@@ -1,4 +1,4 @@
-use std::{pin::Pin, str::FromStr as _, sync::Arc};
+use std::{pin::Pin, str::FromStr as _};
 
 use crate::responses as copilot_responses;
 use crate::{
@@ -13,17 +13,16 @@ use anthropic::{
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use futures::future::BoxFuture;
-use futures::stream::BoxStream;
 use futures::{FutureExt, Stream, StreamExt};
 use gpui::{AsyncApp, Entity};
 use http_client::StatusCode;
 use language_model::{
     CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelCostInfo, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, ProviderErrorCategory, RateLimiter, Role, StopReason,
-    TokenUsage,
+    LanguageModelCompletionStream, LanguageModelCostInfo, LanguageModelEffortLevel,
+    LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolChoice,
+    LanguageModelToolChoiceSupport, LanguageModelToolResultContent, LanguageModelToolUse,
+    MessageContent, ProviderErrorCategory, RateLimiter, Role, StopReason, TokenUsage,
 };
 use util::debug_panic;
 
@@ -33,61 +32,13 @@ pub const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("c
 pub const PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("GitHub Copilot Chat");
 
-pub fn create_language_model(
-    model: CopilotChatModel,
-    copilot_chat: Entity<CopilotChat>,
-) -> Arc<dyn LanguageModel> {
-    Arc::new(CopilotChatLanguageModel {
-        model,
-        copilot_chat,
-        request_limiter: RateLimiter::new(4),
-    })
-}
-
-struct CopilotChatLanguageModel {
-    model: CopilotChatModel,
-    copilot_chat: Entity<CopilotChat>,
-    request_limiter: RateLimiter,
-}
-
-impl LanguageModel for CopilotChatLanguageModel {
-    fn id(&self) -> LanguageModelId {
-        LanguageModelId::from(self.model.id().to_string())
-    }
-
-    fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(self.model.display_name().to_string())
-    }
-
-    fn provider_id(&self) -> LanguageModelProviderId {
-        PROVIDER_ID
-    }
-
-    fn provider_name(&self) -> LanguageModelProviderName {
-        PROVIDER_NAME
-    }
-
-    fn supports_tools(&self) -> bool {
-        self.model.supports_tools()
-    }
-
-    fn supports_streaming_tools(&self) -> bool {
-        true
-    }
-
-    fn supports_images(&self) -> bool {
-        self.model.supports_vision()
-    }
-
-    fn supports_thinking(&self) -> bool {
-        self.model.can_think()
-    }
-
-    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
-        let levels = self.model.reasoning_effort_levels();
-        if levels.is_empty() {
-            return vec![];
-        }
+/// Describes a Copilot Chat model as a [`LanguageModel`].
+pub fn language_model(model: &CopilotChatModel) -> LanguageModel {
+    let supports_tools = model.supports_tools();
+    let levels = model.reasoning_effort_levels();
+    let supported_effort_levels = if levels.is_empty() {
+        vec![]
+    } else {
         levels
             .iter()
             .map(|level| {
@@ -105,228 +56,216 @@ impl LanguageModel for CopilotChatLanguageModel {
                 }
             })
             .collect()
-    }
-
-    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
-        match choice {
-            LanguageModelToolChoice::Auto
-            | LanguageModelToolChoice::Any
-            | LanguageModelToolChoice::None => self.supports_tools(),
+    };
+    LanguageModel {
+        supports_tools,
+        supports_streaming_tools: true,
+        supports_images: model.supports_vision(),
+        supports_thinking: model.can_think(),
+        supported_effort_levels: supported_effort_levels.into(),
+        tool_choice_support: LanguageModelToolChoiceSupport {
+            auto: supports_tools,
+            any: supports_tools,
+            none: supports_tools,
+        },
+        cost_info: LanguageModelCostInfo::RequestCost {
+            cost_per_request: model.multiplier(),
         }
+        .into(),
+        max_input_tokens: model.max_prompt_tokens().unwrap_or(model.max_token_count()),
+        max_output_tokens: model.max_output_tokens(),
+        ..LanguageModel::new(
+            LanguageModelId::from(model.id().to_string()),
+            LanguageModelName::from(model.display_name().to_string()),
+            PROVIDER_ID,
+            PROVIDER_NAME,
+            format!("copilot_chat/{}", model.id()),
+            model.max_token_count(),
+        )
     }
+}
 
-    fn model_cost_info(&self) -> Option<LanguageModelCostInfo> {
-        LanguageModelCostInfo::RequestCost {
-            cost_per_request: self.model.multiplier(),
-        }
-        .into()
-    }
+/// Streams a completion of `request` from the Copilot Chat model `model`.
+pub fn stream_completion(
+    model: &CopilotChatModel,
+    copilot_chat: &Entity<CopilotChat>,
+    request_limiter: &RateLimiter,
+    request: LanguageModelRequest,
+    cx: &AsyncApp,
+) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>> {
+    let is_user_initiated = request.intent.is_none_or(|intent| match intent {
+        CompletionIntent::UserPrompt
+        | CompletionIntent::ThreadContextSummarization
+        | CompletionIntent::InlineAssist
+        | CompletionIntent::TerminalInlineAssist
+        | CompletionIntent::GenerateGitCommitMessage => true,
 
-    fn telemetry_id(&self) -> String {
-        format!("copilot_chat/{}", self.model.id())
-    }
+        CompletionIntent::Subagent
+        | CompletionIntent::ToolResults
+        | CompletionIntent::ThreadSummarization
+        | CompletionIntent::CreateFile
+        | CompletionIntent::EditFile => false,
+    });
 
-    fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
-    }
-
-    fn max_input_tokens(&self) -> u64 {
-        self.model
-            .max_prompt_tokens()
-            .unwrap_or_else(|| self.model.max_token_count())
-    }
-
-    fn max_output_tokens(&self) -> Option<u64> {
-        self.model.max_output_tokens()
-    }
-
-    fn stream_completion(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
-            LanguageModelCompletionError,
-        >,
-    > {
-        let is_user_initiated = request.intent.is_none_or(|intent| match intent {
-            CompletionIntent::UserPrompt
-            | CompletionIntent::ThreadContextSummarization
-            | CompletionIntent::InlineAssist
-            | CompletionIntent::TerminalInlineAssist
-            | CompletionIntent::GenerateGitCommitMessage => true,
-
-            CompletionIntent::Subagent
-            | CompletionIntent::ToolResults
-            | CompletionIntent::ThreadSummarization
-            | CompletionIntent::CreateFile
-            | CompletionIntent::EditFile => false,
-        });
-
-        if self.model.supports_messages() {
-            let location = intent_to_chat_location(request.intent);
-            let model = self.model.clone();
-            let copilot_chat = self.copilot_chat.clone();
-            let request_limiter = self.request_limiter.clone();
-            let future = cx.spawn(async move |cx| {
-                let max_output_tokens = model
-                    .max_output_tokens()
-                    .or(request.max_output_tokens)
-                    .ok_or_else(|| {
-                        anyhow!("Copilot did not provide an output limit for this model")
-                    })?;
-                let effort = request
-                    .thinking_effort
-                    .as_ref()
-                    .and_then(|e| anthropic::Effort::from_str(e).ok());
-
-                let mut anthropic_request = into_anthropic(
-                    request,
-                    model.id().to_string(),
-                    0.0,
-                    max_output_tokens,
-                    if model.supports_adaptive_thinking() {
-                        AnthropicModelMode::Thinking {
-                            budget_tokens: None,
-                        }
-                    } else if model.supports_thinking() {
-                        AnthropicModelMode::Thinking {
-                            budget_tokens: compute_thinking_budget(
-                                model.min_thinking_budget(),
-                                model.max_thinking_budget(),
-                                max_output_tokens.min(u32::MAX as u64) as u32,
-                            ),
-                        }
-                    } else {
-                        AnthropicModelMode::Default
-                    },
-                    AnthropicPromptCacheMode::Legacy,
-                    &PROVIDER_ID,
-                )?;
-
-                anthropic_request.temperature = None;
-
-                // The Copilot proxy doesn't support eager_input_streaming on tools.
-                for tool in &mut anthropic_request.tools {
-                    tool.eager_input_streaming = false;
-                }
-
-                if model.supports_adaptive_thinking() {
-                    if anthropic_request.thinking.is_some() {
-                        anthropic_request.thinking = Some(anthropic::Thinking::Adaptive {
-                            display: Some(anthropic::AdaptiveThinkingDisplay::Summarized),
-                            // Thinking block binding needs a beta header on
-                            // the upstream Anthropic request, which the
-                            // Copilot proxy controls, so opting in belongs
-                            // server-side.
-                            block_binding: None,
-                        });
-                        anthropic_request.output_config =
-                            effort.map(|effort| anthropic::OutputConfig {
-                                effort: Some(effort),
-                            });
-                    }
-                }
-
-                let anthropic_beta =
-                    if !model.supports_adaptive_thinking() && model.supports_thinking() {
-                        Some("interleaved-thinking-2025-05-14".to_string())
-                    } else {
-                        None
-                    };
-
-                let body = serde_json::to_string(&anthropic::StreamingRequest {
-                    base: anthropic_request,
-                    stream: true,
-                })
-                .map_err(|e| anyhow::anyhow!(e))?;
-
-                let stream = CopilotChat::stream_messages(
-                    copilot_chat,
-                    body,
-                    location,
-                    is_user_initiated,
-                    anthropic_beta,
-                    cx.clone(),
-                );
-                let executor = cx.background_executor().clone();
-
-                request_limiter
-                    .stream(async move {
-                        let events = stream.await?;
-                        let mapper = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID);
-                        Ok(language_model::stream_in_background(
-                            mapper.map_stream(events).boxed(),
-                            executor,
-                        ))
-                    })
-                    .await
-            });
-            return async move { Ok(future.await?.boxed()) }.boxed();
-        }
-
-        if self.model.supports_response() {
-            let location = intent_to_chat_location(request.intent);
-            let responses_request = match into_copilot_responses(&self.model, request) {
-                Ok(request) => request,
-                Err(error) => return async move { Err(error.into()) }.boxed(),
-            };
-            let copilot_chat = self.copilot_chat.clone();
-            let request_limiter = self.request_limiter.clone();
-            let future = cx.spawn(async move |cx| {
-                let request = CopilotChat::stream_response(
-                    copilot_chat,
-                    responses_request,
-                    location,
-                    is_user_initiated,
-                    cx.clone(),
-                );
-                let executor = cx.background_executor().clone();
-                request_limiter
-                    .stream(async move {
-                        let stream = request.await?;
-                        let mapper = CopilotResponsesEventMapper::new();
-                        Ok(language_model::stream_in_background(
-                            mapper.map_stream(stream).boxed(),
-                            executor,
-                        ))
-                    })
-                    .await
-            });
-            return async move { Ok(future.await?.boxed()) }.boxed();
-        }
-
+    if model.supports_messages() {
         let location = intent_to_chat_location(request.intent);
-        let copilot_request = match into_copilot_chat(&self.model, request) {
-            Ok(request) => request,
-            Err(err) => return futures::future::ready(Err(err.into())).boxed(),
-        };
-        let is_streaming = copilot_request.stream;
-
-        let copilot_chat = self.copilot_chat.clone();
-        let request_limiter = self.request_limiter.clone();
+        let model = model.clone();
+        let copilot_chat = copilot_chat.clone();
+        let request_limiter = request_limiter.clone();
         let future = cx.spawn(async move |cx| {
-            let request = CopilotChat::stream_completion(
+            let max_output_tokens = model
+                .max_output_tokens()
+                .or(request.max_output_tokens)
+                .ok_or_else(|| anyhow!("Copilot did not provide an output limit for this model"))?;
+            let effort = request
+                .thinking_effort
+                .as_ref()
+                .and_then(|e| anthropic::Effort::from_str(e).ok());
+
+            let mut anthropic_request = into_anthropic(
+                request,
+                model.id().to_string(),
+                0.0,
+                max_output_tokens,
+                if model.supports_adaptive_thinking() {
+                    AnthropicModelMode::Thinking {
+                        budget_tokens: None,
+                    }
+                } else if model.supports_thinking() {
+                    AnthropicModelMode::Thinking {
+                        budget_tokens: compute_thinking_budget(
+                            model.min_thinking_budget(),
+                            model.max_thinking_budget(),
+                            max_output_tokens.min(u32::MAX as u64) as u32,
+                        ),
+                    }
+                } else {
+                    AnthropicModelMode::Default
+                },
+                AnthropicPromptCacheMode::Legacy,
+                &PROVIDER_ID,
+            )?;
+
+            anthropic_request.temperature = None;
+
+            // The Copilot proxy doesn't support eager_input_streaming on tools.
+            for tool in &mut anthropic_request.tools {
+                tool.eager_input_streaming = false;
+            }
+
+            if model.supports_adaptive_thinking() {
+                if anthropic_request.thinking.is_some() {
+                    anthropic_request.thinking = Some(anthropic::Thinking::Adaptive {
+                        display: Some(anthropic::AdaptiveThinkingDisplay::Summarized),
+                        // Thinking block binding needs a beta header on
+                        // the upstream Anthropic request, which the
+                        // Copilot proxy controls, so opting in belongs
+                        // server-side.
+                        block_binding: None,
+                    });
+                    anthropic_request.output_config =
+                        effort.map(|effort| anthropic::OutputConfig {
+                            effort: Some(effort),
+                        });
+                }
+            }
+
+            let anthropic_beta = if !model.supports_adaptive_thinking() && model.supports_thinking()
+            {
+                Some("interleaved-thinking-2025-05-14".to_string())
+            } else {
+                None
+            };
+
+            let body = serde_json::to_string(&anthropic::StreamingRequest {
+                base: anthropic_request,
+                stream: true,
+            })
+            .map_err(|e| anyhow::anyhow!(e))?;
+
+            let stream = CopilotChat::stream_messages(
                 copilot_chat,
-                copilot_request,
+                body,
                 location,
                 is_user_initiated,
+                anthropic_beta,
                 cx.clone(),
             );
+            let executor = cx.background_executor().clone();
+
             request_limiter
                 .stream(async move {
-                    let response = request.await?;
-                    Ok(map_to_language_model_completion_events(
-                        response,
-                        is_streaming,
+                    let events = stream.await?;
+                    let mapper = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID);
+                    Ok(language_model::stream_in_background(
+                        mapper.map_stream(events).boxed(),
+                        executor,
                     ))
                 })
                 .await
         });
-        async move { Ok(future.await?.boxed()) }.boxed()
+        return async move { Ok(future.await?.boxed()) }.boxed();
     }
+
+    if model.supports_response() {
+        let location = intent_to_chat_location(request.intent);
+        let responses_request = match into_copilot_responses(model, request) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
+        let copilot_chat = copilot_chat.clone();
+        let request_limiter = request_limiter.clone();
+        let future = cx.spawn(async move |cx| {
+            let request = CopilotChat::stream_response(
+                copilot_chat,
+                responses_request,
+                location,
+                is_user_initiated,
+                cx.clone(),
+            );
+            let executor = cx.background_executor().clone();
+            request_limiter
+                .stream(async move {
+                    let stream = request.await?;
+                    let mapper = CopilotResponsesEventMapper::new();
+                    Ok(language_model::stream_in_background(
+                        mapper.map_stream(stream).boxed(),
+                        executor,
+                    ))
+                })
+                .await
+        });
+        return async move { Ok(future.await?.boxed()) }.boxed();
+    }
+
+    let location = intent_to_chat_location(request.intent);
+    let copilot_request = match into_copilot_chat(model, request) {
+        Ok(request) => request,
+        Err(err) => return futures::future::ready(Err(err.into())).boxed(),
+    };
+    let is_streaming = copilot_request.stream;
+
+    let copilot_chat = copilot_chat.clone();
+    let request_limiter = request_limiter.clone();
+    let future = cx.spawn(async move |cx| {
+        let request = CopilotChat::stream_completion(
+            copilot_chat,
+            copilot_request,
+            location,
+            is_user_initiated,
+            cx.clone(),
+        );
+        request_limiter
+            .stream(async move {
+                let response = request.await?;
+                Ok(map_to_language_model_completion_events(
+                    response,
+                    is_streaming,
+                ))
+            })
+            .await
+    });
+    async move { Ok(future.await?.boxed()) }.boxed()
 }
 
 pub fn map_to_language_model_completion_events(
@@ -1311,19 +1250,10 @@ mod tests {
     use futures::StreamExt;
     use language_model::ProviderErrorCategory;
     use serde_json::json;
+    use std::sync::Arc;
 
-    #[gpui::test]
-    fn language_model_exposes_token_limits(cx: &mut gpui::TestAppContext) {
-        use gpui::AppContext as _;
-
-        let copilot_chat = cx.new(|cx| {
-            CopilotChat::new(
-                Arc::new(http_client::BlockedHttpClient::new()),
-                Arc::new(EmptyCredentialsProvider),
-                crate::CopilotChatConfiguration::default(),
-                cx,
-            )
-        });
+    #[test]
+    fn language_model_exposes_token_limits() {
         for (limits, input, context, output) in [
             (
                 json!({"max_context_window_tokens": 200_000, "max_prompt_tokens": 90_000, "max_output_tokens": 16_384}),
@@ -1353,41 +1283,10 @@ mod tests {
             let mut value = serde_json::to_value(test_responses_model()).unwrap();
             value["capabilities"]["limits"] = limits;
             let descriptor = serde_json::from_value(value).unwrap();
-            let model = create_language_model(descriptor, copilot_chat.clone());
-            assert_eq!(model.max_token_count(), context);
-            assert_eq!(model.max_input_tokens(), input);
-            assert_eq!(model.max_total_tokens(), Some(context));
-            assert_eq!(model.max_output_tokens(), output);
-        }
-    }
-
-    struct EmptyCredentialsProvider;
-
-    impl credentials_provider::CredentialsProvider for EmptyCredentialsProvider {
-        fn read_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _cx: &'a AsyncApp,
-        ) -> Pin<Box<dyn Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>> {
-            Box::pin(async { Ok(None) })
-        }
-
-        fn write_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _username: &'a str,
-            _password: &'a [u8],
-            _cx: &'a AsyncApp,
-        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-            Box::pin(async { Ok(()) })
-        }
-
-        fn delete_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _cx: &'a AsyncApp,
-        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-            Box::pin(async { Ok(()) })
+            let model = language_model(&descriptor);
+            assert_eq!(model.max_token_count, context);
+            assert_eq!(model.max_input_tokens, input);
+            assert_eq!(model.max_output_tokens, output);
         }
     }
 

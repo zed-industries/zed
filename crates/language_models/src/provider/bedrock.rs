@@ -2,10 +2,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
-use async_lock::OnceCell;
 use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::{BehaviorVersion, Region};
-use aws_credential_types::provider::{ProvideCredentials, SharedCredentialsProvider};
+use aws_credential_types::provider::ProvideCredentials;
 use aws_credential_types::{Credentials, Token};
 use aws_http_client::AwsHttpClient;
 use aws_sigv4::http_request::{SignableBody, SignableRequest, SigningSettings, sign};
@@ -25,7 +24,7 @@ use bedrock::{
     BedrockToolResultContentBlock, BedrockToolResultStatus, BedrockToolSpec, BedrockToolUseBlock,
     ConverseModel, MantleModel, MantleProtocol, value_to_aws_document,
 };
-use collections::{BTreeMap, HashMap};
+use collections::{BTreeMap, HashMap, IndexMap};
 use credentials_provider::CredentialsProvider;
 use futures::{
     AsyncBufReadExt, AsyncReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, io::BufReader,
@@ -41,12 +40,13 @@ use http_client::{
 };
 use language_model::{
     AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelCompletionStream,
+    LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolChoiceSupport,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, ModelRateLimiters,
     ProviderErrorCategory, ProviderSettingsView, RateLimiter, Role, SubPageProviderSettings,
-    TokenUsage, env_var,
+    TokenUsage, env_var, unavailable_error,
 };
 use open_ai::responses::Request as OpenAiResponseRequest;
 use open_ai::responses::{ResponseOutputItem, StreamEvent as OpenAiResponseStreamEvent};
@@ -58,7 +58,7 @@ use settings::{
     Settings, SettingsStore,
 };
 use std::sync::LazyLock;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use ui::{ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
@@ -254,20 +254,22 @@ fn mantle_endpoint_url(region: &str) -> String {
     format!("https://bedrock-mantle.{region}.api.aws/openai/v1")
 }
 
-enum MantleAuth {
+/// Auth resolved for one request, shared by the Converse and Mantle APIs.
+#[derive(Clone)]
+enum BedrockRequestAuth {
     ApiKey { api_key: String },
     SigV4 { credentials: Credentials },
 }
 
-impl MantleAuth {
+impl BedrockRequestAuth {
     fn apply(&self, request: &mut HttpRequest<AsyncBody>, body: &[u8], region: &str) -> Result<()> {
         match self {
-            MantleAuth::ApiKey { api_key } => {
+            BedrockRequestAuth::ApiKey { api_key } => {
                 let value = HeaderValue::from_str(&format!("Bearer {}", api_key.trim()))
                     .context("building Mantle bearer token authorization header")?;
                 request.headers_mut().insert(AUTHORIZATION, value);
             }
-            MantleAuth::SigV4 { credentials } => {
+            BedrockRequestAuth::SigV4 { credentials } => {
                 sign_mantle_request_sigv4(request, body, credentials, region)?;
             }
         }
@@ -348,10 +350,54 @@ pub struct State {
     /// Whether credentials came from environment variables (only relevant for static credentials)
     credentials_from_env: bool,
     credentials_provider: Arc<dyn CredentialsProvider>,
+    /// AWS credentials that expire, such as those from SSO, STS or a credential
+    /// process, reused until shortly before they expire. Credentials without an
+    /// expiry are resolved for every request instead, because the AWS SDK never
+    /// rereads credential files and external tools rewrite them.
+    expiring_credentials: Option<ExpiringCredentials>,
+    /// Incremented on every auth change, so credentials resolved for earlier
+    /// auth are not cached once they arrive.
+    auth_generation: u64,
     _subscription: Subscription,
 }
 
+struct ExpiringCredentials {
+    auth: Option<BedrockAuth>,
+    region: String,
+    credentials: Credentials,
+}
+
+/// How long before expiry cached AWS credentials are replaced, so a request
+/// that streams for a while does not outlive them.
+const CREDENTIALS_EXPIRY_MARGIN: Duration = Duration::from_secs(5 * 60);
+
+/// How long resolving AWS credentials may take before the request fails,
+/// matching the AWS SDK's default identity cache load timeout. Without it a
+/// hung credential process or metadata endpoint would stall the request.
+const CREDENTIALS_LOAD_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The Bedrock bearer token the AWS SDK would find in the environment, looked
+/// up with `environment_variable`.
+///
+/// Unless a token is configured explicitly, the SDK prefers this token over any
+/// AWS credentials when it builds a client, so it is honored before resolving
+/// credentials. Like the SDK, this checks the Bedrock-specific variable, then
+/// the generic one, and uses a set value even when it is empty.
+fn environment_bearer_token(
+    environment_variable: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    environment_variable("AWS_BEARER_TOKEN_BEDROCK")
+        .or_else(|| environment_variable("AWS_BEARER_TOKEN"))
+}
+
 impl State {
+    /// Sets the auth method and drops credentials resolved for the old one.
+    fn set_auth(&mut self, auth: Option<BedrockAuth>) {
+        self.auth = auth;
+        self.expiring_credentials = None;
+        self.auth_generation += 1;
+    }
+
     fn reset_auth(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let credentials_provider = self.credentials_provider.clone();
         cx.spawn(async move |this, cx| {
@@ -360,7 +406,7 @@ impl State {
                 .await
                 .log_err();
             this.update(cx, |this, cx| {
-                this.auth = None;
+                this.set_auth(None);
                 this.credentials_from_env = false;
                 cx.notify();
             })
@@ -384,7 +430,7 @@ impl State {
                 )
                 .await?;
             this.update(cx, |this, cx| {
-                this.auth = auth;
+                this.set_auth(auth);
                 this.credentials_from_env = false;
                 cx.notify();
             })
@@ -422,7 +468,7 @@ impl State {
 
                 return cx.spawn(async move |this, cx| {
                     this.update(cx, |this, cx| {
-                        this.auth = Some(auth);
+                        this.set_auth(Some(auth));
                         this.credentials_from_env = false;
                         cx.notify();
                     })?;
@@ -483,7 +529,7 @@ impl State {
             // If we got auth from env vars, use it
             if let Some(auth) = auth {
                 this.update(cx, |this, cx| {
-                    this.auth = Some(auth);
+                    this.set_auth(Some(auth));
                     this.credentials_from_env = from_env;
                     cx.notify();
                 })?;
@@ -507,7 +553,7 @@ impl State {
                 .ok_or(AuthenticateError::CredentialsNotFound)?;
 
             this.update(cx, |this, cx| {
-                this.auth = Some(auth);
+                this.set_auth(Some(auth));
                 this.credentials_from_env = false;
                 cx.notify();
             })?;
@@ -548,8 +594,14 @@ impl State {
 pub struct BedrockLanguageModelProvider {
     http_client: AwsHttpClient,
     plain_http_client: Arc<dyn HttpClient>,
-    handle: tokio::runtime::Handle,
     state: Entity<State>,
+    request_limiters: ModelRateLimiters,
+}
+
+/// A model this provider offers, served by either the Converse API or Mantle.
+enum BedrockModelConfig {
+    Converse(ConverseModel),
+    Mantle(MantleModel),
 }
 
 impl BedrockLanguageModelProvider {
@@ -563,6 +615,8 @@ impl BedrockLanguageModelProvider {
             settings: Some(AllLanguageModelSettings::get_global(cx).bedrock.clone()),
             credentials_from_env: false,
             credentials_provider,
+            expiring_credentials: None,
+            auth_generation: 0,
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),
@@ -571,58 +625,16 @@ impl BedrockLanguageModelProvider {
         Self {
             http_client: AwsHttpClient::new(http_client.clone()),
             plain_http_client: http_client,
-            handle: Tokio::handle(cx),
             state,
+            request_limiters: ModelRateLimiters::default(),
         }
     }
 
-    fn create_language_model(&self, model: bedrock::ConverseModel) -> Arc<dyn LanguageModel> {
-        Arc::new(BedrockModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            http_client: self.http_client.clone(),
-            handle: self.handle.clone(),
-            state: self.state.clone(),
-            client: OnceCell::new(),
-            request_limiter: RateLimiter::new(4),
-        })
-    }
-
-    fn create_mantle_language_model(&self, model: bedrock::MantleModel) -> Arc<dyn LanguageModel> {
-        Arc::new(BedrockMantleModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            http_client: self.plain_http_client.clone(),
-            state: self.state.clone(),
-            credentials_provider: Arc::new(OnceCell::new()),
-            request_limiter: RateLimiter::new(4),
-        })
-    }
-}
-
-impl LanguageModelProvider for BedrockLanguageModelProvider {
-    fn id(&self) -> LanguageModelProviderId {
-        PROVIDER_ID
-    }
-
-    fn name(&self) -> LanguageModelProviderName {
-        PROVIDER_NAME
-    }
-
-    fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Icon(IconName::AiBedrock)
-    }
-
-    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(bedrock::ConverseModel::default()))
-    }
-
-    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let region = self.state.read(cx).get_region();
-        Some(self.create_language_model(bedrock::ConverseModel::default_fast(region.as_str())))
-    }
-
-    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+    /// Every model this provider offers, keyed by id: the built-in Converse
+    /// models with settings entries added or overriding them, then the same
+    /// for Mantle. A Mantle model replaces a Converse model with the same id,
+    /// so each id is offered and served exactly once.
+    fn bedrock_models(&self, cx: &App) -> IndexMap<String, BedrockModelConfig> {
         let bedrock_settings = &AllLanguageModelSettings::get_global(cx).bedrock;
         let mut models = BTreeMap::default();
 
@@ -632,7 +644,6 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
             }
         }
 
-        // Override with available models from settings
         for model in bedrock_settings.available_models.iter() {
             models.insert(
                 model.name.clone(),
@@ -652,11 +663,6 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
             );
         }
 
-        let mut models: Vec<Arc<dyn LanguageModel>> = models
-            .into_values()
-            .map(|model| self.create_language_model(model))
-            .collect();
-
         let mut mantle_models = BTreeMap::default();
 
         for model in bedrock::MantleModel::iter() {
@@ -665,7 +671,6 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
             }
         }
 
-        // Override with available Mantle models from settings
         for model in bedrock_settings.mantle_available_models.iter() {
             mantle_models.insert(
                 model.name.clone(),
@@ -682,13 +687,92 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
             );
         }
 
-        models.extend(
-            mantle_models
-                .into_values()
-                .map(|model| self.create_mantle_language_model(model)),
-        );
+        let mut all_models = IndexMap::default();
+        for (id, model) in models {
+            all_models.insert(id, BedrockModelConfig::Converse(model));
+        }
+        for (id, model) in mantle_models {
+            all_models.insert(id, BedrockModelConfig::Mantle(model));
+        }
+        all_models
+    }
 
-        models
+    /// Describes the offered model with `id`.
+    fn offered_model(&self, id: &str, cx: &App) -> Option<LanguageModel> {
+        self.bedrock_models(cx).get(id).map(language_model)
+    }
+
+    /// The current configuration of `model`, if this provider still offers it.
+    fn config(
+        &self,
+        model: &LanguageModel,
+        cx: &App,
+    ) -> Result<BedrockModelConfig, LanguageModelCompletionError> {
+        self.bedrock_models(cx)
+            .swap_remove(model.id.0.as_ref())
+            .ok_or_else(|| unavailable_error(model))
+    }
+}
+
+fn language_model(config: &BedrockModelConfig) -> LanguageModel {
+    match config {
+        BedrockModelConfig::Converse(model) => converse_language_model(model),
+        BedrockModelConfig::Mantle(model) => mantle_language_model(model),
+    }
+}
+
+impl LanguageModelProvider for BedrockLanguageModelProvider {
+    fn id(&self) -> LanguageModelProviderId {
+        PROVIDER_ID
+    }
+
+    fn name(&self) -> LanguageModelProviderName {
+        PROVIDER_NAME
+    }
+
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiBedrock)
+    }
+
+    fn default_model(&self, cx: &App) -> Option<LanguageModel> {
+        self.offered_model(bedrock::ConverseModel::default().id(), cx)
+    }
+
+    fn default_fast_model(&self, cx: &App) -> Option<LanguageModel> {
+        let region = self.state.read(cx).get_region();
+        self.offered_model(
+            bedrock::ConverseModel::default_fast(region.as_str()).id(),
+            cx,
+        )
+    }
+
+    fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
+        self.bedrock_models(cx)
+            .values()
+            .map(language_model)
+            .collect()
+    }
+
+    fn stream_completion(
+        &self,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
+        let config = match cx.update(|cx| self.config(model, cx)) {
+            Ok(config) => config,
+            Err(error) => return async move { Err(error) }.boxed(),
+        };
+        let request_limiter = self.request_limiters.for_model(&model.id);
+        match config {
+            BedrockModelConfig::Converse(config) => {
+                self.stream_converse_completion(&config, &request_limiter, request, cx)
+            }
+            BedrockModelConfig::Mantle(config) => {
+                self.stream_mantle_completion(&config, &request_limiter, request, cx)
+            }
+        }
     }
 
     fn is_authenticated(&self, cx: &App) -> bool {
@@ -721,79 +805,85 @@ impl LanguageModelProviderState for BedrockLanguageModelProvider {
     }
 }
 
-struct BedrockModel {
-    id: LanguageModelId,
-    model: ConverseModel,
-    http_client: AwsHttpClient,
-    handle: tokio::runtime::Handle,
-    client: OnceCell<BedrockClient>,
-    state: Entity<State>,
-    request_limiter: RateLimiter,
-}
-
-impl BedrockModel {
-    fn get_or_init_client(&self, cx: &AsyncApp) -> anyhow::Result<&BedrockClient> {
-        self.client
-            .get_or_try_init_blocking(|| {
-                let (auth, endpoint, region) = cx.read_entity(&self.state, |state, _cx| {
-                    let endpoint = state.settings.as_ref().and_then(|s| s.endpoint.clone());
-                    let region = state.get_region();
-                    (state.auth.clone(), endpoint, region)
-                });
-
-                let mut config_builder = aws_config::defaults(BehaviorVersion::latest())
-                    .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
-                    .http_client(self.http_client.clone())
-                    .region(Region::new(region))
-                    .timeout_config(TimeoutConfig::disabled());
-
-                if let Some(endpoint_url) = endpoint
-                    && !endpoint_url.is_empty()
-                {
-                    config_builder = config_builder.endpoint_url(endpoint_url);
-                }
-
-                match auth {
-                    Some(BedrockAuth::Automatic) | None => {
-                        // Use default AWS credential provider chain
-                    }
-                    Some(BedrockAuth::NamedProfile { profile_name })
-                    | Some(BedrockAuth::SingleSignOn { profile_name }) => {
-                        if !profile_name.is_empty() {
-                            config_builder = config_builder.profile_name(profile_name);
-                        }
-                    }
-                    Some(BedrockAuth::IamCredentials {
-                        access_key_id,
-                        secret_access_key,
-                        session_token,
-                    }) => {
-                        let aws_creds = Credentials::new(
-                            access_key_id,
-                            secret_access_key,
-                            session_token,
-                            None,
-                            "zed-bedrock-provider",
-                        );
-                        config_builder = config_builder.credentials_provider(aws_creds);
-                    }
-                    Some(BedrockAuth::ApiKey { api_key }) => {
-                        config_builder = config_builder
-                            .auth_scheme_preference(["httpBearerAuth".into()]) // https://github.com/smithy-lang/smithy-rs/pull/4241
-                            .token_provider(Token::new(api_key, None));
-                    }
-                }
-
-                let config = self.handle.block_on(config_builder.load());
-
-                anyhow::Ok(BedrockClient::new(&config))
-            })
-            .context("initializing Bedrock client")?;
-
-        self.client.get().context("Bedrock client not initialized")
+impl BedrockLanguageModelProvider {
+    /// Resolves auth for one request, reusing unexpired cached credentials.
+    fn resolve_request_auth(&self, cx: &AsyncApp) -> Task<Result<BedrockRequestAuth>> {
+        let http_client = self.http_client.clone();
+        self.resolve_request_auth_with(
+            cx,
+            |name| std::env::var(name).ok(),
+            move |auth, region| resolve_request_auth(http_client, auth, region),
+        )
     }
 
-    fn stream_completion(
+    /// [`Self::resolve_request_auth`], reading environment variables with
+    /// `environment_variable` and resolving uncached auth with `resolve`.
+    fn resolve_request_auth_with<ResolveFuture>(
+        &self,
+        cx: &AsyncApp,
+        environment_variable: impl Fn(&str) -> Option<String>,
+        resolve: impl FnOnce(Option<BedrockAuth>, String) -> ResolveFuture,
+    ) -> Task<Result<BedrockRequestAuth>>
+    where
+        ResolveFuture: Future<Output = Result<BedrockRequestAuth>> + Send + 'static,
+    {
+        let (auth, region, auth_generation, cached_credentials) =
+            cx.read_entity(&self.state, |state, _cx| {
+                let (auth, region) = (state.auth.clone(), state.get_region());
+                let fresh_until = SystemTime::now() + CREDENTIALS_EXPIRY_MARGIN;
+                let cached_credentials = state
+                    .expiring_credentials
+                    .as_ref()
+                    .filter(|cached| {
+                        cached.auth == auth
+                            && cached.region == region
+                            && cached
+                                .credentials
+                                .expiry()
+                                .is_some_and(|expiry| expiry > fresh_until)
+                    })
+                    .map(|cached| cached.credentials.clone());
+                (auth, region, state.auth_generation, cached_credentials)
+            });
+        if !matches!(auth, Some(BedrockAuth::ApiKey { .. }))
+            && let Some(api_key) = environment_bearer_token(environment_variable)
+        {
+            return Task::ready(Ok(BedrockRequestAuth::ApiKey { api_key }));
+        }
+        if let Some(credentials) = cached_credentials {
+            return Task::ready(Ok(BedrockRequestAuth::SigV4 { credentials }));
+        }
+
+        let resolve_task = Tokio::spawn_result(cx, resolve(auth.clone(), region.clone()));
+        let timeout = cx.background_executor().timer(CREDENTIALS_LOAD_TIMEOUT);
+        let state = self.state.clone();
+        cx.spawn(async move |cx| {
+            // Dropping `resolve_task` on timeout cancels the Tokio task.
+            let request_auth = futures::select_biased! {
+                request_auth = resolve_task.fuse() => request_auth?,
+                _ = timeout.fuse() => anyhow::bail!(
+                    "timed out after {CREDENTIALS_LOAD_TIMEOUT:?} resolving AWS credentials"
+                ),
+            };
+            if let BedrockRequestAuth::SigV4 { credentials } = &request_auth
+                && credentials.expiry().is_some()
+            {
+                let credentials = credentials.clone();
+                state.update(cx, |state, _| {
+                    if state.auth_generation == auth_generation {
+                        state.expiring_credentials = Some(ExpiringCredentials {
+                            auth,
+                            region,
+                            credentials,
+                        });
+                    }
+                });
+            }
+            Ok(request_auth)
+        })
+    }
+
+    fn stream_bedrock_request(
         &self,
         request: bedrock::Request,
         cx: &AsyncApp,
@@ -801,72 +891,78 @@ impl BedrockModel {
         'static,
         Result<BoxStream<'static, Result<BedrockStreamingResponse, anyhow::Error>>, BedrockError>,
     > {
-        let Ok(runtime_client) = self
-            .get_or_init_client(cx)
-            .cloned()
-            .context("Bedrock client not initialized")
-        else {
-            return futures::future::ready(Err(BedrockError::Other(anyhow!("App state dropped"))))
-                .boxed();
-        };
-        let extra_headers = self.state.read_with(cx, |_, cx| {
-            AllLanguageModelSettings::get_global(cx)
-                .bedrock
-                .custom_headers
-                .clone()
-        });
+        let http_client = self.http_client.clone();
+        let auth_task = self.resolve_request_auth(cx);
+        let (profile_name, endpoint, region, extra_headers) =
+            self.state.read_with(cx, |state, cx| {
+                (
+                    aws_profile_name(&state.auth),
+                    state.settings.as_ref().and_then(|s| s.endpoint.clone()),
+                    state.get_region(),
+                    AllLanguageModelSettings::get_global(cx)
+                        .bedrock
+                        .custom_headers
+                        .clone(),
+                )
+            });
 
-        let task = Tokio::spawn(
-            cx,
-            bedrock::stream_completion(runtime_client, request, extra_headers),
-        );
+        let task = Tokio::spawn(cx, async move {
+            let request_auth = auth_task.await.map_err(BedrockError::Other)?;
+            let client =
+                build_converse_client(http_client, request_auth, profile_name, endpoint, region)
+                    .await;
+            bedrock::stream_completion(client, request, extra_headers).await
+        });
         async move { task.await.map_err(|e| BedrockError::Other(e.into()))? }.boxed()
     }
 }
 
-impl LanguageModel for BedrockModel {
-    fn id(&self) -> LanguageModelId {
-        self.id.clone()
+/// Builds a Converse client for one request from already-resolved auth. The
+/// profile still applies, since it can configure more than credentials.
+async fn build_converse_client(
+    http_client: AwsHttpClient,
+    request_auth: BedrockRequestAuth,
+    profile_name: Option<String>,
+    endpoint: Option<String>,
+    region: String,
+) -> BedrockClient {
+    let mut config_builder = aws_config::defaults(BehaviorVersion::latest())
+        .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
+        .http_client(http_client)
+        .region(Region::new(region))
+        .timeout_config(TimeoutConfig::disabled());
+
+    if let Some(profile_name) = profile_name {
+        config_builder = config_builder.profile_name(profile_name);
+    }
+    if let Some(endpoint_url) = endpoint
+        && !endpoint_url.is_empty()
+    {
+        config_builder = config_builder.endpoint_url(endpoint_url);
     }
 
-    fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(self.model.display_name().to_string())
-    }
+    config_builder = match request_auth {
+        BedrockRequestAuth::SigV4 { credentials } => {
+            config_builder.credentials_provider(credentials)
+        }
+        BedrockRequestAuth::ApiKey { api_key } => config_builder
+            .auth_scheme_preference(["httpBearerAuth".into()]) // https://github.com/smithy-lang/smithy-rs/pull/4241
+            .token_provider(Token::new(api_key, None)),
+    };
 
-    fn provider_id(&self) -> LanguageModelProviderId {
-        PROVIDER_ID
-    }
+    BedrockClient::new(&config_builder.load().await)
+}
 
-    fn provider_name(&self) -> LanguageModelProviderName {
-        PROVIDER_NAME
-    }
-
-    fn supports_tools(&self) -> bool {
-        self.model.supports_tool_use()
-    }
-
-    fn supports_images(&self) -> bool {
-        self.model.supports_images()
-    }
-
-    fn supports_thinking(&self) -> bool {
-        self.model.supports_thinking()
-    }
-
-    fn refusal_fallback_model_id(&self) -> Option<&'static str> {
-        if self
-            .model
+fn converse_language_model(model: &ConverseModel) -> LanguageModel {
+    LanguageModel {
+        supports_tools: model.supports_tool_use(),
+        supports_images: model.supports_images(),
+        supports_thinking: model.supports_thinking(),
+        refusal_fallback_model_id: model
             .id()
             .starts_with(anthropic::FABLE_MODEL_ID_PREFIX)
-        {
-            Some(anthropic::FABLE_FALLBACK_MODEL_ID)
-        } else {
-            None
-        }
-    }
-
-    fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
-        if self.model.supports_adaptive_thinking() {
+            .then_some(anthropic::FABLE_FALLBACK_MODEL_ID),
+        supported_effort_levels: if model.supports_adaptive_thinking() {
             vec![
                 language_model::LanguageModelEffortLevel {
                     name: "Low".into(),
@@ -896,51 +992,40 @@ impl LanguageModel for BedrockModel {
             ]
             .into_iter()
             .filter(|effort_level| {
-                effort_level.value != "xhigh" || self.model.supports_xhigh_adaptive_thinking()
+                effort_level.value != "xhigh" || model.supports_xhigh_adaptive_thinking()
             })
             .collect()
         } else {
-            Vec::new()
-        }
+            Arc::default()
+        },
+        // Add support for None - we'll filter tool calls at response
+        tool_choice_support: LanguageModelToolChoiceSupport {
+            auto: model.supports_tool_use(),
+            any: model.supports_tool_use(),
+            none: model.supports_tool_use(),
+        },
+        supports_streaming_tools: true,
+        max_output_tokens: Some(model.max_output_tokens()),
+        ..LanguageModel::new(
+            LanguageModelId::from(model.id().to_string()),
+            LanguageModelName::from(model.display_name().to_string()),
+            PROVIDER_ID,
+            PROVIDER_NAME,
+            format!("bedrock/{}", model.id()),
+            model.max_token_count(),
+        )
     }
+}
 
-    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
-        match choice {
-            LanguageModelToolChoice::Auto | LanguageModelToolChoice::Any => {
-                self.model.supports_tool_use()
-            }
-            // Add support for None - we'll filter tool calls at response
-            LanguageModelToolChoice::None => self.model.supports_tool_use(),
-        }
-    }
-
-    fn supports_streaming_tools(&self) -> bool {
-        true
-    }
-
-    fn telemetry_id(&self) -> String {
-        format!("bedrock/{}", self.model.id())
-    }
-
-    fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
-    }
-
-    fn max_output_tokens(&self) -> Option<u64> {
-        Some(self.model.max_output_tokens())
-    }
-
-    fn stream_completion(
+impl BedrockLanguageModelProvider {
+    fn stream_converse_completion(
         &self,
+        config: &ConverseModel,
+        request_limiter: &RateLimiter,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
-            LanguageModelCompletionError,
-        >,
-    > {
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
         if request.contains_custom_tool_input() {
             return async move {
                 Err(anyhow::anyhow!("Bedrock does not support custom tools").into())
@@ -954,7 +1039,7 @@ impl LanguageModel for BedrockModel {
                 (state.get_region(), state.get_allow_global(), gid, gv)
             });
 
-        let model_id = match self.model.cross_region_inference_id(&region, allow_global) {
+        let model_id = match config.cross_region_inference_id(&region, allow_global) {
             Ok(s) => s,
             Err(e) => {
                 return async move { Err(e.into()) }.boxed();
@@ -966,11 +1051,11 @@ impl LanguageModel for BedrockModel {
         let request = match into_bedrock(
             request,
             model_id,
-            self.model.default_temperature(),
-            self.model.max_output_tokens(),
-            self.model.thinking_mode(),
-            self.model.supports_caching(),
-            self.model.supports_tool_use(),
+            config.default_temperature(),
+            config.max_output_tokens(),
+            config.thinking_mode(),
+            config.supports_caching(),
+            config.supports_tool_use(),
             guardrail_identifier,
             guardrail_version,
         ) {
@@ -978,10 +1063,10 @@ impl LanguageModel for BedrockModel {
             Err(err) => return futures::future::ready(Err(err.into())).boxed(),
         };
 
-        let request = self.stream_completion(request, cx);
-        let display_name = self.model.display_name().to_string();
+        let request = self.stream_bedrock_request(request, cx);
+        let display_name = config.display_name().to_string();
         let executor = cx.background_executor().clone();
-        let future = self.request_limiter.stream(async move {
+        let future = request_limiter.stream(async move {
             let response = request.await.map_err(|err| match err {
                 BedrockError::Validation(ref msg) => {
                     if msg.contains("model identifier is invalid") {
@@ -1135,82 +1220,61 @@ fn map_mantle_error(model: &MantleModel, error: RequestError) -> LanguageModelCo
     error.into()
 }
 
-/// Resolves an AWS credentials provider for profile/SSO/automatic auth.
-/// Cached in `cell` since building it may read config files from disk;
-/// credentials themselves are still re-resolved on every call. Async so this
-/// never blocks the foreground thread (unlike `BedrockModel::get_or_init_client`).
-async fn resolve_mantle_credentials_provider(
-    cell: &OnceCell<SharedCredentialsProvider>,
-    profile_name: Option<String>,
-    region: String,
-) -> Result<SharedCredentialsProvider> {
-    let provider = cell
-        .get_or_try_init(move || async move {
-            let mut config_builder =
-                aws_config::defaults(BehaviorVersion::latest()).region(Region::new(region));
-
-            if let Some(profile_name) = profile_name.filter(|name| !name.is_empty()) {
-                config_builder = config_builder.profile_name(profile_name);
-            }
-
-            let config = config_builder.load().await;
-            config
-                .credentials_provider()
-                .context("no AWS credentials provider is configured")
-        })
-        .await
-        .context("resolving AWS credentials for Bedrock Mantle")?;
-    Ok(provider.clone())
+/// The AWS profile named by profile or SSO auth, if any.
+fn aws_profile_name(auth: &Option<BedrockAuth>) -> Option<String> {
+    match auth {
+        Some(BedrockAuth::NamedProfile { profile_name })
+        | Some(BedrockAuth::SingleSignOn { profile_name }) => {
+            Some(profile_name.clone()).filter(|name| !name.is_empty())
+        }
+        _ => None,
+    }
 }
 
-/// Resolves provider settings into concrete Mantle request auth. A configured
-/// Bedrock API key is sent as bearer auth; every AWS-credential-based method
-/// signs the Mantle HTTP request directly with SigV4.
-async fn resolve_mantle_auth(
-    credentials_provider: Arc<OnceCell<SharedCredentialsProvider>>,
+/// Resolves provider settings into concrete request auth. A configured Bedrock
+/// API key is sent as bearer auth; every other method resolves AWS
+/// credentials to sign the request with SigV4.
+async fn resolve_request_auth(
+    http_client: AwsHttpClient,
     auth: Option<BedrockAuth>,
     region: String,
-) -> Result<MantleAuth> {
-    match auth {
-        Some(BedrockAuth::ApiKey { api_key }) => Ok(MantleAuth::ApiKey { api_key }),
+) -> Result<BedrockRequestAuth> {
+    let profile_name = match auth {
+        Some(BedrockAuth::ApiKey { api_key }) => return Ok(BedrockRequestAuth::ApiKey { api_key }),
         Some(BedrockAuth::IamCredentials {
             access_key_id,
             secret_access_key,
             session_token,
-        }) => Ok(MantleAuth::SigV4 {
-            credentials: Credentials::new(
-                access_key_id,
-                secret_access_key,
-                session_token,
-                None,
-                "zed-bedrock-provider",
-            ),
-        }),
-        Some(BedrockAuth::NamedProfile { profile_name })
-        | Some(BedrockAuth::SingleSignOn { profile_name }) => {
-            let provider = resolve_mantle_credentials_provider(
-                &credentials_provider,
-                Some(profile_name),
-                region.clone(),
-            )
-            .await?;
-            let credentials = provider
-                .provide_credentials()
-                .await
-                .context("failed to resolve AWS credentials")?;
-            Ok(MantleAuth::SigV4 { credentials })
+        }) => {
+            return Ok(BedrockRequestAuth::SigV4 {
+                credentials: Credentials::new(
+                    access_key_id,
+                    secret_access_key,
+                    session_token,
+                    None,
+                    "zed-bedrock-provider",
+                ),
+            });
         }
-        Some(BedrockAuth::Automatic) | None => {
-            let provider =
-                resolve_mantle_credentials_provider(&credentials_provider, None, region.clone())
-                    .await?;
-            let credentials = provider
-                .provide_credentials()
-                .await
-                .context("failed to resolve AWS credentials")?;
-            Ok(MantleAuth::SigV4 { credentials })
-        }
+        _ => aws_profile_name(&auth),
+    };
+
+    let mut config_builder = aws_config::defaults(BehaviorVersion::latest())
+        .http_client(http_client)
+        .region(Region::new(region));
+    if let Some(profile_name) = profile_name {
+        config_builder = config_builder.profile_name(profile_name);
     }
+    let credentials = config_builder
+        .load()
+        .await
+        .credentials_provider()
+        .context("no AWS credentials provider is configured")
+        .context("resolving AWS credentials for Bedrock")?
+        .provide_credentials()
+        .await
+        .context("failed to resolve AWS credentials")?;
+    Ok(BedrockRequestAuth::SigV4 { credentials })
 }
 
 fn parse_mantle_chat_stream_line(line: &str) -> Result<ResponseStreamEvent> {
@@ -1244,7 +1308,7 @@ async fn stream_mantle_sse<Request, Event>(
     provider_name: &str,
     url: &str,
     region: &str,
-    auth: &MantleAuth,
+    auth: &BedrockRequestAuth,
     request: Request,
     extra_headers: &CustomHeaders,
     parse_stream_line: fn(&str) -> Result<Event>,
@@ -1363,8 +1427,7 @@ impl MantleResponseEventMapper {
     fn map_stream(
         mut self,
         events: BoxStream<'static, Result<OpenAiResponseStreamEvent>>,
-    ) -> BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
-    {
+    ) -> LanguageModelCompletionStream {
         events
             .flat_map(move |event| {
                 futures::stream::iter(match event {
@@ -1738,18 +1801,11 @@ impl MantleResponseEventMapper {
     }
 }
 
-struct BedrockMantleModel {
-    id: LanguageModelId,
-    model: MantleModel,
-    http_client: Arc<dyn HttpClient>,
-    state: Entity<State>,
-    credentials_provider: Arc<OnceCell<SharedCredentialsProvider>>,
-    request_limiter: RateLimiter,
-}
-
-impl BedrockMantleModel {
+impl BedrockLanguageModelProvider {
     fn stream_mantle_request<Request, Event>(
         &self,
+        config: &MantleModel,
+        request_limiter: &RateLimiter,
         request: Request,
         cx: &AsyncApp,
         endpoint: &'static str,
@@ -1759,12 +1815,9 @@ impl BedrockMantleModel {
         Request: Serialize + Send + 'static,
         Event: Send + 'static,
     {
-        let http_client = self.http_client.clone();
-        let model = self.model.clone();
-        let credentials_provider = self.credentials_provider.clone();
-        let (auth, region) = cx.read_entity(&self.state, |state, _cx| {
-            (state.auth.clone(), state.get_region())
-        });
+        let http_client = self.plain_http_client.clone();
+        let model = config.clone();
+        let region = cx.read_entity(&self.state, |state, _cx| state.get_region());
         let url = format!("{}/{}", mantle_endpoint_url(&region), endpoint);
         let extra_headers = cx.read_entity(&self.state, |_, cx| {
             AllLanguageModelSettings::get_global(cx)
@@ -1773,12 +1826,9 @@ impl BedrockMantleModel {
                 .clone()
         });
         let provider_name = PROVIDER_NAME.0.to_string();
-        let auth_task = Tokio::spawn_result(
-            cx,
-            resolve_mantle_auth(credentials_provider, auth, region.clone()),
-        );
+        let auth_task = self.resolve_request_auth(cx);
 
-        let future = self.request_limiter.stream(async move {
+        let future = request_limiter.stream(async move {
             let auth = auth_task
                 .await
                 .map_err(LanguageModelCompletionError::Other)?;
@@ -1799,8 +1849,10 @@ impl BedrockMantleModel {
         async move { Ok(future.await?.boxed()) }.boxed()
     }
 
-    fn stream_completion(
+    fn stream_chat_completion(
         &self,
+        config: &MantleModel,
+        request_limiter: &RateLimiter,
         request: open_ai::Request,
         cx: &AsyncApp,
     ) -> BoxFuture<
@@ -1808,6 +1860,8 @@ impl BedrockMantleModel {
         Result<BoxStream<'static, Result<ResponseStreamEvent>>, LanguageModelCompletionError>,
     > {
         self.stream_mantle_request(
+            config,
+            request_limiter,
             request,
             cx,
             "chat/completions",
@@ -1817,6 +1871,8 @@ impl BedrockMantleModel {
 
     fn stream_response(
         &self,
+        config: &MantleModel,
+        request_limiter: &RateLimiter,
         request: OpenAiResponseRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<
@@ -1828,87 +1884,55 @@ impl BedrockMantleModel {
     > {
         let mut request = request;
         strip_unsupported_mantle_response_fields(&mut request);
-        self.stream_mantle_request(request, cx, "responses", parse_mantle_response_stream_line)
+        self.stream_mantle_request(
+            config,
+            request_limiter,
+            request,
+            cx,
+            "responses",
+            parse_mantle_response_stream_line,
+        )
     }
 }
 
-impl LanguageModel for BedrockMantleModel {
-    fn id(&self) -> LanguageModelId {
-        self.id.clone()
+fn mantle_language_model(model: &MantleModel) -> LanguageModel {
+    LanguageModel {
+        supports_tools: model.supports_tools(),
+        supports_images: model.supports_images(),
+        tool_choice_support: LanguageModelToolChoiceSupport {
+            auto: model.supports_tools(),
+            any: model.supports_tools(),
+            none: true,
+        },
+        supports_streaming_tools: true,
+        supports_thinking: model.supports_thinking(),
+        supported_effort_levels: mantle_supported_effort_levels(model).into(),
+        supports_split_token_display: true,
+        max_output_tokens: Some(model.max_output_tokens()),
+        ..LanguageModel::new(
+            LanguageModelId::from(model.id().to_string()),
+            LanguageModelName::from(model.display_name().to_string()),
+            PROVIDER_ID,
+            PROVIDER_NAME,
+            format!("bedrock-mantle/{}", model.id()),
+            model.max_token_count(),
+        )
     }
+}
 
-    fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(self.model.display_name().to_string())
-    }
-
-    fn provider_id(&self) -> LanguageModelProviderId {
-        PROVIDER_ID
-    }
-
-    fn provider_name(&self) -> LanguageModelProviderName {
-        PROVIDER_NAME
-    }
-
-    fn supports_tools(&self) -> bool {
-        self.model.supports_tools()
-    }
-
-    fn supports_images(&self) -> bool {
-        self.model.supports_images()
-    }
-
-    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
-        match choice {
-            LanguageModelToolChoice::Auto | LanguageModelToolChoice::Any => {
-                self.model.supports_tools()
-            }
-            LanguageModelToolChoice::None => true,
-        }
-    }
-
-    fn supports_streaming_tools(&self) -> bool {
-        true
-    }
-
-    fn supports_thinking(&self) -> bool {
-        self.model.supports_thinking()
-    }
-
-    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
-        mantle_supported_effort_levels(&self.model)
-    }
-
-    fn supports_split_token_display(&self) -> bool {
-        true
-    }
-
-    fn telemetry_id(&self) -> String {
-        format!("bedrock-mantle/{}", self.model.id())
-    }
-
-    fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
-    }
-
-    fn max_output_tokens(&self) -> Option<u64> {
-        Some(self.model.max_output_tokens())
-    }
-
-    fn stream_completion(
+impl BedrockLanguageModelProvider {
+    fn stream_mantle_completion(
         &self,
+        config: &MantleModel,
+        request_limiter: &RateLimiter,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
-            LanguageModelCompletionError,
-        >,
-    > {
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
         let region = cx.read_entity(&self.state, |state, _cx| state.get_region());
 
         if !MANTLE_SUPPORTED_REGIONS.contains(&region.as_str()) {
-            let display_name = self.model.display_name().to_string();
+            let display_name = config.display_name().to_string();
             let supported = MANTLE_SUPPORTED_REGIONS.join(", ");
             return futures::future::ready(Err(LanguageModelCompletionError::Other(anyhow!(
                 "{display_name} is not available in {region} because Bedrock Mantle isn't offered \
@@ -1917,25 +1941,25 @@ impl LanguageModel for BedrockMantleModel {
             .boxed();
         }
 
-        let model_id = self.model.request_id().to_string();
-        let max_output_tokens = Some(self.model.max_output_tokens());
+        let model_id = config.request_id().to_string();
+        let max_output_tokens = Some(config.max_output_tokens());
 
-        match self.model.protocol() {
+        match config.protocol() {
             MantleProtocol::Responses => {
                 let request = match into_open_ai_response(
                     request,
                     &model_id,
-                    self.model.supports_tools(),
+                    config.supports_tools(),
                     false,
                     max_output_tokens,
-                    mantle_default_reasoning_effort(&self.model),
-                    self.model.supports_thinking(),
+                    mantle_default_reasoning_effort(config),
+                    config.supports_thinking(),
                     &PROVIDER_ID,
                 ) {
                     Ok(request) => request,
                     Err(error) => return async move { Err(error.into()) }.boxed(),
                 };
-                let completions = self.stream_response(request, cx);
+                let completions = self.stream_response(config, request_limiter, request, cx);
                 let executor = cx.background_executor().clone();
                 async move {
                     let mapper = MantleResponseEventMapper::new();
@@ -1947,11 +1971,11 @@ impl LanguageModel for BedrockMantleModel {
                 .boxed()
             }
             MantleProtocol::ChatCompletions => {
-                let reasoning_effort = mantle_selected_reasoning_effort(&request, &self.model);
+                let reasoning_effort = mantle_selected_reasoning_effort(&request, config);
                 let request = match into_open_ai(
                     request,
                     &model_id,
-                    self.model.supports_tools(),
+                    config.supports_tools(),
                     false,
                     max_output_tokens,
                     ChatCompletionMaxTokensParameter::MaxCompletionTokens,
@@ -1961,7 +1985,7 @@ impl LanguageModel for BedrockMantleModel {
                     Ok(request) => request,
                     Err(error) => return async move { Err(error.into()) }.boxed(),
                 };
-                let completions = self.stream_completion(request, cx);
+                let completions = self.stream_chat_completion(config, request_limiter, request, cx);
                 let executor = cx.background_executor().clone();
                 async move {
                     let mapper = ChatCompletionEventMapper::new();
@@ -2946,6 +2970,246 @@ mod tests {
         .unwrap()
     }
 
+    #[gpui::test]
+    fn mantle_model_replaces_converse_model_with_the_same_id(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            gpui_tokio::init(cx);
+            let content = serde_json::json!({
+                "language_models": {
+                    "bedrock": {
+                        "available_models": [{
+                            "name": "shared-model",
+                            "display_name": "Converse Shared",
+                            "max_tokens": 1000,
+                        }],
+                        "mantle_available_models": [{
+                            "name": "shared-model",
+                            "display_name": "Mantle Shared",
+                            "max_tokens": 2000,
+                            "protocol": "chat_completions",
+                        }],
+                    }
+                }
+            })
+            .to_string();
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store
+                    .set_user_settings(&content, cx)
+                    .expect("test settings should parse");
+            });
+        });
+        let provider = cx.update(|cx| {
+            BedrockLanguageModelProvider::new(
+                http_client::FakeHttpClient::with_404_response(),
+                Arc::new(NoCredentialsProvider),
+                cx,
+            )
+        });
+
+        let shared = cx
+            .update(|cx| provider.provided_models(cx))
+            .into_iter()
+            .filter(|model| model.id.0.as_ref() == "shared-model")
+            .collect::<Vec<_>>();
+        assert_eq!(shared.len(), 1, "each id should be offered once");
+        assert_eq!(shared[0].name.0.as_ref(), "Mantle Shared");
+
+        let config = cx
+            .update(|cx| provider.config(&shared[0], cx))
+            .expect("the offered model should resolve");
+        assert!(matches!(
+            config,
+            BedrockModelConfig::Mantle(model) if model.display_name() == "Mantle Shared"
+        ));
+    }
+
+    #[test]
+    fn environment_bearer_token_prefers_the_bedrock_variable_like_the_aws_sdk() {
+        let environment = |variables: &[(&str, &str)]| {
+            let variables: HashMap<String, String> = variables
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .collect();
+            move |name: &str| variables.get(name).cloned()
+        };
+
+        assert_eq!(environment_bearer_token(environment(&[])), None);
+        assert_eq!(
+            environment_bearer_token(environment(&[("AWS_BEARER_TOKEN", "generic")])),
+            Some("generic".to_string())
+        );
+        assert_eq!(
+            environment_bearer_token(environment(&[
+                ("AWS_BEARER_TOKEN", "generic"),
+                ("AWS_BEARER_TOKEN_BEDROCK", "bedrock"),
+            ])),
+            Some("bedrock".to_string())
+        );
+        assert_eq!(
+            environment_bearer_token(environment(&[
+                ("AWS_BEARER_TOKEN", "generic"),
+                ("AWS_BEARER_TOKEN_BEDROCK", ""),
+            ])),
+            Some(String::new()),
+            "a set but empty Bedrock variable still wins, as in the SDK"
+        );
+    }
+
+    #[gpui::test]
+    async fn expiring_credentials_are_cached_per_auth_until_near_expiry(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let provider = test_provider(cx);
+        let auth = Some(BedrockAuth::NamedProfile {
+            profile_name: "work".into(),
+        });
+        let other_auth = Some(BedrockAuth::NamedProfile {
+            profile_name: "other".into(),
+        });
+        provider
+            .state
+            .update(cx, |state, _| state.set_auth(auth.clone()));
+
+        // Resolved credentials that expire are cached and reused.
+        let resolved = provider
+            .resolve_request_auth_with(&cx.to_async(), no_environment, |_, _| {
+                resolved_credentials("first", Some(Duration::from_secs(60 * 60)))
+            })
+            .await;
+        assert_eq!(access_key_id(resolved), "first");
+        let reused = provider
+            .resolve_request_auth_with(&cx.to_async(), no_environment, |_, _| {
+                resolved_credentials("second", None)
+            })
+            .await;
+        assert_eq!(
+            access_key_id(reused),
+            "first",
+            "unexpired credentials are reused"
+        );
+
+        // Credentials close to expiry, or cached for other auth, are replaced.
+        for (cached_auth, expires_in, case) in [
+            (&auth, Duration::from_secs(60), "near expiry"),
+            (&other_auth, Duration::from_secs(60 * 60), "different auth"),
+        ] {
+            provider.state.update(cx, |state, _| {
+                state.expiring_credentials = Some(ExpiringCredentials {
+                    auth: cached_auth.clone(),
+                    region: state.get_region(),
+                    credentials: Credentials::new(
+                        "cached",
+                        "secret",
+                        None,
+                        Some(SystemTime::now() + expires_in),
+                        "test",
+                    ),
+                });
+            });
+            let resolved = provider
+                .resolve_request_auth_with(&cx.to_async(), no_environment, |_, _| {
+                    resolved_credentials("fresh", None)
+                })
+                .await;
+            assert_eq!(access_key_id(resolved), "fresh", "{case}");
+        }
+
+        // Credentials without an expiry are never cached.
+        provider
+            .state
+            .update(cx, |state, _| state.expiring_credentials = None);
+        provider
+            .resolve_request_auth_with(&cx.to_async(), no_environment, |_, _| {
+                resolved_credentials("static", None)
+            })
+            .await
+            .expect("auth should resolve");
+        assert!(
+            provider
+                .state
+                .read_with(cx, |state, _| state.expiring_credentials.is_none()),
+            "credentials without an expiry should not be cached"
+        );
+
+        // A resolution that completes after an auth change, even back to the
+        // same auth, is not cached.
+        let (send_credentials, receive_credentials) = futures::channel::oneshot::channel();
+        let pending =
+            provider.resolve_request_auth_with(&cx.to_async(), no_environment, |_, _| async move {
+                receive_credentials
+                    .await
+                    .expect("the test sends credentials")
+            });
+        provider
+            .state
+            .update(cx, |state, _| state.set_auth(auth.clone()));
+        assert!(
+            send_credentials
+                .send(resolved_credentials("stale", Some(Duration::from_secs(60 * 60))).await)
+                .is_ok(),
+            "the pending resolution should still be waiting"
+        );
+        pending.await.expect("auth should resolve");
+        assert!(
+            provider
+                .state
+                .read_with(cx, |state, _| state.expiring_credentials.is_none()),
+            "credentials resolved for earlier auth should not be cached"
+        );
+    }
+
+    #[gpui::test]
+    async fn resolving_request_auth_prefers_the_environment_token_and_times_out(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let provider = test_provider(cx);
+        provider.state.update(cx, |state, _| {
+            state.set_auth(Some(BedrockAuth::Automatic));
+        });
+
+        let request_auth = provider
+            .resolve_request_auth_with(
+                &cx.to_async(),
+                |name| (name == "AWS_BEARER_TOKEN").then(|| "token".to_string()),
+                |_, _| async { panic!("credentials should not be resolved") },
+            )
+            .await
+            .expect("auth should resolve");
+        assert!(matches!(
+            request_auth,
+            BedrockRequestAuth::ApiKey { api_key } if api_key == "token"
+        ));
+
+        // An API key configured in Zed takes precedence over the environment.
+        provider.state.update(cx, |state, _| {
+            state.set_auth(Some(BedrockAuth::ApiKey {
+                api_key: "configured".into(),
+            }));
+        });
+        let http_client = provider.http_client.clone();
+        let request_auth = provider
+            .resolve_request_auth_with(
+                &cx.to_async(),
+                |name| (name == "AWS_BEARER_TOKEN").then(|| "token".to_string()),
+                move |auth, region| resolve_request_auth(http_client, auth, region),
+            )
+            .await
+            .expect("auth should resolve");
+        assert!(matches!(
+            request_auth,
+            BedrockRequestAuth::ApiKey { api_key } if api_key == "configured"
+        ));
+
+        let pending = provider.resolve_request_auth_with(&cx.to_async(), no_environment, |_, _| {
+            futures::future::pending()
+        });
+        cx.executor().advance_clock(CREDENTIALS_LOAD_TIMEOUT);
+        let error = pending.await.err().expect("resolution should time out");
+        assert!(error.to_string().contains("timed out"), "{error}");
+    }
+
     #[test]
     fn test_thinking_disallowed_sends_explicit_opt_out_only_on_opus_5() {
         // Claude Opus 5 runs adaptive thinking by default when the `thinking`
@@ -3821,5 +4085,75 @@ mod tests {
 
         let request = serde_json::to_value(&request).unwrap();
         assert!(request.get("context_management").is_none());
+    }
+
+    struct NoCredentialsProvider;
+
+    impl CredentialsProvider for NoCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    fn test_provider(cx: &mut gpui::TestAppContext) -> BedrockLanguageModelProvider {
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            gpui_tokio::init(cx);
+            BedrockLanguageModelProvider::new(
+                http_client::FakeHttpClient::with_404_response(),
+                Arc::new(NoCredentialsProvider),
+                cx,
+            )
+        })
+    }
+
+    fn no_environment(_: &str) -> Option<String> {
+        None
+    }
+
+    async fn resolved_credentials(
+        access_key_id: &str,
+        expires_in: Option<Duration>,
+    ) -> Result<BedrockRequestAuth> {
+        Ok(BedrockRequestAuth::SigV4 {
+            credentials: Credentials::new(
+                access_key_id,
+                "secret",
+                None,
+                expires_in.map(|expires_in| SystemTime::now() + expires_in),
+                "test",
+            ),
+        })
+    }
+
+    fn access_key_id(request_auth: Result<BedrockRequestAuth>) -> String {
+        match request_auth.expect("auth should resolve") {
+            BedrockRequestAuth::SigV4 { credentials } => credentials.access_key_id().to_string(),
+            BedrockRequestAuth::ApiKey { .. } => panic!("expected SigV4 credentials"),
+        }
     }
 }
