@@ -319,7 +319,7 @@ Zed supports both built-in and external formatters. See [`formatter`](./referenc
 }
 ```
 
-This example uses Prettier for JavaScript and the language server's formatter for Rust, both set to format on save.
+This example uses Prettier for JavaScript and the language server's formatter for [Rust](./languages/rust.md), both set to format on save.
 
 To disable formatting for a specific language:
 
@@ -347,7 +347,7 @@ Linting in Zed is typically handled by language servers. Many language servers a
 }
 ```
 
-This configuration sets up ESLint to organize imports on save for JavaScript files.
+This configuration sets up ESLint to organize imports on save for [JavaScript](./languages/javascript.md) files.
 
 To run linter fixes automatically on save:
 

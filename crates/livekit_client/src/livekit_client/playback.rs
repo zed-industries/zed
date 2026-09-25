@@ -753,11 +753,15 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
 #[cfg(target_os = "macos")]
 fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
     use livekit::webrtc;
+    use objc2_core_foundation::CFRetained;
 
-    let pixel_buffer = frame.0.as_concrete_TypeRef();
-    std::mem::forget(frame.0);
+    let pixel_buffer = CFRetained::into_raw(frame.0);
     unsafe {
-        Some(webrtc::video_frame::native::NativeBuffer::from_cv_pixel_buffer(pixel_buffer as _))
+        Some(
+            webrtc::video_frame::native::NativeBuffer::from_cv_pixel_buffer(
+                pixel_buffer.as_ptr().cast(),
+            ),
+        )
     }
 }
 

@@ -235,6 +235,7 @@ impl EditToolTest {
 
         let fs = FakeFs::new(cx.executor());
         cx.update(|cx| {
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
