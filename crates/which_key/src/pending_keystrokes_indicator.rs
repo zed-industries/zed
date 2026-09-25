@@ -63,7 +63,7 @@ impl PendingKeystrokesIndicator {
                 if this.refresh_render_state(window, cx) {
                     cx.notify();
                 }
-                this.update_pointer_over_state(window, cx);
+                this.update_popover_state(window, cx);
             });
 
         let mut enabled = Self::enabled(cx);
@@ -86,7 +86,7 @@ impl PendingKeystrokesIndicator {
                 if this.refresh_render_state(window, cx) {
                     cx.notify();
                 }
-                this.update_pointer_over_state(window, cx);
+                this.update_popover_state(window, cx);
             });
 
         Self {
@@ -169,7 +169,7 @@ impl PendingKeystrokesIndicator {
         cx: &mut Context<Self>,
     ) {
         self.popover.indicator_pointer_over = pointer_over;
-        self.update_pointer_over_state(window, cx);
+        self.update_popover_state(window, cx);
     }
 
     fn set_popover_pointer_over(
@@ -179,10 +179,10 @@ impl PendingKeystrokesIndicator {
         cx: &mut Context<Self>,
     ) {
         self.popover.pointer_over = pointer_over;
-        self.update_pointer_over_state(window, cx);
+        self.update_popover_state(window, cx);
     }
 
-    fn update_pointer_over_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn update_popover_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.render_state.is_none() {
             return;
         }
