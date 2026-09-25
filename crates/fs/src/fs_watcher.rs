@@ -3,11 +3,14 @@ use gpui::{BackgroundExecutor, Task};
 use notify::{Event, EventKind};
 use parking_lot::Mutex;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map},
     ops::DerefMut,
     path::Path,
     pin::Pin,
-    sync::{Arc, LazyLock},
+    sync::{
+        Arc, LazyLock, Weak,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 use util::{ResultExt, paths::SanitizedPath};
@@ -47,14 +50,14 @@ pub(crate) async fn watch(
     let (tx, rx) = async_channel::unbounded();
     let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
 
-    let watcher: Arc<dyn Watcher> = Arc::new(FsWatcher::new(
+    let watcher: Arc<dyn Watcher> = FsWatcher::new(
         native_watcher,
         poll_watcher,
         fs.clone(),
         executor.clone(),
         tx,
         pending_paths.clone(),
-    ));
+    );
 
     if let Err(e) = watcher.add(path) {
         log::warn!("Failed to watch {}:\n{e}", path.display());
@@ -104,20 +107,45 @@ pub(crate) async fn watch(
 }
 
 pub struct FsWatcher {
+    this: Weak<FsWatcher>,
     native_watcher: Arc<OsWatcher>,
     poll_watcher: Arc<OsWatcher>,
     fs: Arc<dyn Fs>,
     executor: BackgroundExecutor,
     tx: async_channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
+    // Lock `pending_registrations` before `registrations` when holding both, and
+    // release them before calling into an `OsWatcher`, whose handoffs call back
+    // into registration owners
     registrations: Arc<Mutex<HashMap<WatchKey, FsWatcherRegistration>>>,
-    pending_registrations: Arc<Mutex<HashMap<Arc<std::path::Path>, Task<()>>>>,
+    pending_registrations: Arc<Mutex<HashMap<Arc<std::path::Path>, PendingRegistration>>>,
+}
+
+struct PendingRegistration {
+    // Distinguishes this request from a later one for the same path, because work
+    // started for a removed request can still complete after it was replaced
+    request: PendingRequestId,
+    _task: Task<()>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct PendingRequestId(u64);
+
+impl PendingRequestId {
+    fn next() -> Self {
+        static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
+        Self(NEXT_REQUEST.fetch_add(1, Ordering::Relaxed))
+    }
 }
 
 #[derive(Clone)]
 struct FsWatcherRegistration {
     id: WatcherRegistrationId,
     os_watcher: Arc<OsWatcher>,
+    // Identifies this registration to its recovery callback, which sets it while
+    // holding `pending_registrations` once a handoff leaves the registration
+    // unwatched, so an owner still recording the registration can recover it
+    unwatched: Arc<AtomicBool>,
 }
 
 impl FsWatcher {
@@ -128,8 +156,9 @@ impl FsWatcher {
         executor: BackgroundExecutor,
         tx: async_channel::Sender<()>,
         pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
-    ) -> Self {
-        Self {
+    ) -> Arc<Self> {
+        Arc::new_cyclic(|this| Self {
+            this: this.clone(),
             native_watcher,
             poll_watcher,
             fs,
@@ -138,7 +167,7 @@ impl FsWatcher {
             pending_path_events,
             registrations: Default::default(),
             pending_registrations: Default::default(),
-        }
+        })
     }
 
     fn add_existing_path(&self, path: Arc<Path>) -> anyhow::Result<()> {
@@ -156,28 +185,53 @@ impl FsWatcher {
             case_insensitive,
             self.tx.clone(),
             self.pending_path_events.clone(),
+            self.this.clone(),
         )? {
             Some(registration) => {
-                self.registrations.lock().insert(key, registration);
+                let discarded = {
+                    let mut pending_registrations = self.pending_registrations.lock();
+                    let mut registrations = self.registrations.lock();
+                    // A handoff that ran before the registration was recorded here
+                    // could not queue its recovery
+                    if registration.unwatched.load(Ordering::Relaxed) {
+                        self.add_pending_path(&mut pending_registrations, path);
+                        Some(registration)
+                    } else if let hash_map::Entry::Vacant(entry) = registrations.entry(key) {
+                        entry.insert(registration);
+                        None
+                    } else {
+                        // A concurrent add already recorded a registration for the path
+                        Some(registration)
+                    }
+                };
+                if let Some(registration) = discarded {
+                    registration.os_watcher.remove(registration.id);
+                }
             }
             None => {
                 // Registration was skipped (e.g. the native watch-limit cooldown
                 // is active). Retry in the background rather than silently leaving
                 // the path unwatched forever.
                 log::warn!("watch registration for {path:?} was skipped; retrying in background");
-                self.add_pending_path(path);
+                self.add_pending_path(&mut self.pending_registrations.lock(), path);
             }
         }
         Ok(())
     }
 
-    fn add_pending_path(&self, path: Arc<Path>) {
-        let mut pending_registrations = self.pending_registrations.lock();
+    fn add_pending_path(
+        &self,
+        pending_registrations: &mut HashMap<Arc<Path>, PendingRegistration>,
+        path: Arc<Path>,
+    ) {
         if pending_registrations.contains_key(path.as_ref()) {
             return;
         }
 
+        let request = PendingRequestId::next();
         let task = self.executor.spawn(poll_path_until_created(
+            self.this.clone(),
+            request,
             self.native_watcher.clone(),
             self.poll_watcher.clone(),
             self.fs.clone(),
@@ -188,7 +242,46 @@ impl FsWatcher {
             self.registrations.clone(),
             self.pending_registrations.clone(),
         ));
-        pending_registrations.insert(path, task);
+        pending_registrations.insert(
+            path,
+            PendingRegistration {
+                request,
+                _task: task,
+            },
+        );
+    }
+}
+
+/// Moves the registration identified by `unwatched` into the pending state in a
+/// single step, so explicit removal either precedes the move or cancels its
+/// recovery, and a registration that replaced it is left alone.
+fn rewatch_when_recreated(
+    this: Weak<FsWatcher>,
+    path: Arc<Path>,
+    case_insensitive: bool,
+    unwatched: Arc<AtomicBool>,
+) -> impl Fn() + Send + Sync + 'static {
+    let key = WatchKey::for_registration(SanitizedPath::new(&path), case_insensitive);
+    move || {
+        let Some(watcher) = this.upgrade() else {
+            return;
+        };
+        let registration = {
+            let mut pending_registrations = watcher.pending_registrations.lock();
+            let mut registrations = watcher.registrations.lock();
+            unwatched.store(true, Ordering::Relaxed);
+            if !registrations
+                .get(&key)
+                .is_some_and(|registration| Arc::ptr_eq(&registration.unwatched, &unwatched))
+            {
+                return;
+            }
+            watcher.add_pending_path(&mut pending_registrations, path.clone());
+            registrations.remove(&key)
+        };
+        if let Some(registration) = registration {
+            registration.os_watcher.remove(registration.id);
+        }
     }
 }
 
@@ -231,7 +324,7 @@ impl Watcher for FsWatcher {
         }
 
         if !self.fs.path_exists(&path) {
-            self.add_pending_path(path);
+            self.add_pending_path(&mut self.pending_registrations.lock(), path);
             return Ok(());
         }
 
@@ -240,11 +333,11 @@ impl Watcher for FsWatcher {
 
     fn remove(&self, path: &std::path::Path) -> anyhow::Result<()> {
         log::trace!("remove watched path: {path:?}");
-        self.pending_registrations.lock().remove(path);
-
         let sanitized = SanitizedPath::new(path);
         let registration = {
+            let mut pending_registrations = self.pending_registrations.lock();
             let mut registrations = self.registrations.lock();
+            pending_registrations.remove(path);
             registrations
                 .remove(&WatchKey::exact(sanitized))
                 .or_else(|| registrations.remove(&WatchKey::folded(sanitized)))
@@ -314,6 +407,7 @@ fn register_existing_path(
     case_insensitive: bool,
     tx: async_channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
+    owner: Weak<FsWatcher>,
 ) -> anyhow::Result<Option<FsWatcherRegistration>> {
     let os_watcher = if fs.requires_poll_watcher(path.as_ref()) {
         log::info!(
@@ -328,8 +422,13 @@ fn register_existing_path(
     };
     let root_path = SanitizedPath::new_arc(path.as_ref());
     let path_for_callback = path.clone();
-    let Some(registration_id) =
-        os_watcher.add(path, case_insensitive, move |event: &notify::Event| {
+    let unwatched = Arc::new(AtomicBool::new(false));
+    let on_unwatched =
+        rewatch_when_recreated(owner, path.clone(), case_insensitive, unwatched.clone());
+    let Some(registration_id) = os_watcher.add_recoverable(
+        path,
+        case_insensitive,
+        move |event: &notify::Event| {
             log::trace!("watcher received event: {event:?}");
             push_notify_event(
                 &tx,
@@ -339,13 +438,16 @@ fn register_existing_path(
                 path_for_callback.as_ref(),
                 event,
             );
-        })?
+        },
+        on_unwatched,
+    )?
     else {
         return Ok(None);
     };
     Ok(Some(FsWatcherRegistration {
         id: registration_id,
         os_watcher: os_watcher.clone(),
+        unwatched,
     }))
 }
 
@@ -575,6 +677,8 @@ impl WatchKey {
 }
 
 async fn poll_path_until_created(
+    this: Weak<FsWatcher>,
+    request: PendingRequestId,
     native_watcher: Arc<OsWatcher>,
     poll_watcher: Arc<OsWatcher>,
     fs: Arc<dyn Fs>,
@@ -583,12 +687,12 @@ async fn poll_path_until_created(
     tx: async_channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
     registrations: Arc<Mutex<HashMap<WatchKey, FsWatcherRegistration>>>,
-    pending_registrations: Arc<Mutex<HashMap<Arc<Path>, Task<()>>>>,
+    pending_registrations: Arc<Mutex<HashMap<Arc<Path>, PendingRegistration>>>,
 ) {
     loop {
         executor.timer(poll_interval()).await;
 
-        if !pending_registrations.lock().contains_key(path.as_ref()) {
+        if !is_current_request(&pending_registrations.lock(), &path, request) {
             return;
         }
 
@@ -610,68 +714,129 @@ async fn poll_path_until_created(
         };
         let key = WatchKey::for_registration(SanitizedPath::new(&path), case_insensitive);
 
-        if registrations.lock().contains_key(&key) {
-            pending_registrations.lock().remove(path.as_ref());
-            return;
+        {
+            let mut pending_registrations = pending_registrations.lock();
+            if !is_current_request(&pending_registrations, &path, request) {
+                return;
+            }
+            if registrations.lock().contains_key(&key) {
+                complete_pending_request(
+                    &mut pending_registrations,
+                    &path,
+                    &tx,
+                    &pending_path_events,
+                );
+                return;
+            }
         }
 
+        // Settle the request within the blocking call, which runs to completion
+        // even when removing the request's pending entry cancels this task
         let register = {
+            let this = this.clone();
             let path = path.clone();
+            let key = key.clone();
             let tx = tx.clone();
             let pending_path_events = pending_path_events.clone();
             let fs = fs.clone();
             let native_watcher = native_watcher.clone();
             let poll_watcher = poll_watcher.clone();
+            let registrations = registrations.clone();
+            let pending_registrations = pending_registrations.clone();
             move || {
-                register_existing_path(
+                let Some(registration) = register_existing_path(
                     &native_watcher,
                     &poll_watcher,
                     fs.as_ref(),
-                    path,
+                    path.clone(),
                     case_insensitive,
-                    tx,
-                    pending_path_events,
-                )
+                    tx.clone(),
+                    pending_path_events.clone(),
+                    this,
+                )?
+                else {
+                    return Ok(false);
+                };
+                let (settled, discarded) = {
+                    let mut pending_registrations = pending_registrations.lock();
+                    let mut registrations = registrations.lock();
+                    if !is_current_request(&pending_registrations, &path, request) {
+                        (true, Some(registration))
+                    } else if registration.unwatched.load(Ordering::Relaxed) {
+                        // A handoff already left the registration unwatched, so
+                        // keep polling for the path
+                        (false, Some(registration))
+                    } else if let hash_map::Entry::Vacant(entry) = registrations.entry(key) {
+                        entry.insert(registration);
+                        complete_pending_request(
+                            &mut pending_registrations,
+                            &path,
+                            &tx,
+                            &pending_path_events,
+                        );
+                        (true, None)
+                    } else {
+                        // A concurrent add recorded a registration for the path, which
+                        // the next poll settles the request against
+                        (false, Some(registration))
+                    }
+                };
+                if let Some(registration) = discarded {
+                    registration.os_watcher.remove(registration.id);
+                }
+                anyhow::Ok(settled)
             }
         };
-        let registration = if fs.is_fake() {
+        let settled = if fs.is_fake() {
             register()
         } else {
             smol::unblock(register).await
         };
 
-        match registration {
-            Ok(Some(registration)) => {
-                {
-                    let mut pending_registrations = pending_registrations.lock();
-                    if pending_registrations.remove(path.as_ref()).is_none() {
-                        registration.os_watcher.remove(registration.id);
-                        return;
-                    }
-                    registrations.lock().insert(key, registration);
-                }
-                enqueue_path_events(
-                    &tx,
-                    &pending_path_events,
-                    vec![
-                        PathEvent {
-                            path: path.to_path_buf(),
-                            kind: Some(PathEventKind::Created),
-                        },
-                        PathEvent {
-                            path: path.to_path_buf(),
-                            kind: Some(PathEventKind::Rescan),
-                        },
-                    ],
-                );
-                return;
-            }
-            Ok(None) => {}
+        match settled {
+            Ok(true) => return,
+            Ok(false) => {}
             Err(error) => {
                 log::warn!("failed to watch newly-created path {path:?}: {error}; retrying");
             }
         }
     }
+}
+
+fn is_current_request(
+    pending_registrations: &HashMap<Arc<Path>, PendingRegistration>,
+    path: &Path,
+    request: PendingRequestId,
+) -> bool {
+    pending_registrations
+        .get(path)
+        .is_some_and(|pending| pending.request == request)
+}
+
+/// Ends a pending request once its path is watched and queues the events that
+/// reconcile the path for the consumer. Callers hold `pending_registrations`, so
+/// removing the path cannot slip between the request ending and those events.
+fn complete_pending_request(
+    pending_registrations: &mut HashMap<Arc<Path>, PendingRegistration>,
+    path: &Arc<Path>,
+    tx: &async_channel::Sender<()>,
+    pending_path_events: &Arc<Mutex<Vec<PathEvent>>>,
+) {
+    pending_registrations.remove(path.as_ref());
+    enqueue_path_events(
+        tx,
+        pending_path_events,
+        vec![
+            PathEvent {
+                path: path.to_path_buf(),
+                kind: Some(PathEventKind::Created),
+            },
+            PathEvent {
+                path: path.to_path_buf(),
+                kind: Some(PathEventKind::Rescan),
+            },
+        ],
+    );
 }
 
 fn enqueue_path_events(
@@ -794,6 +959,7 @@ pub struct WatcherRegistrationId(u32);
 
 struct WatcherRegistrationState {
     callback: Arc<dyn Fn(&notify::Event) + Send + Sync>,
+    on_unwatched: Arc<dyn Fn() + Send + Sync>,
     key: WatchKey,
     path: Arc<SanitizedPath>,
 }
@@ -809,8 +975,10 @@ struct PathRegistrationState {
 struct WatchPaths(HashMap<WatchKey, PathRegistrationState>);
 
 impl WatchPaths {
-    fn contains(&self, key: &WatchKey) -> bool {
-        self.0.contains_key(key)
+    fn has_os_watcher(&self, key: &WatchKey) -> bool {
+        self.0
+            .get(key)
+            .is_some_and(|registration| registration.has_os_watcher)
     }
 
     fn get_mut(&mut self, key: &WatchKey) -> Option<&mut PathRegistrationState> {
@@ -836,8 +1004,8 @@ impl WatchPaths {
         }
         path.as_path().ancestors().skip(1).any(|ancestor| {
             let ancestor = SanitizedPath::unchecked_new(ancestor);
-            self.0.contains_key(&WatchKey::exact(ancestor))
-                || self.0.contains_key(&WatchKey::folded(ancestor))
+            self.has_os_watcher(&WatchKey::exact(ancestor))
+                || self.has_os_watcher(&WatchKey::folded(ancestor))
         })
     }
 
@@ -870,7 +1038,10 @@ impl WatcherState {
             .is_some_and(|cooldown_until| cooldown_until > Instant::now())
     }
 
-    fn remove_registration(&mut self, id: WatcherRegistrationId) -> Option<Arc<SanitizedPath>> {
+    fn remove_registration(
+        &mut self,
+        id: WatcherRegistrationId,
+    ) -> Option<WatcherRegistrationState> {
         let registration_state = self.watchers.remove(&id)?;
         let path_state = self.paths.get_mut(&registration_state.key)?;
         path_state.watcher_ids.retain(|&existing| existing != id);
@@ -881,13 +1052,17 @@ impl WatcherState {
         let was_actually_watched = path_state.has_os_watcher;
         self.paths.remove(&registration_state.key);
 
-        was_actually_watched.then_some(registration_state.path)
+        was_actually_watched.then_some(registration_state)
     }
 }
 
 pub(crate) trait WatchBackend: Send {
     fn watch(&mut self, path: &Path, mode: notify::RecursiveMode) -> notify::Result<()>;
     fn unwatch(&mut self, path: &Path) -> notify::Result<()>;
+
+    fn is_watching(&self, _path: &Path) -> bool {
+        true
+    }
 }
 
 impl<T: notify::Watcher + Send> WatchBackend for T {
@@ -898,6 +1073,14 @@ impl<T: notify::Watcher + Send> WatchBackend for T {
     fn unwatch(&mut self, path: &Path) -> notify::Result<()> {
         notify::Watcher::unwatch(self, path)
     }
+
+    fn is_watching(&self, path: &Path) -> bool {
+        notify::Watcher::watched_paths(self).map_or(true, |watched_paths| {
+            watched_paths
+                .iter()
+                .any(|(watched_path, _)| watched_path == path)
+        })
+    }
 }
 
 pub struct OsWatcher {
@@ -905,14 +1088,22 @@ pub struct OsWatcher {
     recursive: bool,
     state: Arc<Mutex<WatcherState>>,
 
+    // Keep add/remove operations atomic while releasing the state lock for backend
+    // calls, so registrations cannot change during a recursive watch handoff
+    registration_lock: Mutex<()>,
+
     // Never hold the state lock while calling the backend: a backend call can be
     // slow (a poll watch scans its whole tree up front, an FSEvents watch rebuilds
     // the stream) and dispatch needs the state to route every other registration's
-    // events. Whoever re-locks the state afterwards must re-check what they assumed.
+    // events
     backend: Mutex<Option<Box<dyn WatchBackend>>>,
     event_tx: async_channel::Sender<notify::Result<notify::Event>>,
     _dispatch_task: Task<()>,
     diagnostics: Arc<diagnostics::DiagnosticRecorder>,
+    #[cfg(test)]
+    after_add: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    #[cfg(test)]
+    before_remove: Mutex<Option<(WatcherRegistrationId, Box<dyn FnOnce() + Send>)>>,
 }
 
 impl OsWatcher {
@@ -949,10 +1140,15 @@ impl OsWatcher {
             kind,
             recursive: kind.is_recursive(),
             state,
+            registration_lock: Mutex::new(()),
             backend: Mutex::new(backend),
             event_tx,
             _dispatch_task: dispatch_task,
             diagnostics: Default::default(),
+            #[cfg(test)]
+            after_add: Default::default(),
+            #[cfg(test)]
+            before_remove: Default::default(),
         })
     }
 
@@ -983,6 +1179,7 @@ impl OsWatcher {
         self.recursive
     }
 
+    #[cfg(test)]
     #[must_use]
     fn add(
         &self,
@@ -990,15 +1187,29 @@ impl OsWatcher {
         case_insensitive: bool,
         cb: impl Fn(&notify::Event) + Send + Sync + 'static,
     ) -> anyhow::Result<Option<WatcherRegistrationId>> {
+        self.add_recoverable(path, case_insensitive, cb, || {})
+    }
+
+    /// `on_unwatched` runs when removing a covering poll watch leaves this
+    /// registration without any watch
+    #[must_use]
+    fn add_recoverable(
+        &self,
+        path: Arc<std::path::Path>,
+        case_insensitive: bool,
+        cb: impl Fn(&notify::Event) + Send + Sync + 'static,
+        on_unwatched: impl Fn() + Send + Sync + 'static,
+    ) -> anyhow::Result<Option<WatcherRegistrationId>> {
+        let registration_guard = self.registration_lock.lock();
         let path = SanitizedPath::from_arc(path);
         let key = WatchKey::for_registration(&path, case_insensitive);
         let mut state = self.state.lock();
         let path_already_covered = state
             .paths
             .covered_by_recursive_ancestor(&path, self.recursive);
-        let path_already_registered = state.paths.contains(&key);
+        let path_already_watched = state.paths.has_os_watcher(&key);
 
-        if !path_already_covered && !path_already_registered {
+        if !path_already_covered && !path_already_watched {
             if self.kind == OsWatcherKind::Native && state.is_native_watch_limit_cooldown_active() {
                 self.diagnostics.record(|| {
                     WatchDiagnosticEvent::new(
@@ -1032,6 +1243,7 @@ impl OsWatcher {
 
         let registration_state = WatcherRegistrationState {
             callback: Arc::new(cb),
+            on_unwatched: Arc::new(on_unwatched),
             key: key.clone(),
             path,
         };
@@ -1039,12 +1251,24 @@ impl OsWatcher {
         state
             .paths
             .entry(key)
-            .and_modify(|registration| registration.watcher_ids.push(id))
+            .and_modify(|registration| {
+                registration.watcher_ids.push(id);
+                registration.has_os_watcher |= !path_already_covered;
+            })
             .or_insert_with(|| PathRegistrationState {
                 watcher_ids: vec![id],
                 has_os_watcher: !path_already_covered,
             });
+        drop(state);
+        drop(registration_guard);
 
+        #[cfg(test)]
+        {
+            let after_add = self.after_add.lock().take();
+            if let Some(after_add) = after_add {
+                after_add();
+            }
+        }
         Ok(Some(id))
     }
 
@@ -1082,12 +1306,126 @@ impl OsWatcher {
     }
 
     pub fn remove(&self, id: WatcherRegistrationId) {
+        #[cfg(test)]
+        {
+            let before_remove = self
+                .before_remove
+                .lock()
+                .take_if(|(hook_id, _)| *hook_id == id);
+            if let Some((_, before_remove)) = before_remove {
+                before_remove();
+            }
+        }
+        let registration_guard = self.registration_lock.lock();
         let mut state = self.state.lock();
-        let Some(path) = state.remove_registration(id) else {
+        let Some(removed) = state.remove_registration(id) else {
             return;
         };
+        let mut orphaned_paths = Vec::new();
+        if self.recursive {
+            for (key, path_state) in &state.paths.0 {
+                if path_state.has_os_watcher {
+                    continue;
+                }
+                let Some(registration) = path_state
+                    .watcher_ids
+                    .first()
+                    .and_then(|id| state.watchers.get(id))
+                else {
+                    continue;
+                };
+                let path = &registration.path;
+                if path.as_path().ancestors().skip(1).any(|ancestor| {
+                    let ancestor = SanitizedPath::unchecked_new(ancestor);
+                    removed.key == WatchKey::exact(ancestor)
+                        || removed.key == WatchKey::folded(ancestor)
+                }) && !state
+                    .paths
+                    .covered_by_recursive_ancestor(path, self.recursive)
+                {
+                    orphaned_paths.push((key.clone(), path.clone()));
+                }
+            }
+        }
         drop(state);
-        self.unwatch(path.as_path()).log_err();
+
+        // Arm descendants before releasing the ancestor to avoid a gap in coverage
+        orphaned_paths.sort_unstable_by(|(_, left), (_, right)| {
+            left.as_path()
+                .components()
+                .count()
+                .cmp(&right.as_path().components().count())
+                .then_with(|| left.as_path().cmp(right.as_path()))
+        });
+        for (key, path) in &orphaned_paths {
+            if self
+                .state
+                .lock()
+                .paths
+                .covered_by_recursive_ancestor(path, self.recursive)
+            {
+                continue;
+            }
+            if self.watch(path.as_path()).log_err().is_some()
+                // The poll backend reports a missing root to its event handler and
+                // still returns `Ok` without watching it
+                && (self.kind != OsWatcherKind::Poll || self.backend_is_watching(path.as_path()))
+                && let Some(path_state) = self.state.lock().paths.get_mut(key)
+            {
+                path_state.has_os_watcher = true;
+            }
+        }
+        self.unwatch(removed.path.as_path()).log_err();
+
+        if self.kind != OsWatcherKind::Poll {
+            return;
+        }
+        // A poll watch takes its baseline when armed, so changes made since the
+        // last poll of the removed ancestor are only found by rescanning
+        let mut rescans = Vec::new();
+        let mut unwatched = Vec::new();
+        {
+            let state = self.state.lock();
+            for (key, path) in &orphaned_paths {
+                let Some(path_state) = state.paths.0.get(key) else {
+                    continue;
+                };
+                let is_watched = path_state.has_os_watcher
+                    || state
+                        .paths
+                        .covered_by_recursive_ancestor(path, self.recursive);
+                for registration in path_state
+                    .watcher_ids
+                    .iter()
+                    .filter_map(|id| state.watchers.get(id))
+                {
+                    rescans.push((registration.callback.clone(), registration.path.clone()));
+                    if !is_watched {
+                        unwatched.push(registration.on_unwatched.clone());
+                    }
+                }
+            }
+        }
+        drop(registration_guard);
+        for (callback, path) in rescans {
+            callback(
+                &notify::Event::new(EventKind::Other)
+                    .set_flag(notify::event::Flag::Rescan)
+                    .add_path(path.as_path().to_path_buf()),
+            );
+        }
+        // Nothing covers a descendant the poll backend couldn't watch, such as a
+        // missing one, so its owners must watch it again once it exists
+        for on_unwatched in unwatched {
+            on_unwatched();
+        }
+    }
+
+    fn backend_is_watching(&self, path: &Path) -> bool {
+        self.backend
+            .lock()
+            .as_ref()
+            .is_some_and(|backend| backend.is_watching(path))
     }
 
     fn watch(&self, path: &Path) -> anyhow::Result<()> {
@@ -1335,6 +1673,7 @@ pub fn poll_interval() -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Context as _;
     use std::{collections::HashSet, path::PathBuf};
 
     fn rescan(path: &str) -> PathEvent {
@@ -1355,17 +1694,23 @@ mod tests {
     struct FakeWatchBackend {
         watched_paths: HashSet<PathBuf>,
         watch_calls: Vec<PathBuf>,
+        watch_modes: Vec<notify::RecursiveMode>,
         unwatch_calls: Vec<PathBuf>,
         fail_with_watch_limit: bool,
+        on_watch: Option<Box<dyn FnMut(&Path) + Send>>,
     }
 
     struct SharedFakeWatchBackend(Arc<Mutex<FakeWatchBackend>>);
 
     impl WatchBackend for SharedFakeWatchBackend {
-        fn watch(&mut self, path: &Path, _mode: notify::RecursiveMode) -> notify::Result<()> {
+        fn watch(&mut self, path: &Path, mode: notify::RecursiveMode) -> notify::Result<()> {
             let path = path.to_path_buf();
             let mut backend = self.0.lock();
             backend.watch_calls.push(path.clone());
+            backend.watch_modes.push(mode);
+            if let Some(on_watch) = backend.on_watch.as_mut() {
+                on_watch(&path);
+            }
             if backend.fail_with_watch_limit {
                 return Err(notify::Error::new(notify::ErrorKind::MaxFilesWatch));
             }
@@ -1383,6 +1728,183 @@ mod tests {
                 Err(notify::Error::generic("path was not watched"))
             }
         }
+
+        fn is_watching(&self, path: &Path) -> bool {
+            self.0.lock().watched_paths.contains(path)
+        }
+    }
+
+    struct ManualPollBackend(Arc<Mutex<notify::PollWatcher>>);
+
+    impl WatchBackend for ManualPollBackend {
+        fn watch(&mut self, path: &Path, mode: notify::RecursiveMode) -> notify::Result<()> {
+            WatchBackend::watch(&mut *self.0.lock(), path, mode)
+        }
+
+        fn unwatch(&mut self, path: &Path) -> notify::Result<()> {
+            WatchBackend::unwatch(&mut *self.0.lock(), path)
+        }
+
+        fn is_watching(&self, path: &Path) -> bool {
+            WatchBackend::is_watching(&*self.0.lock(), path)
+        }
+    }
+
+    struct ManualPollHarness {
+        watcher: Arc<OsWatcher>,
+        poll_watcher: Arc<Mutex<notify::PollWatcher>>,
+        backend_events: Arc<Mutex<Vec<notify::Result<Event>>>>,
+    }
+
+    impl ManualPollHarness {
+        fn new() -> notify::Result<Self> {
+            let backend_events: Arc<Mutex<Vec<notify::Result<Event>>>> = Default::default();
+            let poll_watcher = Arc::new(Mutex::new(notify::PollWatcher::new(
+                {
+                    let backend_events = backend_events.clone();
+                    move |event| backend_events.lock().push(event)
+                },
+                notify::Config::default()
+                    .with_manual_polling()
+                    .with_compare_contents(true),
+            )?));
+            let watcher = Arc::new(test_os_watcher(OsWatcherKind::Poll, None));
+            *watcher.backend.lock() = Some(Box::new(ManualPollBackend(poll_watcher.clone())));
+            Ok(Self {
+                watcher,
+                poll_watcher,
+                backend_events,
+            })
+        }
+
+        fn poll(&self) -> notify::Result<()> {
+            self.poll_watcher.lock().poll_blocking()?;
+            for event in std::mem::take(&mut *self.backend_events.lock()) {
+                self.watcher.dispatch(event);
+            }
+            Ok(())
+        }
+
+        fn watched_paths(&self) -> notify::Result<Vec<PathBuf>> {
+            Ok(notify::Watcher::watched_paths(&*self.poll_watcher.lock())?
+                .into_iter()
+                .map(|(path, _)| path)
+                .collect())
+        }
+
+        fn claims_watch(&self, path: &Path) -> bool {
+            self.watcher
+                .state
+                .lock()
+                .paths
+                .has_os_watcher(&WatchKey::exact(SanitizedPath::new(path)))
+        }
+
+        fn public_watcher(&self, fs: Arc<dyn Fs>, cx: &gpui::TestAppContext) -> PublicPollWatcher {
+            let (tx, signals) = async_channel::unbounded();
+            let events: Arc<Mutex<Vec<PathEvent>>> = Default::default();
+            // Both backends are the manual poll watcher so tests can drive polling
+            let watcher = FsWatcher::new(
+                self.watcher.clone(),
+                self.watcher.clone(),
+                fs,
+                cx.executor(),
+                tx,
+                events.clone(),
+            );
+            PublicPollWatcher {
+                watcher,
+                events,
+                signals,
+            }
+        }
+    }
+
+    struct PublicPollWatcher {
+        watcher: Arc<FsWatcher>,
+        events: Arc<Mutex<Vec<PathEvent>>>,
+        signals: async_channel::Receiver<()>,
+    }
+
+    impl PublicPollWatcher {
+        fn take_events(&self) -> Vec<PathEvent> {
+            while self.signals.try_recv().is_ok() {}
+            std::mem::take(&mut *self.events.lock())
+        }
+    }
+
+    // A fake filesystem mirrors which fixture paths exist so pending registration
+    // runs inline on the test executor while the poll backend watches the disk
+    async fn mirrored_poll_fixture(
+        cx: &gpui::TestAppContext,
+    ) -> (
+        tempfile::TempDir,
+        PathBuf,
+        PathBuf,
+        PathBuf,
+        Arc<crate::FakeFs>,
+    ) {
+        let (temp_dir, parent, child, file) = poll_fixture().expect("create poll fixture");
+        let fs = crate::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            &parent,
+            serde_json::json!({ "child": { "file.txt": "version 0" } }),
+        )
+        .await;
+        (temp_dir, parent, child, file, fs)
+    }
+
+    async fn remove_mirrored_child(fs: &crate::FakeFs, child: &Path) {
+        if child.exists() {
+            std::fs::remove_dir_all(child).expect("remove child");
+        }
+        fs.remove_dir(
+            child,
+            crate::RemoveOptions {
+                recursive: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("remove mirrored child");
+    }
+
+    async fn create_mirrored_child(fs: &crate::FakeFs, child: &Path, contents: &str) {
+        std::fs::create_dir(child).expect("create child");
+        std::fs::write(child.join("file.txt"), contents).expect("create file");
+        fs.insert_tree(child, serde_json::json!({ "file.txt": contents }))
+            .await;
+    }
+
+    fn poll_fixture() -> anyhow::Result<(tempfile::TempDir, PathBuf, PathBuf, PathBuf)> {
+        let temp_dir = tempfile::tempdir()?;
+        let parent = temp_dir.path().canonicalize()?;
+        let child = parent.join("child");
+        std::fs::create_dir(&child)?;
+        let file = child.join("file.txt");
+        std::fs::write(&file, "version 0")?;
+        Ok((temp_dir, parent, child, file))
+    }
+
+    fn recorded_events() -> (
+        Arc<Mutex<Vec<notify::Event>>>,
+        impl Fn(&notify::Event) + Send + Sync + 'static,
+    ) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let callback = {
+            let events = events.clone();
+            move |event: &notify::Event| events.lock().push(event.clone())
+        };
+        (events, callback)
+    }
+
+    fn rescanned_paths(events: &Mutex<Vec<notify::Event>>) -> Vec<PathBuf> {
+        events
+            .lock()
+            .iter()
+            .filter(|event| event.need_rescan())
+            .flat_map(|event| event.paths.clone())
+            .collect()
     }
 
     fn test_os_watcher(
@@ -1402,6 +1924,7 @@ mod tests {
                 cooldown_until: None,
                 last_registration: Default::default(),
             })),
+            registration_lock: Mutex::new(()),
             backend: Mutex::new(
                 backend.map(|watcher| {
                     Box::new(SharedFakeWatchBackend(watcher)) as Box<dyn WatchBackend>
@@ -1410,6 +1933,8 @@ mod tests {
             event_tx,
             _dispatch_task: Task::ready(()),
             diagnostics: Default::default(),
+            after_add: Default::default(),
+            before_remove: Default::default(),
         }
     }
 
@@ -1422,7 +1947,7 @@ mod tests {
     }
 
     #[test]
-    fn covered_child_registration_is_not_unwatched_after_parent_is_removed() {
+    fn covered_child_registration_is_rearmed_after_parent_is_removed() {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
         let watcher = test_os_watcher(OsWatcherKind::Poll, Some(backend.clone()));
         let parent = Arc::<Path>::from(Path::new("/repo"));
@@ -1432,17 +1957,1036 @@ mod tests {
             .add(parent.as_ref().into(), false, |_| {})
             .expect("add parent watch")
             .expect("parent watch registered");
+        let (events, callback) = recorded_events();
         let child_registration = watcher
-            .add(child.as_ref().into(), false, |_| {})
+            .add(child.as_ref().into(), false, callback)
             .expect("add covered child watch")
             .expect("child watch registered");
 
+        assert_eq!(backend.lock().watch_calls, &[parent.to_path_buf()]);
         watcher.remove(parent_registration);
+        assert_eq!(
+            backend.lock().watched_paths,
+            HashSet::from([child.to_path_buf()])
+        );
+        assert_eq!(rescanned_paths(&events), &[child.to_path_buf()]);
+        watcher.dispatch(Ok(modify_event("/repo/foo.csproj")));
+        assert_eq!(events.lock().len(), 2);
         watcher.remove(child_registration);
 
         let backend = backend.lock();
-        assert_eq!(backend.watch_calls, &[parent.to_path_buf()]);
-        assert_eq!(backend.unwatch_calls, &[parent.to_path_buf()]);
+        assert_eq!(
+            backend.watch_calls,
+            &[parent.to_path_buf(), child.to_path_buf()]
+        );
+        assert_eq!(
+            backend.unwatch_calls,
+            &[parent.to_path_buf(), child.to_path_buf()]
+        );
+        assert!(backend.watched_paths.is_empty());
+    }
+
+    #[test]
+    fn covered_child_removal_keeps_parent_watch() {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_os_watcher(OsWatcherKind::Poll, Some(backend.clone()));
+        let parent = watcher
+            .add(Path::new("/repo").into(), false, |_| {})
+            .expect("add parent")
+            .expect("parent registered");
+        let child = watcher
+            .add(Path::new("/repo/child").into(), false, |_| {})
+            .expect("add child")
+            .expect("child registered");
+
+        watcher.remove(child);
+        assert!(backend.lock().unwatch_calls.is_empty());
+        assert_eq!(
+            backend.lock().watched_paths,
+            HashSet::from([PathBuf::from("/repo")])
+        );
+        watcher.remove(parent);
+        let backend = backend.lock();
+        assert_eq!(backend.watch_calls, &[PathBuf::from("/repo")]);
+        assert_eq!(backend.unwatch_calls, &[PathBuf::from("/repo")]);
+        assert!(backend.watched_paths.is_empty());
+    }
+
+    #[test]
+    fn nested_descendants_share_rearmed_ancestor_watch() {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_os_watcher(OsWatcherKind::Poll, Some(backend.clone()));
+        let parent = watcher
+            .add(Path::new("/repo").into(), false, |_| {})
+            .expect("add parent")
+            .expect("parent registered");
+        let nested = watcher
+            .add(Path::new("/repo/child/nested").into(), false, |_| {})
+            .expect("add nested descendant")
+            .expect("nested descendant registered");
+        let child = watcher
+            .add(Path::new("/repo/child").into(), false, |_| {})
+            .expect("add child")
+            .expect("child registered");
+
+        watcher.remove(parent);
+        assert_eq!(
+            backend.lock().watch_calls,
+            &[PathBuf::from("/repo"), PathBuf::from("/repo/child")]
+        );
+        assert_eq!(
+            backend.lock().watched_paths,
+            HashSet::from([PathBuf::from("/repo/child")])
+        );
+        watcher.remove(child);
+        assert_eq!(
+            backend.lock().watched_paths,
+            HashSet::from([PathBuf::from("/repo/child/nested")])
+        );
+        watcher.remove(nested);
+        let backend = backend.lock();
+        assert_eq!(
+            backend.watch_calls,
+            &[
+                PathBuf::from("/repo"),
+                PathBuf::from("/repo/child"),
+                PathBuf::from("/repo/child/nested"),
+            ]
+        );
+        assert_eq!(backend.unwatch_calls, backend.watch_calls);
+        assert!(backend.watched_paths.is_empty());
+    }
+
+    #[test]
+    fn shared_parent_rearms_shared_child_only_after_final_removal() {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_os_watcher(OsWatcherKind::Poll, Some(backend.clone()));
+        let first_parent = watcher
+            .add(Path::new("/repo").into(), false, |_| {})
+            .expect("add first parent")
+            .expect("first parent registered");
+        let second_parent = watcher
+            .add(Path::new("/repo").into(), false, |_| {})
+            .expect("add second parent")
+            .expect("second parent registered");
+        let first_child = watcher
+            .add(Path::new("/repo/child").into(), false, |_| {})
+            .expect("add first child")
+            .expect("first child registered");
+        let second_child = watcher
+            .add(Path::new("/repo/child").into(), false, |_| {})
+            .expect("add second child")
+            .expect("second child registered");
+
+        watcher.remove(first_parent);
+        assert_eq!(backend.lock().watch_calls, &[PathBuf::from("/repo")]);
+        assert!(backend.lock().unwatch_calls.is_empty());
+        watcher.remove(second_parent);
+        assert_eq!(
+            backend.lock().watch_calls,
+            &[PathBuf::from("/repo"), PathBuf::from("/repo/child")]
+        );
+        watcher.remove(first_child);
+        assert_eq!(
+            backend.lock().watched_paths,
+            HashSet::from([PathBuf::from("/repo/child")])
+        );
+        watcher.remove(second_child);
+        let backend = backend.lock();
+        assert_eq!(backend.unwatch_calls, backend.watch_calls);
+        assert!(backend.watched_paths.is_empty());
+    }
+
+    #[test]
+    fn nonrecursive_parent_removal_keeps_existing_child_watch() {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let mut watcher = test_os_watcher(OsWatcherKind::Native, Some(backend.clone()));
+        watcher.recursive = false;
+        let parent = watcher
+            .add(Path::new("/repo").into(), false, |_| {})
+            .expect("add parent")
+            .expect("parent registered");
+        let child = watcher
+            .add(Path::new("/repo/child").into(), false, |_| {})
+            .expect("add child")
+            .expect("child registered");
+
+        watcher.remove(parent);
+        assert_eq!(
+            backend.lock().watched_paths,
+            HashSet::from([PathBuf::from("/repo/child")])
+        );
+        watcher.remove(child);
+        let backend = backend.lock();
+        assert_eq!(
+            backend.watch_calls,
+            &[PathBuf::from("/repo"), PathBuf::from("/repo/child")]
+        );
+        assert_eq!(
+            backend.watch_modes,
+            &[notify::RecursiveMode::NonRecursive; 2]
+        );
+        assert_eq!(backend.unwatch_calls, backend.watch_calls);
+        assert!(backend.watched_paths.is_empty());
+    }
+
+    #[test]
+    fn failed_descendant_rearming_does_not_claim_backend_watches() {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_os_watcher(OsWatcherKind::Poll, Some(backend.clone()));
+        let parent = watcher
+            .add(Path::new("/repo").into(), false, |_| {})
+            .expect("add parent")
+            .expect("parent registered");
+        let first_child = watcher
+            .add(Path::new("/repo/first").into(), false, |_| {})
+            .expect("add first child")
+            .expect("first child registered");
+        let second_child = watcher
+            .add(Path::new("/repo/second").into(), false, |_| {})
+            .expect("add second child")
+            .expect("second child registered");
+        backend.lock().fail_with_watch_limit = true;
+
+        watcher.remove(parent);
+        assert!(
+            watcher
+                .state
+                .lock()
+                .paths
+                .0
+                .values()
+                .all(|path| !path.has_os_watcher)
+        );
+        watcher.remove(first_child);
+        watcher.remove(second_child);
+        let backend = backend.lock();
+        assert_eq!(
+            backend.watch_calls,
+            &[
+                PathBuf::from("/repo"),
+                PathBuf::from("/repo/first"),
+                PathBuf::from("/repo/second"),
+            ]
+        );
+        assert_eq!(backend.unwatch_calls, &[PathBuf::from("/repo")]);
+        assert!(backend.watched_paths.is_empty());
+    }
+
+    #[test]
+    fn adding_registered_child_restores_coverage_after_failed_rearm() {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_os_watcher(OsWatcherKind::Poll, Some(backend.clone()));
+        let parent = watcher
+            .add(Path::new("/repo").into(), false, |_| {})
+            .expect("add parent")
+            .expect("parent registered");
+        let (child_fired, child_callback) = fired_count();
+        let child = watcher
+            .add(Path::new("/repo/child").into(), false, child_callback)
+            .expect("add child")
+            .expect("child registered");
+        let (nested_fired, nested_callback) = fired_count();
+        let nested = watcher
+            .add(
+                Path::new("/repo/child/nested").into(),
+                false,
+                nested_callback,
+            )
+            .expect("add nested descendant")
+            .expect("nested descendant registered");
+        backend.lock().fail_with_watch_limit = true;
+
+        watcher.remove(parent);
+        assert!(backend.lock().watched_paths.is_empty());
+        assert_eq!(
+            backend.lock().watch_calls,
+            &[
+                PathBuf::from("/repo"),
+                PathBuf::from("/repo/child"),
+                PathBuf::from("/repo/child/nested"),
+            ]
+        );
+        assert_eq!((*child_fired.lock(), *nested_fired.lock()), (1, 1));
+        backend.lock().fail_with_watch_limit = false;
+
+        let (additional_fired, additional_callback) = fired_count();
+        let additional_child = watcher
+            .add(Path::new("/repo/child").into(), false, additional_callback)
+            .expect("restore child watch")
+            .expect("additional child registered");
+        assert_eq!(
+            backend.lock().watched_paths,
+            HashSet::from([PathBuf::from("/repo/child")])
+        );
+        let additional_nested = watcher
+            .add(Path::new("/repo/child/nested").into(), false, |_| {})
+            .expect("reuse restored ancestor coverage")
+            .expect("additional nested descendant registered");
+        assert_eq!(
+            backend.lock().watch_calls,
+            &[
+                PathBuf::from("/repo"),
+                PathBuf::from("/repo/child"),
+                PathBuf::from("/repo/child/nested"),
+                PathBuf::from("/repo/child"),
+            ]
+        );
+        watcher.dispatch(Ok(modify_event("/repo/child/nested/file.txt")));
+        assert_eq!(*child_fired.lock(), 2);
+        assert_eq!(*nested_fired.lock(), 2);
+        assert_eq!(*additional_fired.lock(), 1);
+
+        watcher.remove(additional_child);
+        assert_eq!(
+            backend.lock().watched_paths,
+            HashSet::from([PathBuf::from("/repo/child")])
+        );
+        watcher.remove(additional_nested);
+        watcher.remove(nested);
+        watcher.remove(child);
+        let backend = backend.lock();
+        assert_eq!(
+            backend.unwatch_calls,
+            &[PathBuf::from("/repo"), PathBuf::from("/repo/child")]
+        );
+        assert!(backend.watched_paths.is_empty());
+    }
+
+    #[test]
+    fn concurrent_registration_changes_preserve_rearmed_watch() {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_os_watcher(OsWatcherKind::Poll, Some(backend.clone()));
+        let parent = watcher
+            .add(Path::new("/repo").into(), false, |_| {})
+            .expect("add parent")
+            .expect("parent registered");
+        let (fired, callback) = fired_count();
+        let child = watcher
+            .add(Path::new("/repo/child").into(), false, callback)
+            .expect("add child")
+            .expect("child registered");
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+        backend.lock().on_watch = Some(Box::new({
+            let state = watcher.state.clone();
+            move |_| {
+                assert!(state.try_lock().is_some());
+                started_tx.send(()).expect("signal rearming");
+                resume_rx
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("resume rearming");
+            }
+        }));
+
+        std::thread::scope(|scope| {
+            let removal = scope.spawn(|| watcher.remove(parent));
+            started_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("wait for rearming");
+            assert!(watcher.registration_lock.try_lock().is_none());
+            watcher.dispatch(Ok(modify_event("/repo/child/file.txt")));
+            assert_eq!(*fired.lock(), 1);
+            let replacement = scope.spawn(|| {
+                let replacement = watcher
+                    .add(Path::new("/repo/child").into(), false, |_| {})
+                    .expect("add replacement child")
+                    .expect("replacement child registered");
+                watcher.remove(child);
+                replacement
+            });
+            resume_tx.send(()).expect("resume rearming");
+            removal.join().expect("parent removal completes");
+            let replacement = replacement.join().expect("child replacement completes");
+            assert_eq!(
+                backend.lock().watched_paths,
+                HashSet::from([PathBuf::from("/repo/child")])
+            );
+            watcher.remove(replacement);
+        });
+
+        let backend = backend.lock();
+        assert_eq!(
+            backend.watch_calls,
+            &[PathBuf::from("/repo"), PathBuf::from("/repo/child")]
+        );
+        assert_eq!(backend.unwatch_calls, backend.watch_calls);
+        assert!(backend.watched_paths.is_empty());
+    }
+
+    #[test]
+    fn poll_handoff_rescans_changes_made_since_the_last_poll() -> anyhow::Result<()> {
+        let (_temp_dir, parent, child, file) = poll_fixture()?;
+        let harness = ManualPollHarness::new()?;
+        let parent_registration = harness
+            .watcher
+            .add(parent.as_path().into(), false, |_| {})?
+            .context("parent registered")?;
+        let (events, callback) = recorded_events();
+        let child_registration = harness
+            .watcher
+            .add(child.as_path().into(), false, callback)?
+            .context("child registered")?;
+        harness.poll()?;
+        assert!(events.lock().is_empty());
+
+        std::fs::write(&file, "version 1")?;
+        harness.watcher.remove(parent_registration);
+        assert_eq!(harness.watched_paths()?, std::slice::from_ref(&child));
+        assert_eq!(rescanned_paths(&events), std::slice::from_ref(&child));
+
+        events.lock().clear();
+        std::fs::write(&file, "version 2")?;
+        harness.poll()?;
+        assert!(
+            events
+                .lock()
+                .iter()
+                .any(|event| event.paths == [file.clone()])
+        );
+
+        harness.watcher.remove(child_registration);
+        assert!(harness.watched_paths()?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn poll_handoff_leaves_missing_descendants_unwatched_until_added_again() -> anyhow::Result<()> {
+        let (_temp_dir, parent, child, file) = poll_fixture()?;
+        let harness = ManualPollHarness::new()?;
+        let parent_registration = harness
+            .watcher
+            .add(parent.as_path().into(), false, |_| {})?
+            .context("parent registered")?;
+        let (events, callback) = recorded_events();
+        let child_registration = harness
+            .watcher
+            .add(child.as_path().into(), false, callback)?
+            .context("child registered")?;
+        harness.poll()?;
+
+        std::fs::remove_dir_all(&child)?;
+        harness.watcher.remove(parent_registration);
+        assert!(harness.watched_paths()?.is_empty());
+        assert!(!harness.claims_watch(&child));
+        assert_eq!(rescanned_paths(&events), std::slice::from_ref(&child));
+
+        std::fs::create_dir(&child)?;
+        std::fs::write(&file, "version 1")?;
+        let additional_registration = harness
+            .watcher
+            .add(child.as_path().into(), false, |_| {})?
+            .context("additional child registered")?;
+        assert_eq!(harness.watched_paths()?, std::slice::from_ref(&child));
+        assert!(harness.claims_watch(&child));
+
+        events.lock().clear();
+        std::fs::write(&file, "version 2")?;
+        harness.poll()?;
+        assert!(
+            events
+                .lock()
+                .iter()
+                .any(|event| event.paths == [file.clone()])
+        );
+
+        harness.watcher.remove(additional_registration);
+        assert_eq!(harness.watched_paths()?, std::slice::from_ref(&child));
+        harness.watcher.remove(child_registration);
+        assert!(harness.watched_paths()?.is_empty());
+        Ok(())
+    }
+
+    #[gpui::test]
+    async fn poll_handoff_rewatches_missing_descendant_once_recreated(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (_temp_dir, parent, child, file) = poll_fixture().expect("create poll fixture");
+        let harness = ManualPollHarness::new().expect("create manual poll watcher");
+        let ancestor = harness.public_watcher(crate::RealFs::new(None, cx.executor()), cx);
+        ancestor.watcher.add(&parent).expect("watch parent");
+        let descendant = harness.public_watcher(crate::RealFs::new(None, cx.executor()), cx);
+        descendant.watcher.add(&child).expect("watch child");
+        harness.poll().expect("record the polling baseline");
+        assert!(descendant.take_events().is_empty());
+
+        std::fs::remove_dir_all(&child).expect("remove child");
+        drop(ancestor);
+        assert_eq!(
+            descendant.take_events(),
+            [PathEvent {
+                path: child.clone(),
+                kind: Some(PathEventKind::Rescan),
+            }]
+        );
+        assert!(harness.watched_paths().expect("list watches").is_empty());
+
+        std::fs::create_dir(&child).expect("recreate child");
+        std::fs::write(&file, "version 1").expect("recreate file");
+        cx.executor().allow_parking();
+        cx.executor().advance_clock(poll_interval());
+        descendant
+            .signals
+            .recv()
+            .await
+            .expect("receive reconciliation");
+        assert!(
+            descendant
+                .take_events()
+                .iter()
+                .any(|event| event.path == child)
+        );
+        assert_eq!(
+            harness.watched_paths().expect("list watches"),
+            std::slice::from_ref(&child)
+        );
+
+        std::fs::write(&file, "version 2").expect("update file");
+        harness.poll().expect("poll the recreated child");
+        assert!(descendant.take_events().contains(&PathEvent {
+            path: file.clone(),
+            kind: Some(PathEventKind::Changed),
+        }));
+
+        descendant.watcher.remove(&child).expect("unwatch child");
+        assert!(harness.watched_paths().expect("list watches").is_empty());
+        assert!(harness.watcher.state.lock().watchers.is_empty());
+    }
+
+    #[gpui::test]
+    async fn poll_handoff_recovery_ends_with_its_watcher(cx: &mut gpui::TestAppContext) {
+        let (_temp_dir, parent, child, file) = poll_fixture().expect("create poll fixture");
+        let harness = ManualPollHarness::new().expect("create manual poll watcher");
+        let ancestor = harness.public_watcher(crate::RealFs::new(None, cx.executor()), cx);
+        ancestor.watcher.add(&parent).expect("watch parent");
+        let removed = harness.public_watcher(crate::RealFs::new(None, cx.executor()), cx);
+        removed.watcher.add(&child).expect("watch child");
+        let dropped = harness.public_watcher(crate::RealFs::new(None, cx.executor()), cx);
+        dropped.watcher.add(&child).expect("watch child again");
+        harness.poll().expect("record the polling baseline");
+
+        std::fs::remove_dir_all(&child).expect("remove child");
+        drop(ancestor);
+        for recovering in [&removed, &dropped] {
+            assert!(!recovering.take_events().is_empty());
+            assert!(
+                recovering
+                    .watcher
+                    .pending_registrations
+                    .lock()
+                    .contains_key(child.as_path())
+            );
+        }
+
+        removed.watcher.remove(&child).expect("unwatch child");
+        assert!(removed.watcher.pending_registrations.lock().is_empty());
+        let dropped_watcher = Arc::downgrade(&dropped.watcher);
+        drop(dropped);
+        assert!(dropped_watcher.upgrade().is_none());
+        assert!(harness.watcher.state.lock().watchers.is_empty());
+
+        std::fs::create_dir(&child).expect("recreate child");
+        std::fs::write(&file, "version 1").expect("recreate file");
+        cx.executor().advance_clock(poll_interval() * 2);
+        cx.run_until_parked();
+        assert!(harness.watched_paths().expect("list watches").is_empty());
+        assert!(harness.watcher.state.lock().watchers.is_empty());
+        assert!(removed.take_events().is_empty());
+    }
+
+    #[gpui::test]
+    async fn poll_handoff_before_registration_is_recorded_still_recovers(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (_temp_dir, parent, child, file, fs) = mirrored_poll_fixture(cx).await;
+        let harness = ManualPollHarness::new().expect("create manual poll watcher");
+        let ancestor = harness.public_watcher(fs.clone(), cx);
+        ancestor.watcher.add(&parent).expect("watch parent");
+        harness.poll().expect("record the polling baseline");
+
+        *harness.watcher.after_add.lock() = Some(Box::new({
+            let child = child.clone();
+            move || {
+                std::fs::remove_dir_all(&child).expect("remove child");
+                drop(ancestor);
+            }
+        }));
+        let descendant = harness.public_watcher(fs.clone(), cx);
+        descendant.watcher.add(&child).expect("watch child");
+        remove_mirrored_child(&fs, &child).await;
+        assert!(descendant.watcher.registrations.lock().is_empty());
+        assert!(
+            descendant
+                .watcher
+                .pending_registrations
+                .lock()
+                .contains_key(child.as_path())
+        );
+        descendant.take_events();
+
+        create_mirrored_child(&fs, &child, "version 1").await;
+        cx.executor().advance_clock(poll_interval());
+        assert!(
+            descendant
+                .take_events()
+                .iter()
+                .any(|event| event.path == child)
+        );
+        assert_eq!(
+            harness.watched_paths().expect("list watches"),
+            std::slice::from_ref(&child)
+        );
+
+        std::fs::write(&file, "version 2").expect("update file");
+        harness.poll().expect("poll the recreated child");
+        assert!(descendant.take_events().contains(&PathEvent {
+            path: file.clone(),
+            kind: Some(PathEventKind::Changed),
+        }));
+
+        descendant.watcher.remove(&child).expect("unwatch child");
+        assert!(harness.watched_paths().expect("list watches").is_empty());
+        assert!(harness.watcher.state.lock().watchers.is_empty());
+    }
+
+    #[gpui::test]
+    async fn poll_handoff_during_pending_registration_still_recovers(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (_temp_dir, parent, child, file, fs) = mirrored_poll_fixture(cx).await;
+        let harness = ManualPollHarness::new().expect("create manual poll watcher");
+        let ancestor = harness.public_watcher(fs.clone(), cx);
+        ancestor.watcher.add(&parent).expect("watch parent");
+        remove_mirrored_child(&fs, &child).await;
+        harness.poll().expect("record the polling baseline");
+        let descendant = harness.public_watcher(fs.clone(), cx);
+        descendant.watcher.add(&child).expect("wait for child");
+        assert!(
+            descendant
+                .watcher
+                .pending_registrations
+                .lock()
+                .contains_key(child.as_path())
+        );
+
+        create_mirrored_child(&fs, &child, "version 1").await;
+        *harness.watcher.after_add.lock() = Some(Box::new({
+            let child = child.clone();
+            move || {
+                std::fs::remove_dir_all(&child).expect("remove child");
+                drop(ancestor);
+            }
+        }));
+        cx.executor().advance_clock(poll_interval());
+        remove_mirrored_child(&fs, &child).await;
+        assert!(descendant.watcher.registrations.lock().is_empty());
+        assert!(
+            descendant
+                .watcher
+                .pending_registrations
+                .lock()
+                .contains_key(child.as_path())
+        );
+        assert!(harness.watcher.state.lock().watchers.is_empty());
+        descendant.take_events();
+
+        create_mirrored_child(&fs, &child, "version 2").await;
+        cx.executor().advance_clock(poll_interval());
+        assert!(
+            descendant
+                .take_events()
+                .iter()
+                .any(|event| event.path == child)
+        );
+        assert_eq!(
+            harness.watched_paths().expect("list watches"),
+            std::slice::from_ref(&child)
+        );
+
+        std::fs::write(&file, "version 3").expect("update file");
+        harness.poll().expect("poll the recreated child");
+        assert!(descendant.take_events().contains(&PathEvent {
+            path: file.clone(),
+            kind: Some(PathEventKind::Changed),
+        }));
+
+        descendant.watcher.remove(&child).expect("unwatch child");
+        assert!(harness.watched_paths().expect("list watches").is_empty());
+        assert!(harness.watcher.state.lock().watchers.is_empty());
+    }
+
+    #[gpui::test]
+    async fn removal_during_poll_recovery_stays_removed(cx: &mut gpui::TestAppContext) {
+        let (_temp_dir, parent, child, _file, fs) = mirrored_poll_fixture(cx).await;
+        let harness = ManualPollHarness::new().expect("create manual poll watcher");
+        let ancestor = harness.public_watcher(fs.clone(), cx);
+        ancestor.watcher.add(&parent).expect("watch parent");
+        let descendant = harness.public_watcher(fs.clone(), cx);
+        descendant.watcher.add(&child).expect("watch child");
+        harness.poll().expect("record the polling baseline");
+        let registration_id = descendant
+            .watcher
+            .registrations
+            .lock()
+            .values()
+            .next()
+            .expect("child registered")
+            .id;
+
+        *harness.watcher.before_remove.lock() = Some((
+            registration_id,
+            Box::new({
+                let watcher = descendant.watcher.clone();
+                let child = child.clone();
+                move || watcher.remove(&child).expect("unwatch child")
+            }),
+        ));
+        remove_mirrored_child(&fs, &child).await;
+        drop(ancestor);
+        assert!(harness.watcher.before_remove.lock().is_none());
+        assert!(descendant.watcher.registrations.lock().is_empty());
+        assert!(descendant.watcher.pending_registrations.lock().is_empty());
+        assert!(harness.watcher.state.lock().watchers.is_empty());
+        descendant.take_events();
+
+        create_mirrored_child(&fs, &child, "version 1").await;
+        cx.executor().advance_clock(poll_interval() * 2);
+        cx.run_until_parked();
+        assert!(harness.watched_paths().expect("list watches").is_empty());
+        assert!(harness.watcher.state.lock().watchers.is_empty());
+        assert!(descendant.take_events().is_empty());
+    }
+
+    #[gpui::test]
+    async fn pending_registration_ends_with_its_watcher(cx: &mut gpui::TestAppContext) {
+        let (_temp_dir, _parent, child, file) = poll_fixture().expect("create poll fixture");
+        std::fs::remove_dir_all(&child).expect("remove child");
+        let harness = ManualPollHarness::new().expect("create manual poll watcher");
+        let PublicPollWatcher {
+            watcher, signals, ..
+        } = harness.public_watcher(crate::RealFs::new(None, cx.executor()), cx);
+        watcher.add(&child).expect("wait for child");
+        assert!(
+            watcher
+                .pending_registrations
+                .lock()
+                .contains_key(child.as_path())
+        );
+
+        *harness.watcher.after_add.lock() = Some(Box::new(move || drop(watcher)));
+        std::fs::create_dir(&child).expect("recreate child");
+        std::fs::write(&file, "version 1").expect("recreate file");
+        cx.executor().allow_parking();
+        cx.executor().advance_clock(poll_interval());
+        // Each registration holds a sender for these signals, so they close only
+        // once the registration made during the drop is released
+        while signals.recv().await.is_ok() {}
+        assert!(harness.watcher.state.lock().watchers.is_empty());
+        assert!(harness.watched_paths().expect("list watches").is_empty());
+    }
+
+    #[gpui::test]
+    async fn late_registration_leaves_pending_replacement_to_recover(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (_temp_dir, _parent, child, file, fs) = mirrored_poll_fixture(cx).await;
+        let harness = ManualPollHarness::new().expect("create manual poll watcher");
+        remove_mirrored_child(&fs, &child).await;
+        let descendant = harness.public_watcher(fs.clone(), cx);
+        descendant.watcher.add(&child).expect("wait for child");
+        create_mirrored_child(&fs, &child, "version 1").await;
+
+        // Removing the child cancels the request whose registration is in
+        // progress, and adding it while missing starts a replacement request
+        *harness.watcher.after_add.lock() = Some(Box::new({
+            let watcher = descendant.watcher.clone();
+            let fs = fs.clone();
+            let child = child.clone();
+            move || {
+                watcher.remove(&child).expect("unwatch child");
+                smol::block_on(remove_mirrored_child(&fs, &child));
+                watcher.add(&child).expect("wait for child again");
+            }
+        }));
+        cx.executor().advance_clock(poll_interval());
+        assert!(harness.watcher.after_add.lock().is_none());
+        assert!(descendant.watcher.registrations.lock().is_empty());
+        assert!(
+            descendant
+                .watcher
+                .pending_registrations
+                .lock()
+                .contains_key(child.as_path())
+        );
+        assert!(harness.watcher.state.lock().watchers.is_empty());
+        assert!(harness.watched_paths().expect("list watches").is_empty());
+        descendant.take_events();
+
+        create_mirrored_child(&fs, &child, "version 2").await;
+        cx.executor().advance_clock(poll_interval());
+        assert!(
+            descendant
+                .take_events()
+                .iter()
+                .any(|event| event.path == child)
+        );
+        assert!(descendant.watcher.pending_registrations.lock().is_empty());
+        assert_eq!(
+            harness.watched_paths().expect("list watches"),
+            std::slice::from_ref(&child)
+        );
+
+        std::fs::write(&file, "version 3").expect("update file");
+        harness.poll().expect("poll the recreated child");
+        assert!(descendant.take_events().contains(&PathEvent {
+            path: file.clone(),
+            kind: Some(PathEventKind::Changed),
+        }));
+
+        descendant.watcher.remove(&child).expect("unwatch child");
+        assert!(harness.watched_paths().expect("list watches").is_empty());
+        assert!(harness.watcher.state.lock().watchers.is_empty());
+    }
+
+    #[gpui::test]
+    async fn late_blocking_registration_leaves_replacement_to_recover(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (_temp_dir, _parent, child, file) = poll_fixture().expect("create poll fixture");
+        std::fs::remove_dir_all(&child).expect("remove child");
+        let harness = ManualPollHarness::new().expect("create manual poll watcher");
+        let PublicPollWatcher {
+            watcher,
+            events,
+            signals,
+        } = harness.public_watcher(crate::RealFs::new(None, cx.executor()), cx);
+        watcher.add(&child).expect("wait for child");
+        std::fs::create_dir(&child).expect("create child");
+        std::fs::write(&file, "version 1").expect("create file");
+
+        // The request is removed and replaced while its registration blocks, so
+        // its task is cancelled before the registration returns
+        let (replaced_tx, replaced_rx) = async_channel::unbounded();
+        *harness.watcher.after_add.lock() = Some(Box::new({
+            let watcher = watcher.clone();
+            let child = child.clone();
+            let file = file.clone();
+            move || {
+                watcher.remove(&child).expect("unwatch child");
+                std::fs::remove_dir_all(&child).expect("remove child");
+                watcher.add(&child).expect("wait for child again");
+                std::fs::create_dir(&child).expect("recreate child");
+                std::fs::write(&file, "version 2").expect("recreate file");
+                replaced_tx.try_send(()).expect("report the replacement");
+            }
+        }));
+        cx.executor().allow_parking();
+        cx.executor().advance_clock(poll_interval());
+        replaced_rx.recv().await.expect("replace the request");
+        cx.executor().advance_clock(poll_interval());
+        signals.recv().await.expect("receive reconciliation");
+        assert!(events.lock().iter().any(|event| event.path == child));
+        assert!(watcher.pending_registrations.lock().is_empty());
+        assert_eq!(watcher.registrations.lock().len(), 1);
+
+        events.lock().clear();
+        std::fs::write(&file, "version 3").expect("update file");
+        harness.poll().expect("poll the recreated child");
+        assert!(events.lock().contains(&PathEvent {
+            path: file.clone(),
+            kind: Some(PathEventKind::Changed),
+        }));
+
+        watcher.remove(&child).expect("unwatch child");
+        drop(watcher);
+        // Each registration, including the one made for the removed request, holds
+        // a sender for these signals, so they close once all of them are released
+        while signals.recv().await.is_ok() {}
+        assert!(harness.watcher.state.lock().watchers.is_empty());
+        assert!(harness.watched_paths().expect("list watches").is_empty());
+    }
+
+    #[gpui::test]
+    async fn late_registration_leaves_active_replacement_watched(cx: &mut gpui::TestAppContext) {
+        let (_temp_dir, _parent, child, file, fs) = mirrored_poll_fixture(cx).await;
+        let harness = ManualPollHarness::new().expect("create manual poll watcher");
+        remove_mirrored_child(&fs, &child).await;
+        let descendant = harness.public_watcher(fs.clone(), cx);
+        descendant.watcher.add(&child).expect("wait for child");
+        create_mirrored_child(&fs, &child, "version 1").await;
+
+        *harness.watcher.after_add.lock() = Some(Box::new({
+            let watcher = descendant.watcher.clone();
+            let child = child.clone();
+            move || {
+                watcher.remove(&child).expect("unwatch child");
+                watcher.add(&child).expect("watch child again");
+            }
+        }));
+        cx.executor().advance_clock(poll_interval());
+        assert!(harness.watcher.after_add.lock().is_none());
+        let replacement = descendant
+            .watcher
+            .registrations
+            .lock()
+            .values()
+            .map(|registration| registration.id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            harness
+                .watcher
+                .state
+                .lock()
+                .watchers
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            replacement
+        );
+        assert!(descendant.watcher.pending_registrations.lock().is_empty());
+        assert_eq!(
+            harness.watched_paths().expect("list watches"),
+            std::slice::from_ref(&child)
+        );
+
+        std::fs::write(&file, "version 2").expect("update file");
+        harness.poll().expect("poll the child");
+        assert!(descendant.take_events().contains(&PathEvent {
+            path: file.clone(),
+            kind: Some(PathEventKind::Changed),
+        }));
+
+        descendant.watcher.remove(&child).expect("unwatch child");
+        assert!(harness.watched_paths().expect("list watches").is_empty());
+        assert!(harness.watcher.state.lock().watchers.is_empty());
+    }
+
+    #[gpui::test]
+    async fn pending_request_for_watched_path_still_reconciles(cx: &mut gpui::TestAppContext) {
+        let (_temp_dir, _parent, child, file, fs) = mirrored_poll_fixture(cx).await;
+        let harness = ManualPollHarness::new().expect("create manual poll watcher");
+        let descendant = harness.public_watcher(fs.clone(), cx);
+        descendant.watcher.add(&child).expect("watch child");
+
+        // Only the watcher's view of the child disappears, so adding it again
+        // waits for it while the existing registration keeps watching
+        fs.remove_dir(
+            &child,
+            crate::RemoveOptions {
+                recursive: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("hide child");
+        descendant.watcher.add(&child).expect("wait for child");
+        assert!(
+            descendant
+                .watcher
+                .pending_registrations
+                .lock()
+                .contains_key(child.as_path())
+        );
+        fs.insert_tree(&child, serde_json::json!({ "file.txt": "version 0" }))
+            .await;
+
+        cx.executor().advance_clock(poll_interval());
+        assert!(
+            descendant
+                .take_events()
+                .iter()
+                .any(|event| event.path == child)
+        );
+        assert!(descendant.watcher.pending_registrations.lock().is_empty());
+        assert_eq!(descendant.watcher.registrations.lock().len(), 1);
+        assert_eq!(harness.watcher.state.lock().watchers.len(), 1);
+        assert_eq!(
+            harness.watched_paths().expect("list watches"),
+            std::slice::from_ref(&child)
+        );
+
+        std::fs::write(&file, "version 1").expect("update file");
+        harness.poll().expect("poll the child");
+        assert!(descendant.take_events().contains(&PathEvent {
+            path: file.clone(),
+            kind: Some(PathEventKind::Changed),
+        }));
+
+        descendant.watcher.remove(&child).expect("unwatch child");
+        assert!(harness.watched_paths().expect("list watches").is_empty());
+        assert!(harness.watcher.state.lock().watchers.is_empty());
+    }
+
+    #[gpui::test]
+    async fn concurrent_adds_record_one_registration(cx: &mut gpui::TestAppContext) {
+        let (_temp_dir, _parent, child, file, fs) = mirrored_poll_fixture(cx).await;
+        let harness = ManualPollHarness::new().expect("create manual poll watcher");
+        let descendant = harness.public_watcher(fs, cx);
+        // Adding the child again before the first add records its registration
+        // stands in for a concurrent add of the same path
+        *harness.watcher.after_add.lock() = Some(Box::new({
+            let watcher = descendant.watcher.clone();
+            let child = child.clone();
+            move || watcher.add(&child).expect("watch child concurrently")
+        }));
+        descendant.watcher.add(&child).expect("watch child");
+        assert!(harness.watcher.after_add.lock().is_none());
+        assert_eq!(descendant.watcher.registrations.lock().len(), 1);
+        assert_eq!(harness.watcher.state.lock().watchers.len(), 1);
+
+        std::fs::write(&file, "version 1").expect("update file");
+        harness.poll().expect("poll the child");
+        assert!(descendant.take_events().contains(&PathEvent {
+            path: file,
+            kind: Some(PathEventKind::Changed),
+        }));
+
+        descendant.watcher.remove(&child).expect("unwatch child");
+        assert!(harness.watched_paths().expect("list watches").is_empty());
+        assert!(harness.watcher.state.lock().watchers.is_empty());
+    }
+
+    #[gpui::test]
+    async fn stale_poll_recovery_leaves_replacement_watched(cx: &mut gpui::TestAppContext) {
+        let (_temp_dir, parent, child, file, fs) = mirrored_poll_fixture(cx).await;
+        let harness = ManualPollHarness::new().expect("create manual poll watcher");
+        let ancestor = harness.public_watcher(fs.clone(), cx);
+        ancestor.watcher.add(&parent).expect("watch parent");
+        let descendant = harness.public_watcher(fs, cx);
+        descendant.watcher.add(&child).expect("watch child");
+        harness.poll().expect("record the polling baseline");
+        let stale_recovery = {
+            let registration_id = descendant
+                .watcher
+                .registrations
+                .lock()
+                .values()
+                .next()
+                .expect("child registered")
+                .id;
+            harness
+                .watcher
+                .state
+                .lock()
+                .watchers
+                .get(&registration_id)
+                .expect("child registration state")
+                .on_unwatched
+                .clone()
+        };
+
+        descendant.watcher.remove(&child).expect("unwatch child");
+        descendant.watcher.add(&child).expect("watch child again");
+        stale_recovery();
+        assert_eq!(descendant.watcher.registrations.lock().len(), 1);
+        assert!(descendant.watcher.pending_registrations.lock().is_empty());
+
+        std::fs::write(&file, "version 1").expect("update file");
+        harness.poll().expect("poll the parent");
+        assert!(descendant.take_events().contains(&PathEvent {
+            path: file,
+            kind: Some(PathEventKind::Changed),
+        }));
     }
 
     #[gpui::test]
@@ -1676,16 +3220,34 @@ mod tests {
     fn recursive_parent_covers_differently_cased_child() {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
         let watcher = test_os_watcher(OsWatcherKind::Poll, Some(backend.clone()));
-        watcher
+        let parent = watcher
             .add(Path::new("/Repo").into(), true, |_| {})
             .expect("add")
             .expect("registered");
-        watcher
-            .add(Path::new("/repo/child").into(), true, |_| {})
-            .expect("add");
+        let (fired, callback) = fired_count();
+        let child = watcher
+            .add(Path::new("/repo/child").into(), true, callback)
+            .expect("add")
+            .expect("registered");
 
         // The child is covered by the recursive parent despite the case mismatch.
         assert_eq!(backend.lock().watch_calls, vec![PathBuf::from("/Repo")]);
+        watcher.remove(parent);
+        assert_eq!(
+            backend.lock().watched_paths,
+            HashSet::from([PathBuf::from("/repo/child")])
+        );
+        assert_eq!(*fired.lock(), 1);
+        watcher.dispatch(Ok(modify_event("/REPO/CHILD/file.txt")));
+        assert_eq!(*fired.lock(), 2);
+        watcher.remove(child);
+        let backend = backend.lock();
+        assert_eq!(
+            backend.watch_calls,
+            &[PathBuf::from("/Repo"), PathBuf::from("/repo/child")]
+        );
+        assert_eq!(backend.unwatch_calls, backend.watch_calls);
+        assert!(backend.watched_paths.is_empty());
     }
 
     #[test]

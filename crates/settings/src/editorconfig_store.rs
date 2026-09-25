@@ -7,14 +7,16 @@ use ec4rs::{
     },
 };
 use fs::Fs;
-use futures::StreamExt;
+use futures::channel::mpsc;
 use gpui::{Context, EventEmitter, Task};
 use paths::EDITORCONFIG_NAME;
 use smallvec::SmallVec;
 use std::{path::Path, str::FromStr, sync::Arc};
-use util::rel_path::RelPath;
+use util::{ResultExt, rel_path::RelPath};
 
-use crate::{InvalidSettingsError, LocalSettingsPath, WorktreeId, watch_config_file};
+use crate::{
+    InvalidSettingsError, LocalSettingsPath, WorktreeId, editorconfig_watcher::EditorconfigWatcher,
+};
 
 pub type EditorconfigProperties = ec4rs::Properties;
 
@@ -40,7 +42,7 @@ impl FromStr for Editorconfig {
 
 #[derive(Clone, Debug)]
 pub enum EditorconfigEvent {
-    ExternalConfigChanged {
+    ConfigChanged {
         path: LocalSettingsPath,
         content: Option<String>,
         affected_worktree_ids: Vec<WorktreeId>,
@@ -52,9 +54,20 @@ impl EventEmitter<EditorconfigEvent> for EditorconfigStore {}
 #[derive(Default)]
 pub struct EditorconfigStore {
     external_configs: BTreeMap<Arc<Path>, (String, Option<Editorconfig>)>,
+    local_config_watchers: BTreeMap<(WorktreeId, Arc<RelPath>), (Arc<Path>, LocalConfigWatcher)>,
     worktree_state: BTreeMap<WorktreeId, EditorconfigWorktreeState>,
-    local_external_config_watchers: BTreeMap<Arc<Path>, Task<()>>,
+    local_external_config_watchers: BTreeMap<Arc<Path>, ExternalConfigWatcher>,
     local_external_config_discovery_tasks: BTreeMap<WorktreeId, Task<()>>,
+}
+
+struct LocalConfigWatcher {
+    _task: Task<()>,
+    reload: mpsc::UnboundedSender<()>,
+}
+
+struct ExternalConfigWatcher {
+    watcher: LocalConfigWatcher,
+    worktree_ids: BTreeSet<WorktreeId>,
 }
 
 #[derive(Default)]
@@ -86,7 +99,6 @@ impl EditorconfigStore {
                     .any(|state| state.external_config_paths.contains(abs_path));
                 if !still_in_use {
                     self.external_configs.remove(abs_path);
-                    self.local_external_config_watchers.remove(abs_path);
                 }
             }
             (LocalSettingsPath::InWorktree(rel_path), Some(content)) => {
@@ -146,8 +158,14 @@ impl EditorconfigStore {
         Ok(())
     }
 
-    pub(crate) fn remove_for_worktree(&mut self, root_id: WorktreeId) {
+    pub fn remove_for_worktree(&mut self, root_id: WorktreeId) {
+        self.local_config_watchers
+            .retain(|(worktree_id, _), _| *worktree_id != root_id);
         self.local_external_config_discovery_tasks.remove(&root_id);
+        self.local_external_config_watchers.retain(|_, watcher| {
+            watcher.worktree_ids.remove(&root_id);
+            !watcher.worktree_ids.is_empty()
+        });
         let Some(removed) = self.worktree_state.remove(&root_id) else {
             return;
         };
@@ -159,7 +177,6 @@ impl EditorconfigStore {
         for path in removed.external_config_paths.iter() {
             if !paths_in_use.contains(path) {
                 self.external_configs.remove(path);
-                self.local_external_config_watchers.remove(path);
             }
         }
     }
@@ -240,7 +257,7 @@ impl EditorconfigStore {
                     while let Some(dir) = current {
                         let dir_path: Arc<Path> = Arc::from(dir.as_path());
                         let path = dir.join(EDITORCONFIG_NAME);
-                        if fs.load(&path).await.is_ok() {
+                        if fs.load(&path).await.is_ok() || fs.read_link(&path).await.is_ok() {
                             paths.push(dir_path);
                         }
                         current = dir.parent().map(|p| p.to_path_buf());
@@ -250,30 +267,18 @@ impl EditorconfigStore {
 
                 this.update(cx, |this, cx| {
                     for dir_path in discovered_paths {
-                        // We insert it here so that watchers can send events to appropriate worktrees.
-                        // external_config_paths gets populated again in set_configs.
-                        this.worktree_state
-                            .entry(worktree_id)
-                            .or_default()
-                            .external_config_paths
-                            .insert(dir_path.clone());
                         match this.local_external_config_watchers.entry(dir_path.clone()) {
-                            std::collections::btree_map::Entry::Occupied(_) => {
-                                if let Some(existing_config) = this.external_configs.get(&dir_path)
-                                {
-                                    cx.emit(EditorconfigEvent::ExternalConfigChanged {
-                                        path: LocalSettingsPath::OutsideWorktree(dir_path),
-                                        content: Some(existing_config.0.clone()),
-                                        affected_worktree_ids: vec![worktree_id],
-                                    });
-                                } else {
-                                    log::error!("Watcher exists for {dir_path:?} but no config found in external_configs");
-                                }
+                            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                                entry.get_mut().worktree_ids.insert(worktree_id);
+                                entry.get().watcher.reload.unbounded_send(()).log_err();
                             }
                             std::collections::btree_map::Entry::Vacant(entry) => {
                                 let watcher =
                                     Self::watch_local_external_config(fs.clone(), dir_path, cx);
-                                entry.insert(watcher);
+                                entry.insert(ExternalConfigWatcher {
+                                    watcher,
+                                    worktree_ids: BTreeSet::from_iter([worktree_id]),
+                                });
                             }
                         }
                     }
@@ -286,41 +291,161 @@ impl EditorconfigStore {
             .insert(worktree_id, task);
     }
 
+    pub fn watch_local_config(
+        &mut self,
+        worktree_id: WorktreeId,
+        worktree_path: Arc<Path>,
+        directory: Arc<RelPath>,
+        fs: Arc<dyn Fs>,
+        cx: &mut Context<Self>,
+    ) {
+        let key = (worktree_id, directory.clone());
+        if let Some((watched_worktree_path, watcher)) = self.local_config_watchers.get(&key)
+            && *watched_worktree_path == worktree_path
+        {
+            watcher.reload.unbounded_send(()).log_err();
+            return;
+        }
+
+        let (reload, mut reloads) = mpsc::unbounded();
+        let config_path = worktree_path
+            .join(directory.as_std_path())
+            .join(EDITORCONFIG_NAME);
+        let task = cx.spawn({
+            let worktree_path = worktree_path.clone();
+            async move |this, cx| {
+                let mut watcher = EditorconfigWatcher::new(fs.clone(), config_path.clone());
+                let mut discovered_parents = false;
+                loop {
+                    let content = watcher.load().await.log_err();
+                    let discover_parents = !discovered_parents
+                        && (content.as_ref().is_some_and(Option::is_some)
+                            || fs.read_link(&config_path).await.is_ok()
+                            || fs.is_file(&config_path).await);
+                    if this
+                        .update(cx, |this, cx| {
+                            if discover_parents {
+                                this.discover_local_external_configs_chain(
+                                    worktree_id,
+                                    worktree_path.clone(),
+                                    fs.clone(),
+                                    cx,
+                                );
+                                discovered_parents = true;
+                            }
+                            if let Some(content) = content {
+                                cx.emit(EditorconfigEvent::ConfigChanged {
+                                    path: LocalSettingsPath::InWorktree(directory.clone()),
+                                    content,
+                                    affected_worktree_ids: vec![worktree_id],
+                                });
+                            }
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                    watcher.changed(&mut reloads).await;
+                }
+            }
+        });
+        // Replacing the entry drops any watcher still bound to a former worktree location
+        self.local_config_watchers.insert(
+            key,
+            (
+                worktree_path,
+                LocalConfigWatcher {
+                    _task: task,
+                    reload,
+                },
+            ),
+        );
+    }
+
+    pub fn update_worktree_path(
+        &mut self,
+        worktree_id: WorktreeId,
+        worktree_path: Arc<Path>,
+        fs: Arc<dyn Fs>,
+        cx: &mut Context<Self>,
+    ) {
+        let moved_directories = self
+            .local_config_watchers
+            .iter()
+            .filter(|((id, _), (watched_worktree_path, _))| {
+                *id == worktree_id && *watched_worktree_path != worktree_path
+            })
+            .map(|((_, directory), _)| directory.clone())
+            .collect::<Vec<_>>();
+        for directory in moved_directories {
+            self.watch_local_config(
+                worktree_id,
+                worktree_path.clone(),
+                directory,
+                fs.clone(),
+                cx,
+            );
+        }
+    }
+
+    pub fn watches_local_config(&self, worktree_id: WorktreeId, directory: Arc<RelPath>) -> bool {
+        self.local_config_watchers
+            .contains_key(&(worktree_id, directory))
+    }
+
+    pub fn retain_local_config_watchers(
+        &mut self,
+        worktree_id: WorktreeId,
+        mut retain: impl FnMut(&RelPath) -> bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.local_config_watchers.retain(|(id, directory), _| {
+            if *id != worktree_id || retain(directory) {
+                return true;
+            }
+            cx.emit(EditorconfigEvent::ConfigChanged {
+                path: LocalSettingsPath::InWorktree(directory.clone()),
+                content: None,
+                affected_worktree_ids: vec![worktree_id],
+            });
+            false
+        });
+    }
+
     fn watch_local_external_config(
         fs: Arc<dyn Fs>,
         dir_path: Arc<Path>,
         cx: &mut Context<Self>,
-    ) -> Task<()> {
-        let config_path = dir_path.join(EDITORCONFIG_NAME);
-        let (mut config_rx, watcher_task) =
-            watch_config_file(cx.background_executor(), fs, config_path);
-
-        cx.spawn(async move |this, cx| {
-            let _watcher_task = watcher_task;
-            while let Some(content) = config_rx.next().await {
-                let content = Some(content).filter(|c| !c.is_empty());
-                let dir_path = dir_path.clone();
-                this.update(cx, |this, cx| {
-                    let affected_worktree_ids: Vec<WorktreeId> = this
-                        .worktree_state
-                        .iter()
-                        .filter_map(|(id, state)| {
-                            state
-                                .external_config_paths
-                                .contains(&dir_path)
-                                .then_some(*id)
+    ) -> LocalConfigWatcher {
+        let (reload, mut reloads) = mpsc::unbounded();
+        let task = cx.spawn(async move |this, cx| {
+            let mut watcher = EditorconfigWatcher::new(fs, dir_path.join(EDITORCONFIG_NAME));
+            loop {
+                if let Some(content) = watcher.load().await.log_err()
+                    && this
+                        .update(cx, |this, cx| {
+                            let affected_worktree_ids = this
+                                .local_external_config_watchers
+                                .get(&dir_path)
+                                .map(|watcher| watcher.worktree_ids.iter().copied().collect())
+                                .unwrap_or_default();
+                            cx.emit(EditorconfigEvent::ConfigChanged {
+                                path: LocalSettingsPath::OutsideWorktree(dir_path.clone()),
+                                content,
+                                affected_worktree_ids,
+                            });
                         })
-                        .collect();
-
-                    cx.emit(EditorconfigEvent::ExternalConfigChanged {
-                        path: LocalSettingsPath::OutsideWorktree(dir_path),
-                        content,
-                        affected_worktree_ids,
-                    });
-                })
-                .ok();
+                        .is_err()
+                {
+                    break;
+                }
+                watcher.changed(&mut reloads).await;
             }
-        })
+        });
+        LocalConfigWatcher {
+            _task: task,
+            reload,
+        }
     }
 
     pub fn properties(
@@ -432,6 +557,148 @@ impl EditorconfigStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fs::FakeFs;
+    use gpui::{AppContext as _, TestAppContext};
+    use serde_json::json;
+    use util::path;
+
+    #[gpui::test]
+    async fn test_external_config_watcher_survives_clearing_and_removal(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/parent"),
+            json!({
+                ".editorconfig": "root = true\n[*]\nindent_size = 2\n",
+                "worktree_a": {},
+                "worktree_b": {},
+            }),
+        )
+        .await;
+        let store = cx.new(|_| EditorconfigStore::default());
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&store, |store, event: &EditorconfigEvent, cx| {
+                let EditorconfigEvent::ConfigChanged {
+                    path,
+                    content,
+                    affected_worktree_ids,
+                } = event;
+                store.update(cx, |store, _| {
+                    for worktree_id in affected_worktree_ids {
+                        store
+                            .set_configs(*worktree_id, path.clone(), content.as_deref())
+                            .expect("external config applies");
+                    }
+                });
+            })
+        });
+        let first_worktree = WorktreeId::from_usize(1);
+        let second_worktree = WorktreeId::from_usize(2);
+        let parent: Arc<Path> = Path::new(path!("/parent")).into();
+        let config_path = Path::new(path!("/parent/.editorconfig"));
+        let file_path = RelPath::from_unix_str("file.txt").expect("valid relative path");
+        let indent_size = |worktree_id, cx: &TestAppContext| {
+            store.read_with(cx, |store, _| {
+                store
+                    .properties(worktree_id, file_path)
+                    .and_then(|properties| properties.get::<IndentSize>().ok())
+            })
+        };
+        store.update(cx, |store, cx| {
+            store.discover_local_external_configs_chain(
+                first_worktree,
+                Path::new(path!("/parent/worktree_a")).into(),
+                fs.clone(),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(indent_size(first_worktree, cx), Some(IndentSize::Value(2)));
+
+        fs.write(config_path, &[0xff])
+            .await
+            .expect("invalid UTF-8 is written");
+        cx.run_until_parked();
+        assert_eq!(indent_size(first_worktree, cx), Some(IndentSize::Value(2)));
+
+        fs.write(config_path, b"")
+            .await
+            .expect("external config empties");
+        cx.run_until_parked();
+        assert_eq!(indent_size(first_worktree, cx), None);
+        store.read_with(cx, |store, _| {
+            assert!(store.external_configs.is_empty());
+            assert_eq!(store.local_external_config_watchers.len(), 1);
+        });
+
+        store.update(cx, |store, cx| {
+            store.discover_local_external_configs_chain(
+                second_worktree,
+                Path::new(path!("/parent/worktree_b")).into(),
+                fs.clone(),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        store.read_with(cx, |store, _| {
+            assert!(store.external_configs.is_empty());
+            assert_eq!(store.local_external_config_watchers.len(), 1);
+            assert_eq!(
+                store
+                    .local_external_config_watchers
+                    .get(&parent)
+                    .expect("shared watcher exists")
+                    .worktree_ids,
+                BTreeSet::from_iter([first_worktree, second_worktree]),
+            );
+        });
+
+        fs.write(config_path, b"root = true\n[*]\nindent_size = 6\n")
+            .await
+            .expect("external config refills");
+        cx.run_until_parked();
+        assert_eq!(indent_size(first_worktree, cx), Some(IndentSize::Value(6)));
+        assert_eq!(indent_size(second_worktree, cx), Some(IndentSize::Value(6)));
+
+        fs.remove_file(config_path, Default::default())
+            .await
+            .expect("external config is deleted");
+        cx.run_until_parked();
+        assert_eq!(indent_size(first_worktree, cx), None);
+        assert_eq!(indent_size(second_worktree, cx), None);
+        store.update(cx, |store, _| store.remove_for_worktree(first_worktree));
+        cx.run_until_parked();
+        store.read_with(cx, |store, _| {
+            assert!(store.external_configs.is_empty());
+            assert_eq!(store.local_external_config_watchers.len(), 1);
+            assert_eq!(
+                store
+                    .local_external_config_watchers
+                    .get(&parent)
+                    .expect("surviving watcher exists")
+                    .worktree_ids,
+                BTreeSet::from_iter([second_worktree]),
+            );
+        });
+
+        fs.atomic_write(
+            config_path.to_path_buf(),
+            "root = true\n[*]\nindent_size = 8\n".to_owned(),
+        )
+        .await
+        .expect("external config is recreated");
+        cx.run_until_parked();
+        assert_eq!(indent_size(first_worktree, cx), None);
+        assert_eq!(indent_size(second_worktree, cx), Some(IndentSize::Value(8)));
+        store.update(cx, |store, _| store.remove_for_worktree(second_worktree));
+        cx.run_until_parked();
+        store.read_with(cx, |store, _| {
+            assert!(store.external_configs.is_empty());
+            assert!(store.local_external_config_discovery_tasks.is_empty());
+            assert!(store.local_external_config_watchers.is_empty());
+            assert!(store.worktree_state.is_empty());
+        });
+        assert!(fs.watched_paths().is_empty());
+    }
 
     #[test]
     fn test_properties_resolution_and_updates() {
