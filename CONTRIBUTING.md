@@ -5,20 +5,15 @@ Thank you for helping us make Zed better!
 ## Before you start
 
 - **Keep no more than three PRs open at a time.**
-  Start with one and see it through; getting it merged gives the next one a better chance.
   This limit helps us keep up with reviews and ensures all contributors get a fair share of our reviewing capacity.
-  A stack of open PRs can go stale as `main` changes, especially when submissions are automated.
-- **For bug fixes and docs improvements, start with a PR.**
-- **Discuss features with us before you start.**
+  Start with one and see it through; we're lucky to get a lot of contributions, and the pattern we've seen is that landing your first PR dramatically improves the odds for every PR after it.
+  A stack of open PRs on the other hand tends to go stale as `main` changes.
+- **Discuss features with us before you start writing code for them**.
   If there isn't a GitHub issue with staff confirmation that we want it, start a [GitHub discussion](https://github.com/zed-industries/zed/discussions), not a PR or a new issue.
   This especially applies to changes to the Zed Extension API.
   - Before proposing a larger feature, read the [Zed Feature Process](./docs/src/development/feature-process.md) for the context, integration points, and design decisions to cover.
-- **Keep each PR about one thing**, leaving unrelated features and refactoring for another PR.
-- **Sign the [Contributor License Agreement](https://zed.dev/cla)** before your contribution can be merged.
-  All activity in Zed forums is subject to our [Code of Conduct](https://zed.dev/code-of-conduct).
 
-Read the [AI policy](#ai-policy) below, then see [sending changes](#sending-changes) for build guides and PR requirements.
-For UI changes, keep the [UI/UX checklist](./docs/src/development/ui-checklist.md) handy.
+All activity in Zed forums is subject to our [Code of Conduct](https://zed.dev/code-of-conduct).
 
 ### Things we will (probably) not merge
 
@@ -31,7 +26,18 @@ There are few hard-and-fast rules, but we typically don't merge:
 - **Giant refactorings.**
 - **Non-trivial changes without tests.**
 - **Style-only code changes that don't alter app logic.** Reducing allocations, removing `.unwrap()`s, and fixing typos are welcome; making code "more readable" alone may not be.
-- **AI-generated work the author doesn't understand.** You are responsible for the output, not just the prompt.
+- **LLM-generated work the author doesn't understand.**
+
+### We love PRs that...
+
+- **Fix or extend the docs**: browse [docs issues](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20type%3ADocs).
+- **Close issues curated for the community:** [good first issues](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22.contrib%2Fgood%20first%20issue%22), [good non-first issues](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22.contrib%2Fgood%20non-first%20issue%22).
+- **Fix bugs**: start with [triaged bugs with confirmed reproduction steps](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20type%3ABug%20label%3Astate%3Areproducible), or browse [area labels](https://github.com/zed-industries/zed/labels?q=area%3A*) for parts of Zed you care about.
+  Select a label, then add `type:Bug` to the search.
+- **Make existing features work for more people** through small enhancements, such as support for more platforms or modes.
+- **Add small features**, like keybindings or actions you miss from other editors.
+- **Join a Community Program** like [Let's Git Together](https://github.com/zed-industries/zed/issues/41541) or [The Guild](https://zed.dev/community/guild).
+- **Build features we've explicitly invited contributions for**, listed on the [community feature board](https://github.com/orgs/zed-industries/projects/78/views/4).
 
 ## AI Policy
 
@@ -51,47 +57,27 @@ This policy was adapted from [ripgrep's AI policy](https://github.com/BurntSushi
 
 **Build and run Zed locally, then manually test your changes before opening a PR.** Follow the guide for [macOS](./docs/src/development/macos.md), [Linux](./docs/src/development/linux.md), [Windows](./docs/src/development/windows.md), or [FreeBSD](./docs/src/development/freebsd.md).
 
-For help finding your way around the code, see the [codebase overview](https://zed.dev/docs/development#birds-eye-view-of-zed).
-
 When preparing your PR:
 
-- **Explain the problem and why it matters**, then describe your solution.
-- **Include tests**, and consider updating [visual regression tests](./docs/src/development/macos.md#visual-regression-tests) for UI changes.
-- **For visual changes, attach screenshots or a video** and work through the [UI/UX checklist](./docs/src/development/ui-checklist.md).
-- **Review your own diff**, including any AI-assisted code, for quality, security, reliability, and performance.
+- **Review your own work**, including any AI-assisted code. Follow the [pull request template](./.github/pull_request_template.md?plain=1) for testing details and the self-review checklist.
+- **For visual changes, attach screenshots or a video** and work through the [UI/UX checklist](./docs/src/development/ui-checklist.md). For non-visual improvements and changes, include benchmarks or other artifacts produced when testing.
+- **Keep each PR about one thing**, leaving unrelated features and refactoring for another PR.
+- **Sign the [Contributor License Agreement](https://zed.dev/cla)** so that your contribution can be merged.
 
-### What to expect from review
+**Opening a PR does not guarantee a merge.** We may decline a change that doesn't fit Zed's direction or quality standards, even after you've put work into it. Confirming interest early and following this guide give your PR the best chance.
 
-**Opening a PR does not guarantee a merge** - We may decline a change that doesn't fit Zed's direction or quality standards, even after you've put work into it. Confirming interest early and following this guide give your PR the best chance.
+**Pinging maintainers by username or emailing them does not raise your PR's priority**; it takes time away from review.
 
-We value working code and synchronous conversations over long discussion threads. Respond to GitHub comments, or offer time to pair if you need more feedback.
+## Resources
 
-We'll get back to you, though sometimes more slowly than we'd like. That said, **pinging maintainers by username or emailing them does not raise your PR's priority**; it takes time away from review.
-
-## Contribution ideas
-
-**Looking for a place to start?**
-Browse issues considered suitable for [first-time contributors](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22.contrib%2Fgood%20first%20issue%22) or [returning contributors](https://github.com/zed-industries/zed/issues?q=state%3Aopen%20label%3A%22.contrib%2Fgood%20non-first%20issue%22).
-
-We spend most of our time on Zed's core priorities, but welcome community improvements we haven't thought of or had time to tackle.
-In particular, we love PRs that:
-
-- **Fix or extend the docs**: browse [docs issues](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20type%3ADocs).
-- **Fix bugs**: start with [triaged bugs with confirmed reproduction steps](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20type%3ABug%20label%3Astate%3Areproducible), or browse [area labels](https://github.com/zed-industries/zed/labels?q=area%3A*) for parts of Zed you care about.
-  Select a label, then add `type:Bug` to the search.
-- **Make existing features work for more people** through small enhancements, such as support for more platforms or modes.
-- **Add small features**, like keybindings or actions you miss from other editors or extensions.
-- **Join a Community Program** like [Let's Git Together](https://github.com/zed-industries/zed/issues/41541) or [The Guild](https://zed.dev/community/guild).
-- **Build features we've explicitly invited contributions for**, listed on the [community feature board](https://github.com/orgs/zed-industries/projects/78/views/4).
-
-## UI/UX checklist
+### UI/UX checklist
 
 For UI changes, use the [UI/UX checklist](./docs/src/development/ui-checklist.md) in the development docs.
 
-## Bird's-eye view of Zed
+### Bird's-eye view of Zed
 
 For a tour of the main crates, see the [codebase overview](https://zed.dev/docs/development#birds-eye-view-of-zed) in the development docs.
 
-## Packaging Zed
+### Packaging Zed
 
 Check our [notes for packaging Zed](https://zed.dev/docs/development/linux#notes-for-packaging-zed).
