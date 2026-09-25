@@ -295,7 +295,7 @@ impl WgpuRenderer {
             .borrow()
             .as_ref()
             .map(|ctx| ctx.instance.clone())
-            .unwrap_or_else(|| WgpuContext::instance(Box::new(window.clone())));
+            .unwrap_or_else(|| WgpuContext::instance(Some(Box::new(window.clone()))));
 
         // Safety: The caller guarantees that the window handle is valid for the
         // lifetime of this renderer. In practice, the RawWindow struct is created
@@ -1182,7 +1182,6 @@ impl WgpuRenderer {
             wgpu::Color::TRANSPARENT,
         ) {
             log::error!("{error:#}");
-            self.resources().queue.submit(std::iter::empty());
             return false;
         }
 
@@ -1449,6 +1448,10 @@ impl WgpuRendererCore {
         );
 
         self.record_frame(scene, target_view, clear_color)
+            .inspect_err(|_| {
+                // Queue writes are staged before encoding; flush them even if the frame fails.
+                self.resources.queue.submit(std::iter::empty());
+            })
     }
 
     fn record_frame(
@@ -2197,7 +2200,7 @@ impl WgpuRenderer {
             // may need more time to come back (e.g. after suspend/resume).
             std::thread::sleep(std::time::Duration::from_millis(350));
 
-            let instance = WgpuContext::instance(Box::new(window.clone()));
+            let instance = WgpuContext::instance(Some(Box::new(window.clone())));
             let surface = create_surface(&instance, window_handle.as_raw())?;
             let new_context =
                 WgpuContext::new_rejecting_software(instance, &surface, self.compositor_gpu)?;
@@ -2265,15 +2268,7 @@ pub struct WgpuHeadlessRenderer {
 ))]
 impl WgpuHeadlessRenderer {
     pub fn new() -> anyhow::Result<Self> {
-        Self::new_with_software(false)
-    }
-
-    pub fn new_allowing_software() -> anyhow::Result<Self> {
-        Self::new_with_software(true)
-    }
-
-    fn new_with_software(allow_software: bool) -> anyhow::Result<Self> {
-        let (context, target_format) = WgpuContext::new_headless(allow_software)?;
+        let (context, target_format) = WgpuContext::new_headless()?;
         let atlas = Arc::new(WgpuAtlas::from_context(&context));
         let core = WgpuRendererCore::new(
             &context,
@@ -2362,13 +2357,8 @@ impl WgpuHeadlessRenderer {
             .ok_or_else(|| anyhow::anyhow!("Headless render target was not created"))?
             .view
             .clone();
-        if let Err(error) = self
-            .core
-            .render_frame(scene, &view, size, false, wgpu::Color::BLACK)
-        {
-            self.core.resources.queue.submit(std::iter::empty());
-            return Err(error);
-        }
+        self.core
+            .render_frame(scene, &view, size, false, wgpu::Color::BLACK)?;
         Ok(())
     }
 
@@ -2581,7 +2571,7 @@ mod tests {
 
     #[test]
     fn headless_renderer_reads_padded_rows_and_resizes() -> anyhow::Result<()> {
-        let mut renderer = WgpuHeadlessRenderer::new_allowing_software()?;
+        let mut renderer = WgpuHeadlessRenderer::new()?;
         let first_size = Size {
             width: DevicePixels(13),
             height: DevicePixels(7),

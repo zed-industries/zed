@@ -115,16 +115,8 @@ impl WgpuContext {
         not(target_family = "wasm"),
         any(test, feature = "bench-support", feature = "test-support")
     ))]
-    pub(crate) fn new_headless(
-        allow_software: bool,
-    ) -> anyhow::Result<(Self, wgpu::TextureFormat)> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
-            flags: wgpu::InstanceFlags::default(),
-            backend_options: wgpu::BackendOptions::default(),
-            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-            display: None,
-        });
+    pub(crate) fn new_headless() -> anyhow::Result<(Self, wgpu::TextureFormat)> {
+        let instance = Self::instance(None);
         let device_id_filter = Self::device_id_filter();
         let (adapter, device, queue, dual_source_blending, color_texture_format, target_format) =
             gpui::block_on(async {
@@ -133,10 +125,6 @@ impl WgpuContext {
 
                 for adapter in adapters {
                     let adapter_info = adapter.get_info();
-                    if !allow_software && adapter_info.device_type == wgpu::DeviceType::Cpu {
-                        continue;
-                    }
-
                     let Some(target_format) = Self::headless_target_format(&adapter) else {
                         log::warn!(
                             "Adapter {:?} has no supported headless render target format",
@@ -147,6 +135,14 @@ impl WgpuContext {
 
                     match Self::create_device(&adapter).await {
                         Ok((device, queue, dual_source_blending, color_texture_format)) => {
+                            #[cfg(feature = "bench-support")]
+                            if adapter_info.device_type == wgpu::DeviceType::Cpu {
+                                log::error!(
+                                    "Headless renderer selected software adapter {:?}; \
+                                     benchmark results measure CPU software rendering, not hardware GPU rendering",
+                                    adapter_info.name
+                                );
+                            }
                             return Ok((
                                 adapter,
                                 device,
@@ -165,14 +161,7 @@ impl WgpuContext {
                     }
                 }
 
-                if allow_software {
-                    anyhow::bail!("No usable headless GPU adapter found")
-                } else {
-                    anyhow::bail!(
-                        "No usable hardware adapter found for headless rendering; \
-                         software adapters are disabled"
-                    )
-                }
+                anyhow::bail!("No usable headless GPU adapter found")
             })?;
 
         Ok((
@@ -409,13 +398,13 @@ impl WgpuContext {
     }
 
     #[cfg(not(target_family = "wasm"))]
-    pub fn instance(display: Box<dyn wgpu::wgt::WgpuHasDisplayHandle>) -> wgpu::Instance {
+    pub fn instance(display: Option<Box<dyn wgpu::wgt::WgpuHasDisplayHandle>>) -> wgpu::Instance {
         wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
             flags: wgpu::InstanceFlags::default(),
             backend_options: wgpu::BackendOptions::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-            display: Some(display),
+            display,
         })
     }
 
