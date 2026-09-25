@@ -409,10 +409,14 @@ impl criterion::measurement::ValueFormatter for InstructionFormatter {
         values: &mut [f64],
     ) -> &'static str {
         let (units, unit) = match throughput {
+            criterion::Throughput::Bits(units) => (*units, "instructions/bit"),
             criterion::Throughput::Bytes(units) | criterion::Throughput::BytesDecimal(units) => {
                 (*units, "instructions/byte")
             }
-            criterion::Throughput::Elements(units) => (*units, "instructions/element"),
+            criterion::Throughput::Elements(units)
+            | criterion::Throughput::ElementsAndBytes {
+                elements: units, ..
+            } => (*units, "instructions/element"),
         };
         for value in values {
             *value /= units as f64;
