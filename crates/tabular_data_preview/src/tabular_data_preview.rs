@@ -28,6 +28,9 @@ pub struct TabularDataPreviewPane {
     pub(crate) parse_error: Option<SharedString>,
     /// Time when the last parsing operation ended, used for smart debouncing
     pub(crate) last_parse_end_time: Option<std::time::Instant>,
+    /// Forwards the table's notifications so observers of this pane (e.g. `cx.condition` in
+    /// tests, or anything watching for the mapping/list-state to settle) see them too.
+    _table_subscription: gpui::Subscription,
 }
 
 pub fn init(cx: &mut App) {
@@ -128,6 +131,7 @@ impl TabularDataPreviewPane {
             );
 
             let table = cx.new(|cx| TableView::new(window, cx));
+            let table_subscription = cx.observe(&table, |_, _, cx| cx.notify());
 
             let mut view = TabularDataPreviewPane {
                 active_editor_state: EditorState {
@@ -139,6 +143,7 @@ impl TabularDataPreviewPane {
                 is_parsing: false,
                 parse_error: None,
                 last_parse_end_time: None,
+                _table_subscription: table_subscription,
             };
 
             view.parse_from_active_editor(false, cx);
