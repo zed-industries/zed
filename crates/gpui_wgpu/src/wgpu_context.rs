@@ -290,7 +290,7 @@ impl WgpuContext {
     pub fn instance(display: Box<dyn wgpu::wgt::WgpuHasDisplayHandle>) -> wgpu::Instance {
         wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
-            flags: wgpu::InstanceFlags::default(),
+            flags: instance_flags(),
             backend_options: wgpu::BackendOptions::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
             display: Some(display),
@@ -565,6 +565,14 @@ impl WgpuContext {
     }
 }
 
+/// Instance flags, including the ones wgpu reads from the environment. Without
+/// them a driver reporting a zero conformance version, such as Mesa's PanVK on
+/// most Mali GPUs, cannot be enabled at all.
+#[cfg(not(target_family = "wasm"))]
+fn instance_flags() -> wgpu::InstanceFlags {
+    wgpu::InstanceFlags::from_env_or_default()
+}
+
 #[cfg(not(target_family = "wasm"))]
 fn parse_pci_id(id: &str) -> anyhow::Result<u32> {
     let mut id = id.trim();
@@ -584,7 +592,29 @@ fn parse_pci_id(id: &str) -> anyhow::Result<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_pci_id;
+    use super::{instance_flags, parse_pci_id};
+
+    #[test]
+    fn instance_flags_follow_the_environment() {
+        const KEY: &str = "WGPU_ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER";
+        const FLAG: wgpu::InstanceFlags = wgpu::InstanceFlags::ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER;
+
+        assert!(
+            !wgpu::InstanceFlags::default().contains(FLAG),
+            "the flag is already set without the environment, so this test proves nothing"
+        );
+
+        let previous = std::env::var_os(KEY);
+        // Safety: no other thread in this test binary reads wgpu's environment.
+        unsafe { std::env::set_var(KEY, "1") };
+        let flags = instance_flags();
+        match previous {
+            Some(value) => unsafe { std::env::set_var(KEY, value) },
+            None => unsafe { std::env::remove_var(KEY) },
+        }
+
+        assert!(flags.contains(FLAG));
+    }
 
     #[test]
     fn test_parse_device_id() {
