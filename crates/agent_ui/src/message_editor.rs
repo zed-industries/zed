@@ -932,6 +932,12 @@ impl MessageEditor {
     pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
             editor.clear(window, cx);
+        });
+        self.clear_mentions(cx);
+    }
+
+    fn clear_mentions(&mut self, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
             editor.remove_creases(
                 self.mention_set.update(cx, |mention_set, _cx| {
                     mention_set
@@ -1691,7 +1697,11 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.clear(window, cx);
+        // This also replaces read-only transcript content; input actions such as
+        // Editor::clear intentionally cannot modify those buffers.
+        self.editor
+            .update(cx, |editor, cx| editor.set_text("", window, cx));
+        self.clear_mentions(cx);
         self.insert_message_blocks(message, false, window, cx);
     }
 

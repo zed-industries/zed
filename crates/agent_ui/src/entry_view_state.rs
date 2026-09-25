@@ -241,22 +241,30 @@ impl EntryViewState {
                 let has_client_id = message.client_id.is_some();
                 let is_subagent = thread.read(cx).parent_session_id().is_some();
                 let source_blocks = message.content.source_blocks();
+                let source_version = message.content.source_version();
                 let source_is_representable = source_blocks
                     .iter()
                     .all(acp_thread::content::can_convert_to_v1);
                 let is_editable =
                     can_rewind && has_client_id && !is_subagent && source_is_representable;
-                if let Some(Entry::UserMessage(editor)) = self.entries.get_mut(index) {
-                    // Keep focused drafts unless newly unsupported content makes
-                    // the message read-only and needs its fallback shown.
-                    let refreshed_source = (!source_is_representable
-                        || !editor.focus_handle(cx).is_focused(window))
+                if let Some(Entry::UserMessage {
+                    editor,
+                    synced_source_version,
+                }) = self.entries.get_mut(index)
+                {
+                    // Read-only messages cannot hold drafts, so focus must not
+                    // block new content, nor should unchanged content reset their selection.
+                    let was_read_only = editor.read(cx).editor().read(cx).read_only(cx);
+                    let refreshed_source = ((!was_read_only
+                        || *synced_source_version != source_version)
+                        && (!is_editable || !editor.focus_handle(cx).is_focused(window)))
                     .then(|| source_blocks.to_vec());
                     editor.update(cx, |editor, cx| editor.set_read_only(!is_editable, cx));
                     if let Some(source_blocks) = refreshed_source {
                         editor.update(cx, |editor, cx| {
                             editor.set_source_message(source_blocks, window, cx);
                         });
+                        *synced_source_version = source_version;
                     }
                 } else {
                     let source_blocks = source_blocks.to_vec();
@@ -288,7 +296,13 @@ impl EntryViewState {
                         })
                     })
                     .detach();
-                    self.set_entry(index, Entry::UserMessage(message_editor));
+                    self.set_entry(
+                        index,
+                        Entry::UserMessage {
+                            editor: message_editor,
+                            synced_source_version: source_version,
+                        },
+                    );
                 }
             }
             AgentThreadEntry::ToolCall(tool_call) => {
@@ -540,17 +554,22 @@ pub struct ToolCallEntry {
 
 #[derive(Debug)]
 pub enum Entry {
-    UserMessage(Entity<MessageEditor>),
+    UserMessage {
+        editor: Entity<MessageEditor>,
+        synced_source_version: acp_thread::MessageContentVersion,
+    },
     AssistantMessage(AssistantMessageEntry),
     ToolCall(ToolCallEntry),
-    Elicitation { focus_handle: FocusHandle },
+    Elicitation {
+        focus_handle: FocusHandle,
+    },
     ContextCompaction,
 }
 
 impl Entry {
     pub fn focus_handle(&self, cx: &App) -> Option<FocusHandle> {
         match self {
-            Self::UserMessage(editor) => Some(editor.read(cx).focus_handle(cx)),
+            Self::UserMessage { editor, .. } => Some(editor.read(cx).focus_handle(cx)),
             Self::AssistantMessage(message) => Some(message.focus_handle.clone()),
             Self::ToolCall(tool_call) => Some(tool_call.focus_handle.clone()),
             Self::Elicitation { focus_handle } => Some(focus_handle.clone()),
@@ -560,7 +579,7 @@ impl Entry {
 
     pub fn message_editor(&self) -> Option<&Entity<MessageEditor>> {
         match self {
-            Self::UserMessage(editor) => Some(editor),
+            Self::UserMessage { editor, .. } => Some(editor),
             Self::AssistantMessage(_)
             | Self::ToolCall(_)
             | Self::Elicitation { .. }
@@ -591,7 +610,7 @@ impl Entry {
     ) -> Option<ScrollHandle> {
         match self {
             Self::AssistantMessage(message) => message.scroll_handle_for_chunk(chunk_ix),
-            Self::UserMessage(_)
+            Self::UserMessage { .. }
             | Self::ToolCall(_)
             | Self::Elicitation { .. }
             | Self::ContextCompaction => None,
@@ -609,7 +628,7 @@ impl Entry {
     pub fn has_content(&self) -> bool {
         match self {
             Self::ToolCall(ToolCallEntry { content, .. }) => !content.is_empty(),
-            Self::UserMessage(_)
+            Self::UserMessage { .. }
             | Self::AssistantMessage(_)
             | Self::Elicitation { .. }
             | Self::ContextCompaction => false,
@@ -626,7 +645,7 @@ impl Focusable for ToolCallEntry {
 impl Focusable for Entry {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match self {
-            Self::UserMessage(editor) => editor.read(cx).focus_handle(cx),
+            Self::UserMessage { editor, .. } => editor.read(cx).focus_handle(cx),
             Self::AssistantMessage(message) => message.focus_handle.clone(),
             Self::ToolCall(tool_call) => tool_call.focus_handle.clone(),
             Self::Elicitation { focus_handle } => focus_handle.clone(),
