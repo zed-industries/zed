@@ -64,6 +64,11 @@ impl fmt::Display for TreeInput {
 /// stop well short of that. Real UI is not hundreds of levels deep either.
 const TALL_MAX_ELEMENTS: usize = 256;
 
+/// Entities are how GPUI structures a UI, so every family has at least this share of its
+/// elements backed by one; a tree with none is a single view, which no renderer can
+/// partially reuse and which real UI never is.
+const MIN_ENTITY_DENSITY: f64 = 0.05;
+
 /// The families every benchmark samples. Each is a question: what does this class of
 /// change cost on a tree like *this*?
 fn families() -> Vec<(&'static str, RandomizedElementTreeBounds)> {
@@ -72,14 +77,14 @@ fn families() -> Vec<(&'static str, RandomizedElementTreeBounds)> {
         (
             "any",
             RandomizedElementTreeBounds::new(32..=TALL_MAX_ELEMENTS)
-                .with_entity_density(0.0..=0.5)
+                .with_entity_density(MIN_ENTITY_DENSITY..=0.5)
                 .with_handler_density(handlers.clone()),
         ),
         (
             "wide",
             RandomizedElementTreeBounds::new(128..=2048)
                 .with_topologies([RandomizedElementTreeTopology::Wide])
-                .with_entity_density(0.0..=0.25)
+                .with_entity_density(MIN_ENTITY_DENSITY..=0.25)
                 .with_handler_density(handlers.clone()),
         ),
         (
@@ -90,14 +95,14 @@ fn families() -> Vec<(&'static str, RandomizedElementTreeBounds)> {
                         .into_iter()
                         .filter(|topology| topology.is_tall()),
                 )
-                .with_entity_density(0.0..=0.25)
+                .with_entity_density(MIN_ENTITY_DENSITY..=0.25)
                 .with_handler_density(handlers.clone()),
         ),
         (
             "mixed",
             RandomizedElementTreeBounds::new(128..=1024)
                 .with_topologies([RandomizedElementTreeTopology::Mixed])
-                .with_entity_density(0.0..=0.25)
+                .with_entity_density(MIN_ENTITY_DENSITY..=0.25)
                 .with_handler_density(handlers.clone()),
         ),
         (
@@ -284,17 +289,18 @@ impl fmt::Display for ChangingShareInput {
     }
 }
 
+/// Seeds per family in the `changing share` group, which multiplies every tree by five
+/// shares; fewer seeds keep the group to a few minutes.
+const CHANGING_SHARE_SEEDS: u64 = 3;
+
 /// The share of elements recolored per frame, from one element to all of them. A renderer
-/// that retains clean subtrees should scale along this axis; one that redraws everything
-/// is flat across it, so the two curves' distance is what retention buys at each share.
-/// Only families with entities are sampled: reuse happens per entity, so a tree that is
-/// one view is all-or-nothing on every renderer.
+/// that retains clean entity subtrees should fall toward the left of this axis; one that
+/// redraws everything is flat across it, so the two curves' distance is what retention
+/// buys at each share.
 fn changing_share_inputs() -> Vec<ChangingShareInput> {
     inputs()
         .into_iter()
-        .filter(|input| {
-            matches!(input.family, "any" | "dense-entities") && input.config.entity_density() > 0.0
-        })
+        .filter(|input| input.seed < CHANGING_SHARE_SEEDS)
         .flat_map(|tree| {
             [0, 1, 5, 25, 100]
                 .into_iter()
