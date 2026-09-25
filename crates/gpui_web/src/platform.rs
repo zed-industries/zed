@@ -1,21 +1,23 @@
+use crate::CanvasFontFallback;
 use crate::dispatcher::WebDispatcher;
 use crate::display::WebDisplay;
 use crate::events::EventListenerHandle;
 use crate::http_client::FetchHttpClient;
 use crate::keyboard::WebKeyboardLayout;
+use crate::text_system::WebTextSystem;
 use crate::window::WebWindow;
 use anyhow::Result;
 use futures::channel::oneshot;
 use gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardReadError,
-    ClipboardString, CursorStyle, DummyKeyboardMapper, ForegroundExecutor, Image, ImageFormat,
-    Keymap, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Task, ThermalState,
-    WindowAppearance, WindowKind, WindowParams, popup::PopupNotSupportedError,
+    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem,
+    ClipboardReadError, ClipboardString, CursorStyle, DummyKeyboardMapper, ForegroundExecutor,
+    GestureTuning, Image, ImageFormat, Keymap, Menu, MenuItem, PathPromptOptions, Platform,
+    PlatformDisplay, PlatformGestures, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, ScrollPhysics, Task, ThermalState, WindowAppearance,
+    WindowKind, WindowParams, popup::PopupNotSupportedError,
 };
 use gpui_wgpu::{PreparedWebGraphics, WebBackendPreference, WgpuContext, wgpu};
 use std::{
-    borrow::Cow,
     cell::{Cell, RefCell},
     path::{Path, PathBuf},
     rc::Rc,
@@ -23,17 +25,10 @@ use std::{
 };
 use wasm_bindgen::prelude::*;
 
-static BUNDLED_FONTS: &[&[u8]] = &[
-    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf"),
-    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Italic.ttf"),
-    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf"),
-    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBoldItalic.ttf"),
-    include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf"),
-    include_bytes!("../../../assets/fonts/lilex/Lilex-Bold.ttf"),
-    include_bytes!("../../../assets/fonts/lilex/Lilex-Italic.ttf"),
-    include_bytes!("../../../assets/fonts/lilex/Lilex-BoldItalic.ttf"),
-];
-
+/// Provides the GPUI platform implementation for web browsers.
+///
+/// The platform starts with an empty font database. Applications must add fonts
+/// through [`gpui::App::text_system`] before opening a window.
 pub struct WebPlatform {
     browser_window: web_sys::Window,
     dispatcher: Arc<WebDispatcher>,
@@ -49,7 +44,40 @@ pub struct WebPlatform {
     window_lifecycle: Rc<Cell<WebWindowLifecycle>>,
     cursor_visible: Rc<Cell<bool>>,
     last_cursor_css: Rc<Cell<&'static str>>,
+    gestures: Rc<WebGestures>,
     _cursor_restore_listeners: Vec<EventListenerHandle>,
+}
+
+/// Gesture feel for the browser, chosen so touch scrolling matches the host
+/// OS's native applications.
+struct WebGestures {
+    tuning: GestureTuning,
+}
+
+impl WebGestures {
+    fn from_user_agent(user_agent: &str) -> Self {
+        let scroll_physics = if user_agent.contains("Android") {
+            ScrollPhysics::android()
+        } else {
+            // iOS, and also desktops: the default exponential decay. Desktop
+            // browsers rarely reach the portable fling at all (trackpads
+            // deliver their own momentum events), so the distinction only
+            // matters for touch screens.
+            ScrollPhysics::ios()
+        };
+        Self {
+            tuning: GestureTuning {
+                scroll_physics,
+                ..GestureTuning::default()
+            },
+        }
+    }
+}
+
+impl PlatformGestures for WebGestures {
+    fn tuning(&self) -> GestureTuning {
+        self.tuning
+    }
 }
 
 struct PreparedWebWindow {
@@ -124,6 +152,22 @@ impl WebPlatform {
         allow_multi_threading: bool,
         backend_preference: WebBackendPreference,
     ) -> Self {
+        Self::new_with_backend_and_font_fallback(
+            allow_multi_threading,
+            backend_preference,
+            CanvasFontFallback::default(),
+        )
+    }
+
+    /// Configures browser fallback before any fonts or layouts are cached.
+    ///
+    /// Loaded fonts remain preferred, except when they cannot supply requested
+    /// emoji presentation. The policy cannot be changed after construction.
+    pub fn new_with_backend_and_font_fallback(
+        allow_multi_threading: bool,
+        backend_preference: WebBackendPreference,
+        canvas_font_fallback: CanvasFontFallback,
+    ) -> Self {
         let browser_window =
             web_sys::window().expect("must be running in a browser window context");
         let dispatcher = Arc::new(WebDispatcher::new(
@@ -132,16 +176,7 @@ impl WebPlatform {
         ));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher.clone());
-        let text_system = Arc::new(gpui_wgpu::CosmicTextSystem::new_without_system_fonts(
-            "IBM Plex Sans",
-        ));
-        let fonts = BUNDLED_FONTS
-            .iter()
-            .map(|bytes| Cow::Borrowed(*bytes))
-            .collect();
-        if let Err(error) = text_system.add_fonts(fonts) {
-            log::error!("failed to load bundled fonts: {error:#}");
-        }
+        let text_system = Arc::new(WebTextSystem::new("IBM Plex Sans", canvas_font_fallback));
         let text_system: Arc<dyn PlatformTextSystem> = text_system;
         let active_display: Rc<dyn PlatformDisplay> =
             Rc::new(WebDisplay::new(browser_window.clone()));
@@ -153,6 +188,9 @@ impl WebPlatform {
             cursor_visible.clone(),
             last_cursor_css.clone(),
         );
+        let gestures = Rc::new(WebGestures::from_user_agent(
+            &browser_window.navigator().user_agent().unwrap_or_default(),
+        ));
 
         Self {
             browser_window,
@@ -169,6 +207,7 @@ impl WebPlatform {
             window_lifecycle: Rc::new(Cell::new(WebWindowLifecycle::Available)),
             cursor_visible,
             last_cursor_css,
+            gestures,
             _cursor_restore_listeners: cursor_restore_listeners,
         }
     }
@@ -267,6 +306,10 @@ async fn initialize_graphics(
 impl Platform for WebPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
+    }
+
+    fn gestures(&self) -> Option<Rc<dyn PlatformGestures>> {
+        Some(self.gestures.clone())
     }
 
     fn foreground_executor(&self) -> ForegroundExecutor {
@@ -466,6 +509,10 @@ impl Platform for WebPlatform {
         self.callbacks.borrow_mut().reopen = Some(callback);
     }
 
+    // Browsers expose no system sleep or wake signal; the nearest thing is the
+    // Page Visibility API, which drives `WindowVisibility` instead.
+    fn on_system_sleep(&self, _callback: Box<dyn FnMut()>) {}
+
     fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
 
     fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {}
@@ -490,6 +537,12 @@ impl Platform for WebPlatform {
 
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
         self.callbacks.borrow_mut().thermal_state_change = Some(callback);
+    }
+
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "Idle sleep prevention for {reason:?} is not supported in the browser"
+        )))
     }
 
     fn compositor_name(&self) -> &'static str {

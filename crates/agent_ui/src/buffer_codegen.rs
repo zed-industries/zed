@@ -497,6 +497,7 @@ impl CodegenAlternative {
             .context("generating content prompt")?;
 
         let temperature = AgentSettings::temperature_for_model(model, cx);
+        let session_id = self.session_id.to_string();
 
         let tool_choice = model
             .supports_tool_choice(LanguageModelToolChoice::Any)
@@ -544,7 +545,8 @@ impl CodegenAlternative {
             ];
 
             LanguageModelRequest {
-                thread_id: None,
+                thread_id: Some(session_id),
+                prompt_cache_key: None,
                 prompt_id: None,
                 intent: Some(CompletionIntent::InlineAssist),
                 tools,
@@ -556,6 +558,7 @@ impl CodegenAlternative {
                 thinking_effort: None,
                 speed: None,
                 compact_at_tokens: None,
+                max_output_tokens: None,
             }
         }))
     }
@@ -609,6 +612,7 @@ impl CodegenAlternative {
             .context("generating content prompt")?;
 
         let temperature = AgentSettings::temperature_for_model(model, cx);
+        let session_id = self.session_id.to_string();
 
         Ok(cx.spawn(async move |_cx| {
             let mut request_message = LanguageModelRequestMessage {
@@ -625,7 +629,8 @@ impl CodegenAlternative {
             request_message.content.push(prompt.into());
 
             LanguageModelRequest {
-                thread_id: None,
+                thread_id: Some(session_id),
+                prompt_cache_key: None,
                 prompt_id: None,
                 intent: Some(CompletionIntent::InlineAssist),
                 tools: Vec::new(),
@@ -637,6 +642,7 @@ impl CodegenAlternative {
                 thinking_effort: None,
                 speed: None,
                 compact_at_tokens: None,
+                max_output_tokens: None,
             }
         }))
     }

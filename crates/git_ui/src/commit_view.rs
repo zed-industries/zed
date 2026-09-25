@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use collections::HashMap;
 use editor::{
-    Addon, Editor, EditorEvent, EditorSettings, MultiBuffer, RestoreOnlyDiffHunkDelegate,
+    Addon, Editor, EditorEvent, EditorSettings, HiddenDiffHunkRenderer, MultiBuffer,
     SplittableEditor, hover_markdown_style, multibuffer_context_lines,
 };
 use futures_lite::future::yield_now;
@@ -326,7 +326,7 @@ impl CommitView {
                 window,
                 cx,
             );
-            editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
+            editor.set_diff_hunk_renderer(Some(Arc::new(HiddenDiffHunkRenderer)), cx);
 
             editor.rhs_editor().update(cx, |editor, cx| {
                 editor.set_show_bookmarks(false, cx);
@@ -417,7 +417,6 @@ impl CommitView {
                                 &snapshot,
                                 snapshot.language().cloned(),
                                 Some(language_registry.clone()),
-                                buffer_diff::DiffBaseKind::Oid,
                                 cx,
                             )
                         })
@@ -1139,7 +1138,8 @@ pub(crate) async fn build_buffer(
             line_ending,
             text,
         );
-        let mut buffer = Buffer::build(buffer, Some(blob), Capability::ReadWrite);
+        let mut buffer = Buffer::build(buffer, Some(blob), Capability::ReadWrite, cx);
+        buffer.set_language_registry(language_registry.clone());
         buffer.set_language_async(language, cx);
         buffer
     });
@@ -1159,15 +1159,8 @@ async fn build_buffer_diff(
     let language = cx.update(|_, cx| buffer.read(cx).language().cloned())?;
     let buffer = cx.update(|_, cx| buffer.read(cx).snapshot())?;
 
-    let diff = cx.new(|cx| {
-        BufferDiff::new(
-            &buffer.text,
-            language,
-            Some(language_registry.clone()),
-            buffer_diff::DiffBaseKind::Oid,
-            cx,
-        )
-    });
+    let diff =
+        cx.new(|cx| BufferDiff::new(&buffer.text, language, Some(language_registry.clone()), cx));
 
     diff.update(cx, |diff, cx| {
         diff.set_base_text(
@@ -1346,7 +1339,7 @@ impl Item for CommitView {
                         window,
                         cx,
                     );
-                    editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
+                    editor.set_diff_hunk_renderer(Some(Arc::new(HiddenDiffHunkRenderer)), cx);
                     editor.rhs_editor().update(cx, |editor, cx| {
                         editor.set_show_bookmarks(false, cx);
                         editor.set_show_breakpoints(false, cx);
@@ -1536,4 +1529,79 @@ fn stash_matches_index(sha: &str, stash_index: usize, repo: &Repository) -> bool
         .get(stash_index)
         .map(|entry| entry.oid.to_string() == sha)
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{EmptyView, TestAppContext};
+    use indoc::indoc;
+    use language::{Language, LanguageConfig, markdown_lang};
+    use settings::SettingsStore;
+
+    #[gpui::test]
+    async fn test_build_buffer_resolves_injected_languages(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+        });
+
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        language_registry.add(markdown_lang());
+        language_registry.add(Arc::new(markdown_inline_lang()));
+
+        let window = cx.add_window(|_, _| EmptyView);
+        let mut async_cx = window
+            .update(cx, |_, window, cx| window.to_async(cx))
+            .expect("window should be open");
+
+        let text = indoc! {"
+            # Title
+
+            Some *emphasized* text.
+        "}
+        .to_string();
+        let blob = Arc::new(GitBlob {
+            path: RepoPath::new("notes.md").unwrap(),
+            worktree_id: WorktreeId::from_usize(0),
+            is_deleted: false,
+            is_binary: false,
+            display_name: "abc1234 - notes.md".into(),
+        }) as Arc<dyn File>;
+
+        let buffer = build_buffer(text, blob, &language_registry, &mut async_cx)
+            .await
+            .expect("buffer should build");
+
+        cx.run_until_parked();
+
+        buffer.read_with(cx, |buffer, _| {
+            let language = buffer.language().expect("buffer should have a language");
+            assert_eq!(language.name().as_ref(), "Markdown");
+
+            let layers = buffer
+                .snapshot()
+                .syntax_layers()
+                .map(|layer| layer.language.name().to_string())
+                .collect::<Vec<_>>();
+            assert!(
+                layers.iter().any(|name| name == "Markdown-Inline"),
+                "emphasis, links, and fenced code blocks are highlighted by the injected \
+                 Markdown-Inline grammar, but the buffer parsed with layers {layers:?}",
+            );
+        });
+    }
+
+    fn markdown_inline_lang() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "Markdown-Inline".into(),
+                hidden: true,
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_md::INLINE_LANGUAGE.into()),
+        )
+        .with_highlights_query("(emphasis) @emphasis")
+        .unwrap()
+    }
 }

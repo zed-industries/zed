@@ -72,7 +72,7 @@
       ]
     },
     {
-      "name": "Auth & Zed.dev",
+      "name": "Auth & zed.dev",
       "labels": [
         "area:auth",
         "area:billing",
@@ -269,7 +269,8 @@
         "area:integrations/environment",
         "area:accessibility",
         "area:docs",
-        "platform:general"
+        "platform:general",
+        "platform:web"
       ]
     }
   ]
