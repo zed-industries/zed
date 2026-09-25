@@ -69,51 +69,103 @@ const DEFAULT_FPS: u64 = 120;
 
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
 
-/// The environment variable `bench_group!` reads to pick a [`BenchMeasurement`].
+/// The environment variable `bench_group!` reads to configure [`BenchMeasurement`].
 pub const BENCH_MEASUREMENT_ENV_VAR: &str = "GPUI_BENCH_MEASUREMENT";
 
-/// A Criterion measurement chosen at runtime.
+/// A Criterion measurement that records several metrics per sample.
 ///
-/// Criterion fixes the measurement in the `Criterion<M>` type, which would force a
-/// type parameter onto every benchmark function and context. Instead,
-/// `#[gpui::bench]` functions take `&mut criterion::Criterion<BenchMeasurement>`,
-/// and this type erases the concrete [`criterion::measurement::Measurement`] behind
-/// it. `bench_group!` selects wall time or retired instructions from
-/// [`BENCH_MEASUREMENT_ENV_VAR`]; a custom `criterion_group!` can supply any other
-/// measurement through [`BenchMeasurement::new`].
+/// Criterion analyzes exactly one scalar per benchmark, fixed in the
+/// `Criterion<M>` type. `#[gpui::bench]` functions take
+/// `&mut criterion::Criterion<BenchMeasurement>`, and this type erases the
+/// concrete [`criterion::measurement::Measurement`] Criterion analyzes (the
+/// *primary*) so benchmark code needs no type parameter. Any number of
+/// *secondary* measurements are taken over the same iterations; their
+/// per-iteration values are collected by [`BenchAppContext`] into the
+/// [`BenchReport`] printed after each benchmark, so one run reports, for
+/// example, both wall time and retired instructions.
 ///
-/// Every measurement already reduces to `f64` for Criterion's statistics, so the
-/// erased value is that `f64` and the wrapped measurement's own formatter still
+/// Every measurement already reduces to `f64` for Criterion's statistics, so
+/// the erased value is that `f64` and each measurement's own formatter still
 /// labels it.
-pub struct BenchMeasurement(Box<dyn ErasedMeasurement>);
+pub struct BenchMeasurement {
+    primary: Box<dyn ErasedMeasurement>,
+    secondaries: Rc<SecondaryMeasurements>,
+}
 
 impl BenchMeasurement {
-    /// Wraps any Criterion measurement.
-    pub fn new<M>(measurement: M) -> Self
+    /// Wraps the Criterion measurement whose values Criterion analyzes.
+    pub fn new<M>(primary: M) -> Self
     where
         M: criterion::measurement::Measurement + 'static,
         M::Intermediate: 'static,
     {
-        Self(Box::new(ErasedMeasurementCell {
-            measurement,
-            intermediate: RefCell::new(None),
-        }))
+        Self {
+            primary: Box::new(ErasedMeasurementCell::new(primary)),
+            secondaries: Rc::new(SecondaryMeasurements::default()),
+        }
     }
 
-    /// Returns the measurement selected by [`BENCH_MEASUREMENT_ENV_VAR`].
+    /// Adds a measurement taken alongside the primary on every sample.
     ///
-    /// An unset variable or `wall-time` selects Criterion's wall-clock
-    /// measurement. `instructions` selects `RetiredInstructions`, which is only
-    /// available on Linux.
+    /// `name` labels the metric in the benchmark report, e.g. `"instructions"`.
+    /// Secondaries start before and end after the primary, so their own setup
+    /// and readout stays outside the primary's measured interval.
+    pub fn with_secondary<M>(mut self, name: &'static str, measurement: M) -> Self
+    where
+        M: criterion::measurement::Measurement + 'static,
+        M::Intermediate: 'static,
+    {
+        Rc::get_mut(&mut self.secondaries)
+            .expect("secondaries are only shared once measurement starts")
+            .metrics
+            .push(Rc::new(SecondaryMetric {
+                name,
+                measurement: Box::new(ErasedMeasurementCell::new(measurement)),
+                total: std::cell::Cell::new(0.0),
+            }));
+        self
+    }
+
+    /// Returns the measurement configured by [`BENCH_MEASUREMENT_ENV_VAR`].
+    ///
+    /// * unset: Criterion analyzes wall time. On Linux, retired instructions
+    ///   are reported as a secondary metric when hardware counters are
+    ///   available; otherwise a note is printed once and only wall time runs.
+    /// * `wall-time`: wall time only.
+    /// * `instructions`: Criterion analyzes retired instructions and wall time
+    ///   is reported as a secondary metric. This fails when counters are
+    ///   unavailable so CI does not silently measure something else.
     pub fn from_env() -> Result<Self> {
         match std::env::var(BENCH_MEASUREMENT_ENV_VAR).as_deref() {
-            Err(std::env::VarError::NotPresent) | Ok("wall-time") => {
-                Ok(Self::new(criterion::measurement::WallTime))
+            Err(std::env::VarError::NotPresent) => {
+                let measurement = Self::new(criterion::measurement::WallTime);
+                #[cfg(target_os = "linux")]
+                {
+                    static UNAVAILABLE_NOTE: std::sync::Once = std::sync::Once::new();
+                    match RetiredInstructions::new() {
+                        Ok(instructions) => {
+                            Ok(measurement.with_secondary("instructions", instructions))
+                        }
+                        Err(error) => {
+                            UNAVAILABLE_NOTE.call_once(|| {
+                                eprintln!(
+                                    "GPUI benchmarks: retired-instruction counts unavailable, \
+                                     reporting wall time only ({error:#})"
+                                );
+                            });
+                            Ok(measurement)
+                        }
+                    }
+                }
+                #[cfg(not(target_os = "linux"))]
+                Ok(measurement)
             }
+            Ok("wall-time") => Ok(Self::new(criterion::measurement::WallTime)),
             Ok("instructions") => {
                 #[cfg(target_os = "linux")]
                 {
-                    Ok(Self::new(RetiredInstructions::new()?))
+                    Ok(Self::new(RetiredInstructions::new()?)
+                        .with_secondary("wall time", criterion::measurement::WallTime))
                 }
                 #[cfg(not(target_os = "linux"))]
                 {
@@ -161,6 +213,15 @@ struct ErasedMeasurementCell<M: criterion::measurement::Measurement> {
     intermediate: RefCell<Option<M::Intermediate>>,
 }
 
+impl<M: criterion::measurement::Measurement> ErasedMeasurementCell<M> {
+    fn new(measurement: M) -> Self {
+        Self {
+            measurement,
+            intermediate: RefCell::new(None),
+        }
+    }
+}
+
 impl<M: criterion::measurement::Measurement> ErasedMeasurement for ErasedMeasurementCell<M> {
     fn start(&self) {
         let previous = self
@@ -187,16 +248,63 @@ impl<M: criterion::measurement::Measurement> ErasedMeasurement for ErasedMeasure
     }
 }
 
+/// A secondary metric and its total since [`SecondaryMeasurements::take_totals`]
+/// last ran.
+struct SecondaryMetric {
+    name: &'static str,
+    measurement: Box<dyn ErasedMeasurement>,
+    total: std::cell::Cell<f64>,
+}
+
+#[derive(Default)]
+struct SecondaryMeasurements {
+    metrics: Vec<Rc<SecondaryMetric>>,
+}
+
+impl SecondaryMeasurements {
+    /// Returns each metric with its total since the previous call, resetting
+    /// the totals to zero.
+    fn take_totals(&self) -> Vec<(Rc<SecondaryMetric>, f64)> {
+        self.metrics
+            .iter()
+            .map(|metric| (metric.clone(), metric.total.replace(0.0)))
+            .collect()
+    }
+}
+
+thread_local! {
+    /// The secondaries of the `BenchMeasurement` most recently started on this
+    /// thread. Criterion owns the measurement and hands benchmark code only a
+    /// `Bencher`, so this is how `BenchAppContext` reaches the secondary totals
+    /// after Criterion's iteration loop returns.
+    static ACTIVE_SECONDARIES: RefCell<Option<Rc<SecondaryMeasurements>>> =
+        const { RefCell::new(None) };
+}
+
+fn active_secondaries() -> Option<Rc<SecondaryMeasurements>> {
+    ACTIVE_SECONDARIES.with(|active| active.borrow().clone())
+}
+
 impl criterion::measurement::Measurement for BenchMeasurement {
     type Intermediate = ();
     type Value = f64;
 
     fn start(&self) -> Self::Intermediate {
-        self.0.start();
+        ACTIVE_SECONDARIES.with(|active| *active.borrow_mut() = Some(self.secondaries.clone()));
+        for metric in &self.secondaries.metrics {
+            metric.measurement.start();
+        }
+        self.primary.start();
     }
 
     fn end(&self, (): Self::Intermediate) -> Self::Value {
-        self.0.end()
+        let value = self.primary.end();
+        for metric in self.secondaries.metrics.iter().rev() {
+            metric
+                .total
+                .set(metric.total.get() + metric.measurement.end());
+        }
+        value
     }
 
     fn add(&self, first: &Self::Value, second: &Self::Value) -> Self::Value {
@@ -212,7 +320,7 @@ impl criterion::measurement::Measurement for BenchMeasurement {
     }
 
     fn formatter(&self) -> &dyn criterion::measurement::ValueFormatter {
-        self.0.formatter()
+        self.primary.formatter()
     }
 }
 
@@ -542,7 +650,14 @@ pub struct ForegroundWorkSummary {
 #[derive(Clone)]
 pub struct BenchReport {
     frame_snapshot: Rc<RefCell<WindowFrameSnapshot>>,
+    secondary_metrics: Rc<RefCell<Vec<SecondaryMetricHistogram>>>,
     frame_budget_nanos: u128,
+}
+
+/// Per-iteration values of one secondary metric across every measured sample.
+struct SecondaryMetricHistogram {
+    metric: Rc<SecondaryMetric>,
+    per_iteration: Histogram<u64>,
 }
 
 impl Default for BenchReport {
@@ -568,7 +683,54 @@ impl BenchReport {
         );
         Self {
             frame_snapshot: Rc::new(RefCell::new(WindowFrameSnapshot::new())),
+            secondary_metrics: Rc::new(RefCell::new(Vec::new())),
             frame_budget_nanos,
+        }
+    }
+
+    /// Records the per-iteration value of every active secondary metric for
+    /// the Criterion sample that just finished, using the totals accumulated
+    /// since the previous call.
+    ///
+    /// `iterations` is counted by the caller because Criterion's `Bencher`
+    /// does not expose it, and `iter_batched_ref` with
+    /// `BatchSize::PerIteration` ends the measurement once per iteration.
+    fn record_secondary_metrics(&self, iterations: u64) {
+        let Some(secondaries) = active_secondaries() else {
+            return;
+        };
+        if iterations == 0 {
+            return;
+        }
+        let mut histograms = self.secondary_metrics.borrow_mut();
+        for (metric, total) in secondaries.take_totals() {
+            let histogram = match histograms
+                .iter_mut()
+                .find(|histogram| Rc::ptr_eq(&histogram.metric, &metric))
+            {
+                Some(histogram) => histogram,
+                None => {
+                    histograms.push(SecondaryMetricHistogram {
+                        metric,
+                        per_iteration: Histogram::new(3).expect("3 significant digits is valid"),
+                    });
+                    histograms.last_mut().expect("a histogram was just pushed")
+                }
+            };
+            let per_iteration = (total / iterations as f64).round();
+            // `.ok()`: the histogram auto-resizes, so recording is infallible.
+            histogram
+                .per_iteration
+                .record(per_iteration.clamp(0.0, u64::MAX as f64) as u64)
+                .ok();
+        }
+    }
+
+    /// Discards secondary totals accumulated outside a measured interval, e.g.
+    /// by Criterion iterating a different benchmark on this thread.
+    fn discard_secondary_totals(&self) {
+        if let Some(secondaries) = active_secondaries() {
+            secondaries.take_totals();
         }
     }
 
@@ -680,15 +842,18 @@ impl BenchReport {
     }
 
     /// Prints this report to stderr.
-    pub fn print(&self, benchmark_name: Option<&'static str>) {
+    pub fn print(&self, benchmark_name: &str) {
         let frame_snapshot = self.frame_snapshot.borrow();
-        if frame_snapshot.is_empty() {
+        let secondary_metrics = self.secondary_metrics.borrow();
+        if frame_snapshot.is_empty() && secondary_metrics.is_empty() {
             return;
         }
 
-        let benchmark_name = benchmark_name.unwrap_or("unknown benchmark");
         eprintln!("GPUI bench report (all observed iterations): {benchmark_name}");
         eprintln!("  note: includes Criterion warmup/calibration");
+        for histogram in secondary_metrics.iter() {
+            Self::print_secondary_metric(histogram);
+        }
         self.print_histogram("window dirty-to-draw", &frame_snapshot.dirty_to_draw);
         self.print_histogram("window draw", &frame_snapshot.draw);
         self.print_histogram("window present interval", &frame_snapshot.present_interval);
@@ -700,6 +865,24 @@ impl BenchReport {
             );
         }
         self.print_foreground_work(&frame_snapshot.foreground_work);
+    }
+
+    fn print_secondary_metric(histogram: &SecondaryMetricHistogram) {
+        let values = &histogram.per_iteration;
+        let median = values.value_at_quantile(0.50) as f64;
+        let mut scaled = [median, values.min() as f64, values.max() as f64];
+        let unit = histogram
+            .metric
+            .measurement
+            .formatter()
+            .scale_values(median, &mut scaled);
+        let [median, min, max] = scaled;
+        eprintln!(
+            "  {} per iteration: median {median:.3} {unit} (min {min:.3}, max {max:.3}, \
+             samples {})",
+            histogram.metric.name,
+            values.len()
+        );
     }
 
     fn print_histogram(&self, name: &str, histogram: &Histogram<u64>) {
@@ -1103,12 +1286,16 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         let bencher = self.take_bencher("bench_iter");
         self.dispatch_pending_frames(|| true);
         let collector = TraceScope::start(self.foreground_journal_collector());
+        self.report.discard_secondary_totals();
+        let mut iterations = 0;
         let mut benchmark = || {
+            iterations += 1;
             benchmark(self);
             self.dispatch_pending_frames(|| true);
         };
         bencher.iter(&mut benchmark);
         let events = collector.finish();
+        self.report.record_secondary_metrics(iterations);
         self.report.record_frame_timings(events.frame_events.iter());
         self.report
             .record_foreground_events(events.foreground_events());
@@ -1163,6 +1350,8 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         let mut benchmark_context = self.clone();
         let foreground_executor = self.foreground_executor.clone();
         let report = self.report.clone();
+        report.discard_secondary_totals();
+        let iterations = std::cell::Cell::new(0);
 
         bencher.iter_batched_ref(
             || {
@@ -1181,6 +1370,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
                 }
             },
             |measured_input| {
+                iterations.set(iterations.get() + 1);
                 let task = benchmark(&mut measured_input.input, &mut benchmark_context);
                 benchmark_context.dispatch_pending_frames(|| true);
                 let output = Rc::new(RefCell::new(None));
@@ -1200,6 +1390,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             },
             criterion::BatchSize::PerIteration,
         );
+        report.record_secondary_metrics(iterations.get());
         self.replace_bencher(bencher);
     }
 
@@ -1230,7 +1421,10 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         let dispatcher = self.background_executor.dispatcher().clone();
         self.dispatch_pending_frames(|| true);
         let collector = TraceScope::start(self.foreground_journal_collector());
+        self.report.discard_secondary_totals();
+        let mut iterations = 0;
         let mut benchmark = || {
+            iterations += 1;
             dispatcher
                 .as_threaded()
                 .expect("validated in BenchAppContext::build")
@@ -1249,6 +1443,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         bencher.iter(&mut benchmark);
 
         let events = collector.finish();
+        self.report.record_secondary_metrics(iterations);
         self.report.record_frame_timings(events.frame_events.iter());
         self.report
             .record_foreground_events(events.foreground_events());
@@ -1294,6 +1489,8 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             .as_threaded()
             .expect("validated in BenchAppContext::build");
         let report = self.report.clone();
+        report.discard_secondary_totals();
+        let iterations = std::cell::Cell::new(0);
 
         bencher.iter_batched_ref(
             || {
@@ -1308,6 +1505,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
                 }
             },
             |measured_input| {
+                iterations.set(iterations.get() + 1);
                 let (state, window, stopped) = &mut measured_input.input;
                 let started = Instant::now();
                 let check_deadline = || {
@@ -1373,6 +1571,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             },
             criterion::BatchSize::PerIteration,
         );
+        report.record_secondary_metrics(iterations.get());
         self.replace_bencher(bencher);
     }
 
@@ -1914,6 +2113,89 @@ mod tests {
         let intermediate = measurement.start();
         counter.fetch_add(3, Ordering::SeqCst);
         assert_eq!(measurement.end(intermediate), 3.0);
+    }
+
+    /// Runs `benchmark` under a wall-time primary with a fake counter as the
+    /// secondary metric and returns the per-iteration values the report
+    /// recorded for it.
+    fn secondary_values_per_iteration(
+        counter: Arc<AtomicU64>,
+        benchmark: impl Fn(&mut BenchAppContext, &Arc<AtomicU64>),
+    ) -> Vec<u64> {
+        let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+        let report = BenchReport::default();
+        let measurements = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut criterion = criterion::Criterion::default()
+            .with_measurement(
+                BenchMeasurement::new(criterion::measurement::WallTime).with_secondary(
+                    "fake counter",
+                    FakeCounterMeasurement::new(counter.clone(), measurements),
+                ),
+            )
+            .without_plots()
+            .sample_size(10)
+            .warm_up_time(Duration::from_millis(1))
+            .measurement_time(Duration::from_millis(1));
+
+        criterion.bench_function("secondary_values_per_iteration", |bencher| {
+            let mut cx = BenchAppContext::new_with_platform_and_report(
+                platform.clone(),
+                Some("secondary_values_per_iteration"),
+                bencher,
+                report.clone(),
+            );
+            // Fixture work outside the measured loop must not be attributed
+            // to any iteration.
+            counter.fetch_add(1_000_000, Ordering::SeqCst);
+            benchmark(&mut cx, &counter);
+            cx.teardown();
+        });
+
+        let histograms = report.secondary_metrics.borrow();
+        assert_eq!(histograms.len(), 1);
+        assert_eq!(histograms[0].metric.name, "fake counter");
+        histograms[0]
+            .per_iteration
+            .iter_recorded()
+            .flat_map(|value| {
+                std::iter::repeat_n(value.value_iterated_to(), value.count_at_value() as usize)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn secondary_metric_is_normalized_per_iteration_for_bench_iter() {
+        let values = secondary_values_per_iteration(Arc::new(AtomicU64::new(0)), |cx, counter| {
+            cx.bench_iter(|_| {
+                counter.fetch_add(11, Ordering::SeqCst);
+            });
+        });
+        assert!(!values.is_empty());
+        assert!(
+            values.iter().all(|value| *value == 11),
+            "each sample's total should be divided by its iteration count: {values:?}"
+        );
+    }
+
+    #[test]
+    fn secondary_metric_is_accumulated_across_per_iteration_batches() {
+        let values = secondary_values_per_iteration(Arc::new(AtomicU64::new(0)), |cx, counter| {
+            cx.bench_batched_task(
+                |_| {
+                    // Setup runs outside every measured interval.
+                    counter.fetch_add(1_000, Ordering::SeqCst);
+                },
+                |(), cx| {
+                    counter.fetch_add(11, Ordering::SeqCst);
+                    cx.background_spawn(async {})
+                },
+            );
+        });
+        assert!(!values.is_empty());
+        assert!(
+            values.iter().all(|value| *value == 11),
+            "PerIteration batches should sum to one per-iteration value: {values:?}"
+        );
     }
 
     #[cfg(target_os = "linux")]

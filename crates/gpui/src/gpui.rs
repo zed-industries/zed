@@ -113,12 +113,14 @@ pub use spring::*;
 /// Defines a Criterion benchmark group for benchmarks annotated with [`gpui::bench`].
 ///
 /// This mirrors `criterion::criterion_group!`, but the group measures with the
-/// `gpui::BenchMeasurement` selected by `GPUI_BENCH_MEASUREMENT`: wall time by
-/// default, or retired CPU instructions on Linux with
-/// `GPUI_BENCH_MEASUREMENT=instructions`. A `config = ...` expression may set any
-/// other Criterion option; its measurement is replaced. To measure with something
-/// else, call `criterion::criterion_group!` directly with
-/// `config = criterion::Criterion::default().with_measurement(gpui::BenchMeasurement::new(...))`.
+/// `gpui::BenchMeasurement` configured by `GPUI_BENCH_MEASUREMENT`. By default
+/// Criterion analyzes wall time and, on Linux with hardware counters available,
+/// retired CPU instructions per iteration are printed in the GPUI bench report.
+/// `GPUI_BENCH_MEASUREMENT=instructions` swaps the two so Criterion analyzes
+/// instructions; `wall-time` disables the counters entirely. A `config = ...`
+/// expression may set any other Criterion option; its measurement is replaced.
+/// To measure with something else, call `criterion::criterion_group!` directly
+/// with `config = criterion::Criterion::default().with_measurement(gpui::BenchMeasurement::new(...))`.
 ///
 /// [`gpui::bench`]: crate::bench
 #[macro_export]
