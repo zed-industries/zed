@@ -118,15 +118,6 @@ pub struct FsWatcher {
 struct FsWatcherRegistration {
     id: WatcherRegistrationId,
     os_watcher: Arc<OsWatcher>,
-    /// Inode of the path at the time it was registered. Used to detect when a
-    /// watched path has been replaced by a different file/directory (e.g. one
-    /// that was deleted and quickly recreated). On Linux, inotify silently
-    /// invalidates the kernel watch on the old inode when the directory is
-    /// removed, but this registration lingers; without re-registering, a later
-    /// `add` for the recreated path would be treated as already-watched and the
-    /// new inode would never be watched. `None` when the inode is unavailable
-    /// (non-Unix, or the stat failed), in which case the check is skipped.
-    inode: Option<u64>,
 }
 
 impl FsWatcher {
@@ -153,30 +144,14 @@ impl FsWatcher {
     fn add_existing_path(&self, path: Arc<Path>) -> anyhow::Result<()> {
         let case_insensitive = !self.fs.is_path_case_sensitive(&path);
         let key = WatchKey::for_registration(SanitizedPath::new(&path), case_insensitive);
-        // Bind the lookup to a local so the registrations lock is released before
-        // the block below re-acquires it; `parking_lot::Mutex` is not reentrant.
         let existing = self.registrations.lock().get(&key).cloned();
         if let Some(existing) = existing {
-            let current_inode = path_inode(&path);
-            // Treat the path as already watched unless the inode changed, which
-            // means the file/directory here was replaced (e.g. deleted and
-            // recreated). In that case inotify's watch on the old inode is dead,
-            // so drop the stale registration and fall through to register a
-            // fresh watch on the new inode. When either inode is unknown we can't
-            // tell, so conservatively keep the existing registration.
-            if current_inode.is_none()
-                || existing.inode.is_none()
-                || current_inode == existing.inode
-            {
-                log::trace!("path to watch is already watched: {path:?}");
-                return Ok(());
-            }
-            log::trace!(
-                "path {path:?} was recreated (inode {:?} -> {current_inode:?}); re-registering watch",
-                existing.inode,
+            log::trace!("path to watch is already registered: {path:?}");
+            return existing.os_watcher.rewatch_if_stale(
+                &mut existing.os_watcher.state.lock(),
+                SanitizedPath::new(&path),
+                &key,
             );
-            self.registrations.lock().remove(&key);
-            existing.os_watcher.remove(existing.id);
         }
         match register_existing_path(
             &self.native_watcher,
@@ -336,22 +311,6 @@ pub fn requires_poll_watcher(path: &Path) -> bool {
     }
 }
 
-/// The inode of `path` itself (a final symlink is not followed), or `None` when
-/// the inode is unavailable (non-Unix platforms, or the stat failed). Used to
-/// detect a path replaced by a newly-created inode. See [`FsWatcherRegistration::inode`].
-fn path_inode(path: &Path) -> Option<u64> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        std::fs::symlink_metadata(path).ok().map(|meta| meta.ino())
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        None
-    }
-}
-
 fn register_existing_path(
     native_watcher: &Arc<OsWatcher>,
     poll_watcher: &Arc<OsWatcher>,
@@ -361,7 +320,6 @@ fn register_existing_path(
     tx: async_channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
 ) -> anyhow::Result<Option<FsWatcherRegistration>> {
-    let inode = path_inode(path.as_ref());
     let os_watcher = if fs.requires_poll_watcher(path.as_ref()) {
         log::info!(
             "Using poll watcher ({}ms interval) for {}",
@@ -393,7 +351,6 @@ fn register_existing_path(
     Ok(Some(FsWatcherRegistration {
         id: registration_id,
         os_watcher: os_watcher.clone(),
-        inode,
     }))
 }
 
@@ -849,6 +806,7 @@ struct WatcherRegistrationState {
 struct PathRegistrationState {
     watcher_ids: Vec<WatcherRegistrationId>,
     has_os_watcher: bool,
+    stale: bool,
 }
 
 /// The registered watch paths for one backend, keyed by [`WatchKey`] so that
@@ -918,6 +876,17 @@ impl WatcherState {
             .is_some_and(|cooldown_until| cooldown_until > Instant::now())
     }
 
+    fn start_native_watch_limit_cooldown(&mut self, path: &Path) {
+        let should_log = !self.is_native_watch_limit_cooldown_active();
+        self.cooldown_until = Some(Instant::now() + *NATIVE_WATCH_LIMIT_COOLDOWN);
+        if should_log {
+            log::warn!(
+                "OS file watch limit reached while watching {path:?}; skipping new native file watcher registrations for {} seconds",
+                NATIVE_WATCH_LIMIT_COOLDOWN.as_secs()
+            );
+        }
+    }
+
     fn remove_registration(&mut self, id: WatcherRegistrationId) -> Option<Arc<SanitizedPath>> {
         let registration_state = self.watchers.remove(&id)?;
         let path_state = self.paths.get_mut(&registration_state.key)?;
@@ -953,10 +922,8 @@ pub struct OsWatcher {
     recursive: bool,
     state: Arc<Mutex<WatcherState>>,
 
-    // Never hold the state lock while calling the backend: a backend call can be
-    // slow (a poll watch scans its whole tree up front, an FSEvents watch rebuilds
-    // the stream) and dispatch needs the state to route every other registration's
-    // events. Whoever re-locks the state afterwards must re-check what they assumed.
+    // Hold state across backend mutations. Callbacks don't acquire state or
+    // invert the lock order.
     backend: Mutex<Option<Box<dyn WatchBackend>>>,
     event_tx: async_channel::Sender<notify::Result<notify::Event>>,
     _dispatch_task: Task<()>,
@@ -1046,7 +1013,9 @@ impl OsWatcher {
             .covered_by_recursive_ancestor(&path, self.recursive);
         let path_already_registered = state.paths.contains(&key);
 
-        if !path_already_covered && !path_already_registered {
+        if path_already_registered {
+            self.rewatch_if_stale(&mut state, &path, &key)?;
+        } else if !path_already_covered {
             if self.kind == OsWatcherKind::Native && state.is_native_watch_limit_cooldown_active() {
                 self.diagnostics.record(|| {
                     WatchDiagnosticEvent::new(
@@ -1061,18 +1030,16 @@ impl OsWatcher {
                 return Ok(None);
             }
 
-            drop(state);
             match self.watch(path.as_path()) {
                 Ok(()) => {}
                 Err(error)
                     if self.kind == OsWatcherKind::Native && is_max_files_watch_error(&error) =>
                 {
-                    self.start_native_watch_limit_cooldown(path.as_path());
+                    state.start_native_watch_limit_cooldown(path.as_path());
                     return Ok(None);
                 }
                 Err(error) => return Err(error),
             }
-            state = self.state.lock();
         }
 
         let id = state.last_registration;
@@ -1091,9 +1058,32 @@ impl OsWatcher {
             .or_insert_with(|| PathRegistrationState {
                 watcher_ids: vec![id],
                 has_os_watcher: !path_already_covered,
+                stale: false,
             });
 
         Ok(Some(id))
+    }
+
+    fn rewatch_if_stale(
+        &self,
+        state: &mut WatcherState,
+        path: &SanitizedPath,
+        key: &WatchKey,
+    ) -> anyhow::Result<()> {
+        let Some(path_state) = state.paths.get_mut(key) else {
+            return Ok(());
+        };
+        if !path_state.stale {
+            return Ok(());
+        }
+
+        log::trace!("rewatching stale path: {path:?}");
+        // A renamed directory's watch survives under the old path; unwatch it
+        // so the backend won't skip installation as a duplicate.
+        self.unwatch(path.as_path()).log_err();
+        self.watch(path.as_path())?;
+        path_state.stale = false;
+        Ok(())
     }
 
     #[cfg(test)]
@@ -1116,25 +1106,11 @@ impl OsWatcher {
         );
     }
 
-    fn start_native_watch_limit_cooldown(&self, path: &Path) {
-        let mut state = self.state.lock();
-        let now = Instant::now();
-        let should_log = !state.is_native_watch_limit_cooldown_active();
-        state.cooldown_until = Some(now + *NATIVE_WATCH_LIMIT_COOLDOWN);
-        if should_log {
-            log::warn!(
-                "OS file watch limit reached while watching {path:?}; skipping new native file watcher registrations for {} seconds",
-                NATIVE_WATCH_LIMIT_COOLDOWN.as_secs()
-            );
-        }
-    }
-
     pub fn remove(&self, id: WatcherRegistrationId) {
         let mut state = self.state.lock();
         let Some(path) = state.remove_registration(id) else {
             return;
         };
-        drop(state);
         self.unwatch(path.as_path()).log_err();
     }
 
@@ -1272,7 +1248,47 @@ fn dispatch(
     log::trace!("handle {kind:?} watcher event: {event:?}");
 
     let callbacks = {
-        let state = state.lock();
+        let mut state = state.lock();
+        // Invalidate before callbacks can trigger a scan.
+        if !kind.is_recursive() && event.need_rescan() {
+            // Overflow may have dropped removal events.
+            for path_state in state.paths.0.values_mut() {
+                path_state.stale = true;
+            }
+        } else if !kind.is_recursive()
+            && matches!(
+                event.kind,
+                EventKind::Remove(_) | EventKind::Modify(notify::event::ModifyKind::Name(_))
+            )
+        {
+            for path in &event.paths {
+                let path = SanitizedPath::new(path);
+                for event_key in [WatchKey::exact(path), WatchKey::folded(path)] {
+                    let Some(path_state) = state.paths.get_mut(&event_key) else {
+                        continue;
+                    };
+                    path_state.stale = true;
+                    if !matches!(event.kind, EventKind::Modify(_)) {
+                        continue;
+                    }
+                    // Descendant watches follow the directory without their own rename events.
+                    for (key, path_state) in &mut state.paths.0 {
+                        let descendant = match (key, &event_key) {
+                            (WatchKey::Exact(key), WatchKey::Exact(event_key)) => {
+                                key.starts_with(event_key)
+                            }
+                            (WatchKey::Folded(key), WatchKey::Folded(event_key)) => {
+                                Path::new(key.as_ref()).starts_with(Path::new(event_key.as_ref()))
+                            }
+                            _ => false,
+                        };
+                        if descendant {
+                            path_state.stale = true;
+                        }
+                    }
+                }
+            }
+        }
         if event.need_rescan() {
             state
                 .watchers
@@ -1572,6 +1588,73 @@ mod tests {
 
         let native_backend = native_backend.lock();
         assert_eq!(native_backend.watch_calls, &[first_path.to_path_buf()]);
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[test]
+    fn removed_or_renamed_path_is_rewatched_once() {
+        let dir = PathBuf::from("/Repo/Dir");
+        let subdir = PathBuf::from("/Repo/Dir/Subdir");
+        let removal = notify::Event {
+            paths: vec![dir.clone()],
+            ..notify::Event::new(EventKind::Remove(notify::event::RemoveKind::Folder))
+        };
+        let overflow = notify::Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan);
+        let rename = |path: &str| notify::Event {
+            paths: vec![PathBuf::from(path)],
+            ..notify::Event::new(EventKind::Modify(notify::event::ModifyKind::Name(
+                notify::event::RenameMode::From,
+            )))
+        };
+
+        for (event, case_insensitive, rewatched, rewatched_ids) in [
+            (removal, false, &dir, vec![0, 1]),
+            (overflow, false, &dir, vec![0, 1]),
+            (rename("/Repo/Dir"), false, &subdir, vec![2]),
+            (rename("/repo/dir"), true, &subdir, vec![2]),
+        ] {
+            let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+            let watcher = test_os_watcher(OsWatcherKind::Native, Some(backend.clone()));
+            for path in [&dir, &dir, &subdir] {
+                watcher
+                    .add(path.as_path().into(), case_insensitive, |_| {})
+                    .expect("add watch")
+                    .expect("watch registered");
+            }
+
+            watcher.dispatch(Ok(event));
+            let rewatched = SanitizedPath::new(rewatched);
+            let key = WatchKey::for_registration(rewatched, case_insensitive);
+            for _ in 0..2 {
+                watcher
+                    .rewatch_if_stale(&mut watcher.state.lock(), rewatched, &key)
+                    .expect("rewatch");
+            }
+
+            let backend = backend.lock();
+            assert_eq!(
+                backend.watch_calls,
+                &[dir.clone(), subdir.clone(), rewatched.as_path().to_path_buf()]
+            );
+            assert_eq!(backend.unwatch_calls, &[rewatched.as_path().to_path_buf()]);
+            let mut state = watcher.state.lock();
+            let path_state = state.paths.get_mut(&key).expect("registration retained");
+            assert_eq!(
+                (
+                    path_state.watcher_ids.clone(),
+                    path_state.has_os_watcher,
+                    path_state.stale
+                ),
+                (
+                    rewatched_ids
+                        .into_iter()
+                        .map(WatcherRegistrationId)
+                        .collect::<Vec<_>>(),
+                    true,
+                    false
+                )
+            );
+        }
     }
 
     fn modify_event(path: &str) -> notify::Event {

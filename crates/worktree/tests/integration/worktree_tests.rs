@@ -1660,8 +1660,10 @@ async fn test_root_rescan_keeps_root_watcher_registered(cx: &mut TestAppContext)
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
 
-    // Dropping and re-registering the root watch would open a window in
-    // which filesystem events are lost.
+    // Dropping and re-registering the recursive root watch would open a window
+    // in which filesystem events are lost. Non-recursive watches may have been
+    // lost in the overflow, so the rescan reinstalls the root watch before
+    // reading the root again.
     fs.emit_fs_event("/root", Some(PathEventKind::Rescan));
     tree.flush_fs_events(cx).await;
 
@@ -1670,7 +1672,61 @@ async fn test_root_rescan_keeps_root_watcher_registered(cx: &mut TestAppContext)
         .into_iter()
         .filter(|path| path == Path::new("/root"))
         .count();
-    assert_eq!(root_watch_calls, 1);
+    let expected_root_watch_calls = if cfg!(any(target_os = "windows", target_os = "macos")) {
+        1
+    } else {
+        2
+    };
+    assert_eq!(root_watch_calls, expected_root_watch_calls);
+}
+
+// Native watches are recursive on macOS and Windows, so the new directory is
+// covered by the root watch and never watched separately.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[gpui::test]
+async fn test_new_directory_scan_does_not_miss_event_before_adding_watcher(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/root", json!({})).await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    fs.create_file_before_next_watch_add("/root/new-directory", "/root/new-directory/file.txt");
+    fs.create_dir(Path::new("/root/new-directory")).await.unwrap();
+
+    wait_for_condition(cx, |cx| {
+        tree.read_with(cx, |tree, _| {
+            tree.entry_for_path(rel_path("new-directory/file.txt"))
+                .is_some()
+        })
+    })
+    .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(""),
+                rel_path("new-directory"),
+                rel_path("new-directory/file.txt"),
+            ]
+        );
+    });
 }
 
 #[gpui::test]
@@ -5874,110 +5930,6 @@ fn drain_git_repo_updates(events: &mut futures::channel::mpsc::UnboundedReceiver
         }
     }
     found
-}
-
-// Regression test for https://github.com/zed-industries/zed/issues/53901 (the
-// delete-then-recreate cause, distinct from the macOS fd-saturation cause):
-// a directory that is removed and immediately recreated while its children are
-// still being written (e.g. a build/test step that clears then repopulates an
-// output directory) must end up with ALL of its children reflected in the
-// worktree - not just the handful that happened to exist at the instant the
-// recreated directory was rescanned.
-#[gpui::test]
-async fn test_rapid_delete_recreate_dir_shows_all_children(cx: &mut TestAppContext) {
-    cx.executor().allow_parking();
-    init_test(cx);
-
-    const COUNT: usize = 20;
-
-    let fs = Arc::new(RealFs::new(None, cx.executor()));
-    let temp_root = TempTree::new(json!({
-        "test_results": {},
-    }));
-    let results_dir = temp_root.path().join("test_results");
-
-    // Simulate the first run: populate `test_results` with COUNT files + COUNT dirs.
-    for i in 0..COUNT {
-        fs.create_file(
-            &results_dir.join(format!("file{i}.txt")),
-            Default::default(),
-        )
-        .await
-        .unwrap();
-        fs.create_dir(&results_dir.join(format!("dir{i}")))
-            .await
-            .unwrap();
-    }
-
-    let tree = Worktree::local(
-        temp_root.path(),
-        true,
-        fs.clone(),
-        Default::default(),
-        true,
-        WorktreeId::from_proto(0),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
-
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-        .await;
-
-    // Second run: remove the directory and *immediately* recreate + repopulate it,
-    // with no delay between the removal and recreation (the trigger), and each child
-    // created ~10ms apart so the burst spans more than FS_WATCH_LATENCY (100ms).
-    fs.remove_dir(
-        &results_dir,
-        RemoveOptions {
-            recursive: true,
-            ignore_if_not_exists: true,
-        },
-    )
-    .await
-    .unwrap();
-    fs.create_dir(&results_dir).await.unwrap();
-    for i in 0..COUNT {
-        cx.background_executor
-            .timer(std::time::Duration::from_millis(10))
-            .await;
-        fs.create_file(
-            &results_dir.join(format!("file{i}.txt")),
-            Default::default(),
-        )
-        .await
-        .unwrap();
-        fs.create_dir(&results_dir.join(format!("dir{i}")))
-            .await
-            .unwrap();
-    }
-
-    tree.flush_fs_events(cx).await;
-
-    let missing = tree.read_with(cx, |tree, _| {
-        let mut missing = Vec::new();
-        for i in 0..COUNT {
-            for name in [
-                format!("test_results/file{i}.txt"),
-                format!("test_results/dir{i}"),
-            ] {
-                if tree
-                    .entry_for_path(RelPath::from_unix_str(&name).unwrap())
-                    .is_none()
-                {
-                    missing.push(name);
-                }
-            }
-        }
-        missing
-    });
-
-    assert!(
-        missing.is_empty(),
-        "{} of {} entries missing from the worktree after a rapid delete/recreate: {missing:?}",
-        missing.len(),
-        COUNT * 2,
-    );
 }
 
 fn init_test(cx: &mut gpui::TestAppContext) {

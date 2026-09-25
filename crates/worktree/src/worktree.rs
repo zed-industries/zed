@@ -5407,15 +5407,8 @@ impl BackgroundScanner {
         let mut new_entries: Vec<Entry> = Vec::new();
         let mut new_jobs: Vec<Option<ScanJob>> = Vec::new();
 
-        // Establish the watch on this directory *before* enumerating its
-        // contents, so that any child created after the enumeration but before
-        // the watch would otherwise be active still produces an FS event and is
-        // not silently lost. Without this ordering, a directory that is deleted
-        // and quickly recreated while it is being repopulated (e.g. a build or
-        // test step that clears then rewrites an output directory) only reflects
-        // the entries that happened to exist at the instant of enumeration. For
-        // external entries we watch the canonical (resolved) path, matching the
-        // bookkeeping recorded after `populate_dir` below. See zed#53901.
+        // Watch before reading so a child created after enumeration still
+        // produces an event.
         let watched_abs_path: Option<Arc<Path>> = if job.is_external {
             self.fs
                 .canonicalize(job.abs_path.as_ref())
