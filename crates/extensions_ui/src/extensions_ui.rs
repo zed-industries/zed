@@ -374,13 +374,25 @@ enum DisplayedExtension {
     Remote(usize),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExtensionFetchState {
+    Fetching,
+    Succeeded,
+    Failed,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FetchDebounce {
+    Immediate,
+    /// Debounce the fetch if there is a search query.
+    WhenSearching,
+}
+
 pub struct ExtensionsPage {
     workspace: WeakEntity<Workspace>,
     provider_registry: Arc<GitHostingProviderRegistry>,
     list: UniformListScrollHandle,
-    is_fetching_extensions: bool,
-    /// Whether the most recently completed fetch failed.
-    fetch_failed: bool,
+    fetch_state: ExtensionFetchState,
     filter: ExtensionFilter,
     /// Installed extensions matching the current search.
     installed_search_results: Vec<ExtensionIndexEntry>,
@@ -445,8 +457,7 @@ impl ExtensionsPage {
                 workspace: workspace.weak_handle(),
                 provider_registry,
                 list: scroll_handle,
-                is_fetching_extensions: false,
-                fetch_failed: false,
+                fetch_state: ExtensionFetchState::Fetching,
                 filter: ExtensionFilter::All,
                 installed_search_results: Vec::new(),
                 remote_extensions: Vec::new(),
@@ -460,7 +471,7 @@ impl ExtensionsPage {
                 upsells: BTreeSet::default(),
             };
             this.update_local_search_results(cx);
-            this.fetch_extensions(false, None, cx);
+            this.fetch_extensions(FetchDebounce::Immediate, None, cx);
             this
         })
     }
@@ -613,7 +624,7 @@ impl ExtensionsPage {
         let remote_row = |(index, _)| DisplayedExtension::Remote(index);
 
         self.displayed_extensions = match self.filter {
-            ExtensionFilter::All if self.fetch_failed => {
+            ExtensionFilter::All if self.fetch_state == ExtensionFetchState::Failed => {
                 installed_rows.map(installed_row).collect()
             }
             ExtensionFilter::All => installed_rows
@@ -639,13 +650,13 @@ impl ExtensionsPage {
     /// flight is cancelled.
     fn fetch_extensions(
         &mut self,
-        debounce: bool,
+        debounce: FetchDebounce,
         on_complete: Option<Box<dyn FnOnce(&mut Self, &mut Context<Self>)>>,
         cx: &mut Context<Self>,
     ) {
         let search = self.search_query(cx);
         let provides_filter = BTreeSet::from_iter(self.provides_filter);
-        self.is_fetching_extensions = true;
+        self.fetch_state = ExtensionFetchState::Fetching;
         cx.notify();
 
         self.extension_fetch_task = Some(cx.spawn(async move |this, cx| {
@@ -655,7 +666,7 @@ impl ExtensionsPage {
             // If the search was just cleared then we can just reload the list
             // of extensions without a debounce, which allows us to avoid seeing
             // an intermittent flash of a "no extensions" state.
-            if debounce && search.is_some() {
+            if debounce == FetchDebounce::WhenSearching && search.is_some() {
                 cx.background_executor()
                     .timer(Duration::from_millis(250))
                     .await;
@@ -688,21 +699,21 @@ impl ExtensionsPage {
             let fetch_result = remote_extensions.await;
 
             this.update(cx, |this, cx| {
-                this.is_fetching_extensions = false;
-                let succeeded = match fetch_result {
+                match fetch_result {
                     Ok(remote_extensions) => {
+                        this.fetch_state = ExtensionFetchState::Succeeded;
                         this.remote_extensions = remote_extensions;
-                        true
                     }
                     Err(error) => {
                         log::error!("failed to fetch extensions: {error:#}");
+                        this.fetch_state = ExtensionFetchState::Failed;
                         this.remote_extensions.clear();
-                        false
                     }
-                };
-                this.fetch_failed = !succeeded;
+                }
                 this.rebuild_displayed_extensions(cx);
-                if succeeded && let Some(on_complete) = on_complete {
+                if this.fetch_state == ExtensionFetchState::Succeeded
+                    && let Some(on_complete) = on_complete
+                {
                     on_complete(this, cx);
                 }
             })
@@ -917,7 +928,7 @@ impl ExtensionsPage {
     fn refresh_search(&mut self, cx: &mut Context<Self>) {
         self.update_local_search_results(cx);
         self.fetch_extensions(
-            true,
+            FetchDebounce::WhenSearching,
             Some(Box::new(|this, cx| {
                 this.scroll_to_top(cx);
             })),
@@ -957,8 +968,9 @@ impl ExtensionsPage {
         // The `Installed` filter is fully local, so fetch progress and failure are
         // only relevant to the other filters.
         let fetch_is_relevant = self.filter != ExtensionFilter::Installed;
-        let fetch_failure_is_relevant = self.fetch_failed && fetch_is_relevant;
-        let message = if self.is_fetching_extensions && fetch_is_relevant {
+        let fetch_failure_is_relevant =
+            self.fetch_state == ExtensionFetchState::Failed && fetch_is_relevant;
+        let message = if self.fetch_state == ExtensionFetchState::Fetching && fetch_is_relevant {
             "Loading extensions…"
         } else if fetch_failure_is_relevant {
             "Failed to load extensions. Please check your connection and try again."
@@ -1561,7 +1573,8 @@ impl Render for ExtensionsPage {
                 } else {
                     let scroll_handle = &self.list;
                     this.when(
-                        self.fetch_failed && self.filter == ExtensionFilter::All,
+                        self.fetch_state == ExtensionFetchState::Failed
+                            && self.filter == ExtensionFilter::All,
                         |this| {
                             this.child(
                                 div().pt_4().child(

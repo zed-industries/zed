@@ -57,6 +57,12 @@ impl ExtensionStatus {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LocalExtensionKind {
+    Dev,
+    Installed,
+}
+
 struct ExtensionCardDetails {
     id: Arc<str>,
     name: SharedString,
@@ -123,13 +129,13 @@ impl ExtensionCard {
     pub fn for_dev(extension: Arc<ExtensionManifest>, cx: &App) -> Self {
         let extension_store = ExtensionStore::global(cx).read(cx);
         let status = extension_status(&extension.id, extension_store);
-        Self::manifest::<true>(extension, status, true)
+        Self::manifest::<true>(extension, status, LocalExtensionKind::Dev)
     }
 
     pub fn for_installed(extension: Arc<ExtensionManifest>, cx: &App) -> Self {
         let extension_store = ExtensionStore::global(cx).read(cx);
         let status = extension_status(&extension.id, extension_store);
-        Self::manifest::<true>(extension, status, false)
+        Self::manifest::<true>(extension, status, LocalExtensionKind::Installed)
     }
 
     pub fn for_remote(extension: &ExtensionMetadata, cx: &App) -> Self {
@@ -140,10 +146,10 @@ impl ExtensionCard {
     fn manifest<const ENABLE_HANDLERS: bool>(
         extension: Arc<ExtensionManifest>,
         status: ExtensionStatus,
-        is_dev: bool,
+        kind: LocalExtensionKind,
     ) -> Self {
         let actions =
-            Self::actions_for_manifest_extension::<ENABLE_HANDLERS>(&extension, &status, is_dev);
+            Self::actions_for_manifest_extension::<ENABLE_HANDLERS>(&extension, &status, kind);
         let details = ExtensionCardDetails {
             id: extension.id.clone(),
             name: extension.name.clone().into(),
@@ -153,10 +159,9 @@ impl ExtensionCard {
             repository_url: extension.repository.clone().map(Into::into),
             repository_icon: IconName::Link,
             provided_features: provided_feature_labels(extension.provides()),
-            source: if is_dev {
-                ExtensionCardSource::Dev
-            } else {
-                ExtensionCardSource::Installed
+            source: match kind {
+                LocalExtensionKind::Dev => ExtensionCardSource::Dev,
+                LocalExtensionKind::Installed => ExtensionCardSource::Installed,
             },
         };
 
@@ -257,8 +262,9 @@ impl ExtensionCard {
     fn actions_for_manifest_extension<const ENABLE_HANDLERS: bool>(
         extension: &Arc<ExtensionManifest>,
         status: &ExtensionStatus,
-        is_dev: bool,
+        kind: LocalExtensionKind,
     ) -> ExtensionCardActions {
+        let is_dev = kind == LocalExtensionKind::Dev;
         let rebuild = is_dev.then(|| {
             Button::new(
                 SharedString::from(format!("rebuild-{}", extension.id)),
@@ -462,7 +468,7 @@ pub(crate) fn extension_provides_label(provides: ExtensionProvides) -> &'static 
 }
 
 fn preview_dev_card(extension: Arc<ExtensionManifest>, status: ExtensionStatus) -> ExtensionCard {
-    ExtensionCard::manifest::<false>(extension, status, true)
+    ExtensionCard::manifest::<false>(extension, status, LocalExtensionKind::Dev)
 }
 
 fn preview_remote_card(
