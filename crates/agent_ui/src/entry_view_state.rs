@@ -240,16 +240,26 @@ impl EntryViewState {
                 let can_rewind = thread.read(cx).supports_truncate(cx);
                 let has_client_id = message.client_id.is_some();
                 let is_subagent = thread.read(cx).parent_session_id().is_some();
-                let chunks = message.content.source_blocks().to_vec();
+                let source_blocks = message.content.source_blocks();
+                let source_is_representable = source_blocks
+                    .iter()
+                    .all(acp_thread::content::can_convert_to_v1);
+                let is_editable =
+                    can_rewind && has_client_id && !is_subagent && source_is_representable;
                 if let Some(Entry::UserMessage(editor)) = self.entries.get_mut(index) {
-                    if !editor.focus_handle(cx).is_focused(window) {
-                        // Only update if we are not editing.
-                        // If we are, cancelling the edit will set the message to the newest content.
+                    // Keep focused drafts unless newly unsupported content makes
+                    // the message read-only and needs its fallback shown.
+                    let refreshed_source = (!source_is_representable
+                        || !editor.focus_handle(cx).is_focused(window))
+                    .then(|| source_blocks.to_vec());
+                    editor.update(cx, |editor, cx| editor.set_read_only(!is_editable, cx));
+                    if let Some(source_blocks) = refreshed_source {
                         editor.update(cx, |editor, cx| {
-                            editor.set_message(chunks, window, cx);
+                            editor.set_source_message(source_blocks, window, cx);
                         });
                     }
                 } else {
+                    let source_blocks = source_blocks.to_vec();
                     let message_editor = cx.new(|cx| {
                         let mut editor = MessageEditor::new(
                             self.workspace.clone(),
@@ -265,10 +275,10 @@ impl EntryViewState {
                             window,
                             cx,
                         );
-                        if !can_rewind || !has_client_id || is_subagent {
+                        if !is_editable {
                             editor.set_read_only(true, cx);
                         }
-                        editor.set_message(chunks, window, cx);
+                        editor.set_source_message(source_blocks, window, cx);
                         editor
                     });
                     cx.subscribe(&message_editor, move |_, editor, event, cx| {

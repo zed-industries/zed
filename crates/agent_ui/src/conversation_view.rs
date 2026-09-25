@@ -1674,6 +1674,12 @@ impl ConversationView {
                     });
                     list_state.remeasure_items(*index..*index + 1);
                     active.update(cx, |active, cx| {
+                        if active.editing_message == Some(*index)
+                            && !active.can_edit_user_message(*index, cx)
+                        {
+                            active.editing_message = None;
+                            cx.notify();
+                        }
                         active.sync_elicitation_state_for_entry(*index, window, cx);
                         active.auto_expand_streaming_thought(cx);
                         active.sync_generating_indicator(cx);
@@ -9101,6 +9107,221 @@ pub(crate) mod tests {
             entries_before, entries_after,
             "No message should be sent when editor is empty"
         );
+    }
+
+    async fn assert_unsupported_source_message_cannot_regenerate(
+        unsupported: agent_client_protocol::schema::v2::ContentBlock,
+        cx: &mut TestAppContext,
+    ) {
+        use agent_client_protocol::schema::v2 as acp_v2;
+
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| thread.send_raw("original", cx))
+            .await
+            .expect("send initial message");
+        cx.run_until_parked();
+
+        let client_id = ClientUserMessageId::new();
+        thread.update(cx, |thread, cx| {
+            thread.push_user_content_block(
+                Some(client_id.clone()),
+                acp_v2::ContentBlock::Text(acp_v2::TextContent::new("still visible")),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let index = thread.read_with(cx, |thread, _| thread.entries().len() - 1);
+        let entry_view_state = thread_view.read_with(cx, |view, _| view.entry_view_state.clone());
+        let editor = entry_view_state.read_with(cx, |state, _| {
+            state
+                .entry(index)
+                .and_then(|entry| entry.message_editor())
+                .cloned()
+                .expect("user message editor")
+        });
+        cx.focus(&editor);
+        thread_view.read_with(cx, |view, _| assert_eq!(view.editing_message, Some(index)));
+        thread.update(cx, |thread, cx| {
+            thread.push_user_content_block(Some(client_id), unsupported.clone(), cx);
+        });
+        cx.run_until_parked();
+
+        thread_view.read_with(cx, |view, _| assert_eq!(view.editing_message, None));
+        let rendered = editor.update(cx, |editor, cx| editor.text(cx));
+        assert!(rendered.contains("still visible"));
+        assert!(rendered.contains("Unsupported message content"));
+        cx.simulate_input("attempted edit");
+        assert_eq!(editor.update(cx, |editor, cx| editor.text(cx)), rendered);
+
+        thread_view.update_in(cx, |view, window, cx| {
+            view.handle_entry_view_event(
+                &entry_view_state,
+                &EntryViewEvent {
+                    entry_index: index,
+                    view_event: ViewEvent::MessageEditorEvent(
+                        editor.clone(),
+                        MessageEditorEvent::Send,
+                    ),
+                },
+                window,
+                cx,
+            );
+            view.regenerate(index, editor.clone(), window, cx);
+        });
+        let other_editor = entry_view_state.read_with(cx, |state, _| {
+            state
+                .entry(0)
+                .and_then(|entry| entry.message_editor())
+                .cloned()
+                .expect("original editor")
+        });
+        cx.focus(&other_editor);
+        other_editor.update_in(cx, |editor, window, cx| {
+            assert!(editor.focus_handle(cx).is_focused(window));
+        });
+        let composer = message_editor(&conversation_view, cx);
+        cx.focus(&composer);
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, _| assert_eq!(view.editing_message, None));
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread.entries()[index]
+                    .user_message()
+                    .expect("user message")
+                    .content
+                    .source_blocks()[1],
+                unsupported
+            );
+            assert_eq!(thread.entries().len(), index + 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_unsupported_source_message_cannot_regenerate(cx: &mut TestAppContext) {
+        use agent_client_protocol::schema::v2 as acp_v2;
+
+        assert_unsupported_source_message_cannot_regenerate(
+            acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
+                "_future",
+                Default::default(),
+            )),
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_unknown_annotation_source_message_cannot_regenerate(cx: &mut TestAppContext) {
+        use agent_client_protocol::schema::v2 as acp_v2;
+
+        assert_unsupported_source_message_cannot_regenerate(
+            acp_v2::ContentBlock::Text(acp_v2::TextContent::new("annotated text").annotations(
+                acp_v2::Annotations::new().audience(vec![acp_v2::Role::Other("_future".into())]),
+            )),
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_regenerate_does_not_resend_fallback_after_delayed_rewind(
+        cx: &mut TestAppContext,
+    ) {
+        use agent_client_protocol::schema::v2 as acp_v2;
+
+        init_test(cx);
+        for (cancel_before_update, cancel_after_update) in
+            [(false, false), (true, false), (false, true)]
+        {
+            let connection = StubAgentConnection::new();
+            let (conversation_view, cx) =
+                setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+            add_to_workspace(conversation_view.clone(), cx);
+            let thread_view = active_thread(&conversation_view, cx);
+            let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+            let prompt = thread.update(cx, |thread, cx| thread.send_raw("original", cx));
+            cx.run_until_parked();
+            let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+            connection.end_turn(session_id.clone(), acp_v1::StopReason::EndTurn);
+            prompt.await.expect("initial prompt should finish");
+            cx.run_until_parked();
+
+            let client_id = thread.read_with(cx, |thread, _| {
+                thread
+                    .entries()
+                    .first()
+                    .and_then(|entry| entry.user_message())
+                    .and_then(|message| message.client_id.clone())
+                    .expect("initial user message")
+            });
+            let editor = thread_view.read_with(cx, |view, cx| {
+                view.entry_view_state
+                    .read(cx)
+                    .entry(0)
+                    .and_then(|entry| entry.message_editor())
+                    .cloned()
+                    .expect("initial message editor")
+            });
+            cx.focus(&editor);
+            editor.update_in(cx, |editor, window, cx| {
+                editor.set_text("edited", window, cx);
+            });
+            let finish_truncate = connection.defer_next_truncate();
+            thread_view.update_in(cx, |view, window, cx| {
+                view.regenerate(0, editor.clone(), window, cx);
+            });
+            cx.run_until_parked();
+            assert_eq!(thread.read_with(cx, |thread, _| thread.entries().len()), 1);
+
+            if cancel_before_update {
+                thread_view.update_in(cx, |view, window, cx| {
+                    view.cancel_editing(&Default::default(), window, cx);
+                });
+            }
+            thread.update(cx, |thread, cx| {
+                thread.push_user_content_block(
+                    Some(client_id),
+                    acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
+                        "_future",
+                        Default::default(),
+                    )),
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            if cancel_after_update {
+                thread_view.update_in(cx, |view, window, cx| {
+                    view.cancel_editing(&Default::default(), window, cx);
+                });
+            }
+            assert!(
+                editor
+                    .update(cx, |editor, cx| editor.text(cx))
+                    .contains("Unsupported message content")
+            );
+            finish_truncate
+                .send(())
+                .expect("truncate should be pending");
+            cx.run_until_parked();
+
+            let resent =
+                thread.read_with(cx, |thread, _| thread.status() == ThreadStatus::Generating);
+            if resent {
+                connection.end_turn(session_id, acp_v1::StopReason::EndTurn);
+                cx.run_until_parked();
+            }
+            assert!(!resent, "regeneration must not submit a read-only fallback");
+            thread.read_with(cx, |thread, _| assert!(thread.entries().is_empty()));
+            thread_view.read_with(cx, |view, _| assert!(view.thread_error.is_some()));
+        }
     }
 
     #[gpui::test]

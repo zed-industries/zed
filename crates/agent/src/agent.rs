@@ -1981,6 +1981,7 @@ impl NativeAgent {
             for message in prompt.messages {
                 let context_server::types::PromptMessage { role, content } = message;
                 let block = mcp_message_content_to_acp_content_block(content);
+                let display_block = acp_thread::content::from_v1(block.clone())?;
 
                 match role {
                     context_server::types::Role::User => {
@@ -1989,7 +1990,7 @@ impl NativeAgent {
                         acp_thread.update(cx, |acp_thread, cx| {
                             acp_thread.push_user_content_block_with_indent(
                                 Some(id.clone()),
-                                block.clone(),
+                                display_block,
                                 true,
                                 cx,
                             );
@@ -2002,7 +2003,7 @@ impl NativeAgent {
                     context_server::types::Role::Assistant => {
                         acp_thread.update(cx, |acp_thread, cx| {
                             acp_thread.push_assistant_content_block_with_indent(
-                                block.clone(),
+                                display_block,
                                 false,
                                 true,
                                 cx,
@@ -2154,10 +2155,11 @@ impl NativeAgent {
             // user's own typed message is already rendered by the normal
             // prompt flow, so we don't push it to the UI again here.
             let injected_id = acp_thread::ClientUserMessageId::new();
+            let display_block = acp_thread::content::from_v1(envelope_block.clone())?;
             acp_thread.update(cx, |acp_thread, cx| {
                 acp_thread.push_user_content_block_with_indent(
                     Some(injected_id),
-                    envelope_block.clone(),
+                    display_block,
                     true,
                     cx,
                 );
@@ -2288,11 +2290,14 @@ impl NativeAgentConnection {
 
                         match event {
                             ThreadEvent::UserMessage(message) => {
+                                let content = message.content.iter().cloned()
+                                    .map(|content| acp_thread::content::from_v1(content.into()))
+                                    .collect::<Result<Vec<_>>>()?;
                                 acp_thread.update(cx, |thread, cx| {
-                                    for content in &*message.content {
+                                    for content in content {
                                         thread.push_user_content_block(
                                             Some(message.id.clone()),
-                                            content.clone().into(),
+                                            content,
                                             cx,
                                         );
                                     }

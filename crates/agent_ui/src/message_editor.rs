@@ -1695,6 +1695,57 @@ impl MessageEditor {
         self.insert_message_blocks(message, false, window, cx);
     }
 
+    pub fn set_source_message(
+        &mut self,
+        source_blocks: Vec<agent_client_protocol::schema::v2::ContentBlock>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use agent_client_protocol::schema::v2::ContentBlock;
+
+        if source_blocks
+            .iter()
+            .all(acp_thread::content::can_convert_to_v1)
+        {
+            match source_blocks
+                .into_iter()
+                .map(acp_thread::content::to_v1)
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(message) => self.set_message(message, window, cx),
+                Err(error) => {
+                    log::error!("failed to display representable source message: {error}");
+                    self.set_message(
+                        vec![acp_v1::ContentBlock::Text(acp_v1::TextContent::new(
+                            "[Unsupported message content — this message cannot be edited or resent]",
+                        ))],
+                        window,
+                        cx,
+                    );
+                }
+            }
+            return;
+        }
+
+        let mut visible = Vec::new();
+        for block in source_blocks {
+            if acp_thread::content::can_convert_to_v1(&block) {
+                match acp_thread::content::to_v1(block) {
+                    Ok(block) => visible.push(block),
+                    Err(error) => log::error!("failed to display source content: {error}"),
+                }
+            } else if let ContentBlock::Text(text) = block {
+                visible.push(acp_v1::ContentBlock::Text(acp_v1::TextContent::new(
+                    text.text,
+                )));
+            }
+        }
+        visible.push(acp_v1::ContentBlock::Text(acp_v1::TextContent::new(
+            "\n[Unsupported message content — this message cannot be edited or resent]",
+        )));
+        self.set_message(visible, window, cx);
+    }
+
     pub fn append_message(
         &mut self,
         message: Vec<acp_v1::ContentBlock>,
@@ -2266,7 +2317,7 @@ mod tests {
     use futures::{FutureExt as _, StreamExt as _};
     use gpui::{
         AppContext, ClipboardEntry, ClipboardItem, Entity, EventEmitter, ExternalPaths,
-        FocusHandle, Focusable, Task, TestAppContext, VisualTestContext,
+        FocusHandle, Focusable, Task, TestAppContext, VisualContext, VisualTestContext,
     };
     use language_model::LanguageModelRegistry;
     use lsp::{CompletionContext, CompletionTriggerKind};
@@ -5577,6 +5628,93 @@ mod tests {
         let text = message_editor.update(cx, |editor, cx| editor.text(cx));
         assert_eq!(text, "hello world");
         assert!(!message_editor.update(cx, |editor, cx| editor.is_empty(cx)));
+    }
+
+    #[gpui::test]
+    async fn test_source_message_known_text_remains_editable(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, cx) = setup_message_editor(cx).await;
+
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_source_message(
+                vec![agent_client_protocol::schema::v2::ContentBlock::Text(
+                    agent_client_protocol::schema::v2::TextContent::new("original"),
+                )],
+                window,
+                cx,
+            );
+        });
+        let workspace = message_editor.read_with(cx, |editor, _| {
+            editor.workspace.upgrade().expect("message workspace")
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.focus(&message_editor);
+        cx.simulate_input("edited");
+        assert!(
+            message_editor
+                .update(cx, |editor, cx| editor.text(cx))
+                .contains("edited")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_source_message_unknown_content_indicated_with_known_text(
+        cx: &mut TestAppContext,
+    ) {
+        use agent_client_protocol::schema::v2 as acp_v2;
+
+        init_test(cx);
+        let (message_editor, cx) = setup_message_editor(cx).await;
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_read_only(true, cx);
+            editor.set_source_message(
+                vec![
+                    acp_v2::ContentBlock::Text(acp_v2::TextContent::new("visible text")),
+                    acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
+                        "_future",
+                        Default::default(),
+                    )),
+                ],
+                window,
+                cx,
+            );
+            assert!(editor.text(cx).contains("visible text"));
+            assert!(editor.text(cx).contains("Unsupported message content"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_source_message_unknown_annotation_indicated_with_text(cx: &mut TestAppContext) {
+        use agent_client_protocol::schema::v2 as acp_v2;
+
+        init_test(cx);
+        let (message_editor, cx) = setup_message_editor(cx).await;
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_read_only(true, cx);
+            editor.set_source_message(
+                vec![acp_v2::ContentBlock::Text(
+                    acp_v2::TextContent::new("annotated text").annotations(
+                        acp_v2::Annotations::new()
+                            .audience(vec![acp_v2::Role::Other("_future".into())]),
+                    ),
+                )],
+                window,
+                cx,
+            );
+            assert!(editor.text(cx).contains("annotated text"));
+            assert!(editor.text(cx).contains("Unsupported message content"));
+        });
     }
 
     #[gpui::test]

@@ -767,6 +767,7 @@ mod test_support {
         sessions: Arc<Mutex<HashMap<acp_v1::SessionId, Session>>>,
         permission_requests: HashMap<acp_v1::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<acp_v1::SessionUpdate>>>,
+        next_truncate: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
         supports_load_session: bool,
         supports_session_additional_directories: bool,
         agent_id: AgentId,
@@ -788,6 +789,7 @@ mod test_support {
         pub fn new() -> Self {
             Self {
                 next_prompt_updates: Default::default(),
+                next_truncate: Default::default(),
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
                 supports_load_session: false,
@@ -799,6 +801,12 @@ mod test_support {
 
         pub fn set_next_prompt_updates(&self, updates: Vec<acp_v1::SessionUpdate>) {
             *self.next_prompt_updates.lock() = updates;
+        }
+
+        pub fn defer_next_truncate(&self) -> oneshot::Sender<()> {
+            let (sender, receiver) = oneshot::channel();
+            assert!(self.next_truncate.lock().replace(receiver).is_none());
+            sender
         }
 
         pub fn with_permission_requests(
@@ -1060,7 +1068,10 @@ mod test_support {
             _session_id: &acp_v1::SessionId,
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
-            Some(Rc::new(StubAgentSessionEditor))
+            // Capability checks also call this; only run may consume the gate.
+            Some(Rc::new(StubAgentSessionEditor {
+                next_truncate: self.next_truncate.clone(),
+            }))
         }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
@@ -1091,11 +1102,20 @@ mod test_support {
         }
     }
 
-    struct StubAgentSessionEditor;
+    struct StubAgentSessionEditor {
+        next_truncate: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
+    }
 
     impl AgentSessionTruncate for StubAgentSessionEditor {
-        fn run(&self, _: ClientUserMessageId, _: &mut App) -> Task<Result<()>> {
-            Task::ready(Ok(()))
+        fn run(&self, _: ClientUserMessageId, cx: &mut App) -> Task<Result<()>> {
+            if let Some(receiver) = self.next_truncate.lock().take() {
+                cx.foreground_executor().spawn(async move {
+                    receiver.await?;
+                    Ok(())
+                })
+            } else {
+                Task::ready(Ok(()))
+            }
         }
     }
 
