@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::Context as _;
 use ashpd::WindowIdentifier;
 use calloop::{
     Dispatcher, EventLoop, LoopHandle, RegistrationToken,
@@ -236,9 +237,9 @@ impl Globals {
         qh: QueueHandle<WaylandClientStatePtr>,
         seat: wl_seat::WlSeat,
         frame_ping: Ping,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let dialog_v = XdgWmDialogV1::interface().version;
-        Globals {
+        Ok(Globals {
             activation: globals.bind(&qh, 1..=1, ()).ok(),
             compositor: globals
                 .bind(
@@ -247,7 +248,7 @@ impl Globals {
                         ..=wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE,
                     (),
                 )
-                .unwrap(),
+                .context("Wayland compositor does not provide a compatible wl_compositor")?,
             cursor_shape_manager: globals.bind(&qh, 1..=1, ()).ok(),
             data_device_manager: globals
                 .bind(
@@ -257,11 +258,15 @@ impl Globals {
                 )
                 .ok(),
             primary_selection_manager: globals.bind(&qh, 1..=1, ()).ok(),
-            shm: globals.bind(&qh, 1..=1, ()).unwrap(),
+            shm: globals
+                .bind(&qh, 1..=1, ())
+                .context("Wayland compositor does not provide wl_shm")?,
             seat,
             // Accept any xdg_wm_base version up to 6, which added the `suspended`
             // toplevel state; older compositors bind at their own version.
-            wm_base: globals.bind(&qh, 1..=6, ()).unwrap(),
+            wm_base: globals
+                .bind(&qh, 1..=6, ())
+                .context("Wayland compositor does not provide xdg_wm_base")?,
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
@@ -274,7 +279,7 @@ impl Globals {
             executor,
             qh,
             frame_ping,
-        }
+        })
     }
 }
 
@@ -819,51 +824,89 @@ impl Drop for WaylandClient {
 
 const WL_DATA_DEVICE_MANAGER_VERSION: u32 = 3;
 
-fn wl_seat_version(version: u32) -> u32 {
+fn wl_seat_version(version: u32) -> anyhow::Result<u32> {
     // We rely on the wl_pointer.frame event
     const WL_SEAT_MIN_VERSION: u32 = 5;
     const WL_SEAT_MAX_VERSION: u32 = 9;
 
     if version < WL_SEAT_MIN_VERSION {
-        panic!(
+        anyhow::bail!(
             "wl_seat below required version: {} < {}",
-            version, WL_SEAT_MIN_VERSION
+            version,
+            WL_SEAT_MIN_VERSION
         );
     }
 
-    version.clamp(WL_SEAT_MIN_VERSION, WL_SEAT_MAX_VERSION)
+    Ok(version.clamp(WL_SEAT_MIN_VERSION, WL_SEAT_MAX_VERSION))
 }
 
-fn wl_output_version(version: u32) -> u32 {
+fn wl_output_version(version: u32) -> anyhow::Result<u32> {
     const WL_OUTPUT_MIN_VERSION: u32 = 2;
     const WL_OUTPUT_MAX_VERSION: u32 = 4;
 
     if version < WL_OUTPUT_MIN_VERSION {
-        panic!(
+        anyhow::bail!(
             "wl_output below required version: {} < {}",
-            version, WL_OUTPUT_MIN_VERSION
+            version,
+            WL_OUTPUT_MIN_VERSION
         );
     }
 
-    version.clamp(WL_OUTPUT_MIN_VERSION, WL_OUTPUT_MAX_VERSION)
+    Ok(version.clamp(WL_OUTPUT_MIN_VERSION, WL_OUTPUT_MAX_VERSION))
+}
+
+pub(crate) struct WaylandServices {
+    pub(crate) common: Rc<RefCell<LinuxCommon>>,
+    pub(crate) main_receiver: PriorityQueueCalloopReceiver<RunnableVariant>,
+    pub(crate) power_receiver: Channel<SystemPowerEvent>,
+}
+
+pub(crate) struct WaylandClientInitError {
+    error: anyhow::Error,
+    services: Option<WaylandServices>,
+}
+
+impl WaylandClientInitError {
+    pub(crate) fn into_parts(self) -> (anyhow::Error, Option<WaylandServices>) {
+        (self.error, self.services)
+    }
 }
 
 impl WaylandClient {
+    /// Creates the process's initial Wayland client.
+    ///
+    /// This preserves the infallible platform startup API by panicking when Wayland is unavailable.
     pub(crate) fn new() -> Self {
         Self::new_with_services(None, take_startup_activation_token_from_environment())
+            .map_err(|error| error.error)
+            .expect("failed to initialize Wayland client")
     }
 
+    /// Creates a Wayland client and returns supplied services after any initialization error.
     pub(crate) fn new_with_services(
-        services: Option<(
-            Rc<RefCell<LinuxCommon>>,
-            PriorityQueueCalloopReceiver<RunnableVariant>,
-            Channel<SystemPowerEvent>,
-        )>,
+        services: Option<WaylandServices>,
         startup_activation_token: Option<String>,
-    ) -> Self {
-        let conn = Connection::connect_to_env().unwrap();
+    ) -> Result<Self, WaylandClientInitError> {
+        Self::try_new_with_services(services, startup_activation_token)
+            .map_err(|(error, services)| WaylandClientInitError { error, services })
+    }
 
-        let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
+    fn try_new_with_services(
+        services: Option<WaylandServices>,
+        startup_activation_token: Option<String>,
+    ) -> Result<Self, (anyhow::Error, Option<WaylandServices>)> {
+        let conn =
+            match Connection::connect_to_env().context("failed to connect to Wayland compositor") {
+                Ok(connection) => connection,
+                Err(error) => return Err((error, services)),
+            };
+
+        let (globals, event_queue) = match registry_queue_init::<WaylandClientStatePtr>(&conn)
+            .context("failed to initialize Wayland registry")
+        {
+            Ok(registry) => registry,
+            Err(error) => return Err((error, services)),
+        };
         let qh = event_queue.handle();
 
         let mut seat: Option<wl_seat::WlSeat> = None;
@@ -871,13 +914,13 @@ impl WaylandClient {
         let mut in_progress_outputs = HashMap::default();
         #[allow(clippy::mutable_key_type)]
         let mut wl_outputs: HashMap<ObjectId, wl_output::WlOutput> = HashMap::default();
-        globals.contents().with_list(|list| {
+        let global_result = globals.contents().with_list(|list| -> anyhow::Result<()> {
             for global in list {
                 match &global.interface[..] {
                     "wl_seat" => {
                         seat = Some(globals.registry().bind::<wl_seat::WlSeat, _, _>(
                             global.name,
-                            wl_seat_version(global.version),
+                            wl_seat_version(global.version)?,
                             &qh,
                             (),
                         ));
@@ -885,7 +928,7 @@ impl WaylandClient {
                     "wl_output" => {
                         let output = globals.registry().bind::<wl_output::WlOutput, _, _>(
                             global.name,
-                            wl_output_version(global.version),
+                            wl_output_version(global.version)?,
                             &qh,
                             (),
                         );
@@ -895,15 +938,32 @@ impl WaylandClient {
                     _ => {}
                 }
             }
+            Ok(())
         });
+        if let Err(error) = global_result {
+            return Err((error, services));
+        }
 
-        let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
+        let event_loop = match EventLoop::<WaylandClientStatePtr>::try_new()
+            .context("failed to create Wayland event loop")
+        {
+            Ok(event_loop) => event_loop,
+            Err(error) => return Err((error, services)),
+        };
 
-        let (common, main_receiver, power_receiver) = services.unwrap_or_else(|| {
+        let services = services.unwrap_or_else(|| {
             let (common, main_receiver, power_receiver) = LinuxCommon::new(event_loop.get_signal());
-            (Rc::new(RefCell::new(common)), main_receiver, power_receiver)
+            WaylandServices {
+                common: Rc::new(RefCell::new(common)),
+                main_receiver,
+                power_receiver,
+            }
         });
-        common.borrow_mut().signal = event_loop.get_signal();
+        let WaylandServices {
+            common,
+            main_receiver,
+            power_receiver,
+        } = services;
 
         let handle = event_loop.handle();
         let pending_runnable_idles = Rc::new(Cell::new(0));
@@ -925,8 +985,6 @@ impl WaylandClient {
                 }
             }
         });
-        let main_registration = handle.register_dispatcher(main_dispatcher.clone()).unwrap();
-
         let power_dispatcher = Dispatcher::new(
             power_receiver,
             |event, _, client: &mut WaylandClientStatePtr| {
@@ -940,28 +998,57 @@ impl WaylandClient {
                 }
             },
         );
-        let power_registration = handle
-            .register_dispatcher(power_dispatcher.clone())
-            .unwrap();
-
+        macro_rules! recover_services {
+            ($result:expr, $message:literal) => {
+                match $result {
+                    Ok(value) => value,
+                    Err(error) => {
+                        return Err((
+                            anyhow::anyhow!(concat!($message, ": {}"), error),
+                            Some(WaylandServices {
+                                common,
+                                main_receiver: main_dispatcher.into_source_inner(),
+                                power_receiver: power_dispatcher.into_source_inner(),
+                            }),
+                        ));
+                    }
+                }
+            };
+        }
         let compositor_gpu = detect_compositor_gpu();
         let gpu_context = Rc::new(RefCell::new(None));
 
-        let (frame_ping, frame_ping_source) =
-            calloop::ping::make_ping().expect("Failed to create the frame ping");
-        handle
-            .insert_source(frame_ping_source, |_, _, client| {
+        let (frame_ping, frame_ping_source) = recover_services!(
+            calloop::ping::make_ping(),
+            "failed to create Wayland frame ping"
+        );
+        recover_services!(
+            handle.insert_source(frame_ping_source, |_, _, client| {
                 client.dispatch_scheduled_frames();
-            })
-            .unwrap();
+            }),
+            "failed to register Wayland frame source"
+        );
 
-        let seat = seat.unwrap();
-        let globals = Globals::new(
-            globals,
-            common.borrow().foreground_executor.clone(),
-            qh.clone(),
-            seat.clone(),
-            frame_ping,
+        let Some(seat) = seat else {
+            return Err((
+                anyhow::anyhow!("Wayland compositor does not provide wl_seat"),
+                Some(WaylandServices {
+                    common,
+                    main_receiver: main_dispatcher.into_source_inner(),
+                    power_receiver: power_dispatcher.into_source_inner(),
+                }),
+            ));
+        };
+        let foreground_executor = common.borrow().foreground_executor.clone();
+        let globals = recover_services!(
+            Globals::new(
+                globals,
+                foreground_executor,
+                qh.clone(),
+                seat.clone(),
+                frame_ping,
+            ),
+            "failed to bind required Wayland globals"
         );
 
         let data_device = globals
@@ -976,8 +1063,9 @@ impl WaylandClient {
 
         let cursor = Cursor::new(&conn, &globals, 24);
 
-        handle
-            .insert_source(XDPEventSource::new(&common.borrow().background_executor), {
+        let background_executor = common.borrow().background_executor.clone();
+        recover_services!(
+            handle.insert_source(XDPEventSource::new(&background_executor), {
                 move |event, _, client| match event {
                     XDPEvent::WindowAppearance(appearance) => {
                         if let Some(client) = client.0.upgrade() {
@@ -1016,8 +1104,35 @@ impl WaylandClient {
                         }
                     }
                 }
-            })
-            .unwrap();
+            }),
+            "failed to register desktop portal source"
+        );
+
+        recover_services!(
+            WaylandSource::new(conn.clone(), event_queue).insert(handle.clone()),
+            "failed to register Wayland connection source"
+        );
+
+        let main_registration = recover_services!(
+            handle.register_dispatcher(main_dispatcher.clone()),
+            "failed to register foreground executor with Wayland event loop"
+        );
+        let power_registration = match handle.register_dispatcher(power_dispatcher.clone()) {
+            Ok(registration) => registration,
+            Err(error) => {
+                handle.remove(main_registration);
+                return Err((
+                    anyhow::Error::new(error)
+                        .context("failed to register power listener with Wayland event loop"),
+                    Some(WaylandServices {
+                        common,
+                        main_receiver: main_dispatcher.into_source_inner(),
+                        power_receiver: power_dispatcher.into_source_inner(),
+                    }),
+                ));
+            }
+        };
+        common.borrow_mut().signal = event_loop.get_signal();
 
         let state = Rc::new(RefCell::new(WaylandClientState {
             serial_tracker: SerialTracker::new(),
@@ -1101,11 +1216,7 @@ impl WaylandClient {
             ime_enabled: None,
         }));
 
-        WaylandSource::new(conn, event_queue)
-            .insert(handle)
-            .unwrap();
-
-        Self(state)
+        Ok(Self(state))
     }
 
     pub(crate) fn run_and_recover_services(
@@ -1558,6 +1669,10 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                 version,
             } => match &interface[..] {
                 "wl_seat" => {
+                    let Ok(version) = wl_seat_version(version) else {
+                        log::error!("ignoring wl_seat below the required version");
+                        return;
+                    };
                     if let Some(wl_pointer) = state.wl_pointer.take() {
                         wl_pointer.release();
                     }
@@ -1565,20 +1680,14 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                         wl_keyboard.release();
                     }
                     state.wl_seat.release();
-                    state.wl_seat = registry.bind::<wl_seat::WlSeat, _, _>(
-                        name,
-                        wl_seat_version(version),
-                        qh,
-                        (),
-                    );
+                    state.wl_seat = registry.bind::<wl_seat::WlSeat, _, _>(name, version, qh, ());
                 }
                 "wl_output" => {
-                    let output = registry.bind::<wl_output::WlOutput, _, _>(
-                        name,
-                        wl_output_version(version),
-                        qh,
-                        (),
-                    );
+                    let Ok(version) = wl_output_version(version) else {
+                        log::error!("ignoring wl_output below the required version");
+                        return;
+                    };
+                    let output = registry.bind::<wl_output::WlOutput, _, _>(name, version, qh, ());
 
                     state
                         .in_progress_outputs
@@ -3101,6 +3210,14 @@ mod tests {
         drain_pending_runnable_idles(&mut event_loop, &mut ran, &pending_runnable_idles);
 
         assert_eq!(ran, RUNNABLE_COUNT);
+    }
+
+    #[test]
+    fn rejects_required_globals_below_supported_versions() {
+        assert!(wl_seat_version(4).is_err());
+        assert!(wl_output_version(1).is_err());
+        assert_eq!(wl_seat_version(5).expect("minimum seat version"), 5);
+        assert_eq!(wl_output_version(2).expect("minimum output version"), 2);
     }
 
     #[derive(Clone)]

@@ -14,7 +14,7 @@ use gpui_util::ResultExt as _;
 
 use super::{
     HeadlessDisplay, HeadlessWindow, LinuxClient, LinuxCommon, LinuxKeyboardLayout,
-    PriorityQueueCalloopReceiver, SystemPowerEvent, WaylandClient,
+    PriorityQueueCalloopReceiver, SystemPowerEvent, WaylandClient, WaylandServices,
     take_startup_activation_token_from_environment,
 };
 
@@ -30,7 +30,7 @@ struct SwitchableClientState {
     wayland: RefCell<Option<WaylandClient>>,
     headless: Cell<bool>,
     requested_headless: Cell<bool>,
-    transition_waiter: RefCell<Option<oneshot::Sender<()>>>,
+    transition_waiter: RefCell<Option<oneshot::Sender<anyhow::Result<()>>>>,
     quitting: Cell<bool>,
     display: Rc<dyn PlatformDisplay>,
     startup_activation_token: RefCell<Option<String>>,
@@ -116,9 +116,9 @@ impl SwitchableClient {
         wayland.as_ref().map(function)
     }
 
-    fn finish_transition(&self) {
+    fn finish_transition(&self, result: anyhow::Result<()>) {
         if let Some(waiter) = self.0.transition_waiter.borrow_mut().take() {
-            waiter.send(()).unwrap_or(());
+            waiter.send(result).unwrap_or(());
         }
     }
 }
@@ -240,13 +240,46 @@ impl LinuxClient for SwitchableClient {
                 break;
             }
 
-            let wayland = WaylandClient::new_with_services(
-                Some((self.0.common.clone(), main_receiver, power_receiver)),
-                self.0.startup_activation_token.borrow_mut().take(),
-            );
+            let wayland = match WaylandClient::new_with_services(
+                Some(WaylandServices {
+                    common: self.0.common.clone(),
+                    main_receiver,
+                    power_receiver,
+                }),
+                self.0.startup_activation_token.borrow().clone(),
+            ) {
+                Ok(wayland) => wayland,
+                Err(error) => {
+                    let (error, services) = error.into_parts();
+                    let Some(services) = services else {
+                        self.finish_transition(Err(error.context(
+                            "Wayland initialization did not return the headless services",
+                        )));
+                        break;
+                    };
+                    self.0.requested_headless.set(true);
+                    let event_loop = match EventLoop::try_new() {
+                        Ok(event_loop) => event_loop,
+                        Err(event_loop_error) => {
+                            self.finish_transition(Err(error.context(format!(
+                                "also failed to recreate headless event loop: {event_loop_error}"
+                            ))));
+                            break;
+                        }
+                    };
+                    runtime = HeadlessRuntime {
+                        event_loop,
+                        main_receiver: services.main_receiver,
+                        power_receiver: services.power_receiver,
+                    };
+                    self.finish_transition(Err(error));
+                    continue;
+                }
+            };
+            self.0.startup_activation_token.borrow_mut().take();
             self.0.headless.set(false);
             self.0.wayland.borrow_mut().replace(wayland);
-            self.finish_transition();
+            self.finish_transition(Ok(()));
             let (main_receiver, power_receiver) = self
                 .0
                 .wayland
@@ -270,7 +303,7 @@ impl LinuxClient for SwitchableClient {
                 main_receiver,
                 power_receiver,
             };
-            self.finish_transition();
+            self.finish_transition(Ok(()));
         }
     }
 
@@ -305,11 +338,109 @@ impl LinuxClient for SwitchableClient {
                 receiver
                     .await
                     .map_err(|_| anyhow::anyhow!("display backend transition was canceled"))
+                    .and_then(|result| result)
             })
     }
 
     fn quit(&self) {
         self.0.quitting.set(true);
         self.0.common.borrow().signal.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::RefCell, process::Command};
+
+    use gpui::{AppContext as _, Application, QuitMode};
+
+    use super::*;
+    use crate::linux::LinuxPlatform;
+
+    #[test]
+    fn failed_wayland_attach_preserves_headless_app_and_allows_retry() {
+        const CHILD_ENV: &str = "GPUI_FAILED_WAYLAND_ATTACH_TEST_CHILD";
+
+        if std::env::var_os(CHILD_ENV).is_some() {
+            run_failed_wayland_attach_scenario();
+            return;
+        }
+
+        let test_name = format!(
+            "{}::failed_wayland_attach_preserves_headless_app_and_allows_retry",
+            module_path!()
+        );
+        let output = Command::new(std::env::current_exe().expect("current test executable"))
+            .args(["--exact", &test_name, "--nocapture"])
+            .env(CHILD_ENV, "1")
+            .env(
+                "WAYLAND_DISPLAY",
+                "/gpui-test/wayland-display-does-not-exist",
+            )
+            .output()
+            .expect("run isolated invalid-display scenario");
+
+        assert!(
+            output.status.success(),
+            "invalid-display scenario failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    fn run_failed_wayland_attach_scenario() {
+        let platform = Rc::new(LinuxPlatform {
+            inner: SwitchableClient::new(),
+        });
+        let outcome = Rc::new(RefCell::new(None));
+        let queued_task_ran = Rc::new(Cell::new(false));
+
+        Application::with_platform(platform)
+            .with_quit_mode(QuitMode::Explicit)
+            .run({
+                let outcome = outcome.clone();
+                let queued_task_ran = queued_task_ran.clone();
+                move |cx| {
+                    let entity = cx.new(|_| 1usize);
+                    cx.spawn(async move |cx| {
+                        let result = async {
+                            entity.update(cx, |value, _| *value += 1);
+                            let (release_task, wait_for_release) = oneshot::channel();
+                            let queued_task = cx.spawn(async move |_| {
+                                wait_for_release
+                                    .await
+                                    .expect("queued task release sender remains alive");
+                                queued_task_ran.set(true);
+                            });
+
+                            let first_attach = cx.update(|cx| cx.set_headless(false));
+                            assert!(first_attach.await.is_err());
+                            assert_eq!(entity.read_with(cx, |value, _| *value), 2);
+                            release_task
+                                .send(())
+                                .expect("queued task remains attached to the executor");
+                            queued_task.await;
+
+                            let second_attach = cx.update(|cx| cx.set_headless(false));
+                            assert!(second_attach.await.is_err());
+                            entity.update(cx, |value, _| *value += 1);
+                            assert_eq!(entity.read_with(cx, |value, _| *value), 3);
+                            anyhow::Ok(())
+                        }
+                        .await;
+                        *outcome.borrow_mut() = Some(result);
+                        cx.update(|cx| cx.quit());
+                        anyhow::Ok(())
+                    })
+                    .detach();
+                }
+            });
+
+        assert!(queued_task_ran.get());
+        outcome
+            .borrow_mut()
+            .take()
+            .expect("scenario completed")
+            .expect("headless app survived failed Wayland attachments");
     }
 }
