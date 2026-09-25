@@ -18702,6 +18702,7 @@ dependencies = [
  "cloud_api_types",
  "command_palette_hooks",
  "db",
+ "file_icons",
  "fs",
  "git_ui_core",
  "gpui",
