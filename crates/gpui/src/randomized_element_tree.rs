@@ -455,6 +455,15 @@ pub enum RandomizedElementTreeMutation {
     },
 }
 
+/// What [`RandomizedElementTree::recolor_children`] changed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RecoloredChildren {
+    /// Descendants whose background changed.
+    pub recolored: usize,
+    /// Entity boundaries (or the root) notified, each once.
+    pub notified: usize,
+}
+
 /// A persistent root view for randomized GPUI element-tree tests and benchmarks.
 pub struct RandomizedElementTree {
     snapshot: Rc<RefCell<RandomizedElementTreeSnapshot>>,
@@ -747,6 +756,43 @@ impl RandomizedElementTree {
             owner_entity_id,
             synchronize_entities: true,
         })
+    }
+
+    /// Recolors `count` distinct seeded random descendants in one pass and notifies each
+    /// affected entity boundary once (the root, for descendants owned by no entity).
+    /// Returns how many descendants changed and how many boundaries were notified.
+    ///
+    /// This is the "share of the scene changing per frame" knob: `count` calls to
+    /// [`Self::apply_mutation`] would each walk the tree and notify separately, costing
+    /// more than the frame being measured once `count` is a fair share of the tree.
+    pub fn recolor_children(&mut self, count: usize, cx: &mut Context<Self>) -> RecoloredChildren {
+        let owners = {
+            let mut snapshot = self.snapshot.borrow_mut();
+            let mut paths = node_paths(&snapshot.children);
+            let count = count.min(paths.len());
+            // A partial Fisher–Yates shuffle: the first `count` paths are a uniform sample.
+            for index in 0..count {
+                let other = self.rng.random_range(index..paths.len());
+                paths.swap(index, other);
+            }
+            let mut owners = HashSet::default();
+            for path in &paths[..count] {
+                owners.insert(nearest_entity_id(&snapshot.children, path));
+                if let Some(node) = node_at_path_mut(&mut snapshot.children, path) {
+                    node.style.background = random_color(&mut self.rng);
+                }
+            }
+            owners
+        };
+        let notified = owners.len();
+        let recolored = count.min(self.snapshot.borrow().descendant_count());
+        for owner in owners {
+            self.notify_owner(owner, cx);
+        }
+        RecoloredChildren {
+            recolored,
+            notified,
+        }
     }
 
     fn mutate_random_child(
