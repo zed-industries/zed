@@ -276,12 +276,7 @@ impl WgpuRenderer {
         let window_handle = window
             .window_handle()
             .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
-
-        let target = wgpu::SurfaceTargetUnsafe::RawHandle {
-            // Fall back to the display handle already provided via InstanceDescriptor::display.
-            raw_display_handle: None,
-            raw_window_handle: window_handle.as_raw(),
-        };
+        let raw_window_handle = window_handle.as_raw();
 
         // Use the existing context's instance if available, otherwise create a new one.
         // The surface must be created with the same instance that will be used for
@@ -292,22 +287,38 @@ impl WgpuRenderer {
             .map(|ctx| ctx.instance.clone())
             .unwrap_or_else(|| WgpuContext::instance(Box::new(window.clone())));
 
-        // Safety: The caller guarantees that the window handle is valid for the
-        // lifetime of this renderer. In practice, the RawWindow struct is created
-        // from the native window handles and the surface is dropped before the window.
-        let surface = unsafe {
-            instance
-                .create_surface_unsafe(target)
-                .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?
-        };
-
         let mut ctx_ref = gpu_context.borrow_mut();
-        let context = match ctx_ref.as_mut() {
+        let (context, surface) = match ctx_ref.as_mut() {
             Some(context) => {
+                let surface = create_surface(&context.instance, raw_window_handle)?;
                 context.check_compatible_with_surface(&surface)?;
-                context
+                (context, surface)
             }
-            None => ctx_ref.insert(WgpuContext::new(instance, &surface, compositor_gpu)?),
+            None => {
+                match create_context_for_surface(
+                    instance,
+                    raw_window_handle,
+                    |instance, surface| WgpuContext::new(instance, surface, compositor_gpu),
+                ) {
+                    Ok((context, surface)) => (ctx_ref.insert(context), surface),
+                    Err(err) => {
+                        log::warn!(
+                            "GPU context creation failed: {err}), retrying with an \
+                             unfiltered Vulkan + GL instance"
+                        );
+                        WgpuContext::restore_full_icd_selection();
+                        let full_instance =
+                            WgpuContext::instance_unrestricted(Box::new(window.clone()));
+                        let (context, full_surface) = create_context_for_surface(
+                            full_instance,
+                            raw_window_handle,
+                            |instance, surface| WgpuContext::new(instance, surface, compositor_gpu),
+                        )
+                        .context("No usable GPU adapter on this system")?;
+                        (ctx_ref.insert(context), full_surface)
+                    }
+                }
+            }
         };
 
         let atlas = Arc::new(WgpuAtlas::from_context(context));
@@ -2156,10 +2167,37 @@ impl WgpuRenderer {
             // may need more time to come back (e.g. after suspend/resume).
             std::thread::sleep(std::time::Duration::from_millis(350));
 
-            let instance = WgpuContext::instance(Box::new(window.clone()));
-            let surface = create_surface(&instance, window_handle.as_raw())?;
-            let new_context =
-                WgpuContext::new_rejecting_software(instance, &surface, self.compositor_gpu)?;
+            let window = Box::new(window.clone());
+            let instance = WgpuContext::instance(window.clone());
+            let (new_context, surface) = match create_context_for_surface(
+                instance,
+                window_handle.as_raw(),
+                |instance, surface| {
+                    WgpuContext::new_rejecting_software(instance, surface, self.compositor_gpu)
+                },
+            ) {
+                Ok(result) => result,
+                Err(err) => {
+                    log::warn!(
+                        "GPU context creation failed: {err}), retrying with an \
+                       unfiltered Vulkan + GL instance"
+                    );
+                    WgpuContext::restore_full_icd_selection();
+                    let full_instance = WgpuContext::instance_unrestricted(window);
+                    create_context_for_surface(
+                        full_instance,
+                        window_handle.as_raw(),
+                        |instance, surface| {
+                            WgpuContext::new_rejecting_software(
+                                instance,
+                                surface,
+                                self.compositor_gpu,
+                            )
+                        },
+                    )
+                    .context("No usable GPU adapter on this system")?
+                }
+            };
             *gpu_context.borrow_mut() = Some(new_context);
             surface
         } else {
@@ -2215,6 +2253,24 @@ fn create_surface(
             })
             .map_err(|e| anyhow::anyhow!("{e}"))
     }
+}
+
+/// Create a surface and a GPU context together, so that a surface-creation
+/// failure (e.g. a Vulkan-only instance with no usable ICD) fails the attempt
+/// instead of aborting before the caller can fall back to another instance.
+#[cfg(not(target_family = "wasm"))]
+fn create_context_for_surface<F>(
+    instance: wgpu::Instance,
+    raw_window_handle: raw_window_handle::RawWindowHandle,
+    create_context: F,
+) -> anyhow::Result<(WgpuContext, wgpu::Surface<'static>)>
+where
+    F: FnOnce(wgpu::Instance, &wgpu::Surface<'static>) -> anyhow::Result<WgpuContext>,
+{
+    let surface = create_surface(&instance, raw_window_handle)?;
+    let context = create_context(instance, &surface)?;
+    
+    Ok((context, surface))
 }
 
 struct RenderingParameters {
