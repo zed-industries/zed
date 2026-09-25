@@ -9,10 +9,12 @@ use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::BoxStream, st
 use gpui::{App, AsyncApp, Entity, Task};
 use http_client::Result;
 use parking_lot::Mutex;
-use std::collections::VecDeque;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, AtomicU64, Ordering::SeqCst},
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering::SeqCst},
+    },
 };
 
 #[derive(Clone)]
@@ -117,6 +119,7 @@ pub struct FakeLanguageModel {
     forbid_requests: AtomicBool,
     supports_thinking: AtomicBool,
     supports_disabling_thinking: AtomicBool,
+    supports_disabling_thinking_by_effort: Mutex<HashMap<String, bool>>,
     supports_streaming_tools: AtomicBool,
     supports_images: AtomicBool,
     supports_server_side_compaction: AtomicBool,
@@ -138,6 +141,7 @@ impl Default for FakeLanguageModel {
             forbid_requests: AtomicBool::new(false),
             supports_thinking: AtomicBool::new(false),
             supports_disabling_thinking: AtomicBool::new(true),
+            supports_disabling_thinking_by_effort: Mutex::new(HashMap::new()),
             supports_streaming_tools: AtomicBool::new(false),
             supports_images: AtomicBool::new(false),
             supports_server_side_compaction: AtomicBool::new(false),
@@ -180,6 +184,12 @@ impl FakeLanguageModel {
 
     pub fn set_supports_disabling_thinking(&self, supports: bool) {
         self.supports_disabling_thinking.store(supports, SeqCst);
+    }
+
+    pub fn set_supports_disabling_thinking_at_effort(&self, effort: &str, supports: bool) {
+        self.supports_disabling_thinking_by_effort
+            .lock()
+            .insert(effort.to_string(), supports);
     }
 
     pub fn set_supports_streaming_tools(&self, supports: bool) {
@@ -342,6 +352,17 @@ impl LanguageModel for FakeLanguageModel {
 
     fn supports_disabling_thinking(&self) -> bool {
         self.supports_disabling_thinking.load(SeqCst)
+    }
+
+    fn supports_disabling_thinking_at_effort(&self, effort: Option<&str>) -> bool {
+        effort
+            .and_then(|effort| {
+                self.supports_disabling_thinking_by_effort
+                    .lock()
+                    .get(effort)
+                    .copied()
+            })
+            .unwrap_or_else(|| self.supports_disabling_thinking())
     }
 
     fn supports_streaming_tools(&self) -> bool {
