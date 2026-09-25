@@ -179,6 +179,35 @@ Zed can also wait before inserting printable text when it might begin a multi-st
 
 Whenever multi-stroke input is pending, an indicator with the pending keystrokes is shown in the status bar. Hovering it lists the bindings that could still match. If the input has a timeout, the indicator also shows a countdown, and hovering pauses the timeout so you can read the bindings. The timeout resumes with the same remaining duration when the pointer leaves. Without a timeout, the pending keystrokes are shown without a countdown. The indicator can be hidden with `{"status_bar": {"pending_keystrokes_indicator": false}}`. Vim and Helix modes continue to use their existing pending-key indicator instead.
 
+While a key sequence (chord) is pending, press {#kb which_key::ShowPendingBindings}
+to open the indicator's binding list without moving focus. The list updates as
+you continue typing and stays open until the chord completes or is cleared.
+While it is open, the timeout stays paused, even if the pointer moves away.
+
+The {#action which_key::ShowPendingBindings} action only works while a chord is
+pending, and only when bound to a single keystroke. While a chord is pending,
+it takes precedence over longer bindings that use the same keystroke, such as
+`ctrl-b alt-/` or `alt-/ x`. To use those bindings mid-chord, rebind or disable
+the shortcut.
+
+Your chords that start with `alt-/`, such as `alt-/ x`, time out like any chord
+whose first keystroke is also bound. You can override or disable the default
+binding using the normal [keybinding precedence](#precedence); only disabling it
+removes that timeout. For example, add this to your `keymap.json` to move the
+shortcut to `alt-h`:
+
+```json [keymap]
+[
+  {
+    "context": "Workspace",
+    "bindings": {
+      "alt-/": null,
+      "alt-h": "which_key::ShowPendingBindings"
+    }
+  }
+]
+```
+
 To also use the larger which-key menu, open the Settings Editor and search for
 `Show Which-key Menu`. The pending keystrokes indicator remains visible when the
 menu is enabled, and hovering it still pauses the timeout, but its binding list
