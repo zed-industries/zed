@@ -8,17 +8,18 @@ use gpui::{App, AsyncApp, Context, Entity, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, DisabledReason, EnvVar, IconOrSvg, InlineDescription,
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestTool,
-    LanguageModelToolChoice, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
-    ProviderSettingsView, RateLimiter, Role, StopReason, SubPageProviderSettings, TokenUsage,
-    env_var,
+    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelRequestTool, LanguageModelToolChoice, LanguageModelToolUse,
+    LanguageModelToolUseId, MessageContent, ProviderSettingsView, RateLimiter, Role, StopReason,
+    SubPageProviderSettings, TokenUsage, env_var,
 };
 use menu;
 use ollama::{
     ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, OLLAMA_API_URL, OllamaFunctionCall,
-    OllamaFunctionTool, OllamaToolCall, get_models, show_model, stream_chat_completion,
+    OllamaFunctionTool, OllamaToolCall, ThinkingValue, get_models, show_model,
+    stream_chat_completion,
 };
 pub use settings::OllamaAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -163,6 +164,7 @@ impl State {
                                     Some(model.supports_tools()),
                                     Some(model.supports_vision()),
                                     Some(model.supports_thinking()),
+                                    model.thinking,
                                 )
                             },
                         )
@@ -366,6 +368,7 @@ impl OllamaLanguageModel {
         }
 
         let supports_vision = self.model.supports_vision.unwrap_or(false);
+        let think = ollama_thinking_value(&self.model, &request);
 
         let mut messages = Vec::with_capacity(request.messages.len());
 
@@ -486,10 +489,7 @@ impl OllamaLanguageModel {
                 temperature: request.temperature.or(Some(1.0)),
                 ..Default::default()
             }),
-            think: self
-                .model
-                .supports_thinking
-                .map(|supports_thinking| supports_thinking && request.thinking_allowed),
+            think,
             tools: if self.model.supports_tools.unwrap_or(false) {
                 request
                     .tools
@@ -530,6 +530,18 @@ impl LanguageModel for OllamaLanguageModel {
 
     fn supports_thinking(&self) -> bool {
         self.model.supports_thinking.unwrap_or(false)
+    }
+
+    fn supports_disabling_thinking(&self) -> bool {
+        ollama_supports_disabling_thinking(&self.model)
+    }
+
+    fn default_thinking_enabled(&self) -> bool {
+        ollama_default_thinking_enabled(&self.model)
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        ollama_effort_levels(&self.model)
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -1155,11 +1167,89 @@ fn merge_settings_into_models(
                     supports_tools: setting_model.supports_tools,
                     supports_vision: setting_model.supports_images,
                     supports_thinking: setting_model.supports_thinking,
+                    thinking: None,
                     disabled: None,
                 },
             );
         }
     }
+}
+
+fn ollama_supports_disabling_thinking(model: &ollama::Model) -> bool {
+    model
+        .thinking
+        .as_ref()
+        .is_none_or(|thinking| thinking.values.contains(&ThinkingValue::Boolean(false)))
+}
+
+fn ollama_default_thinking_enabled(model: &ollama::Model) -> bool {
+    model.supports_thinking.unwrap_or(false)
+        && !matches!(
+            model.thinking.as_ref().map(|thinking| &thinking.default),
+            Some(ThinkingValue::Boolean(false))
+        )
+}
+
+fn ollama_effort_levels(model: &ollama::Model) -> Vec<LanguageModelEffortLevel> {
+    if !model.supports_thinking.unwrap_or(false) {
+        return Vec::new();
+    }
+
+    let Some(thinking) = &model.thinking else {
+        return Vec::new();
+    };
+
+    thinking
+        .values
+        .iter()
+        .filter_map(|value| {
+            let ThinkingValue::Level(value) = value else {
+                return None;
+            };
+            let name = match value.as_str() {
+                "low" => "Low".into(),
+                "medium" => "Medium".into(),
+                "high" => "High".into(),
+                "xhigh" => "Extra High".into(),
+                "max" => "Max".into(),
+                _ => SharedString::from(value.clone()),
+            };
+            Some(LanguageModelEffortLevel {
+                name,
+                value: SharedString::from(value.clone()),
+                is_default: matches!(
+                    &thinking.default,
+                    ThinkingValue::Level(default) if default == value
+                ),
+            })
+        })
+        .collect()
+}
+
+fn ollama_thinking_value(
+    model: &ollama::Model,
+    request: &LanguageModelRequest,
+) -> Option<ThinkingValue> {
+    model.supports_thinking.map(|supports_thinking| {
+        if !supports_thinking || !request.thinking_allowed {
+            return ThinkingValue::Boolean(false);
+        }
+
+        request
+            .thinking_effort
+            .clone()
+            .map(ThinkingValue::Level)
+            .or_else(|| {
+                model.thinking.as_ref().and_then(|thinking| {
+                    if let ThinkingValue::Level(default) = &thinking.default {
+                        Some(ThinkingValue::Level(default.clone()))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or(ThinkingValue::Boolean(true))
+    })
 }
 
 fn tool_into_ollama(tool: LanguageModelRequestTool) -> Result<ollama::OllamaTool> {
@@ -1201,6 +1291,7 @@ mod tests {
                 supports_tools: None,
                 supports_vision: None,
                 supports_thinking: None,
+                thinking: None,
                 disabled: None,
             },
         );
@@ -1214,6 +1305,7 @@ mod tests {
                 supports_tools: None,
                 supports_vision: None,
                 supports_thinking: None,
+                thinking: None,
                 disabled: None,
             },
         );
@@ -1259,5 +1351,107 @@ mod tests {
             "3b model should have its own display_name"
         );
         assert_eq!(model_3b.max_tokens, 6000);
+    }
+
+    fn thinking_model(values: Vec<ThinkingValue>, default: ThinkingValue) -> ollama::Model {
+        ollama::Model {
+            name: "thinking-model".to_string(),
+            display_name: None,
+            max_tokens: 4096,
+            keep_alive: None,
+            supports_tools: None,
+            supports_vision: None,
+            supports_thinking: Some(true),
+            thinking: Some(ollama::Thinking { values, default }),
+            disabled: None,
+        }
+    }
+
+    #[test]
+    fn test_ollama_dynamic_thinking_levels() {
+        let model = thinking_model(
+            vec![
+                ThinkingValue::Boolean(false),
+                ThinkingValue::Level("low".to_string()),
+                ThinkingValue::Level("high".to_string()),
+                ThinkingValue::Level("max".to_string()),
+            ],
+            ThinkingValue::Level("max".to_string()),
+        );
+
+        assert!(ollama_supports_disabling_thinking(&model));
+        assert!(ollama_default_thinking_enabled(&model));
+
+        let levels = ollama_effort_levels(&model);
+        assert_eq!(
+            levels
+                .iter()
+                .map(|level| level.value.as_ref())
+                .collect::<Vec<_>>(),
+            ["low", "high", "max"]
+        );
+        assert_eq!(
+            levels
+                .iter()
+                .find(|level| level.is_default)
+                .map(|level| level.value.as_ref()),
+            Some("max")
+        );
+    }
+
+    #[test]
+    fn test_ollama_boolean_thinking_controls() {
+        let model = thinking_model(
+            vec![ThinkingValue::Boolean(false), ThinkingValue::Boolean(true)],
+            ThinkingValue::Boolean(false),
+        );
+
+        assert!(ollama_supports_disabling_thinking(&model));
+        assert!(!ollama_default_thinking_enabled(&model));
+        assert!(ollama_effort_levels(&model).is_empty());
+
+        let model = thinking_model(
+            vec![ThinkingValue::Boolean(false), ThinkingValue::Boolean(true)],
+            ThinkingValue::Boolean(true),
+        );
+        assert!(ollama_default_thinking_enabled(&model));
+    }
+
+    #[test]
+    fn test_ollama_thinking_request_value() {
+        let model = thinking_model(
+            vec![
+                ThinkingValue::Level("low".to_string()),
+                ThinkingValue::Level("max".to_string()),
+            ],
+            ThinkingValue::Level("max".to_string()),
+        );
+
+        assert!(!ollama_supports_disabling_thinking(&model));
+
+        let request = LanguageModelRequest {
+            thinking_allowed: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            ollama_thinking_value(&model, &request),
+            Some(ThinkingValue::Level("max".to_string()))
+        );
+
+        let request = LanguageModelRequest {
+            thinking_allowed: true,
+            thinking_effort: Some("low".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            ollama_thinking_value(&model, &request),
+            Some(ThinkingValue::Level("low".to_string()))
+        );
+
+        let request = LanguageModelRequest::default();
+        assert_eq!(
+            ollama_thinking_value(&model, &request),
+            Some(ThinkingValue::Boolean(false))
+        );
     }
 }
