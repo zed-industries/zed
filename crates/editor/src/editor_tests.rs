@@ -19642,6 +19642,27 @@ async fn test_format_selections_action_available_when_range_formatting_is_suppor
 }
 
 #[gpui::test]
+async fn test_semantic_navigation_actions_available_in_working_tree_buffer(
+    cx: &mut TestAppContext,
+) {
+    let (_, editor, cx, _) = setup_range_format_test(cx).await;
+    refresh_editor_actions(cx);
+
+    assert!(cx.update(|window, cx| {
+        window.is_action_available(&GoToDefinition::default(), cx)
+            && window.is_action_available(&GoToDefinitionSplit, cx)
+            && window.is_action_available(&GoToDeclaration::default(), cx)
+            && window.is_action_available(&GoToDeclarationSplit, cx)
+            && window.is_action_available(&GoToTypeDefinition::default(), cx)
+            && window.is_action_available(&GoToTypeDefinitionSplit, cx)
+            && window.is_action_available(&GoToImplementation::default(), cx)
+            && window.is_action_available(&GoToImplementationSplit, cx)
+            && window.is_action_available(&FindAllReferences::default(), cx)
+    }));
+    drop(editor);
+}
+
+#[gpui::test]
 async fn test_format_selections_action_available_for_cursor_when_range_formatting_is_supported(
     cx: &mut TestAppContext,
 ) {

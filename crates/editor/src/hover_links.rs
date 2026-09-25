@@ -275,8 +275,10 @@ impl Editor {
             HoverLink::Text(link) => exclude_link_to_position(&buffer, &anchor, link, cx),
             _ => true,
         });
-        let attempted_semantic_navigation =
-            refresh && self.lsp_data_enabled() && point.as_valid().is_some();
+        let attempted_semantic_navigation = refresh
+            && self.lsp_data_enabled()
+            && point.as_valid().is_some()
+            && !Editor::is_historical_buffer(&buffer, cx);
         let definitions = attempted_semantic_navigation
             .then(|| {
                 self.semantics_provider
@@ -309,11 +311,6 @@ impl Editor {
                                 matches!(link, HoverLink::Url(_) | HoverLink::File(_))
                             });
                         }
-                        if links.is_empty()
-                            && editor.show_historical_navigation_unavailable(&buffer, cx)
-                        {
-                            return;
-                        }
                         editor
                             .reveal_clicked_links(kind, links, position, origin, split, window, cx);
                     })
@@ -321,12 +318,6 @@ impl Editor {
             })
             .detach();
         } else {
-            if attempted_semantic_navigation
-                && links.is_empty()
-                && self.show_historical_navigation_unavailable(&buffer, cx)
-            {
-                return;
-            }
             self.reveal_clicked_links(kind, links, position, origin, split, window, cx);
         }
     }
@@ -512,6 +503,7 @@ pub fn show_link_definition(
     let Some(buffer) = editor.buffer.read(cx).buffer(anchor.buffer_id) else {
         return;
     };
+    let is_historical_buffer = Editor::is_historical_buffer(&buffer, cx);
     let same_kind = hovered_link_state.preferred_kind == preferred_kind
         || hovered_link_state
             .links
@@ -609,7 +601,7 @@ pub fn show_link_definition(
                     // Always also collect LSP definitions so that cmd-click
                     // reveals every applicable target (e.g. a position that
                     // carries both a document link and a definition).
-                    if let Some(provider) = provider {
+                    if !is_historical_buffer && let Some(provider) = provider {
                         let task = cx.update(|_, cx| {
                             provider.definitions(&buffer, anchor, preferred_kind, cx)
                         })?;

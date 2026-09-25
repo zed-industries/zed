@@ -15,6 +15,11 @@ use crate::{
     HandleInput, HoveredCursor, InlayHintRefreshReason, LineDown, LineHighlight, LineUp,
     MAX_LINE_LEN, MINIMAP_FONT_SIZE, PageDown, PageUp, Point, RowExt, RowRangeExt, Selection,
     SelectionDragState, SizingBehavior, SoftWrap, ToPoint,
+    actions::{
+        FindAllReferences, GoToDeclaration, GoToDeclarationSplit, GoToDefinition,
+        GoToDefinitionSplit, GoToImplementation, GoToImplementationSplit, GoToTypeDefinition,
+        GoToTypeDefinitionSplit,
+    },
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     cursor_animation::{CursorViewport, LogicalCursorPosition, animated_corners_overlap_target},
@@ -380,10 +385,17 @@ impl EditorElement {
 
     fn register_actions(&self, window: &mut Window, cx: &mut App) {
         let editor = &self.editor;
-        editor.update(cx, |editor, cx| {
+        let is_historical_at_cursor = editor.update(cx, |editor, cx| {
+            let is_historical_at_cursor = editor.is_historical_at_cursor(cx);
             for action in editor.editor_actions.borrow().values() {
-                (action)(editor, window, cx)
+                let action_is_unavailable = action
+                    .action_type
+                    .is_some_and(is_historical_navigation_action);
+                if !is_historical_at_cursor || !action_is_unavailable {
+                    (action.render)(editor, window, cx)
+                }
             }
+            is_historical_at_cursor
         });
 
         crate::rust_analyzer_ext::apply_related_actions(editor, window, cx);
@@ -526,46 +538,48 @@ impl EditorElement {
         if editor.read(cx).lsp_data_enabled() {
             register_action(editor, window, Editor::open_definition_locations);
         }
-        register_action(editor, window, |editor, action, window, cx| {
-            editor
-                .go_to_definition(action, window, cx)
-                .detach_and_log_err(cx);
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            editor
-                .go_to_definition_split(action, window, cx)
-                .detach_and_log_err(cx);
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            editor
-                .go_to_declaration(action, window, cx)
-                .detach_and_log_err(cx);
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            editor
-                .go_to_declaration_split(action, window, cx)
-                .detach_and_log_err(cx);
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            editor
-                .go_to_implementation(action, window, cx)
-                .detach_and_log_err(cx);
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            editor
-                .go_to_implementation_split(action, window, cx)
-                .detach_and_log_err(cx);
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            editor
-                .go_to_type_definition(action, window, cx)
-                .detach_and_log_err(cx);
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            editor
-                .go_to_type_definition_split(action, window, cx)
-                .detach_and_log_err(cx);
-        });
+        if !is_historical_at_cursor {
+            register_action(editor, window, |editor, action, window, cx| {
+                editor
+                    .go_to_definition(action, window, cx)
+                    .detach_and_log_err(cx);
+            });
+            register_action(editor, window, |editor, action, window, cx| {
+                editor
+                    .go_to_definition_split(action, window, cx)
+                    .detach_and_log_err(cx);
+            });
+            register_action(editor, window, |editor, action, window, cx| {
+                editor
+                    .go_to_declaration(action, window, cx)
+                    .detach_and_log_err(cx);
+            });
+            register_action(editor, window, |editor, action, window, cx| {
+                editor
+                    .go_to_declaration_split(action, window, cx)
+                    .detach_and_log_err(cx);
+            });
+            register_action(editor, window, |editor, action, window, cx| {
+                editor
+                    .go_to_implementation(action, window, cx)
+                    .detach_and_log_err(cx);
+            });
+            register_action(editor, window, |editor, action, window, cx| {
+                editor
+                    .go_to_implementation_split(action, window, cx)
+                    .detach_and_log_err(cx);
+            });
+            register_action(editor, window, |editor, action, window, cx| {
+                editor
+                    .go_to_type_definition(action, window, cx)
+                    .detach_and_log_err(cx);
+            });
+            register_action(editor, window, |editor, action, window, cx| {
+                editor
+                    .go_to_type_definition_split(action, window, cx)
+                    .detach_and_log_err(cx);
+            });
+        }
         register_action(editor, window, Editor::open_url);
         register_action(editor, window, Editor::open_selected_filename);
         register_action(editor, window, Editor::fold);
@@ -671,13 +685,15 @@ impl EditorElement {
                 cx.propagate();
             }
         });
-        register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.find_all_references(action, window, cx) {
-                task.detach_and_log_err(cx);
-            } else {
-                cx.propagate();
-            }
-        });
+        if !is_historical_at_cursor {
+            register_action(editor, window, |editor, action, window, cx| {
+                if let Some(task) = editor.find_all_references(action, window, cx) {
+                    task.detach_and_log_err(cx);
+                } else {
+                    cx.propagate();
+                }
+            });
+        }
         register_action(editor, window, Editor::show_signature_help);
         register_action(editor, window, Editor::signature_help_prev);
         register_action(editor, window, Editor::signature_help_next);
@@ -11305,6 +11321,20 @@ impl HighlightedRange {
 enum CursorPopoverType {
     CodeContextMenu,
     EditPrediction,
+}
+
+fn is_historical_navigation_action(action_type: TypeId) -> bool {
+    action_type == TypeId::of::<GoToDefinition>()
+        || action_type == TypeId::of::<GoToDefinitionSplit>()
+        || action_type == TypeId::of::<GoToDeclaration>()
+        || action_type == TypeId::of::<GoToDeclarationSplit>()
+        || action_type == TypeId::of::<GoToTypeDefinition>()
+        || action_type == TypeId::of::<GoToTypeDefinitionSplit>()
+        || action_type == TypeId::of::<GoToImplementation>()
+        || action_type == TypeId::of::<GoToImplementationSplit>()
+        || action_type == TypeId::of::<FindAllReferences>()
+        || action_type == TypeId::of::<zed_actions::ShowIncomingCalls>()
+        || action_type == TypeId::of::<zed_actions::ShowOutgoingCalls>()
 }
 
 pub fn register_action<T: Action>(
