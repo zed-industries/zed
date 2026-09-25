@@ -1,6 +1,7 @@
 use gpui::{
     Action as _, Anchor, Animation, AnimationExt, App, Context, HoverListenerMode,
-    KeybindingKeystroke, Render, ScrollHandle, Subscription, Task, Window, anchored, deferred,
+    KeybindingKeystroke, KeystrokeEvent, Render, ScrollHandle, Subscription, Task, Window,
+    anchored, deferred,
 };
 use settings::{Settings, SettingsStore};
 use std::{rc::Rc, time::Duration};
@@ -12,7 +13,7 @@ use vim_mode_setting::{HelixModeSetting, VimModeSetting};
 use workspace::{HideStatusItem, StatusBarSettings, StatusItemView, item::ItemHandle};
 
 use crate::{
-    bindings_for_pending_input, map_pending_keystrokes,
+    ShowPendingBindings, bindings_for_pending_input, map_pending_keystrokes,
     pending_bindings::{PendingBindingRow, PendingBindings, prepare_pending_bindings},
     which_key_settings::WhichKeySettings,
 };
@@ -34,6 +35,7 @@ struct PopoverState {
     indicator_pointer_over: bool,
     pointer_over: bool,
     visible: bool,
+    opened_by_keyboard: bool,
     hide_task: Option<Task<()>>,
 }
 
@@ -81,6 +83,7 @@ impl PendingKeystrokesIndicator {
                 if !new_popover_enabled {
                     this.popover.pointer_over = false;
                     this.popover.visible = false;
+                    this.popover.opened_by_keyboard = false;
                     this.popover.hide_task.take();
                 }
                 if this.refresh_render_state(window, cx) {
@@ -131,9 +134,15 @@ impl PendingKeystrokesIndicator {
         if pending_keys_changed {
             self.popover_scroll_handle.set_offset(Default::default());
         }
-        // Pausing or resuming the timer also notifies observers.
-        // Only a change in pending keys should close the popover early.
-        if self.popover.visible && !self.popover.is_pointer_over() && pending_keys_changed {
+        // Pausing or resuming the timeout also notifies observers, so close a hover-opened
+        // popover early only when the pending keys change. A keyboard-opened popover stays open
+        // while any input is pending, even if an unmatched key resolves one chord and starts
+        // another.
+        if self.popover.visible
+            && !self.popover.opened_by_keyboard
+            && !self.popover.is_pointer_over()
+            && pending_keys_changed
+        {
             self.popover = PopoverState::default();
         }
 
@@ -187,7 +196,7 @@ impl PendingKeystrokesIndicator {
             return;
         }
 
-        if self.popover.is_pointer_over() {
+        if self.popover.opened_by_keyboard || self.popover.is_pointer_over() {
             self.popover.hide_task.take();
             let was_visible = self.popover.visible;
             self.popover.visible = Self::popover_enabled(cx);
@@ -215,6 +224,34 @@ impl PendingKeystrokesIndicator {
             window.set_pending_input_timeout_paused(&cx.entity(), false, cx);
         }
     }
+
+    fn handle_intercepted_keystroke(
+        &mut self,
+        event: &KeystrokeEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !window.has_pending_keystrokes() || !Self::enabled(cx) || !Self::popover_enabled(cx) {
+            return;
+        }
+
+        // Only the highest-precedence binding counts, so user overrides can disable the shortcut.
+        let (bindings, _) = cx
+            .key_bindings()
+            .borrow()
+            .bindings_for_input(std::slice::from_ref(&event.keystroke), &event.context_stack);
+        if !bindings
+            .first()
+            .is_some_and(|binding| binding.action().partial_eq(&ShowPendingBindings))
+        {
+            return;
+        }
+
+        cx.stop_propagation();
+        self.popover.opened_by_keyboard = true;
+        self.update_popover_state(window, cx);
+        cx.notify();
+    }
 }
 
 impl Render for PendingKeystrokesIndicator {
@@ -222,6 +259,20 @@ impl Render for PendingKeystrokesIndicator {
         let Some(render_state) = self.render_state().cloned() else {
             return div().hidden().into_any_element();
         };
+
+        if Self::popover_enabled(cx) {
+            let window_handle = window.window_handle();
+            let listener = cx.listener(move |this, event: &KeystrokeEvent, window, cx| {
+                if window.window_handle() == window_handle {
+                    this.handle_intercepted_keystroke(event, window, cx);
+                }
+            });
+            // Inactive workspaces in the same window keep their indicators alive. Storing the
+            // subscription in element state ensures only the rendered indicator intercepts input.
+            window.use_keyed_state("pending-keystrokes-interceptor", cx, |_, cx| {
+                cx.intercept_keystrokes(listener)
+            });
+        }
 
         let button = ButtonLike::new("pending-keystrokes-indicator")
             .on_click(|_, window, cx| {
