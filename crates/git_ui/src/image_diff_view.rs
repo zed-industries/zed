@@ -2,8 +2,9 @@ use anyhow::Result;
 use git::repository::RepoPath;
 use git::status::TreeDiffStatus;
 use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ObjectFit, Render, StyledImage as _, Subscription, Task, WeakEntity, Window, checkerboard, img,
+    AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    IntoElement, ObjectFit, Render, StyledImage as _, Subscription, Task, WeakEntity, Window,
+    checkerboard, img,
 };
 use language::DiskState;
 use project::WorktreeId;
@@ -257,25 +258,76 @@ impl ImageDiff {
     }
 }
 
-impl Render for ImageDiff {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        h_flex()
-            .size_full()
-            .gap_2()
-            .child(render_side(
+impl ImageDiff {
+    fn render_pane(&self, pane: ImageDiffPane, cx: &App) -> AnyElement {
+        let old = || {
+            render_side(
                 "old-image",
                 self.old_input.label.clone(),
                 &self.old_side,
                 Color::Deleted,
                 cx,
-            ))
-            .child(render_side(
+            )
+        };
+        let new = || {
+            render_side(
                 "new-image",
                 self.new_input.label.clone(),
                 &self.new_side,
                 Color::Created,
                 cx,
-            ))
+            )
+        };
+        match pane {
+            ImageDiffPane::Both => h_flex()
+                .size_full()
+                .gap_2()
+                .child(old())
+                .child(new())
+                .into_any_element(),
+            ImageDiffPane::Old => old().into_any_element(),
+            ImageDiffPane::New => new().into_any_element(),
+        }
+    }
+}
+
+impl Render for ImageDiff {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.render_pane(ImageDiffPane::Both, cx)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ImageDiffPane {
+    Both,
+    Old,
+    New,
+}
+
+/// Shows one side of an [`ImageDiff`], so a split diff can put each version on its own side.
+pub(crate) struct ImageDiffPaneView {
+    image_diff: Entity<ImageDiff>,
+    pane: ImageDiffPane,
+    _observation: Subscription,
+}
+
+impl ImageDiffPaneView {
+    pub(crate) fn new(
+        image_diff: Entity<ImageDiff>,
+        pane: ImageDiffPane,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            _observation: cx.observe(&image_diff, |_, _, cx| cx.notify()),
+            image_diff,
+            pane,
+        }
+    }
+}
+
+impl Render for ImageDiffPaneView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.image_diff.read(cx).render_pane(self.pane, cx)
     }
 }
 

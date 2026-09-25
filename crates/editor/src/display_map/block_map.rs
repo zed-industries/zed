@@ -2902,6 +2902,11 @@ impl CustomBlock {
         self.style
     }
 
+    #[cfg(test)]
+    pub(crate) fn renderer(&self) -> RenderBlock {
+        self.render.lock().clone()
+    }
+
     pub fn properties(&self) -> BlockProperties<Anchor> {
         BlockProperties {
             placement: self.placement.clone(),

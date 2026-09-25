@@ -2,7 +2,9 @@ use crate::{
     conflict_view,
     git_panel::{GitPanel, GitStatusEntry},
     git_panel_settings::GitPanelSettings,
-    image_diff_view::{ImageDiff, ImageDiffFile, image_diff_inputs},
+    image_diff_view::{
+        ImageDiff, ImageDiffFile, ImageDiffPane, ImageDiffPaneView, image_diff_inputs,
+    },
 };
 use anyhow::Result;
 use buffer_diff::BufferDiff;
@@ -10,7 +12,9 @@ use collections::{HashMap, HashSet};
 use editor::{
     EditorEvent, EditorSettings, SelectionEffects, SplittableEditor,
     actions::GoToHunk,
-    display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
+    display_map::{
+        BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
+    },
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
@@ -697,23 +701,39 @@ impl DiffMultibuffer {
                 );
             });
 
+            let old_pane =
+                cx.new(|cx| ImageDiffPaneView::new(image_diff.clone(), ImageDiffPane::Old, cx));
+            let new_pane =
+                cx.new(|cx| ImageDiffPaneView::new(image_diff.clone(), ImageDiffPane::New, cx));
+            let both_panes =
+                cx.new(|cx| ImageDiffPaneView::new(image_diff.clone(), ImageDiffPane::Both, cx));
+            let splittable_editor = self.editor.downgrade();
+            let rhs_render: RenderBlock = Arc::new(move |cx| {
+                // When split, the left side shows the old image in this block's balancing block.
+                let is_split = splittable_editor
+                    .upgrade()
+                    .is_some_and(|editor| editor.read(cx.app).lhs_editor().is_some());
+                let pane = if is_split { &new_pane } else { &both_panes };
+                render_image_diff_block(pane.clone().into_any_element(), cx)
+            });
+            let lhs_render: RenderBlock = Arc::new(move |cx| {
+                render_image_diff_block(old_pane.clone().into_any_element(), cx)
+            });
+
             let block_id = self
                 .multibuffer
                 .read(cx)
                 .location_for_path(&path_key, cx)
                 .and_then(|anchor| {
                     self.editor.update(cx, |editor, cx| {
-                        editor.rhs_editor().update(cx, |editor, cx| {
+                        let block_id = editor.rhs_editor().update(cx, |editor, cx| {
                             editor
                                 .insert_blocks(
                                     [BlockProperties {
                                         placement: BlockPlacement::Below(anchor),
                                         height: Some(IMAGE_DIFF_BLOCK_LINES),
                                         style: BlockStyle::Sticky,
-                                        render: Arc::new({
-                                            let image_diff = image_diff.clone();
-                                            move |cx| render_image_diff_block(&image_diff, cx)
-                                        }),
+                                        render: rhs_render,
                                         priority: 0,
                                     }],
                                     None,
@@ -721,7 +741,9 @@ impl DiffMultibuffer {
                                 )
                                 .into_iter()
                                 .next()
-                        })
+                        })?;
+                        editor.set_lhs_block_renderer(block_id, lhs_render, cx);
+                        Some(block_id)
                     })
                 });
 
@@ -831,6 +853,7 @@ impl DiffMultibuffer {
 
             this.editor.update(cx, |editor, cx| {
                 if !removed_image_blocks.is_empty() {
+                    editor.remove_lhs_block_renderers(removed_image_blocks.iter().copied());
                     editor.rhs_editor().update(cx, |editor, cx| {
                         editor.remove_blocks(removed_image_blocks, None, cx);
                     });
@@ -839,6 +862,7 @@ impl DiffMultibuffer {
                     if let Some(repo_path) = repo_path_by_display_id.get(&buffer_id) {
                         this.buffer_subscriptions.remove(repo_path);
                         if let Some(entry) = this.image_entries.remove(repo_path) {
+                            editor.remove_lhs_block_renderers(entry.block_id);
                             editor.rhs_editor().update(cx, |editor, cx| {
                                 editor.remove_blocks(
                                     entry.block_id.into_iter().collect(),
@@ -1258,7 +1282,7 @@ fn tree_sort_path(repo_path: &RelPath) -> Arc<RelPath> {
         .unwrap_or_else(|_| repo_path.into_arc())
 }
 
-fn render_image_diff_block(image_diff: &Entity<ImageDiff>, cx: &mut BlockContext) -> AnyElement {
+fn render_image_diff_block(content: AnyElement, cx: &mut BlockContext) -> AnyElement {
     div()
         .id(cx.block_id)
         .h(cx.line_height * cx.height as f32)
@@ -1266,6 +1290,6 @@ fn render_image_diff_block(image_diff: &Entity<ImageDiff>, cx: &mut BlockContext
         .pl(cx.margins.gutter.full_width())
         .pr(cx.margins.right)
         .py_2()
-        .child(image_diff.clone())
+        .child(content)
         .into_any_element()
 }
