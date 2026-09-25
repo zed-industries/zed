@@ -8202,6 +8202,11 @@ impl GitPanel {
         };
 
         let entries = self.effective_status_entries();
+
+        if entries.is_empty() {
+            return;
+        }
+
         let all_created = entries.iter().all(|entry| entry.status.is_created());
         let all_deleted = entries.iter().all(|entry| entry.status.is_deleted());
         let will_unstage = self.should_unstage(target_kind, &entries, cx);
@@ -8258,56 +8263,6 @@ impl GitPanel {
         );
 
         self.set_context_menu(context_menu, position, target_entry_index, window, cx);
-    }
-
-    fn deploy_directory_context_menu(
-        &mut self,
-        position: Point<Pixels>,
-        ix: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self
-            .entries
-            .get(ix)
-            .and_then(GitListEntry::directory_entry)
-            .is_none()
-        {
-            return;
-        }
-
-        if !self.row_is_marked(ix) {
-            self.clear_marks();
-        }
-        self.selected_entry = Some(ix);
-        let Some(target_kind) = self.selection_target_kind() else {
-            return;
-        };
-        let entries = self.effective_status_entries();
-        if entries.is_empty() {
-            return;
-        }
-
-        let will_unstage = self.should_unstage(target_kind, &entries, cx);
-        let all_created = entries.iter().all(|e| e.status.is_created());
-        let all_deleted = entries.iter().all(|e| e.status.is_deleted());
-        let file_count = entries.len();
-
-        self.set_context_menu(
-            self.build_context_menu(
-                will_unstage,
-                all_created,
-                all_deleted,
-                file_count,
-                target_kind,
-                window,
-                cx,
-            ),
-            position,
-            None,
-            window,
-            cx,
-        );
     }
 
     fn set_context_menu(
@@ -8807,7 +8762,7 @@ impl GitPanel {
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                     cx.stop_propagation();
-                    this.deploy_directory_context_menu(event.position, ix, window, cx);
+                    this.deploy_entry_context_menu(event.position, ix, window, cx);
                 }),
             )
             .into_any_element()
