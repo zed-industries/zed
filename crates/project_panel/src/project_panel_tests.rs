@@ -4173,6 +4173,9 @@ async fn test_collapse_opened_file_scrolls_to_parent(cx: &mut TestAppContext) {
     ensure_single_file_is_opened(&workspace, "src/h.rs", cx);
     let parent_id = find_project_entry(&panel, "root/src", cx).expect("src exists");
     let opened_entry = panel.read_with(cx, |panel, _| panel.selection.expect("file is selected"));
+    let mut expected_expanded_dir_ids = ["root", "root/src", "root/tests"]
+        .map(|path| find_project_entry(&panel, path, cx).expect("directory exists"));
+    expected_expanded_dir_ids.sort_unstable();
     for expand_children in [false, true] {
         if expand_children {
             toggle_expand_dir(&panel, "root/src", cx);
@@ -4191,6 +4194,10 @@ async fn test_collapse_opened_file_scrolls_to_parent(cx: &mut TestAppContext) {
         });
         cx.run_until_parked();
         panel.read_with(cx, |panel, _| {
+            assert_eq!(
+                panel.state.expanded_dir_ids[&opened_entry.worktree_id], expected_expanded_dir_ids,
+                "expand_children={expand_children}"
+            );
             assert!(
                 entry_row_bounds(panel, parent_id).bottom() < panel.scroll_handle.viewport().top()
             );
