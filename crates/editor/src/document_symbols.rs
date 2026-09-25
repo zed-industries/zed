@@ -282,11 +282,11 @@ fn highlights_from_buffer(
     });
     let buffer_snapshot =
         multi_buffer_snapshot.buffer_for_id(item.source_range_for_text.start.buffer_id)?;
-    if buffer_snapshot
+    let can_reuse_buffer_highlight_offsets = buffer_snapshot
         .text_for_range(item.source_range_for_text.clone())
         .flat_map(str::bytes)
-        .eq(outline_text.bytes())
-    {
+        .eq(outline_text.bytes());
+    if can_reuse_buffer_highlight_offsets {
         let visible_range = anchor_range
             .as_ref()
             .and_then(|_| {
