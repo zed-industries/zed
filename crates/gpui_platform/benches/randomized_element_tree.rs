@@ -20,9 +20,9 @@ use std::fmt;
 use gpui::{
     BenchAppContext, Context,
     randomized_element_tree::{
-        RandomizedElementTree, RandomizedElementTreeBounds, RandomizedElementTreeConfig,
-        RandomizedElementTreeMutation, RandomizedElementTreeMutationKind,
-        RandomizedElementTreeTopology, RecoloredChildren,
+        ChangeLocality, RandomizedElementTree, RandomizedElementTreeBounds,
+        RandomizedElementTreeConfig, RandomizedElementTreeMutation,
+        RandomizedElementTreeMutationKind, RandomizedElementTreeTopology, RecoloredChildren,
     },
 };
 
@@ -276,16 +276,25 @@ fn reorder(input: &TreeInput, cx: &mut BenchAppContext) {
     }
 }
 
-/// A tree and the share of its elements that change each frame.
+/// A tree, the share of its elements that change each frame, and where those changes sit.
 #[derive(Clone)]
 struct ChangingShareInput {
     tree: TreeInput,
     share_percent: usize,
+    locality: ChangeLocality,
 }
 
 impl fmt::Display for ChangingShareInput {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}-f{}", self.tree, self.share_percent)
+        let locality = match self.locality {
+            ChangeLocality::Localized => "local",
+            ChangeLocality::Spread => "spread",
+        };
+        write!(
+            formatter,
+            "{}-f{}-{locality}",
+            self.tree, self.share_percent
+        )
     }
 }
 
@@ -297,17 +306,30 @@ const CHANGING_SHARE_SEEDS: u64 = 3;
 /// that retains clean entity subtrees should fall toward the left of this axis; one that
 /// redraws everything is flat across it, so the two curves' distance is what retention
 /// buys at each share.
+///
+/// The main line keeps each frame's change inside one entity, as a user action does. Two
+/// `spread` points scatter it uniformly instead: the pessimistic bound, where every
+/// changed element may dirty a different subtree.
 fn changing_share_inputs() -> Vec<ChangingShareInput> {
     inputs()
         .into_iter()
         .filter(|input| input.seed < CHANGING_SHARE_SEEDS)
         .flat_map(|tree| {
-            [0, 1, 5, 25, 100]
-                .into_iter()
-                .map(move |share_percent| ChangingShareInput {
-                    tree: tree.clone(),
-                    share_percent,
-                })
+            [
+                (0, ChangeLocality::Localized),
+                (1, ChangeLocality::Localized),
+                (5, ChangeLocality::Localized),
+                (25, ChangeLocality::Localized),
+                (100, ChangeLocality::Localized),
+                (5, ChangeLocality::Spread),
+                (25, ChangeLocality::Spread),
+            ]
+            .into_iter()
+            .map(move |(share_percent, locality)| ChangingShareInput {
+                tree: tree.clone(),
+                share_percent,
+                locality,
+            })
         })
         .collect()
 }
@@ -328,7 +350,7 @@ fn changing_share(input: &ChangingShareInput, cx: &mut BenchAppContext) {
         if per_frame == 0 {
             cx.notify();
         } else {
-            last = tree.recolor_children(per_frame, cx);
+            last = tree.recolor_children(per_frame, input.locality, cx);
         }
     });
     assert!(frames > 0);

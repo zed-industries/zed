@@ -455,6 +455,18 @@ pub enum RandomizedElementTreeMutation {
     },
 }
 
+/// Where the elements changed by one frame sit relative to each other.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChangeLocality {
+    /// Inside one random entity's subtree, as a user action or one component's state
+    /// change would be; the change reaches the rest of the tree only if the subtree has
+    /// fewer elements than are changing (a common ancestor changing).
+    Localized,
+    /// Anywhere in the tree, uniformly: the worst case for a renderer that reuses clean
+    /// subtrees, since every changed element may sit in a different one.
+    Spread,
+}
+
 /// What [`RandomizedElementTree::recolor_children`] changed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RecoloredChildren {
@@ -765,14 +777,46 @@ impl RandomizedElementTree {
     /// This is the "share of the scene changing per frame" knob: `count` calls to
     /// [`Self::apply_mutation`] would each walk the tree and notify separately, costing
     /// more than the frame being measured once `count` is a fair share of the tree.
-    pub fn recolor_children(&mut self, count: usize, cx: &mut Context<Self>) -> RecoloredChildren {
+    pub fn recolor_children(
+        &mut self,
+        count: usize,
+        locality: ChangeLocality,
+        cx: &mut Context<Self>,
+    ) -> RecoloredChildren {
         let owners = {
             let mut snapshot = self.snapshot.borrow_mut();
             let mut paths = node_paths(&snapshot.children);
             let count = count.min(paths.len());
-            // A partial Fisher–Yates shuffle: the first `count` paths are a uniform sample.
+            if locality == ChangeLocality::Localized {
+                // Order the paths so one random entity's subtree comes first: the change
+                // stays inside that entity unless there is more of it than the subtree.
+                let entity_paths: Vec<_> = paths
+                    .iter()
+                    .filter(|path| {
+                        node_at_path(&snapshot.children, path).is_some_and(|node| node.is_entity)
+                    })
+                    .cloned()
+                    .collect();
+                if let Some(entity_path) = entity_paths
+                    .get(self.rng.random_range(0..entity_paths.len().max(1)))
+                    .cloned()
+                {
+                    let (inside, outside): (Vec<_>, Vec<_>) = paths
+                        .into_iter()
+                        .partition(|path| path.starts_with(&entity_path));
+                    paths = inside;
+                    paths.extend(outside);
+                }
+            }
+            // A partial Fisher–Yates shuffle over the first `count` slots: for `Spread`, a
+            // uniform sample of the tree; for `Localized`, a uniform sample of the chosen
+            // subtree, spilling into the rest only once the subtree is exhausted.
+            let sample_from = match locality {
+                ChangeLocality::Spread => paths.len(),
+                ChangeLocality::Localized => count,
+            };
             for index in 0..count {
-                let other = self.rng.random_range(index..paths.len());
+                let other = self.rng.random_range(index..sample_from.max(index + 1));
                 paths.swap(index, other);
             }
             let mut owners = HashSet::default();
@@ -1438,6 +1482,34 @@ mod tests {
                 border_widths: quad.border_widths,
             }
         }
+    }
+
+    #[gpui::test]
+    fn localized_recoloring_notifies_one_entity_until_its_subtree_is_exhausted(
+        cx: &mut TestAppContext,
+    ) {
+        // Wide: every element is a root child, so every entity's subtree is exactly one
+        // element and localized change of k elements must touch k boundaries only when it
+        // spills; a mixed tree has larger subtrees to stay inside.
+        let config = RandomizedElementTreeConfig::new(11, 200)
+            .with_topology(RandomizedElementTreeTopology::Mixed)
+            .with_entity_density(0.1);
+        let window = cx.open_window(WINDOW_SIZE, move |_, cx| {
+            RandomizedElementTree::new_with_config(config, cx)
+        });
+        let root = window.root(cx).expect("window has a root");
+        let (localized, spread) = root.update(cx, |tree, cx| {
+            let localized = tree.recolor_children(20, ChangeLocality::Localized, cx);
+            let spread = tree.recolor_children(20, ChangeLocality::Spread, cx);
+            (localized, spread)
+        });
+        assert_eq!(localized.recolored, 20);
+        assert_eq!(spread.recolored, 20);
+        assert!(
+            localized.notified <= spread.notified,
+            "localized change touches no more boundaries than spread change: {localized:?} vs {spread:?}"
+        );
+        assert!(localized.notified >= 1);
     }
 
     #[test]
