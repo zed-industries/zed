@@ -162,19 +162,27 @@ fn measure(
         "every generated element renders in the first frame"
     );
 
+    // Each iteration reads what the previous frame rendered before resetting for its own
+    // mutation. Frame pacing may coalesce two mutations into one drawn frame, the more
+    // often the faster the frames, so some observation windows legitimately see no draw;
+    // a renderer that skipped the changed element would see none in any of them.
     let mut frames = 0;
+    let mut frames_that_rendered = 0;
     cx.bench_renderer(tree.clone(), |tree, _window, cx| {
+        let previous = tree.work_counters();
+        if previous.root_render_count() + previous.entity_render_count() >= 1
+            && previous.element_render_count() >= 1
+        {
+            frames_that_rendered += 1;
+        }
         tree.reset_work_counters();
         mutate(tree, cx);
         frames += 1;
     });
-
-    let last_frame = tree.read_with(cx, |tree, _| tree.work_counters());
     assert!(
-        last_frame.root_render_count() + last_frame.entity_render_count() >= 1,
-        "the notified root or entity re-rendered in the last measured frame"
+        frames_that_rendered * 2 >= frames,
+        "the notified root or entity re-rendered in {frames_that_rendered} of {frames} frames"
     );
-    assert!(last_frame.element_render_count() >= 1);
     frames
 }
 
