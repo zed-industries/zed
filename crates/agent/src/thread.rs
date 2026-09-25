@@ -1652,8 +1652,6 @@ impl Thread {
         let Some(tool) = tool else {
             // Tool not found (e.g., MCP server not connected after restart),
             // but still display the saved result if available.
-            // We need to send both ToolCall and ToolCallUpdate events because the UI
-            // only converts raw_output to displayable content in update_fields, not from_acp.
             stream
                 .sender
                 .unbounded_send(Ok(ThreadEvent::ToolCall(

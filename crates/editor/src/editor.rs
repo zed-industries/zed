@@ -274,7 +274,7 @@ use workspace::{
     TabBarSettings, Toast, ViewId, Workspace, WorkspaceId, WorkspaceSettings,
     item::{ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions},
     notifications::{DetachAndPromptErr, NotificationId, NotifyResultExt, NotifyTaskExt},
-    searchable::SearchEvent,
+    searchable::{SearchEvent, SelectSearchOptions},
 };
 pub use zed_actions::editor::RevealInFileManager;
 use zed_actions::editor::{MoveDown, MoveUp};
@@ -1201,7 +1201,7 @@ pub struct Editor {
     refresh_folding_ranges_task: Task<()>,
     inlay_hints: Option<LspInlayHintData>,
     folding_newlines: Task<()>,
-    select_next_is_case_sensitive: Option<bool>,
+    select_next_options: Option<SelectSearchOptions>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
     on_local_selections_changed:
         Option<Box<dyn Fn(Point, &mut Window, &mut Context<Self>) + 'static>>,
@@ -2573,7 +2573,7 @@ impl Editor {
             selection_drag_state: SelectionDragState::None,
             folding_newlines: Task::ready(()),
             lookup_key: None,
-            select_next_is_case_sensitive: None,
+            select_next_options: None,
             on_local_selections_changed: None,
             suppress_selection_callback: false,
             applicable_language_settings: HashMap::default(),
@@ -5582,7 +5582,13 @@ impl Editor {
             let current_indent = snapshot.indent_size_for_line(MultiBufferRow(row));
             let indent_delta = match (current_indent.kind, indent_kind) {
                 (IndentKind::Space, IndentKind::Space) => {
-                    let columns_to_next_tab_stop = tab_size - (current_indent.len % tab_size);
+                    let columns_to_next_tab_stop = if delta_for_start_row > 0 {
+                        delta_for_start_row
+                    } else if has_multiple_rows {
+                        tab_size
+                    } else {
+                        tab_size - (current_indent.len % tab_size)
+                    };
                     IndentSize::spaces(columns_to_next_tab_stop)
                 }
                 (IndentKind::Tab, IndentKind::Space) => IndentSize::spaces(tab_size),
