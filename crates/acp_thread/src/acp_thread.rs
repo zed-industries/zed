@@ -7792,6 +7792,732 @@ mod tests {
         });
     }
 
+    fn only_keyed_message(
+        thread: &AcpThread,
+    ) -> (&MessageIdentity, &MessageContent, &Option<acp_v2::Meta>) {
+        let [entry] = thread.entries() else {
+            panic!("expected one message entry");
+        };
+        match entry {
+            AgentThreadEntry::UserMessage(message) => {
+                (&message.identity, &message.content, &message.meta)
+            }
+            AgentThreadEntry::AssistantMessage(message) => {
+                let [chunk] = message.chunks.as_slice() else {
+                    panic!("expected one assistant chunk");
+                };
+                match chunk {
+                    AssistantMessageChunk::Message {
+                        identity,
+                        block,
+                        meta,
+                    }
+                    | AssistantMessageChunk::Thought {
+                        identity,
+                        block,
+                        meta,
+                    } => (identity, block, meta),
+                }
+            }
+            _ => panic!("expected a message"),
+        }
+    }
+
+    #[gpui::test]
+    async fn test_keyed_messages_keep_first_seen_order_across_interleaved_updates(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let updates = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&thread, {
+                let updates = updates.clone();
+                move |_, event, _| match event {
+                    AcpThreadEvent::NewEntry => updates.borrow_mut().push(None),
+                    AcpThreadEvent::EntryUpdated(index) => updates.borrow_mut().push(Some(*index)),
+                    _ => {}
+                }
+            })
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_user_message(
+                    acp_v2::UserMessage::new("user").content(vec!["question".into()]),
+                    cx,
+                )
+                .expect("user");
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new("old answer".into(), "answer"),
+                    cx,
+                )
+                .expect("answer chunk");
+            thread
+                .upsert_tool_call(acp_v1::ToolCall::new("tool", "Read file"), cx)
+                .expect("tool");
+            thread
+                .upsert_thought(
+                    acp_v2::AgentThought::new("thought").content(vec!["thinking".into()]),
+                    cx,
+                )
+                .expect("thought");
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("later").content(vec!["later answer".into()]),
+                    cx,
+                )
+                .expect("later answer");
+        });
+        cx.run_until_parked();
+        assert_eq!(&*updates.borrow(), &[None, None, None, None, Some(3)]);
+        updates.borrow_mut().clear();
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("answer")
+                        .content(vec!["new ".into(), "answer".into()]),
+                    cx,
+                )
+                .expect("replace historical answer");
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" tail".into(), "answer"),
+                    cx,
+                )
+                .expect("append to replacement");
+            thread
+                .upsert_user_message(
+                    acp_v2::UserMessage::new("user").content(None::<Vec<acp_v2::ContentBlock>>),
+                    cx,
+                )
+                .expect("clear historical user");
+            thread
+                .append_message_chunk(
+                    MessageKind::User,
+                    acp_v2::ContentChunk::new("new question".into(), "user"),
+                    cx,
+                )
+                .expect("append after clear");
+            thread
+                .upsert_thought(
+                    acp_v2::AgentThought::new("thought").content(vec!["revised thought".into()]),
+                    cx,
+                )
+                .expect("replace thought");
+            thread.flush_streaming_text(cx);
+
+            let [
+                AgentThreadEntry::UserMessage(user),
+                AgentThreadEntry::AssistantMessage(answer),
+                AgentThreadEntry::ToolCall(tool),
+                AgentThreadEntry::AssistantMessage(later),
+            ] = thread.entries()
+            else {
+                panic!("updates must retain first-seen rows");
+            };
+            assert_eq!(user.identity, MessageIdentity::Keyed("user".into()));
+            assert_eq!(user.content.source_blocks(), &["new question".into()]);
+            assert_eq!(tool.id, acp_v1::ToolCallId::new("tool"));
+            let [
+                AssistantMessageChunk::Message {
+                    identity, block, ..
+                },
+            ] = answer.chunks.as_slice()
+            else {
+                panic!("one original answer chunk");
+            };
+            assert_eq!(identity, &MessageIdentity::Keyed("answer".into()));
+            assert_eq!(
+                block.source_blocks(),
+                &["new ".into(), "answer".into(), " tail".into()]
+            );
+            assert_eq!(block.to_markdown(cx), "new answer tail");
+            let [
+                AssistantMessageChunk::Thought {
+                    identity, block, ..
+                },
+                AssistantMessageChunk::Message {
+                    identity: later_id,
+                    block: later_block,
+                    ..
+                },
+            ] = later.chunks.as_slice()
+            else {
+                panic!("thought and later answer must retain their chunk positions");
+            };
+            assert_eq!(identity, &MessageIdentity::Keyed("thought".into()));
+            assert_eq!(block.to_markdown(cx), "revised thought");
+            assert_eq!(later_id, &MessageIdentity::Keyed("later".into()));
+            assert_eq!(later_block.to_markdown(cx), "later answer");
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            &*updates.borrow(),
+            &[Some(1), Some(1), Some(0), Some(0), Some(3)]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_keyed_message_patches_keep_metadata_scopes_and_tristate_fields(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        for kind in [
+            MessageKind::User,
+            MessageKind::Assistant,
+            MessageKind::Thought,
+        ] {
+            let thread = new_test_thread(cx).await;
+            let original = json!([{"type": "text", "text": "original", "_meta": {"block": true}}]);
+            let replacement = json!([{"type": "text", "text": "replacement"}]);
+            for (patch, expected_content, expected_meta) in [
+                (json!({"messageId": "patch"}), json!([]), json!(null)),
+                (
+                    json!({"messageId": "patch", "content": original, "_meta": {"message": true}}),
+                    original.clone(),
+                    json!({"message": true}),
+                ),
+                (
+                    json!({"messageId": "patch"}),
+                    original.clone(),
+                    json!({"message": true}),
+                ),
+                (
+                    json!({"messageId": "patch", "_meta": null}),
+                    original.clone(),
+                    json!(null),
+                ),
+                (
+                    json!({"messageId": "patch", "_meta": {}}),
+                    original.clone(),
+                    json!({}),
+                ),
+                (
+                    json!({"messageId": "patch", "content": replacement}),
+                    replacement.clone(),
+                    json!({}),
+                ),
+                (
+                    json!({"messageId": "patch", "content": null}),
+                    json!([]),
+                    json!({}),
+                ),
+                (
+                    json!({"messageId": "patch", "_meta": null}),
+                    json!([]),
+                    json!(null),
+                ),
+                (
+                    json!({"messageId": "patch", "content": original, "_meta": {"restored": true}}),
+                    original.clone(),
+                    json!({"restored": true}),
+                ),
+                (
+                    json!({"messageId": "patch", "content": []}),
+                    json!([]),
+                    json!({"restored": true}),
+                ),
+            ] {
+                thread.update(cx, |thread, cx| {
+                    match kind {
+                        MessageKind::User => thread.upsert_user_message(
+                            serde_json::from_value(patch).expect("user patch"),
+                            cx,
+                        ),
+                        MessageKind::Assistant => thread.upsert_assistant_message(
+                            serde_json::from_value(patch).expect("assistant patch"),
+                            cx,
+                        ),
+                        MessageKind::Thought => thread.upsert_thought(
+                            serde_json::from_value(patch).expect("thought patch"),
+                            cx,
+                        ),
+                    }
+                    .expect("apply patch");
+                    let (identity, content, meta) = only_keyed_message(thread);
+                    assert_eq!(identity, &MessageIdentity::Keyed("patch".into()));
+                    assert_eq!(
+                        serde_json::to_value(content.source_blocks()).expect("source JSON"),
+                        expected_content,
+                        "{kind:?}",
+                    );
+                    assert_eq!(
+                        serde_json::to_value(meta).expect("metadata JSON"),
+                        expected_meta,
+                        "{kind:?}",
+                    );
+                });
+            }
+            thread.update(cx, |thread, cx| {
+                let block = acp_v2::ContentBlock::Text(
+                    acp_v2::TextContent::new("chunk")
+                        .meta(acp_v2::Meta::from_iter([("block".into(), json!(true))])),
+                );
+                thread
+                    .append_message_chunk(
+                        kind,
+                        acp_v2::ContentChunk::new(block.clone(), "patch")
+                            .meta(acp_v2::Meta::from_iter([("envelope".into(), json!(true))])),
+                        cx,
+                    )
+                    .expect("append scoped metadata");
+                let (_, content, meta) = only_keyed_message(thread);
+                assert_eq!(content.source_blocks(), &[block]);
+                assert_eq!(
+                    meta,
+                    &Some(acp_v2::Meta::from_iter([("restored".into(), json!(true))]))
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_keyed_snapshots_supersede_only_their_own_buffered_text(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let original_markdown = thread.update(cx, |thread, cx| {
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("answer").content(vec!["visible".into()]),
+                    cx,
+                )
+                .expect("answer");
+            for text in ["", "é🦀 pending"] {
+                thread
+                    .append_message_chunk(
+                        MessageKind::Assistant,
+                        acp_v2::ContentChunk::new(text.into(), "answer"),
+                        cx,
+                    )
+                    .expect("buffer text");
+            }
+            only_keyed_message(thread)
+                .1
+                .markdowns()
+                .next()
+                .expect("markdown")
+                .clone()
+        });
+        cx.run_until_parked();
+
+        thread.update(cx, |thread, cx| {
+            let pending_bytes = thread
+                .streaming_text_buffer
+                .as_ref()
+                .expect("buffer")
+                .cursor
+                .pending_bytes;
+            assert_eq!(pending_bytes, "é🦀 pending".len());
+            assert_eq!(original_markdown.read(cx).source(), "visible");
+            let content = only_keyed_message(thread).1;
+            let source_version = content.source_version();
+            let snapshot = content.source_blocks().to_vec();
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("answer")
+                        .meta(acp_v2::Meta::from_iter([("message".into(), json!(true))])),
+                    cx,
+                )
+                .expect("metadata update");
+            let buffer = thread
+                .streaming_text_buffer
+                .as_ref()
+                .expect("metadata preserves buffer");
+            assert_eq!(buffer.cursor.pending_bytes, pending_bytes);
+            assert_eq!(buffer.target.markdown, original_markdown);
+            assert_eq!(
+                only_keyed_message(thread).1.source_version(),
+                source_version
+            );
+            thread
+                .upsert_assistant_message(acp_v2::AgentMessage::new("answer").content(snapshot), cx)
+                .expect("snapshot identical to source, but ahead of display");
+            assert!(thread.streaming_text_buffer.is_none());
+            assert_eq!(original_markdown.read(cx).source(), "visibleé🦀 pending");
+            assert_eq!(
+                only_keyed_message(thread).1.source_version(),
+                source_version
+            );
+            assert_eq!(
+                only_keyed_message(thread).1.markdowns().next(),
+                Some(&original_markdown)
+            );
+
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" superseded".into(), "answer"),
+                    cx,
+                )
+                .expect("buffer superseded text");
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("answer").content(vec!["replacement".into()]),
+                    cx,
+                )
+                .expect("replace buffered source");
+            assert!(thread.streaming_text_buffer.is_none());
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(
+            original_markdown.read_with(cx, |markdown, _| markdown.source().to_string()),
+            "replacement"
+        );
+
+        let current_markdown = thread.update(cx, |thread, cx| {
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" discarded on clear".into(), "answer"),
+                    cx,
+                )
+                .expect("buffer before clear");
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("answer").content(None::<Vec<acp_v2::ContentBlock>>),
+                    cx,
+                )
+                .expect("clear buffered message");
+            assert!(thread.streaming_text_buffer.is_none());
+            assert!(only_keyed_message(thread).1.source_blocks().is_empty());
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new("fresh".into(), "answer"),
+                    cx,
+                )
+                .expect("append after clear");
+            let current = only_keyed_message(thread)
+                .1
+                .markdowns()
+                .next()
+                .expect("fresh markdown")
+                .clone();
+            assert_ne!(current, original_markdown);
+
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("other").content(vec!["other".into()]),
+                    cx,
+                )
+                .expect("second keyed record");
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" pending".into(), "other"),
+                    cx,
+                )
+                .expect("other buffer");
+            let other_markdown = thread
+                .streaming_text_buffer
+                .as_ref()
+                .expect("other buffer")
+                .target
+                .markdown
+                .clone();
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("answer").content(vec!["fresh replacement".into()]),
+                    cx,
+                )
+                .expect("replace a different record");
+            let buffer = thread
+                .streaming_text_buffer
+                .as_ref()
+                .expect("unrelated buffer survives");
+            assert_eq!(buffer.target.markdown, other_markdown);
+            assert_eq!(buffer.cursor.pending_bytes, " pending".len());
+            assert_eq!(other_markdown.read(cx).source(), "other");
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" tail".into(), "answer"),
+                    cx,
+                )
+                .expect("switch to historical target");
+            assert_eq!(other_markdown.read(cx).source(), "other pending");
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(
+                        acp_v2::ContentBlock::ResourceLink(acp_v2::ResourceLink::new(
+                            "link",
+                            "https://example.com",
+                        )),
+                        "answer",
+                    ),
+                    cx,
+                )
+                .expect("flush before non-text append");
+            assert!(thread.streaming_text_buffer.is_none());
+            assert_eq!(
+                current.read(cx).source(),
+                "fresh replacement tail[@https://example.com/](https://example.com/)"
+            );
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" final".into(), "answer"),
+                    cx,
+                )
+                .expect("buffer before cancellation");
+            thread.cancel(cx).detach();
+            assert!(thread.streaming_text_buffer.is_none());
+            current
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(
+            original_markdown.read_with(cx, |markdown, _| markdown.source().to_string()),
+            "replacement"
+        );
+        assert_eq!(
+            current_markdown.read_with(cx, |markdown, _| markdown.source().to_string()),
+            "fresh replacement tail[@https://example.com/](https://example.com/) final",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_keyed_kind_conflicts_are_atomic_and_legacy_ids_stay_separate(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("shared").content(vec!["keyed".into()]),
+                    cx,
+                )
+                .expect("keyed message");
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" buffered".into(), "shared"),
+                    cx,
+                )
+                .expect("pending keyed text");
+        });
+        let updates = Rc::new(RefCell::new(0));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&thread, {
+                let updates = updates.clone();
+                move |_, event, _| {
+                    if matches!(
+                        event,
+                        AcpThreadEvent::NewEntry | AcpThreadEvent::EntryUpdated(_)
+                    ) {
+                        *updates.borrow_mut() += 1;
+                    }
+                }
+            })
+        });
+        thread.update(cx, |thread, cx| {
+            let version = only_keyed_message(thread).1.source_version();
+            assert!(
+                thread
+                    .upsert_user_message(
+                        acp_v2::UserMessage::new("shared").content(vec!["wrong role".into()]),
+                        cx,
+                    )
+                    .is_err()
+            );
+            assert!(
+                thread
+                    .upsert_thought(
+                        acp_v2::AgentThought::new("shared")
+                            .meta(acp_v2::Meta::from_iter([("wrong".into(), json!(true))])),
+                        cx,
+                    )
+                    .is_err()
+            );
+            for kind in [MessageKind::User, MessageKind::Thought] {
+                assert!(
+                    thread
+                        .append_message_chunk(
+                            kind,
+                            acp_v2::ContentChunk::new("wrong chunk".into(), "shared"),
+                            cx,
+                        )
+                        .is_err()
+                );
+            }
+            let (_, content, meta) = only_keyed_message(thread);
+            assert_eq!(content.source_version(), version);
+            assert_eq!(
+                content.source_blocks(),
+                &["keyed".into(), " buffered".into()]
+            );
+            assert_eq!(content.to_markdown(cx), "keyed");
+            assert_eq!(meta, &None);
+            assert_eq!(
+                thread
+                    .streaming_text_buffer
+                    .as_ref()
+                    .expect("buffer survives")
+                    .cursor
+                    .pending_bytes,
+                " buffered".len()
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(*updates.borrow(), 0);
+
+        thread.update(cx, |thread, cx| {
+            for chunk in [
+                acp_v1::ContentChunk::new("legacy ".into()),
+                acp_v1::ContentChunk::new("tail".into()).message_id("shared"),
+            ] {
+                thread
+                    .handle_session_update(acp_v1::SessionUpdate::AgentMessageChunk(chunk), cx)
+                    .expect("legacy chunk");
+            }
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" again".into(), "shared"),
+                    cx,
+                )
+                .expect("keyed append does not target legacy tail");
+            thread.flush_streaming_text(cx);
+            let [AgentThreadEntry::AssistantMessage(message)] = thread.entries() else {
+                panic!("one assistant row");
+            };
+            let [
+                AssistantMessageChunk::Message {
+                    identity, block, ..
+                },
+                AssistantMessageChunk::Message {
+                    identity: legacy_id,
+                    block: legacy_block,
+                    ..
+                },
+            ] = message.chunks.as_slice()
+            else {
+                panic!("separate keyed and legacy chunks");
+            };
+            assert_eq!(identity, &MessageIdentity::Keyed("shared".into()));
+            assert_eq!(block.to_markdown(cx), "keyed buffered again");
+            assert_eq!(legacy_id, &MessageIdentity::Legacy(Some("shared".into())));
+            assert_eq!(legacy_block.to_markdown(cx), "legacy tail");
+
+            thread
+                .upsert_user_message(
+                    acp_v2::UserMessage::new("user").content(vec!["keyed user".into()]),
+                    cx,
+                )
+                .expect("keyed user");
+            for chunk in [
+                acp_v1::ContentChunk::new("legacy ".into()),
+                acp_v1::ContentChunk::new("user".into()).message_id("user"),
+            ] {
+                thread
+                    .handle_session_update(acp_v1::SessionUpdate::UserMessageChunk(chunk), cx)
+                    .expect("legacy user chunk");
+            }
+            let [
+                AgentThreadEntry::AssistantMessage(_),
+                AgentThreadEntry::UserMessage(keyed),
+                AgentThreadEntry::UserMessage(legacy),
+            ] = thread.entries()
+            else {
+                panic!("legacy user chunks must not merge into keyed user");
+            };
+            assert_eq!(keyed.identity, MessageIdentity::Keyed("user".into()));
+            assert_eq!(keyed.content.to_markdown(cx), "keyed user");
+            assert_eq!(
+                legacy.identity,
+                MessageIdentity::Legacy(Some("user".into()))
+            );
+            assert_eq!(legacy.content.to_markdown(cx), "legacy user");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_keyed_messages_can_reuse_removed_ids_after_rewind(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let client_id = ClientUserMessageId::new();
+        let old_markdown = thread.update(cx, |thread, cx| {
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("kept").content(vec!["kept".into()]),
+                    cx,
+                )
+                .expect("retained prefix");
+            thread.push_user_content_block(Some(client_id.clone()), "prompt".into(), cx);
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("reuse").content(vec!["old".into()]),
+                    cx,
+                )
+                .expect("old keyed answer");
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" pending".into(), "reuse"),
+                    cx,
+                )
+                .expect("buffered old answer");
+            thread
+                .streaming_text_buffer
+                .as_ref()
+                .expect("buffer")
+                .target
+                .markdown
+                .clone()
+        });
+        let rewind = thread.update(cx, |thread, cx| {
+            let rewind = thread.rewind(client_id, cx);
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" late".into(), "reuse"),
+                    cx,
+                )
+                .expect("update before rewind settles");
+            rewind
+        });
+        rewind.await.expect("rewind");
+        thread.update(cx, |thread, cx| {
+            assert_eq!(thread.entries().len(), 1);
+            assert!(thread.streaming_text_buffer.is_none());
+            assert_eq!(old_markdown.read(cx).source(), "old pending late");
+            thread
+                .upsert_user_message(
+                    acp_v2::UserMessage::new("reuse").content(vec!["fresh user".into()]),
+                    cx,
+                )
+                .expect("removed ID may identify a new kind");
+            let [
+                AgentThreadEntry::AssistantMessage(_),
+                AgentThreadEntry::UserMessage(message),
+            ] = thread.entries()
+            else {
+                panic!("prefix plus fresh record");
+            };
+            assert_eq!(message.identity, MessageIdentity::Keyed("reuse".into()));
+            assert_eq!(message.content.to_markdown(cx), "fresh user");
+            assert_eq!(message.meta, None);
+            assert_eq!(test_message_content(thread, 0).to_markdown(cx), "kept");
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(
+            old_markdown.read_with(cx, |markdown, _| markdown.source().to_string()),
+            "old pending late"
+        );
+    }
+
     #[gpui::test]
     async fn test_user_message_chunks_use_protocol_message_id_boundaries(
         cx: &mut gpui::TestAppContext,
