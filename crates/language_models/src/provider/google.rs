@@ -11,10 +11,10 @@ use language_model::{
     LanguageModelCompletionStream, LanguageModelToolChoiceSupport, unavailable_error,
 };
 use language_model::{
-    GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, IconOrSvg, LanguageModel, LanguageModelEffortLevel,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, ModelRateLimiters,
-    ProviderSettingsView,
+    GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, IconOrSvg, LanguageModel, LanguageModelClient,
+    LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, ModelRateLimiters, ProviderSettingsView,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -272,7 +272,9 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
         self.state
             .update(cx, |state, cx| state.set_api_key(api_key, cx))
     }
+}
 
+impl LanguageModelClient for GoogleLanguageModelProvider {
     fn stream_completion(
         &self,
         model: &LanguageModel,

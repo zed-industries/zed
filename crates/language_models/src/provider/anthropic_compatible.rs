@@ -6,7 +6,7 @@ use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
+    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelClient, LanguageModelCompletionError,
     LanguageModelCompletionStream, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoiceSupport, ModelRateLimiters, ProviderSettingsView,
@@ -380,7 +380,9 @@ impl LanguageModelProvider for AnthropicCompatibleLanguageModelProvider {
         self.state
             .update(cx, |state, cx| state.set_api_key(api_key, cx))
     }
+}
 
+impl LanguageModelClient for AnthropicCompatibleLanguageModelProvider {
     fn stream_completion(
         &self,
         model: &LanguageModel,

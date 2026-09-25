@@ -8,7 +8,7 @@ use futures::{FutureExt as _, future::BoxFuture};
 use gpui::{App, AsyncApp, Entity, Subscription, Task};
 use language::language_settings::all_language_settings;
 use language_model::{
-    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
+    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelClient, LanguageModelCompletionError,
     LanguageModelCompletionStream, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, ModelRateLimiters,
     ProviderSettingsView, unavailable_error,
@@ -131,21 +131,6 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         models.iter().map(language_model).collect()
     }
 
-    fn stream_completion(
-        &self,
-        model: &LanguageModel,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
-    {
-        let (config, copilot_chat) = match cx.update(|cx| self.config(model, cx)) {
-            Ok(config) => config,
-            Err(error) => return async move { Err(error) }.boxed(),
-        };
-        let request_limiter = self.request_limiters.for_model(&model.id);
-        copilot_chat::stream_completion(&config, &copilot_chat, &request_limiter, request, cx)
-    }
-
     fn is_authenticated(&self, cx: &App) -> bool {
         self.state.read(cx).is_authenticated(cx)
     }
@@ -207,5 +192,22 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
             return Task::ready(Ok(()));
         };
         copilot_chat.update(cx, |chat, cx| chat.sign_out(cx))
+    }
+}
+
+impl LanguageModelClient for CopilotChatLanguageModelProvider {
+    fn stream_completion(
+        &self,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
+        let (config, copilot_chat) = match cx.update(|cx| self.config(model, cx)) {
+            Ok(config) => config,
+            Err(error) => return async move { Err(error) }.boxed(),
+        };
+        let request_limiter = self.request_limiters.for_model(&model.id);
+        copilot_chat::stream_completion(&config, &copilot_chat, &request_limiter, request, cx)
     }
 }

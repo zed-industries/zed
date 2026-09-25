@@ -10,10 +10,11 @@ use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, ApiKeyConfiguration, ApiKeyState,
     AuthenticateError, CompactionResult, EnvVar, FastModeConfirmation, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionStream, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoiceSupport,
-    ModelRateLimiters, ProviderSettingsView, env_var, unavailable_error,
+    LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionStream,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoiceSupport, ModelRateLimiters, ProviderSettingsView, env_var,
+    unavailable_error,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
@@ -352,6 +353,19 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
             .update(cx, |state, cx| state.set_api_key(api_key, cx))
     }
 
+    fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
+        Some(FastModeConfirmation {
+            title: "Enable Fast Mode for Anthropic?".into(),
+            message: "Fast mode lets requests use your Anthropic Priority Tier capacity, which \
+                Anthropic prioritizes over standard requests during peak load. Requires a \
+                Priority Tier commitment with Anthropic; without one, requests behave the same \
+                as the standard tier."
+                .into(),
+        })
+    }
+}
+
+impl LanguageModelClient for AnthropicLanguageModelProvider {
     fn stream_completion(
         &self,
         model: &LanguageModel,
@@ -496,17 +510,6 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         self.state.read_with(cx, |state, cx| {
             let api_url = AnthropicLanguageModelProvider::api_url(cx);
             state.api_key_state.key(&api_url).map(|key| key.to_string())
-        })
-    }
-
-    fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
-        Some(FastModeConfirmation {
-            title: "Enable Fast Mode for Anthropic?".into(),
-            message: "Fast mode lets requests use your Anthropic Priority Tier capacity, which \
-                Anthropic prioritizes over standard requests during peak load. Requires a \
-                Priority Tier commitment with Anthropic; without one, requests behave the same \
-                as the standard tier."
-                .into(),
         })
     }
 }

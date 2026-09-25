@@ -376,19 +376,8 @@ impl Default for IconOrSvg {
     }
 }
 
-pub trait LanguageModelProvider: 'static {
-    fn id(&self) -> LanguageModelProviderId;
-    fn name(&self) -> LanguageModelProviderName;
-    fn icon(&self) -> IconOrSvg {
-        IconOrSvg::default()
-    }
-    fn default_model(&self, cx: &App) -> Option<LanguageModel>;
-    fn default_fast_model(&self, cx: &App) -> Option<LanguageModel>;
-    fn provided_models(&self, cx: &App) -> Vec<LanguageModel>;
-    fn recommended_models(&self, _cx: &App) -> Vec<LanguageModel> {
-        Vec::new()
-    }
-
+/// Sends requests to a provider's models.
+pub trait LanguageModelClient: 'static {
     /// Streams a completion of `request` from `model`, which must be one of
     /// this provider's models.
     fn stream_completion(
@@ -534,6 +523,20 @@ pub trait LanguageModelProvider: 'static {
     /// The API key used to serve `model`, if this provider uses one.
     fn api_key(&self, _model: &LanguageModel, _cx: &App) -> Option<String> {
         None
+    }
+}
+
+pub trait LanguageModelProvider: LanguageModelClient {
+    fn id(&self) -> LanguageModelProviderId;
+    fn name(&self) -> LanguageModelProviderName;
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::default()
+    }
+    fn default_model(&self, cx: &App) -> Option<LanguageModel>;
+    fn default_fast_model(&self, cx: &App) -> Option<LanguageModel>;
+    fn provided_models(&self, cx: &App) -> Vec<LanguageModel>;
+    fn recommended_models(&self, _cx: &App) -> Vec<LanguageModel> {
+        Vec::new()
     }
 
     fn is_authenticated(&self, cx: &App) -> bool;

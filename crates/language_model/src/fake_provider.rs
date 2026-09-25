@@ -1,8 +1,8 @@
 use crate::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelCompletionStream, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest,
+    AuthenticateError, LanguageModel, LanguageModelClient, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelCompletionStream, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest,
 };
 use anyhow::anyhow;
 use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::StreamExt};
@@ -86,7 +86,9 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
     fn settings_view(&self, _: &mut App) -> Option<crate::ProviderSettingsView> {
         None
     }
+}
 
+impl LanguageModelClient for FakeLanguageModelProvider {
     fn stream_completion(
         &self,
         model: &LanguageModel,
