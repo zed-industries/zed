@@ -2,8 +2,7 @@ use anyhow::Result;
 use git::repository::RepoPath;
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ObjectFit, Render, StyledImage as _, Subscription, Task, WeakEntity, Window, checkerboard,
-    img,
+    ObjectFit, Render, StyledImage as _, Subscription, Task, WeakEntity, Window, checkerboard, img,
 };
 use project::{
     Project, ProjectPath,
@@ -302,7 +301,10 @@ fn render_side(
             .into_any_element(),
         ImageDiffSide::Loaded { image, .. } => div()
             .size_full()
-            .bg(checkerboard(colors.panel_background, CHECKERBOARD_SQUARE_SIZE))
+            .bg(checkerboard(
+                colors.panel_background,
+                CHECKERBOARD_SQUARE_SIZE,
+            ))
             .child(
                 img(image.clone())
                     .size_full()
