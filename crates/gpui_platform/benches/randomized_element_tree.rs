@@ -168,7 +168,7 @@ fn measure(
     // a renderer that skipped the changed element would see none in any of them.
     let mut frames = 0;
     let mut frames_that_rendered = 0;
-    cx.bench_renderer(tree.clone(), |tree, _window, cx| {
+    cx.bench_renderer(tree, |tree, _window, cx| {
         let previous = tree.work_counters();
         if previous.root_render_count() + previous.entity_render_count() >= 1
             && previous.element_render_count() >= 1
