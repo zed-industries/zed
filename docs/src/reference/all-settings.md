@@ -100,7 +100,7 @@ To configure panel sizing, open the Settings Editor and search for “Agent Pane
 
 ### Flexible Sizing {#agent-panel-flexible-sizing}
 
-- Description: Whether the agent panel uses flexible (proportional) sizing when docked to the left or right. When enabled, `agent.default_width` does not control the panel width, and double-clicking the panel’s outer resize handle restores the default proportion.
+- Description: Whether the agent panel uses flexible (proportional) sizing when docked to the left or right. When enabled, `agent.default_width` does not control the panel width, and double-clicking the panel's outer resize handle restores the default proportion.
 - Setting: `agent.flexible`
 - Default: `true`
 
@@ -121,10 +121,32 @@ To use a fixed reset width, disable flexible sizing in the Settings Editor. Or a
 
 See [Agent Panel visual customization](../visual-customization.md#agent-panel) for other panel appearance settings.
 
+### Threads Sidebar Position {#agent-threads-sidebar-position}
+
+- Description: Which side of the window displays the [Threads Sidebar](../ai/parallel-agents.md#threads-sidebar).
+- Setting: `agent.threads_sidebar.position`
+- Default: `"left"`
+
+**Options**
+
+`"left"` or `"right"`.
+
+Open the Settings Editor and search for “Threads Sidebar Position”. Or add this to your `settings.json`:
+
+```json [settings]
+{
+  "agent": {
+    "threads_sidebar": {
+      "position": "right"
+    }
+  }
+}
+```
+
 ### Threads Sidebar Default Width {#agent-threads-sidebar-default-width}
 
 - Description: Default width in pixels of the [Threads Sidebar](../ai/parallel-agents.md#threads-sidebar).
-- Setting: `agent.threads_sidebar_default_width`
+- Setting: `agent.threads_sidebar.default_width`
 - Default: `300`
 
 **Options**
@@ -136,19 +158,21 @@ Open the Settings Editor and search for “Threads Sidebar Default Width”. Or 
 ```json [settings]
 {
   "agent": {
-    "threads_sidebar_default_width": 360
+    "threads_sidebar": {
+      "default_width": 360
+    }
   }
 }
 ```
 
-If you haven’t manually resized the sidebar, its width follows changes to this setting immediately. A manually resized width takes precedence until you double-click the divider to reset it. After resetting, the sidebar follows this setting again.
+Changing this setting immediately updates the sidebar width, even if you previously resized it manually. You can also double-click the divider to reset the sidebar to the configured width.
 
 Widths saved by older versions of Zed are preserved if they differ from the previous default of 300 pixels. A saved width of 300 pixels uses this setting instead.
 
 ### Threads Sidebar Auto Open {#agent-threads-sidebar-auto-open}
 
 - Description: Whether opening a folder in an existing window automatically opens the [Threads Sidebar](../ai/parallel-agents.md#threads-sidebar).
-- Setting: `agent.threads_sidebar_auto_open`
+- Setting: `agent.threads_sidebar.auto_open`
 - Default: `true`
 
 **Options**
@@ -162,7 +186,9 @@ Open the Settings Editor and search for “Threads Sidebar Auto Open”. Or add 
 ```json [settings]
 {
   "agent": {
-    "threads_sidebar_auto_open": false
+    "threads_sidebar": {
+      "auto_open": false
+    }
   }
 }
 ```
@@ -209,7 +235,7 @@ Open the Settings Editor and search for “Threads Sidebar Auto Open”. Or add 
 }
 ```
 
-> Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
+> Note: This setting has no effect in [Vim mode](../vim.md), as rewrap is already allowed everywhere.
 
 ## Auto Indent
 
@@ -789,6 +815,7 @@ For the case of "open", regular selection behavior can be achieved by holding `a
 - Default:
 
 ```json [settings]
+{
   "edit_predictions": {
     "disabled_globs": [
       "**/.env*",
@@ -803,6 +830,7 @@ For the case of "open", regular selection behavior can be achieved by holding `a
       "/**/zed/keymap.json"
     ]
   }
+}
 ```
 
 **Options**
@@ -847,13 +875,29 @@ For the case of "open", regular selection behavior can be achieved by holding `a
 
 ### Disabled Globs
 
-- Description: A list of globs for which edit predictions should be disabled for. This list adds to a pre-existing, sensible default set of globs. Any additional ones you add are combined with them.
+- Description: Disable edit predictions for files matching these glob patterns.
 - Setting: `disabled_globs`
 - Default: `["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/.dev.vars", "**/secrets.yml", "**/.zed/settings.json", "/**/zed/settings.json", "/**/zed/keymap.json"]`
 
 **Options**
 
 List of `string` values.
+
+Use `"..."` to add patterns without repeating Zed's defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
+
+```json [settings]
+{
+  "edit_predictions": {
+    "disabled_globs": ["**/build/**", "..."]
+  }
+}
+```
+
+Inherited patterns are inserted at `"..."`, and duplicates keep their first occurrence.
+
+Set `[]` to clear the inherited list. Omit this setting to inherit it unchanged.
+
+Relative patterns are matched against paths relative to the worktree root. Absolute patterns are matched against absolute paths. A leading `~` is expanded to your home folder.
 
 ### Prediction Debounce
 
@@ -880,41 +924,32 @@ See [Configuring the Prediction Debounce](../ai/edit-prediction.md#configuring-t
 
 ## Edit Predictions Disabled in
 
-- Description: A list of language scopes in which edit predictions should be disabled.
 - Setting: `edit_predictions_disabled_in`
-- Default: `[]`
-
-**Options**
-
-List of `string` values
-
-1. Don't show edit predictions in comments:
+- Description: Disable edit predictions in these language scopes, such as "comment" and "string".
+- Default:
 
 ```json [settings]
 {
-  "edit_predictions_disabled_in": ["comment"]
+  "edit_predictions_disabled_in": []
 }
 ```
 
-2. Don't show edit predictions in strings and comments:
+Use `"..."` to add scopes without repeating the inherited list. In project settings, it extends the user or parent configuration value. In language-specific settings, it extends the scopes inherited by that language. Omit `"..."` to replace the inherited list.
 
 ```json [settings]
 {
-  "edit_predictions_disabled_in": ["comment", "string"]
-}
-```
-
-3. Only in Go, don't show edit predictions in strings and comments:
-
-```json [settings]
-{
+  "edit_predictions_disabled_in": ["comment"],
   "languages": {
     "Go": {
-      "edit_predictions_disabled_in": ["comment", "string"]
+      "edit_predictions_disabled_in": ["string", "..."]
     }
   }
 }
 ```
+
+Inherited scopes are inserted at `"..."`, and duplicates keep their first occurrence.
+
+Set `[]` to clear the inherited list. Omit this setting to inherit it unchanged.
 
 ## Current Line Highlight
 
@@ -1878,13 +1913,13 @@ Each option controls displaying of a particular toolbar element. If all elements
 
 ## Use System Tabs
 
-- Description: Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
+- Description: Whether to allow windows to tab together based on the user's tabbing preference (macOS only).
 - Setting: `use_system_window_tabs`
 - Default: `false`
 
 **Options**
 
-This setting enables integration with macOS’s native window tabbing feature. When set to `true`, Zed windows can be grouped together as tabs in a single macOS window, following the system-wide tabbing preferences set by the user (such as "Always", "In Full Screen", or "Never"). This setting is only available on macOS.
+This setting enables integration with macOS's native window tabbing feature. When set to `true`, Zed windows can be grouped together as tabs in a single macOS window, following the system-wide tabbing preferences set by the user (such as "Always", "In Full Screen", or "Never"). This setting is only available on macOS.
 
 ## Fullscreen Mode
 
@@ -2332,7 +2367,7 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 ## File Scan Exclusions
 
 - Setting: `file_scan_exclusions`
-- Description: Files or globs of files that will be excluded by Zed entirely. They will be skipped during file scans, file searches, and not be displayed in the project file tree. Overrides `file_scan_inclusions`.
+- Description: Exclude files matching these glob patterns from file scans, file searches, and the project file tree. Takes precedence over `file_scan_inclusions`.
 - Default:
 
 ```json [settings]
@@ -2353,7 +2388,7 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 }
 ```
 
-Note that specifying `file_scan_exclusions` in `settings.json` will override the defaults (listed above). Use `"..."` to keep them:
+Use `"..."` to add patterns without repeating Zed's defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
 
 ```json [settings]
 {
@@ -2361,20 +2396,12 @@ Note that specifying `file_scan_exclusions` in `settings.json` will override the
 }
 ```
 
-The `"..."` entry expands to the list you are overriding, so the example above excludes `node_modules` in addition to every default. Entries you list by name keep their position, and `"..."` fills in the inherited ones at that point in the list. If you want full control over what is excluded, omit `"..."` — only the entries you list by name will be used.
-
-| Configuration                | Result                               |
-| ---------------------------- | ------------------------------------ |
-| `["..."]`                    | The defaults, unchanged              |
-| `["**/node_modules", "..."]` | `**/node_modules`, then the defaults |
-| `["**/node_modules"]`        | `**/node_modules` only               |
-
-> Note: `"..."` resolves one settings layer at a time. In a project’s `.zed/settings.json` it expands to whatever your user settings resolved to, rather than to Zed’s defaults.
+Inherited patterns are inserted at `"..."`, and duplicates keep their first occurrence.
 
 ## File Scan Inclusions
 
 - Setting: `file_scan_inclusions`
-- Description: Files or globs of files that will be included by Zed, even when ignored by git. This is useful for files that are not tracked by git, but are still important to your project. Note that globs that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes precedence over these inclusions.
+- Description: Include files matching these glob patterns when scanning, even if ignored by Git. Note that broad patterns can slow file scanning. `file_scan_exclusions` takes precedence.
 - Default:
 
 ```json [settings]
@@ -2382,6 +2409,16 @@ The `"..."` entry expands to the list you are overriding, so the example above e
   "file_scan_inclusions": [".env*"]
 }
 ```
+
+Use `"..."` to add patterns without repeating Zed's defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
+
+```json [settings]
+{
+  "file_scan_inclusions": ["**/build/**", "..."]
+}
+```
+
+Inherited patterns are inserted at `"..."`, and duplicates keep their first occurrence.
 
 ## File Scan Depth
 
@@ -2929,6 +2966,31 @@ Example:
 **Options**
 
 `boolean` values
+
+## Hidden Files {#hidden-files}
+
+- Setting: `hidden_files`
+- Description: Treat files and folders matching these glob patterns as hidden, including files inside matching folders. To [hide these entries](../project-panel.md#hiding-files), run `project panel: toggle hide hidden` from the command palette or set `project_panel.hide_hidden` to `true`.
+- Default:
+
+```json [settings]
+{
+  "hidden_files": ["**/.*"]
+}
+```
+
+Use `"..."` to add patterns without repeating Zed's defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
+
+```json [settings]
+{
+  "hidden_files": ["**/*.log", "..."],
+  "project_panel": {
+    "hide_hidden": true
+  }
+}
+```
+
+Inherited patterns are inserted at `"..."`, and duplicates keep their first occurrence.
 
 ## Indent Guides
 
@@ -3871,21 +3933,25 @@ List of `string` glob patterns
 
 ## Read-Only Files {#read-only-files}
 
-- Default: `[]`
-- Description: Glob patterns for files you can open and view but cannot edit, such as generated files or external dependencies.
 - Setting: `read_only_files`
-
-Add this to your project’s `.zed/settings.json`:
+- Description: Treat files matching these glob patterns as read-only when opened. You can view but not edit them, which is useful for build outputs, external dependencies, or generated files.
+- Default:
 
 ```json [settings]
 {
-  "read_only_files": ["**/generated/**", "..."]
+  "read_only_files": []
 }
 ```
 
-Like [File Scan Exclusions](#file-scan-exclusions), `"..."` expands to the list inherited from the preceding settings layer. This example adds generated files to the read-only patterns from your user settings without repeating them. Duplicate entries collapse to their first occurrence.
+Use `"..."` to add patterns without repeating Zed's defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
 
-Omit `"..."` to replace the inherited list, or use `[]` to clear it. These patterns apply when you open a file.
+```json [settings]
+{
+  "read_only_files": ["**/build/**", "..."]
+}
+```
+
+Inherited patterns are inserted at `"..."`, and duplicates keep their first occurrence.
 
 ## Read SSH Config
 
@@ -4183,7 +4249,7 @@ Non-negative `integer` values
 
 ## Semantic Tokens
 
-- Description: Controls how semantic tokens from language servers are used for syntax highlighting.
+- Description: Controls how [semantic tokens](../semantic-tokens.md) from language servers are used for syntax highlighting.
 - Setting: `semantic_tokens`
 - Default: `off`
 
@@ -5207,8 +5273,8 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 ### Terminal: Path Hyperlink Regexes
 
-- Description: Regexes used to identify path hyperlinks. The regexes can be specified in two forms - a single regex string, or an array of strings (which will be collected into a single multi-line regex string).
 - Setting: `path_hyperlink_regexes`
+- Description: Regexes used to identify paths for hyperlink navigation.
 - Default:
 
 ```json [settings]
@@ -5221,30 +5287,48 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
       // surrounding symbols or quotes
       [
         "(?x)",
-        "# optionally starts with 0-2 opening prefix symbols",
-        "[({\\[<]{0,2}",
-        "# which may be followed by an opening quote",
-        "(?<quote>[\"'`])?",
-        "# `path` is the shortest sequence of any non-space character",
-        "(?<link>(?<path>[^ ]+?",
-        "    # which may end with a line and optionally a column,",
-        "    (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?",
-        "))",
-        "# which must be followed by a matching quote",
-        "(?(<quote>)\\k<quote>)",
-        "# and optionally a single closing symbol",
-        "[)}\\]>]?",
-        "# if line/column matched, may be followed by a description",
-        "(?(<line_column>):[^ 0-9][^ ]*)?",
-        "# which may be followed by trailing punctuation",
-        "[.,:)}\\]>]*",
-        "# and always includes trailing whitespace or end of line",
-        "([ ]+|$)"
+        "(?<path>",
+        "    (",
+        "        # multi-char path: first char (not opening delimiter, space, or box drawing char)",
+        "        [^({\\[<\"'`\\ \\u2500-\\u257F]",
+        "        # middle chars: non-space, and colon/paren only if not followed by digit/paren/space",
+        "        ([^\\ :(]|[:(][^0-9()\\ ])*",
+        "        # last char: not closing delimiter or colon",
+        "        [^()}\\]>\"'`.,;:\\ ]",
+        "    |",
+        "        # single-char path: not delimiter, punctuation, space, or box drawing char",
+        "        [^(){}\\[\\]<>\"'`.,;:\\ \\u2500-\\u257F]",
+        "    )",
+        "    # optional line/column suffix (included in path for PathWithPosition::parse_str)",
+        "    (:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:]?[0-9]+)?\\))?",
+        ")"
       ]
     ]
   }
 }
 ```
+
+Use `"..."` to add regexes without repeating Zed's defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list. Set `[]` to clear it. Omitting this setting keeps the inherited list.
+
+```json [settings]
+{
+  "terminal": {
+    "path_hyperlink_regexes": [
+      "\\s+(-->|:::|at) (?<link>(?<path>.+?))(:$|$)",
+      "\\s+(Compiling|Checking|Documenting) [^(]+\\((?<link>(?<path>.+))\\)",
+      "..."
+    ]
+  }
+}
+```
+
+Inherited regexes are inserted at `"..."`, and duplicates keep their first occurrence. Regexes are duplicates when their text is identical after joining multiline entries with newlines.
+
+Each regex can be a single string or an array of strings joined with newlines. The marker is recognized only as a top-level string. To use `...` as a regex matching three characters, write `["..."]` as an entry. A `"..."` line inside a multiline entry is always regex text.
+
+The optional named capture `path` selects the hyperlink target. Without it, the entire match is the target. With `path`, `line` and `column` specify the position. Without a captured `line`, built-in suffix processing parses `line:column` and `(line,column)` variants. The optional `link` capture selects the clickable text, otherwise the entire match is clickable.
+
+Processing stops at the first regex that matches the terminal line, even if the cursor is outside its clickable text. Put more specific regexes before broader ones. Regexes use Rust's `regex` syntax. Invalid regexes are logged and ignored. The `path_hyperlink_timeout_ms` setting controls the discovery timeout. Setting it to `0` disables path hyperlinks.
 
 ### Terminal: Path Hyperlink Timeout (ms)
 

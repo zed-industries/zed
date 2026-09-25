@@ -56,7 +56,7 @@ impl LanguageModelProvider for XAiSubscribedProvider {
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_model(SuperGrokModel::Grok46, cx))
+        Some(self.create_model(SuperGrokModel::Grok47, cx))
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
