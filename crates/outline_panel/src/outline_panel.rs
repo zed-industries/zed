@@ -2494,22 +2494,14 @@ impl OutlinePanel {
             .contains(&CollapsedEntry::Excerpt(excerpt.clone()));
         let color = entry_label_color(is_active);
         let icon = if has_outlines {
-            FileIcons::get_chevron_icon(is_expanded, cx)
-                .map(|icon_path| Icon::from_path(icon_path).color(color).into_any_element())
-        } else {
-            None
-        }
-        .unwrap_or_else(empty_icon);
-
-        let icon = if has_outlines {
-            self.expand_collapse_icon(
+            self.chevron_toggle(
                 PanelEntry::Outline(OutlineEntry::Excerpt(excerpt.clone())),
                 is_expanded,
-                icon,
+                color,
                 cx,
             )
         } else {
-            icon
+            empty_icon()
         };
 
         let label = self.excerpt_label(&excerpt, cx)?;
@@ -2581,26 +2573,14 @@ impl OutlinePanel {
             .contains(&CollapsedEntry::Outline(outline.range.clone()));
 
         let icon = if has_children {
-            FileIcons::get_chevron_icon(is_expanded, cx)
-                .map(|icon_path| {
-                    Icon::from_path(icon_path)
-                        .color(entry_label_color(is_active))
-                        .into_any_element()
-                })
-                .unwrap_or_else(empty_icon)
-        } else {
-            empty_icon()
-        };
-
-        let icon = if has_children {
-            self.expand_collapse_icon(
+            self.chevron_toggle(
                 PanelEntry::Outline(OutlineEntry::Outline(outline.clone())),
                 is_expanded,
-                icon,
+                entry_label_color(is_active),
                 cx,
             )
         } else {
-            icon
+            empty_icon()
         };
 
         self.entry_element(
@@ -2921,6 +2901,19 @@ impl OutlinePanel {
         ))
     }
 
+    fn chevron_toggle(
+        &self,
+        entry: PanelEntry,
+        is_expanded: bool,
+        color: Color,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let chevron = FileIcons::get_chevron_icon(is_expanded, cx)
+            .map(|path| Icon::from_path(path).color(color).into_any_element())
+            .unwrap_or_else(empty_icon);
+        self.expand_collapse_icon(entry, is_expanded, chevron, cx)
+    }
+
     fn expand_collapse_icon(
         &self,
         entry: PanelEntry,
@@ -3013,10 +3006,7 @@ impl OutlinePanel {
         let expand_collapse_icon = if self.hide_symbols_active(cx) {
             empty_icon()
         } else {
-            let chevron = FileIcons::get_chevron_icon(is_expanded, cx)
-                .map(|path| Icon::from_path(path).color(color).into_any_element())
-                .unwrap_or_else(empty_icon);
-            self.expand_collapse_icon(PanelEntry::Fs(entry.clone()), is_expanded, chevron, cx)
+            self.chevron_toggle(PanelEntry::Fs(entry.clone()), is_expanded, color, cx)
         };
         h_flex()
             .flex_none()
