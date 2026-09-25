@@ -20,10 +20,12 @@ use parking_lot::RwLock;
 use slotmap::SlotMap;
 
 pub use async_context::*;
+#[cfg(all(feature = "bench-support", target_os = "linux"))]
+pub use bench_context::RetiredInstructions;
 #[cfg(feature = "bench-support")]
 pub use bench_context::{
-    BenchAppContext, BenchMeasurement, BenchReport, BenchWindowContext, RetiredInstructions,
-    bench_platform, requested_bench_measurement,
+    BENCH_MEASUREMENT_ENV_VAR, BenchAppContext, BenchMeasurement, BenchReport, BenchWindowContext,
+    bench_measurement_from_env, bench_platform,
 };
 use collections::{FxHashMap, FxHashSet, HashMap, TypeIdHashMap, TypeIdHashSet, VecDeque};
 pub use context::*;

@@ -69,41 +69,160 @@ const DEFAULT_FPS: u64 = 120;
 
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
 
-/// Selects the scalar that Criterion analyzes for a GPUI benchmark run.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BenchMeasurement {
-    /// Criterion's default wall-clock measurement.
-    WallTime,
-    /// Retired userspace CPU instructions in the benchmark process.
-    Instructions,
+/// The environment variable `bench_group!` reads to pick a [`BenchMeasurement`].
+pub const BENCH_MEASUREMENT_ENV_VAR: &str = "GPUI_BENCH_MEASUREMENT";
+
+/// A Criterion measurement chosen at runtime.
+///
+/// Criterion fixes the measurement in the `Criterion<M>` type, which would force a
+/// type parameter onto every benchmark function and context. Instead,
+/// `#[gpui::bench]` functions take `&mut criterion::Criterion<BenchMeasurement>`,
+/// and this type erases the concrete [`criterion::measurement::Measurement`] behind
+/// it. `bench_group!` selects wall time or retired instructions from
+/// [`BENCH_MEASUREMENT_ENV_VAR`]; a custom `criterion_group!` can supply any other
+/// measurement through [`BenchMeasurement::new`].
+///
+/// Every measurement already reduces to `f64` for Criterion's statistics, so the
+/// erased value is that `f64` and the wrapped measurement's own formatter still
+/// labels it.
+pub struct BenchMeasurement(Box<dyn ErasedMeasurement>);
+
+impl BenchMeasurement {
+    /// Wraps any Criterion measurement.
+    pub fn new<M>(measurement: M) -> Self
+    where
+        M: criterion::measurement::Measurement + 'static,
+        M::Intermediate: 'static,
+    {
+        Self(Box::new(ErasedMeasurementCell {
+            measurement,
+            intermediate: RefCell::new(None),
+        }))
+    }
+
+    /// Returns the measurement selected by [`BENCH_MEASUREMENT_ENV_VAR`].
+    ///
+    /// An unset variable or `wall-time` selects Criterion's wall-clock
+    /// measurement. `instructions` selects `RetiredInstructions`, which is only
+    /// available on Linux.
+    pub fn from_env() -> Result<Self> {
+        match std::env::var(BENCH_MEASUREMENT_ENV_VAR).as_deref() {
+            Err(std::env::VarError::NotPresent) | Ok("wall-time") => {
+                Ok(Self::new(criterion::measurement::WallTime))
+            }
+            Ok("instructions") => {
+                #[cfg(target_os = "linux")]
+                {
+                    Ok(Self::new(RetiredInstructions::new()?))
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    Err(anyhow!(
+                        "GPUI retired-instruction benchmarks require Linux perf_event_open; run \
+                         with {BENCH_MEASUREMENT_ENV_VAR}=wall-time on this platform"
+                    ))
+                }
+            }
+            Ok(value) => Err(anyhow!(
+                "unsupported {BENCH_MEASUREMENT_ENV_VAR} value {value:?}; expected \"wall-time\" \
+                 or \"instructions\""
+            )),
+            Err(error) => Err(anyhow!(
+                "{BENCH_MEASUREMENT_ENV_VAR} is not valid Unicode: {error}"
+            )),
+        }
+    }
 }
 
-/// Returns the measurement selected by `GPUI_BENCH_MEASUREMENT`.
-///
-/// An unset variable selects wall time. Set it to `instructions` for the
-/// Linux hardware-counter mode.
+/// [`BenchMeasurement::from_env`] for `bench_group!`, exiting with an actionable
+/// message instead of a panic when the requested measurement can't be used on
+/// this machine.
 #[doc(hidden)]
-pub fn requested_bench_measurement() -> Result<BenchMeasurement> {
-    match std::env::var("GPUI_BENCH_MEASUREMENT").as_deref() {
-        Err(std::env::VarError::NotPresent) | Ok("wall-time") => Ok(BenchMeasurement::WallTime),
-        Ok("instructions") => Ok(BenchMeasurement::Instructions),
-        Ok(value) => Err(anyhow!(
-            "unsupported GPUI_BENCH_MEASUREMENT value {value:?}; expected \"wall-time\" or \
-             \"instructions\""
-        )),
-        Err(error) => Err(anyhow!(
-            "GPUI_BENCH_MEASUREMENT is not valid Unicode: {error}"
-        )),
+pub fn bench_measurement_from_env() -> BenchMeasurement {
+    BenchMeasurement::from_env().unwrap_or_else(|error| {
+        eprintln!("failed to select GPUI benchmark measurement: {error:#}");
+        std::process::exit(2);
+    })
+}
+
+/// Object-safe view of a Criterion measurement.
+///
+/// Criterion always pairs `start` with `end` on the same thread and never nests
+/// them, so the intermediate value can be parked in the measurement between the
+/// two calls instead of flowing through the generic `Intermediate` type.
+trait ErasedMeasurement {
+    fn start(&self);
+    fn end(&self) -> f64;
+    fn formatter(&self) -> &dyn criterion::measurement::ValueFormatter;
+}
+
+struct ErasedMeasurementCell<M: criterion::measurement::Measurement> {
+    measurement: M,
+    intermediate: RefCell<Option<M::Intermediate>>,
+}
+
+impl<M: criterion::measurement::Measurement> ErasedMeasurement for ErasedMeasurementCell<M> {
+    fn start(&self) {
+        let previous = self
+            .intermediate
+            .borrow_mut()
+            .replace(self.measurement.start());
+        assert!(
+            previous.is_none(),
+            "Measurement::start called again before Measurement::end"
+        );
+    }
+
+    fn end(&self) -> f64 {
+        let intermediate = self
+            .intermediate
+            .borrow_mut()
+            .take()
+            .expect("Measurement::end called without a matching Measurement::start");
+        self.measurement.to_f64(&self.measurement.end(intermediate))
+    }
+
+    fn formatter(&self) -> &dyn criterion::measurement::ValueFormatter {
+        self.measurement.formatter()
+    }
+}
+
+impl criterion::measurement::Measurement for BenchMeasurement {
+    type Intermediate = ();
+    type Value = f64;
+
+    fn start(&self) -> Self::Intermediate {
+        self.0.start();
+    }
+
+    fn end(&self, (): Self::Intermediate) -> Self::Value {
+        self.0.end()
+    }
+
+    fn add(&self, first: &Self::Value, second: &Self::Value) -> Self::Value {
+        first + second
+    }
+
+    fn zero(&self) -> Self::Value {
+        0.0
+    }
+
+    fn to_f64(&self, value: &Self::Value) -> f64 {
+        *value
+    }
+
+    fn formatter(&self) -> &dyn criterion::measurement::ValueFormatter {
+        self.0.formatter()
     }
 }
 
 /// Criterion measurement for retired userspace CPU instructions.
 ///
-/// On Linux, `Measurement::start` attaches one `perf_event_open` counter to
-/// every thread then present in the benchmark process. Inheritance includes
-/// threads subsequently created by those threads. Opening at the measurement
-/// boundary means fixture-created GPUI dispatcher and graphics-driver threads
-/// are included without counting fixture construction.
+/// `Measurement::start` attaches one `perf_event_open` counter to every thread
+/// then present in the benchmark process. Inheritance includes threads
+/// subsequently created by those threads. Opening at the measurement boundary
+/// means fixture-created GPUI dispatcher and graphics-driver threads are
+/// included without counting fixture construction.
 /// The result includes CPU work performed by the benchmark process during
 /// `Measurement::start`/`end`, including GPUI and WGPU submission work on those
 /// threads. It does not count GPU shader instructions.
@@ -113,6 +232,7 @@ pub fn requested_bench_measurement() -> Result<BenchMeasurement> {
 /// where the thread runs can be scheduled. If a conventional counter is
 /// multiplexed with other system profiling, its count is scaled using
 /// `time_enabled / time_running` and a warning is printed once.
+#[cfg(target_os = "linux")]
 pub struct RetiredInstructions {
     multiplexing_reported: std::cell::Cell<bool>,
 }
@@ -124,29 +244,19 @@ pub struct InstructionCounter {
     scale_for_multiplexing: bool,
 }
 
+#[cfg(target_os = "linux")]
 impl RetiredInstructions {
     /// Opens retired-instruction counters for the current benchmark process.
     ///
     /// This returns an actionable error rather than falling back to wall time
     /// when the kernel's perf security policy denies access.
     pub fn new() -> Result<Self> {
-        #[cfg(target_os = "linux")]
-        {
-            Self::open_counters()?;
-            Ok(Self {
-                multiplexing_reported: std::cell::Cell::new(false),
-            })
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            Err(anyhow!(
-                "GPUI retired-instruction benchmarks require Linux perf_event_open; run with \
-                 GPUI_BENCH_MEASUREMENT=wall-time on this platform"
-            ))
-        }
+        Self::open_counters()?;
+        Ok(Self {
+            multiplexing_reported: std::cell::Cell::new(false),
+        })
     }
 
-    #[cfg(target_os = "linux")]
     fn open_counters() -> Result<Vec<InstructionCounter>> {
         use perf_event::events::Hardware;
 
@@ -228,7 +338,6 @@ impl RetiredInstructions {
         Ok(counters)
     }
 
-    #[cfg(target_os = "linux")]
     fn build_counter(
         event: impl perf_event::events::Event,
         thread_id: i32,
@@ -243,7 +352,6 @@ impl RetiredInstructions {
         builder.build()
     }
 
-    #[cfg(target_os = "linux")]
     fn build_hybrid_counter(
         pmu_type: u32,
         event: u64,
@@ -260,7 +368,6 @@ impl RetiredInstructions {
         builder.build()
     }
 
-    #[cfg(target_os = "linux")]
     fn open_error(thread_id: i32, error: std::io::Error) -> anyhow::Error {
         anyhow!(
             "failed to open Linux retired-instruction counter for thread {thread_id}: {error}. \
@@ -269,14 +376,15 @@ impl RetiredInstructions {
         )
     }
 
-    #[cfg(target_os = "linux")]
     fn fail(operation: &str, error: std::io::Error) -> ! {
         panic!("Linux retired-instruction counter {operation} failed: {error}")
     }
 }
 
+#[cfg(target_os = "linux")]
 struct InstructionFormatter;
 
+#[cfg(target_os = "linux")]
 impl criterion::measurement::ValueFormatter for InstructionFormatter {
     fn scale_values(&self, typical_value: f64, values: &mut [f64]) -> &'static str {
         let (scale, unit) = if typical_value < 1_000.0 {
@@ -301,14 +409,10 @@ impl criterion::measurement::ValueFormatter for InstructionFormatter {
         values: &mut [f64],
     ) -> &'static str {
         let (units, unit) = match throughput {
-            criterion::Throughput::Bits(units) => (*units, "instructions/bit"),
             criterion::Throughput::Bytes(units) | criterion::Throughput::BytesDecimal(units) => {
                 (*units, "instructions/byte")
             }
-            criterion::Throughput::Elements(units)
-            | criterion::Throughput::ElementsAndBytes {
-                elements: units, ..
-            } => (*units, "instructions/element"),
+            criterion::Throughput::Elements(units) => (*units, "instructions/element"),
         };
         for value in values {
             *value /= units as f64;
@@ -321,86 +425,70 @@ impl criterion::measurement::ValueFormatter for InstructionFormatter {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl criterion::measurement::Measurement for RetiredInstructions {
-    #[cfg(target_os = "linux")]
     type Intermediate = Vec<InstructionCounter>;
-    #[cfg(not(target_os = "linux"))]
-    type Intermediate = ();
     type Value = f64;
 
     fn start(&self) -> Self::Intermediate {
-        #[cfg(target_os = "linux")]
-        {
-            let mut counters = Self::open_counters()
-                .unwrap_or_else(|error| panic!("failed to open instruction counters: {error:#}"));
-            for counter in &mut counters {
-                counter
-                    .counter
-                    .enable()
-                    .unwrap_or_else(|error| Self::fail("enable", error));
-            }
-            counters
+        let mut counters = Self::open_counters()
+            .unwrap_or_else(|error| panic!("failed to open instruction counters: {error:#}"));
+        for counter in &mut counters {
+            counter
+                .counter
+                .enable()
+                .unwrap_or_else(|error| Self::fail("enable", error));
         }
-        #[cfg(not(target_os = "linux"))]
-        panic!("retired-instruction measurement is unavailable outside Linux");
+        counters
     }
 
-    fn end(&self, intermediate: Self::Intermediate) -> Self::Value {
-        #[cfg(target_os = "linux")]
-        {
-            let mut counters = intermediate;
-            for counter in &mut counters {
-                counter
-                    .counter
-                    .disable()
-                    .unwrap_or_else(|error| Self::fail("disable", error));
-            }
+    fn end(&self, mut counters: Self::Intermediate) -> Self::Value {
+        for counter in &mut counters {
+            counter
+                .counter
+                .disable()
+                .unwrap_or_else(|error| Self::fail("disable", error));
+        }
 
-            let mut instructions = 0.0;
-            let mut any_counter_ran = false;
-            for counter in counters.iter_mut() {
-                let data = counter
-                    .counter
-                    .read_full()
-                    .unwrap_or_else(|error| Self::fail("read", error));
-                let time_enabled = data
-                    .time_enabled()
-                    .expect("time-enabled counter data was requested");
-                let time_running = data
-                    .time_running()
-                    .expect("time-running counter data was requested");
-                if time_running.is_zero() {
-                    // Process-wide measurement includes persistent workers that
-                    // may remain asleep for the entire measured interval.
-                    continue;
-                }
-                any_counter_ran = true;
-                if counter.scale_for_multiplexing && time_running < time_enabled {
-                    if !self.multiplexing_reported.replace(true) {
-                        eprintln!(
-                            "GPUI instruction counters were multiplexed by the kernel; counts \
-                             are scaled using time_enabled/time_running"
-                        );
-                    }
-                    instructions += data.count() as f64 * time_enabled.as_secs_f64()
-                        / time_running.as_secs_f64();
-                } else {
-                    instructions += data.count() as f64;
-                }
+        let mut instructions = 0.0;
+        let mut any_counter_ran = false;
+        for counter in counters.iter_mut() {
+            let data = counter
+                .counter
+                .read_full()
+                .unwrap_or_else(|error| Self::fail("read", error));
+            let time_enabled = data
+                .time_enabled()
+                .expect("time-enabled counter data was requested");
+            let time_running = data
+                .time_running()
+                .expect("time-running counter data was requested");
+            if time_running.is_zero() {
+                // Process-wide measurement includes persistent workers that
+                // may remain asleep for the entire measured interval.
+                continue;
             }
-            if !any_counter_ran {
-                panic!(
-                    "Linux opened the retired-instruction counters but the PMU never ran them; \
-                     ensure hardware performance counters are available to this CI runner"
-                );
+            any_counter_ran = true;
+            if counter.scale_for_multiplexing && time_running < time_enabled {
+                if !self.multiplexing_reported.replace(true) {
+                    eprintln!(
+                        "GPUI instruction counters were multiplexed by the kernel; counts \
+                         are scaled using time_enabled/time_running"
+                    );
+                }
+                instructions +=
+                    data.count() as f64 * time_enabled.as_secs_f64() / time_running.as_secs_f64();
+            } else {
+                instructions += data.count() as f64;
             }
-            instructions
         }
-        #[cfg(not(target_os = "linux"))]
-        {
-            let () = intermediate;
-            panic!("retired-instruction measurement is unavailable outside Linux");
+        if !any_counter_ran {
+            panic!(
+                "Linux opened the retired-instruction counters but the PMU never ran them; \
+                 ensure hardware performance counters are available to this CI runner"
+            );
         }
+        instructions
     }
 
     fn add(&self, first: &Self::Value, second: &Self::Value) -> Self::Value {
@@ -831,35 +919,17 @@ where
 /// benchmark app instance and exposes only the app/window operations needed by
 /// benchmark setup. Criterion remains responsible for the measured loop via its
 /// `Bencher` API.
-pub struct BenchAppContext<
-    'a,
-    'measurement,
-    M: criterion::measurement::Measurement = criterion::measurement::WallTime,
-> {
+#[derive(Clone)]
+pub struct BenchAppContext<'a, 'measurement> {
     app: Rc<AppCell>,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     benchmark_name: Option<&'static str>,
-    bencher: Rc<RefCell<Option<&'a mut criterion::Bencher<'measurement, M>>>>,
+    bencher: Rc<RefCell<Option<&'a mut criterion::Bencher<'measurement, BenchMeasurement>>>>,
     report: BenchReport,
 }
 
-impl<M: criterion::measurement::Measurement> Clone for BenchAppContext<'_, '_, M> {
-    fn clone(&self) -> Self {
-        Self {
-            app: self.app.clone(),
-            background_executor: self.background_executor.clone(),
-            foreground_executor: self.foreground_executor.clone(),
-            benchmark_name: self.benchmark_name,
-            bencher: self.bencher.clone(),
-            report: self.report.clone(),
-        }
-    }
-}
-
-impl<'a, 'measurement, M: criterion::measurement::Measurement>
-    BenchAppContext<'a, 'measurement, M>
-{
+impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     /// Creates a new benchmark app context backed by the provided platform.
     ///
     /// The platform's executors must be backed by a [`ThreadedDispatcher`]
@@ -868,7 +938,7 @@ impl<'a, 'measurement, M: criterion::measurement::Measurement>
     pub fn new(
         platform: Rc<dyn Platform>,
         benchmark_name: Option<&'static str>,
-        bencher: &'a mut criterion::Bencher<'measurement, M>,
+        bencher: &'a mut criterion::Bencher<'measurement, BenchMeasurement>,
     ) -> Self {
         Self::build(platform, benchmark_name, bencher, BenchReport::default())
     }
@@ -882,7 +952,7 @@ impl<'a, 'measurement, M: criterion::measurement::Measurement>
     pub fn new_with_platform_and_report(
         platform: Rc<dyn Platform>,
         benchmark_name: Option<&'static str>,
-        bencher: &'a mut criterion::Bencher<'measurement, M>,
+        bencher: &'a mut criterion::Bencher<'measurement, BenchMeasurement>,
         report: BenchReport,
     ) -> Self {
         Self::build(platform, benchmark_name, bencher, report)
@@ -891,7 +961,7 @@ impl<'a, 'measurement, M: criterion::measurement::Measurement>
     fn build(
         platform: Rc<dyn Platform>,
         benchmark_name: Option<&'static str>,
-        bencher: &'a mut criterion::Bencher<'measurement, M>,
+        bencher: &'a mut criterion::Bencher<'measurement, BenchMeasurement>,
         report: BenchReport,
     ) -> Self {
         let background_executor = platform.background_executor();
@@ -1345,7 +1415,7 @@ impl<'a, 'measurement, M: criterion::measurement::Measurement>
     ///
     /// Activation is settled before returning so renderer measurements exercise
     /// foreground animation rather than the inactive-window frame throttle.
-    pub fn add_empty_window(&mut self) -> BenchWindowContext<'a, 'measurement, M> {
+    pub fn add_empty_window(&mut self) -> BenchWindowContext<'a, 'measurement> {
         let bounds = {
             let app = self.app.borrow();
             Bounds::maximized(None, &app)
@@ -1376,13 +1446,16 @@ impl<'a, 'measurement, M: criterion::measurement::Measurement>
         }
     }
 
-    fn take_bencher(&self, benchmark_kind: &str) -> &'a mut criterion::Bencher<'measurement, M> {
+    fn take_bencher(
+        &self,
+        benchmark_kind: &str,
+    ) -> &'a mut criterion::Bencher<'measurement, BenchMeasurement> {
         self.bencher.borrow_mut().take().unwrap_or_else(|| {
             panic!("cannot start {benchmark_kind}: benchmark measurement is already running")
         })
     }
 
-    fn replace_bencher(&self, bencher: &'a mut criterion::Bencher<'measurement, M>) {
+    fn replace_bencher(&self, bencher: &'a mut criterion::Bencher<'measurement, BenchMeasurement>) {
         let previous = self.bencher.borrow_mut().replace(bencher);
         assert!(
             previous.is_none(),
@@ -1423,7 +1496,7 @@ impl<'a, 'measurement, M: criterion::measurement::Measurement>
     }
 }
 
-impl<M: criterion::measurement::Measurement> AppContext for BenchAppContext<'_, '_, M> {
+impl AppContext for BenchAppContext<'_, '_> {
     fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
         let mut app = self.app.borrow_mut();
         app.new(build_entity)
@@ -1517,20 +1590,14 @@ impl<M: criterion::measurement::Measurement> AppContext for BenchAppContext<'_, 
 /// This is separate from `VisualTestContext`; it provides access to a benchmark
 /// window without exposing test-only helpers such as input simulation.
 #[derive(Clone)]
-pub struct BenchWindowContext<
-    'a,
-    'measurement,
-    M: criterion::measurement::Measurement = criterion::measurement::WallTime,
-> {
-    cx: BenchAppContext<'a, 'measurement, M>,
+pub struct BenchWindowContext<'a, 'measurement> {
+    cx: BenchAppContext<'a, 'measurement>,
     window: AnyWindowHandle,
 }
 
-impl<'a, 'measurement, M: criterion::measurement::Measurement>
-    BenchWindowContext<'a, 'measurement, M>
-{
+impl<'a, 'measurement> BenchWindowContext<'a, 'measurement> {
     /// Returns the underlying benchmark app context.
-    pub fn app_context(&mut self) -> &mut BenchAppContext<'a, 'measurement, M> {
+    pub fn app_context(&mut self) -> &mut BenchAppContext<'a, 'measurement> {
         &mut self.cx
     }
 
@@ -1553,7 +1620,7 @@ impl<'a, 'measurement, M: criterion::measurement::Measurement>
     }
 }
 
-impl<M: criterion::measurement::Measurement> AppContext for BenchWindowContext<'_, '_, M> {
+impl AppContext for BenchWindowContext<'_, '_> {
     fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
         self.window
             .update(&mut self.cx, |_, _, cx| cx.new(build_entity))
@@ -1639,7 +1706,7 @@ impl<M: criterion::measurement::Measurement> AppContext for BenchWindowContext<'
     }
 }
 
-impl<M: criterion::measurement::Measurement> VisualContext for BenchWindowContext<'_, '_, M> {
+impl VisualContext for BenchWindowContext<'_, '_> {
     type Result<T> = Result<T>;
 
     fn window_handle(&self) -> AnyWindowHandle {
@@ -1707,10 +1774,20 @@ mod tests {
     use super::*;
     use crate::profiler::journal::install_test_foreground_journal;
 
-    #[derive(Clone)]
     struct FakeCounterMeasurement {
         counter: Arc<AtomicU64>,
         measurements: Arc<std::sync::Mutex<Vec<u64>>>,
+        wall_time: criterion::measurement::WallTime,
+    }
+
+    impl FakeCounterMeasurement {
+        fn new(counter: Arc<AtomicU64>, measurements: Arc<std::sync::Mutex<Vec<u64>>>) -> Self {
+            Self {
+                counter,
+                measurements,
+                wall_time: criterion::measurement::WallTime,
+            }
+        }
     }
 
     impl criterion::measurement::Measurement for FakeCounterMeasurement {
@@ -1743,15 +1820,15 @@ mod tests {
         }
 
         fn formatter(&self) -> &dyn criterion::measurement::ValueFormatter {
-            &InstructionFormatter
+            self.wall_time.formatter()
         }
     }
 
     fn fake_criterion(
         measurement: FakeCounterMeasurement,
-    ) -> criterion::Criterion<FakeCounterMeasurement> {
+    ) -> criterion::Criterion<BenchMeasurement> {
         criterion::Criterion::default()
-            .with_measurement(measurement)
+            .with_measurement(BenchMeasurement::new(measurement))
             .without_plots()
             .sample_size(10)
             .warm_up_time(Duration::from_millis(1))
@@ -1762,11 +1839,10 @@ mod tests {
     fn measurement_lifecycle_excludes_fixture_setup() {
         let counter = Arc::new(AtomicU64::new(0));
         let measurements = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let measurement = FakeCounterMeasurement {
-            counter: counter.clone(),
-            measurements: measurements.clone(),
-        };
-        let mut criterion = fake_criterion(measurement);
+        let mut criterion = fake_criterion(FakeCounterMeasurement::new(
+            counter.clone(),
+            measurements.clone(),
+        ));
 
         criterion.bench_function("measurement_lifecycle_excludes_fixture_setup", |bencher| {
             counter.fetch_add(7, Ordering::SeqCst);
@@ -1791,11 +1867,10 @@ mod tests {
     fn measurement_lifecycle_excludes_batched_setup() {
         let counter = Arc::new(AtomicU64::new(0));
         let measurements = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let measurement = FakeCounterMeasurement {
-            counter: counter.clone(),
-            measurements: measurements.clone(),
-        };
-        let mut criterion = fake_criterion(measurement);
+        let mut criterion = fake_criterion(FakeCounterMeasurement::new(
+            counter.clone(),
+            measurements.clone(),
+        ));
 
         criterion.bench_function("measurement_lifecycle_excludes_batched_setup", |bencher| {
             bencher.iter_batched(
@@ -1819,6 +1894,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn erased_measurement_preserves_wrapped_values() {
+        use criterion::measurement::Measurement as _;
+
+        let counter = Arc::new(AtomicU64::new(0));
+        let measurements = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let measurement =
+            BenchMeasurement::new(FakeCounterMeasurement::new(counter.clone(), measurements));
+
+        let intermediate = measurement.start();
+        counter.fetch_add(5, Ordering::SeqCst);
+        assert_eq!(measurement.end(intermediate), 5.0);
+
+        let intermediate = measurement.start();
+        counter.fetch_add(3, Ordering::SeqCst);
+        assert_eq!(measurement.end(intermediate), 3.0);
+    }
+
+    #[cfg(target_os = "linux")]
     #[test]
     fn instruction_formatter_uses_instruction_units() {
         use criterion::measurement::ValueFormatter as _;
@@ -1894,15 +1988,6 @@ mod tests {
             "GPUI background work should increase the process-wide count: \
              idle={idle_instructions}, busy={busy_instructions}"
         );
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    #[test]
-    fn retired_instructions_are_rejected_outside_linux() {
-        let error = RetiredInstructions::new()
-            .err()
-            .expect("hardware counters should be unavailable");
-        assert!(error.to_string().contains("require Linux perf_event_open"));
     }
 
     #[test]
@@ -1998,6 +2083,7 @@ mod tests {
         let name = "bench_task_reports_long_task_without_window";
 
         let mut criterion = criterion::Criterion::default()
+            .with_measurement(BenchMeasurement::new(criterion::measurement::WallTime))
             .without_plots()
             .sample_size(10)
             .warm_up_time(Duration::from_millis(1))

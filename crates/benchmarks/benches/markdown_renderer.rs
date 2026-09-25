@@ -321,17 +321,15 @@ fn choose(rng: &mut StdRng, items: &'static [&'static str]) -> &'static str {
     items.get(index).copied().unwrap_or("markdown")
 }
 
-fn markdown_language_registry<M: criterion::measurement::Measurement>(
-    cx: &BenchAppContext<'_, '_, M>,
-) -> Arc<LanguageRegistry> {
-    let registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
+fn markdown_language_registry(cx: &BenchAppContext) -> Arc<LanguageRegistry> {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     registry.add(language::rust_lang());
     registry
 }
 
-fn init_context<M: criterion::measurement::Measurement>(cx: &mut BenchAppContext<'_, '_, M>) {
+fn init_context(cx: &mut BenchAppContext) {
     cx.update(|cx| {
-        let store = SettingsStore::new(cx, settings::default_settings().as_ref());
+        let store = SettingsStore::test(cx);
         cx.set_global(store);
         assets::Assets.load_test_fonts(cx);
         theme_settings::init(theme::LoadThemes::JustBase, cx);

@@ -112,58 +112,41 @@ pub use spring::*;
 
 /// Defines a Criterion benchmark group for benchmarks annotated with [`gpui::bench`].
 ///
-/// The same target list drives wall-time runs and, on Linux, retired-instruction
-/// runs. Wall time remains the default. Set
-/// `GPUI_BENCH_MEASUREMENT=instructions` to select the hardware-counter mode.
+/// This mirrors `criterion::criterion_group!`, but the group measures with the
+/// `gpui::BenchMeasurement` selected by `GPUI_BENCH_MEASUREMENT`: wall time by
+/// default, or retired CPU instructions on Linux with
+/// `GPUI_BENCH_MEASUREMENT=instructions`. A `config = ...` expression may set any
+/// other Criterion option; its measurement is replaced. To measure with something
+/// else, call `criterion::criterion_group!` directly with
+/// `config = criterion::Criterion::default().with_measurement(gpui::BenchMeasurement::new(...))`.
 ///
 /// [`gpui::bench`]: crate::bench
 #[macro_export]
 macro_rules! bench_group {
+    (name = $name:ident; config = $config:expr; targets = $($target:path),+ $(,)?) => {
+        criterion::criterion_group! {
+            name = $name;
+            config = ($config).with_measurement($crate::bench_measurement_from_env());
+            targets = $($target),+
+        }
+    };
     ($name:ident, $($target:path),+ $(,)?) => {
-        pub fn $name() {
-            let measurement = $crate::requested_bench_measurement().unwrap_or_else(|error| {
-                eprintln!("failed to select GPUI benchmark measurement: {error:#}");
-                std::process::exit(2);
-            });
-            match measurement {
-                $crate::BenchMeasurement::WallTime => {
-                    let mut criterion: criterion::Criterion<_> =
-                        criterion::Criterion::default().configure_from_args();
-                    $(
-                        $target(&mut criterion);
-                    )+
-                    criterion.final_summary();
-                }
-                $crate::BenchMeasurement::Instructions => {
-                    let measurement = $crate::RetiredInstructions::new().unwrap_or_else(|error| {
-                        eprintln!("failed to start GPUI instruction benchmark: {error:#}");
-                        std::process::exit(2);
-                    });
-                    let mut criterion =
-                        criterion::Criterion::default()
-                            .with_measurement(measurement)
-                            .configure_from_args();
-                    $(
-                        $target(&mut criterion);
-                    )+
-                    criterion.final_summary();
-                }
-            }
+        $crate::bench_group! {
+            name = $name;
+            config = criterion::Criterion::default();
+            targets = $($target),+
         }
     };
 }
 
 /// Defines the entry point for GPUI Criterion benchmark groups.
 ///
-/// Each group selects its scalar measurement from `GPUI_BENCH_MEASUREMENT`.
+/// This mirrors `criterion::criterion_main!` so GPUI benchmark files can keep the
+/// same shape as ordinary Criterion benchmarks.
 #[macro_export]
 macro_rules! bench_main {
-    ($($group:path),+ $(,)?) => {
-        fn main() {
-            $(
-                $group();
-            )+
-        }
+    ($($tokens:tt)*) => {
+        criterion::criterion_main!($($tokens)*);
     };
 }
 pub use gpui_shared_string::*;
