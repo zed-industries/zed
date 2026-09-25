@@ -470,6 +470,87 @@ async fn test_request_events(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_edit_history_releases_single_file_worktree_when_buffer_is_dropped(
+    cx: &mut TestAppContext,
+) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/"),
+        json!({
+            "root": { "other.md": "other\n" },
+            "external.md": "one\n\nthree\n",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/external.md"), cx)
+        })
+        .await
+        .unwrap();
+    let other_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/other.md"), cx)
+        })
+        .await
+        .unwrap();
+    let worktree = project.read_with(cx, |project, cx| {
+        let (worktree, _) = project
+            .find_worktree(Path::new(path!("/external.md")), cx)
+            .unwrap();
+        assert!(worktree.read(cx).is_single_file());
+        assert!(!worktree.read(cx).is_visible());
+        worktree.downgrade()
+    });
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+        ep_store.register_buffer(&other_buffer, &project, cx);
+    });
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(4..4, "two")], None, cx);
+    });
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .unwrap();
+
+    cx.update(|_| drop(other_buffer));
+    cx.run_until_parked();
+    ep_store.read_with(cx, |ep_store, _| {
+        let project_state = &ep_store.projects[&project.entity_id()];
+        assert!(project_state.last_event.is_some());
+    });
+
+    let weak_buffer = buffer.downgrade();
+    cx.update(|_| drop(buffer));
+    cx.run_until_parked();
+    weak_buffer.assert_released();
+    worktree.assert_released();
+
+    let events = ep_store.read_with(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| {
+                let zeta_prompt::Event::BufferChange { diff, .. } = event.event.as_ref();
+                diff.as_str()
+            })
+            .collect::<Vec<_>>(),
+        [indoc! {"
+            @@ -1,3 +1,3 @@
+             one
+            -
+            +two
+             three
+        "}],
+    );
+}
+
+#[gpui::test]
 async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContext) {
     let (ep_store, _requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
@@ -4370,6 +4451,73 @@ async fn test_edit_prediction_settled_sample_data_requires_observing_all_events_
 
     let missed_request = settled_by_id.remove("prediction-missed").unwrap();
     assert_eq!(missed_request.sample_data, None);
+}
+
+#[gpui::test]
+async fn test_edit_prediction_settled_drops_sample_when_buffer_release_finalized_missed_event(
+    cx: &mut TestAppContext,
+) {
+    let (ep_store, mut requests, project, buffer) = init_sample_capture_test(
+        json!({
+            "LICENSE": MIT_LICENSE,
+            "foo.md": "one\n",
+            "other.md": "two\n",
+        }),
+        cx,
+    )
+    .await;
+    let other_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/other.md"), cx)
+        })
+        .await
+        .unwrap();
+    let boundary = ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&other_buffer, &project, cx);
+        let project_state = &ep_store.projects[&project.entity_id()];
+        PromptHistoryBoundary {
+            first_event_seq: project_state.next_last_event_seq,
+            snapshot: None,
+        }
+    });
+
+    other_buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "updated ")], None, cx);
+    });
+    cx.update(|_| drop(other_buffer));
+    cx.run_until_parked();
+    ep_store.read_with(cx, |ep_store, _| {
+        assert!(ep_store.projects[&project.entity_id()].last_event.is_none());
+    });
+
+    enqueue_sample_capture(
+        &ep_store,
+        &project,
+        &buffer,
+        "prediction-after-close",
+        Point::new(0, 0)..Point::new(1, 0),
+        CapturedPredictionContext {
+            repository_url: None,
+            revision: None,
+            uncommitted_diff: None,
+            buffer_diagnostics: Vec::new(),
+            editable_context: Vec::new(),
+        },
+        Some(boundary),
+        VecDeque::new(),
+        cx,
+    )
+    .await;
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE);
+    cx.run_until_parked();
+
+    let request = requests
+        .settled
+        .next()
+        .await
+        .expect("settled request should be sent");
+    assert_eq!(request.sample_data, None);
 }
 
 #[gpui::test]
