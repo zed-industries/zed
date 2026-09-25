@@ -4299,8 +4299,8 @@ impl Element for RenderedLineElement {
         cx: &mut App,
     ) {
         self.line.paint_code_chips(window);
-        self.text.paint(window, cx);
         self.line.paint_highlights(window);
+        self.text.paint(window, cx);
     }
 }
 
@@ -4372,6 +4372,7 @@ impl RenderedLine {
         }
     }
 
+    /// Painted before the glyphs so themes with opaque highlight colors don't hide the text
     fn paint_highlights(&self, window: &mut Window) {
         if self.highlights.is_empty() {
             return;
@@ -7735,6 +7736,48 @@ mod tests {
         assert!(quad_bounds.left() < px(0.));
         assert!(visible_bounds.left() >= px(0.));
         assert!(visible_bounds.right() <= window_width);
+    }
+
+    #[gpui::test]
+    fn test_search_highlights_are_painted_below_text(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let source = "~~struck through~~";
+        let highlight_start = source
+            .find("struck")
+            .expect("highlighted text should be present");
+        let highlight_range = highlight_start..highlight_start + "struck".len();
+
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        markdown.update(cx, |markdown, cx| {
+            markdown.set_search_highlights(vec![highlight_range], None, cx);
+        });
+        let (_, cx) = cx.add_window_view(move |_, _| MarkdownTestView {
+            markdown,
+            style: MarkdownStyle::default(),
+            code_span_link: None,
+            rendered_text: Rc::new(RefCell::new(None)),
+        });
+        cx.run_until_parked();
+
+        let highlight_color = cx.update(|_, cx| cx.theme().colors().search_match_background);
+        cx.update(|window, _| {
+            let highlight_order = window
+                .painted_quads()
+                .into_iter()
+                .find(|quad| quad.background == highlight_color.into())
+                .expect("search highlight should be painted")
+                .order;
+            // Strikethroughs are painted in the same layer as the glyphs
+            let text_order = window
+                .painted_underlines()
+                .first()
+                .expect("strikethrough should be painted")
+                .order;
+            assert!(
+                highlight_order < text_order,
+                "search highlight must be drawn below the text, otherwise opaque theme colors hide it"
+            );
+        });
     }
 
     /// Renders a paragraph followed by a fenced code block at the given
