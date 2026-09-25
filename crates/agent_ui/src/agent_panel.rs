@@ -192,6 +192,7 @@ pub struct AgentPanelTerminalInfo {
     pub has_notification: bool,
     pub custom_title: Option<SharedString>,
     pub working_directory: Option<PathBuf>,
+    pub is_running: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -3387,6 +3388,13 @@ impl AgentPanel {
                 has_notification: terminal.has_notification,
                 custom_title: terminal.custom_title(cx),
                 working_directory: terminal.working_directory.clone(),
+                is_running: terminal
+                    .view
+                    .read(cx)
+                    .terminal()
+                    .read(cx)
+                    .task()
+                    .map(|task| task.status == terminal::TaskStatus::Running),
             })
             .collect()
     }

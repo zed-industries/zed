@@ -35,6 +35,7 @@ pub(crate) struct ThreadSwitcherThreadEntry {
 pub(crate) struct ThreadSwitcherTerminalEntry {
     pub metadata: TerminalThreadMetadata,
     pub(super) workspace: ThreadEntryWorkspace,
+    pub status: AgentThreadStatus,
     pub project_name: Option<SharedString>,
     pub worktrees: Vec<ThreadItemWorktreeInfo>,
     pub notified: bool,
@@ -112,7 +113,7 @@ impl ThreadSwitcherEntry {
     fn status(&self) -> AgentThreadStatus {
         match self {
             Self::Thread(entry) => entry.status,
-            Self::Terminal(_) => AgentThreadStatus::default(),
+            Self::Terminal(entry) => entry.status,
         }
     }
 

@@ -57,6 +57,28 @@ fn init_test(cx: &mut TestAppContext) {
     });
 }
 
+#[test]
+fn terminal_task_status_maps_to_sidebar_status() {
+    assert_eq!(
+        terminal_thread_status(Some(true)),
+        AgentThreadStatus::Running
+    );
+    assert_eq!(
+        terminal_thread_status(Some(false)),
+        AgentThreadStatus::Completed
+    );
+    assert_eq!(terminal_thread_status(None), AgentThreadStatus::Unavailable);
+}
+
+#[test]
+fn blank_worktree_name_keeps_automatic_naming() {
+    assert_eq!(worktree_name_from_input("  \n"), None);
+    assert_eq!(
+        worktree_name_from_input(" feature-name "),
+        Some("feature-name".to_string())
+    );
+}
+
 #[track_caller]
 fn assert_active_thread(sidebar: &Sidebar, session_id: &acp::SessionId, msg: &str) {
     let active = sidebar.active_entry.as_ref();
@@ -661,6 +683,7 @@ fn visible_entries_as_strings(
                         };
                         format!("{} [{}]{}", icon, label, selected)
                     }
+                    ListEntry::WorktreeHeader { .. } => String::new(),
                     ListEntry::Thread(thread) => {
                         let title = thread.metadata.display_title();
                         let worktree = format_linked_worktree_chips(&thread.worktrees);
@@ -691,6 +714,7 @@ fn visible_entries_as_strings(
                     }
                 }
             })
+            .filter(|entry| !entry.is_empty())
             .collect()
     })
 }
@@ -1218,6 +1242,45 @@ async fn test_single_workspace_with_saved_threads(cx: &mut TestAppContext) {
             "v [my-project]",
             "  Fix crash in project panel",
             "  Add inline diff view",
+        ]
+    );
+    sidebar.read_with(cx, |sidebar, _| {
+        assert!(matches!(
+            sidebar.contents.entries.get(1),
+            Some(ListEntry::WorktreeHeader { heading, .. })
+                if heading.label.as_ref() == "my-project" && heading.is_current
+        ));
+        assert!(matches!(
+            sidebar.contents.entries.get(2),
+            Some(ListEntry::Thread(_))
+        ));
+    });
+    let (project_key, worktree_path) = sidebar.read_with(cx, |sidebar, _| {
+        let Some(ListEntry::WorktreeHeader {
+            project_key,
+            heading,
+        }) = sidebar.contents.entries.get(1)
+        else {
+            panic!("expected a worktree group after the project header");
+        };
+        (project_key.clone(), heading.full_path.clone())
+    });
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.toggle_worktree_collapse(project_key.clone(), worktree_path.clone(), cx);
+    });
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [my-project]"]
+    );
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.toggle_worktree_collapse(project_key, worktree_path, cx);
+    });
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            "v [my-project]",
+            "  Fix crash in project panel",
+            "  Add inline diff view"
         ]
     );
 }
