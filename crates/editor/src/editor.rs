@@ -11223,25 +11223,7 @@ impl Editor {
             if let Some(folds) = folds {
                 let snapshot = buffer_snapshot.get_or_init(|| self.buffer.read(cx).snapshot(cx));
                 let snapshot_len = snapshot.len().0;
-
-                let fingerprint_offsets = OnceCell::new();
-
-                // Helper: search for fingerprint in buffer, return offset if found
-                let find_fingerprint = |fingerprint: &str, search_start: usize| -> Option<usize> {
-                    // Ensure we start at a character boundary (defensive)
-                    let search_start = snapshot
-                        .clip_offset(MultiBufferOffset(search_start), Bias::Left)
-                        .0;
-                    if fingerprint.is_empty() {
-                        return (search_start < snapshot_len).then_some(search_start);
-                    }
-                    let offsets = fingerprint_offsets
-                        .get_or_init(|| fold::find_fingerprint_offsets(snapshot, &folds))
-                        .get(fingerprint)?;
-                    offsets
-                        .get(offsets.partition_point(|&offset| offset < search_start))
-                        .copied()
-                };
+                let mut fingerprint_search = fold::FingerprintSearch::new(snapshot, &folds);
 
                 // Track search position to handle duplicate fingerprints correctly.
                 // Folds are stored in document order, so we advance after each match.
@@ -11273,15 +11255,15 @@ impl Editor {
                         } else if sfp == efp {
                             // Short fold: identical fingerprints can only match once per search
                             // Use stored fold length to compute new_end
-                            let new_start = find_fingerprint(&sfp, search_start)?;
+                            let new_start = fingerprint_search.find(sfp, search_start)?;
                             let fold_len = stored_end - stored_start;
                             let new_end = new_start + fold_len;
                             (new_start, new_end)
                         } else {
                             // Slow path: search for fingerprints in buffer
-                            let new_start = find_fingerprint(&sfp, search_start)?;
+                            let new_start = fingerprint_search.find(sfp, search_start)?;
                             // Search for end_fp after start, then add efp_len to get actual fold end
-                            let efp_pos = find_fingerprint(&efp, new_start + sfp.len())?;
+                            let efp_pos = fingerprint_search.find(efp, new_start + sfp.len())?;
                             let new_end = efp_pos + efp_len;
                             (new_start, new_end)
                         };

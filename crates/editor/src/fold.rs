@@ -1006,24 +1006,7 @@ impl Editor {
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let snapshot_len = snapshot.len().0;
-
-        let fingerprint_offsets = OnceCell::new();
-
-        // Helper: search for fingerprint in buffer, return offset if found
-        let find_fingerprint = |fingerprint: &str, search_start: usize| -> Option<usize> {
-            let search_start = snapshot
-                .clip_offset(MultiBufferOffset(search_start), Bias::Left)
-                .0;
-            if fingerprint.is_empty() {
-                return (search_start < snapshot_len).then_some(search_start);
-            }
-            let offsets = fingerprint_offsets
-                .get_or_init(|| find_fingerprint_offsets(&snapshot, &folds))
-                .get(fingerprint)?;
-            offsets
-                .get(offsets.partition_point(|&offset| offset < search_start))
-                .copied()
-        };
+        let mut fingerprint_search = FingerprintSearch::new(&snapshot, &folds);
 
         let mut search_start = 0usize;
 
@@ -1044,13 +1027,13 @@ impl Editor {
                 let (new_start, new_end) = if start_matches && end_matches {
                     (stored_start, stored_end)
                 } else if sfp == efp {
-                    let new_start = find_fingerprint(&sfp, search_start)?;
+                    let new_start = fingerprint_search.find(sfp, search_start)?;
                     let fold_len = stored_end - stored_start;
                     let new_end = new_start + fold_len;
                     (new_start, new_end)
                 } else {
-                    let new_start = find_fingerprint(&sfp, search_start)?;
-                    let efp_pos = find_fingerprint(&efp, new_start + sfp.len())?;
+                    let new_start = fingerprint_search.find(sfp, search_start)?;
+                    let efp_pos = fingerprint_search.find(efp, new_start + sfp.len())?;
                     let new_end = efp_pos + efp_len;
                     (new_start, new_end)
                 };
@@ -1096,31 +1079,120 @@ impl Editor {
     }
 }
 
-/// Finds every occurrence of the fold fingerprints in a single pass over the buffer.
-/// Searching for each fingerprint separately rescans the rest of the buffer for every
-/// fold that no longer matches, which freezes large files with many stale folds.
-pub(super) fn find_fingerprint_offsets<'a>(
-    snapshot: &MultiBufferSnapshot,
-    folds: &'a [(usize, usize, Option<String>, Option<String>)],
-) -> HashMap<&'a str, Vec<usize>> {
-    let fingerprints = folds
-        .iter()
-        .flat_map(|(_, _, start_fp, end_fp)| [start_fp.as_deref(), end_fp.as_deref()])
-        .flatten()
-        .filter(|fingerprint| !fingerprint.is_empty())
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let mut offsets = HashMap::<&str, Vec<usize>>::default();
-    let Some(searcher) = AhoCorasick::new(&fingerprints).log_err() else {
-        return offsets;
-    };
-    let text = snapshot.text();
-    for found in searcher.find_overlapping_iter(&text) {
-        offsets
-            .entry(fingerprints[found.pattern().as_usize()])
-            .or_default()
-            .push(found.start());
+/// Finds saved fold fingerprints in a buffer when restoring folds.
+///
+/// A fingerprint that is still in the buffer is found by searching forward from the
+/// search start, which stops at the first match. A fingerprint that is no longer in the
+/// buffer makes that search run to the end of the buffer, and with many stale folds this
+/// froze the editor. So after the first miss, the last offset of every fingerprint is
+/// recorded in one pass, and fingerprints with no match after the search start are
+/// rejected without searching.
+pub(super) struct FingerprintSearch<'a> {
+    snapshot: &'a MultiBufferSnapshot,
+    fingerprints: Vec<&'a str>,
+    last_offsets: Option<HashMap<&'a str, usize>>,
+    #[cfg(test)]
+    pub(super) searched_offsets: usize,
+}
+
+impl<'a> FingerprintSearch<'a> {
+    pub(super) fn new(
+        snapshot: &'a MultiBufferSnapshot,
+        folds: &'a [(usize, usize, Option<String>, Option<String>)],
+    ) -> Self {
+        let fingerprints = folds
+            .iter()
+            .flat_map(|(_, _, start_fp, end_fp)| [start_fp.as_deref(), end_fp.as_deref()])
+            .flatten()
+            .filter(|fingerprint| !fingerprint.is_empty())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        Self {
+            snapshot,
+            fingerprints,
+            last_offsets: None,
+            #[cfg(test)]
+            searched_offsets: 0,
+        }
     }
-    offsets
+
+    pub(super) fn find(&mut self, fingerprint: &str, search_start: usize) -> Option<usize> {
+        let snapshot = self.snapshot;
+        let search_start = snapshot
+            .clip_offset(MultiBufferOffset(search_start), Bias::Left)
+            .0;
+        if !fingerprint.is_empty()
+            && let Some(last_offsets) = &self.last_offsets
+            && last_offsets
+                .get(fingerprint)
+                .is_none_or(|&last_offset| last_offset < search_start)
+        {
+            return None;
+        }
+
+        let search_end = snapshot.len().0.saturating_sub(fingerprint.len());
+        let mut byte_offset = search_start;
+        for ch in snapshot.chars_at(MultiBufferOffset(search_start)) {
+            if byte_offset > search_end {
+                break;
+            }
+            #[cfg(test)]
+            {
+                self.searched_offsets += 1;
+            }
+            if snapshot.contains_str_at(MultiBufferOffset(byte_offset), fingerprint) {
+                return Some(byte_offset);
+            }
+            byte_offset += ch.len_utf8();
+        }
+
+        if !fingerprint.is_empty() && self.last_offsets.is_none() {
+            self.last_offsets = Some(self.find_last_offsets());
+        }
+        None
+    }
+
+    fn find_last_offsets(&self) -> HashMap<&'a str, usize> {
+        let mut last_offsets = HashMap::default();
+        let Some(max_len) = self
+            .fingerprints
+            .iter()
+            .map(|fingerprint| fingerprint.len())
+            .max()
+        else {
+            return last_offsets;
+        };
+        let Some(searcher) = AhoCorasick::new(&self.fingerprints).log_err() else {
+            return last_offsets;
+        };
+
+        // Search the buffer chunk by chunk, keeping the end of the previous chunks so that
+        // matches spanning a chunk boundary are found.
+        let mut window = String::new();
+        let mut window_start = 0;
+        for chunk in self
+            .snapshot
+            .text_for_range(MultiBufferOffset(0)..self.snapshot.len())
+        {
+            window.push_str(chunk);
+            for found in searcher.find_overlapping_iter(&window) {
+                let Some(fingerprint) = self.fingerprints.get(found.pattern().as_usize()) else {
+                    continue;
+                };
+                let offset = window_start + found.start();
+                last_offsets
+                    .entry(*fingerprint)
+                    .and_modify(|last_offset: &mut usize| *last_offset = (*last_offset).max(offset))
+                    .or_insert(offset);
+            }
+            let mut keep_from = window.len().saturating_sub(max_len - 1);
+            while !window.is_char_boundary(keep_from) {
+                keep_from -= 1;
+            }
+            window.drain(..keep_from);
+            window_start += keep_from;
+        }
+        last_offsets
+    }
 }

@@ -2452,6 +2452,61 @@ async fn test_load_folds_from_db_with_stale_folds(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_fingerprint_search_with_missing_fingerprints(cx: &mut App) {
+    let text = "let value = compute();\n".repeat(2_000);
+    let snapshot = MultiBuffer::build_simple(&text, cx).read(cx).snapshot(cx);
+    let folds = (0..500)
+        .map(|ix| {
+            (
+                0,
+                100,
+                Some(format!("removed start {ix}")),
+                Some(format!("removed end {ix}")),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let mut search = fold::FingerprintSearch::new(&snapshot, &folds);
+    for ix in 0..500 {
+        assert_eq!(search.find(&format!("removed start {ix}"), 0), None);
+    }
+    // Only the first missing fingerprint is searched for. Searching for each of them
+    // would scan the whole buffer 500 times.
+    assert!(
+        search.searched_offsets <= text.len(),
+        "searched {} offsets in a buffer of {} bytes",
+        search.searched_offsets,
+        text.len()
+    );
+}
+
+#[gpui::test]
+fn test_fingerprint_search_in_repetitive_text(cx: &mut App) {
+    let text = "a".repeat(100_000);
+    let snapshot = MultiBuffer::build_simple(&text, cx).read(cx).snapshot(cx);
+    let fingerprint = "a".repeat(32);
+    let folds = vec![
+        (0, 64, Some(fingerprint.clone()), Some(fingerprint.clone())),
+        (
+            0,
+            64,
+            Some("removed".to_string()),
+            Some("removed".to_string()),
+        ),
+    ];
+
+    let mut search = fold::FingerprintSearch::new(&snapshot, &folds);
+    assert_eq!(search.find(&fingerprint, 10), Some(10));
+    assert_eq!(search.searched_offsets, 1);
+
+    assert_eq!(search.find("removed", 0), None);
+    let searched_offsets = search.searched_offsets;
+    assert_eq!(search.find(&fingerprint, 50_000), Some(50_000));
+    assert_eq!(search.find(&fingerprint, 99_990), None);
+    assert_eq!(search.searched_offsets, searched_offsets + 1);
+}
+
+#[gpui::test]
 fn test_move_cursor(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
