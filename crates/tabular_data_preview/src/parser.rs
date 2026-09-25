@@ -156,7 +156,8 @@ impl TabularDataPreviewPane {
                     Ok(contents) => contents,
                     Err(error) => {
                         view.parse_error = Some(format!("{error:#}").into());
-                        view.table.update(cx, |table, cx| table.set_loading(false, cx));
+                        view.table
+                            .update(cx, |table, cx| table.set_loading(false, cx));
                         cx.notify();
                         return;
                     }

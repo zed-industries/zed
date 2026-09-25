@@ -307,7 +307,13 @@ mod tests {
             };
             cx.condition(&preview, |preview, cx| {
                 !preview.is_parsing
-                    && preview.table.read(cx).engine.d2d_mapping().visible_row_count() == 2
+                    && preview
+                        .table
+                        .read(cx)
+                        .engine
+                        .d2d_mapping()
+                        .visible_row_count()
+                        == 2
             })
             .await;
 
@@ -398,7 +404,13 @@ mod tests {
             };
             cx.condition(&preview, |preview, cx| {
                 !preview.is_parsing
-                    && preview.table.read(cx).engine.d2d_mapping().visible_row_count() == 2
+                    && preview
+                        .table
+                        .read(cx)
+                        .engine
+                        .d2d_mapping()
+                        .visible_row_count()
+                        == 2
             })
             .await;
 
@@ -412,12 +424,23 @@ mod tests {
                 });
             });
             cx.condition(&preview, |preview, cx| {
-                preview.table.read(cx).engine.d2d_mapping().visible_row_count() == 1
+                preview
+                    .table
+                    .read(cx)
+                    .engine
+                    .d2d_mapping()
+                    .visible_row_count()
+                    == 1
             })
             .await;
             preview.read_with(cx, |preview, cx| {
                 assert_eq!(
-                    preview.table.read(cx).engine.d2d_mapping().get_data_row(DisplayRow(0)),
+                    preview
+                        .table
+                        .read(cx)
+                        .engine
+                        .d2d_mapping()
+                        .get_data_row(DisplayRow(0)),
                     Some(DataRow(1))
                 );
             });
@@ -444,7 +467,12 @@ mod tests {
             cx.condition(&preview, |preview, cx| {
                 !preview.is_parsing
                     && preview.parse_error.is_none()
-                    && preview.table.read(cx).engine.d2d_mapping().get_data_row(DisplayRow(0))
+                    && preview
+                        .table
+                        .read(cx)
+                        .engine
+                        .d2d_mapping()
+                        .get_data_row(DisplayRow(0))
                         == Some(DataRow(0))
             })
             .await;
