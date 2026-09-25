@@ -534,7 +534,7 @@ impl Server {
             .add_request_handler(disallow_guest_request::<proto::GitCreateArchiveCheckpoint>)
             .add_request_handler(disallow_guest_request::<proto::GitRestoreArchiveCheckpoint>)
             .add_request_handler(forward_mutating_project_request::<proto::CheckForPushedCommits>)
-            .add_request_handler(forward_mutating_project_request::<proto::ToggleLspLogs>)
+            .add_message_handler(forward_toggle_lsp_logs)
             .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>)
             .add_request_handler(forward_project_search_chunk)
             .add_request_handler(forward_read_only_project_request::<proto::LoadCommitTemplate>);
@@ -2441,6 +2441,22 @@ where
         .await?;
     let payload = session.forward_request(host_connection_id, request).await?;
     response.send(payload)?;
+    Ok(())
+}
+
+async fn forward_toggle_lsp_logs(
+    message: proto::ToggleLspLogs,
+    session: MessageContext,
+) -> Result<()> {
+    let project_id = ProjectId::from_proto(message.project_id);
+    let host_connection_id = session
+        .db()
+        .await
+        .host_for_mutating_project_request(project_id, session.connection_id)
+        .await?;
+    session
+        .peer
+        .forward_send(session.connection_id, host_connection_id, message)?;
     Ok(())
 }
 
