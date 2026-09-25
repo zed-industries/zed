@@ -254,7 +254,7 @@ struct PendingSession {
 
 pub struct LanguageModels {
     /// Access language model by ID
-    models: HashMap<AgentModelId, Arc<dyn LanguageModel>>,
+    models: HashMap<AgentModelId, LanguageModel>,
     /// Cached list for returning language model information
     model_list: acp_thread::AgentModelList,
     refresh_models_rx: watch::Receiver<()>,
@@ -332,12 +332,12 @@ impl LanguageModels {
         self.refresh_models_tx.send(()).ok();
     }
 
-    pub fn model_from_id(&self, model_id: &AgentModelId) -> Option<Arc<dyn LanguageModel>> {
+    pub fn model_from_id(&self, model_id: &AgentModelId) -> Option<LanguageModel> {
         self.models.get(model_id).cloned()
     }
 
     fn map_language_model_to_info(
-        model: &Arc<dyn LanguageModel>,
+        model: &LanguageModel,
         provider: &Arc<dyn LanguageModelProvider>,
     ) -> acp_thread::AgentModelInfo {
         acp_thread::AgentModelInfo {
@@ -354,7 +354,7 @@ impl LanguageModels {
         }
     }
 
-    fn model_id(model: &Arc<dyn LanguageModel>) -> AgentModelId {
+    fn model_id(model: &LanguageModel) -> AgentModelId {
         AgentModelId::new(format!("{}/{}", model.provider_id().0, model.id().0))
     }
 
@@ -771,7 +771,7 @@ impl NativeAgent {
 
         let default_model = registry.default_model().and_then(|default_model| {
             self.models
-                .model_from_id(&LanguageModels::model_id(&default_model.model))
+                .model_from_id(&LanguageModels::model_id(&default_model))
         });
         let thread = cx.new(|cx| {
             Thread::new(
@@ -824,7 +824,7 @@ impl NativeAgent {
         });
 
         let registry = LanguageModelRegistry::read_global(cx);
-        let summarization_model = registry.thread_summary_model(cx).map(|c| c.model);
+        let summarization_model = registry.thread_summary_model(cx);
 
         let weak = cx.weak_entity();
         let weak_thread = thread_handle.downgrade();
@@ -1444,12 +1444,15 @@ impl NativeAgent {
         self.models.refresh_list(cx);
 
         let registry = LanguageModelRegistry::read_global(cx);
-        let default_model = registry.default_model().map(|m| m.model);
-        let summarization_model = registry.thread_summary_model(cx).map(|m| m.model);
+        let default_model = registry.default_model();
+        let summarization_model = registry.thread_summary_model(cx);
 
         for session in self.sessions.values_mut() {
             session.thread.update(cx, |thread, cx| {
                 thread.ensure_model(default_model.as_ref(), cx);
+                if let language_model::Event::ProviderStateChanged(provider_id) = event {
+                    thread.refresh_model(provider_id, cx);
+                }
 
                 if let Some(model) = summarization_model.clone() {
                     if thread.summarization_model().is_none()
@@ -1655,9 +1658,8 @@ impl NativeAgent {
                     .projects
                     .get(&project_id)
                     .context("project state not found")?;
-                let summarization_model = LanguageModelRegistry::read_global(cx)
-                    .thread_summary_model(cx)
-                    .map(|c| c.model);
+                let summarization_model =
+                    LanguageModelRegistry::read_global(cx).thread_summary_model(cx);
 
                 Ok(cx.new(|cx| {
                     let mut thread = Thread::from_db(
@@ -2746,7 +2748,7 @@ pub fn available_native_agent(cx: &App) -> AvailableAgent {
         for model in provider.provided_models(cx) {
             let id = format!("{}/{}", provider_id.0, model.id().0);
             let is_default = default.as_ref().is_some_and(|default| {
-                default.provider.id() == provider_id && default.model.id() == model.id()
+                default.provider_id == provider_id && default.id == model.id
             });
             models.push(AvailableModel {
                 id,
@@ -3922,10 +3924,10 @@ mod internal_tests {
     use fs::FakeFs;
     use gpui::TestAppContext;
     use indoc::formatdoc;
-    use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
+    use language_model::fake_provider::FakeLanguageModelProvider;
     use language_model::{
         CompletionIntent, LanguageModelCompletionError, LanguageModelCompletionEvent,
-        LanguageModelProviderId, LanguageModelProviderName, Speed,
+        LanguageModelName, LanguageModelProviderId, LanguageModelProviderName, Speed,
     };
     use serde_json::json;
     use settings::{LanguageModelProviderSetting, SettingsStore};
@@ -3957,19 +3959,14 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
         let connection = Rc::new(NativeAgentConnection(agent.clone()));
-        let model = Arc::new(FakeLanguageModel::with_id_and_thinking(
-            "fake-corp",
-            "subagent-model",
-            "Subagent Model",
-            true,
+        let provider = Arc::new(FakeLanguageModelProvider::new(
+            LanguageModelProviderId::from("fake-corp".to_string()),
+            LanguageModelProviderName::from("Fake Corp".to_string()),
         ));
-        let provider = Arc::new(
-            FakeLanguageModelProvider::new(
-                LanguageModelProviderId::from("fake-corp".to_string()),
-                LanguageModelProviderName::from("Fake Corp".to_string()),
-            )
-            .with_models(vec![model.clone()]),
-        );
+        let model = provider.update_model("subagent-model", |model| {
+            model.name = LanguageModelName::from("Subagent Model".to_string());
+            model.supports_thinking = true;
+        });
         cx.update(|cx| {
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                 registry.register_provider(provider, cx);
@@ -4230,11 +4227,11 @@ mod internal_tests {
             AcpBetaFeatureFlag, FeatureFlag as _, FeatureFlagAppExt as _, FeatureFlagsSettings,
         };
 
-        init_test(cx);
+        let fake = init_test(cx);
         let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = fake.model("fake");
         let old_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
@@ -4273,7 +4270,7 @@ mod internal_tests {
         });
         cx.run_until_parked();
 
-        let request = model.pending_completions().pop().unwrap();
+        let request = fake.pending_completions().pop().unwrap();
         assert_eq!(
             request.intent,
             Some(CompletionIntent::ThreadContextSummarization)
@@ -4299,7 +4296,7 @@ mod internal_tests {
             compaction.id.clone()
         });
 
-        model.send_completion_stream_text_chunk(&request, "retained ");
+        fake.send_text(&model, &request, "retained ");
         cx.run_until_parked();
         let summary = acp_thread.read_with(cx, |thread, cx| {
             let Some(acp_thread::AgentThreadEntry::ContextCompaction(compaction)) =
@@ -4318,8 +4315,8 @@ mod internal_tests {
             assert_eq!(markdown.read(cx).source().as_ref(), "retained ");
             markdown.clone()
         });
-        model.send_completion_stream_text_chunk(&request, "context");
-        model.end_completion_stream(&request);
+        fake.send_text(&model, &request, "context");
+        fake.end_stream(&model, &request);
         cx.run_until_parked();
         prompt_task
             .await
@@ -4454,12 +4451,11 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_retried_auto_compaction_terminalizes_each_attempt(cx: &mut TestAppContext) {
-        init_test(cx);
+        let fake = init_test(cx);
         let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-        let model = Arc::new(FakeLanguageModel::default());
-        model.set_max_token_count(1_000_000);
+        let model = fake.model("fake");
 
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
@@ -4481,19 +4477,20 @@ mod internal_tests {
         });
         cx.run_until_parked();
 
-        let first_request = model
+        let first_request = fake
             .pending_completions()
             .pop()
             .expect("first user prompt should start a model request");
-        model.send_completion_stream_event(
+        fake.send_event(
+            &model,
             &first_request,
             LanguageModelCompletionEvent::UsageUpdate(language_model::TokenUsage {
                 input_tokens: 750_000,
                 ..Default::default()
             }),
         );
-        model.send_completion_stream_text_chunk(&first_request, "old assistant");
-        model.end_completion_stream(&first_request);
+        fake.send_text(&model, &first_request, "old assistant");
+        fake.end_stream(&model, &first_request);
         cx.run_until_parked();
         first_prompt
             .await
@@ -4509,7 +4506,7 @@ mod internal_tests {
         });
         cx.run_until_parked();
 
-        let first_compaction_request = model
+        let first_compaction_request = fake
             .pending_completions()
             .pop()
             .expect("token threshold should start automatic compaction");
@@ -4517,7 +4514,8 @@ mod internal_tests {
             first_compaction_request.intent,
             Some(CompletionIntent::ThreadContextSummarization)
         );
-        model.send_completion_stream_error(
+        fake.send_error(
+            &model,
             &first_compaction_request,
             LanguageModelCompletionError::from_provider_response(
                 language_model::ANTHROPIC_PROVIDER_NAME,
@@ -4528,10 +4526,10 @@ mod internal_tests {
                 language_model::ProviderErrorCategory::RateLimit,
             ),
         );
-        model.end_completion_stream(&first_compaction_request);
+        fake.end_stream(&model, &first_compaction_request);
         cx.run_until_parked();
 
-        let second_compaction_request = model
+        let second_compaction_request = fake
             .pending_completions()
             .pop()
             .expect("retryable error should start another compaction attempt");
@@ -4560,8 +4558,8 @@ mod internal_tests {
             assert!(thread.is_compacting());
         });
 
-        model.send_completion_stream_text_chunk(&second_compaction_request, "summary");
-        model.end_completion_stream(&second_compaction_request);
+        fake.send_text(&model, &second_compaction_request, "summary");
+        fake.end_stream(&model, &second_compaction_request);
         cx.run_until_parked();
 
         acp_thread.read_with(cx, |thread, _cx| {
@@ -4588,13 +4586,13 @@ mod internal_tests {
             );
         });
 
-        let final_request = model
+        let final_request = fake
             .pending_completions()
             .pop()
             .expect("successful compaction should continue the user turn");
         assert_eq!(final_request.intent, Some(CompletionIntent::UserPrompt));
-        model.send_completion_stream_text_chunk(&final_request, "new assistant");
-        model.end_completion_stream(&final_request);
+        fake.send_text(&model, &final_request, "new assistant");
+        fake.end_stream(&model, &final_request);
         cx.run_until_parked();
         second_prompt
             .await
@@ -4603,7 +4601,7 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_native_compaction_cancellation_is_bridged_before_stop(cx: &mut TestAppContext) {
-        init_test(cx);
+        let fake = init_test(cx);
 
         for (scenario, cancel_before_first_poll, partial_summary) in [
             ("before first poll", true, None),
@@ -4617,7 +4615,7 @@ mod internal_tests {
             let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
             let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
             let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-            let model = Arc::new(FakeLanguageModel::default());
+            let model = fake.model("fake");
 
             cx.update(|cx| {
                 let path_style = project.read(cx).path_style(cx);
@@ -4649,12 +4647,12 @@ mod internal_tests {
                     .expect("manual compaction should start");
                 cx.run_until_parked();
 
-                let request = model
+                let request = fake
                     .pending_completions()
                     .pop()
                     .expect("manual compaction should reach the model");
                 if let Some(partial_summary) = partial_summary {
-                    model.send_completion_stream_text_chunk(&request, partial_summary);
+                    fake.send_text(&model, &request, partial_summary);
                     cx.run_until_parked();
                 }
 
@@ -4723,11 +4721,11 @@ mod internal_tests {
     async fn test_native_tool_names_survive_reused_ids_and_reload(cx: &mut TestAppContext) {
         use language_model::{LanguageModelToolUse, LanguageModelToolUseInput};
 
-        init_test(cx);
+        let fake = init_test(cx);
         let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = fake.model("thread");
         let fs = project.read_with(cx, |project, _| project.fs().clone());
         fs.write(Path::new("/a/file.txt"), b"retained file contents")
             .await
@@ -4750,12 +4748,13 @@ mod internal_tests {
                 )
             });
             cx.run_until_parked();
-            let request = model
-                .pending_completions()
+            let request = fake
+                .pending_completions_for(&model)
                 .pop()
                 .expect("user prompt should reach the model");
             let input = json!({"path": "a/file.txt"});
-            model.send_completion_stream_event(
+            fake.send_event(
+                &model,
                 &request,
                 LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
                     id: "reused_id".into(),
@@ -4766,15 +4765,15 @@ mod internal_tests {
                     thought_signature: None,
                 }),
             );
-            model.end_completion_stream(&request);
+            fake.end_stream(&model, &request);
             cx.run_until_parked();
-            let request = model
-                .pending_completions()
+            let request = fake
+                .pending_completions_for(&model)
                 .pop()
                 .expect("tool result should reach the model");
             assert_eq!(request.intent, Some(CompletionIntent::ToolResults));
-            model.send_completion_stream_text_chunk(&request, "done");
-            model.end_completion_stream(&request);
+            fake.send_text(&model, &request, "done");
+            fake.end_stream(&model, &request);
             cx.run_until_parked();
             prompt_task.await.expect("native tool turn should complete");
         }
@@ -6653,19 +6652,14 @@ mod internal_tests {
 
         // Register a thinking model and select it.
         cx.update(|cx| {
-            let thinking_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
-                "fake-corp",
-                "fake-thinking",
-                "Fake Thinking",
-                true,
+            let thinking_provider = Arc::new(FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("fake-corp".to_string()),
+                LanguageModelProviderName::from("Fake Corp".to_string()),
             ));
-            let thinking_provider = Arc::new(
-                FakeLanguageModelProvider::new(
-                    LanguageModelProviderId::from("fake-corp".to_string()),
-                    LanguageModelProviderName::from("Fake Corp".to_string()),
-                )
-                .with_models(vec![thinking_model]),
-            );
+            thinking_provider.update_model("fake-thinking", |model| {
+                model.name = LanguageModelName::from("Fake Thinking".to_string());
+                model.supports_thinking = true;
+            });
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                 registry.register_provider(thinking_provider, cx);
             });
@@ -6717,19 +6711,14 @@ mod internal_tests {
 
         // Register a second provider with a thinking model.
         cx.update(|cx| {
-            let thinking_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
-                "fake-corp",
-                "fake-thinking",
-                "Fake Thinking",
-                true,
+            let thinking_provider = Arc::new(FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("fake-corp".to_string()),
+                LanguageModelProviderName::from("Fake Corp".to_string()),
             ));
-            let thinking_provider = Arc::new(
-                FakeLanguageModelProvider::new(
-                    LanguageModelProviderId::from("fake-corp".to_string()),
-                    LanguageModelProviderName::from("Fake Corp".to_string()),
-                )
-                .with_models(vec![thinking_model]),
-            );
+            thinking_provider.update_model("fake-thinking", |model| {
+                model.name = LanguageModelName::from("Fake Thinking".to_string());
+                model.supports_thinking = true;
+            });
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                 registry.register_provider(thinking_provider, cx);
             });
@@ -6847,22 +6836,17 @@ mod internal_tests {
         let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
         // Register a thinking model.
-        let thinking_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
-            "fake-corp",
-            "fake-thinking",
-            "Fake Thinking",
-            true,
+        let thinking_provider = Arc::new(FakeLanguageModelProvider::new(
+            LanguageModelProviderId::from("fake-corp".to_string()),
+            LanguageModelProviderName::from("Fake Corp".to_string()),
         ));
-        let thinking_provider = Arc::new(
-            FakeLanguageModelProvider::new(
-                LanguageModelProviderId::from("fake-corp".to_string()),
-                LanguageModelProviderName::from("Fake Corp".to_string()),
-            )
-            .with_models(vec![thinking_model.clone()]),
-        );
+        let thinking_model = thinking_provider.update_model("fake-thinking", |model| {
+            model.name = LanguageModelName::from("Fake Thinking".to_string());
+            model.supports_thinking = true;
+        });
         cx.update(|cx| {
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-                registry.register_provider(thinking_provider, cx);
+                registry.register_provider(thinking_provider.clone(), cx);
             });
         });
         agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
@@ -6901,8 +6885,8 @@ mod internal_tests {
         let send = cx.foreground_executor().spawn(send);
         cx.run_until_parked();
 
-        thinking_model.send_last_completion_stream_text_chunk("Response.");
-        thinking_model.end_last_completion_stream();
+        thinking_provider.send_last_text(&thinking_model, "Response.");
+        thinking_provider.end_last(&thinking_model);
 
         send.await.unwrap();
         cx.run_until_parked();
@@ -6948,22 +6932,16 @@ mod internal_tests {
 
         // Register a model where id() != name(), like real Anthropic models
         // (e.g. id="claude-sonnet-4-5-thinking-latest", name="Claude Sonnet 4.5 Thinking").
-        let model = Arc::new(FakeLanguageModel::with_id_and_thinking(
-            "fake-corp",
-            "custom-model-id",
-            "Custom Model Display Name",
-            false,
+        let provider = Arc::new(FakeLanguageModelProvider::new(
+            LanguageModelProviderId::from("fake-corp".to_string()),
+            LanguageModelProviderName::from("Fake Corp".to_string()),
         ));
-        let provider = Arc::new(
-            FakeLanguageModelProvider::new(
-                LanguageModelProviderId::from("fake-corp".to_string()),
-                LanguageModelProviderName::from("Fake Corp".to_string()),
-            )
-            .with_models(vec![model.clone()]),
-        );
+        let model = provider.update_model("custom-model-id", |model| {
+            model.name = LanguageModelName::from("Custom Model Display Name".to_string());
+        });
         cx.update(|cx| {
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-                registry.register_provider(provider, cx);
+                registry.register_provider(provider.clone(), cx);
             });
         });
         agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
@@ -7002,8 +6980,8 @@ mod internal_tests {
         let send = cx.foreground_executor().spawn(send);
         cx.run_until_parked();
 
-        model.send_last_completion_stream_text_chunk("Response.");
-        model.end_last_completion_stream();
+        provider.send_last_text(&model, "Response.");
+        provider.end_last(&model);
 
         send.await.unwrap();
         cx.run_until_parked();
@@ -7057,19 +7035,13 @@ mod internal_tests {
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
         let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
-        let model = Arc::new(FakeLanguageModel::with_id_and_thinking(
-            "fake-corp",
-            "custom-model-id",
-            "Custom Model Display Name",
-            false,
+        let provider = Arc::new(FakeLanguageModelProvider::new(
+            LanguageModelProviderId::from("fake-corp".to_string()),
+            LanguageModelProviderName::from("Fake Corp".to_string()),
         ));
-        let provider = Arc::new(
-            FakeLanguageModelProvider::new(
-                LanguageModelProviderId::from("fake-corp".to_string()),
-                LanguageModelProviderName::from("Fake Corp".to_string()),
-            )
-            .with_models(vec![model.clone()]),
-        );
+        let model = provider.update_model("custom-model-id", |model| {
+            model.name = LanguageModelName::from("Custom Model Display Name".to_string());
+        });
         cx.update(|cx| {
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                 registry.register_provider(provider.clone(), cx);
@@ -7097,8 +7069,8 @@ mod internal_tests {
         let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["Hello".into()], cx));
         let send = cx.foreground_executor().spawn(send);
         cx.run_until_parked();
-        model.send_last_completion_stream_text_chunk("Response.");
-        model.end_last_completion_stream();
+        provider.send_last_text(&model, "Response.");
+        provider.end_last(&model);
         send.await.unwrap();
         cx.run_until_parked();
 
@@ -7196,19 +7168,13 @@ mod internal_tests {
         });
 
         // The user explicitly picks a different, available model.
-        let other_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
-            "other-corp",
-            "other-model-id",
-            "Other Model",
-            false,
+        let other_provider = Arc::new(FakeLanguageModelProvider::new(
+            LanguageModelProviderId::from("other-corp".to_string()),
+            LanguageModelProviderName::from("Other Corp".to_string()),
         ));
-        let other_provider = Arc::new(
-            FakeLanguageModelProvider::new(
-                LanguageModelProviderId::from("other-corp".to_string()),
-                LanguageModelProviderName::from("Other Corp".to_string()),
-            )
-            .with_models(vec![other_model.clone()]),
-        );
+        other_provider.update_model("other-model-id", |model| {
+            model.name = LanguageModelName::from("Other Model".to_string());
+        });
         cx.update(|cx| {
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                 registry.register_provider(other_provider, cx);
@@ -7246,7 +7212,7 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_save_load_thread(cx: &mut TestAppContext) {
-        init_test(cx);
+        let fake = init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/",
@@ -7277,8 +7243,8 @@ mod internal_tests {
         });
 
         // Ensure empty threads are not saved, even if they get mutated.
-        let model = Arc::new(FakeLanguageModel::default());
-        let summary_model = Arc::new(FakeLanguageModel::default());
+        let model = fake.model("fake");
+        let summary_model = fake.model("summary");
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
             thread.set_summarization_model(Some(summary_model.clone()), cx);
@@ -7306,19 +7272,26 @@ mod internal_tests {
         let send = cx.foreground_executor().spawn(send);
         cx.run_until_parked();
 
-        model.send_last_completion_stream_text_chunk("Lorem.");
-        model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
-            language_model::TokenUsage {
+        let request = fake.pending_completions_for(&model).pop().unwrap();
+        fake.send_text(&model, &request, "Lorem.");
+        fake.send_event(
+            &model,
+            &request,
+            LanguageModelCompletionEvent::UsageUpdate(language_model::TokenUsage {
                 input_tokens: 150,
                 output_tokens: 75,
                 ..Default::default()
-            },
-        ));
-        model.end_last_completion_stream();
+            }),
+        );
+        fake.end_stream(&model, &request);
         cx.run_until_parked();
-        summary_model
-            .send_last_completion_stream_text_chunk(&format!("Explaining {}", path!("/a/b.md")));
-        summary_model.end_last_completion_stream();
+        let summary_request = fake.pending_completions_for(&summary_model).pop().unwrap();
+        fake.send_text(
+            &summary_model,
+            &summary_request,
+            format!("Explaining {}", path!("/a/b.md")),
+        );
+        fake.end_stream(&summary_model, &summary_request);
 
         send.await.unwrap();
         let uri = MentionUri::File {
@@ -7425,7 +7398,7 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_releasing_session_saves_thread(cx: &mut TestAppContext) {
-        init_test(cx);
+        let fake = init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/",
@@ -7455,7 +7428,7 @@ mod internal_tests {
             agent.sessions.get(&session_id).unwrap().thread.clone()
         });
 
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = fake.model("fake");
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
         });
@@ -7465,8 +7438,8 @@ mod internal_tests {
         let send = cx.foreground_executor().spawn(send);
         cx.run_until_parked();
 
-        model.send_last_completion_stream_text_chunk("world");
-        model.end_last_completion_stream();
+        fake.send_last_text(&model, "world");
+        fake.end_last(&model);
         send.await.unwrap();
         cx.run_until_parked();
 
@@ -7589,7 +7562,7 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_save_burst_preserves_in_flight_write(cx: &mut TestAppContext) {
-        init_test(cx);
+        let fake = init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/",
@@ -7619,7 +7592,7 @@ mod internal_tests {
             agent.sessions.get(&session_id).unwrap().thread.clone()
         });
 
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = fake.model("fake");
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
         });
@@ -7628,8 +7601,8 @@ mod internal_tests {
         let send = cx.foreground_executor().spawn(send);
         cx.run_until_parked();
 
-        model.send_last_completion_stream_text_chunk("world");
-        model.end_last_completion_stream();
+        fake.send_last_text(&model, "world");
+        fake.end_last(&model);
         send.await.unwrap();
         cx.run_until_parked();
 
@@ -7680,7 +7653,7 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_thread_summary_releases_loaded_session(cx: &mut TestAppContext) {
-        init_test(cx);
+        let fake = init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/",
@@ -7710,8 +7683,8 @@ mod internal_tests {
             agent.sessions.get(&session_id).unwrap().thread.clone()
         });
 
-        let model = Arc::new(FakeLanguageModel::default());
-        let summary_model = Arc::new(FakeLanguageModel::default());
+        let model = fake.model("fake");
+        let summary_model = fake.model("summary");
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
             thread.set_summarization_model(Some(summary_model.clone()), cx);
@@ -7721,8 +7694,9 @@ mod internal_tests {
         let send = cx.foreground_executor().spawn(send);
         cx.run_until_parked();
 
-        model.send_last_completion_stream_text_chunk("world");
-        model.end_last_completion_stream();
+        let request = fake.pending_completions_for(&model).pop().unwrap();
+        fake.send_text(&model, &request, "world");
+        fake.end_stream(&model, &request);
         send.await.unwrap();
         cx.run_until_parked();
 
@@ -7731,8 +7705,9 @@ mod internal_tests {
         });
         cx.run_until_parked();
 
-        summary_model.send_last_completion_stream_text_chunk("summary");
-        summary_model.end_last_completion_stream();
+        let summary_request = fake.pending_completions_for(&summary_model).pop().unwrap();
+        fake.send_text(&summary_model, &summary_request, "summary");
+        fake.end_stream(&summary_model, &summary_request);
 
         assert_eq!(summary.await.unwrap(), "summary");
         cx.run_until_parked();
@@ -7758,7 +7733,7 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_loaded_sessions_keep_state_until_last_close(cx: &mut TestAppContext) {
-        init_test(cx);
+        let fake = init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/",
@@ -7788,13 +7763,7 @@ mod internal_tests {
             agent.sessions.get(&session_id).unwrap().thread.clone()
         });
 
-        let model = cx.update(|cx| {
-            LanguageModelRegistry::read_global(cx)
-                .default_model()
-                .map(|default_model| default_model.model)
-                .expect("default test model should be available")
-        });
-        let fake_model = model.as_fake();
+        let model = fake.model("fake");
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
         });
@@ -7803,8 +7772,8 @@ mod internal_tests {
         let send = cx.foreground_executor().spawn(send);
         cx.run_until_parked();
 
-        fake_model.send_last_completion_stream_text_chunk("world");
-        fake_model.end_last_completion_stream();
+        fake.send_last_text(&model, "world");
+        fake.end_last(&model);
         send.await.unwrap();
         cx.run_until_parked();
 
@@ -7861,8 +7830,8 @@ mod internal_tests {
         let follow_up = cx.foreground_executor().spawn(follow_up);
         cx.run_until_parked();
 
-        fake_model.send_last_completion_stream_text_chunk("yes");
-        fake_model.end_last_completion_stream();
+        fake.send_last_text(&model, "yes");
+        fake.end_last(&model);
         follow_up.await.unwrap();
         cx.run_until_parked();
 
@@ -7973,14 +7942,15 @@ mod internal_tests {
         })
     }
 
-    fn init_test(cx: &mut TestAppContext) {
+    /// Returns the fake provider that serves the registry's default model.
+    fn init_test(cx: &mut TestAppContext) -> Arc<FakeLanguageModelProvider> {
         env_logger::try_init().ok();
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
 
-            LanguageModelRegistry::test(cx);
-        });
+            LanguageModelRegistry::test(cx)
+        })
     }
 
     #[test]

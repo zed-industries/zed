@@ -3,13 +3,13 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
-use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
+use gpui::{AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use http_client::{AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest};
 use language_model::chat_completion::ChatCompletionEventMapper;
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionStream,
     LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelProviderName, LanguageModelRequest, LanguageModelToolChoiceSupport,
     ProviderErrorCategory, RateLimiter,
 };
 use open_ai::{ReasoningEffort, ResponseStreamEvent};
@@ -317,32 +317,6 @@ impl SuperGrokModel {
     }
 }
 
-pub fn create_language_model(
-    model: SuperGrokModel,
-    state: &Entity<State>,
-    cx: &App,
-) -> Arc<dyn LanguageModel> {
-    Arc::new(SuperGrokLanguageModel {
-        id: LanguageModelId::from(model.id().to_string()),
-        http_client: state.read(cx).http_client(),
-        model,
-        state: state.clone(),
-        api_url: XAI_API_URL.into(),
-        extra_headers: CustomHeaders::default(),
-        request_limiter: RateLimiter::new(4),
-    })
-}
-
-struct SuperGrokLanguageModel {
-    id: LanguageModelId,
-    model: SuperGrokModel,
-    state: Entity<State>,
-    http_client: Arc<dyn HttpClient>,
-    api_url: SharedString,
-    extra_headers: CustomHeaders,
-    request_limiter: RateLimiter,
-}
-
 fn advertised_reasoning_efforts(model: &SuperGrokModel) -> &'static [ReasoningEffort] {
     // xAI rejects `reasoning_effort: "none"` on grok-4.5 and newer. Compact and
     // title requests disable thinking, so we omit the field instead of sending none.
@@ -439,151 +413,101 @@ fn map_completion_error(error: LanguageModelCompletionError) -> LanguageModelCom
     }
 }
 
-impl SuperGrokLanguageModel {
-    fn stream_open_ai_completion(
-        &self,
-        request: open_ai::Request,
-        cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>,
-            LanguageModelCompletionError,
-        >,
-    > {
-        let http_client = self.http_client.clone();
-        let api_url = self.api_url.clone();
-        let extra_headers = self.extra_headers.clone();
-        let state = self.state.downgrade();
-        let request_limiter = self.request_limiter.clone();
+fn stream_open_ai_completion(
+    state: &Entity<State>,
+    request_limiter: &RateLimiter,
+    request: open_ai::Request,
+    cx: &AsyncApp,
+) -> BoxFuture<
+    'static,
+    Result<
+        futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>,
+        LanguageModelCompletionError,
+    >,
+> {
+    let http_client = state.read_with(cx, |state, _| state.http_client());
+    let extra_headers = CustomHeaders::default();
+    let state = state.downgrade();
+    let request_limiter = request_limiter.clone();
 
-        let future = cx.spawn(async move |cx| {
-            let credentials = get_fresh_credentials(&state, &http_client, cx).await?;
-            let access_token = credentials.access_token.clone();
-            request_limiter
-                .stream(async move {
-                    open_ai::stream_completion(
-                        http_client.as_ref(),
-                        PROVIDER_NAME.0.as_str(),
-                        api_url.as_ref(),
-                        &access_token,
-                        request,
-                        &extra_headers,
-                    )
-                    .await
-                    .map_err(|error| {
-                        map_completion_error(LanguageModelCompletionError::from(error))
-                    })
-                })
+    let future = cx.spawn(async move |cx| {
+        let credentials = get_fresh_credentials(&state, &http_client, cx).await?;
+        let access_token = credentials.access_token.clone();
+        request_limiter
+            .stream(async move {
+                open_ai::stream_completion(
+                    http_client.as_ref(),
+                    PROVIDER_NAME.0.as_str(),
+                    XAI_API_URL,
+                    &access_token,
+                    request,
+                    &extra_headers,
+                )
                 .await
-        });
+                .map_err(|error| map_completion_error(LanguageModelCompletionError::from(error)))
+            })
+            .await
+    });
 
-        async move { Ok(future.await?.boxed()) }.boxed()
+    async move { Ok(future.await?.boxed()) }.boxed()
+}
+
+/// Describes a SuperGrok model as a [`LanguageModel`].
+pub fn language_model(model: &SuperGrokModel) -> LanguageModel {
+    LanguageModel {
+        supports_tools: model.supports_tools(),
+        supports_images: model.supports_images(),
+        supports_streaming_tools: true,
+        tool_choice_support: LanguageModelToolChoiceSupport::ALL,
+        supports_thinking: model.supports_reasoning_effort(),
+        supported_effort_levels: supported_thinking_effort_levels(model).into(),
+        max_output_tokens: model.max_output_tokens(),
+        supports_split_token_display: true,
+        ..LanguageModel::new(
+            LanguageModelId::from(model.id().to_string()),
+            LanguageModelName::from(model.display_name().to_string()),
+            PROVIDER_ID,
+            PROVIDER_NAME,
+            format!("x_ai_subscribed/{}", model.id()),
+            model.max_token_count(),
+        )
     }
 }
 
-impl LanguageModel for SuperGrokLanguageModel {
-    fn id(&self) -> LanguageModelId {
-        self.id.clone()
+/// Streams a completion of `request` from the SuperGrok model `model`, using
+/// `state`'s credentials, which are refreshed as needed.
+pub fn stream_completion(
+    model: &SuperGrokModel,
+    state: &Entity<State>,
+    request_limiter: &RateLimiter,
+    request: LanguageModelRequest,
+    cx: &AsyncApp,
+) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>> {
+    let reasoning_effort = reasoning_effort_for_request(&request, model);
+    let request = match open_ai::completion::into_open_ai(
+        request,
+        model.id(),
+        model.supports_parallel_tool_calls(),
+        false,
+        model.max_output_tokens(),
+        open_ai::completion::ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+        reasoning_effort,
+        false,
+    ) {
+        Ok(request) => request,
+        Err(error) => return async move { Err(error.into()) }.boxed(),
+    };
+    let completions = stream_open_ai_completion(state, request_limiter, request, cx);
+    let executor = cx.background_executor().clone();
+    async move {
+        let mapper = ChatCompletionEventMapper::new();
+        Ok(language_model::stream_in_background(
+            mapper.map_stream(completions.await?).boxed(),
+            executor,
+        ))
     }
-
-    fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(self.model.display_name().to_string())
-    }
-
-    fn provider_id(&self) -> LanguageModelProviderId {
-        PROVIDER_ID
-    }
-
-    fn provider_name(&self) -> LanguageModelProviderName {
-        PROVIDER_NAME
-    }
-
-    fn supports_tools(&self) -> bool {
-        self.model.supports_tools()
-    }
-
-    fn supports_images(&self) -> bool {
-        self.model.supports_images()
-    }
-
-    fn supports_streaming_tools(&self) -> bool {
-        true
-    }
-
-    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
-        match choice {
-            LanguageModelToolChoice::Auto
-            | LanguageModelToolChoice::Any
-            | LanguageModelToolChoice::None => true,
-        }
-    }
-
-    fn supports_thinking(&self) -> bool {
-        self.model.supports_reasoning_effort()
-    }
-
-    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
-        supported_thinking_effort_levels(&self.model)
-    }
-
-    fn telemetry_id(&self) -> String {
-        format!("x_ai_subscribed/{}", self.model.id())
-    }
-
-    fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
-    }
-
-    fn max_output_tokens(&self) -> Option<u64> {
-        self.model.max_output_tokens()
-    }
-
-    fn supports_split_token_display(&self) -> bool {
-        true
-    }
-
-    fn stream_completion(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            futures::stream::BoxStream<
-                'static,
-                Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
-            >,
-            LanguageModelCompletionError,
-        >,
-    > {
-        let reasoning_effort = reasoning_effort_for_request(&request, &self.model);
-        let request = match open_ai::completion::into_open_ai(
-            request,
-            self.model.id(),
-            self.model.supports_parallel_tool_calls(),
-            false,
-            self.max_output_tokens(),
-            open_ai::completion::ChatCompletionMaxTokensParameter::MaxCompletionTokens,
-            reasoning_effort,
-            false,
-        ) {
-            Ok(request) => request,
-            Err(error) => return async move { Err(error.into()) }.boxed(),
-        };
-        let completions = self.stream_open_ai_completion(request, cx);
-        let executor = cx.background_executor().clone();
-        async move {
-            let mapper = ChatCompletionEventMapper::new();
-            Ok(language_model::stream_in_background(
-                mapper.map_stream(completions.await?).boxed(),
-                executor,
-            ))
-        }
-        .boxed()
-    }
+    .boxed()
 }
-
 async fn get_fresh_credentials(
     state: &WeakEntity<State>,
     http_client: &Arc<dyn HttpClient>,

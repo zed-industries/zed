@@ -463,10 +463,7 @@ fn ensure_provider_authenticated(selected: &SelectedModel, cx: &gpui::App) -> Re
     Ok(())
 }
 
-fn find_available_model(
-    selected: &SelectedModel,
-    cx: &gpui::App,
-) -> Option<Arc<dyn LanguageModel>> {
+fn find_available_model(selected: &SelectedModel, cx: &gpui::App) -> Option<LanguageModel> {
     let registry = LanguageModelRegistry::global(cx);
     let models = registry.read(cx).available_models(cx).collect::<Vec<_>>();
 
@@ -619,19 +616,11 @@ async fn run_agent(
         let registry = LanguageModelRegistry::global(cx);
         let model = find_available_model(&selected, cx)
             .ok_or_else(|| model_not_found_error(model_name, cx))?;
-        let provider = registry
-            .read(cx)
-            .provider(&model.provider_id())
-            .context("Provider not found")?;
-
         let supports_thinking = model.supports_thinking();
         let model_id = model.id().0.to_string();
 
         registry.update(cx, |registry, cx| {
-            registry.set_default_model(
-                Some(language_model::ConfiguredModel { provider, model }),
-                cx,
-            );
+            registry.set_default_model(Some(model), cx);
         });
 
         let enable_thinking = thinking_override.unwrap_or(supports_thinking);
