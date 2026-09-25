@@ -5173,7 +5173,7 @@ impl OutlinePanel {
                 .get()
                 .map(|data| data.context_text.len())
                 .unwrap_or_default(),
-            PanelEntry::CallHierarchy(row) => row.name().len(),
+            PanelEntry::CallHierarchy(row) => row.width_estimate() as usize,
         };
 
         (item_text_chars + depth) as u64

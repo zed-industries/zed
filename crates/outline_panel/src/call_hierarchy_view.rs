@@ -172,6 +172,16 @@ impl CallHierarchyRow {
     pub(super) fn name(&self) -> &str {
         &self.call.display.name
     }
+
+    pub(super) fn width_estimate(&self) -> u64 {
+        self.call
+            .display
+            .label_text
+            .as_ref()
+            .map_or(self.call.display.full_signature.len(), |label| {
+                label.len().max(self.call.display.full_signature.len())
+            }) as u64
+    }
 }
 
 impl PartialEq for CallHierarchyRow {
@@ -701,11 +711,20 @@ mod tests {
         uri: lsp::Uri,
         line: u32,
     ) -> lsp::CallHierarchyItem {
+        make_lsp_call_hierarchy_item_with_detail(name, uri, line, &format!("fn {name}()"))
+    }
+
+    fn make_lsp_call_hierarchy_item_with_detail(
+        name: &str,
+        uri: lsp::Uri,
+        line: u32,
+        detail: &str,
+    ) -> lsp::CallHierarchyItem {
         lsp::CallHierarchyItem {
             name: name.to_string(),
             kind: lsp::SymbolKind::FUNCTION,
             tags: None,
-            detail: Some(format!("fn {name}()")),
+            detail: Some(detail.to_string()),
             uri,
             range: lsp::Range {
                 start: lsp::Position { line, character: 0 },
@@ -944,6 +963,82 @@ mod tests {
             panel.read_with(cx, |panel, _| panel.max_width_item_index),
             Some(0)
         );
+    }
+
+    #[gpui::test]
+    async fn test_call_hierarchy_measures_long_rows_in_separate_subtrees(cx: &mut TestAppContext) {
+        let (_project, _workspace, fake_server, uri, _editor, _buffer, panel, mut visual_cx) =
+            setup_call_hierarchy_test(
+                "fn root() {}\nfn b() {}\nfn c() {}\nfn d() {}\nfn e() {}\n",
+                cx,
+            )
+            .await;
+        let cx = &mut visual_cx;
+        fake_server.set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
+            let uri = uri.clone();
+            move |_, _| {
+                let uri = uri.clone();
+                async move { Ok(Some(vec![make_lsp_call_hierarchy_item("root", uri, 0)])) }
+            }
+        });
+        fake_server.set_request_handler::<lsp::request::CallHierarchyIncomingCalls, _, _>({
+            let uri = uri.clone();
+            move |params, _| {
+                let uri = uri.clone();
+                async move {
+                    let calls = match params.item.name.as_str() {
+                        "root" => vec![
+                            lsp::CallHierarchyIncomingCall {
+                                from: make_lsp_call_hierarchy_item("b", uri.clone(), 1),
+                                from_ranges: Vec::new(),
+                            },
+                            lsp::CallHierarchyIncomingCall {
+                                from: make_lsp_call_hierarchy_item("c", uri.clone(), 2),
+                                from_ranges: Vec::new(),
+                            },
+                        ],
+                        "b" => vec![lsp::CallHierarchyIncomingCall {
+                            from: make_lsp_call_hierarchy_item("d", uri.clone(), 3),
+                            from_ranges: Vec::new(),
+                        }],
+                        "c" => vec![lsp::CallHierarchyIncomingCall {
+                            from: make_lsp_call_hierarchy_item_with_detail(
+                                "e",
+                                uri,
+                                4,
+                                "fn e() { a_very_long_argument_name: a_very_long_type_name }",
+                            ),
+                            from_ranges: Vec::new(),
+                        }],
+                        _ => Vec::new(),
+                    };
+                    Ok(Some(calls))
+                }
+            }
+        });
+        cx.dispatch_action(ShowCallHierarchy);
+        wait_for_call_hierarchy(&panel, cx).await;
+        panel.update_in(cx, |panel, window, cx| {
+            panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
+            panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
+        });
+        wait_for_call_hierarchy(&panel, cx).await;
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next(&SelectNext, window, cx);
+            panel.select_next(&SelectNext, window, cx);
+            panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
+        });
+        wait_for_call_hierarchy(&panel, cx).await;
+        let (index, name) = panel.read_with(cx, |panel, _| {
+            let index = panel.max_width_item_index.unwrap();
+            let name = match &panel.cached_entries[index].entry {
+                PanelEntry::CallHierarchy(row) => row.name().to_string(),
+                _ => panic!("expected a call hierarchy row"),
+            };
+            (index, name)
+        });
+        assert_eq!(name, "e");
+        assert_eq!(index, 4);
     }
 
     #[gpui::test]
