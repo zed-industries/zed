@@ -1602,8 +1602,14 @@ impl GitRepository for RealGitRepository {
                 return Ok(());
             }
 
+            let mut args = vec!["checkout"];
+            if !commit.is_empty() {
+                args.push(&commit);
+            }
+            args.push("--");
+
             let output = git
-                .build_command(&["checkout", &commit, "--"])
+                .build_command(&args)
                 .envs(env.iter())
                 .args(paths.iter().map(|path| path.as_unix_str()))
                 .output()
