@@ -88,187 +88,324 @@ impl Default for LanguageModelTextStream {
     }
 }
 
-pub trait LanguageModel: Send + Sync {
-    fn id(&self) -> LanguageModelId;
-    fn name(&self) -> LanguageModelName;
-    fn provider_id(&self) -> LanguageModelProviderId;
-    fn provider_name(&self) -> LanguageModelProviderName;
-    fn upstream_provider_id(&self) -> LanguageModelProviderId {
-        self.provider_id()
-    }
-    fn upstream_provider_name(&self) -> LanguageModelProviderName {
-        self.provider_name()
-    }
-
-    /// Returns whether this model is the "latest", so we can highlight it in the UI.
-    fn is_latest(&self) -> bool {
-        false
-    }
-
-    /// Whether the model is currently disabled and, if so, why this is the case.
-    fn is_disabled(&self) -> Option<DisabledReason> {
-        None
-    }
-
+/// A language model offered by a [`LanguageModelProvider`].
+///
+/// This is plain data: identity, capabilities, and limits. Everything that
+/// talks to a backend (streaming completions, counting tokens, compaction)
+/// lives on the provider, which is handed the model it should serve and
+/// resolves its own configuration for it by `id`. Find that provider with
+/// [`LanguageModelRegistry::provider_for_model`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct LanguageModel {
+    /// Identifies the model within its provider. Stable across provider
+    /// refreshes; the name and capabilities may change.
+    pub id: LanguageModelId,
+    pub name: LanguageModelName,
+    pub provider_id: LanguageModelProviderId,
+    pub provider_name: LanguageModelProviderName,
+    /// The provider that ultimately serves requests, when it differs from
+    /// `provider_id` (for example, a model offered through a gateway).
+    pub upstream_provider_id: Option<LanguageModelProviderId>,
+    pub upstream_provider_name: Option<LanguageModelProviderName>,
+    pub telemetry_id: SharedString,
+    /// Whether this model is the "latest", so we can highlight it in the UI.
+    pub is_latest: bool,
+    /// Why the model is currently disabled, if it is.
+    pub disabled_reason: Option<DisabledReason>,
     /// Whether requests to this model require the user to consent to the
     /// upstream provider retaining inference logs (i.e. the model cannot be
     /// offered with Zero Data Retention).
-    fn requires_data_retention(&self) -> bool {
-        false
-    }
-
+    pub requires_data_retention: bool,
     /// When this model refuses a request, the model ID to fall back to (same provider).
-    fn refusal_fallback_model_id(&self) -> Option<&'static str> {
-        None
-    }
-
-    fn telemetry_id(&self) -> String;
-
-    fn api_key(&self, _cx: &App) -> Option<String> {
-        None
-    }
-
+    pub refusal_fallback_model_id: Option<&'static str>,
     /// Information about the cost of using this model, if available.
-    fn model_cost_info(&self) -> Option<LanguageModelCostInfo> {
-        None
-    }
-
-    /// Whether this model supports thinking.
-    fn supports_thinking(&self) -> bool {
-        false
-    }
-
+    pub cost_info: Option<LanguageModelCostInfo>,
+    pub supports_thinking: bool,
     /// Whether thinking can be turned off entirely for this model. Some
     /// models (e.g. Claude Fable 5) always think and cannot honor an "off"
-    /// request. Only meaningful when `supports_thinking` returns `true`.
-    fn supports_disabling_thinking(&self) -> bool {
-        true
+    /// request. Only meaningful when `supports_thinking` is `true`.
+    pub supports_disabling_thinking: bool,
+    pub supports_fast_mode: bool,
+    /// The effort levels that can be used when thinking.
+    pub supported_effort_levels: Arc<[LanguageModelEffortLevel]>,
+    /// Whether this model supports provider-side automatic context
+    /// compaction (requested via `LanguageModelRequest::compact_at_tokens`).
+    pub supports_server_side_compaction: bool,
+    pub supports_explicit_compaction: bool,
+    /// Whether native compaction honors `LanguageModelRequest::max_output_tokens`.
+    pub supports_explicit_compaction_output_limit: bool,
+    /// The provider-enforced input size required for explicit compaction.
+    pub minimum_explicit_compaction_input_tokens: Option<u64>,
+    pub supports_images: bool,
+    pub supports_tools: bool,
+    pub tool_choice_support: LanguageModelToolChoiceSupport,
+    /// Whether this model or provider supports streaming tool calls.
+    pub supports_streaming_tools: bool,
+    /// Whether this model/provider reports accurate split input/output token
+    /// counts. When true, the UI may show separate input/output token indicators.
+    pub supports_split_token_display: bool,
+    /// The model's context-window capacity.
+    pub max_token_count: u64,
+    /// The input ceiling before reserving output from any shared window.
+    /// Equals `max_token_count` unless the model has a separate prompt limit.
+    pub max_input_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+}
+
+/// Which [`LanguageModelToolChoice`] values a model accepts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LanguageModelToolChoiceSupport {
+    pub auto: bool,
+    pub any: bool,
+    pub none: bool,
+}
+
+impl LanguageModelToolChoiceSupport {
+    pub const ALL: Self = Self {
+        auto: true,
+        any: true,
+        none: true,
+    };
+
+    pub fn supports(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto => self.auto,
+            LanguageModelToolChoice::Any => self.any,
+            LanguageModelToolChoice::None => self.none,
+        }
+    }
+}
+
+impl LanguageModel {
+    /// Creates a model with the given identity and conservative defaults for
+    /// every capability. Providers override the capabilities they support
+    /// with struct update syntax.
+    pub fn new(
+        id: LanguageModelId,
+        name: LanguageModelName,
+        provider_id: LanguageModelProviderId,
+        provider_name: LanguageModelProviderName,
+        telemetry_id: impl Into<SharedString>,
+        max_token_count: u64,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            provider_id,
+            provider_name,
+            upstream_provider_id: None,
+            upstream_provider_name: None,
+            telemetry_id: telemetry_id.into(),
+            is_latest: false,
+            disabled_reason: None,
+            requires_data_retention: false,
+            refusal_fallback_model_id: None,
+            cost_info: None,
+            supports_thinking: false,
+            supports_disabling_thinking: true,
+            supports_fast_mode: false,
+            supported_effort_levels: Arc::default(),
+            supports_server_side_compaction: false,
+            supports_explicit_compaction: false,
+            supports_explicit_compaction_output_limit: false,
+            minimum_explicit_compaction_input_tokens: None,
+            supports_images: false,
+            supports_tools: false,
+            tool_choice_support: LanguageModelToolChoiceSupport::default(),
+            supports_streaming_tools: false,
+            supports_split_token_display: false,
+            max_token_count,
+            max_input_tokens: max_token_count,
+            max_output_tokens: None,
+        }
     }
 
-    fn supports_fast_mode(&self) -> bool {
-        false
+    pub fn id(&self) -> LanguageModelId {
+        self.id.clone()
     }
 
-    /// Returns the list of supported effort levels that can be used when thinking.
-    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
-        Vec::new()
+    pub fn name(&self) -> LanguageModelName {
+        self.name.clone()
+    }
+
+    pub fn provider_id(&self) -> LanguageModelProviderId {
+        self.provider_id.clone()
+    }
+
+    pub fn provider_name(&self) -> LanguageModelProviderName {
+        self.provider_name.clone()
+    }
+
+    pub fn upstream_provider_id(&self) -> LanguageModelProviderId {
+        self.upstream_provider_id
+            .clone()
+            .unwrap_or_else(|| self.provider_id.clone())
+    }
+
+    pub fn upstream_provider_name(&self) -> LanguageModelProviderName {
+        self.upstream_provider_name
+            .clone()
+            .unwrap_or_else(|| self.provider_name.clone())
+    }
+
+    pub fn is_latest(&self) -> bool {
+        self.is_latest
+    }
+
+    pub fn is_disabled(&self) -> Option<DisabledReason> {
+        self.disabled_reason.clone()
+    }
+
+    pub fn requires_data_retention(&self) -> bool {
+        self.requires_data_retention
+    }
+
+    pub fn refusal_fallback_model_id(&self) -> Option<&'static str> {
+        self.refusal_fallback_model_id
+    }
+
+    pub fn telemetry_id(&self) -> String {
+        self.telemetry_id.to_string()
+    }
+
+    pub fn model_cost_info(&self) -> Option<LanguageModelCostInfo> {
+        self.cost_info.clone()
+    }
+
+    pub fn supports_thinking(&self) -> bool {
+        self.supports_thinking
+    }
+
+    pub fn supports_disabling_thinking(&self) -> bool {
+        self.supports_disabling_thinking
+    }
+
+    pub fn supports_fast_mode(&self) -> bool {
+        self.supports_fast_mode
+    }
+
+    pub fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        self.supported_effort_levels.to_vec()
     }
 
     /// Returns the default effort level to use when thinking.
-    fn default_effort_level(&self) -> Option<LanguageModelEffortLevel> {
-        self.supported_effort_levels()
-            .into_iter()
+    pub fn default_effort_level(&self) -> Option<LanguageModelEffortLevel> {
+        self.supported_effort_levels
+            .iter()
             .find(|effort_level| effort_level.is_default)
+            .cloned()
     }
 
-    /// Whether this model supports provider-side automatic context
-    /// compaction (requested via `LanguageModelRequest::compact_at_tokens`).
-    fn supports_server_side_compaction(&self) -> bool {
-        false
+    pub fn supports_server_side_compaction(&self) -> bool {
+        self.supports_server_side_compaction
     }
 
-    fn supports_explicit_compaction(&self) -> bool {
-        false
+    pub fn supports_explicit_compaction(&self) -> bool {
+        self.supports_explicit_compaction
     }
 
-    /// Whether native compaction honors `LanguageModelRequest::max_output_tokens`.
-    fn supports_explicit_compaction_output_limit(&self) -> bool {
-        false
+    pub fn supports_explicit_compaction_output_limit(&self) -> bool {
+        self.supports_explicit_compaction_output_limit
     }
 
-    /// The provider-enforced input size required for explicit compaction.
-    fn minimum_explicit_compaction_input_tokens(&self) -> Option<u64> {
-        None
+    pub fn minimum_explicit_compaction_input_tokens(&self) -> Option<u64> {
+        self.minimum_explicit_compaction_input_tokens
     }
 
-    fn compact(
-        &self,
-        _request: LanguageModelRequest,
-        _cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
-        let provider = self.provider_name();
-        async move {
-            Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
-                "{provider} does not support explicit compaction"
-            )))
-        }
-        .boxed()
+    pub fn supports_images(&self) -> bool {
+        self.supports_images
     }
 
-    /// Whether this model supports images
-    fn supports_images(&self) -> bool;
-
-    /// Whether this model supports tools.
-    fn supports_tools(&self) -> bool;
-
-    /// Whether this model supports choosing which tool to use.
-    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool;
-
-    /// Returns whether this model or provider supports streaming tool calls;
-    fn supports_streaming_tools(&self) -> bool {
-        false
+    pub fn supports_tools(&self) -> bool {
+        self.supports_tools
     }
 
-    /// Returns whether this model/provider reports accurate split input/output token counts.
-    /// When true, the UI may show separate input/output token indicators.
-    fn supports_split_token_display(&self) -> bool {
-        false
+    pub fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        self.tool_choice_support.supports(choice)
     }
 
-    /// Returns the model's context-window capacity.
-    fn max_token_count(&self) -> u64;
+    pub fn supports_streaming_tools(&self) -> bool {
+        self.supports_streaming_tools
+    }
+
+    pub fn supports_split_token_display(&self) -> bool {
+        self.supports_split_token_display
+    }
+
+    pub fn max_token_count(&self) -> u64 {
+        self.max_token_count
+    }
 
     /// Returns the input ceiling before reserving output from any shared window.
-    ///
-    /// Models with a separate prompt limit override the context-window default.
-    fn max_input_tokens(&self) -> u64 {
-        self.max_token_count()
-    }
-
-    /// Counts request input without generating output, when supported by the provider.
-    ///
-    /// Counts may be estimates and differ from subsequent measured usage. Callers
-    /// choose the content to count; this does not infer which input is already
-    /// covered by a previous usage report. Unsupported providers return `None`.
-    fn count_input_tokens(
-        &self,
-        _request: LanguageModelRequest,
-        _cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
-        async { Ok(None) }.boxed()
+    pub fn max_input_tokens(&self) -> u64 {
+        self.max_input_tokens
     }
 
     /// Returns the combined input and output ceiling, if one applies.
     ///
-    /// The conservative default shares the context window with output. `None`
-    /// means generation does not consume that window, not merely that the API
-    /// validates input separately or stops generation at the window boundary.
-    fn max_total_tokens(&self) -> Option<u64> {
-        Some(self.max_token_count())
+    /// This shares the context window with output.
+    pub fn max_total_tokens(&self) -> Option<u64> {
+        Some(self.max_token_count)
     }
 
-    fn max_output_tokens(&self) -> Option<u64> {
-        None
+    pub fn max_output_tokens(&self) -> Option<u64> {
+        self.max_output_tokens
+    }
+}
+
+/// The error for a request to `model` when its provider doesn't offer it.
+pub fn unavailable_error(model: &LanguageModel) -> LanguageModelCompletionError {
+    LanguageModelCompletionError::ModelUnavailable {
+        provider: model.provider_name.clone(),
+        model: model.id.clone(),
+    }
+}
+
+/// Either a built-in icon name or a path to an external SVG.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IconOrSvg {
+    /// A built-in icon from Zed's icon set.
+    Icon(IconName),
+    /// Path to a custom SVG icon file.
+    Svg(SharedString),
+}
+
+impl Default for IconOrSvg {
+    fn default() -> Self {
+        Self::Icon(IconName::ZedAssistant)
+    }
+}
+
+pub trait LanguageModelProvider: 'static {
+    fn id(&self) -> LanguageModelProviderId;
+    fn name(&self) -> LanguageModelProviderName;
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::default()
+    }
+    fn default_model(&self, cx: &App) -> Option<LanguageModel>;
+    fn default_fast_model(&self, cx: &App) -> Option<LanguageModel>;
+    fn provided_models(&self, cx: &App) -> Vec<LanguageModel>;
+    fn recommended_models(&self, _cx: &App) -> Vec<LanguageModel> {
+        Vec::new()
     }
 
+    /// Streams a completion of `request` from `model`, which must be one of
+    /// this provider's models.
     fn stream_completion(
         &self,
+        model: &LanguageModel,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
-            LanguageModelCompletionError,
-        >,
-    >;
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>;
 
+    /// Streams the text of a completion of `request` from `model`.
     fn stream_completion_text(
         &self,
+        model: &LanguageModel,
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<LanguageModelTextStream, LanguageModelCompletionError>> {
-        let future = self.stream_completion(request, cx);
+        let future = self.stream_completion(model, request, cx);
 
         async move {
             let events = future.await?;
@@ -329,18 +466,19 @@ pub trait LanguageModel: Send + Sync {
         .boxed()
     }
 
+    /// Completes `request` from `model`, resolving to its first complete tool use.
     fn stream_completion_tool(
         &self,
+        model: &LanguageModel,
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<LanguageModelToolUse, LanguageModelCompletionError>> {
-        let future = self.stream_completion(request, cx);
+        let future = self.stream_completion(model, request, cx);
 
         async move {
             let events = future.await?;
             let mut events = events.fuse();
 
-            // Iterate through events until we find a complete ToolUse
             while let Some(event) = events.next().await {
                 match event {
                     Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
@@ -355,7 +493,6 @@ pub trait LanguageModel: Send + Sync {
                 }
             }
 
-            // Stream ended without a complete tool use
             Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
                 "Stream ended without receiving a complete tool use"
             )))
@@ -363,54 +500,42 @@ pub trait LanguageModel: Send + Sync {
         .boxed()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    fn as_fake(&self) -> &fake_provider::FakeLanguageModel {
-        unimplemented!()
+    /// Counts request input without generating output, when supported by the provider.
+    ///
+    /// Counts may be estimates and differ from subsequent measured usage. Callers
+    /// choose the content to count; this does not infer which input is already
+    /// covered by a previous usage report. Unsupported providers return `None`.
+    fn count_input_tokens(
+        &self,
+        _model: &LanguageModel,
+        _request: LanguageModelRequest,
+        _cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
+        async { Ok(None) }.boxed()
     }
-}
 
-impl std::fmt::Debug for dyn LanguageModel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("<dyn LanguageModel>")
-            .field("id", &self.id())
-            .field("name", &self.name())
-            .field("provider_id", &self.provider_id())
-            .field("provider_name", &self.provider_name())
-            .field("upstream_provider_name", &self.upstream_provider_name())
-            .field("upstream_provider_id", &self.upstream_provider_id())
-            .field("upstream_provider_id", &self.upstream_provider_id())
-            .field("supports_streaming_tools", &self.supports_streaming_tools())
-            .finish()
+    /// Compacts `request` into replacement context, for models that report
+    /// [`LanguageModel::supports_explicit_compaction`].
+    fn compact(
+        &self,
+        model: &LanguageModel,
+        _request: LanguageModelRequest,
+        _cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
+        let provider = model.provider_name.clone();
+        async move {
+            Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                "{provider} does not support explicit compaction"
+            )))
+        }
+        .boxed()
     }
-}
 
-/// Either a built-in icon name or a path to an external SVG.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum IconOrSvg {
-    /// A built-in icon from Zed's icon set.
-    Icon(IconName),
-    /// Path to a custom SVG icon file.
-    Svg(SharedString),
-}
+    /// The API key used to serve `model`, if this provider uses one.
+    fn api_key(&self, _model: &LanguageModel, _cx: &App) -> Option<String> {
+        None
+    }
 
-impl Default for IconOrSvg {
-    fn default() -> Self {
-        Self::Icon(IconName::ZedAssistant)
-    }
-}
-
-pub trait LanguageModelProvider: 'static {
-    fn id(&self) -> LanguageModelProviderId;
-    fn name(&self) -> LanguageModelProviderName;
-    fn icon(&self) -> IconOrSvg {
-        IconOrSvg::default()
-    }
-    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;
-    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;
-    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>>;
-    fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        Vec::new()
-    }
     fn is_authenticated(&self, cx: &App) -> bool;
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>>;
     fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView>;

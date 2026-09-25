@@ -56,8 +56,8 @@ use gpui::{
 use itertools::Itertools;
 use language::{Buffer, BufferEvent, File};
 use language_model::{
-    CompletionIntent, ConfiguredModel, Event as LanguageModelEvent, LanguageModelRegistry,
-    LanguageModelRequest, LanguageModelRequestMessage, Role,
+    CompletionIntent, Event as LanguageModelEvent, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
 };
 use menu;
 use multi_buffer::ExcerptBoundaryInfo;
@@ -4047,10 +4047,21 @@ impl GitPanel {
             return;
         }
 
-        let Some(ConfiguredModel { provider, model }) =
-            LanguageModelRegistry::read_global(cx).commit_message_model(cx)
-        else {
+        let registry = LanguageModelRegistry::read_global(cx);
+        let Some(model) = registry.commit_message_model(cx) else {
             return;
+        };
+        let provider = match registry.provider_for_model(&model) {
+            Ok(provider) => provider,
+            Err(error) => {
+                if let Some(workspace) = self.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace
+                            .show_error(format!("Failed to generate commit message: {error}"), cx);
+                    });
+                }
+                return;
+            }
         };
 
         let Some(repo) = self.active_repository.as_ref() else {
@@ -4085,11 +4096,7 @@ impl GitPanel {
                 });
 
                 if let Some(task) = cx.update(|cx| {
-                    if !provider.is_authenticated(cx) {
-                        Some(provider.authenticate(cx))
-                    } else {
-                        None
-                    }
+                    (!provider.is_authenticated(cx)).then(|| provider.authenticate(cx))
                 }) {
                     task.await.log_err();
                 }
@@ -4170,7 +4177,7 @@ impl GitPanel {
                     max_output_tokens: None,
                 };
 
-                let stream = model.stream_completion_text(request, cx);
+                let stream = provider.stream_completion_text(&model, request, cx);
                 match stream.await {
                     Ok(mut messages) => {
                         if !text_empty {

@@ -2,16 +2,17 @@ use anyhow::Result;
 use collections::{HashMap, HashSet};
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
-use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AsyncApp, Context, Entity, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelCompletionError, LanguageModelCompletionStream, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, MessageContent, ProviderSettingsView, RateLimiter, Role,
-    SubPageProviderSettings, env_var,
+    LanguageModelToolChoiceSupport, LanguageModelToolResultContent, MessageContent,
+    ModelRateLimiters, ProviderSettingsView, RateLimiter, Role, SubPageProviderSettings, env_var,
+    unavailable_error,
 };
 use llama_cpp::{
     LLAMA_CPP_API_URL, ModelEntry, Props, get_models, get_props, stream_chat_completion,
@@ -60,10 +61,11 @@ pub struct LlamaCppSettings {
 pub struct LlamaCppLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: Entity<State>,
-    /// Live capabilities shared with the agent's models (see [`LiveCapabilities`]).
+    /// Live capabilities shared with [`State`] (see [`LiveCapabilities`]).
     capability_cells: CapabilityCells,
-    /// Live model-load progress shared with the models (see [`LoadingProgress`]).
+    /// Live model-load progress shared with [`State`] (see [`LoadingProgress`]).
     loading_progress: LoadingProgress,
+    request_limiters: ModelRateLimiters,
 }
 
 pub struct State {
@@ -337,11 +339,10 @@ impl State {
     }
 }
 
-/// Capabilities that only become known once a router model loads. `LanguageModel`'s
-/// methods take no `cx`, yet the agent reads them live each turn, so we share
-/// them through a map that re-discovery updates — an already-selected model
-/// picks up real values without re-selection. Image support is available from
-/// `/v1/models` hints, so it stays a field.
+/// Capabilities that only become known once a router model loads. Re-discovery
+/// updates them in a shared map, which each request reads when it is bound, so
+/// a request uses the model's real values as soon as it has loaded. Image
+/// support is available from `/v1/models` hints, so it is not tracked here.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct LiveCapabilities {
     max_tokens: u64,
@@ -359,7 +360,7 @@ impl LiveCapabilities {
     }
 }
 
-/// Live capabilities keyed by model name, shared by the provider and its models.
+/// Live capabilities keyed by model name, shared by the provider and its state.
 type CapabilityCells = Arc<RwLock<HashMap<String, LiveCapabilities>>>;
 
 /// Model name → load-status label (e.g. `"Loading weights 42%"`) while a router
@@ -402,8 +403,8 @@ fn compute_effective_models(
     models
 }
 
-/// Updates the shared capability map from the effective models, so a model held
-/// by an open conversation observes the new values (it reads the map by name).
+/// Updates the shared capability map from the effective models, so requests
+/// for a model held by an open conversation observe the new values.
 fn sync_capability_cells(cells: &CapabilityCells, effective: &HashMap<String, llama_cpp::Model>) {
     let mut cells = write_recover(cells);
     for model in effective.values() {
@@ -461,6 +462,7 @@ impl LlamaCppLanguageModelProvider {
             http_client: http_client.clone(),
             capability_cells: capability_cells.clone(),
             loading_progress: loading_progress.clone(),
+            request_limiters: ModelRateLimiters::default(),
             state: cx.new(|cx| {
                 cx.observe_global::<SettingsStore>({
                     let mut last_settings = LlamaCppLanguageModelProvider::settings(cx).clone();
@@ -526,6 +528,103 @@ impl LlamaCppLanguageModelProvider {
     fn has_custom_url(cx: &App) -> bool {
         Self::settings(cx).api_url != LLAMA_CPP_API_URL
     }
+
+    /// Every model this provider offers, keyed by id; see [`compute_effective_models`].
+    fn llama_cpp_models(&self, cx: &App) -> HashMap<String, llama_cpp::Model> {
+        compute_effective_models(
+            &self.state.read(cx).fetched_models,
+            LlamaCppLanguageModelProvider::settings(cx),
+        )
+    }
+
+    /// The model's live capabilities, or `model`'s own if the map lacks it.
+    fn capabilities(&self, model: &llama_cpp::Model) -> LiveCapabilities {
+        read_recover(&self.capability_cells)
+            .get(&model.name)
+            .copied()
+            .unwrap_or_else(|| LiveCapabilities::of(model))
+    }
+
+    fn create_language_model(&self, model: &llama_cpp::Model) -> LanguageModel {
+        let capabilities = self.capabilities(model);
+        let display_name = model.display_name();
+        let loading_label = read_recover(&self.loading_progress)
+            .get(&model.name)
+            .cloned();
+        let name = match loading_label {
+            // Surface load progress in the display name so it shows wherever the
+            // model is named, without provider-agnostic UI changes. The agent
+            // rebuilds the name on `ProviderStateChanged`, which our ticks emit.
+            Some(label) => LanguageModelName::from(format!("{display_name} · {label}")),
+            None => LanguageModelName::from(display_name.to_string()),
+        };
+        LanguageModel {
+            supports_tools: capabilities.supports_tools,
+            tool_choice_support: LanguageModelToolChoiceSupport {
+                auto: capabilities.supports_tools,
+                any: capabilities.supports_tools,
+                none: capabilities.supports_tools,
+            },
+            supports_images: model.supports_images,
+            supports_thinking: capabilities.supports_thinking,
+            ..LanguageModel::new(
+                LanguageModelId::from(model.name.clone()),
+                name,
+                PROVIDER_ID,
+                PROVIDER_NAME,
+                telemetry_id_for(&model.name),
+                capabilities.max_tokens,
+            )
+        }
+    }
+
+    /// The current configuration of `model` and its live capabilities, if
+    /// this provider still offers it.
+    fn config(
+        &self,
+        model: &LanguageModel,
+        cx: &App,
+    ) -> Result<(llama_cpp::Model, LiveCapabilities), LanguageModelCompletionError> {
+        let config = self
+            .llama_cpp_models(cx)
+            .remove(model.id.0.as_ref())
+            .ok_or_else(|| unavailable_error(model))?;
+        let capabilities = self.capabilities(&config);
+        Ok((config, capabilities))
+    }
+
+    fn stream_llama_cpp_request(
+        &self,
+        request: llama_cpp::ChatCompletionRequest,
+        request_limiter: &RateLimiter,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<futures::stream::BoxStream<'static, Result<llama_cpp::ResponseStreamEvent>>>,
+    > {
+        let http_client = self.http_client.clone();
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+            let api_url = LlamaCppLanguageModelProvider::api_url(cx);
+            let extra_headers = LlamaCppLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
+        });
+
+        let future = request_limiter.stream(async move {
+            let stream = stream_chat_completion(
+                http_client.as_ref(),
+                &api_url,
+                api_key.as_deref(),
+                request,
+                &extra_headers,
+            )
+            .await?;
+            Ok(stream)
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
 }
 
 impl LanguageModelProviderState for LlamaCppLanguageModelProvider {
@@ -549,39 +648,25 @@ impl LanguageModelProvider for LlamaCppLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiLlamaCpp)
     }
 
-    fn default_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn default_model(&self, _: &App) -> Option<LanguageModel> {
         // No default model: in router mode it could trigger an expensive load of
         // an unloaded model on a constrained machine.
         None
     }
 
-    fn default_fast_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn default_fast_model(&self, _: &App) -> Option<LanguageModel> {
         // See explanation for default_model.
         None
     }
 
-    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let settings = LlamaCppLanguageModelProvider::settings(cx);
-        let effective = compute_effective_models(&self.state.read(cx).fetched_models, settings);
+    fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
+        let effective = self.llama_cpp_models(cx);
 
         // Refresh the shared capability map so open conversations pick up settings changes.
         sync_capability_cells(&self.capability_cells, &effective);
         let mut models = effective
-            .into_values()
-            .map(|model| {
-                Arc::new(LlamaCppLanguageModel {
-                    id: LanguageModelId::from(model.name.clone()),
-                    name: model.name.clone(),
-                    display_name: model.display_name().to_string(),
-                    fallback_capabilities: LiveCapabilities::of(&model),
-                    supports_images: model.supports_images,
-                    capability_cells: self.capability_cells.clone(),
-                    loading_progress: self.loading_progress.clone(),
-                    http_client: self.http_client.clone(),
-                    request_limiter: RateLimiter::new(4),
-                    state: self.state.clone(),
-                }) as Arc<dyn LanguageModel>
-            })
+            .values()
+            .map(|model| self.create_language_model(model))
             .collect::<Vec<_>>();
         models.sort_by_key(|model| model.name());
         models
@@ -607,86 +692,34 @@ impl LanguageModelProvider for LlamaCppLanguageModelProvider {
             )),
         ))
     }
-}
-
-pub struct LlamaCppLanguageModel {
-    id: LanguageModelId,
-    /// The model id sent to the server.
-    name: String,
-    display_name: String,
-    /// Live capabilities shared with the provider, read fresh on each access so an
-    /// open conversation reflects the model's real values once it has loaded.
-    capability_cells: CapabilityCells,
-    /// Used when `capability_cells` has no entry (e.g. model removed mid-conversation).
-    fallback_capabilities: LiveCapabilities,
-    /// Available from `/v1/models` hints, so captured at build time.
-    supports_images: bool,
-    /// Shared with the provider; this model's load progress, read by `name` so the
-    /// selector can show a loading indicator.
-    loading_progress: LoadingProgress,
-    http_client: Arc<dyn HttpClient>,
-    request_limiter: RateLimiter,
-    state: Entity<State>,
-}
-
-impl LlamaCppLanguageModel {
-    /// The model's live capabilities, or the build-time fallback if the map lacks it.
-    fn capabilities(&self) -> LiveCapabilities {
-        read_recover(&self.capability_cells)
-            .get(&self.name)
-            .copied()
-            .unwrap_or(self.fallback_capabilities)
-    }
-
-    /// This model's load-status label while loading, read live from the shared map.
-    fn loading_label(&self) -> Option<SharedString> {
-        read_recover(&self.loading_progress)
-            .get(&self.name)
-            .cloned()
-    }
-
-    fn to_llama_cpp_request(
-        &self,
-        request: LanguageModelRequest,
-    ) -> Result<llama_cpp::ChatCompletionRequest> {
-        build_llama_cpp_request(
-            &self.name,
-            self.supports_images,
-            self.capabilities(),
-            request,
-        )
-    }
 
     fn stream_completion(
         &self,
-        request: llama_cpp::ChatCompletionRequest,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<futures::stream::BoxStream<'static, Result<llama_cpp::ResponseStreamEvent>>>,
-    > {
-        let http_client = self.http_client.clone();
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
-            let api_url = LlamaCppLanguageModelProvider::api_url(cx);
-            let extra_headers = LlamaCppLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone();
-            (state.api_key_state.key(&api_url), api_url, extra_headers)
-        });
-
-        let future = self.request_limiter.stream(async move {
-            let stream = stream_chat_completion(
-                http_client.as_ref(),
-                &api_url,
-                api_key.as_deref(),
-                request,
-                &extra_headers,
-            )
-            .await?;
-            Ok(stream)
-        });
-
-        async move { Ok(future.await?.boxed()) }.boxed()
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
+        let (config, capabilities) = match cx.update(|cx| self.config(model, cx)) {
+            Ok(config) => config,
+            Err(error) => return async move { Err(error) }.boxed(),
+        };
+        let request_limiter = self.request_limiters.for_model(&model.id);
+        let request = match build_llama_cpp_request(
+            &config.name,
+            config.supports_images,
+            capabilities,
+            request,
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
+        let completions = self.stream_llama_cpp_request(request, &request_limiter, cx);
+        async move {
+            let mapper = ChatCompletionEventMapper::new();
+            Ok(mapper.map_stream(completions.await?).boxed())
+        }
+        .boxed()
     }
 }
 
@@ -869,82 +902,6 @@ fn build_llama_cpp_request(
             include_usage: true,
         }),
     })
-}
-
-impl LanguageModel for LlamaCppLanguageModel {
-    fn id(&self) -> LanguageModelId {
-        self.id.clone()
-    }
-
-    fn name(&self) -> LanguageModelName {
-        match self.loading_label() {
-            // Surface load progress in the display name so it shows wherever the
-            // model is named, without provider-agnostic UI changes. The agent
-            // rebuilds the name on `ProviderStateChanged`, which our ticks emit.
-            Some(label) => LanguageModelName::from(format!("{} · {}", self.display_name, label)),
-            None => LanguageModelName::from(self.display_name.clone()),
-        }
-    }
-
-    fn provider_id(&self) -> LanguageModelProviderId {
-        PROVIDER_ID
-    }
-
-    fn provider_name(&self) -> LanguageModelProviderName {
-        PROVIDER_NAME
-    }
-
-    fn supports_tools(&self) -> bool {
-        self.capabilities().supports_tools
-    }
-
-    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
-        self.supports_tools()
-            && match choice {
-                LanguageModelToolChoice::Auto => true,
-                LanguageModelToolChoice::Any => true,
-                LanguageModelToolChoice::None => true,
-            }
-    }
-
-    fn supports_images(&self) -> bool {
-        self.supports_images
-    }
-
-    fn supports_thinking(&self) -> bool {
-        self.capabilities().supports_thinking
-    }
-
-    fn telemetry_id(&self) -> String {
-        telemetry_id_for(&self.name)
-    }
-
-    fn max_token_count(&self) -> u64 {
-        self.capabilities().max_tokens
-    }
-
-    fn stream_completion(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
-            LanguageModelCompletionError,
-        >,
-    > {
-        let request = match self.to_llama_cpp_request(request) {
-            Ok(request) => request,
-            Err(error) => return async move { Err(error.into()) }.boxed(),
-        };
-        let completions = self.stream_completion(request, cx);
-        async move {
-            let mapper = ChatCompletionEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
-        }
-        .boxed()
-    }
 }
 
 fn add_message_content_part(
@@ -1835,6 +1792,80 @@ mod tests {
             }
             message => panic!("unexpected message: {message:?}"),
         }
+    }
+
+    #[gpui::test]
+    fn config_uses_live_capabilities_for_a_stable_model_id(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+        let provider = cx.update(|cx| {
+            LlamaCppLanguageModelProvider::new(
+                FakeHttpClient::with_404_response(),
+                Arc::new(FakeCredentialsProvider {
+                    api_key: Vec::new(),
+                }),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let cold = llama_cpp::Model::new(
+            "m",
+            Some("m"),
+            Some(ASSUMED_UNLOADED_CONTEXT),
+            true,
+            false,
+            false,
+        );
+        provider
+            .state
+            .update(cx, |state, _| state.fetched_models = vec![cold]);
+        write_recover(&provider.loading_progress)
+            .insert("m".to_string(), SharedString::from("Loading 42%"));
+        let selected = cx.update(|cx| provider.provided_models(cx)).remove(0);
+        assert_eq!(selected.id.0.as_ref(), "m");
+        assert_eq!(selected.name.0.as_ref(), "m · Loading 42%");
+        assert!(!selected.supports_thinking);
+
+        // The model finishes loading and re-discovery reports its real values.
+        let loaded = llama_cpp::Model::new("m", Some("m"), Some(262_144), false, false, true);
+        provider.state.update(cx, |state, cx| {
+            state.fetched_models = vec![loaded];
+            sync_capability_cells(
+                &state.capability_cells,
+                &compute_effective_models(
+                    &state.fetched_models,
+                    LlamaCppLanguageModelProvider::settings(cx),
+                ),
+            );
+        });
+        write_recover(&provider.loading_progress).remove("m");
+
+        let (config, capabilities) = cx
+            .update(|cx| provider.config(&selected, cx))
+            .expect("model is still offered");
+        assert_eq!(config.name, "m");
+        assert_eq!(
+            capabilities,
+            LiveCapabilities {
+                max_tokens: 262_144,
+                supports_tools: false,
+                supports_thinking: true,
+            }
+        );
+        let refreshed = cx.update(|cx| provider.provided_models(cx)).remove(0);
+        assert_eq!(refreshed.id, selected.id);
+        assert_eq!(refreshed.name.0.as_ref(), "m");
+
+        provider
+            .state
+            .update(cx, |state, _| state.fetched_models.clear());
+        assert!(matches!(
+            cx.update(|cx| provider.config(&selected, cx)),
+            Err(LanguageModelCompletionError::ModelUnavailable { .. })
+        ));
     }
 
     #[gpui::test]

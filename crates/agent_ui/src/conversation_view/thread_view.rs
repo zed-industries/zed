@@ -5144,9 +5144,9 @@ impl ThreadView {
                         let enable_thinking = !thread.thinking_enabled();
                         thread.set_thinking_enabled(enable_thinking, cx);
 
-                        let favorite_key = thread.model().map(|model| {
-                            (model.provider_id().0.to_string(), model.id().0.to_string())
-                        });
+                        let favorite_key = thread
+                            .model()
+                            .map(|model| (model.provider_id.0.to_string(), model.id.0.to_string()));
                         let fs = thread.project().read(cx).fs().clone();
                         update_settings_file(fs, cx, move |settings, _| {
                             if let Some(agent) = settings.agent.as_mut() {
@@ -11960,7 +11960,7 @@ impl ThreadView {
 
     /// Returns the model to offer as a downgrade target when the current model
     /// requires data retention consent (e.g. Opus 4.8 for Fable).
-    fn data_retention_fallback_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn data_retention_fallback_model(&self, cx: &App) -> Option<LanguageModel> {
         let thread = self.as_native_thread(cx)?;
         let model = thread.read(cx).model()?.clone();
         let fallback_id = model.refusal_fallback_model_id()?;

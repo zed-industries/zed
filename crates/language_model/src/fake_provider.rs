@@ -1,34 +1,48 @@
 use crate::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice,
+    LanguageModelCompletionStream, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest,
 };
 use anyhow::anyhow;
-use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::BoxStream, stream::StreamExt};
+use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::StreamExt};
 use gpui::{App, AsyncApp, Entity, Task};
 use http_client::Result;
 use parking_lot::Mutex;
 use std::collections::VecDeque;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, AtomicU64, Ordering::SeqCst},
-};
 
-#[derive(Clone)]
+/// A provider for tests that serves any model id and records every request.
+///
+/// Tests get models with [`Self::model`] and drive responses to the requests
+/// the provider has received, like `send_last_text`.
 pub struct FakeLanguageModelProvider {
     id: LanguageModelProviderId,
     name: LanguageModelProviderName,
-    models: Vec<Arc<dyn LanguageModel>>,
+    state: Mutex<FakeProviderState>,
+}
+
+#[derive(Default)]
+struct FakeProviderState {
+    models: Vec<LanguageModel>,
+    pending_completions: Vec<PendingCompletion>,
+    forbid_requests: bool,
+    input_token_counts: VecDeque<u64>,
+    input_token_count_requests: Vec<LanguageModelRequest>,
+}
+
+struct PendingCompletion {
+    model_id: LanguageModelId,
+    request: LanguageModelRequest,
+    events:
+        mpsc::UnboundedSender<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
 }
 
 impl Default for FakeLanguageModelProvider {
     fn default() -> Self {
-        Self {
-            id: LanguageModelProviderId::from("fake".to_string()),
-            name: LanguageModelProviderName::from("Fake".to_string()),
-            models: vec![Arc::new(FakeLanguageModel::default())],
-        }
+        Self::new(
+            LanguageModelProviderId::from("fake".to_string()),
+            LanguageModelProviderName::from("Fake".to_string()),
+        )
     }
 }
 
@@ -49,16 +63,16 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         self.name.clone()
     }
 
-    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        self.models.first().cloned()
+    fn default_model(&self, _cx: &App) -> Option<LanguageModel> {
+        self.state.lock().models.first().cloned()
     }
 
-    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        self.models.first().cloned()
+    fn default_fast_model(&self, _cx: &App) -> Option<LanguageModel> {
+        self.state.lock().models.first().cloned()
     }
 
-    fn provided_models(&self, _: &App) -> Vec<Arc<dyn LanguageModel>> {
-        self.models.clone()
+    fn provided_models(&self, _: &App) -> Vec<LanguageModel> {
+        self.state.lock().models.clone()
     }
 
     fn is_authenticated(&self, _: &App) -> bool {
@@ -72,24 +86,249 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
     fn settings_view(&self, _: &mut App) -> Option<crate::ProviderSettingsView> {
         None
     }
+
+    fn stream_completion(
+        &self,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        _: &AsyncApp,
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
+        let mut state = self.state.lock();
+        if state.forbid_requests {
+            return async { Err(anyhow!("requests are forbidden").into()) }.boxed();
+        }
+        let (events, rx) = mpsc::unbounded();
+        state.pending_completions.push(PendingCompletion {
+            model_id: model.id.clone(),
+            request,
+            events,
+        });
+        async move { Ok(rx.boxed()) }.boxed()
+    }
+
+    fn count_input_tokens(
+        &self,
+        _model: &LanguageModel,
+        request: LanguageModelRequest,
+        _: &AsyncApp,
+    ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
+        let mut state = self.state.lock();
+        if state.forbid_requests {
+            return async { Err(anyhow!("requests are forbidden").into()) }.boxed();
+        }
+        state.input_token_count_requests.push(request);
+        let count = state.input_token_counts.pop_front();
+        async move { Ok(count) }.boxed()
+    }
 }
 
 impl FakeLanguageModelProvider {
+    /// A provider offering one model, with id `fake`.
     pub fn new(id: LanguageModelProviderId, name: LanguageModelProviderName) -> Self {
-        Self {
+        let provider = Self {
             id,
             name,
-            models: vec![Arc::new(FakeLanguageModel::default())],
-        }
+            state: Mutex::default(),
+        };
+        provider.update_model("fake", |model| {
+            model.name = LanguageModelName::from("Fake".to_string())
+        });
+        provider
     }
 
-    pub fn with_models(mut self, models: Vec<Arc<dyn LanguageModel>>) -> Self {
-        self.models = models;
-        self
+    /// The model this provider offers as `id`, adding it with default
+    /// capabilities if it isn't offered yet.
+    pub fn model(&self, id: &str) -> LanguageModel {
+        self.update_model(id, |_| {})
     }
 
-    pub fn test_model(&self) -> FakeLanguageModel {
-        FakeLanguageModel::default()
+    /// Changes the capabilities of the model offered as `id`, adding it first
+    /// if needed, and returns the updated model.
+    pub fn update_model(&self, id: &str, update: impl FnOnce(&mut LanguageModel)) -> LanguageModel {
+        let mut state = self.state.lock();
+        let index = match state
+            .models
+            .iter()
+            .position(|model| model.id.0.as_ref() == id)
+        {
+            Some(index) => index,
+            None => {
+                state.models.push(LanguageModel {
+                    supports_disabling_thinking: true,
+                    ..LanguageModel::new(
+                        LanguageModelId::from(id.to_string()),
+                        LanguageModelName::from(id.to_string()),
+                        self.id.clone(),
+                        self.name.clone(),
+                        "fake",
+                        1_000_000,
+                    )
+                });
+                state.models.len() - 1
+            }
+        };
+        update(&mut state.models[index]);
+        state.models[index].clone()
+    }
+
+    pub fn allow_requests(&self) {
+        self.state.lock().forbid_requests = false;
+    }
+
+    pub fn forbid_requests(&self) {
+        self.state.lock().forbid_requests = true;
+    }
+
+    pub fn queue_input_token_count(&self, count: u64) {
+        self.state.lock().input_token_counts.push_back(count);
+    }
+
+    pub fn input_token_count_requests(&self) -> Vec<LanguageModelRequest> {
+        self.state.lock().input_token_count_requests.clone()
+    }
+
+    /// Requests still streaming, to any model, oldest first.
+    pub fn pending_completions(&self) -> Vec<LanguageModelRequest> {
+        self.state
+            .lock()
+            .pending_completions
+            .iter()
+            .map(|pending| pending.request.clone())
+            .collect()
+    }
+
+    /// Requests still streaming to `model`, oldest first.
+    pub fn pending_completions_for(&self, model: &LanguageModel) -> Vec<LanguageModelRequest> {
+        self.state
+            .lock()
+            .pending_completions
+            .iter()
+            .filter(|pending| pending.model_id == model.id)
+            .map(|pending| pending.request.clone())
+            .collect()
+    }
+
+    pub fn completion_count(&self) -> usize {
+        self.state.lock().pending_completions.len()
+    }
+
+    /// Streams `chunk` as text to the oldest pending `request` to `model`.
+    pub fn send_text(
+        &self,
+        model: &LanguageModel,
+        request: &LanguageModelRequest,
+        chunk: impl Into<String>,
+    ) {
+        self.send_event(
+            model,
+            request,
+            LanguageModelCompletionEvent::Text(chunk.into()),
+        );
+    }
+
+    /// Streams `event` to the oldest pending `request` to `model`.
+    pub fn send_event(
+        &self,
+        model: &LanguageModel,
+        request: &LanguageModelRequest,
+        event: impl Into<LanguageModelCompletionEvent>,
+    ) {
+        let state = self.state.lock();
+        state.send(state.pending_index(model, request), Ok(event.into()));
+    }
+
+    /// Streams `error` to the oldest pending `request` to `model`.
+    pub fn send_error(
+        &self,
+        model: &LanguageModel,
+        request: &LanguageModelRequest,
+        error: impl Into<LanguageModelCompletionError>,
+    ) {
+        let state = self.state.lock();
+        state.send(state.pending_index(model, request), Err(error.into()));
+    }
+
+    /// Ends the stream of the oldest pending `request` to `model`.
+    pub fn end_stream(&self, model: &LanguageModel, request: &LanguageModelRequest) {
+        let mut state = self.state.lock();
+        let index = state.pending_index(model, request);
+        state.pending_completions.remove(index);
+    }
+
+    /// Whether the oldest pending `request` to `model` has ended or had its
+    /// receiver dropped.
+    pub fn is_stream_closed(&self, model: &LanguageModel, request: &LanguageModelRequest) -> bool {
+        self.state
+            .lock()
+            .pending_completions
+            .iter()
+            .find(|pending| pending.model_id == model.id && &pending.request == request)
+            .is_none_or(|pending| pending.events.is_closed())
+    }
+
+    /// Streams `chunk` as text to the most recent pending request to `model`.
+    pub fn send_last_text(&self, model: &LanguageModel, chunk: impl Into<String>) {
+        self.send_last_event(model, LanguageModelCompletionEvent::Text(chunk.into()));
+    }
+
+    /// Streams `event` to the most recent pending request to `model`.
+    pub fn send_last_event(
+        &self,
+        model: &LanguageModel,
+        event: impl Into<LanguageModelCompletionEvent>,
+    ) {
+        let state = self.state.lock();
+        state.send(state.last_pending_index(model), Ok(event.into()));
+    }
+
+    /// Streams `error` to the most recent pending request to `model`.
+    pub fn send_last_error(
+        &self,
+        model: &LanguageModel,
+        error: impl Into<LanguageModelCompletionError>,
+    ) {
+        let state = self.state.lock();
+        state.send(state.last_pending_index(model), Err(error.into()));
+    }
+
+    /// Ends the stream of the most recent pending request to `model`.
+    pub fn end_last(&self, model: &LanguageModel) {
+        let mut state = self.state.lock();
+        let index = state.last_pending_index(model);
+        state.pending_completions.remove(index);
+    }
+}
+
+impl FakeProviderState {
+    fn pending_index(&self, model: &LanguageModel, request: &LanguageModelRequest) -> usize {
+        self.pending_completions
+            .iter()
+            .position(|pending| pending.model_id == model.id && &pending.request == request)
+            .unwrap_or_else(|| {
+                panic!(
+                    "no pending completion to model `{}` matches the request",
+                    model.id.0
+                )
+            })
+    }
+
+    fn last_pending_index(&self, model: &LanguageModel) -> usize {
+        self.pending_completions
+            .iter()
+            .rposition(|pending| pending.model_id == model.id)
+            .unwrap_or_else(|| panic!("no pending completion to model `{}`", model.id.0))
+    }
+
+    fn send(
+        &self,
+        index: usize,
+        event: Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+    ) {
+        self.pending_completions[index]
+            .events
+            .unbounded_send(event)
+            .unwrap();
     }
 }
 
@@ -99,321 +338,4 @@ pub struct ToolUseRequest {
     pub name: String,
     pub description: String,
     pub schema: serde_json::Value,
-}
-
-pub struct FakeLanguageModel {
-    id: LanguageModelId,
-    name: LanguageModelName,
-    provider_id: LanguageModelProviderId,
-    provider_name: LanguageModelProviderName,
-    current_completion_txs: Mutex<
-        Vec<(
-            LanguageModelRequest,
-            mpsc::UnboundedSender<
-                Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
-            >,
-        )>,
-    >,
-    forbid_requests: AtomicBool,
-    supports_thinking: AtomicBool,
-    supports_disabling_thinking: AtomicBool,
-    supports_streaming_tools: AtomicBool,
-    supports_images: AtomicBool,
-    supports_server_side_compaction: AtomicBool,
-    max_token_count: AtomicU64,
-    max_input_tokens: Option<u64>,
-    max_output_tokens: AtomicU64,
-    input_token_counts: Mutex<VecDeque<u64>>,
-    input_token_count_requests: Mutex<Vec<LanguageModelRequest>>,
-}
-
-impl Default for FakeLanguageModel {
-    fn default() -> Self {
-        Self {
-            id: LanguageModelId::from("fake".to_string()),
-            name: LanguageModelName::from("Fake".to_string()),
-            provider_id: LanguageModelProviderId::from("fake".to_string()),
-            provider_name: LanguageModelProviderName::from("Fake".to_string()),
-            current_completion_txs: Mutex::new(Vec::new()),
-            forbid_requests: AtomicBool::new(false),
-            supports_thinking: AtomicBool::new(false),
-            supports_disabling_thinking: AtomicBool::new(true),
-            supports_streaming_tools: AtomicBool::new(false),
-            supports_images: AtomicBool::new(false),
-            supports_server_side_compaction: AtomicBool::new(false),
-            max_token_count: AtomicU64::new(1_000_000),
-            max_input_tokens: None,
-            max_output_tokens: AtomicU64::new(0),
-            input_token_counts: Mutex::new(VecDeque::new()),
-            input_token_count_requests: Mutex::new(Vec::new()),
-        }
-    }
-}
-
-impl FakeLanguageModel {
-    pub fn with_id_and_thinking(
-        provider_id: &str,
-        id: &str,
-        name: &str,
-        supports_thinking: bool,
-    ) -> Self {
-        Self {
-            id: LanguageModelId::from(id.to_string()),
-            name: LanguageModelName::from(name.to_string()),
-            provider_id: LanguageModelProviderId::from(provider_id.to_string()),
-            supports_thinking: AtomicBool::new(supports_thinking),
-            ..Default::default()
-        }
-    }
-
-    pub fn allow_requests(&self) {
-        self.forbid_requests.store(false, SeqCst);
-    }
-
-    pub fn forbid_requests(&self) {
-        self.forbid_requests.store(true, SeqCst);
-    }
-
-    pub fn set_supports_thinking(&self, supports: bool) {
-        self.supports_thinking.store(supports, SeqCst);
-    }
-
-    pub fn set_supports_disabling_thinking(&self, supports: bool) {
-        self.supports_disabling_thinking.store(supports, SeqCst);
-    }
-
-    pub fn set_supports_streaming_tools(&self, supports: bool) {
-        self.supports_streaming_tools.store(supports, SeqCst);
-    }
-
-    pub fn set_supports_images(&self, supports: bool) {
-        self.supports_images.store(supports, SeqCst);
-    }
-
-    pub fn set_supports_server_side_compaction(&self, supports: bool) {
-        self.supports_server_side_compaction.store(supports, SeqCst);
-    }
-
-    pub fn set_max_token_count(&self, count: u64) {
-        self.max_token_count.store(count, SeqCst);
-    }
-
-    pub fn set_max_input_tokens(&mut self, count: u64) {
-        self.max_input_tokens = Some(count);
-    }
-
-    pub fn set_max_output_tokens(&self, count: Option<u64>) {
-        self.max_output_tokens
-            .store(count.unwrap_or_default(), SeqCst);
-    }
-
-    pub fn queue_input_token_count(&self, count: u64) {
-        self.input_token_counts.lock().push_back(count);
-    }
-
-    pub fn input_token_count_requests(&self) -> Vec<LanguageModelRequest> {
-        self.input_token_count_requests.lock().clone()
-    }
-
-    pub fn pending_completions(&self) -> Vec<LanguageModelRequest> {
-        self.current_completion_txs
-            .lock()
-            .iter()
-            .map(|(request, _)| request.clone())
-            .collect()
-    }
-
-    pub fn completion_count(&self) -> usize {
-        self.current_completion_txs.lock().len()
-    }
-
-    pub fn send_completion_stream_text_chunk(
-        &self,
-        request: &LanguageModelRequest,
-        chunk: impl Into<String>,
-    ) {
-        self.send_completion_stream_event(
-            request,
-            LanguageModelCompletionEvent::Text(chunk.into()),
-        );
-    }
-
-    pub fn send_completion_stream_event(
-        &self,
-        request: &LanguageModelRequest,
-        event: impl Into<LanguageModelCompletionEvent>,
-    ) {
-        let current_completion_txs = self.current_completion_txs.lock();
-        let tx = current_completion_txs
-            .iter()
-            .find(|(req, _)| req == request)
-            .map(|(_, tx)| tx)
-            .unwrap();
-        tx.unbounded_send(Ok(event.into())).unwrap();
-    }
-
-    pub fn send_completion_stream_error(
-        &self,
-        request: &LanguageModelRequest,
-        error: impl Into<LanguageModelCompletionError>,
-    ) {
-        let current_completion_txs = self.current_completion_txs.lock();
-        let tx = current_completion_txs
-            .iter()
-            .find(|(req, _)| req == request)
-            .map(|(_, tx)| tx)
-            .unwrap();
-        tx.unbounded_send(Err(error.into())).unwrap();
-    }
-
-    pub fn end_completion_stream(&self, request: &LanguageModelRequest) {
-        self.current_completion_txs
-            .lock()
-            .retain(|(req, _)| req != request);
-    }
-
-    pub fn is_completion_stream_closed(&self, request: &LanguageModelRequest) -> bool {
-        self.current_completion_txs
-            .lock()
-            .iter()
-            .find(|(pending_request, _)| pending_request == request)
-            .is_none_or(|(_, sender)| sender.is_closed())
-    }
-
-    pub fn send_last_completion_stream_text_chunk(&self, chunk: impl Into<String>) {
-        self.send_completion_stream_text_chunk(self.pending_completions().last().unwrap(), chunk);
-    }
-
-    pub fn send_last_completion_stream_event(
-        &self,
-        event: impl Into<LanguageModelCompletionEvent>,
-    ) {
-        self.send_completion_stream_event(self.pending_completions().last().unwrap(), event);
-    }
-
-    pub fn send_last_completion_stream_error(
-        &self,
-        error: impl Into<LanguageModelCompletionError>,
-    ) {
-        self.send_completion_stream_error(self.pending_completions().last().unwrap(), error);
-    }
-
-    pub fn end_last_completion_stream(&self) {
-        self.end_completion_stream(self.pending_completions().last().unwrap());
-    }
-}
-
-impl LanguageModel for FakeLanguageModel {
-    fn id(&self) -> LanguageModelId {
-        self.id.clone()
-    }
-
-    fn name(&self) -> LanguageModelName {
-        self.name.clone()
-    }
-
-    fn provider_id(&self) -> LanguageModelProviderId {
-        self.provider_id.clone()
-    }
-
-    fn provider_name(&self) -> LanguageModelProviderName {
-        self.provider_name.clone()
-    }
-
-    fn supports_tools(&self) -> bool {
-        false
-    }
-
-    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
-        false
-    }
-
-    fn supports_images(&self) -> bool {
-        self.supports_images.load(SeqCst)
-    }
-
-    fn supports_server_side_compaction(&self) -> bool {
-        self.supports_server_side_compaction.load(SeqCst)
-    }
-
-    fn supports_thinking(&self) -> bool {
-        self.supports_thinking.load(SeqCst)
-    }
-
-    fn supports_disabling_thinking(&self) -> bool {
-        self.supports_disabling_thinking.load(SeqCst)
-    }
-
-    fn supports_streaming_tools(&self) -> bool {
-        self.supports_streaming_tools.load(SeqCst)
-    }
-
-    fn telemetry_id(&self) -> String {
-        "fake".to_string()
-    }
-
-    fn max_token_count(&self) -> u64 {
-        self.max_token_count.load(SeqCst)
-    }
-
-    fn max_input_tokens(&self) -> u64 {
-        self.max_input_tokens
-            .unwrap_or_else(|| self.max_token_count())
-    }
-
-    fn max_output_tokens(&self) -> Option<u64> {
-        let max_output_tokens = self.max_output_tokens.load(SeqCst);
-        if max_output_tokens == 0 {
-            None
-        } else {
-            Some(max_output_tokens)
-        }
-    }
-
-    fn count_input_tokens(
-        &self,
-        request: LanguageModelRequest,
-        _: &AsyncApp,
-    ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
-        if self.forbid_requests.load(SeqCst) {
-            return async {
-                Err(LanguageModelCompletionError::Other(anyhow!(
-                    "requests are forbidden"
-                )))
-            }
-            .boxed();
-        }
-        self.input_token_count_requests.lock().push(request);
-        let count = self.input_token_counts.lock().pop_front();
-        async move { Ok(count) }.boxed()
-    }
-
-    fn stream_completion(
-        &self,
-        request: LanguageModelRequest,
-        _: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
-            LanguageModelCompletionError,
-        >,
-    > {
-        if self.forbid_requests.load(SeqCst) {
-            async move {
-                Err(LanguageModelCompletionError::Other(anyhow!(
-                    "requests are forbidden"
-                )))
-            }
-            .boxed()
-        } else {
-            let (tx, rx) = mpsc::unbounded();
-            self.current_completion_txs.lock().push((request, tx));
-            async move { Ok(rx.boxed()) }.boxed()
-        }
-    }
-
-    fn as_fake(&self) -> &Self {
-        self
-    }
 }
