@@ -7756,6 +7756,115 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_keyed_thought_snapshot_keeps_expansion_on_original_chunk(
+        cx: &mut TestAppContext,
+    ) {
+        use agent_client_protocol::schema::v2 as acp_v2;
+
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_thought(
+                    acp_v2::AgentThought::new("first-thought").content(vec![
+                        acp_v2::ContentBlock::Text(acp_v2::TextContent::new("Old papaya thought")),
+                    ]),
+                    cx,
+                )
+            })
+            .expect("initial keyed thought");
+        cx.run_until_parked();
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_assistant_message(
+                    acp_v2::AgentMessage::new("answer").content(vec![acp_v2::ContentBlock::Text(
+                        acp_v2::TextContent::new("Final answer"),
+                    )]),
+                    cx,
+                )
+            })
+            .expect("initial keyed answer");
+        cx.run_until_parked();
+
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread search bar");
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("mango", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        thread_view.update(cx, |view, cx| {
+            view.entry_view_state.update(cx, |state, cx| {
+                state.toggle_thinking_block_expansion((0, 0), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_thought(
+                    acp_v2::AgentThought::new("first-thought").content(vec![
+                        acp_v2::ContentBlock::Text(acp_v2::TextContent::new("New mango thought")),
+                    ]),
+                    cx,
+                )?;
+                thread.upsert_thought(
+                    acp_v2::AgentThought::new("second-thought").content(vec![
+                        acp_v2::ContentBlock::Text(acp_v2::TextContent::new("Another thought")),
+                    ]),
+                    cx,
+                )
+            })
+            .expect("replace original thought and add another");
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            let Some(AgentThreadEntry::AssistantMessage(message)) = thread.entries().first() else {
+                panic!("assistant entry should remain at its first position");
+            };
+            assert_eq!(message.chunks.len(), 3);
+            assert!(matches!(
+                message.chunks.first(),
+                Some(AssistantMessageChunk::Thought { .. })
+            ));
+            assert!(matches!(
+                message.chunks.get(1),
+                Some(AssistantMessageChunk::Message { .. })
+            ));
+            assert!(matches!(
+                message.chunks.get(2),
+                Some(AssistantMessageChunk::Thought { .. })
+            ));
+        });
+        thread_view.read_with(cx, |view, cx| {
+            assert!(
+                view.entry_view_state
+                    .read(cx)
+                    .thinking_block_state((0, 0), cx)
+                    .0,
+                "the replaced thought must retain its expansion",
+            );
+        });
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.match_count()),
+            1,
+            "replacement content in the original expanded thought should be searchable",
+        );
+    }
+
+    #[gpui::test]
     async fn test_empty_assistant_text_followed_by_image_is_rendered(cx: &mut TestAppContext) {
         init_test(cx);
         let connection = StubAgentConnection::new();
@@ -8721,6 +8830,122 @@ pub(crate) mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_thread_search_refreshes_older_keyed_assistant_snapshot(cx: &mut TestAppContext) {
+        use agent_client_protocol::schema::v2 as acp_v2;
+
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_assistant_message(
+                    acp_v2::AgentMessage::new("older-answer").content(vec![
+                        acp_v2::ContentBlock::Text(acp_v2::TextContent::new("Old papaya answer")),
+                    ]),
+                    cx,
+                )
+            })
+            .expect("initial keyed answer");
+        cx.run_until_parked();
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_user_message(
+                    acp_v2::UserMessage::new("later-user").content(vec![
+                        acp_v2::ContentBlock::Text(acp_v2::TextContent::new("Later question")),
+                    ]),
+                    cx,
+                )
+            })
+            .expect("later keyed user message");
+        cx.run_until_parked();
+
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread search bar");
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("papaya", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(bar.read_with(cx, |bar, _| bar.match_count()), 1);
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_assistant_message(
+                    acp_v2::AgentMessage::new("older-answer").content(vec![
+                        acp_v2::ContentBlock::Text(acp_v2::TextContent::new("New mango answer")),
+                    ]),
+                    cx,
+                )
+            })
+            .expect("replace older assistant snapshot");
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
+        cx.run_until_parked();
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.match_count()),
+            0,
+            "old content should disappear from search without changing the query",
+        );
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread.entries().len(),
+                2,
+                "snapshot must update the older row"
+            );
+            assert!(matches!(
+                thread.entries().first(),
+                Some(AgentThreadEntry::AssistantMessage(_))
+            ));
+            assert!(matches!(
+                thread.entries().get(1),
+                Some(AgentThreadEntry::UserMessage(_))
+            ));
+        });
+
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("mango", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.match_count()),
+            1,
+            "replacement content in the older row should be searchable",
+        );
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_assistant_message(
+                    acp_v2::AgentMessage::new("older-answer")
+                        .content(None::<Vec<acp_v2::ContentBlock>>),
+                    cx,
+                )
+            })
+            .expect("clear older assistant snapshot");
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
+        cx.run_until_parked();
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.match_count()),
+            0,
+            "cleared snapshot should remove the replacement match",
+        );
+    }
+
     /// Regression test for re-entering `ThreadView` during search navigation.
     #[gpui::test]
     async fn test_thread_search_select_next_from_thread_view_update_does_not_panic(
@@ -9224,6 +9449,160 @@ pub(crate) mod tests {
             entries_before, entries_after,
             "No message should be sent when editor is empty"
         );
+    }
+
+    #[gpui::test]
+    async fn test_focused_read_only_keyed_user_message_refreshes_supported_snapshot(
+        cx: &mut TestAppContext,
+    ) {
+        use agent_client_protocol::schema::v2 as acp_v2;
+
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_user_message(
+                    acp_v2::UserMessage::new("keyed-user").content(vec![
+                        acp_v2::ContentBlock::Text(acp_v2::TextContent::new("Original text")),
+                    ]),
+                    cx,
+                )
+            })
+            .expect("initial keyed user message");
+        cx.run_until_parked();
+
+        let editor = thread_view.read_with(cx, |view, cx| {
+            view.entry_view_state
+                .read(cx)
+                .entry(0)
+                .and_then(|entry| entry.message_editor())
+                .cloned()
+                .expect("keyed user message editor")
+        });
+        editor.read_with(cx, |editor, cx| {
+            assert!(editor.editor().read(cx).read_only(cx));
+        });
+        assert_eq!(
+            editor.update(cx, |editor, cx| editor.text(cx)),
+            "Original text"
+        );
+        cx.focus(&editor);
+        editor.update_in(cx, |editor, window, cx| {
+            assert!(editor.focus_handle(cx).is_focused(window));
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_user_message(
+                    acp_v2::UserMessage::new("keyed-user").content(vec![
+                        acp_v2::ContentBlock::Text(acp_v2::TextContent::new("Replacement text")),
+                    ]),
+                    cx,
+                )
+            })
+            .expect("replace keyed user message");
+        cx.run_until_parked();
+
+        assert_eq!(thread.read_with(cx, |thread, _| thread.entries().len()), 1);
+        assert_eq!(
+            editor.update(cx, |editor, cx| editor.text(cx)),
+            "Replacement text",
+            "a focused read-only editor has no draft to preserve",
+        );
+
+        for cleared_content in [None, Some(Vec::new()), Some(vec!["".into()])] {
+            thread
+                .update(cx, |thread, cx| {
+                    thread.upsert_user_message(
+                        acp_v2::UserMessage::new("keyed-user")
+                            .content(vec!["Replacement text".into()]),
+                        cx,
+                    )
+                })
+                .expect("restore source before clearing");
+            cx.run_until_parked();
+            thread
+                .update(cx, |thread, cx| {
+                    thread.upsert_user_message(
+                        acp_v2::UserMessage::new("keyed-user").content(cleared_content),
+                        cx,
+                    )
+                })
+                .expect("clear keyed source");
+            cx.run_until_parked();
+            assert_eq!(editor.update(cx, |editor, cx| editor.text(cx)), "");
+        }
+    }
+
+    #[gpui::test]
+    async fn test_keyed_user_metadata_and_identical_snapshots_preserve_selection(
+        cx: &mut TestAppContext,
+    ) {
+        use agent_client_protocol::schema::v2 as acp_v2;
+        use multi_buffer::MultiBufferOffset;
+
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_user_message(
+                    acp_v2::UserMessage::new("keyed-user").content(vec!["Original text".into()]),
+                    cx,
+                )
+            })
+            .expect("initial keyed user message");
+        cx.run_until_parked();
+        let editor = thread_view.read_with(cx, |view, cx| {
+            view.entry_view_state
+                .read(cx)
+                .entry(0)
+                .and_then(|entry| entry.message_editor())
+                .cloned()
+                .expect("keyed user message editor")
+        });
+        cx.focus(&editor);
+        for update in [
+            acp_v2::UserMessage::new("keyed-user"),
+            acp_v2::UserMessage::new("keyed-user").meta(acp_v2::Meta::from_iter([(
+                "label".into(),
+                serde_json::json!("new"),
+            )])),
+            acp_v2::UserMessage::new("keyed-user").content(vec!["Original text".into()]),
+        ] {
+            editor.update_in(cx, |message_editor, window, cx| {
+                message_editor.editor().update(cx, |editor, cx| {
+                    assert!(editor.read_only(cx));
+                    editor.change_selections(Default::default(), window, cx, |selections| {
+                        selections.select_ranges([MultiBufferOffset(0)..MultiBufferOffset(4)]);
+                    });
+                });
+            });
+            thread
+                .update(cx, |thread, cx| thread.upsert_user_message(update, cx))
+                .expect("update unchanged user content");
+            cx.run_until_parked();
+            editor.update(cx, |message_editor, cx| {
+                message_editor.editor().update(cx, |editor, cx| {
+                    let snapshot = editor.display_snapshot(cx);
+                    assert_eq!(
+                        editor
+                            .selections
+                            .newest::<MultiBufferOffset>(&snapshot)
+                            .range(),
+                        MultiBufferOffset(0)..MultiBufferOffset(4),
+                    );
+                });
+            });
+        }
     }
 
     async fn assert_unsupported_source_message_cannot_regenerate(
