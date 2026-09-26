@@ -1,50 +1,31 @@
 use editor::{Editor, EditorEvent};
-use gpui::{
-    AppContext, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, Task, actions,
-};
-use std::{
-    collections::HashMap,
-    time::{Duration, Instant},
-};
+use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, Task, actions};
 
-use crate::table_data_engine::{DisplayToDataMapping, TableDataEngine};
-use ui::{
-    AbsoluteLength, ResizableColumnsState, SharedString, TableInteractionState,
-    TableResizeBehavior, prelude::*,
-};
+use ui::{SharedString, prelude::*};
 use workspace::{Item, Pane, Workspace};
 
-use crate::{parser::EditorState, settings::TabularDataPreviewSettings, types::TableLikeContent};
+use crate::parser::EditorState;
+
+pub use crate::table_view::{PerformanceMetrics, TableView};
 
 mod parser;
 mod renderer;
 mod settings;
 mod table_data_engine;
-mod types;
+mod table_view;
+pub mod types;
 
 actions!(tabular_data, [OpenPreview, OpenPreviewToTheSide]);
 
+/// Editor-backed adapter: watches an [`Editor`], parses its buffer into a [`crate::types::TableLikeContent`],
+/// and feeds the result to an embedded [`TableView`] that owns all grid rendering.
 pub struct TabularDataPreviewPane {
-    pub(crate) engine: TableDataEngine,
-
-    pub(crate) focus_handle: FocusHandle,
+    /// The reusable tabular viewer this adapter drives.
+    pub(crate) table: Entity<TableView>,
     active_editor_state: EditorState,
-    pub(crate) table_interaction_state: Entity<TableInteractionState>,
-    pub(crate) column_widths: ColumnWidths,
     pub(crate) parsing_task: Option<Task<anyhow::Result<()>>>,
     pub(crate) is_parsing: bool,
     pub(crate) parse_error: Option<SharedString>,
-    /// Background task computing the display-to-data mapping after a filter/sort change.
-    /// Stored here so that a new change cancels the previous in-flight computation.
-    pub(crate) filter_sort_task: Option<Task<()>>,
-    pub(crate) settings: TabularDataPreviewSettings,
-    /// Performance metrics for debugging and monitoring tabular data operations.
-    pub(crate) performance_metrics: PerformanceMetrics,
-    pub(crate) list_state: gpui::ListState,
-    /// Cached row height, refreshed from the actual text line height on every render.
-    /// Used to size not-yet-rendered rows for the scrollbar without a full `.measure_all()`
-    /// pass, so it tracks the real row height instead of a hardcoded guess.
-    pub(crate) row_height: Pixels,
     /// Time when the last parsing operation ended, used for smart debouncing
     pub(crate) last_parse_end_time: Option<std::time::Instant>,
 }
@@ -57,30 +38,6 @@ pub fn init(cx: &mut App) {
 }
 
 impl TabularDataPreviewPane {
-    pub(crate) fn sync_column_widths(&self, cx: &mut Context<Self>) {
-        // plus 1 for the row identifier column
-        let cols = self.engine.contents.headers.cols() + 1;
-        let line_number_width = self.calculate_row_identifier_column_width();
-
-        let mut widths: Vec<AbsoluteLength> = vec![AbsoluteLength::Pixels(px(150.)); cols];
-        widths[0] = AbsoluteLength::Pixels(px(line_number_width));
-
-        let mut resize_behaviors = vec![TableResizeBehavior::Resizable; cols];
-        resize_behaviors[0] = TableResizeBehavior::None;
-
-        self.column_widths.widths.update(cx, |state, _cx| {
-            if state.cols() != cols {
-                *state = ResizableColumnsState::new(cols, widths, resize_behaviors);
-            } else {
-                state.set_column_configuration(
-                    0,
-                    AbsoluteLength::Pixels(px(line_number_width)),
-                    TableResizeBehavior::None,
-                );
-            }
-        });
-    }
-
     pub fn register(workspace: &mut Workspace) {
         workspace.register_action_renderer(|div, _, _, cx| {
             div.on_action(cx.listener(|workspace, _: &OpenPreview, window, cx| {
@@ -157,13 +114,6 @@ impl TabularDataPreviewPane {
     }
 
     fn new(editor: &Entity<Editor>, window: &Window, cx: &mut Context<Workspace>) -> Entity<Self> {
-        let contents = TableLikeContent::default();
-        let table_interaction_state = cx.new(|cx| {
-            TableInteractionState::new(cx).with_custom_scrollbar(ui::Scrollbars::for_settings::<
-                editor::EditorSettingsScrollbarProxy,
-            >())
-        });
-
         cx.new(|cx| {
             let subscription = cx.subscribe(
                 editor,
@@ -177,26 +127,18 @@ impl TabularDataPreviewPane {
                 },
             );
 
-            let row_height = window.pixel_snap(window.line_height());
+            let table = cx.new(|cx| TableView::new(window, cx));
+
             let mut view = TabularDataPreviewPane {
-                focus_handle: cx.focus_handle(),
                 active_editor_state: EditorState {
                     editor: editor.clone(),
                     _subscription: subscription,
                 },
-                table_interaction_state,
-                column_widths: ColumnWidths::new(cx, 1),
+                table,
                 parsing_task: None,
                 is_parsing: false,
                 parse_error: None,
-                filter_sort_task: None,
-                performance_metrics: PerformanceMetrics::default(),
-                list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.))
-                    .with_uniform_item_height(row_height),
-                row_height,
-                settings: TabularDataPreviewSettings::default(),
                 last_parse_end_time: None,
-                engine: TableDataEngine::default(),
             };
 
             view.parse_from_active_editor(false, cx);
@@ -206,54 +148,6 @@ impl TabularDataPreviewPane {
 
     pub(crate) fn editor_state(&self) -> &EditorState {
         &self.active_editor_state
-    }
-    pub(crate) fn apply_sort(&mut self, cx: &mut Context<Self>) {
-        self.apply_filter_sort(cx);
-    }
-
-    pub fn clear_filters(&mut self, col: types::AnyColumn, cx: &mut Context<Self>) {
-        self.engine.clear_filters_for_col(col);
-        self.apply_filter_sort(cx);
-    }
-
-    pub fn toggle_filter(
-        &mut self,
-        col: types::AnyColumn,
-        value: Option<SharedString>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Err(err) = self.engine.toggle_filter(col, value) {
-            log::error!("Failed to toggle filter: {err}");
-            return;
-        }
-        self.apply_filter_sort(cx);
-    }
-
-    /// Spawns a background task to recompute the display-to-data mapping after a filter or sort
-    /// change. Storing the task cancels any previous in-flight computation automatically.
-    pub(crate) fn apply_filter_sort(&mut self, cx: &mut Context<Self>) {
-        let contents = self.engine.contents.clone();
-        let filter_stack = self.engine.filter_stack.clone();
-        let sorting = self.engine.applied_sorting;
-
-        self.filter_sort_task = Some(cx.spawn(async move |this, cx| {
-            let mapping = cx
-                .background_spawn(async move {
-                    DisplayToDataMapping::compute(&contents, &filter_stack, sorting)
-                })
-                .await;
-
-            this.update(cx, |view, cx| {
-                view.engine.set_d2d_mapping(mapping);
-                let visible_rows = view.engine.d2d_mapping().visible_row_count();
-                // Uses the row height measured on the last render. Cheaper than a full
-                // `.measure_all()` pass; exact row heights are re-measured on scrolling.
-                view.list_state
-                    .reset_with_uniform_height(visible_rows, view.row_height);
-                cx.notify();
-            })
-            .ok();
-        }));
     }
 
     pub fn resolve_active_item_as_tabular_data_editor(
@@ -272,8 +166,25 @@ impl TabularDataPreviewPane {
 }
 
 impl Focusable for TabularDataPreviewPane {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.table.read(cx).focus_handle(cx)
+    }
+}
+
+impl Render for TabularDataPreviewPane {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(match &self.parse_error {
+            Some(error) => div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .p_4()
+                .text_color(cx.theme().status().error)
+                .child(error.clone())
+                .into_any_element(),
+            None => self.table.clone().into_any_element(),
+        })
     }
 }
 
@@ -302,65 +213,6 @@ impl Item for TabularDataPreviewPane {
                     .map(|name| format!("Preview {}", name.to_string_lossy()).into())
             })
             .unwrap_or_else(|| SharedString::from("Tabular Data Preview"))
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct PerformanceMetrics {
-    /// Map of timing metrics with their duration and measurement time.
-    pub timings: HashMap<&'static str, (Duration, Instant)>,
-    /// List of display indices that were rendered in the current frame.
-    pub rendered_indices: Vec<usize>,
-}
-impl PerformanceMetrics {
-    pub fn record<F, R>(&mut self, name: &'static str, mut f: F) -> R
-    where
-        F: FnMut() -> R,
-    {
-        let start_time = Instant::now();
-        let ret = f();
-        let duration = start_time.elapsed();
-        self.timings.insert(name, (duration, Instant::now()));
-        ret
-    }
-
-    /// Displays all metrics sorted A-Z in format: `{name}: {took}ms {ago}s ago`
-    pub fn display(&self) -> String {
-        let mut metrics = self.timings.iter().collect::<Vec<_>>();
-        metrics.sort_by_key(|&(name, _)| *name);
-        metrics
-            .iter()
-            .map(|(name, (duration, time))| {
-                let took = duration.as_secs_f32() * 1000.;
-                let ago = time.elapsed().as_secs();
-                format!("{name}: {took:.3}ms {ago}s ago")
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    /// Get timing for a specific metric
-    pub fn get_timing(&self, name: &str) -> Option<Duration> {
-        self.timings.get(name).map(|(duration, _)| *duration)
-    }
-}
-
-/// Holds state of column widths for a table component in the tabular data preview.
-pub(crate) struct ColumnWidths {
-    pub widths: Entity<ResizableColumnsState>,
-}
-
-impl ColumnWidths {
-    pub(crate) fn new(cx: &mut Context<TabularDataPreviewPane>, cols: usize) -> Self {
-        Self {
-            widths: cx.new(|_cx| {
-                ResizableColumnsState::new(
-                    cols,
-                    vec![AbsoluteLength::Pixels(px(150.)); cols],
-                    vec![ui::TableResizeBehavior::Resizable; cols],
-                )
-            }),
-        }
     }
 }
 
@@ -453,8 +305,9 @@ mod tests {
             let Some(preview) = preview else {
                 anyhow::bail!("preview did not open");
             };
-            cx.condition(&preview, |preview, _| {
-                !preview.is_parsing && preview.engine.d2d_mapping().visible_row_count() == 2
+            cx.condition(&preview, |preview, cx| {
+                !preview.is_parsing
+                    && preview.table.read(cx).engine.d2d_mapping().visible_row_count() == 2
             })
             .await;
 
@@ -462,13 +315,14 @@ mod tests {
                 cx.observe(&preview, |preview, cx| {
                     let preview = preview.read(cx);
                     if !preview.is_parsing && preview.parse_error.is_none() {
-                        let mapping = preview.engine.d2d_mapping();
-                        assert_eq!(preview.list_state.item_count(), mapping.visible_row_count());
+                        let table = preview.table.read(cx);
+                        let mapping = table.engine.d2d_mapping();
+                        assert_eq!(table.list_state.item_count(), mapping.visible_row_count());
                         for display_row in 0..mapping.visible_row_count() {
                             assert!(
                                 mapping
                                     .get_data_row(DisplayRow(display_row))
-                                    .and_then(|data_row| preview.engine.contents.get_row(data_row))
+                                    .and_then(|data_row| table.engine.contents.get_row(data_row))
                                     .is_some(),
                                 "display mapping points to a deleted row"
                             );
@@ -489,10 +343,11 @@ mod tests {
                 editor.update_in(cx, |editor, window, cx| {
                     editor.set_text(text, window, cx);
                 });
-                cx.condition(&preview, |preview, _| {
+                cx.condition(&preview, |preview, cx| {
+                    let table = preview.table.read(cx);
                     !preview.is_parsing
-                        && preview.engine.contents.rows.len() == expected_rows
-                        && preview.engine.d2d_mapping().visible_row_count() == expected_rows
+                        && table.engine.contents.rows.len() == expected_rows
+                        && table.engine.d2d_mapping().visible_row_count() == expected_rows
                 })
                 .await;
             }
@@ -541,25 +396,28 @@ mod tests {
             let Some(preview) = preview else {
                 anyhow::bail!("preview did not open");
             };
-            cx.condition(&preview, |preview, _| {
-                !preview.is_parsing && preview.engine.d2d_mapping().visible_row_count() == 2
+            cx.condition(&preview, |preview, cx| {
+                !preview.is_parsing
+                    && preview.table.read(cx).engine.d2d_mapping().visible_row_count() == 2
             })
             .await;
 
             preview.update(cx, |preview, cx| {
-                preview.engine.applied_sorting = Some(AppliedSorting {
-                    col_idx: AnyColumn(0),
-                    direction: SortDirection::Asc,
+                preview.table.update(cx, |table, cx| {
+                    table.engine.applied_sorting = Some(AppliedSorting {
+                        col_idx: AnyColumn(0),
+                        direction: SortDirection::Asc,
+                    });
+                    table.toggle_filter(AnyColumn(0), Some(r#""Ada""#.into()), cx);
                 });
-                preview.toggle_filter(AnyColumn(0), Some(r#""Ada""#.into()), cx);
             });
-            cx.condition(&preview, |preview, _| {
-                preview.engine.d2d_mapping().visible_row_count() == 1
+            cx.condition(&preview, |preview, cx| {
+                preview.table.read(cx).engine.d2d_mapping().visible_row_count() == 1
             })
             .await;
-            preview.read_with(cx, |preview, _| {
+            preview.read_with(cx, |preview, cx| {
                 assert_eq!(
-                    preview.engine.d2d_mapping().get_data_row(DisplayRow(0)),
+                    preview.table.read(cx).engine.d2d_mapping().get_data_row(DisplayRow(0)),
                     Some(DataRow(1))
                 );
             });
@@ -583,15 +441,17 @@ mod tests {
             editor.update_in(cx, |editor, window, cx| {
                 editor.set_text("{\"name\":\"Ada\"}\n{\"name\":\"Grace\"}", window, cx);
             });
-            cx.condition(&preview, |preview, _| {
+            cx.condition(&preview, |preview, cx| {
                 !preview.is_parsing
                     && preview.parse_error.is_none()
-                    && preview.engine.d2d_mapping().get_data_row(DisplayRow(0)) == Some(DataRow(0))
+                    && preview.table.read(cx).engine.d2d_mapping().get_data_row(DisplayRow(0))
+                        == Some(DataRow(0))
             })
             .await;
-            preview.read_with(cx, |preview, _| {
-                assert!(preview.engine.has_active_filters(AnyColumn(0)));
-                assert!(preview.engine.applied_sorting.is_some());
+            preview.read_with(cx, |preview, cx| {
+                let table = preview.table.read(cx);
+                assert!(table.engine.has_active_filters(AnyColumn(0)));
+                assert!(table.engine.applied_sorting.is_some());
             });
 
             editor.update_in(cx, |editor, window, cx| {
@@ -601,15 +461,17 @@ mod tests {
                     cx,
                 );
             });
-            cx.condition(&preview, |preview, _| {
+            cx.condition(&preview, |preview, cx| {
+                let table = preview.table.read(cx);
                 !preview.is_parsing
-                    && preview.engine.contents.number_of_cols == 2
-                    && preview.engine.d2d_mapping().visible_row_count() == 2
+                    && table.engine.contents.number_of_cols == 2
+                    && table.engine.d2d_mapping().visible_row_count() == 2
             })
             .await;
-            preview.read_with(cx, |preview, _| {
-                assert!(!preview.engine.has_active_filters(AnyColumn(0)));
-                assert!(preview.engine.applied_sorting.is_none());
+            preview.read_with(cx, |preview, cx| {
+                let table = preview.table.read(cx);
+                assert!(!table.engine.has_active_filters(AnyColumn(0)));
+                assert!(table.engine.applied_sorting.is_none());
                 assert!(preview.parse_error.is_none());
             });
             Ok(())

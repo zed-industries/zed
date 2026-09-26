@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    cmp::Ordering as CmpOrdering,
     collections::HashMap,
     sync::{
         Arc,
@@ -18,7 +19,7 @@ use ui::{
 };
 
 use crate::{
-    TabularDataPreviewPane,
+    TableView,
     renderer::table_cell::with_copy_on_right_click,
     settings::FilterSortOrder,
     table_data_engine::{
@@ -27,6 +28,16 @@ use crate::{
     },
     types::AnyColumn,
 };
+
+/// Orders filter options human-intuitively by sorting multi-digit numbers by value and placing nulls at the end.
+fn compare_filter_values(left: &Option<SharedString>, right: &Option<SharedString>) -> CmpOrdering {
+    match (left, right) {
+        (Some(left), Some(right)) => util::paths::natural_sort(left, right),
+        (Some(_), None) => CmpOrdering::Less,
+        (None, Some(_)) => CmpOrdering::Greater,
+        (None, None) => CmpOrdering::Equal,
+    }
+}
 
 struct ColumnFilterRow {
     entry: FilterEntry,
@@ -46,7 +57,7 @@ enum ColumnFilterListEntry {
 
 struct ColumnFilterDelegate {
     col: AnyColumn,
-    view: Entity<TabularDataPreviewPane>,
+    view: Entity<TableView>,
     /// Row order frozen at open time (available entries sorted per the
     /// column's `FilterSortOrder`, then entries hidden by other columns'
     /// filters). Kept stable so toggling a value doesn't reshuffle the list
@@ -67,7 +78,7 @@ struct ColumnFilterDelegate {
 impl ColumnFilterDelegate {
     fn new(
         col: AnyColumn,
-        view: Entity<TabularDataPreviewPane>,
+        view: Entity<TableView>,
         sort_order: FilterSortOrder,
         column_filters: Arc<Vec<(FilterEntry, FilterEntryState)>>,
         cx: &mut Context<Picker<Self>>,
@@ -90,14 +101,14 @@ impl ColumnFilterDelegate {
             FilterSortOrder::AlphaThenCount => available.sort_by(|(a, a_app), (b, b_app)| {
                 b_app
                     .cmp(a_app)
-                    .then_with(|| a.content.cmp(&b.content))
+                    .then_with(|| compare_filter_values(&a.content, &b.content))
                     .then_with(|| b.occurred_times().cmp(&a.occurred_times()))
             }),
             FilterSortOrder::CountThenAlpha => available.sort_by(|(a, a_app), (b, b_app)| {
                 b_app
                     .cmp(a_app)
                     .then_with(|| b.occurred_times().cmp(&a.occurred_times()))
-                    .then_with(|| a.content.cmp(&b.content))
+                    .then_with(|| compare_filter_values(&a.content, &b.content))
             }),
         }
 
@@ -519,12 +530,12 @@ impl PickerDelegate for ColumnFilterDelegate {
     }
 }
 
-impl TabularDataPreviewPane {
+impl TableView {
     /// Create header for data, which is orderable with text on the left and sort button on the right
     pub(crate) fn create_header_element_with_sort_button(
         &self,
         header_text: SharedString,
-        cx: &mut Context<'_, TabularDataPreviewPane>,
+        cx: &mut Context<'_, TableView>,
         col_idx: AnyColumn,
     ) -> AnyElement {
         let has_active_filter = self.engine.has_active_filters(col_idx);
@@ -600,11 +611,7 @@ impl TabularDataPreviewPane {
             .into_any_element()
     }
 
-    fn create_sort_button(
-        &self,
-        cx: &mut Context<'_, TabularDataPreviewPane>,
-        col_idx: AnyColumn,
-    ) -> Button {
+    fn create_sort_button(&self, cx: &mut Context<'_, TableView>, col_idx: AnyColumn) -> Button {
         Button::new(
             ElementId::NamedInteger("sort-button".into(), col_idx.get() as u64),
             match self.engine.applied_sorting {
@@ -649,14 +656,14 @@ impl TabularDataPreviewPane {
                 }),
             };
             this.engine.applied_sorting = new_sorting;
-            this.apply_sort(cx);
+            this.apply_filter_sort(cx);
             cx.notify();
         }))
     }
 
     fn create_filter_button(
         &self,
-        cx: &mut Context<'_, TabularDataPreviewPane>,
+        cx: &mut Context<'_, TableView>,
         col: AnyColumn,
     ) -> PopoverMenu<Picker<ColumnFilterDelegate>> {
         let has_active_filters = self.engine.has_active_filters(col);
@@ -709,5 +716,62 @@ impl TabularDataPreviewPane {
                 Some(picker)
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compare_filter_values;
+    use ui::SharedString;
+
+    #[test]
+    fn natural_sort_compares_numeric_runs_by_value() {
+        let values = [
+            Some(SharedString::from("item 10")),
+            Some(SharedString::from("item 2")),
+            Some(SharedString::from("item 1")),
+            Some(SharedString::from("item 02")),
+        ];
+        let mut sorted = values.to_vec();
+        sorted.sort_by(compare_filter_values);
+
+        assert_eq!(
+            sorted,
+            [
+                Some(SharedString::from("item 1")),
+                Some(SharedString::from("item 2")),
+                Some(SharedString::from("item 02")),
+                Some(SharedString::from("item 10")),
+            ]
+        );
+    }
+
+    #[test]
+    fn natural_sort_compares_text_case_insensitively() {
+        let values = [
+            Some(SharedString::from("b2")),
+            Some(SharedString::from("A10")),
+            Some(SharedString::from("a2")),
+            Some(SharedString::from("B1")),
+        ];
+        let mut sorted = values.to_vec();
+        sorted.sort_by(compare_filter_values);
+
+        assert_eq!(
+            sorted,
+            [
+                Some(SharedString::from("a2")),
+                Some(SharedString::from("A10")),
+                Some(SharedString::from("B1")),
+                Some(SharedString::from("b2")),
+            ]
+        );
+    }
+
+    #[test]
+    fn null_filter_values_sort_after_text() {
+        let text = Some(SharedString::from("value"));
+        assert!(compare_filter_values(&text, &None).is_lt());
+        assert!(compare_filter_values(&None, &text).is_gt());
     }
 }

@@ -78,6 +78,8 @@ impl TabularDataPreviewPane {
     ) {
         let editor = self.active_editor_state.editor.clone();
         self.is_parsing = true;
+        self.table
+            .update(cx, |table, cx| table.set_loading(true, cx));
         self.parsing_task = Some(self.parse_in_background(wait_for_debounce, editor, cx));
     }
 
@@ -148,17 +150,13 @@ impl TabularDataPreviewPane {
             let parse_end_time: Instant = Instant::now();
             log::debug!("Parsed data in {}ms", parse_duration.as_millis());
             view.update(cx, move |view, cx| {
-                view.performance_metrics
-                    .timings
-                    .insert("Parsing", (parse_duration, Instant::now()));
-
                 view.last_parse_end_time = Some(parse_end_time);
                 view.is_parsing = false;
                 let parsed_contents = match parsed_contents {
                     Ok(contents) => contents,
                     Err(error) => {
                         view.parse_error = Some(format!("{error:#}").into());
-                        view.filter_sort_task = None;
+                        view.table.update(cx, |table, cx| table.set_loading(false, cx));
                         cx.notify();
                         return;
                     }
@@ -166,11 +164,14 @@ impl TabularDataPreviewPane {
 
                 log::debug!("Parsed {} rows", parsed_contents.rows.len());
                 view.parse_error = None;
-                view.engine.set_contents(parsed_contents);
-                view.list_state
-                    .reset_with_uniform_height(0, view.row_height);
-                view.sync_column_widths(cx);
-                view.apply_filter_sort(cx);
+                view.table.update(cx, |table, cx| {
+                    table
+                        .performance_metrics
+                        .timings
+                        .insert("Parsing", (parse_duration, Instant::now()));
+                    // `set_contents` recomputes filters/widths/mapping and clears the loading state.
+                    table.set_contents(parsed_contents, cx);
+                });
                 cx.notify();
             })
         })
