@@ -644,6 +644,7 @@ pub struct ConversationView {
     pub(crate) thread_id: ThreadId,
     pub(crate) root_session_id: Option<acp::SessionId>,
     server_state: ServerState,
+    pending_selections: Vec<AgentContextSelection>,
     focus_handle: FocusHandle,
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
@@ -926,6 +927,7 @@ impl ConversationView {
                 window,
                 cx,
             ),
+            pending_selections: Vec::new(),
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             auth_task: None,
@@ -1234,6 +1236,16 @@ impl ConversationView {
                             window,
                             cx,
                         );
+
+                        if this.has_pending_selections() {
+                            current.update(cx, |thread, cx| {
+                                thread.message_editor.update(cx, |editor, cx| {
+                                    for selection in std::mem::take(&mut this.pending_selections) {
+                                        editor.insert_selections(selection, window, cx);
+                                    }
+                                });
+                            });
+                        }
 
                         if this.focus_handle.contains_focused(window, cx) {
                             current
@@ -3237,10 +3249,14 @@ impl ConversationView {
         }
     }
 
+    pub(crate) fn has_pending_selections(&self) -> bool {
+        !self.pending_selections.is_empty()
+    }
+
     /// Inserts the selected text into the message editor or the message being
-    /// edited, if any.
+    /// edited, if any. Queues the selection until an editor is available.
     pub(crate) fn insert_selection(
-        &self,
+        &mut self,
         selection: AgentContextSelection,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -3251,6 +3267,9 @@ impl ConversationView {
                     editor.insert_selections(selection, window, cx);
                 })
             });
+        } else {
+            self.pending_selections.push(selection);
+            cx.notify();
         }
     }
 
@@ -5125,6 +5144,81 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_pending_selections_survive_connection_retry(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new().with_supports_load_session(true);
+        let (server, fail) = FlakyAgentServer::new(connection);
+        let (conversation_view, cx) = setup_conversation_view(server, cx).await;
+
+        conversation_view.update_in(cx, |view, window, cx| {
+            assert!(matches!(view.server_state, ServerState::LoadError { .. }));
+            assert!(!view.has_pending_selections());
+            view.insert_selection(
+                AgentContextSelection::Terminal(vec!["first selection".into()]),
+                window,
+                cx,
+            );
+            view.retry_connection(window, cx);
+            assert!(matches!(view.server_state, ServerState::Loading { .. }));
+            view.insert_selection(
+                AgentContextSelection::Terminal(vec!["second selection".into()]),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        conversation_view.read_with(cx, |view, _cx| {
+            assert!(matches!(view.server_state, ServerState::LoadError { .. }));
+            assert!(view.active_thread().is_none());
+            assert!(view.has_pending_selections());
+        });
+
+        fail.store(false, std::sync::atomic::Ordering::SeqCst);
+        conversation_view.update_in(cx, |view, window, cx| view.retry_connection(window, cx));
+        cx.run_until_parked();
+
+        conversation_view.read_with(cx, |view, cx| {
+            assert!(!view.has_pending_selections());
+            let active = view.active_thread().expect("expected a thread after retry");
+            assert!(active.read(cx).thread.read(cx).entries().is_empty());
+        });
+        let editor = message_editor(&conversation_view, cx);
+        let (contents, _) = editor
+            .update(cx, |editor, cx| editor.contents(true, cx))
+            .await
+            .expect("pending selections must resolve after retry");
+        let [
+            acp::ContentBlock::Resource(first),
+            acp::ContentBlock::Text(separator),
+            acp::ContentBlock::Resource(second),
+        ] = contents.as_slice()
+        else {
+            panic!("expected exactly two resolved selections, got {contents:?}");
+        };
+        assert_eq!(separator.text, " ");
+        for (selection, expected) in [(first, "first selection"), (second, "second selection")] {
+            let acp::EmbeddedResourceResource::TextResourceContents(selection) =
+                &selection.resource
+            else {
+                panic!("expected selected text");
+            };
+            assert_eq!(selection.text, expected);
+        }
+
+        editor.update_in(cx, |editor, window, cx| editor.clear(window, cx));
+        conversation_view.update_in(cx, |view, window, cx| view.retry_connection(window, cx));
+        cx.run_until_parked();
+
+        let (contents, _) = message_editor(&conversation_view, cx)
+            .update(cx, |editor, cx| editor.contents(true, cx))
+            .await
+            .expect("message contents must resolve after another retry");
+        assert!(contents.is_empty(), "delivered selections must not replay");
+    }
+
+    #[gpui::test]
     async fn test_auth_required_on_initial_connect(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -5165,6 +5259,26 @@ pub(crate) mod tests {
                 view.active_thread().is_none(),
                 "active_thread() should be None when unauthenticated without a session"
             );
+        });
+
+        let selection_text = "selected before authentication";
+        conversation_view.update_in(cx, |view, window, cx| {
+            assert!(!view.has_pending_selections());
+            let buffer = view.project.update(cx, |project, cx| {
+                project.create_local_buffer(selection_text, None, false, cx)
+            });
+            let range = buffer.read(cx).anchor_before(0)
+                ..buffer.read(cx).anchor_after(selection_text.len());
+            view.insert_selection(
+                AgentContextSelection::Editor(vec![(buffer, range)]),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        conversation_view.read_with(cx, |view, _cx| {
+            assert!(view.active_thread().is_none());
+            assert!(view.has_pending_selections());
         });
 
         // Authenticate using the real authenticate flow on ConnectionView.
@@ -5210,7 +5324,22 @@ pub(crate) mod tests {
                 active.read(cx).thread_error.is_none(),
                 "The new thread should have no errors"
             );
+            assert!(!view.has_pending_selections());
+            assert!(active.read(cx).thread.read(cx).entries().is_empty());
         });
+
+        let (contents, _) = message_editor(&conversation_view, cx)
+            .update(cx, |editor, cx| editor.contents(true, cx))
+            .await
+            .expect("pending selection must resolve after authentication");
+        let [acp::ContentBlock::Resource(selection)] = contents.as_slice() else {
+            panic!("expected one resolved selection, got {contents:?}");
+        };
+        let acp::EmbeddedResourceResource::TextResourceContents(selection) = &selection.resource
+        else {
+            panic!("expected selected text");
+        };
+        assert_eq!(selection.text, selection_text);
 
         conversation_view.update_in(cx, |view, window, cx| view.logout(window, cx));
         cx.run_until_parked();
