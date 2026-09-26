@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+
+import argparse
+from pathlib import Path
+
+from doc_links.evaluation import evaluate_live, load_cases
+from doc_links.io import write_json_atomic
+from doc_links.jev import Client, api_key_from_environment
+from doc_links.policy import Thresholds
+
+DEFAULT_CASES = Path("script/doc_links/evals/pr_64481_review.json")
+
+
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Check Jev behavior against reviewed link decisions."
+    )
+    parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
+    parser.add_argument("--docs-dir", type=Path, default=Path("docs/src"))
+    parser.add_argument("--model", default="jev-1.13.0")
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=Path("target/doc-link-audit/evaluation-cache"),
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Write per-case probabilities and selections as JSON.",
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    arguments = parse_arguments()
+    cases = load_cases(arguments.cases)
+    client = Client(api_key_from_environment(), arguments.cache_dir)
+    run = evaluate_live(
+        client,
+        arguments.cases,
+        arguments.docs_dir,
+        arguments.model,
+        Thresholds(),
+    )
+    if arguments.output:
+        write_json_atomic(arguments.output, run.to_dict())
+    if run.failures:
+        for failure in run.failures:
+            print(f"FAIL {failure.identifier}: {failure.message}")
+        print(f"{len(run.failures)} of {len(cases)} reviewed cases failed.")
+        return 1
+    print(f"Passed {len(cases)} reviewed regression cases.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

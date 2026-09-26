@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>Documentation link review</title>
+    <style>
+      /*__STYLE__*/
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="title-row">
+        <h1>Documentation link review</h1>
+        <span id="counter"></span>
+        <div class="progress"><div id="progress"></div></div>
+        <span id="progress-label"></span>
+        <button id="export">Export labels</button>
+      </div>
+      <div class="controls">
+        <label
+          >Queue
+          <select id="queue">
+            <option value="all">All</option>
+            <option value="automatic">Automatic</option>
+            <option value="strong_review">Strong reason</option>
+            <option value="near_review">Near threshold</option>
+            <option value="superseded">Superseded</option>
+          </select></label
+        >
+        <label
+          >Status
+          <select id="status">
+            <option value="unlabeled">Unlabeled</option>
+            <option value="all">All</option>
+            <option value="pass">Pass</option>
+            <option value="fail">Fail</option>
+            <option value="defer">Defer</option>
+          </select></label
+        >
+        <input id="search" type="search" placeholder="Path or item ID" />
+        <span class="spacer"></span>
+        <span class="shortcuts">←/→ navigate · 1 pass · 2 fail · D defer · U undo</span>
+        <button id="previous">Previous</button>
+        <button id="next">Next</button>
+      </div>
+    </header>
+    <main id="main"><div class="empty">Loading…</div></main>
+    <script>
+      window.REVIEW_DATA = null /*__DATA__*/;
+    </script>
+    <script>
+      /*__SCRIPT__*/
+    </script>
+  </body>
+</html>

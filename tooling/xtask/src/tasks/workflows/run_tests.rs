@@ -439,6 +439,15 @@ pub(crate) fn run_ts_query_ls(context: RunContext) -> Step<Run> {
 }
 
 fn check_style() -> NamedJob {
+    fn doc_link_tests() -> Step<Run> {
+        named::bash(
+            "PYTHONPATH=script python3 -m unittest discover -s script/doc_links/tests -p 'test_*.py'\n\
+             python3 -m py_compile script/audit-doc-links script/review-doc-links script/evaluate-doc-links script/doc_links/*.py\n\
+             node script/doc_links/tests/review_ui_test.mjs\n\
+             pnpm dlx prettier@3.5.0 script/doc_links/ui script/doc_links/evals script/doc_links/tests/review_ui_test.mjs --check",
+        )
+    }
+
     fn check_for_typos() -> Step<Use> {
         named::uses(
             "crate-ci",
@@ -456,6 +465,7 @@ fn check_style() -> NamedJob {
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::setup_pnpm())
             .add_step(steps::prettier())
+            .add_step(doc_link_tests())
             .add_step(steps::cargo_fmt())
             .add_step(steps::script("./script/check-todos"))
             .add_step(steps::script("./script/check-keymaps"))

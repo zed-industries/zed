@@ -1,0 +1,203 @@
+{
+  "schema_version": 2,
+  "cases": [
+    {
+      "id": "link-gateway-directly",
+      "outcome": "link",
+      "source_path": "ai/overview.md",
+      "target_path": "ai/use-a-gateway.md",
+      "anchor_text": "gateways",
+      "reason": "The anchor should name only the gateway concept."
+    },
+    {
+      "id": "reject-multi-concept-gateway-anchor",
+      "outcome": "out_of_scope",
+      "source_path": "ai/overview.md",
+      "target_path": "ai/use-a-gateway.md",
+      "anchor_text": "models, API access, subscriptions, gateways",
+      "reason": "One anchor must not combine four model-access concepts."
+    },
+    {
+      "id": "reject-circular-edit-prediction-link",
+      "outcome": "no_link",
+      "source_path": "ai/edit-prediction.md",
+      "target_path": "ai/use-a-local-model.md",
+      "anchor_text": "local or self-hosted edit prediction models",
+      "reason": "The target section only sends the reader back to Edit Prediction."
+    },
+    {
+      "id": "link-extension-installation",
+      "outcome": "link",
+      "source_path": "languages.md",
+      "target_path": "extensions/installing-extensions.md",
+      "anchor_text": "3rd party extensions",
+      "reason": "Readers need the extension installation guide."
+    },
+    {
+      "id": "reject-extension-authoring-guide",
+      "outcome": "no_link",
+      "source_path": "languages.md",
+      "target_path": "extensions/languages.md",
+      "anchor_text": "3rd party extensions",
+      "reason": "The authoring guide serves a different audience."
+    },
+    {
+      "id": "reject-settings-ui-mismatch",
+      "outcome": "no_link",
+      "source_path": "getting-started.md",
+      "target_path": "reference/all-settings.md",
+      "anchor_text": "in Settings",
+      "reason": "The phrase names the Settings UI rather than the setting reference."
+    },
+    {
+      "id": "link-debugger-directly",
+      "outcome": "link",
+      "source_path": "languages/cpp.md",
+      "target_path": "debugger.md",
+      "anchor_text": "debug",
+      "reason": "The concise verb directly names the debugger guide."
+    },
+    {
+      "id": "reject-local-see-below-anchor",
+      "outcome": "no_link",
+      "source_path": "languages/cpp.md",
+      "target_path": "debugger.md",
+      "anchor_text": "examples of debug configurations",
+      "context_contains": "See below for examples of debug configurations",
+      "reason": "The phrase refers to examples later on the same page."
+    },
+    {
+      "id": "link-command-palette-directly",
+      "outcome": "link",
+      "source_path": "migrate/vs-code.md",
+      "target_path": "command-palette.md",
+      "anchor_text": "Command Palette",
+      "reason": "The direct Command Palette page contains the details."
+    },
+    {
+      "id": "reject-forwarding-command-palette-page",
+      "outcome": "no_link",
+      "source_path": "migrate/vs-code.md",
+      "target_path": "finding-navigating.md",
+      "anchor_text": "Command Palette",
+      "reason": "The target forwards to the direct Command Palette page."
+    },
+    {
+      "id": "instructions-table-out-of-scope",
+      "outcome": "out_of_scope",
+      "source_path": "ai/instructions.md",
+      "target_path": "ai/zed-agent.md",
+      "anchor_text": "project instructions by Zed Agent",
+      "reason": "Table-cell links remain outside automatic anchor placement."
+    },
+    {
+      "id": "agents-table-out-of-scope",
+      "outcome": "out_of_scope",
+      "source_path": "ai/agents.md",
+      "target_path": "ai/agent-panel.md",
+      "anchor_text": "Agent Panel",
+      "reason": "Parallel table cells remain outside automatic anchor placement."
+    },
+    {
+      "id": "link-first-semantic-token-mention",
+      "outcome": "link",
+      "source_path": "reference/all-settings.md",
+      "target_path": "semantic-tokens.md",
+      "anchor_text": "semantic tokens",
+      "context_contains": "Description: Controls how semantic tokens",
+      "reason": "The first descriptive mention is the canonical placement."
+    },
+    {
+      "id": "link-zed-agent-profiles",
+      "outcome": "link",
+      "source_path": "ai/terminal-threads.md",
+      "target_path": "ai/agent-profiles.md",
+      "anchor_text": "Zed Agent profiles",
+      "reason": "The anchor must keep the product proper noun together."
+    },
+    {
+      "id": "reject-split-zed-agent-profiles",
+      "outcome": "no_link",
+      "source_path": "ai/terminal-threads.md",
+      "target_path": "ai/agent-profiles.md",
+      "anchor_text": "Agent profiles",
+      "reason": "The partial phrase splits the product proper noun."
+    },
+    {
+      "id": "external-agent-table-out-of-scope",
+      "outcome": "out_of_scope",
+      "source_path": "ai/external-agents.md",
+      "target_path": "ai/agent-profiles.md",
+      "anchor_text": "Agent profiles",
+      "reason": "Table-cell links remain outside automatic anchor placement."
+    },
+    {
+      "id": "link-zed-repl",
+      "outcome": "link",
+      "source_path": "languages/r.md",
+      "target_path": "repl.md",
+      "anchor_text": "Zed REPL",
+      "reason": "The anchor should use the product name."
+    },
+    {
+      "id": "reject-awkward-repl-anchor",
+      "outcome": "no_link",
+      "source_path": "languages/r.md",
+      "target_path": "repl.md",
+      "anchor_text": "REPL with R",
+      "reason": "The phrase is not the product name."
+    },
+    {
+      "id": "link-toolchain-system",
+      "outcome": "link",
+      "source_path": "migrate/pycharm.md",
+      "target_path": "toolchains.md",
+      "anchor_text": "toolchain system",
+      "reason": "The concise noun phrase names the destination."
+    },
+    {
+      "id": "reject-awkward-toolchain-anchor",
+      "outcome": "no_link",
+      "source_path": "migrate/pycharm.md",
+      "target_path": "toolchains.md",
+      "anchor_text": "virtual environments through its toolchain",
+      "reason": "The phrase mixes the subject with the destination."
+    },
+    {
+      "id": "link-first-command-palette-mention",
+      "outcome": "link",
+      "source_path": "key-bindings.md",
+      "target_path": "command-palette.md",
+      "anchor_text": "command palette",
+      "context_contains": "zed::OpenKeymap} action from the command palette",
+      "reason": "The first non-possessive mention is the natural placement."
+    },
+    {
+      "id": "reject-possessive-command-palette-mention",
+      "outcome": "no_link",
+      "source_path": "key-bindings.md",
+      "target_path": "command-palette.md",
+      "anchor_text": "command palette",
+      "context_contains": "command palette's left bottom corner",
+      "reason": "The possessive mention is not the natural placement."
+    },
+    {
+      "id": "link-first-key-bindings-mention",
+      "outcome": "link",
+      "source_path": "vim.md",
+      "target_path": "key-bindings.md",
+      "anchor_text": "key bindings",
+      "context_contains": "Zed's key bindings are evaluated",
+      "reason": "The first mention in the paragraph is the natural placement."
+    },
+    {
+      "id": "reject-later-key-bindings-mention",
+      "outcome": "no_link",
+      "source_path": "vim.md",
+      "target_path": "key-bindings.md",
+      "anchor_text": "key bindings",
+      "context_contains": "If you add key bindings to the `\"Workspace\"` context",
+      "reason": "A later repeated mention should not be linked instead."
+    }
+  ]
+}
