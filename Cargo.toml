@@ -552,13 +552,17 @@ async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.33"
 async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
-aws-config = { version = "1.8.10", features = ["behavior-version-latest"] }
+aws-config = { version = "1.8.10", default-features = false, features = [
+    "behavior-version-latest",
+    "credentials-process",
+    "rt-tokio",
+    "sso",
+] }
 aws-credential-types = { version = "1.2.8", features = [
     "hardcoded-credentials",
 ] }
 aws-sdk-bedrockruntime = { version = "1.112.0", default-features = false, features = [
     "behavior-version-latest",
-    "default-https-client",
     "rt-tokio",
 ] }
 aws-sigv4 = { version = "1.4.0", features = ["http1"] }
@@ -922,7 +926,7 @@ wasmtime = { version = "48", default-features = false, features = [
 ] }
 wasm-bindgen = "0.2.120"
 wasm-bindgen-futures = "0.4"
-wasmtime-wasi = "48"
+wasmtime-wasi = { version = "48", default-features = false, features = ["p2"] }
 wax = "0.7"
 web-time = "1.1.0"
 webpki-roots = "1.0.8"
