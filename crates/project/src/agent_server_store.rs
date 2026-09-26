@@ -1,5 +1,6 @@
 use std::{
     any::Any,
+    io,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
     time::Duration,
@@ -1410,17 +1411,12 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
             env.extend(extra_env);
             env.extend(settings_env);
 
-            let mut command_args = vec![executable.to_string_lossy().into_owned()];
-            command_args.extend(args);
+            let mut command_args = args;
             command_args.extend(extra_args);
-
-            let command = AgentServerCommand {
-                path: node_binary,
-                args: command_args,
-                env: Some(env),
-            };
-
-            Ok(command)
+            smol::unblock(move || {
+                node_or_native_command(executable, node_binary, command_args, env)
+            })
+            .await
         })
     }
 
@@ -1430,6 +1426,85 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+}
+
+fn node_or_native_command(
+    executable: PathBuf,
+    node_binary: PathBuf,
+    mut args: Vec<String>,
+    env: HashMap<String, String>,
+) -> Result<AgentServerCommand> {
+    // Postinstall can replace a JavaScript launcher with a native binary.
+    // Keep using the managed Node runtime for scripts, including on Windows
+    // and for scripts without a shebang.
+    let native = match std::fs::metadata(&executable) {
+        // These files can be large, so read only the header.
+        Ok(metadata) if metadata.is_file() => {
+            std::fs::File::open(&executable).and_then(has_native_executable_header)
+        }
+        // Let Node resolve directory entry points and omitted extensions (e.g. `.js`).
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+    .with_context(|| format!("checking {}", executable.display()))?;
+    let path = if native {
+        executable
+    } else {
+        args.insert(0, executable.to_string_lossy().into_owned());
+        node_binary
+    };
+    Ok(AgentServerCommand {
+        path,
+        args,
+        env: Some(env),
+    })
+}
+
+// ELF (Linux) and Mach-O (macOS) magics. PE (Windows) is checked separately in
+// `has_native_executable_header`.
+// Mach-O has 32/64-bit thin and universal (fat) headers; CIGAM is byte-swapped MAGIC.
+// Thin: https://github.com/apple-oss-distributions/cctools/blob/main/include/mach-o/loader.h
+// Fat: https://github.com/apple-oss-distributions/cctools/blob/main/include/mach-o/fat.h
+const NATIVE_EXECUTABLE_HEADERS: &[[u8; 4]] = &[
+    *b"\x7fELF",          // ELFMAG
+    *b"\xfe\xed\xfa\xce", // MH_MAGIC
+    *b"\xce\xfa\xed\xfe", // MH_CIGAM
+    *b"\xfe\xed\xfa\xcf", // MH_MAGIC_64
+    *b"\xcf\xfa\xed\xfe", // MH_CIGAM_64
+    *b"\xca\xfe\xba\xbe", // FAT_MAGIC
+    *b"\xbe\xba\xfe\xca", // FAT_CIGAM
+    *b"\xca\xfe\xba\xbf", // FAT_MAGIC_64
+    *b"\xbf\xba\xfe\xca", // FAT_CIGAM_64
+];
+
+fn has_native_executable_header(mut reader: impl io::Read + io::Seek) -> io::Result<bool> {
+    let Some(magic) = read_four_bytes(&mut reader)? else {
+        return Ok(false);
+    };
+    if !magic.starts_with(b"MZ") {
+        return Ok(NATIVE_EXECUTABLE_HEADERS.contains(&magic));
+    }
+
+    // PE's initial "MZ" can also begin valid JavaScript (`MZ = 1;`).
+    // Confirm the "PE\0\0" signature at the offset stored at 0x3c (`e_lfanew`).
+    reader.seek(io::SeekFrom::Start(0x3c))?;
+    let Some(signature_offset) = read_four_bytes(&mut reader)? else {
+        return Ok(false);
+    };
+    let signature_offset = u32::from_le_bytes(signature_offset);
+    reader.seek(io::SeekFrom::Start(u64::from(signature_offset)))?;
+    Ok(read_four_bytes(&mut reader)? == Some(*b"PE\0\0"))
+}
+
+// Returns `None` for incomplete headers so that they keep launching through Node.
+fn read_four_bytes(reader: &mut impl io::Read) -> io::Result<Option<[u8; 4]>> {
+    let mut bytes = [0; 4];
+    match reader.read_exact(&mut bytes) {
+        Ok(()) => Ok(Some(bytes)),
+        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => Ok(None),
+        Err(error) => Err(error),
     }
 }
 
@@ -1690,6 +1765,95 @@ mod tests {
     use http_client::{AsyncBody, FakeHttpClient, Response};
     use node_runtime::NodeRuntime;
     use settings::Settings as _;
+
+    #[test]
+    fn test_native_executable_headers() -> Result<()> {
+        let pe_header = |signature: &[u8]| {
+            let mut header = b"MZ".to_vec();
+            header.resize(0x3c, 0);
+            header.extend_from_slice(&64_u32.to_le_bytes());
+            header.extend_from_slice(signature);
+            header
+        };
+        let valid_pe = pe_header(b"PE\0\0");
+        let wrong_pe_signature = pe_header(b"nope");
+        let truncated_pe_signature = pe_header(b"PE");
+
+        let native_headers: &[&[u8]] = &[
+            b"\x7fELF",
+            b"\xfe\xed\xfa\xce",
+            b"\xce\xfa\xed\xfe",
+            b"\xfe\xed\xfa\xcf",
+            b"\xcf\xfa\xed\xfe",
+            b"\xca\xfe\xba\xbe",
+            b"\xbe\xba\xfe\xca",
+            b"\xca\xfe\xba\xbf",
+            b"\xbf\xba\xfe\xca",
+            &valid_pe,
+        ];
+        let other_headers: &[&[u8]] = &[
+            b"#!/usr/bin/env node\nconsole.log('hi');",
+            b"console.log('hi');",
+            b"MZ = 1; console.log(MZ);",
+            b"MZ = 1; // A JavaScript program long enough to reach the PE header offset.\n",
+            &wrong_pe_signature,
+            &truncated_pe_signature,
+            b"\x7fEL",
+            b"MZ",
+            b"",
+        ];
+        for (headers, native) in [(native_headers, true), (other_headers, false)] {
+            for header in headers {
+                assert_eq!(
+                    has_native_executable_header(io::Cursor::new(header))?,
+                    native,
+                    "{header:?}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_node_or_native_command() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let script = directory.path().join("script");
+        std::fs::write(&script, "#!/usr/bin/env node\n")?;
+        let native_executable = directory.path().join("native");
+        std::fs::write(&native_executable, b"\x7fELF")?;
+        let entry_point_directory = directory.path().join("entry-point");
+        std::fs::create_dir(&entry_point_directory)?;
+        let missing = directory.path().join("missing");
+        let node_binary = directory.path().join("node");
+        let args = vec!["stdio".to_string()];
+        let env = HashMap::from_iter([("AGENT_OPTION".to_string(), "value".to_string())]);
+
+        for (executable, native) in [
+            (script, false),
+            // Node resolves these to `entry-point/index.js` and `missing.js`.
+            (entry_point_directory, false),
+            (missing, false),
+            (native_executable, true),
+            // A real binary in the host platform's format.
+            (std::env::current_exe()?, true),
+        ] {
+            let (expected_path, expected_args) = if native {
+                (executable.clone(), args.clone())
+            } else {
+                let executable_arg = executable.to_string_lossy().into_owned();
+                (
+                    node_binary.clone(),
+                    [vec![executable_arg], args.clone()].concat(),
+                )
+            };
+            let command =
+                node_or_native_command(executable, node_binary.clone(), args.clone(), env.clone())?;
+            assert_eq!(command.path, expected_path);
+            assert_eq!(command.args, expected_args);
+            assert_eq!(command.env, Some(env.clone()));
+        }
+        Ok(())
+    }
 
     #[cfg(feature = "test-support")]
     const TEST_ARCHIVE_URL: &str = "https://example.test/agent";
