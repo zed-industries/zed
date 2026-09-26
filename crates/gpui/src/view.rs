@@ -1625,6 +1625,75 @@ mod tests {
         }
     }
 
+    /// An inline component takes its identity, and so its `use_state`, from how many
+    /// components of its type its scope has drawn. A failed `Window::transact` attempt must
+    /// not use up an occurrence, or the retry would draw the component with fresh state.
+    #[gpui::test]
+    fn rolled_back_prepaint_keeps_inline_component_state(cx: &mut TestAppContext) {
+        struct Probe(Rc<std::cell::RefCell<Vec<crate::EntityId>>>);
+        impl PartialEq for Probe {
+            fn eq(&self, _: &Self) -> bool {
+                true
+            }
+        }
+        impl Component for Probe {
+            fn render(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+                let state = window.use_state(cx, |_, _| 0usize);
+                self.0.borrow_mut().push(state.entity_id());
+                div().size(px(10.))
+            }
+        }
+        struct Host {
+            states: Rc<std::cell::RefCell<Vec<crate::EntityId>>>,
+            fail_first: bool,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let states = self.states.clone();
+                let fail_first = self.fail_first;
+                canvas(
+                    move |bounds, window, cx| {
+                        let draw = |window: &mut Window, cx: &mut App| {
+                            let mut element = Probe(states.clone()).into_any_element();
+                            element.layout_as_root(bounds.size.into(), window, cx);
+                            element.prepaint_at(bounds.origin, window, cx);
+                            element
+                        };
+                        if fail_first {
+                            let attempt: Result<(), ()> = window.transact(|window| {
+                                draw(window, cx);
+                                Err(())
+                            });
+                            assert!(attempt.is_err());
+                        }
+                        states.borrow_mut().clear();
+                        draw(window, cx)
+                    },
+                    |_, mut element, window, cx| element.paint(window, cx),
+                )
+                .size_full()
+            }
+        }
+        let states = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let window = cx.open_window(size(px(100.), px(100.)), |_, _| Host {
+            states: states.clone(),
+            fail_first: false,
+        });
+        cx.run_until_parked();
+        let first = states.borrow().clone();
+        assert_eq!(first.len(), 1);
+        for fail_first in [true, false] {
+            window
+                .update(cx, |host, _, cx| {
+                    host.fail_first = fail_first;
+                    cx.notify();
+                })
+                .expect("window open");
+            cx.run_until_parked();
+            assert_eq!(*states.borrow(), first, "fail_first: {fail_first}");
+        }
+    }
+
     use crate::{
         App, Component, Context, Entity, FocusHandle, Render, StyleRefinement, TestAppContext,
         Window, canvas, div, prelude::*, px, rgb, size,

@@ -12,22 +12,23 @@ use std::{any::TypeId, ops::ControlFlow, ops::Range};
 
 /// A point in the frame being drawn that `ViewTree::rollback` returns to: the output of the
 /// scope being drawn (`None` outside every node, where nothing is recorded), with the
-/// children it has mounted, and how many nodes the frame has mounted and renders it has
-/// noted so far.
-#[derive(Clone, Copy)]
+/// children it has mounted and the inline components it has counted, and how many nodes
+/// the frame has mounted and renders it has noted so far.
 pub(crate) struct OutputCheckpoint {
     output: Option<OutputPosition>,
     mounted: usize,
     rendered_phases: usize,
 }
 
-#[derive(Clone, Copy)]
 struct OutputPosition {
     node_id: ViewNodeId,
     phase: MetadataPhase,
     items: usize,
     dispatch: usize,
     next_children: usize,
+    /// Restored so a retry's inline components take the occurrences, and so the state,
+    /// they had before the attempt.
+    inline_views: Option<Box<FxHashMap<&'static str, u64>>>,
 }
 
 /// Which frame's roots a query walks: the frame drawn last, which events are dispatched
@@ -419,6 +420,7 @@ impl ViewTree {
                     items: node.output.phase(phase).items.len(),
                     dispatch: node.output.dispatch.len(),
                     next_children: node.next_children.len(),
+                    inline_views: node.output.inline_views.clone(),
                 })
             });
         OutputCheckpoint {
@@ -443,6 +445,7 @@ impl ViewTree {
                 .items
                 .truncate(position.items);
             node.output.dispatch.truncate(position.dispatch);
+            node.output.inline_views = position.inline_views;
             node.next_children.truncate(position.next_children);
         }
         let discarded = self.rendered_phases.split_off(checkpoint.rendered_phases);
