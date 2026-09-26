@@ -1,6 +1,7 @@
 use gpui::{
     Action as _, Anchor, Animation, AnimationExt, App, Context, HoverListenerMode,
-    KeybindingKeystroke, Render, ScrollHandle, Subscription, Task, Window, anchored, deferred,
+    KeybindingKeystroke, KeystrokeEvent, Render, ScrollHandle, Subscription, Task, Window,
+    anchored, deferred,
 };
 use settings::{Settings, SettingsStore};
 use std::{rc::Rc, time::Duration};
@@ -12,7 +13,7 @@ use vim_mode_setting::{HelixModeSetting, VimModeSetting};
 use workspace::{HideStatusItem, StatusBarSettings, StatusItemView, item::ItemHandle};
 
 use crate::{
-    bindings_for_pending_input, map_pending_keystrokes,
+    ShowPendingBindings, bindings_for_pending_input, map_pending_keystrokes,
     pending_bindings::{PendingBindingRow, PendingBindings, prepare_pending_bindings},
     which_key_settings::WhichKeySettings,
 };
@@ -34,6 +35,7 @@ struct PopoverState {
     indicator_pointer_over: bool,
     pointer_over: bool,
     visible: bool,
+    opened_by_keyboard: bool,
     hide_task: Option<Task<()>>,
 }
 
@@ -63,7 +65,7 @@ impl PendingKeystrokesIndicator {
                 if this.refresh_render_state(window, cx) {
                     cx.notify();
                 }
-                this.update_pointer_over_state(window, cx);
+                this.update_popover_state(window, cx);
             });
 
         let mut enabled = Self::enabled(cx);
@@ -81,12 +83,13 @@ impl PendingKeystrokesIndicator {
                 if !new_popover_enabled {
                     this.popover.pointer_over = false;
                     this.popover.visible = false;
+                    this.popover.opened_by_keyboard = false;
                     this.popover.hide_task.take();
                 }
                 if this.refresh_render_state(window, cx) {
                     cx.notify();
                 }
-                this.update_pointer_over_state(window, cx);
+                this.update_popover_state(window, cx);
             });
 
         Self {
@@ -131,9 +134,15 @@ impl PendingKeystrokesIndicator {
         if pending_keys_changed {
             self.popover_scroll_handle.set_offset(Default::default());
         }
-        // Pausing or resuming the timer also notifies observers.
-        // Only a change in pending keys should close the popover early.
-        if self.popover.visible && !self.popover.is_pointer_over() && pending_keys_changed {
+        // Pausing or resuming the timeout also notifies observers, so close a hover-opened
+        // popover early only when the pending keys change. A keyboard-opened popover stays open
+        // while any input is pending, even if an unmatched key resolves one chord and starts
+        // another.
+        if self.popover.visible
+            && !self.popover.opened_by_keyboard
+            && !self.popover.is_pointer_over()
+            && pending_keys_changed
+        {
             self.popover = PopoverState::default();
         }
 
@@ -169,7 +178,7 @@ impl PendingKeystrokesIndicator {
         cx: &mut Context<Self>,
     ) {
         self.popover.indicator_pointer_over = pointer_over;
-        self.update_pointer_over_state(window, cx);
+        self.update_popover_state(window, cx);
     }
 
     fn set_popover_pointer_over(
@@ -179,15 +188,15 @@ impl PendingKeystrokesIndicator {
         cx: &mut Context<Self>,
     ) {
         self.popover.pointer_over = pointer_over;
-        self.update_pointer_over_state(window, cx);
+        self.update_popover_state(window, cx);
     }
 
-    fn update_pointer_over_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn update_popover_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.render_state.is_none() {
             return;
         }
 
-        if self.popover.is_pointer_over() {
+        if self.popover.opened_by_keyboard || self.popover.is_pointer_over() {
             self.popover.hide_task.take();
             let was_visible = self.popover.visible;
             self.popover.visible = Self::popover_enabled(cx);
@@ -215,6 +224,34 @@ impl PendingKeystrokesIndicator {
             window.set_pending_input_timeout_paused(&cx.entity(), false, cx);
         }
     }
+
+    fn handle_intercepted_keystroke(
+        &mut self,
+        event: &KeystrokeEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !window.has_pending_keystrokes() || !Self::enabled(cx) || !Self::popover_enabled(cx) {
+            return;
+        }
+
+        // Only the highest-precedence binding counts, so user overrides can disable the shortcut.
+        let (bindings, _) = cx
+            .key_bindings()
+            .borrow()
+            .bindings_for_input(std::slice::from_ref(&event.keystroke), &event.context_stack);
+        if !bindings
+            .first()
+            .is_some_and(|binding| binding.action().partial_eq(&ShowPendingBindings))
+        {
+            return;
+        }
+
+        cx.stop_propagation();
+        self.popover.opened_by_keyboard = true;
+        self.update_popover_state(window, cx);
+        cx.notify();
+    }
 }
 
 impl Render for PendingKeystrokesIndicator {
@@ -222,6 +259,20 @@ impl Render for PendingKeystrokesIndicator {
         let Some(render_state) = self.render_state().cloned() else {
             return div().hidden().into_any_element();
         };
+
+        if Self::popover_enabled(cx) {
+            let window_handle = window.window_handle();
+            let listener = cx.listener(move |this, event: &KeystrokeEvent, window, cx| {
+                if window.window_handle() == window_handle {
+                    this.handle_intercepted_keystroke(event, window, cx);
+                }
+            });
+            // Inactive workspaces in the same window keep their indicators alive. Storing the
+            // subscription in element state ensures only the rendered indicator intercepts input.
+            window.use_keyed_state("pending-keystrokes-interceptor", cx, |_, cx| {
+                cx.intercept_keystrokes(listener)
+            });
+        }
 
         let button = ButtonLike::new("pending-keystrokes-indicator")
             .on_click(|_, window, cx| {
@@ -356,8 +407,8 @@ mod tests {
     use super::*;
     use command_palette::humanize_action_name;
     use gpui::{
-        Entity, FocusHandle, KeyBinding, Modifiers, TestAppContext, VisualTestContext, actions,
-        point,
+        Entity, FocusHandle, KeyBinding, Keystroke, Modifiers, TestAppContext, VisualTestContext,
+        actions, point,
     };
 
     actions!(
@@ -398,6 +449,15 @@ mod tests {
                 Some("PendingKeystrokesIndicatorTest"),
             ),
         ]
+    }
+
+    fn binding(keystrokes: &str, action: impl gpui::Action) -> KeyBinding {
+        KeyBinding::new(keystrokes, action, Some("PendingKeystrokesIndicatorTest"))
+    }
+
+    /// Binds each keystroke sequence to the action the test view counts.
+    fn counted_bindings<const N: usize>(keystrokes: [&str; N]) -> [KeyBinding; N] {
+        keystrokes.map(|keystrokes| binding(keystrokes, zed_actions::dev::OpenKeyContextView))
     }
 
     struct TestView {
@@ -461,6 +521,11 @@ mod tests {
             settings::init(cx);
             WhichKeySettings::register(cx);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
+            cx.bind_keys([KeyBinding::new(
+                "alt-/",
+                ShowPendingBindings,
+                Some("PendingKeystrokesIndicatorTest"),
+            )]);
             cx.bind_keys(bindings);
         });
 
@@ -512,6 +577,40 @@ mod tests {
         move_pointer_outside(cx);
     }
 
+    fn popover_rendered(cx: &mut VisualTestContext) -> bool {
+        cx.debug_bounds("PENDING_KEYSTROKES_POPOVER").is_some()
+    }
+
+    /// Advances the clock well past the default 1s pending input timeout.
+    fn advance_past_pending_timeout(cx: &mut VisualTestContext) {
+        cx.executor().advance_clock(Duration::from_secs(5));
+        cx.run_until_parked();
+    }
+
+    fn window_pending_keystrokes(cx: &mut VisualTestContext) -> Vec<Keystroke> {
+        cx.update(|window, _| {
+            window
+                .pending_input_keystrokes()
+                .map(<[Keystroke]>::to_vec)
+                .unwrap_or_default()
+        })
+    }
+
+    fn window_timeout_paused(cx: &mut VisualTestContext) -> Option<bool> {
+        cx.update(|window, _| Some(window.pending_input()?.timeout()?.is_paused()))
+    }
+
+    fn set_user_settings(cx: &mut VisualTestContext, settings: &str) {
+        cx.update(|_, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store
+                    .set_user_settings(settings, cx)
+                    .expect("valid test settings");
+            });
+        });
+        cx.run_until_parked();
+    }
+
     impl Render for TestView {
         fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             div()
@@ -547,6 +646,11 @@ mod tests {
         assert!(indicator.read_with(cx, |indicator, _| indicator.render_state().is_none()));
         assert!(cx.debug_bounds("PENDING_KEYSTROKES_INDICATOR").is_none());
 
+        // The help shortcut does nothing when no input is pending.
+        cx.simulate_keystrokes("alt-/");
+        cx.run_until_parked();
+        assert!(!popover_rendered(cx));
+
         // "x" starts no chord in this keymap, so ordinary input must keep the indicator hidden.
         cx.simulate_keystrokes("x");
         cx.run_until_parked();
@@ -554,6 +658,349 @@ mod tests {
         cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
         assert!(indicator.read_with(cx, |indicator, _| indicator.render_state().is_none()));
         assert!(cx.debug_bounds("PENDING_KEYSTROKES_INDICATOR").is_none());
+    }
+
+    #[gpui::test]
+    fn test_disabled_shortcut_lets_longer_chord_complete(cx: &mut TestAppContext) {
+        // Only `ctrl-b alt-/` is counted, so a count of 1 means the chord completed.
+        let (_, action_count, cx) = setup_indicator_test(
+            cx,
+            counted_bindings(["ctrl-b alt-/"])
+                .into_iter()
+                .chain([binding("alt-/", gpui::NoAction)]),
+        );
+        cx.simulate_keystrokes("ctrl-b alt-/");
+        cx.run_until_parked();
+        assert_eq!(action_count.get(), 1);
+        assert!(!popover_rendered(cx));
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+    }
+
+    #[gpui::test]
+    fn test_keyboard_popover_cancels_hover_dismissal(cx: &mut TestAppContext) {
+        let (indicator, action_count, cx) =
+            setup_indicator_test(cx, counted_bindings(["ctrl-b", "ctrl-b h"]));
+        start_popover_dismissal(cx);
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+        cx.simulate_keystrokes("alt-/");
+        advance_past_pending_timeout(cx);
+        assert!(popover_rendered(cx));
+        assert_eq!(action_count.get(), 0);
+        indicator.read_with(cx, |indicator, _| {
+            assert!(indicator.popover.opened_by_keyboard);
+            assert!(indicator.popover.hide_task.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn test_keyboard_popover_preserves_and_completes_pending_input(cx: &mut TestAppContext) {
+        // `ctrl-b alt-/` is bound too, but while `ctrl-b` is pending the help shortcut wins.
+        let (indicator, action_count, cx) = setup_indicator_test(
+            cx,
+            counted_bindings(["ctrl-b", "ctrl-b h", "ctrl-b h j", "ctrl-b alt-/"]),
+        );
+        let focus_handle = cx.update(|window, cx| window.focused(cx));
+        cx.simulate_keystrokes("ctrl-b");
+        let pending_keystrokes = window_pending_keystrokes(cx);
+
+        cx.simulate_keystrokes("alt-/");
+        cx.run_until_parked();
+        assert!(popover_rendered(cx));
+        assert_eq!(cx.update(|window, cx| window.focused(cx)), focus_handle);
+        assert_eq!(window_pending_keystrokes(cx), pending_keystrokes);
+        assert_eq!(action_count.get(), 0);
+
+        // Moving the pointer away or pressing the shortcut again must neither dismiss the
+        // popover nor let the timeout fire.
+        move_pointer_over_popover(cx);
+        move_pointer_outside(cx);
+        cx.simulate_keystrokes("alt-/");
+        advance_past_pending_timeout(cx);
+        assert!(popover_rendered(cx));
+        assert_eq!(action_count.get(), 0);
+
+        // The popover follows the chord as it advances, keeping the timeout paused.
+        cx.simulate_keystrokes("h");
+        cx.run_until_parked();
+        let snapshot = indicator
+            .read_with(cx, |indicator, _| indicator_snapshot(indicator))
+            .expect("pending input snapshot");
+        assert_eq!(snapshot.keystrokes, ["ctrl-b", "h"]);
+        assert!(snapshot.popover_visible);
+        assert!(snapshot.timeout_paused);
+        assert_eq!(
+            snapshot.bindings,
+            vec![(
+                vec!["j".to_string()],
+                humanize_action_name(zed_actions::dev::OpenKeyContextView.name()),
+            )]
+        );
+
+        advance_past_pending_timeout(cx);
+        assert_eq!(action_count.get(), 0);
+
+        // Completing the chord runs its action and closes the popover.
+        cx.simulate_keystrokes("j");
+        cx.run_until_parked();
+        assert_eq!(action_count.get(), 1);
+        assert!(!popover_rendered(cx));
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+
+        // The next chord starts with the popover closed.
+        cx.simulate_keystrokes("ctrl-b");
+        cx.run_until_parked();
+        assert!(!popover_rendered(cx));
+        let snapshot = indicator
+            .read_with(cx, |indicator, _| indicator_snapshot(indicator))
+            .expect("new pending input snapshot");
+        assert!(!snapshot.timeout_paused);
+    }
+
+    #[gpui::test]
+    fn test_keyboard_popover_stays_open_when_pending_chord_restarts(cx: &mut TestAppContext) {
+        let (indicator, action_count, cx) =
+            setup_indicator_test(cx, counted_bindings(["ctrl-b", "ctrl-b h"]));
+
+        // The second `ctrl-b` doesn't continue the chord, so the first `ctrl-b` runs its action
+        // and a new chord starts. The keyboard-opened popover stays open across the restart.
+        cx.simulate_keystrokes("ctrl-b alt-/ ctrl-b");
+        cx.run_until_parked();
+        assert_eq!(action_count.get(), 1);
+        assert!(popover_rendered(cx));
+        assert_eq!(
+            window_pending_keystrokes(cx)
+                .iter()
+                .map(Keystroke::unparse)
+                .collect::<Vec<_>>(),
+            ["ctrl-b"]
+        );
+        assert_eq!(window_timeout_paused(cx), Some(true));
+        assert!(indicator.read_with(cx, |indicator, _| indicator.popover.opened_by_keyboard));
+
+        advance_past_pending_timeout(cx);
+        assert_eq!(action_count.get(), 1);
+        assert!(popover_rendered(cx));
+    }
+
+    #[gpui::test]
+    fn test_keyboard_popover_respects_overrides_and_unbinding(cx: &mut TestAppContext) {
+        // Each override is bound after the default `alt-/`, so it takes precedence.
+        for (override_binding, expected_action_count) in [
+            (binding("alt-/", zed_actions::dev::OpenKeyContextView), 1),
+            (binding("alt-/", gpui::NoAction), 0),
+            (
+                binding("alt-/", gpui::Unbind(ShowPendingBindings.name().into())),
+                0,
+            ),
+        ] {
+            cx.update(|cx| cx.clear_key_bindings());
+            let (indicator, action_count, cx) =
+                setup_indicator_test(cx, timed_bindings().into_iter().chain([override_binding]));
+
+            cx.simulate_keystrokes("ctrl-b alt-/");
+            cx.run_until_parked();
+            assert!(!indicator.read_with(cx, |indicator, _| indicator.popover.visible));
+            assert!(!popover_rendered(cx));
+            assert_eq!(action_count.get(), expected_action_count);
+        }
+    }
+
+    #[gpui::test]
+    fn test_keyboard_popover_shortcut_ignores_inactive_context_bindings(cx: &mut TestAppContext) {
+        // The `x` binding in an inactive context must not shadow the active help shortcut.
+        let (indicator, _, cx) = setup_indicator_test(
+            cx,
+            timed_bindings().into_iter().chain([
+                binding("alt-/", gpui::NoAction),
+                binding("x", ShowPendingBindings),
+                KeyBinding::new("x", ShorterBinding, Some("InactiveContext")),
+            ]),
+        );
+
+        cx.simulate_keystrokes("ctrl-b x");
+        cx.run_until_parked();
+        assert!(popover_rendered(cx));
+        let snapshot = indicator
+            .read_with(cx, |indicator, _| indicator_snapshot(indicator))
+            .expect("pending input snapshot");
+        assert_eq!(snapshot.keystrokes, ["ctrl-b"]);
+        assert!(snapshot.timeout_paused);
+    }
+
+    #[gpui::test]
+    fn test_keyboard_popover_can_use_a_standalone_modifier_shortcut(cx: &mut TestAppContext) {
+        let (indicator, action_count, cx) = setup_indicator_test(
+            cx,
+            counted_bindings(["ctrl-b", "ctrl-b h"])
+                .into_iter()
+                .chain([binding("shift", ShowPendingBindings)]),
+        );
+        cx.simulate_keystrokes("ctrl-b");
+        let pending_keystrokes = window_pending_keystrokes(cx);
+
+        // Standalone modifier bindings match on release, not on press.
+        cx.simulate_modifiers_change(Modifiers::shift());
+        cx.run_until_parked();
+        assert!(!popover_rendered(cx));
+
+        cx.simulate_modifiers_change(Modifiers::none());
+        cx.run_until_parked();
+        assert!(popover_rendered(cx));
+        assert_eq!(window_pending_keystrokes(cx), pending_keystrokes);
+        assert_eq!(window_timeout_paused(cx), Some(true));
+        assert!(indicator.read_with(cx, |indicator, _| indicator.popover.opened_by_keyboard));
+        assert_eq!(action_count.get(), 0);
+
+        advance_past_pending_timeout(cx);
+        assert!(popover_rendered(cx));
+        assert_eq!(action_count.get(), 0);
+    }
+
+    #[gpui::test]
+    fn test_multistroke_shortcut_binding_does_not_open_popover(cx: &mut TestAppContext) {
+        let (indicator, _, cx) =
+            setup_indicator_test(cx, [binding("ctrl-b h", ShowPendingBindings)]);
+
+        cx.simulate_keystrokes("ctrl-b");
+        cx.run_until_parked();
+        assert!(!indicator.read_with(cx, |indicator, _| indicator.popover.visible));
+
+        // Completing the binding dispatches the action normally, which doesn't open the popover.
+        cx.simulate_keystrokes("h");
+        cx.run_until_parked();
+        assert!(!popover_rendered(cx));
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+    }
+
+    #[gpui::test]
+    fn test_keyboard_popover_is_scoped_to_its_window(cx: &mut TestAppContext) {
+        // Both indicators need pending input to render and register an interceptor.
+        let (first_indicator, _, first_cx) = setup_indicator_test(cx, timed_bindings());
+        first_cx.simulate_keystrokes("ctrl-b");
+        first_cx.run_until_parked();
+        let (second_indicator, _, cx) = setup_indicator_test(cx, timed_bindings());
+
+        cx.simulate_keystrokes("ctrl-b alt-/");
+        cx.run_until_parked();
+        assert!(second_indicator.read_with(cx, |indicator, _| indicator.popover.visible));
+        first_indicator.read_with(cx, |indicator, _| {
+            assert!(indicator.render_state().is_some());
+            assert!(!indicator.popover.visible);
+            assert!(!indicator.popover.opened_by_keyboard);
+        });
+    }
+
+    #[gpui::test]
+    fn test_keyboard_popover_does_not_open_unrendered_indicator(cx: &mut TestAppContext) {
+        // Like an indicator in an inactive workspace, the replacement indicator observes the
+        // same window's pending input without being rendered.
+        let (initial_indicator, _, cx) = setup_indicator_test(cx, timed_bindings());
+        let replacement_indicator =
+            cx.update(|window, cx| cx.new(|cx| PendingKeystrokesIndicator::new(window, cx)));
+
+        cx.simulate_keystrokes("ctrl-b alt-/");
+        cx.run_until_parked();
+        assert!(initial_indicator.read_with(cx, |indicator, _| indicator.popover.visible));
+        assert!(!replacement_indicator.read_with(cx, |indicator, _| indicator.popover.visible));
+
+        // Once the replacement is the rendered indicator, only it responds to the shortcut.
+        cx.simulate_keystrokes("h ctrl-b");
+        cx.update(|window, cx| {
+            window
+                .root::<TestView>()
+                .expect("test view type")
+                .expect("window root")
+                .update(cx, |view, cx| {
+                    view.indicator = replacement_indicator.clone();
+                    cx.notify();
+                });
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("alt-/");
+        cx.run_until_parked();
+        assert!(replacement_indicator.read_with(cx, |indicator, _| indicator.popover.visible));
+        assert!(!initial_indicator.read_with(cx, |indicator, _| indicator.popover.visible));
+    }
+
+    #[gpui::test]
+    fn test_keyboard_popover_pauses_new_timeout(cx: &mut TestAppContext) {
+        // `ctrl-b` alone isn't bound, so pending `ctrl-b` has no timeout. Typing `h` matches
+        // `ctrl-b h` while `ctrl-b h j` is still possible, starting a timeout that the open
+        // popover must pause. GPUI keeps an already paused timeout paused as the chord advances,
+        // so this is the only case that relies on the popover.
+        let (indicator, _, cx) = setup_indicator_test(
+            cx,
+            [
+                binding("ctrl-b h", ShorterBinding),
+                binding("ctrl-b h j", LongerBinding),
+            ],
+        );
+
+        cx.simulate_keystrokes("ctrl-b alt-/");
+        cx.update(|window, _| {
+            let pending_input = window.pending_input().expect("pending chord");
+            assert!(pending_input.timeout().is_none());
+        });
+
+        cx.simulate_keystrokes("h");
+        cx.run_until_parked();
+        advance_past_pending_timeout(cx);
+        let snapshot = indicator
+            .read_with(cx, |indicator, _| indicator_snapshot(indicator))
+            .expect("pending input snapshot");
+        assert_eq!(snapshot.keystrokes, ["ctrl-b", "h"]);
+        assert!(snapshot.popover_visible);
+        assert!(snapshot.timeout_paused);
+    }
+
+    #[gpui::test]
+    fn test_disabling_keyboard_popover_resumes_timeout(cx: &mut TestAppContext) {
+        // Hiding the indicator and enabling which-key both disable the popover.
+        for disabling_settings in [
+            r#"{"status_bar":{"pending_keystrokes_indicator":false}}"#,
+            r#"{"which_key":{"enabled":true}}"#,
+        ] {
+            let (indicator, _, cx) = setup_indicator_test(cx, timed_bindings());
+            cx.simulate_keystrokes("ctrl-b");
+            cx.executor().advance_clock(Duration::from_millis(600));
+            cx.run_until_parked();
+            cx.simulate_keystrokes("alt-/");
+            advance_past_pending_timeout(cx);
+            assert!(indicator.read_with(cx, |indicator, _| indicator.popover.visible));
+
+            // The timeout resumes with the time that was left when the popover opened.
+            set_user_settings(cx, disabling_settings);
+            assert!(!indicator.read_with(cx, |indicator, _| indicator.popover.visible));
+            cx.update(|window, cx| {
+                let timeout = window
+                    .pending_input()
+                    .and_then(|pending_input| pending_input.timeout())
+                    .expect("resumed timeout");
+                assert!(!timeout.is_paused());
+                assert_eq!(timeout.remaining(cx), Duration::from_millis(400));
+            });
+
+            advance_past_pending_timeout(cx);
+            cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+
+            // The shortcut does nothing while the popover is disabled.
+            cx.simulate_keystrokes("ctrl-b alt-/");
+            cx.run_until_parked();
+            assert!(!popover_rendered(cx));
+
+            // Re-enabling the popover mid-chord makes the shortcut work again.
+            cx.simulate_keystrokes("ctrl-b");
+            set_user_settings(cx, "{}");
+            cx.simulate_keystrokes("alt-/");
+            cx.run_until_parked();
+            assert!(popover_rendered(cx));
+            let snapshot = indicator
+                .read_with(cx, |indicator, _| indicator_snapshot(indicator))
+                .expect("pending input snapshot");
+            assert!(snapshot.timeout_paused);
+        }
     }
 
     #[gpui::test]
