@@ -225,6 +225,13 @@ pub struct CommitDiff {
     pub is_shallow_boundary: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GitFileRevision {
+    Head,
+    Index,
+    Blob(Oid),
+}
+
 #[derive(Debug)]
 pub struct CommitFile {
     pub path: RepoPath,
@@ -7189,6 +7196,39 @@ impl Repository {
                 }
             }
         })
+    }
+
+    pub fn load_file_bytes(
+        &mut self,
+        revision: GitFileRevision,
+        repo_path: RepoPath,
+        cx: &App,
+    ) -> Task<Result<Option<Vec<u8>>>> {
+        let rx = self.send_job("load_file_bytes", None, move |state, _| async move {
+            match state {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    let revision = match revision {
+                        GitFileRevision::Head => format!("HEAD:{}", repo_path.as_unix_str()),
+                        GitFileRevision::Index => format!(":{}", repo_path.as_unix_str()),
+                        GitFileRevision::Blob(oid) => {
+                            return backend.load_blob_content(oid).await.map(Some);
+                        }
+                    };
+                    Ok(backend
+                        .load_revisions(vec![revision])
+                        .await?
+                        .into_iter()
+                        .next()
+                        .flatten())
+                }
+                // The collab protocol only carries blob contents as text, so binary blobs
+                // cannot be fetched from a remote host yet.
+                RepositoryState::Remote(_) => {
+                    anyhow::bail!("Image diffs are not yet supported in remote projects")
+                }
+            }
+        });
+        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
 
     pub fn load_commit_diff(

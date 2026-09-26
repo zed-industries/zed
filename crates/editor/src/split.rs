@@ -38,7 +38,7 @@ use crate::{
     Autoscroll, DefaultDiffHunkRenderer, DiffHunkRenderer, Editor, EditorEvent, EditorSettings,
     ToggleSoftWrap,
     actions::{DisableBreakpoint, EditLogBreakpoint, EnableBreakpoint, ToggleBreakpoint},
-    display_map::Companion,
+    display_map::{Companion, CustomBlockId, RenderBlock},
 };
 use zed_actions::{OpenSettingsAt, assistant::InlineAssist};
 
@@ -544,6 +544,8 @@ pub struct SplittableEditor {
     /// mode, regardless of the current diff view style setting.
     too_narrow_for_split: bool,
     last_width: Option<Pixels>,
+    /// Renderers for the left side's balancing blocks, keyed by the right side's custom block.
+    lhs_block_renderers: HashMap<CustomBlockId, RenderBlock>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -699,7 +701,60 @@ impl SplittableEditor {
             searched_side: None,
             too_narrow_for_split: false,
             last_width: None,
+            lhs_block_renderers: HashMap::default(),
             _subscriptions: subscriptions,
+        }
+    }
+
+    /// Renders `render` on the left side in place of the blank block that balances the right
+    /// side's custom block `rhs_block_id`, including after the editor is split again later.
+    pub fn set_lhs_block_renderer(
+        &mut self,
+        rhs_block_id: CustomBlockId,
+        render: RenderBlock,
+        cx: &mut Context<Self>,
+    ) {
+        self.lhs_block_renderers.insert(rhs_block_id, render);
+        self.apply_lhs_block_renderers(cx);
+    }
+
+    pub fn remove_lhs_block_renderers(
+        &mut self,
+        rhs_block_ids: impl IntoIterator<Item = CustomBlockId>,
+    ) {
+        for block_id in rhs_block_ids {
+            self.lhs_block_renderers.remove(&block_id);
+        }
+    }
+
+    fn apply_lhs_block_renderers(&self, cx: &mut Context<Self>) {
+        let Some(lhs) = &self.lhs else {
+            return;
+        };
+        if self.lhs_block_renderers.is_empty() {
+            return;
+        }
+        let rhs_display_map_id = self.rhs_editor.read(cx).display_map.entity_id();
+        let renderers = {
+            let display_map = lhs.editor.read(cx).display_map.read(cx);
+            let Some(companion) = display_map.companion() else {
+                return;
+            };
+            let balancing_blocks = companion
+                .read(cx)
+                .custom_block_to_balancing_block(rhs_display_map_id)
+                .borrow();
+            self.lhs_block_renderers
+                .iter()
+                .filter_map(|(rhs_block_id, render)| {
+                    Some((*balancing_blocks.get(rhs_block_id)?, render.clone()))
+                })
+                .collect::<HashMap<_, _>>()
+        };
+        if !renderers.is_empty() {
+            lhs.editor.update(cx, |editor, cx| {
+                editor.replace_blocks(renderers, None, cx);
+            });
         }
     }
 
@@ -787,11 +842,14 @@ impl SplittableEditor {
                     split,
                 } => {
                     if this.lhs.is_some() {
-                        let translated =
+                        let mut translated =
                             translate_lhs_selections_to_rhs(selections_by_buffer, this, cx);
+                        let split = *split;
+                        this.rhs_editor.update(cx, |rhs_editor, cx| {
+                            rhs_editor.open_buffers_with_addons(&mut translated, split, window, cx);
+                        });
                         if !translated.is_empty() {
                             let workspace = this.workspace.clone();
-                            let split = *split;
                             Editor::open_buffers_in_workspace(
                                 workspace, translated, split, window, cx,
                             );
@@ -860,6 +918,7 @@ impl SplittableEditor {
         rhs_display_map.update(cx, |dm, cx| {
             dm.set_companion(Some((lhs_display_map, companion.clone())), cx);
         });
+        self.apply_lhs_block_renderers(cx);
 
         let lhs = self.lhs.as_ref().unwrap();
 
@@ -2336,7 +2395,8 @@ mod tests {
     use workspace::{Item, MultiWorkspace};
 
     use crate::display_map::{
-        BlockPlacement, BlockProperties, BlockStyle, Crease, FoldPlaceholder,
+        Block, BlockPlacement, BlockProperties, BlockStyle, Crease, DisplayRow, FoldPlaceholder,
+        RenderBlock,
     };
     use crate::inlays::Inlay;
     use crate::test::{editor_content_with_blocks_and_width, set_block_content_for_tests};
@@ -4743,6 +4803,87 @@ mod tests {
             .unindent(),
             &mut cx,
         );
+    }
+
+    #[gpui::test]
+    async fn test_lhs_block_renderer_survives_resplit(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
+        let (buffer, diff) = buffer_with_diff("one\n", "one\ntwo\n", &mut cx);
+        editor.update(cx, |editor, cx| {
+            editor.update_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let rhs_block_id = editor.update(cx, |editor, cx| {
+            editor.rhs_editor.update(cx, |rhs_editor, cx| {
+                let anchor = rhs_editor
+                    .buffer()
+                    .read(cx)
+                    .snapshot(cx)
+                    .anchor_before(Point::new(0, 0));
+                rhs_editor.insert_blocks(
+                    [BlockProperties {
+                        placement: BlockPlacement::Below(anchor),
+                        height: Some(2),
+                        style: BlockStyle::Sticky,
+                        render: Arc::new(|_| div().into_any()),
+                        priority: 0,
+                    }],
+                    None,
+                    cx,
+                )[0]
+            })
+        });
+        let lhs_render: RenderBlock = Arc::new(|_| div().into_any());
+        editor.update(cx, |editor, cx| {
+            editor.set_lhs_block_renderer(rhs_block_id, lhs_render.clone(), cx);
+        });
+
+        let lhs_renders_custom_block = |cx: &mut VisualTestContext| {
+            editor.update(cx, |editor, cx| {
+                let rhs_display_map_id = editor.rhs_editor.read(cx).display_map.entity_id();
+                let lhs_editor = editor.lhs.as_ref().unwrap().editor.clone();
+                lhs_editor.update(cx, |lhs_editor, cx| {
+                    let display_map = lhs_editor.display_map.clone();
+                    let lhs_block_id = *display_map
+                        .read(cx)
+                        .companion()
+                        .unwrap()
+                        .read(cx)
+                        .custom_block_to_balancing_block(rhs_display_map_id)
+                        .borrow()
+                        .get(&rhs_block_id)
+                        .unwrap();
+                    let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
+                    snapshot
+                        .blocks_in_range(DisplayRow(0)..snapshot.max_point().row() + 1)
+                        .any(|(_, block)| match block {
+                            Block::Custom(custom) if custom.id == lhs_block_id => {
+                                Arc::ptr_eq(&custom.renderer(), &lhs_render)
+                            }
+                            _ => false,
+                        })
+                })
+            })
+        };
+
+        assert!(lhs_renders_custom_block(&mut cx));
+
+        editor.update_in(cx, |editor, window, cx| editor.unsplit(window, cx));
+        cx.run_until_parked();
+        editor.update_in(cx, |editor, window, cx| editor.split(window, cx));
+        cx.run_until_parked();
+
+        assert!(lhs_renders_custom_block(&mut cx));
     }
 
     #[gpui::test]

@@ -2,22 +2,35 @@ use crate::{
     conflict_view,
     git_panel::{GitPanel, GitStatusEntry},
     git_panel_settings::GitPanelSettings,
+    image_diff_view::{
+        ImageDiff, ImageDiffFile, ImageDiffPane, ImageDiffPaneView, image_diff_inputs,
+    },
 };
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
 use editor::{
-    EditorEvent, EditorSettings, SelectionEffects, SplittableEditor, actions::GoToHunk,
-    multibuffer_context_lines, scroll::Autoscroll,
+    EditorEvent, EditorSettings, SelectionEffects, SplittableEditor,
+    actions::GoToHunk,
+    display_map::{
+        BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
+    },
+    multibuffer_context_lines,
+    scroll::Autoscroll,
 };
 use futures::{FutureExt as _, StreamExt as _, stream};
 use futures_lite::future::yield_now;
-use git::{repository::RepoPath, status::FileStatus};
+use git::{
+    repository::RepoPath,
+    status::{FileStatus, TreeDiffStatus},
+};
 use gpui::{
     App, AppContext as _, AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable, Render,
     SharedString, Subscription, Task, WeakEntity,
 };
-use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt};
+use language::{
+    Anchor, Buffer, BufferId, Capability, OffsetRangeExt, Point, ReplicaId, TextBuffer,
+};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     ConflictSet, Project, ProjectPath,
@@ -25,6 +38,7 @@ use project::{
         Repository,
         diff_buffer_list::{self, BranchDiffEvent, DiffBase},
     },
+    image_store::is_image_file,
 };
 use settings::{GitPanelGroupBy, GitPanelSortBy, Settings, SettingsStore};
 use std::{collections::BTreeMap, sync::Arc};
@@ -41,6 +55,8 @@ use ztracing::instrument;
 /// last, leaving a large diff on a spinner. Throughput flattens past this point.
 const MAX_CONCURRENT_BUFFER_LOADS: usize = 16;
 
+const IMAGE_DIFF_BLOCK_LINES: u32 = 16;
+
 struct BufferSubscriptions {
     _diff: Entity<BufferDiff>,
     display_buffer: Entity<Buffer>,
@@ -49,11 +65,75 @@ struct BufferSubscriptions {
     _conflict_set_subscription: Option<Subscription>,
 }
 
+struct ImageEntry {
+    buffer: Entity<Buffer>,
+    project_path: ProjectPath,
+    image_diff: Entity<ImageDiff>,
+    block_id: Option<CustomBlockId>,
+    is_deleted: bool,
+}
+
+/// Image sections are backed by empty placeholder buffers, so opening one as text would show a
+/// blank editor. This opens the image file itself instead.
+struct ImageDiffAddon {
+    diff_multibuffer: WeakEntity<DiffMultibuffer>,
+    workspace: WeakEntity<Workspace>,
+}
+
+impl editor::Addon for ImageDiffAddon {
+    fn open_buffer(
+        &self,
+        buffer: &Entity<Buffer>,
+        split: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let buffer_id = buffer.read(cx).remote_id();
+        let Some(entry) = self
+            .diff_multibuffer
+            .upgrade()
+            .and_then(|diff_multibuffer| {
+                diff_multibuffer
+                    .read(cx)
+                    .image_entries
+                    .values()
+                    .find(|entry| entry.buffer.read(cx).remote_id() == buffer_id)
+                    .map(|entry| (entry.project_path.clone(), entry.is_deleted))
+            })
+        else {
+            return false;
+        };
+        let (project_path, is_deleted) = entry;
+        if is_deleted {
+            return true;
+        }
+        let workspace = self.workspace.clone();
+        // Activating a new pane item while this editor is being updated would re-enter it.
+        window.defer(cx, move |window, cx| {
+            workspace
+                .update(cx, |workspace, cx| {
+                    let pane = split.then(|| workspace.adjacent_pane(window, cx).downgrade());
+                    workspace
+                        .open_path(project_path, pane, true, window, cx)
+                        .detach_and_log_err(cx);
+                })
+                .log_err();
+        });
+        true
+    }
+
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 pub struct DiffMultibuffer {
+    project: Entity<Project>,
     multibuffer: Entity<MultiBuffer>,
     branch_diff: Entity<diff_buffer_list::DiffBufferList>,
     editor: Entity<SplittableEditor>,
     buffer_subscriptions: HashMap<RepoPath, BufferSubscriptions>,
+    image_entries: HashMap<RepoPath, ImageEntry>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
@@ -80,6 +160,7 @@ impl DiffMultibuffer {
             multibuffer.set_all_diff_hunks_expanded(cx);
             multibuffer
         });
+        let diff_multibuffer = cx.weak_entity();
         let editor = cx.new(|cx| {
             let mut diff_display_editor = SplittableEditor::new(
                 EditorSettings::get_global(cx).diff_view_style,
@@ -92,6 +173,10 @@ impl DiffMultibuffer {
             configure_editor(&mut diff_display_editor, cx);
             diff_display_editor.rhs_editor().update(cx, |editor, cx| {
                 editor.set_show_diff_review_button(true, cx);
+                editor.register_addon(ImageDiffAddon {
+                    diff_multibuffer: diff_multibuffer.clone(),
+                    workspace: workspace.downgrade(),
+                });
             });
             diff_display_editor
         });
@@ -162,12 +247,14 @@ impl DiffMultibuffer {
         });
 
         Self {
+            project,
             workspace: workspace.downgrade(),
             branch_diff,
             focus_handle,
             editor,
             multibuffer,
             buffer_subscriptions: Default::default(),
+            image_entries: Default::default(),
             pending_scroll: None,
             review_comment_count: 0,
             empty_label: empty_label.into(),
@@ -594,6 +681,225 @@ impl DiffMultibuffer {
         needs_fold.then_some(buffer_id)
     }
 
+    #[cfg(test)]
+    pub(crate) fn image_diff_sides(&self, cx: &App) -> Vec<(String, String, String)> {
+        let mut sides = self
+            .image_entries
+            .iter()
+            .map(|(repo_path, entry)| {
+                let (old, new) = entry.image_diff.read(cx).describe_sides();
+                (repo_path.as_unix_str().to_string(), old, new)
+            })
+            .collect::<Vec<_>>();
+        sides.sort();
+        sides
+    }
+
+    #[cfg(test)]
+    pub(crate) fn image_reload_counts(&self, cx: &App) -> Vec<(String, usize)> {
+        let mut counts = self
+            .image_entries
+            .iter()
+            .map(|(repo_path, entry)| {
+                (
+                    repo_path.as_unix_str().to_string(),
+                    entry.image_diff.read(cx).reload_count(),
+                )
+            })
+            .collect::<Vec<_>>();
+        counts.sort();
+        counts
+    }
+
+    #[cfg(test)]
+    pub(crate) fn image_can_open(&self, cx: &App) -> Vec<(String, bool)> {
+        let mut can_open = self
+            .image_entries
+            .iter()
+            .map(|(repo_path, entry)| {
+                (
+                    repo_path.as_unix_str().to_string(),
+                    entry
+                        .buffer
+                        .read(cx)
+                        .file()
+                        .is_some_and(|file| file.can_open()),
+                )
+            })
+            .collect::<Vec<_>>();
+        can_open.sort();
+        can_open
+    }
+
+    #[cfg(test)]
+    pub(crate) fn rhs_custom_block_count(&self, cx: &mut App) -> usize {
+        let snapshot = self
+            .editor
+            .read(cx)
+            .rhs_editor()
+            .clone()
+            .update(cx, |editor, cx| editor.display_snapshot(cx));
+        let end_row = editor::display_map::DisplayRow(snapshot.max_point().row().0 + 1);
+        snapshot
+            .blocks_in_range(editor::display_map::DisplayRow(0)..end_row)
+            .filter(|(_, block)| matches!(block, editor::display_map::Block::Custom(_)))
+            .count()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn image_block_count(&self) -> usize {
+        self.image_entries
+            .values()
+            .filter(|entry| entry.block_id.is_some())
+            .count()
+    }
+
+    fn register_image(
+        &mut self,
+        repo_path: RepoPath,
+        path_key: PathKey,
+        project_path: ProjectPath,
+        file_status: FileStatus,
+        branch_diff: Option<TreeDiffStatus>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repository) = self.branch_diff.read(cx).repo().cloned() else {
+            return;
+        };
+        let (old_input, new_input) =
+            image_diff_inputs(self.branch_diff.read(cx).diff_base(), branch_diff.as_ref());
+
+        let is_deleted = file_status.is_deleted();
+        // The placeholder buffer's file records whether the image is deleted, so rebuild the
+        // section when that changes.
+        if self
+            .image_entries
+            .get(&repo_path)
+            .is_some_and(|entry| entry.is_deleted != is_deleted)
+        {
+            self.remove_image_entry(&repo_path, cx);
+        }
+
+        if let Some(entry) = self.image_entries.get(&repo_path) {
+            entry.image_diff.update(cx, |image_diff, cx| {
+                image_diff.set_inputs(old_input, new_input, cx);
+            });
+        } else {
+            let file = Arc::new(ImageDiffFile {
+                path: project_path.path.clone(),
+                worktree_id: project_path.worktree_id,
+                is_deleted,
+            });
+            let buffer = cx.new(|cx| {
+                let text = TextBuffer::new(
+                    ReplicaId::LOCAL,
+                    cx.entity_id().as_non_zero_u64().into(),
+                    "",
+                );
+                Buffer::build(text, Some(file), Capability::ReadOnly, cx)
+            });
+            let snapshot = buffer.read(cx).text_snapshot();
+            let diff = cx.new(|cx| BufferDiff::new_unchanged(&snapshot, None, None, cx));
+            let image_diff = cx.new(|cx| {
+                ImageDiff::new(
+                    self.project.clone(),
+                    repository,
+                    repo_path.clone(),
+                    project_path.clone(),
+                    old_input,
+                    new_input,
+                    cx,
+                )
+            });
+
+            self.editor.update(cx, |editor, cx| {
+                editor.update_excerpts_for_path(
+                    path_key.clone(),
+                    buffer.clone(),
+                    [Point::zero()..Point::zero()],
+                    0,
+                    diff,
+                    cx,
+                );
+            });
+
+            let old_pane =
+                cx.new(|cx| ImageDiffPaneView::new(image_diff.clone(), ImageDiffPane::Old, cx));
+            let new_pane =
+                cx.new(|cx| ImageDiffPaneView::new(image_diff.clone(), ImageDiffPane::New, cx));
+            let both_panes =
+                cx.new(|cx| ImageDiffPaneView::new(image_diff.clone(), ImageDiffPane::Both, cx));
+            let splittable_editor = self.editor.downgrade();
+            let rhs_render: RenderBlock = Arc::new(move |cx| {
+                // When split, the left side shows the old image in this block's balancing block.
+                let is_split = splittable_editor
+                    .upgrade()
+                    .is_some_and(|editor| editor.read(cx.app).lhs_editor().is_some());
+                let pane = if is_split { &new_pane } else { &both_panes };
+                render_image_diff_block(pane.clone().into_any_element(), cx)
+            });
+            let lhs_render: RenderBlock = Arc::new(move |cx| {
+                render_image_diff_block(old_pane.clone().into_any_element(), cx)
+            });
+
+            let block_id = self
+                .multibuffer
+                .read(cx)
+                .location_for_path(&path_key, cx)
+                .and_then(|anchor| {
+                    self.editor.update(cx, |editor, cx| {
+                        let block_id = editor.rhs_editor().update(cx, |editor, cx| {
+                            editor
+                                .insert_blocks(
+                                    [BlockProperties {
+                                        placement: BlockPlacement::Below(anchor),
+                                        height: Some(IMAGE_DIFF_BLOCK_LINES),
+                                        style: BlockStyle::Sticky,
+                                        render: rhs_render,
+                                        priority: 0,
+                                    }],
+                                    None,
+                                    cx,
+                                )
+                                .into_iter()
+                                .next()
+                        })?;
+                        editor.set_lhs_block_renderer(block_id, lhs_render, cx);
+                        Some(block_id)
+                    })
+                });
+
+            self.image_entries.insert(
+                repo_path,
+                ImageEntry {
+                    buffer,
+                    project_path,
+                    image_diff,
+                    block_id,
+                    is_deleted,
+                },
+            );
+        }
+
+        if self.pending_scroll.as_ref() == Some(&path_key) {
+            self.move_to_path(path_key, window, cx);
+        }
+        cx.notify();
+    }
+
+    fn remove_image_entry(&mut self, repo_path: &RepoPath, cx: &mut Context<Self>) {
+        let Some(entry) = self.image_entries.remove(repo_path) else {
+            return;
+        };
+        self.editor.update(cx, |editor, cx| {
+            editor.remove_lhs_block_renderers(entry.block_id);
+            editor.rhs_editor().update(cx, |editor, cx| {
+                editor.remove_blocks(entry.block_id.into_iter().collect(), None, cx);
+            });
+        });
+    }
+
     fn buffer_ranges_changed(
         &mut self,
         repo_path: RepoPath,
@@ -638,6 +944,7 @@ impl DiffMultibuffer {
                 .collect::<HashMap<_, _>>();
 
             let mut entries = BTreeMap::new();
+            let mut image_entries = Vec::new();
             let mut live_repo_paths = HashSet::default();
             if let Some(repo) = repo {
                 let repo = repo.read(cx);
@@ -650,7 +957,11 @@ impl DiffMultibuffer {
                         cx,
                     );
                     previous_paths.remove(&path_key);
-                    entries.insert(path_key, diff_buffer);
+                    if is_image_file(&this.project, &diff_buffer.project_path, cx) {
+                        image_entries.push((path_key, diff_buffer));
+                    } else {
+                        entries.insert(path_key, diff_buffer);
+                    }
                 }
             }
 
@@ -660,7 +971,30 @@ impl DiffMultibuffer {
                 .map(|(repo_path, sub)| {
                     (sub.display_buffer.read(cx).remote_id(), repo_path.clone())
                 })
+                .chain(this.image_entries.iter().map(|(repo_path, entry)| {
+                    (entry.buffer.read(cx).remote_id(), repo_path.clone())
+                }))
                 .collect::<HashMap<_, _>>();
+
+            let stale_image_paths = this
+                .image_entries
+                .keys()
+                .filter(|repo_path| {
+                    !live_repo_paths.contains(*repo_path)
+                        || !image_entries
+                            .iter()
+                            .any(|(_, diff_buffer)| &diff_buffer.repo_path == *repo_path)
+                })
+                .chain(
+                    previous_paths
+                        .values()
+                        .filter_map(|buffer_id| repo_path_by_display_id.get(buffer_id)),
+                )
+                .cloned()
+                .collect::<Vec<_>>();
+            for repo_path in &stale_image_paths {
+                this.remove_image_entry(repo_path, cx);
+            }
 
             this.editor.update(cx, |editor, cx| {
                 for (path, buffer_id) in previous_paths {
@@ -679,8 +1013,25 @@ impl DiffMultibuffer {
             this.buffer_subscriptions
                 .retain(|repo_path, _| live_repo_paths.contains(repo_path));
 
-            entries
+            (entries, image_entries)
         })?;
+        let (entries, image_entries) = entries;
+
+        cx.update(|window, cx| {
+            this.update(cx, |this, cx| {
+                for (path_key, diff_buffer) in image_entries {
+                    this.register_image(
+                        diff_buffer.repo_path,
+                        path_key,
+                        diff_buffer.project_path,
+                        diff_buffer.file_status,
+                        diff_buffer.branch_diff,
+                        window,
+                        cx,
+                    );
+                }
+            })
+        })??;
 
         let mut buffers_to_fold = Vec::new();
 
@@ -690,6 +1041,7 @@ impl DiffMultibuffer {
                 repo_path,
                 file_status,
                 load,
+                ..
             } = entry;
             load.map(move |loaded| (path_key, repo_path, file_status, loaded))
         }))
@@ -1057,4 +1409,16 @@ fn tree_sort_path(repo_path: &RelPath) -> Arc<RelPath> {
     RelPath::from_unix_str(&synthetic)
         .map(|path| path.into_arc())
         .unwrap_or_else(|_| repo_path.into_arc())
+}
+
+fn render_image_diff_block(content: AnyElement, cx: &mut BlockContext) -> AnyElement {
+    div()
+        .id(cx.block_id)
+        .h(cx.line_height * cx.height as f32)
+        .w_full()
+        .pl(cx.margins.gutter.full_width())
+        .pr(cx.margins.right)
+        .py_2()
+        .child(content)
+        .into_any_element()
 }
