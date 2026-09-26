@@ -2433,7 +2433,7 @@
       "tab_size": 4,
     },
     "Erlang": {
-      "language_servers": ["erlang-ls", "!elp", "..."],
+      "language_servers": ["elp", "!erlang-ls", "..."],
     },
     "Git Commit": {
       "allow_rewrap": "anywhere",
