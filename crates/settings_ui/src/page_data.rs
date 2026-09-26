@@ -10537,7 +10537,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn global_only_miscellaneous_sub_section() -> [SettingsPageItem; 4] {
+    fn global_only_miscellaneous_sub_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Image Viewer",
@@ -10639,6 +10639,98 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                         metadata: None,
                     }],
                 ],
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                files: USER,
+                title: "Limit Mermaid Width",
+                description: "Whether to constrain top-level Mermaid blocks to `mermaid_max_width`. When disabled, no Mermaid-specific maximum width is applied. Zed's default layout is preserved when both Mermaid width options are disabled and `mermaid_alignment` is `left`.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview.limit_mermaid_width"),
+                    pick: |settings_content| {
+                        settings_content
+                            .markdown_preview
+                            .as_ref()?
+                            .limit_mermaid_width
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .markdown_preview
+                            .get_or_insert_default()
+                            .limit_mermaid_width = value;
+                    },
+                }),
+                metadata: None,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                files: USER,
+                title: "Mermaid Max Width",
+                description: "The maximum width, in pixels, of top-level Mermaid blocks when `limit_mermaid_width` is enabled and `mermaid_width_follows_diagram` is disabled. Has no effect otherwise.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview.mermaid_max_width"),
+                    pick: |settings_content| {
+                        settings_content
+                            .markdown_preview
+                            .as_ref()?
+                            .mermaid_max_width
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .markdown_preview
+                            .get_or_insert_default()
+                            .mermaid_max_width = value;
+                    },
+                }),
+                metadata: None,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                files: USER,
+                title: "Mermaid Width Follows Diagram",
+                description: "Whether top-level Mermaid blocks follow the diagram's 100% natural width, with enough space for controls, instead of using Zed's default full-width Mermaid block. This takes precedence over `limit_mermaid_width`. Interactive zoom remains within the block.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview.mermaid_width_follows_diagram"),
+                    pick: |settings_content| {
+                        settings_content
+                            .markdown_preview
+                            .as_ref()?
+                            .mermaid_width_follows_diagram
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .markdown_preview
+                            .get_or_insert_default()
+                            .mermaid_width_follows_diagram = value;
+                    },
+                }),
+                metadata: None,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Mermaid Alignment",
+                description: "Where to align top-level Mermaid diagrams horizontally. In the default or limited-width layout, this aligns the diagram within the Mermaid block; when `mermaid_width_follows_diagram` is enabled, it aligns the block itself.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview.mermaid_alignment"),
+                    pick: |settings_content| {
+                        settings_content
+                            .markdown_preview
+                            .as_ref()?
+                            .mermaid_alignment
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .markdown_preview
+                            .get_or_insert_default()
+                            .mermaid_alignment = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Drop Size Target",

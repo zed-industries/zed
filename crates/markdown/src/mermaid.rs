@@ -1,8 +1,9 @@
 use collections::HashMap;
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, ClipboardItem, Context, Entity, ImageSource,
-    ParsedSvg, RenderImage, SMOOTH_SVG_SCALE_FACTOR, ScrollDelta, ScrollHandle, ScrollWheelEvent,
-    Size, Stateful, StyledText, Task, Window, img, pulsating_between, size,
+    AbsoluteLength, Animation, AnimationExt, AnyElement, App, AvailableSpace, ClipboardItem,
+    Context, DefiniteLength, Entity, ImageSource, ParsedSvg, RenderImage, SMOOTH_SVG_SCALE_FACTOR,
+    ScrollDelta, ScrollHandle, ScrollWheelEvent, Size, Stateful, StyleRefinement, StyledText, Task,
+    Window, img, pulsating_between, px, size,
 };
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -15,7 +16,10 @@ use crate::parser::{CodeBlockKind, MarkdownEvent, MarkdownTag};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
 
-use super::{CopyButtonVisibility, Markdown, MarkdownStyle, MermaidZoomCallback, ParsedMarkdown};
+use super::{
+    CopyButtonVisibility, MERMAID_MAX_ZOOM, Markdown, MarkdownStyle, MermaidAlignment,
+    MermaidLayout, MermaidZoomCallback, ParsedMarkdown,
+};
 
 type MermaidDiagramCache = HashMap<ParsedMarkdownMermaidDiagramContents, Arc<CachedMermaidDiagram>>;
 
@@ -525,6 +529,88 @@ fn mermaid_display_size(base_size: Size<Pixels>, display_scale: f32) -> Size<Pix
     )
 }
 
+/// Horizontal space the code-block style consumes on each side (padding plus
+/// border), so a hugged Mermaid container can be sized to fit the diagram
+/// instead of clipping it against the style's own insets.
+fn code_block_horizontal_inset(style: &StyleRefinement) -> Pixels {
+    fn padding(length: Option<DefiniteLength>) -> Pixels {
+        match length {
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(pixels))) => pixels,
+            _ => px(0.),
+        }
+    }
+    fn border(width: Option<AbsoluteLength>) -> Pixels {
+        match width {
+            Some(AbsoluteLength::Pixels(pixels)) => pixels,
+            _ => px(0.),
+        }
+    }
+    padding(style.padding.left)
+        + padding(style.padding.right)
+        + border(style.border_widths.left)
+        + border(style.border_widths.right)
+}
+
+/// Narrows the Mermaid container (its background, controls, and the tab bar) to
+/// the natural diagram width or the toolbar's minimum width. The container is
+/// aligned within the available area according to `alignment`.
+fn hug_mermaid_diagram(
+    element: AnyElement,
+    layout: &MermaidLayout,
+    diagram_width: Option<Pixels>,
+) -> AnyElement {
+    if layout.width_follows_diagram
+        && let Some(diagram_width) = diagram_width
+    {
+        return apply_mermaid_alignment(
+            div().w_full().max_w(diagram_width).child(element),
+            layout.alignment,
+        )
+        .into_any_element();
+    }
+    element
+}
+
+fn mermaid_toolbar_min_width(
+    source_offset: usize,
+    code: &str,
+    markdown: &Entity<Markdown>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Pixels {
+    // Measure in a separate namespace so these controls cannot reuse the
+    // state of the real toolbar. Reserve zoom controls even at 100% to keep
+    // the block width stable when the user zooms.
+    window.with_element_namespace(("mermaid-toolbar-measurement", source_offset), |window| {
+        render_mermaid_toolbar(
+            source_offset,
+            code.to_owned(),
+            Some(false),
+            Some(MERMAID_MAX_ZOOM),
+            markdown.clone(),
+            None,
+        )
+        .into_any_element()
+        .layout_as_root(
+            size(AvailableSpace::MaxContent, AvailableSpace::MaxContent),
+            window,
+            cx,
+        )
+        .width
+    })
+}
+
+/// Aligns a Mermaid diagram horizontally within its container. Auto margins
+/// collapse to zero once the diagram fills or overflows the container, so a
+/// zoomed diagram still scrolls from its leading edge.
+fn apply_mermaid_alignment<T: Styled>(element: T, alignment: MermaidAlignment) -> T {
+    match alignment {
+        MermaidAlignment::Left => element,
+        MermaidAlignment::Center => element.mx_auto(),
+        MermaidAlignment::Right => element.ml_auto(),
+    }
+}
+
 /// The number of zoom ticks represented by a scroll-wheel event.
 ///
 /// A discrete wheel notch arrives as one `Lines` event whose magnitude varies
@@ -577,6 +663,7 @@ pub(crate) fn render_mermaid_diagram(
     showing_code: bool,
     zoom: f32,
     copy_button_visibility: CopyButtonVisibility,
+    layout: MermaidLayout,
     on_zoom: Option<MermaidZoomCallback>,
     window: &mut Window,
     cx: &mut App,
@@ -584,20 +671,44 @@ pub(crate) fn render_mermaid_diagram(
     let cached = mermaid_state.cache.get(&parsed.contents);
     let render_result = cached.and_then(|cached| cached.render_image.get());
     let show_interactive = copy_button_visibility != CopyButtonVisibility::Hidden;
-
     let code = parsed.contents.contents.clone();
+    let diagram_width = if layout.width_follows_diagram {
+        mermaid_state.natural_size(&parsed.contents).map(|size| {
+            let content_width = if show_interactive {
+                size.width.max(mermaid_toolbar_min_width(
+                    source_offset,
+                    &code,
+                    &markdown,
+                    window,
+                    cx,
+                ))
+            } else {
+                size.width
+            };
+            content_width + code_block_horizontal_inset(&style.code_block)
+        })
+    } else {
+        None
+    };
+    let use_toolbar = show_interactive && layout.width_follows_diagram;
 
-    let mut container = div().group("code_block").relative().w_full().rounded_lg();
+    let mut container = div()
+        .group("code_block")
+        .relative()
+        .w_full()
+        .rounded_lg()
+        .debug_selector(|| "mermaid-container".into());
     container.style().refine(&style.code_block);
 
-    match render_result {
+    let element = match render_result {
         Some(Ok(render_image)) => {
             let body = if showing_code {
                 render_mermaid_code_view(&parsed.contents.contents)
             } else {
                 let rasterized_scale = cached.map_or(1.0, |cached| cached.rasterized_scale);
-                let image_element =
-                    img(ImageSource::Render(render_image.clone())).with_fallback(|| {
+                let image_element = img(ImageSource::Render(render_image.clone()))
+                    .debug_selector(|| "mermaid-image".into())
+                    .with_fallback(|| {
                         Label::new("Failed to Load Mermaid Diagram").into_any_element()
                     });
                 let scroll_handle = markdown.update(cx, |markdown, _| {
@@ -611,13 +722,26 @@ pub(crate) fn render_mermaid_diagram(
                     &scroll_handle,
                     on_zoom.clone(),
                 )
-                .child(image_element.w(display_size.width).h(display_size.height))
+                .child(apply_mermaid_alignment(
+                    image_element.w(display_size.width).h(display_size.height),
+                    layout.alignment,
+                ))
                 .into_any_element();
                 with_mermaid_horizontal_scrollbar(source_offset, &scroll_handle, body, window, cx)
             };
 
             container
-                .when(show_interactive, |container| {
+                .when(use_toolbar, |container| {
+                    container.child(render_mermaid_toolbar(
+                        source_offset,
+                        code.to_string(),
+                        Some(showing_code),
+                        (!showing_code && zoom != 1.0).then_some(zoom),
+                        markdown.clone(),
+                        on_zoom.clone(),
+                    ))
+                })
+                .when(show_interactive && !use_toolbar, |container| {
                     container.child(render_mermaid_tab_header(
                         source_offset,
                         showing_code,
@@ -625,7 +749,7 @@ pub(crate) fn render_mermaid_diagram(
                     ))
                 })
                 .child(body)
-                .when(show_interactive, |container| {
+                .when(show_interactive && !use_toolbar, |container| {
                     container.child(render_mermaid_overlay_controls(
                         source_offset,
                         code.to_string(),
@@ -639,8 +763,18 @@ pub(crate) fn render_mermaid_diagram(
         Some(Err(_)) => {
             // Render failed — show the source code without tabs
             container
+                .when(use_toolbar, |container| {
+                    container.child(render_mermaid_toolbar(
+                        source_offset,
+                        code.to_string(),
+                        None,
+                        None,
+                        markdown.clone(),
+                        on_zoom.clone(),
+                    ))
+                })
                 .child(render_mermaid_code_view(&parsed.contents.contents))
-                .when(show_interactive, |container| {
+                .when(show_interactive && !use_toolbar, |container| {
                     container.child(render_mermaid_overlay_controls(
                         source_offset,
                         code.to_string(),
@@ -676,11 +810,12 @@ pub(crate) fn render_mermaid_diagram(
                     &scroll_handle,
                     on_zoom.clone(),
                 )
-                .child(
+                .child(apply_mermaid_alignment(
                     fallback_element
                         .w(display_size.width)
                         .h(display_size.height),
-                )
+                    layout.alignment,
+                ))
                 .into_any_element();
                 let body = with_mermaid_horizontal_scrollbar(
                     source_offset,
@@ -690,7 +825,17 @@ pub(crate) fn render_mermaid_diagram(
                     cx,
                 );
                 container
-                    .when(show_interactive, |container| {
+                    .when(use_toolbar, |container| {
+                        container.child(render_mermaid_toolbar(
+                            source_offset,
+                            code.to_string(),
+                            Some(showing_code),
+                            (zoom != 1.0).then_some(zoom),
+                            markdown.clone(),
+                            on_zoom.clone(),
+                        ))
+                    })
+                    .when(show_interactive && !use_toolbar, |container| {
                         container.child(render_mermaid_tab_header(
                             source_offset,
                             showing_code,
@@ -698,7 +843,7 @@ pub(crate) fn render_mermaid_diagram(
                         ))
                     })
                     .child(body)
-                    .when(show_interactive, |container| {
+                    .when(show_interactive && !use_toolbar, |container| {
                         container.child(render_mermaid_overlay_controls(
                             source_offset,
                             code.to_string(),
@@ -711,22 +856,34 @@ pub(crate) fn render_mermaid_diagram(
             } else {
                 // No fallback — show the code so the user has something to look at
                 container
+                    .when(use_toolbar, |container| {
+                        container.child(render_mermaid_toolbar(
+                            source_offset,
+                            code.to_string(),
+                            None,
+                            None,
+                            markdown.clone(),
+                            on_zoom.clone(),
+                        ))
+                    })
                     .child(render_mermaid_code_view(&parsed.contents.contents))
                     .child(
-                        div().absolute().top_1().right_2().child(
-                            Label::new("Rendering...")
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted)
-                                .with_animation(
-                                    "mermaid-loading-pulse",
-                                    Animation::new(Duration::from_secs(2))
-                                        .repeat()
-                                        .with_easing(pulsating_between(0.4, 0.8)),
-                                    |label, delta| label.alpha(delta),
-                                ),
-                        ),
+                        div()
+                            .when(!use_toolbar, |this| this.absolute().top_1().right_2())
+                            .child(
+                                Label::new("Rendering...")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted)
+                                    .with_animation(
+                                        "mermaid-loading-pulse",
+                                        Animation::new(Duration::from_secs(2))
+                                            .repeat()
+                                            .with_easing(pulsating_between(0.4, 0.8)),
+                                        |label, delta| label.alpha(delta),
+                                    ),
+                            ),
                     )
-                    .when(show_interactive, |container| {
+                    .when(show_interactive && !use_toolbar, |container| {
                         container.child(render_mermaid_overlay_controls(
                             source_offset,
                             code.to_string(),
@@ -738,7 +895,8 @@ pub(crate) fn render_mermaid_diagram(
                     .into_any_element()
             }
         }
-    }
+    };
+    hug_mermaid_diagram(element, &layout, diagram_width)
 }
 
 /// The horizontal scroll container wrapping a mermaid raster. The element id
@@ -802,7 +960,7 @@ fn render_mermaid_tab_header(
     source_offset: usize,
     showing_code: bool,
     markdown: Entity<Markdown>,
-) -> impl IntoElement {
+) -> Div {
     let preview_id = ElementId::NamedChild(
         Arc::new(ElementId::from((
             "mermaid-tab-preview",
@@ -818,6 +976,7 @@ fn render_mermaid_tab_header(
     let code_markdown = markdown;
 
     h_flex()
+        .debug_selector(|| "mermaid-tabs".into())
         .gap_0p5()
         .mb_2p5()
         .child(
@@ -847,6 +1006,42 @@ fn render_mermaid_tab_header(
                         }
                     });
                 }),
+        )
+}
+
+fn render_mermaid_toolbar(
+    source_offset: usize,
+    code: String,
+    showing_code: Option<bool>,
+    zoom: Option<f32>,
+    markdown: Entity<Markdown>,
+    on_zoom: Option<MermaidZoomCallback>,
+) -> Div {
+    h_flex()
+        .w_full()
+        .flex_wrap()
+        .gap_2()
+        .mb_2p5()
+        .debug_selector(|| "mermaid-toolbar".into())
+        .when_some(showing_code, |this, showing_code| {
+            this.child(
+                render_mermaid_tab_header(source_offset, showing_code, markdown.clone())
+                    .mb_0()
+                    .min_w_0()
+                    .flex_wrap(),
+            )
+        })
+        .when_some(zoom, |this, zoom| {
+            this.child(
+                render_mermaid_zoom_indicator(source_offset, zoom, markdown.clone(), on_zoom)
+                    .min_w_0()
+                    .flex_wrap(),
+            )
+        })
+        .child(
+            div()
+                .debug_selector(|| "mermaid-toolbar-copy".into())
+                .child(render_mermaid_copy_button(source_offset, code, markdown)),
         )
 }
 
@@ -884,10 +1079,11 @@ fn render_mermaid_zoom_indicator(
     zoom: f32,
     markdown: Entity<Markdown>,
     on_zoom: Option<MermaidZoomCallback>,
-) -> impl IntoElement {
+) -> Div {
     let percentage = (zoom * 100.0).round() as i32;
 
     h_flex()
+        .debug_selector(|| "mermaid-zoom-controls".into())
         .gap_0p5()
         .child(
             Label::new(format!("Zoom {percentage}%"))
@@ -964,11 +1160,13 @@ mod tests {
     };
     use crate::{
         CodeBlockRenderer, CopyButtonVisibility, MERMAID_ZOOM_DEBOUNCE, Markdown, MarkdownElement,
-        MarkdownOptions, MarkdownStyle, WrapButtonVisibility,
+        MarkdownFont, MarkdownOptions, MarkdownStyle, MermaidAlignment, MermaidLayout,
+        WrapButtonVisibility,
     };
     use collections::HashMap;
     use gpui::{
-        Context, Entity, IntoElement, Render, RenderImage, TestAppContext, Window, point, size,
+        Bounds, Context, Entity, IntoElement, Render, RenderImage, ScrollHandle, TestAppContext,
+        VisualTestContext, Window, point, size,
     };
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -1064,6 +1262,326 @@ mod tests {
                 )
                 .unwrap()
         })
+    }
+
+    #[derive(Clone, Copy)]
+    struct MermaidLayoutTestOptions {
+        layout: MermaidLayout,
+        content_max_width: Option<Pixels>,
+        markers: bool,
+        interactive: bool,
+    }
+
+    impl Default for MermaidLayoutTestOptions {
+        fn default() -> Self {
+            Self {
+                layout: MermaidLayout::default(),
+                content_max_width: Some(px(800.)),
+                markers: true,
+                interactive: false,
+            }
+        }
+    }
+
+    struct MermaidLayoutTestView {
+        markdown: Entity<Markdown>,
+        options: MermaidLayoutTestOptions,
+        font_size: Pixels,
+    }
+
+    impl Render for MermaidLayoutTestView {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let options = self.options;
+            let mut element = MarkdownElement::new(
+                self.markdown.clone(),
+                MarkdownStyle::themed(MarkdownFont::Preview, window, cx),
+            )
+            .mermaid_layout(options.layout)
+            .code_block_renderer(CodeBlockRenderer::Default {
+                copy_button_visibility: if options.interactive {
+                    CopyButtonVisibility::VisibleOnHover
+                } else {
+                    CopyButtonVisibility::Hidden
+                },
+                wrap_button_visibility: WrapButtonVisibility::Hidden,
+                border: false,
+            });
+            if options.markers {
+                element = element.show_root_block_markers();
+            }
+            if options.layout.has_width_override() {
+                element = element.content_max_width(options.content_max_width);
+            }
+            ui::utils::WithRemSize::new(self.font_size).child(
+                div()
+                    .w_full()
+                    .when(!options.layout.has_width_override(), |this| {
+                        this.when_some(options.content_max_width, |this, width| {
+                            this.max_w(width).mx_auto()
+                        })
+                    })
+                    .child(element),
+            )
+        }
+    }
+
+    fn prepare_mermaid_layout<'a>(
+        source: &str,
+        natural_width: f32,
+        cx: &'a mut TestAppContext,
+    ) -> (Entity<Markdown>, &'a mut VisualTestContext) {
+        ensure_theme_initialized(cx);
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                source.to_owned().into(),
+                None,
+                None,
+                MarkdownOptions {
+                    render_mermaid_diagrams: true,
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        markdown.update(cx, |markdown, cx| {
+            let svg = format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="{natural_width}" height="100"/>"#
+            );
+            let parsed = Arc::new(
+                cx.svg_renderer()
+                    .parse_svg(svg.as_bytes())
+                    .expect("test SVG"),
+            );
+            let image = cx
+                .svg_renderer()
+                .render_parsed(&parsed, 1.0)
+                .expect("test raster");
+            for diagram in markdown.parsed_markdown.mermaid_diagrams.values() {
+                markdown.mermaid_state.cache.insert(
+                    diagram.contents.clone(),
+                    Arc::new(CachedMermaidDiagram::new_for_test(
+                        Some(image.clone()),
+                        None,
+                        Some(parsed.clone()),
+                    )),
+                );
+            }
+            assert!(
+                !markdown.parsed_markdown.mermaid_diagrams.is_empty(),
+                "Mermaid fixture"
+            );
+        });
+        let (_, cx) = cx.add_window_view(|_, _| MermaidLayoutTestView {
+            markdown: markdown.clone(),
+            options: MermaidLayoutTestOptions::default(),
+            font_size: px(16.),
+        });
+        (markdown, cx)
+    }
+
+    fn draw_mermaid_layout(
+        markdown: &Entity<Markdown>,
+        options: MermaidLayoutTestOptions,
+        width: f32,
+        font_size: f32,
+        cx: &mut VisualTestContext,
+    ) -> (Bounds<Pixels>, Bounds<Pixels>, ScrollHandle) {
+        cx.update(|window, cx| {
+            window
+                .root::<MermaidLayoutTestView>()
+                .flatten()
+                .expect("layout test window")
+                .update(cx, |view, cx| {
+                    view.markdown = markdown.clone();
+                    view.options = options;
+                    view.font_size = px(font_size);
+                    cx.notify();
+                });
+        });
+        cx.simulate_resize(size(px(width), px(1500.)));
+        cx.run_until_parked();
+        // Scrollbars reserve their space using the previous frame's measured
+        // scroll bounds, so compare geometry only after that frame settles.
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let container = cx.debug_bounds("mermaid-container").expect("diagram block");
+        let image = cx.debug_bounds("mermaid-image").expect("diagram image");
+        let scroll = markdown.read_with(cx, |markdown, _| {
+            markdown
+                .mermaid_views
+                .values()
+                .next()
+                .expect("diagram view")
+                .scroll_handle
+                .clone()
+        });
+        (container, image, scroll)
+    }
+
+    #[gpui::test]
+    fn test_mermaid_layout_default_width_and_alignment(cx: &mut TestAppContext) {
+        let (markdown, cx) = prepare_mermaid_layout("```mermaid\nflowchart LR\nA\n```", 1000., cx);
+        for width in [420., 1200.] {
+            for content_max_width in [None, Some(px(800.))] {
+                let options = MermaidLayoutTestOptions {
+                    content_max_width,
+                    ..Default::default()
+                };
+                let (baseline, _, _) = draw_mermaid_layout(&markdown, options, width, 16., cx);
+                assert_eq!(
+                    baseline.size.width,
+                    px(content_max_width.map_or(width, |limit| width.min(f32::from(limit))) - 16.)
+                );
+                for alignment in [
+                    MermaidAlignment::Left,
+                    MermaidAlignment::Center,
+                    MermaidAlignment::Right,
+                ] {
+                    let options = MermaidLayoutTestOptions {
+                        layout: MermaidLayout {
+                            alignment,
+                            ..Default::default()
+                        },
+                        ..options
+                    };
+                    let (container, image, scroll) =
+                        draw_mermaid_layout(&markdown, options, width, 16., cx);
+                    assert_eq!(container, baseline);
+                    assert_eq!(image.size.width, px(1000.));
+                    let free_space = (scroll.bounds().size.width - image.size.width).max(px(0.));
+                    let offset = match alignment {
+                        MermaidAlignment::Left => px(0.),
+                        MermaidAlignment::Center => free_space / 2.,
+                        MermaidAlignment::Right => free_space,
+                    };
+                    assert_eq!(image.left(), scroll.bounds().left() + offset);
+                    assert_eq!(
+                        scroll.max_offset().x,
+                        (image.size.width - scroll.bounds().size.width).max(px(0.))
+                    );
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_mermaid_layout_width_priority_and_zoom(cx: &mut TestAppContext) {
+        let (markdown, cx) = prepare_mermaid_layout("```mermaid\nflowchart LR\nA\n```", 650., cx);
+        let options = MermaidLayoutTestOptions {
+            content_max_width: Some(px(400.)),
+            layout: MermaidLayout {
+                max_width: Some(px(700.)),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (limited, _, _) = draw_mermaid_layout(&markdown, options, 1000., 16., cx);
+        assert_eq!(limited.size.width, px(684.));
+        let options = MermaidLayoutTestOptions {
+            layout: MermaidLayout {
+                width_follows_diagram: true,
+                max_width: Some(px(200.)),
+                ..Default::default()
+            },
+            ..options
+        };
+        let (natural, _, scroll) = draw_mermaid_layout(&markdown, options, 1000., 16., cx);
+        assert_eq!(scroll.bounds().size.width, px(650.));
+        let (narrow, _, scroll) = draw_mermaid_layout(&markdown, options, 360., 16., cx);
+        assert!(narrow.right() <= px(360.));
+        assert!(scroll.max_offset().x > px(0.));
+        markdown.update(cx, |markdown, cx| {
+            markdown.set_mermaid_zoom_level(0, 2.0, cx)
+        });
+        let (zoomed, image, scroll) = draw_mermaid_layout(&markdown, options, 1000., 16., cx);
+        assert_eq!(zoomed.size.width, natural.size.width);
+        assert_eq!(image.size.width, px(1300.));
+        assert_eq!(scroll.max_offset().x, px(650.));
+    }
+
+    #[gpui::test]
+    fn test_mermaid_layout_does_not_override_nested_diagrams(cx: &mut TestAppContext) {
+        for source in [
+            "- item\n\n  ```mermaid\n  flowchart LR\n  A\n  ```",
+            "1. item\n\n   ```mermaid\n   flowchart LR\n   A\n   ```",
+        ] {
+            let (markdown, cx) = prepare_mermaid_layout(source, 80., cx);
+            for markers in [false, true] {
+                let options = MermaidLayoutTestOptions {
+                    content_max_width: Some(px(500.)),
+                    markers,
+                    ..Default::default()
+                };
+                let (baseline, image, _) = draw_mermaid_layout(&markdown, options, 1000., 16., cx);
+                for width_follows_diagram in [false, true] {
+                    let options = MermaidLayoutTestOptions {
+                        layout: MermaidLayout {
+                            max_width: Some(px(900.)),
+                            width_follows_diagram,
+                            alignment: MermaidAlignment::Right,
+                        },
+                        ..options
+                    };
+                    let (container, aligned_image, _) =
+                        draw_mermaid_layout(&markdown, options, 1000., 16., cx);
+                    assert_eq!(container, baseline);
+                    assert_eq!(aligned_image, image);
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_mermaid_layout_small_toolbar_wraps_without_overlap(cx: &mut TestAppContext) {
+        let (markdown, cx) = prepare_mermaid_layout("```mermaid\nflowchart LR\nA\n```", 80., cx);
+        let options = MermaidLayoutTestOptions {
+            interactive: true,
+            layout: MermaidLayout {
+                width_follows_diagram: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        for font_size in [16., 24.] {
+            for width in [120., 220., 1000.] {
+                markdown.update(cx, |markdown, cx| {
+                    markdown.set_mermaid_zoom_level(0, 1.0, cx)
+                });
+                let (natural, _, _) = draw_mermaid_layout(&markdown, options, width, font_size, cx);
+                markdown.update(cx, |markdown, cx| {
+                    markdown.set_mermaid_zoom_level(0, 2.0, cx)
+                });
+                let (zoomed, _, scroll) =
+                    draw_mermaid_layout(&markdown, options, width, font_size, cx);
+                assert_eq!(zoomed.size.width, natural.size.width);
+                let toolbar = cx.debug_bounds("mermaid-toolbar").expect("toolbar");
+                let controls = [
+                    "mermaid-tabs",
+                    "mermaid-zoom-controls",
+                    "mermaid-toolbar-copy",
+                ]
+                .map(|selector| cx.debug_bounds(selector).expect("toolbar controls"));
+                for bounds in controls {
+                    assert!(bounds.left() >= toolbar.left());
+                    assert!(bounds.right() <= toolbar.right() + px(1.));
+                    assert!(bounds.bottom() <= toolbar.bottom() + px(1.));
+                }
+                for (index, left) in controls.iter().enumerate() {
+                    for right in controls.iter().skip(index + 1) {
+                        assert!(
+                            left.right() <= right.left()
+                                || right.right() <= left.left()
+                                || left.bottom() <= right.top()
+                                || right.bottom() <= left.top(),
+                            "overlapping toolbar controls at width={width}, font_size={font_size}"
+                        );
+                    }
+                }
+                assert!(scroll.bounds().top() >= toolbar.bottom());
+                assert!(zoomed.right() <= px(width));
+            }
+        }
     }
 
     fn mermaid_contents(contents: &str) -> ParsedMarkdownMermaidDiagramContents {
