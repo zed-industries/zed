@@ -68,7 +68,18 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
         )
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_env = "ohos")]
+    {
+        let _ = headless;
+        panic!(
+            "gpui_platform does not select an OpenHarmony backend; inject gpui-ohos with Application::with_platform"
+        )
+    }
+
+    #[cfg(all(
+        any(target_os = "linux", target_os = "freebsd"),
+        not(target_env = "ohos")
+    ))]
     {
         gpui_linux::current_platform(headless)
     }
