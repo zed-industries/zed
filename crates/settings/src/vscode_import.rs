@@ -884,6 +884,8 @@ impl VsCodeSettings {
             auto_open: None,
             diagnostic_badges: None,
             git_status_indicator: None,
+            confirm_trash: self.read_bool("explorer.confirmDelete"),
+            confirm_delete: self.read_bool("explorer.confirmDelete"),
         };
 
         if let (Some(false), Some(false)) = (

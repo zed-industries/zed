@@ -923,6 +923,16 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         detail: Option<&str>,
         answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>>;
+    fn prompt_with_checkbox(
+        &self,
+        _level: PromptLevel,
+        _msg: &str,
+        _detail: Option<&str>,
+        _checkbox_label: Option<&str>,
+        _answers: &[PromptButton],
+    ) -> Option<oneshot::Receiver<(usize, bool)>> {
+        None
+    }
     fn activate(&self);
     /// Requests that the operating system draw attention to this window.
     fn request_attention(&self) {}
@@ -2546,6 +2556,27 @@ impl PromptButton {
             PromptButton::Cancel(label) => label,
             PromptButton::Other(label) => label,
         }
+    }
+
+    /// Returns the label of the button without any accelerator prefix ('&').
+    pub fn display_label(&self) -> SharedString {
+        let label = self.label();
+        if !label.contains('&') {
+            return label.clone();
+        }
+        let mut result = String::with_capacity(label.len());
+        let mut chars = label.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '&' {
+                if chars.peek() == Some(&'&') {
+                    result.push('&');
+                    chars.next();
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        result.into()
     }
 }
 

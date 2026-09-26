@@ -6463,6 +6463,33 @@ impl Window {
     where
         T: Clone + Into<PromptButton>,
     {
+        let rx = self.prompt_with_checkbox(level, message, detail, None, answers, cx);
+        let (tx, done_rx) = oneshot::channel();
+        cx.background_executor()
+            .spawn(async move {
+                if let Ok((ix, _)) = rx.await {
+                    tx.send(ix).ok();
+                }
+            })
+            .detach();
+        done_rx
+    }
+
+    /// Present a platform dialog with an optional verification checkbox.
+    /// When a button is clicked, the returned Receiver will receive a tuple containing
+    /// the index of the clicked button and a boolean indicating whether the checkbox was checked.
+    pub fn prompt_with_checkbox<T>(
+        &mut self,
+        level: PromptLevel,
+        message: &str,
+        detail: Option<&str>,
+        checkbox_label: Option<&str>,
+        answers: &[T],
+        cx: &mut App,
+    ) -> oneshot::Receiver<(usize, bool)>
+    where
+        T: Clone + Into<PromptButton>,
+    {
         let prompt_builder = cx.prompt_builder.take();
         let Some(prompt_builder) = prompt_builder else {
             unreachable!("Re-entrant window prompting is not supported by GPUI");
@@ -6476,13 +6503,27 @@ impl Window {
         let receiver = match &prompt_builder {
             PromptBuilder::Default => self
                 .platform_window
-                .prompt(level, message, detail, &answers)
+                .prompt_with_checkbox(level, message, detail, checkbox_label, &answers)
                 .unwrap_or_else(|| {
-                    self.build_custom_prompt(&prompt_builder, level, message, detail, &answers, cx)
+                    self.build_custom_prompt(
+                        &prompt_builder,
+                        level,
+                        message,
+                        detail,
+                        checkbox_label,
+                        &answers,
+                        cx,
+                    )
                 }),
-            PromptBuilder::Custom(_) => {
-                self.build_custom_prompt(&prompt_builder, level, message, detail, &answers, cx)
-            }
+            PromptBuilder::Custom(_) => self.build_custom_prompt(
+                &prompt_builder,
+                level,
+                message,
+                detail,
+                checkbox_label,
+                &answers,
+                cx,
+            ),
         };
 
         cx.prompt_builder = Some(prompt_builder);
@@ -6496,12 +6537,14 @@ impl Window {
         level: PromptLevel,
         message: &str,
         detail: Option<&str>,
+        checkbox_label: Option<&str>,
         answers: &[PromptButton],
         cx: &mut App,
-    ) -> oneshot::Receiver<usize> {
+    ) -> oneshot::Receiver<(usize, bool)> {
         let (sender, receiver) = oneshot::channel();
         let handle = PromptHandle::new(sender);
-        let handle = (prompt_builder)(level, message, detail, answers, handle, self, cx);
+        let handle =
+            (prompt_builder)(level, message, detail, checkbox_label, answers, handle, self, cx);
         self.prompt = Some(handle);
         receiver
     }

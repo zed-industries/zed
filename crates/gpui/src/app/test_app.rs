@@ -304,6 +304,12 @@ impl TestApp {
         self.platform.simulate_prompt_answer(button);
     }
 
+    /// Simulate answering a prompt dialog with a verification checkbox state.
+    pub fn simulate_prompt_answer_with_checkbox(&self, button: &str, checkbox_checked: bool) {
+        self.platform
+            .simulate_prompt_answer_with_checkbox(button, checkbox_checked);
+    }
+
     /// Get all open windows.
     pub fn windows(&self) -> Vec<AnyWindowHandle> {
         self.read(|cx| cx.windows())

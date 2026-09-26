@@ -687,13 +687,13 @@ enum RemoveEntryTask {
     Delete(Task<Result<()>>),
 }
 
-struct RemovalPrompt {
-    message: String,
-    detail: Option<&'static str>,
-    confirmation_label: &'static str,
+pub(crate) struct RemovalPrompt {
+    pub(crate) message: String,
+    pub(crate) detail: Option<String>,
+    pub(crate) confirmation_label: &'static str,
 }
 
-enum RemovalKind {
+pub(crate) enum RemovalKind {
     Trash,
     Delete,
 }
@@ -2777,52 +2777,134 @@ impl ProjectPanel {
     /// Builds the confirmation prompt shared by direct removal and undo/redo.
     ///
     /// The `names` slice must contain every path being removed, and this
-    /// function will apply markdown formatting and display truncation. The
+    pub fn trash_confirmation_label() -> &'static str {
+        if cfg!(target_os = "windows") {
+            "&Move to Recycle Bin"
+        } else {
+            "Move to Trash"
+        }
+    }
+
+    /// Helper for formatting the prompt shown to users before removing entries.
+    /// The function will apply markdown formatting and display truncation. The
     /// `dirty_buffers` parameter should be the number of those paths that have
     /// unsaved changes.
-    fn build_removal_prompt<S>(
+    pub(crate) fn build_removal_prompt<S>(
         kind: RemovalKind,
-        names: &[S],
+        items: &[(S, bool)],
         dirty_buffers: usize,
     ) -> RemovalPrompt
     where
         S: AsRef<str>,
     {
-        let (message_start, confirmation_label, detail) = match kind {
-            RemovalKind::Trash => ("Do you want to trash", "Trash", None),
-            RemovalKind::Delete => (
-                "Are you sure you want to permanently delete",
-                "Delete",
-                Some("This cannot be undone."),
-            ),
+        let is_windows = cfg!(target_os = "windows");
+        let confirmation_label = match kind {
+            RemovalKind::Trash => Self::trash_confirmation_label(),
+            RemovalKind::Delete => "Delete",
         };
 
-        let mut message = match names {
-            [name] => format!("{message_start} {}?", MarkdownInlineCode(name.as_ref())),
+        let (mut message, detail) = match items {
+            [(name, is_dir)] => {
+                let formatted_name = MarkdownInlineCode(name.as_ref());
+                let (main_msg, secondary_text) = match kind {
+                    RemovalKind::Trash => {
+                        let main = if *is_dir {
+                            format!(
+                                "Are you sure you want to delete {formatted_name} and its contents?"
+                            )
+                        } else {
+                            format!("Are you sure you want to delete {formatted_name}?")
+                        };
+                        let detail = if is_windows {
+                            if *is_dir {
+                                "You can restore this folder from the Recycle Bin."
+                            } else {
+                                "You can restore this file from the Recycle Bin."
+                            }
+                        } else {
+                            if *is_dir {
+                                "You can restore this folder from the Trash."
+                            } else {
+                                "You can restore this file from the Trash."
+                            }
+                        };
+                        (main, Some(detail.to_string()))
+                    }
+                    RemovalKind::Delete => {
+                        let main = if *is_dir {
+                            format!(
+                                "Are you sure you want to permanently delete {formatted_name} and its contents?"
+                            )
+                        } else {
+                            format!(
+                                "Are you sure you want to permanently delete {formatted_name}?"
+                            )
+                        };
+                        let detail = "This action cannot be undone.";
+                        (main, Some(detail.to_string()))
+                    }
+                };
+                (main_msg, secondary_text)
+            }
             _ => {
                 const CUTOFF_POINT: usize = 10;
-                let mut listed_names = names
+                let mut listed_names = items
                     .iter()
                     .take(CUTOFF_POINT)
-                    .map(|name| MarkdownInlineCode(name.as_ref()).to_string())
+                    .map(|(name, _)| MarkdownInlineCode(name.as_ref()).to_string())
                     .collect::<Vec<_>>();
-                let omitted_count = names.len().saturating_sub(CUTOFF_POINT);
+                let omitted_count = items.len().saturating_sub(CUTOFF_POINT);
                 if omitted_count == 1 {
-                    listed_names.push(".. 1 file not shown".into());
+                    listed_names.push(".. 1 item not shown".into());
                 } else if omitted_count > 1 {
-                    listed_names.push(format!(".. {omitted_count} files not shown"));
+                    listed_names.push(format!(".. {omitted_count} items not shown"));
                 }
 
-                format!(
-                    "{message_start} the following {} files?\n{}",
-                    names.len(),
-                    listed_names.join("\n")
-                )
+                let all_dirs = items.iter().all(|(_, is_dir)| *is_dir);
+                let all_files = items.iter().all(|(_, is_dir)| !*is_dir);
+                let count = items.len();
+
+                let (main_msg, secondary_text) = match kind {
+                    RemovalKind::Trash => {
+                        let header = if all_dirs {
+                            format!("Are you sure you want to delete the following {count} folders and their contents?")
+                        } else if all_files {
+                            format!("Are you sure you want to delete the following {count} files?")
+                        } else {
+                            format!("Are you sure you want to delete the following {count} items and their contents?")
+                        };
+                        let detail = if is_windows {
+                            "You can restore these items from the Recycle Bin."
+                        } else {
+                            "You can restore these items from the Trash."
+                        };
+                        (
+                            format!("{header}\n{}", listed_names.join("\n")),
+                            Some(detail.to_string()),
+                        )
+                    }
+                    RemovalKind::Delete => {
+                        let header = if all_dirs {
+                            format!("Are you sure you want to permanently delete the following {count} folders and their contents?")
+                        } else if all_files {
+                            format!("Are you sure you want to permanently delete the following {count} files?")
+                        } else {
+                            format!("Are you sure you want to permanently delete the following {count} items?")
+                        };
+                        let detail = "This action cannot be undone.";
+                        (
+                            format!("{header}\n{}", listed_names.join("\n")),
+                            Some(detail.to_string()),
+                        )
+                    }
+                };
+                (main_msg, secondary_text)
             }
         };
+
         match dirty_buffers {
             0 => {}
-            1 if names.len() == 1 => {
+            1 if items.len() == 1 => {
                 message.push_str("\n\nIt has unsaved changes, which will be lost.");
             }
             1 => {
@@ -2855,6 +2937,11 @@ impl ProjectPanel {
         cx: &mut Context<ProjectPanel>,
     ) {
         maybe!({
+            let settings = ProjectPanelSettings::get_global(cx);
+            let skip_prompt = skip_prompt
+                || (trash && !settings.confirm_trash)
+                || (!trash && !settings.confirm_delete);
+
             let items_to_delete = self.disjoint_effective_entries_excluding_roots(cx);
             if items_to_delete.is_empty() {
                 return None;
@@ -2869,10 +2956,20 @@ impl ProjectPanel {
                     dirty_buffers +=
                         project.dirty_buffers(cx).any(|path| path == project_path) as usize;
 
+                    let is_dir = project
+                        .worktree_for_id(selection.worktree_id, cx)
+                        .and_then(|w| {
+                            w.read(cx)
+                                .entry_for_id(selection.entry_id)
+                                .map(|e| e.is_dir())
+                        })
+                        .unwrap_or(false);
+
                     Some((
                         selection.entry_id,
                         selection.worktree_id,
                         project_path.path.file_name()?.to_string(),
+                        is_dir,
                     ))
                 })
                 .collect::<Vec<_>>();
@@ -2880,9 +2977,9 @@ impl ProjectPanel {
                 return None;
             }
             let answer = if !skip_prompt {
-                let names = file_paths
+                let items = file_paths
                     .iter()
-                    .map(|(_, _, name)| name.as_str())
+                    .map(|(_, _, name, is_dir)| (name.as_str(), *is_dir))
                     .collect::<Vec<_>>();
 
                 let removal_kind = if trash {
@@ -2891,12 +2988,13 @@ impl ProjectPanel {
                     RemovalKind::Delete
                 };
 
-                let prompt = Self::build_removal_prompt(removal_kind, &names, dirty_buffers);
+                let prompt = Self::build_removal_prompt(removal_kind, &items, dirty_buffers);
 
-                Some(window.prompt(
+                Some(window.prompt_with_checkbox(
                     PromptLevel::Info,
                     &prompt.message,
-                    prompt.detail,
+                    prompt.detail.as_deref(),
+                    Some("Do not ask me again"),
                     &[prompt.confirmation_label, "Cancel"],
                     cx,
                 ))
@@ -2905,10 +3003,26 @@ impl ProjectPanel {
             };
             let next_selection = self.find_next_selection_after_deletion(items_to_delete, cx);
             cx.spawn_in(window, async move |panel, cx| {
-                if let Some(answer) = answer
-                    && answer.await != Ok(0)
-                {
-                    return anyhow::Ok(());
+                if let Some(answer) = answer {
+                    match answer.await {
+                        Ok((0, do_not_ask_again)) => {
+                            if do_not_ask_again {
+                                panel.update(cx, |this, cx| {
+                                    update_settings_file(this.fs.clone(), cx, move |settings, _| {
+                                        let panel_settings = settings
+                                            .project_panel
+                                            .get_or_insert_with(Default::default);
+                                        if trash {
+                                            panel_settings.confirm_trash = Some(false);
+                                        } else {
+                                            panel_settings.confirm_delete = Some(false);
+                                        }
+                                    });
+                                })?;
+                            }
+                        }
+                        _ => return anyhow::Ok(()),
+                    }
                 }
 
                 let mut changes = Vec::new();
@@ -2919,7 +3033,7 @@ impl ProjectPanel {
                     panel.project.update(cx, |project, cx| {
                         file_paths
                             .into_iter()
-                            .map(|(entry_id, worktree_id, _)| {
+                            .map(|(entry_id, worktree_id, _, _)| {
                                 let task = if trash {
                                     project
                                         .trash_entry(entry_id, cx)
@@ -8192,4 +8306,5 @@ fn git_status_indicator(git_status: GitSummary) -> Option<(&'static str, Color)>
 
 #[cfg(test)]
 mod project_panel_tests;
+#[cfg(test)]
 mod tests;
