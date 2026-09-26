@@ -119,6 +119,11 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: false
     pub show_menus: Option<bool>,
+    /// Whether to keep menus on the same row as other title bar items when
+    /// `show_menus` is enabled (Windows and Linux only).
+    ///
+    /// Default: false
+    pub inline_menus: Option<bool>,
     /// The layout of window control buttons in the title bar (Linux only).
     ///
     /// This can be set to "platform_default" to follow the system configuration, or
