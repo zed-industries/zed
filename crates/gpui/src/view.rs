@@ -1034,6 +1034,59 @@ mod tests {
         );
     }
 
+    /// A clean view whose bounds change renders again at prepaint. Under an image cache it
+    /// must still render with that cache, as it would at layout.
+    #[gpui::test]
+    fn views_restarted_at_prepaint_keep_their_image_cache(cx: &mut TestAppContext) {
+        struct Leaf {
+            renders_without_cache: Rc<Cell<usize>>,
+            renders: Rc<Cell<usize>>,
+        }
+        impl Render for Leaf {
+            fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders.set(self.renders.get() + 1);
+                if window.image_cache_stack.is_empty() {
+                    self.renders_without_cache
+                        .set(self.renders_without_cache.get() + 1);
+                }
+                div().size(px(20.))
+            }
+        }
+        struct Host {
+            leaf: Entity<Leaf>,
+            offset: f32,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                crate::image_cache(crate::retain_all("images"))
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(div().w_full().h(px(self.offset)))
+                    .child(self.leaf.clone())
+            }
+        }
+        let renders = Rc::new(Cell::new(0));
+        let renders_without_cache = Rc::new(Cell::new(0));
+        let window = cx.open_window(size(px(100.), px(100.)), |_, cx| Host {
+            leaf: cx.new(|_| Leaf {
+                renders_without_cache: renders_without_cache.clone(),
+                renders: renders.clone(),
+            }),
+            offset: 0.,
+        });
+        cx.run_until_parked();
+        window
+            .update(cx, |host, _, cx| {
+                host.offset = 10.;
+                cx.notify();
+            })
+            .expect("window open");
+        cx.run_until_parked();
+        assert_eq!(renders.get(), 2, "moving the view renders it again");
+        assert_eq!(renders_without_cache.get(), 0);
+    }
+
     /// A view's cache key includes the text style its ancestors compose, so a clean view
     /// renders again when an ancestor's text style changes and is reused while it does not,
     /// including after a sibling element that pushes and pops a text style of its own.

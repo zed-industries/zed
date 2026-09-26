@@ -3685,10 +3685,9 @@ impl Window {
         hash
     }
 
-    /// The cache key a view's prepaint records, from the key its layout computed. The
-    /// text style and image cache come from layout: the text style hash is costly and the
-    /// elements around a view push the same styles in every phase, and `ImageCacheElement`
-    /// does not push its cache during prepaint at all.
+    /// The cache key a view's prepaint records, from the key its layout computed. The text
+    /// style hash comes from layout: it is costly, and the elements around a view push the
+    /// same styles in every phase.
     pub(crate) fn view_node_prepaint_key(
         &self,
         bounds: Bounds<Pixels>,
@@ -3701,7 +3700,7 @@ impl Window {
             rem_size: self.rem_size(),
             scale_factor: self.scale_factor(),
             opacity: self.element_opacity(),
-            image_cache: layout_key.image_cache,
+            image_cache: self.image_cache_stack.last().map(AnyImageCache::entity_id),
         }
     }
 

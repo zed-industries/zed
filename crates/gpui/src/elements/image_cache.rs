@@ -141,9 +141,14 @@ impl Element for ImageCacheElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        for child in &mut self.children {
-            child.prepaint(window, cx);
-        }
+        // A reused view under this element that must render again at prepaint (its
+        // bounds changed) lays its elements out there, so it needs the cache too.
+        let image_cache = self.image_cache_provider.provide(window, cx);
+        window.with_image_cache(Some(image_cache), |window| {
+            for child in &mut self.children {
+                child.prepaint(window, cx);
+            }
+        })
     }
 
     fn paint(
@@ -269,7 +274,7 @@ impl RetainAllImageCache {
     pub fn load(
         &mut self,
         source: &Resource,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut App,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
         let hash = hash(source);
@@ -283,17 +288,14 @@ impl RetainAllImageCache {
         self.images
             .insert(hash, ImageCacheItem::Loading(task.clone()));
 
+        // Not tied to the requesting window: consumers in other windows are still waiting
+        // after it closes.
         let entity = self.entity_id;
-        window
-            .spawn(cx, {
-                async move |cx| {
-                    _ = task.await;
-                    cx.on_next_frame(move |_, cx| {
-                        cx.notify(entity);
-                    });
-                }
-            })
-            .detach();
+        cx.spawn(async move |cx| {
+            _ = task.await;
+            cx.update(|cx| cx.notify(entity));
+        })
+        .detach();
 
         None
     }

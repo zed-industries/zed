@@ -6,7 +6,7 @@ mod example_support;
 use futures::FutureExt;
 use gpui::{
     App, AppContext, Asset as _, AssetLogger, Bounds, ClickEvent, Context, ElementId, Entity,
-    ImageAssetLoader, ImageCache, ImageCacheProvider, KeyBinding, Menu, MenuItem,
+    EntityId, ImageAssetLoader, ImageCache, ImageCacheProvider, KeyBinding, Menu, MenuItem,
     RetainAllImageCache, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
     actions, div, hash, image_cache, img, prelude::*, px, rgb, size,
 };
@@ -171,6 +171,8 @@ struct SimpleLruCache {
     max_items: usize,
     usages: Vec<u64>,
     cache: HashMap<u64, gpui::ImageCacheItem>,
+    /// Notified when a load completes: every view that loads through the cache reads it.
+    entity_id: EntityId,
 }
 
 impl SimpleLruCache {
@@ -188,6 +190,7 @@ impl SimpleLruCache {
             max_items,
             usages: Vec::with_capacity(max_items),
             cache: HashMap::with_capacity(max_items),
+            entity_id: cx.entity_id(),
         }
     }
 }
@@ -232,17 +235,12 @@ impl ImageCache for SimpleLruCache {
             .insert(hash, gpui::ImageCacheItem::Loading(task.clone()));
         self.usages.insert(0, hash);
 
-        let entity = window.current_view();
-        window
-            .spawn(cx, {
-                async move |cx| {
-                    _ = task.await;
-                    cx.on_next_frame(move |_, cx| {
-                        cx.notify(entity);
-                    });
-                }
-            })
-            .detach();
+        let entity = self.entity_id;
+        cx.spawn(async move |cx| {
+            _ = task.await;
+            cx.update(|cx| cx.notify(entity));
+        })
+        .detach();
 
         None
     }
