@@ -796,6 +796,7 @@ message StatusUpdate {
     ServerBinaryStatus binary = 2;
     ServerHealth health = 3;
   }
+  optional uint64 worktree_id = 4;
 }
 
 enum ServerHealth {
@@ -1106,6 +1107,7 @@ message RestartLanguageServers {
   repeated uint64 buffer_ids = 2;
   repeated LanguageServerSelector only_servers = 3;
   bool all = 4;
+  optional uint64 worktree_id = 5;
 }
 
 message StopLanguageServers {
