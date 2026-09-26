@@ -2092,8 +2092,10 @@ impl Terminal {
         self.last_content.scrolled_to_bottom
     }
 
-    ///Resize the terminal and the PTY.
-    pub fn set_size(&mut self, new_bounds: TerminalBounds) {
+    /// Resize the terminal and the PTY.
+    ///
+    /// Returns whether a grid resize was queued.
+    pub fn set_size(&mut self, new_bounds: TerminalBounds) -> bool {
         let new_bounds = normalize_terminal_bounds(new_bounds);
 
         let old_bounds = self.last_content.terminal_bounds;
@@ -2107,13 +2109,14 @@ impl Terminal {
             || old_bounds.line_height != new_bounds.line_height;
 
         if !requires_resize {
-            return;
+            return false;
         }
 
         match self.events.back_mut() {
             Some(InternalEvent::Resize(pending_bounds)) => *pending_bounds = new_bounds,
             _ => self.events.push_back(InternalEvent::Resize(new_bounds)),
         }
+        true
     }
 
     /// Write the Input payload to the PTY, if applicable.
@@ -4580,21 +4583,21 @@ mod tests {
             ),
         };
 
-        terminal.set_size(base_bounds);
+        assert!(terminal.set_size(base_bounds));
         terminal.events.clear();
         assert_eq!(terminal.last_content.terminal_bounds, base_bounds);
 
         // Pixel-only change: height grows by 1px but still the same number of rows/cols.
         let mut pixel_changed = base_bounds;
         pixel_changed.bounds.size.height = Pixels::from(101.);
-        terminal.set_size(pixel_changed);
+        assert!(!terminal.set_size(pixel_changed));
         assert!(terminal.events.is_empty());
         assert_eq!(terminal.last_content.terminal_bounds, pixel_changed);
 
         // Grid change: height increases enough to add a row.
         let mut grid_changed = base_bounds;
         grid_changed.bounds.size.height = Pixels::from(110.);
-        terminal.set_size(grid_changed);
+        assert!(terminal.set_size(grid_changed));
         assert!(matches!(
             terminal.events.back(),
             Some(InternalEvent::Resize(_))
