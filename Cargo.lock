@@ -18108,6 +18108,8 @@ dependencies = [
  "picker",
  "project",
  "proptest",
+ "schemars 1.0.4",
+ "serde",
  "serde_json",
  "text",
  "ui",
