@@ -1080,6 +1080,15 @@ pub struct Window {
     /// current element path is the last entry and never needs a walk.
     element_id_hashes: SmallVec<[u64; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
+    /// Identifies the contents of `text_style_stack`, so [`Window::text_style_hash`] can
+    /// reuse its last result while they are unchanged: sibling views under the same
+    /// ancestors all ask for the hash of the same composed style. A push takes a fresh
+    /// version and the matching pop restores the one before it, whose contents the stack
+    /// has again, so a styled element does not invalidate the hash for its later siblings.
+    text_style_version: u64,
+    next_text_style_version: u64,
+    /// The last `text_style_hash`, with the `text_style_version` it was computed at.
+    text_style_hash_cache: Option<(u64, u64)>,
     /// The hitboxes of the `.group()` elements being painted, for their descendants'
     /// group styles. Frame-local: it is part of drawing, not app state.
     pub(crate) group_hitboxes: crate::elements::GroupHitboxes,
@@ -1911,6 +1920,9 @@ impl Window {
             element_id_stack: SmallVec::default(),
             element_id_hashes: SmallVec::default(),
             text_style_stack: Vec::new(),
+            text_style_version: 0,
+            next_text_style_version: 1,
+            text_style_hash_cache: None,
             group_hitboxes: Default::default(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
@@ -3514,6 +3526,7 @@ impl Window {
                     (fresh.current_view, fresh.rem_size, fresh.absolute_offset);
                 let element_ids = fresh.element_id_stack.clone();
                 self.text_style_stack.clone_from(&fresh.text_style_stack);
+                self.new_text_style_version();
                 self.set_element_id_stack(&element_ids);
                 self.next_frame.dispatch_tree.set_active_node(parent_node);
 
@@ -3540,6 +3553,7 @@ impl Window {
 
             self.clear_element_id_stack();
             self.text_style_stack.clear();
+            self.new_text_style_version();
             round_start = round_end;
         }
     }
@@ -3635,12 +3649,20 @@ impl Window {
         view_tree.clear();
     }
 
-    pub(crate) fn view_node_key(&self, bounds: Bounds<Pixels>) -> ViewNodeCacheKey {
-        self.view_node_key_with_text_style(bounds, self.text_style_hash())
+    pub(crate) fn view_node_key(&mut self, bounds: Bounds<Pixels>) -> ViewNodeCacheKey {
+        let text_style_hash = self.text_style_hash();
+        self.view_node_key_with_text_style(bounds, text_style_hash)
     }
 
     /// A hash of the composed text style, for [`ViewNodeCacheKey::text_style_hash`].
-    pub(crate) fn text_style_hash(&self) -> u64 {
+    /// Composing and hashing the style is costly and every view asks at layout, so the
+    /// result is kept until the text style stack changes.
+    pub(crate) fn text_style_hash(&mut self) -> u64 {
+        if let Some((version, hash)) = self.text_style_hash_cache
+            && version == self.text_style_version
+        {
+            return hash;
+        }
         // Cache keys do not need a freshly allocated empty font-feature set.
         static DEFAULT_TEXT_STYLE: std::sync::LazyLock<TextStyle> =
             std::sync::LazyLock::new(TextStyle::default);
@@ -3650,7 +3672,9 @@ impl Window {
         }
         let mut hasher = collections::FxHasher::default();
         std::hash::Hash::hash(&text_style, &mut hasher);
-        std::hash::Hasher::finish(&hasher)
+        let hash = std::hash::Hasher::finish(&hasher);
+        self.text_style_hash_cache = Some((self.text_style_version, hash));
+        hash
     }
 
     /// The cache key with a text style hash computed earlier in the frame: the elements
@@ -3808,13 +3832,21 @@ impl Window {
     {
         self.invalidator.debug_assert_paint_or_prepaint();
         if let Some(style) = style {
+            let outer_version = self.text_style_version;
             self.text_style_stack.push(style);
+            self.new_text_style_version();
             let result = f(self);
             self.text_style_stack.pop();
+            self.text_style_version = outer_version;
             result
         } else {
             f(self)
         }
+    }
+
+    fn new_text_style_version(&mut self) {
+        self.text_style_version = self.next_text_style_version;
+        self.next_text_style_version += 1;
     }
 
     /// Updates the cursor style at the platform level. This method should only be called

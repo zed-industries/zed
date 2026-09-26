@@ -906,6 +906,83 @@ mod tests {
         );
     }
 
+    /// A view's cache key includes the text style its ancestors compose, so a clean view
+    /// renders again when an ancestor's text style changes and is reused while it does not,
+    /// including after a sibling element that pushes and pops a text style of its own.
+    #[gpui::test]
+    fn inherited_text_style_invalidates_clean_views(cx: &mut TestAppContext) {
+        struct Leaf {
+            renders: Rc<Cell<usize>>,
+        }
+        impl Render for Leaf {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders.set(self.renders.get() + 1);
+                div().child("leaf")
+            }
+        }
+        struct Host {
+            color: u32,
+            size: f32,
+            revision: usize,
+            first: Entity<Leaf>,
+            second: Entity<Leaf>,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .text_color(rgb(self.color))
+                    .text_size(px(self.size))
+                    .child(self.first.clone())
+                    .child(div().text_size(px(30.)).child(format!("{}", self.revision)))
+                    .child(self.second.clone())
+            }
+        }
+        let first = Rc::new(Cell::new(0));
+        let second = Rc::new(Cell::new(0));
+        let window = cx.open_window(size(px(200.), px(200.)), |_, cx| Host {
+            color: 0x112233,
+            size: 12.,
+            revision: 0,
+            first: cx.new(|_| Leaf {
+                renders: first.clone(),
+            }),
+            second: cx.new(|_| Leaf {
+                renders: second.clone(),
+            }),
+        });
+        cx.run_until_parked();
+        let mut update = |change: fn(&mut Host), cx: &mut TestAppContext| {
+            window
+                .update(cx, |host, _, cx| {
+                    change(host);
+                    cx.notify();
+                })
+                .expect("window open");
+            cx.run_until_parked();
+            (first.get(), second.get())
+        };
+        assert_eq!(
+            update(|host| host.revision += 1, cx),
+            (1, 1),
+            "unchanged style: reused"
+        );
+        assert_eq!(
+            update(|host| host.color = 0x445566, cx),
+            (2, 2),
+            "color changed"
+        );
+        assert_eq!(
+            update(|host| host.revision += 1, cx),
+            (2, 2),
+            "unchanged again: reused"
+        );
+        assert_eq!(
+            update(|host| host.size = 14., cx),
+            (3, 3),
+            "font size changed"
+        );
+    }
+
     /// A view under `visibility: hidden` is laid out and prepainted but never painted. Its
     /// reads are still recorded, so notifying it dirties it and its ancestors only; a
     /// visible sibling is reused rather than the whole window rebuilt.
