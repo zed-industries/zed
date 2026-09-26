@@ -9,9 +9,14 @@ use std::sync::Arc;
 
 use crate::{AgentTool, AvailableAgents, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
-/// List the agents and models available for use with the `create_thread` tool.
+/// List the agents and models available for use with the `create_thread` and
+/// `spawn_agent` tools.
 ///
-/// Call this before `create_thread` if you need to pick a specific agent or a
+/// The result may include external agents. The `spawn_agent` tool creates a
+/// native Zed subagent, so its `model` must be an exact `models[].id` from the
+/// agent entry where `is_native` is `true`.
+///
+/// Call this before either tool if you need to pick a specific agent or a
 /// non-default model (for example, to use a cheaper model for bulk work). If
 /// you're happy with the user's current defaults, you don't need to call this.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

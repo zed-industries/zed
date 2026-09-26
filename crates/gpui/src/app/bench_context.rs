@@ -44,7 +44,9 @@ use crate::{
 /// a headless renderer (Metal), so GPU submission is excluded from benchmark
 /// measurements on other platforms.
 pub fn bench_platform(
-    headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
+    headless_renderer_factory: Option<
+        Box<dyn Fn() -> anyhow::Result<Option<Box<dyn PlatformHeadlessRenderer>>>>,
+    >,
     text_system: Arc<dyn PlatformTextSystem>,
 ) -> Rc<dyn Platform> {
     thread_local! {

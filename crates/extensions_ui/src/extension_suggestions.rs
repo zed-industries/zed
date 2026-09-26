@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use db::kvp::KeyValueStore;
 use editor::Editor;
 use extension_host::{ExtensionSettings, ExtensionStore};
+use extension_suggest::SuggestedExtension;
 use gpui::{App, AppContext as _, Context, Entity, SharedString};
 use language::{Buffer, PLAIN_TEXT};
 use markdown::{Markdown, MarkdownElement};
@@ -11,119 +11,10 @@ use project::lsp_store::LspStoreEvent;
 use settings::Settings as _;
 use ui::prelude::*;
 use util::ResultExt;
-use util::rel_path::RelPath;
 use workspace::notifications::{
     NotificationId, markdown_style, simple_message_notification::MessageNotification,
 };
 use workspace::{AppState, Event as WorkspaceEvent, Workspace};
-
-const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
-    ("astro", &["astro"]),
-    ("beancount", &["beancount"]),
-    ("clojure", &["bb", "clj", "cljc", "cljs", "edn"]),
-    ("neocmake", &["CMakeLists.txt", "cmake"]),
-    ("csharp", &["cs"]),
-    ("cython", &["pyx", "pxd", "pxi"]),
-    ("dart", &["dart"]),
-    ("dockerfile", &["Dockerfile"]),
-    ("elisp", &["el"]),
-    ("elixir", &["eex", "ex", "exs", "heex", "leex", "neex"]),
-    ("elm", &["elm"]),
-    ("erlang", &["erl", "hrl"]),
-    ("fish", &["fish"]),
-    (
-        "git-firefly",
-        &[
-            ".gitconfig",
-            ".gitignore",
-            "COMMIT_EDITMSG",
-            "EDIT_DESCRIPTION",
-            "MERGE_MSG",
-            "NOTES_EDITMSG",
-            "TAG_EDITMSG",
-            "git-rebase-todo",
-        ],
-    ),
-    ("gleam", &["gleam"]),
-    ("glsl", &["vert", "frag"]),
-    ("graphql", &["gql", "graphql"]),
-    ("haskell", &["hs"]),
-    ("html", &["htm", "html", "shtml"]),
-    ("java", &["java"]),
-    ("kotlin", &["kt"]),
-    ("latex", &["tex"]),
-    ("log", &["log"]),
-    ("lua", &["lua"]),
-    ("make", &["Makefile"]),
-    ("nim", &["nim"]),
-    ("nix", &["nix"]),
-    ("nu", &["nu"]),
-    ("ocaml", &["ml", "mli"]),
-    ("php", &["php"]),
-    ("powershell", &["ps1", "psm1"]),
-    ("prisma", &["prisma"]),
-    ("proto", &["proto"]),
-    ("purescript", &["purs"]),
-    ("r", &["r", "R"]),
-    ("racket", &["rkt"]),
-    ("rescript", &["res", "resi"]),
-    ("rst", &["rst"]),
-    ("ruby", &["rb", "erb"]),
-    ("scheme", &["scm"]),
-    ("scss", &["scss"]),
-    ("sql", &["sql"]),
-    ("svelte", &["svelte"]),
-    ("swift", &["swift"]),
-    ("templ", &["templ"]),
-    ("terraform", &["tf", "tfvars", "hcl"]),
-    ("toml", &["Cargo.lock", "toml"]),
-    ("typst", &["typ"]),
-    ("vue", &["vue"]),
-    ("wgsl", &["wgsl"]),
-    ("windows-batch", &["bat", "cmd"]),
-    ("wit", &["wit"]),
-    ("xml", &["xml"]),
-    ("zig", &["zig"]),
-];
-
-struct LanguageSuggestion {
-    extension_id: &'static str,
-    languages: &'static [&'static str],
-    title: &'static str,
-    description: &'static str,
-    docs_url: &'static str,
-    install_message: &'static str,
-}
-
-const SUGGESTIONS_BY_LANGUAGE: &[LanguageSuggestion] = &[LanguageSuggestion {
-    extension_id: "emmet",
-    languages: &[
-        "Angular",
-        "Blade",
-        "CSS",
-        "Django",
-        "ERB",
-        "Elixir",
-        "HEEx",
-        "HTML",
-        "HTML+ERB",
-        "JavaScript",
-        "Jinja2",
-        "LESS",
-        "Liquid",
-        "Nunjucks",
-        "PHP",
-        "SCSS",
-        "Statamic Antlers",
-        "TSX",
-        "Twig",
-        "Vue.js",
-    ],
-    title: "Emmet is available for this file",
-    description: "Emmet expands abbreviations such as `ul>li*3` into HTML and `m10` into CSS.",
-    docs_url: "https://zed.dev/docs/languages/emmet",
-    install_message: "Install Emmet",
-}];
 
 struct ExtensionSuggestionNotification;
 
@@ -167,56 +58,6 @@ pub(crate) fn init(cx: &mut App) {
         .detach();
     })
     .detach();
-}
-
-fn suggested_extensions() -> &'static HashMap<&'static str, Arc<str>> {
-    static SUGGESTIONS_BY_PATH_SUFFIX: OnceLock<HashMap<&str, Arc<str>>> = OnceLock::new();
-    SUGGESTIONS_BY_PATH_SUFFIX.get_or_init(|| {
-        SUGGESTIONS_BY_EXTENSION_ID
-            .iter()
-            .flat_map(|(name, path_suffixes)| {
-                let name = Arc::<str>::from(*name);
-                path_suffixes
-                    .iter()
-                    .map(move |suffix| (*suffix, name.clone()))
-            })
-            .collect()
-    })
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-struct SuggestedExtension {
-    pub extension_id: Arc<str>,
-    pub file_name_or_extension: Arc<str>,
-}
-
-/// Returns the suggested extension for the given [`Path`].
-fn suggested_extension(path: &RelPath) -> Option<SuggestedExtension> {
-    let file_extension: Option<Arc<str>> = path.extension().map(|extension| extension.into());
-    let file_name: Option<Arc<str>> = path.file_name().map(|name| name.into());
-
-    let (file_name_or_extension, extension_id) = None
-        // We suggest against file names first, as these suggestions will be more
-        // specific than ones based on the file extension.
-        .or_else(|| {
-            file_name.clone().zip(
-                file_name
-                    .as_deref()
-                    .and_then(|file_name| suggested_extensions().get(file_name)),
-            )
-        })
-        .or_else(|| {
-            file_extension.clone().zip(
-                file_extension
-                    .as_deref()
-                    .and_then(|file_extension| suggested_extensions().get(file_extension)),
-            )
-        })?;
-
-    Some(SuggestedExtension {
-        extension_id: extension_id.clone(),
-        file_name_or_extension,
-    })
 }
 
 fn language_extension_key(extension_id: &str) -> String {
@@ -277,9 +118,8 @@ fn suggest_for_buffer(
 
     match language_name {
         Some(language_name) => {
-            let Some(suggestion) = SUGGESTIONS_BY_LANGUAGE
-                .iter()
-                .find(|suggestion| suggestion.languages.contains(&language_name.as_ref()))
+            let Some(suggestion) =
+                extension_suggest::additional_suggestion_for_language(language_name.as_ref())
             else {
                 return;
             };
@@ -317,7 +157,7 @@ fn suggest_for_buffer(
             let Some(SuggestedExtension {
                 extension_id,
                 file_name_or_extension,
-            }) = suggested_extension(file.path())
+            }) = extension_suggest::suggest_extension(file.path())
             else {
                 return;
             };
@@ -412,45 +252,6 @@ mod tests {
     use workspace::{AppState, SplitDirection};
 
     const EMMET_EXTENSION_ID: &str = "emmet";
-
-    #[test]
-    pub fn test_suggested_extension() {
-        assert_eq!(
-            suggested_extension(rel_path("Cargo.toml")),
-            Some(SuggestedExtension {
-                extension_id: "toml".into(),
-                file_name_or_extension: "toml".into()
-            })
-        );
-        assert_eq!(
-            suggested_extension(rel_path("Cargo.lock")),
-            Some(SuggestedExtension {
-                extension_id: "toml".into(),
-                file_name_or_extension: "Cargo.lock".into()
-            })
-        );
-        assert_eq!(
-            suggested_extension(rel_path("Dockerfile")),
-            Some(SuggestedExtension {
-                extension_id: "dockerfile".into(),
-                file_name_or_extension: "Dockerfile".into()
-            })
-        );
-        assert_eq!(
-            suggested_extension(rel_path("a/b/c/d/.gitignore")),
-            Some(SuggestedExtension {
-                extension_id: "git-firefly".into(),
-                file_name_or_extension: ".gitignore".into()
-            })
-        );
-        assert_eq!(
-            suggested_extension(rel_path("a/b/c/d/test.gleam")),
-            Some(SuggestedExtension {
-                extension_id: "gleam".into(),
-                file_name_or_extension: "gleam".into()
-            })
-        );
-    }
 
     #[gpui::test]
     async fn test_language_suggestion_for_supported_language(cx: &mut TestAppContext) {

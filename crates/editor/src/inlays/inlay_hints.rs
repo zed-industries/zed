@@ -1115,11 +1115,12 @@ pub mod tests {
     use crate::inlays::inlay_hints::InlayHintRefreshReason;
     use crate::scroll::Autoscroll;
     use crate::scroll::ScrollAmount;
+    use crate::test::editor_lsp_test_context::EditorLspTestContext;
     use crate::{Editor, SelectionEffects};
     use collections::HashSet;
     use futures::channel::oneshot;
     use futures::{StreamExt, future};
-    use gpui::{AppContext as _, Context, TestAppContext, WindowHandle};
+    use gpui::{AppContext as _, Context, TestAppContext, UpdateGlobal, WindowHandle};
     use itertools::Itertools as _;
     use language::language_settings::{InlayHintKind, InlayHintSettings};
     use language::{Capability, FakeLspAdapter};
@@ -1131,7 +1132,9 @@ pub mod tests {
     use pretty_assertions::assert_eq;
     use project::{CodeAction, FakeFs, InlayId, InvalidationStrategy, LspAction, Project};
     use serde_json::json;
-    use settings::{AllLanguageSettingsContent, InlayHintSettingsContent, SettingsStore};
+    use settings::{
+        AllLanguageSettingsContent, InlayHintSettingsContent, SettingsContent, SettingsStore,
+    };
     use std::ops::Range;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -5311,6 +5314,57 @@ let c = 3;"#
                 assert_eq!(Vec::<String>::new(), visible_hint_labels(editor, cx));
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_inlay_hints_at_buffer_bounds(cx: &mut TestAppContext) {
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, &|settings: &mut SettingsContent| {
+                    settings.project.all_languages.defaults.inlay_hints =
+                        Some(InlayHintSettingsContent {
+                            enabled: Some(true),
+                            edit_debounce_ms: Some(0),
+                            scroll_debounce_ms: Some(0),
+                            ..InlayHintSettingsContent::default()
+                        })
+                });
+            });
+        });
+
+        cx.set_state("ˇfoo\nbar");
+
+        cx.lsp
+            .set_request_handler::<lsp::request::InlayHintRequest, _, _>(|_, _| async move {
+                let hint = |line, character, kind, label: &str| lsp::InlayHint {
+                    position: lsp::Position::new(line, character),
+                    label: lsp::InlayHintLabel::String(label.to_string()),
+                    kind: Some(kind),
+                    text_edits: None,
+                    tooltip: None,
+                    padding_left: None,
+                    padding_right: None,
+                    data: None,
+                };
+                Ok(Some(vec![
+                    hint(1090, 1090, lsp::InlayHintKind::PARAMETER, "row_overflow"),
+                    hint(1090, 0, lsp::InlayHintKind::TYPE, "row_overflow"),
+                    hint(0, 1090, lsp::InlayHintKind::PARAMETER, "clipped_column"),
+                    hint(1, 3, lsp::InlayHintKind::TYPE, "buffer_end"),
+                ]))
+            });
+        cx.background_executor.run_until_parked();
+
+        cx.assert_display_state("ˇfooclipped_column\nbarbuffer_end");
     }
 
     pub(crate) fn init_test(cx: &mut TestAppContext, f: &dyn Fn(&mut AllLanguageSettingsContent)) {

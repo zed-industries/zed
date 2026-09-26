@@ -273,6 +273,7 @@ impl ProjectDiff {
             }
         });
         let diff_observation = cx.observe(&diff, |_, _, cx| cx.notify());
+
         Self {
             project,
             workspace: workspace.downgrade(),
@@ -1367,6 +1368,18 @@ mod tests {
         let paths_b = diff_item.read_with(cx, |diff, cx| diff.excerpt_paths(cx));
         assert_eq!(paths_b.len(), 1);
         assert_eq!(*paths_b[0], *"b.txt");
+
+        let active_repository_path = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .map(|repository| repository.read(cx).work_directory_abs_path.clone())
+        });
+
+        assert_eq!(
+            active_repository_path.as_deref(),
+            Some(Path::new(path!("/project_b"))),
+            "Project B should remain the active repository"
+        );
     }
 
     #[gpui::test]

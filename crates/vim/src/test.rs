@@ -50,6 +50,72 @@ async fn test_initially_disabled(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("hjklˇ");
 }
 
+#[gpui::test]
+async fn test_unbound_standalone_modifiers_preserve_operator(cx: &mut TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.update_editor(|_, window, _| window.activate_window());
+    cx.run_until_parked();
+
+    for temporary_normal in [false, true] {
+        let expected_mode = if temporary_normal {
+            Mode::Insert
+        } else {
+            Mode::Normal
+        };
+        for modifiers in [
+            Modifiers::shift(),
+            Modifiers::control(),
+            Modifiers::alt(),
+            Modifiers::command(),
+            Modifiers::function(),
+        ] {
+            if temporary_normal {
+                cx.set_state("ˇone two", Mode::Insert);
+                cx.simulate_keystrokes("ctrl-o");
+            } else {
+                cx.set_state("ˇone two", Mode::Normal);
+            }
+            cx.simulate_keystrokes("d");
+            assert_eq!(cx.active_operator(), Some(crate::state::Operator::Delete));
+
+            cx.simulate_modifiers_change(modifiers);
+            cx.simulate_modifiers_change(Modifiers::none());
+            assert_eq!(
+                cx.active_operator(),
+                Some(crate::state::Operator::Delete),
+                "modifier tap with {modifiers:?}"
+            );
+            assert_eq!(cx.mode(), Mode::Normal);
+
+            cx.simulate_keystrokes("w");
+            cx.assert_editor_state("ˇtwo");
+            assert_eq!(cx.mode(), expected_mode);
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_bound_standalone_modifier_updates_operator(cx: &mut TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.update_editor(|_, window, cx| {
+        window.activate_window();
+        cx.bind_keys([KeyBinding::new(
+            "shift",
+            editor::actions::MoveRight,
+            Some("Editor"),
+        )]);
+    });
+    cx.run_until_parked();
+    cx.set_state("ˇone two", Mode::Normal);
+    cx.simulate_keystrokes("d");
+    assert_eq!(cx.active_operator(), Some(crate::state::Operator::Delete));
+
+    cx.simulate_modifiers_change(Modifiers::shift());
+    cx.simulate_modifiers_change(Modifiers::none());
+    assert_eq!(cx.active_operator(), None);
+    cx.assert_editor_state("oˇne two");
+}
+
 #[perf]
 #[gpui::test]
 async fn test_neovim(cx: &mut gpui::TestAppContext) {

@@ -187,6 +187,11 @@ impl TestAppContext {
         }
     }
 
+    /// Disables accessibility for subsequently created test windows.
+    pub fn disable_accessibility(&mut self) {
+        self.update(|cx| cx.accessibility_force_disabled = true);
+    }
+
     /// Skip all drawing operations for the duration of this test.
     pub fn skip_drawing(&mut self) {
         self.app.borrow_mut().mode = GpuiMode::Test { skip_drawing: true };

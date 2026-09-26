@@ -6857,6 +6857,146 @@ async fn test_indent_yaml_non_comments_with_multiple_cursors(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+async fn test_multicursor_input_preserves_yaml_indentation(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let yaml_language = languages::language("yaml", tree_sitter_yaml::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(yaml_language), cx));
+
+    let initial_state = indoc! {r#"
+        ˇcoverage:
+          ˇrange: 40..60
+        ˇstatus:
+          ˇpatch: off
+          ˇproject:
+            ˇdefault:
+              ˇinformational: true
+
+        ˇ# Don't leave comments on PRs
+        ˇcomment: false
+    "#};
+
+    for input in ["2", "#"] {
+        cx.set_state(initial_state);
+        cx.update_editor(|editor, window, cx| editor.handle_input(input, window, cx));
+        cx.wait_for_autoindent_applied().await;
+        cx.assert_editor_state(&initial_state.replace('ˇ', &format!("{input}ˇ")));
+
+        // Recreate the cursors and delete the inserted characters, as in #21334.
+        cx.update_editor(|editor, window, cx| editor.cancel(&Cancel, window, cx));
+        cx.set_selections_state(&initial_state.replace('ˇ', &format!("ˇ{input}")));
+        cx.update_editor(|editor, window, cx| editor.delete(&Delete, window, cx));
+        cx.wait_for_autoindent_applied().await;
+        cx.assert_editor_state(initial_state);
+    }
+
+    // A multiline replacement must not reindent the other single-line edits.
+    cx.set_state(indoc! {"
+        ˇroot:
+          ˇchild:
+            ˇleaf: 1
+        replacement:
+        «    first: 1
+            second: 2ˇ»
+    "});
+    cx.update_editor(|editor, window, cx| editor.handle_input("2", window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        2ˇroot:
+          2ˇchild:
+            2ˇleaf: 1
+        replacement:
+            2ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_multicursor_input_autoindents_multiline_replacements(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let python_language = languages::language("python", tree_sitter_python::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(python_language), cx));
+
+    cx.set_state(indoc! {"
+        def f():
+        «    a = 1
+            b = 2ˇ»
+        def g():
+        «    a = 1
+            b = 2ˇ»
+    "});
+
+    cx.update_editor(|editor, window, cx| editor.handle_input("pass", window, cx));
+    cx.wait_for_autoindent_applied().await;
+
+    assert_eq!(
+        cx.buffer_text(),
+        indoc! {"
+            def f():
+                pass
+            def g():
+                pass
+        "}
+    );
+}
+
+#[gpui::test]
+async fn test_tab_indents_selected_yaml_block(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let yaml_language = languages::language("yaml", tree_sitter_yaml::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(yaml_language), cx));
+
+    cx.set_state(indoc! {"
+        «foo:
+          - bar
+          - zop
+          x:
+            q
+        bar:
+          qˇ»
+    "});
+
+    cx.update_editor(|editor, window, cx| editor.tab(&Tab, window, cx));
+
+    assert_eq!(
+        cx.buffer_text(),
+        indoc! {"
+            \x20   foo:
+                  - bar
+                  - zop
+                  x:
+                    q
+                bar:
+                  q
+        "}
+    );
+}
+
+#[gpui::test]
+async fn test_tab_indents_overlapping_selections_consistently(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(indoc! {"
+        \x20 «firstˇ»: «1
+        \x20 second: 2
+        \x20 third: 3ˇ»
+    "});
+
+    cx.update_editor(|editor, window, cx| editor.tab(&Tab, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        \x20   «firstˇ»: «1
+        \x20   second: 2
+        \x20   third: 3ˇ»
+    "});
+}
+
+#[gpui::test]
 async fn test_indent_outdent_with_hard_tabs(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.hard_tabs = Some(true);
@@ -14881,6 +15021,18 @@ async fn test_select_next(cx: &mut TestAppContext) {
         e.select_next(&SelectNext::default(), window, cx).unwrap();
     });
     cx.assert_editor_state("«ˇfoo»\n«ˇFOO»\n«ˇFoo»");
+
+    // Enable whole word
+    update_test_editor_settings(&mut cx, &|settings| {
+        let mut search_settings = SearchSettingsContent::default();
+        search_settings.whole_word = Some(true);
+        settings.search = Some(search_settings);
+    });
+
+    cx.set_state("abc\nabc «abcˇ»\ndefabc\nabc");
+    cx.update_editor(|e, window, cx| e.select_next(&SelectNext::default(), window, cx))
+        .unwrap();
+    cx.assert_editor_state("abc\nabc «abcˇ»\ndefabc\n«abcˇ»");
 }
 
 #[gpui::test]
@@ -23255,14 +23407,46 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_completion_without_text_edit(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
-    let mut cx = EditorLspTestContext::new_rust(
-        lsp::ServerCapabilities {
-            completion_provider: Some(lsp::CompletionOptions::default()),
-            ..lsp::ServerCapabilities::default()
+    let mut cx = EditorTestContext::new(cx).await;
+    let language_registry = cx.language_registry();
+    let language = rust_lang();
+    let completion_item = Arc::new(Mutex::new(None::<lsp::CompletionItem>));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        language.name(),
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions::default()),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new({
+                let completion_item = completion_item.clone();
+                move |server| {
+                    let completion_item = completion_item.clone();
+                    server.set_request_handler::<lsp::request::Completion, _, _>(move |_, _| {
+                        let completion_item = completion_item
+                            .lock()
+                            .clone()
+                            .expect("completion item should be set before requesting completions");
+                        async move {
+                            Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
+                                is_incomplete: true,
+                                items: vec![completion_item],
+                                item_defaults: None,
+                            })))
+                        }
+                    });
+                }
+            })),
+            ..FakeLspAdapter::default()
         },
-        cx,
-    )
-    .await;
+    );
+    language_registry.add(language.clone());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    let _language_server = fake_servers
+        .next()
+        .await
+        .expect("language server should start");
+    cx.executor().run_until_parked();
 
     for (initial_state, completion_text, filter_text, expected_states) in [
         (
@@ -23395,27 +23579,17 @@ async fn test_completion_without_text_edit(cx: &mut TestAppContext) {
                     "{initial_state:?}, {lsp_insert_mode:?}, {insert_text:?}, {detail:?}, {description:?}, {use_filter_text:?}"
                 );
                 cx.set_state(initial_state);
-                cx.set_request_handler::<lsp::request::Completion, _, _>(
-                    move |_, _, _| async move {
-                        Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
-                            is_incomplete: true,
-                            items: vec![lsp::CompletionItem {
-                                label: completion_text.to_string(),
-                                filter_text: use_filter_text.then(|| filter_text.to_string()),
-                                insert_text: insert_text.map(str::to_string),
-                                detail: detail.map(str::to_string),
-                                label_details: description.map(|description| {
-                                    lsp::CompletionItemLabelDetails {
-                                        detail: None,
-                                        description: Some(description.to_string()),
-                                    }
-                                }),
-                                ..lsp::CompletionItem::default()
-                            }],
-                            item_defaults: None,
-                        })))
-                    },
-                );
+                *completion_item.lock() = Some(lsp::CompletionItem {
+                    label: completion_text.to_string(),
+                    filter_text: use_filter_text.then(|| filter_text.to_string()),
+                    insert_text: insert_text.map(str::to_string),
+                    detail: detail.map(str::to_string),
+                    label_details: description.map(|description| lsp::CompletionItemLabelDetails {
+                        detail: None,
+                        description: Some(description.to_string()),
+                    }),
+                    ..lsp::CompletionItem::default()
+                });
                 cx.update_editor(|editor, window, cx| {
                     editor.show_completions(&ShowCompletions, window, cx);
                 });
@@ -23509,14 +23683,40 @@ async fn test_completion_with_explicit_replace_range(cx: &mut TestAppContext) {
             ..CompletionSettingsContent::default()
         });
     });
-    let mut cx = EditorLspTestContext::new_rust(
-        lsp::ServerCapabilities {
-            completion_provider: Some(lsp::CompletionOptions::default()),
-            ..lsp::ServerCapabilities::default()
+    let mut cx = EditorTestContext::new(cx).await;
+    let language_registry = cx.language_registry();
+    let language = rust_lang();
+    let completion_list = Arc::new(Mutex::new(None::<lsp::CompletionList>));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        language.name(),
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions::default()),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new({
+                let completion_list = completion_list.clone();
+                move |server| {
+                    let completion_list = completion_list.clone();
+                    server.set_request_handler::<lsp::request::Completion, _, _>(move |_, _| {
+                        let completion_list = completion_list
+                            .lock()
+                            .clone()
+                            .expect("completion list should be set before requesting completions");
+                        async move { Ok(Some(lsp::CompletionResponse::List(completion_list))) }
+                    });
+                }
+            })),
+            ..FakeLspAdapter::default()
         },
-        cx,
-    )
-    .await;
+    );
+    language_registry.add(language.clone());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    let _language_server = fake_servers
+        .next()
+        .await
+        .expect("language server should start");
+    cx.executor().run_until_parked();
 
     for (lsp_insert_mode, expected_pair_state) in [
         (LspInsertMode::ReplaceSuffix, "test(value1, value2=ˇvalue2)"),
@@ -23539,49 +23739,38 @@ async fn test_completion_with_explicit_replace_range(cx: &mut TestAppContext) {
                     "{lsp_insert_mode:?}, {use_default_range:?}, {use_insert_range:?}, {filter_text:?}"
                 );
                 cx.set_state("test(value1, ˇvalue2)");
-                cx.set_request_handler::<lsp::request::Completion, _, _>(
-                    move |_, _, _| async move {
-                        let insert =
-                            lsp::Range::new(lsp::Position::new(0, 13), lsp::Position::new(0, 13));
-                        let replace =
-                            lsp::Range::new(lsp::Position::new(0, 13), lsp::Position::new(0, 19));
-                        let text_edit = if use_insert_range {
-                            lsp::CompletionTextEdit::InsertAndReplace(lsp::InsertReplaceEdit {
-                                insert,
-                                replace,
-                                new_text: "value2=".to_string(),
-                            })
-                        } else {
-                            lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                                range: replace,
-                                new_text: "value2=".to_string(),
-                            })
-                        };
-                        let edit_range = if use_insert_range {
-                            lsp::CompletionListItemDefaultsEditRange::InsertAndReplace {
-                                insert,
-                                replace,
-                            }
-                        } else {
-                            lsp::CompletionListItemDefaultsEditRange::Range(replace)
-                        };
-                        Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
-                            items: vec![lsp::CompletionItem {
-                                label: "value2=".to_string(),
-                                filter_text: filter_text.map(str::to_string),
-                                text_edit: (!use_default_range).then_some(text_edit),
-                                ..lsp::CompletionItem::default()
-                            }],
-                            item_defaults: use_default_range.then(|| {
-                                lsp::CompletionListItemDefaults {
-                                    edit_range: Some(edit_range),
-                                    ..lsp::CompletionListItemDefaults::default()
-                                }
-                            }),
-                            ..lsp::CompletionList::default()
-                        })))
-                    },
-                );
+                let insert = lsp::Range::new(lsp::Position::new(0, 13), lsp::Position::new(0, 13));
+                let replace = lsp::Range::new(lsp::Position::new(0, 13), lsp::Position::new(0, 19));
+                let text_edit = if use_insert_range {
+                    lsp::CompletionTextEdit::InsertAndReplace(lsp::InsertReplaceEdit {
+                        insert,
+                        replace,
+                        new_text: "value2=".to_string(),
+                    })
+                } else {
+                    lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: replace,
+                        new_text: "value2=".to_string(),
+                    })
+                };
+                let edit_range = if use_insert_range {
+                    lsp::CompletionListItemDefaultsEditRange::InsertAndReplace { insert, replace }
+                } else {
+                    lsp::CompletionListItemDefaultsEditRange::Range(replace)
+                };
+                *completion_list.lock() = Some(lsp::CompletionList {
+                    items: vec![lsp::CompletionItem {
+                        label: "value2=".to_string(),
+                        filter_text: filter_text.map(str::to_string),
+                        text_edit: (!use_default_range).then_some(text_edit),
+                        ..lsp::CompletionItem::default()
+                    }],
+                    item_defaults: use_default_range.then(|| lsp::CompletionListItemDefaults {
+                        edit_range: Some(edit_range),
+                        ..lsp::CompletionListItemDefaults::default()
+                    }),
+                    ..lsp::CompletionList::default()
+                });
                 cx.update_editor(|editor, window, cx| {
                     editor.show_completions(&ShowCompletions, window, cx);
                 });
@@ -31352,6 +31541,108 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
         "#
         .unindent(),
     );
+}
+
+#[gpui::test]
+async fn test_row_highlights_for_empty_conflict_side_after_edit(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    struct ReversedHighlight;
+
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(
+        &r#"
+            ˇ<<<<<<< HEAD
+            =======
+            theirs
+            >>>>>>> branch
+            after
+        "#
+        .unindent(),
+    );
+    executor.run_until_parked();
+
+    // Mirrors what `git_ui::conflict_view::update_conflict_highlighting` does
+    // with the ranges produced by the conflict parser, and additionally
+    // stores the inside-out range that empty sides used to produce.
+    cx.update_editor(|editor, _, cx| {
+        let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+        let conflicts = project::ConflictSet::parse(&buffer.read(cx).text_snapshot());
+        assert_eq!(conflicts.conflicts.len(), 1);
+        let conflict = &conflicts.conflicts[0];
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let ours = snapshot
+            .buffer_anchor_range_to_anchor_range(conflict.ours.clone())
+            .unwrap();
+        assert!(ours.start.cmp(&ours.end, &snapshot).is_le());
+        editor.highlight_rows::<ConflictsOurs>(
+            ours,
+            |cx| cx.theme().colors().version_control_conflict_marker_ours,
+            RowHighlightOptions {
+                include_gutter: true,
+                ..Default::default()
+            },
+            cx,
+        );
+
+        let marker_start = Point::new(1, 0);
+        editor.highlight_rows::<ReversedHighlight>(
+            snapshot.anchor_after(marker_start)..snapshot.anchor_before(marker_start),
+            |cx| cx.theme().colors().editor_highlighted_line_background,
+            RowHighlightOptions::default(),
+            cx,
+        );
+    });
+
+    // The user types a resolution into the empty "ours" side, on the line
+    // where the `=======` marker currently sits.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([Point::new(1, 0)..Point::new(1, 0)]);
+        });
+        editor.handle_input("one\ntwo\nthree\nfour\nfive\nsix\n", window, cx);
+    });
+
+    // Render every possible viewport, the same way `EditorElement::prepaint`
+    // does, before the conflict set has been re-parsed. The typed rows carry
+    // the "ours" highlight; the inside-out range never contributes.
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx).display_snapshot;
+        let ours_type_id = Some(TypeId::of::<ConflictsOurs>());
+        for start_row in 0..snapshot.max_point().row().0 {
+            for end_row in start_row + 1..=snapshot.max_point().row().0 {
+                let start = snapshot
+                    .buffer_snapshot()
+                    .anchor_before(Point::new(start_row, 0));
+                let end = snapshot
+                    .buffer_snapshot()
+                    .anchor_before(Point::new(end_row, 0));
+                let highlighted_rows = editor.highlighted_display_rows_in_range(
+                    start..end,
+                    DisplayRow(start_row)..DisplayRow(end_row),
+                    &snapshot,
+                    cx,
+                );
+                let expected_rows = (start_row.max(1)..end_row.min(7))
+                    .map(DisplayRow)
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    highlighted_rows.keys().copied().collect::<Vec<_>>(),
+                    expected_rows,
+                    "viewport {start_row}..{end_row}"
+                );
+                assert!(
+                    highlighted_rows
+                        .values()
+                        .all(|highlight| highlight.type_id == ours_type_id),
+                    "viewport {start_row}..{end_row}"
+                );
+            }
+        }
+    });
 }
 
 #[gpui::test]
@@ -40286,6 +40577,34 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
             if i == 2:
                 return
             else:ˇ
+    "});
+
+    // Completing `else:` at multiple cursors must still trigger syntax outdents.
+    cx.set_state(indoc! {"
+        def f():
+            if True:
+                pass
+                elseˇ
+                pass
+        def g():
+            if True:
+                pass
+                elseˇ
+                pass
+    "});
+    cx.update_editor(|editor, window, cx| editor.handle_input(":", window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        def f():
+            if True:
+                pass
+            else:ˇ
+                pass
+        def g():
+            if True:
+                pass
+            else:ˇ
+                pass
     "});
 
     // test `except` auto outdents when typed inside `try` block
