@@ -1415,6 +1415,16 @@ impl FontMetrics {
     }
 }
 
+/// Virtual font names resolved by [`font_name_with_fallbacks`]. They are valid font
+/// family names even though no installed font has them.
+pub const VIRTUAL_FONT_NAMES: [&str; 5] = [
+    ".SystemUIFont",
+    ".ZedMono",
+    ".ZedSans",
+    "Zed Plex Mono",
+    "Zed Plex Sans",
+];
+
 /// Maps well-known virtual font names to their concrete equivalents.
 #[allow(unused)]
 pub fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'a str {
@@ -1443,6 +1453,30 @@ pub fn font_name_with_fallbacks_shared<'a>(
         ".ZedSans" | "Zed Plex Sans" => const { &SharedString::new_static("IBM Plex Sans") },
         ".ZedMono" | "Zed Plex Mono" => const { &SharedString::new_static("Lilex") },
         _ => name,
+    }
+}
+
+#[cfg(test)]
+mod virtual_font_name_tests {
+    use super::*;
+
+    #[test]
+    fn virtual_font_names_are_resolved() {
+        let system = "System Font";
+        let system_shared = SharedString::new_static(system);
+        for name in VIRTUAL_FONT_NAMES {
+            assert_ne!(
+                font_name_with_fallbacks(name, system),
+                name,
+                "{name} is listed in VIRTUAL_FONT_NAMES but not resolved by font_name_with_fallbacks"
+            );
+            let name_shared = SharedString::new_static(name);
+            assert_ne!(
+                font_name_with_fallbacks_shared(&name_shared, &system_shared),
+                &name_shared,
+                "{name} is listed in VIRTUAL_FONT_NAMES but not resolved by font_name_with_fallbacks_shared"
+            );
+        }
     }
 }
 

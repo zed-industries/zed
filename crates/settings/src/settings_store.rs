@@ -1305,9 +1305,15 @@ impl SettingsStore {
 
         if !params.font_names.is_empty() {
             replace_subschema::<FontFamilyName>(&mut generator, || {
+                // GPUI resolves these aliases, but they are not part of the platform font inventory.
+                let mut font_names = params.font_names.to_vec();
+                font_names.extend(gpui::VIRTUAL_FONT_NAMES.map(str::to_string));
+                font_names.sort_unstable();
+                font_names.dedup();
+
                 json_schema!({
                      "type": "string",
-                     "enum": params.font_names,
+                     "enum": font_names,
                 })
             });
         }
@@ -3167,6 +3173,45 @@ mod tests {
                 &SettingsFile::Default,
             ]
         )
+    }
+
+    #[test]
+    fn test_font_family_schema_accepts_virtual_aliases() -> Result<()> {
+        let schema = SettingsStore::json_schema(&SettingsJsonSchemaParams {
+            language_names: &[],
+            font_names: &["IBM Plex Sans".to_string(), "Lilex".to_string()],
+            theme_names: &[],
+            icon_theme_names: &[],
+            lsp_adapter_names: &[],
+            action_names: &[],
+            action_documentation: &HashMap::default(),
+            deprecations: &HashMap::default(),
+            deprecation_messages: &HashMap::default(),
+        });
+
+        let font_names = schema
+            .pointer("/$defs/FontFamilyName/enum")
+            .and_then(Value::as_array)
+            .context("FontFamilyName schema should contain allowed font names")?;
+
+        for font_name in [
+            "IBM Plex Sans",
+            "Lilex",
+            ".ZedMono",
+            ".ZedSans",
+            ".SystemUIFont",
+            "Zed Plex Mono",
+            "Zed Plex Sans",
+        ] {
+            assert!(
+                font_names
+                    .iter()
+                    .any(|value| value.as_str() == Some(font_name)),
+                "FontFamilyName schema should accept {font_name}"
+            );
+        }
+
+        Ok(())
     }
 
     #[gpui::test]
