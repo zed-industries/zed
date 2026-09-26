@@ -16,9 +16,7 @@ use benchmarks::bench_utils::{
     RUST_FUNCTION_BODY_LINES, RUST_FUNCTION_LINES, RUST_MODULE_HEADER_LINES, random_rust_file,
     rust_file_line_count, rust_identifier as identifier,
 };
-use criterion::{
-    BatchSize, BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
-};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use editor::{Editor, EditorStyle};
 use futures::{StreamExt as _, pin_mut, task::noop_waker};
 use gpui::{
@@ -32,6 +30,7 @@ use prompt_store::ProjectContext;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use serde_json::{Value, json};
 use settings::{Settings as _, SettingsStore};
+use std::hint::black_box;
 use ui::IntoElement as _;
 
 const SEED: u64 = 0x5EED_5EED;

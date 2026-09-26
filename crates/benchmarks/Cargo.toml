@@ -49,17 +49,9 @@ zed_actions.workspace = true
 ignored = ["gpui_platform"]
 
 [[bench]]
-name = "editor_render"
-harness = false
-
-[[bench]]
 name = "display_map"
 harness = false
 
 [[bench]]
 name = "edit_file_tool"
-harness = false
-
-[[bench]]
-name = "markdown_renderer"
 harness = false

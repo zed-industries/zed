@@ -1698,7 +1698,7 @@ pub fn range_from_lsp(range: lsp::Range) -> Range<Unclipped<PointUtf16>> {
 }
 
 #[doc(hidden)]
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 pub fn rust_lang() -> Arc<Language> {
     test_language("rust", tree_sitter_rust::LANGUAGE.into())
 }
@@ -1715,7 +1715,7 @@ pub fn markdown_lang() -> Arc<Language> {
     test_language("markdown", tree_sitter_md::LANGUAGE.into())
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 fn test_language(name: &str, grammar: tree_sitter::Language) -> Arc<Language> {
     Arc::new(
         Language::new(grammars::load_config(name), Some(grammar))

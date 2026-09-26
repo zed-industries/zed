@@ -1,6 +1,9 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Expr, ItemFn, LitStr, parse::Parser, spanned::Spanned};
+use syn::{
+    Expr, FnArg, GenericArgument, ItemFn, LitStr, PathArguments, Type, parse::Parser, parse_quote,
+    spanned::Spanned,
+};
 
 pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
     let mut fps: Option<u64> = None;
@@ -70,6 +73,41 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
     let outer_fn_name = inner_fn.sig.ident.clone();
     let inner_fn_name = format_ident!("__gpui_bench_{}", outer_fn_name);
     inner_fn.sig.ident = inner_fn_name.clone();
+    inner_fn
+        .sig
+        .generics
+        .params
+        .push(parse_quote!(__GpuiMeasurement: criterion::measurement::Measurement + 'static));
+    for input in &mut inner_fn.sig.inputs {
+        let FnArg::Typed(input) = input else {
+            continue;
+        };
+        let Type::Reference(reference) = input.ty.as_mut() else {
+            continue;
+        };
+        let Type::Path(path) = reference.elem.as_mut() else {
+            continue;
+        };
+        let Some(segment) = path.path.segments.last_mut() else {
+            continue;
+        };
+        if segment.ident != "BenchAppContext" {
+            continue;
+        }
+        match &mut segment.arguments {
+            PathArguments::None => {
+                let arguments: syn::AngleBracketedGenericArguments =
+                    parse_quote!(<'_, '_, __GpuiMeasurement>);
+                segment.arguments = PathArguments::AngleBracketed(arguments);
+            }
+            PathArguments::AngleBracketed(arguments) => {
+                arguments
+                    .args
+                    .push(GenericArgument::Type(parse_quote!(__GpuiMeasurement)));
+            }
+            PathArguments::Parenthesized(_) => {}
+        }
+    }
 
     let benchmark = if let Some(inputs) = inputs {
         let input_name = match input_name {
@@ -155,7 +193,11 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
     TokenStream::from(quote! {
         #inner_fn
 
-        fn #outer_fn_name(criterion: &mut criterion::Criterion) {
+        fn #outer_fn_name<
+            __GpuiMeasurement: criterion::measurement::Measurement + 'static,
+        >(
+            criterion: &mut criterion::Criterion<__GpuiMeasurement>,
+        ) {
             #benchmark
         }
 
