@@ -26,6 +26,7 @@ anyhow.workspace = true
 block2.workspace = true
 cocoa.workspace = true
 core-foundation.workspace = true
+core-graphics.workspace = true
 core-video.workspace = true
 derive_more.workspace = true
 etagere.workspace = true
