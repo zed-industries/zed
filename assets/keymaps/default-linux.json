@@ -617,7 +617,7 @@
     },
   },
   {
-    "context": "Editor && (extension == csv || extension == tsv || extension == ssv || extension == psv)",
+    "context": "Editor && (extension == csv || extension == tsv || extension == ssv || extension == psv || extension == jsonl || extension == ndjson)",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-k v": "tabular_data::OpenPreviewToTheSide",
