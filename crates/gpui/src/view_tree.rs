@@ -1,5 +1,5 @@
 use crate::{
-    Bounds, EntityId, GlobalElementId, LayoutId, Pixels, ViewNode, ViewNodeCacheKey,
+    Bounds, ElementId, EntityId, GlobalElementId, LayoutId, Pixels, ViewNode, ViewNodeCacheKey,
     view_node::{
         DispatchLink, DispatchOp, DispatchParent, MetadataPhase, NodeOutput, OutputItem,
         OutputSlot, RecordedDispatchNode, ViewNodeScene,
@@ -33,21 +33,39 @@ slotmap::new_key_type! {
 /// that path within the node. Hashing uses the path's running hash, which the window
 /// maintains as ids are pushed, so finding a node again costs no walk of the path; the
 /// path itself is compared only on a hash match, to rule out a collision.
+///
+/// Every path under one parent node starts with the parent's own path, so only the part
+/// below it is compared: `parent_depth` is the length of the parent's path. Comparing
+/// the whole path would walk every id from the window's root for every view, every
+/// frame, since each frame builds its paths anew.
 #[derive(Clone)]
 pub(crate) struct ViewOccurrence {
     element: GlobalElementId,
     path_hash: u64,
     parent: Option<ViewNodeId>,
+    parent_depth: usize,
     index: usize,
+}
+
+impl ViewOccurrence {
+    fn below_parent(&self) -> &[ElementId] {
+        let path = &*self.element.0;
+        &path[self.parent_depth.min(path.len())..]
+    }
 }
 
 impl PartialEq for ViewOccurrence {
     fn eq(&self, other: &Self) -> bool {
-        self.path_hash == other.path_hash
+        let equal = self.path_hash == other.path_hash
             && self.parent == other.parent
             && self.index == other.index
-            && (std::sync::Arc::ptr_eq(&self.element.0, &other.element.0)
-                || self.element.0 == other.element.0)
+            && self.element.0.len() == other.element.0.len()
+            && self.below_parent() == other.below_parent();
+        debug_assert!(
+            !equal || self.element.0 == other.element.0,
+            "occurrences under one parent share the parent's path"
+        );
+        equal
     }
 }
 
@@ -108,6 +126,9 @@ pub(crate) struct ViewTree {
     retired_layouts: Vec<LayoutId>,
     /// The nodes being drawn, innermost last, each with the phase it is in.
     traversal_stack: Vec<(ViewNodeId, MetadataPhase)>,
+    /// For each entry of `traversal_stack`, the length of the element-id path the node was
+    /// entered at, which is where its children's paths continue from.
+    traversal_depths: Vec<usize>,
     /// Scratch for `invalidate_consumers`, which cannot walk `consumers` while setting flags.
     invalidation_scratch: Vec<ViewNodeId>,
     /// Emptied scene records, so a replayed node records into buffers with capacity.
@@ -164,6 +185,7 @@ impl ViewTree {
             frame_bound_count: 0,
             retired_layouts: Vec::new(),
             traversal_stack: Vec::new(),
+            traversal_depths: Vec::new(),
             dispatch_resolution: Vec::new(),
             child_dispatch_ranges: Vec::new(),
             grafted_dispatch: FxHashMap::default(),
@@ -746,6 +768,7 @@ impl ViewTree {
         node: ViewNodeId,
         phase: MetadataPhase,
         under: Option<crate::DispatchNodeId>,
+        depth: usize,
     ) {
         if self.traversal_stack.is_empty() {
             if phase == MetadataPhase::Prepaint && !self.next_roots.contains(&node) {
@@ -762,6 +785,7 @@ impl ViewTree {
             }
         }
         self.traversal_stack.push((node, phase));
+        self.traversal_depths.push(depth);
     }
 
     /// Takes an empty set to accumulate the entities a rebuilding node reads. Returned to
@@ -925,6 +949,7 @@ impl ViewTree {
             element,
             path_hash,
             parent: self.current_node(),
+            parent_depth: self.traversal_depths.last().copied().unwrap_or(0),
             index: 0,
         };
         // Element IDs can repeat when one view is mounted twice in the same scope.
@@ -980,7 +1005,8 @@ impl ViewTree {
         {
             parent_node.next_children.push(node_id);
         }
-        self.splice(node_id, MetadataPhase::Layout, None);
+        let depth = self.nodes[node_id].occurrence.element.0.len();
+        self.splice(node_id, MetadataPhase::Layout, None, depth);
         node_id
     }
 
@@ -1193,22 +1219,25 @@ impl ViewTree {
 
     /// Enters the layout phase of a root mounted with `mount_root`, so the nodes its element
     /// mounts are its children. Views enter layout through `begin_occurrence`.
+    /// `depth` is the length of the element-id path in scope, as for the other phases.
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn enter_layout(&mut self, node_id: ViewNodeId) {
-        self.splice(node_id, MetadataPhase::Layout, None);
+    pub(crate) fn enter_layout(&mut self, node_id: ViewNodeId, depth: usize) {
+        self.splice(node_id, MetadataPhase::Layout, None, depth);
     }
 
-    /// Enters the node's prepaint; `under` is the live dispatch node it will hang from.
+    /// Enters the node's prepaint; `under` is the live dispatch node it will hang from and
+    /// `depth` the length of the element-id path in scope.
     pub(crate) fn enter_prepaint(
         &mut self,
         node_id: ViewNodeId,
         under: Option<crate::DispatchNodeId>,
+        depth: usize,
     ) {
-        self.splice(node_id, MetadataPhase::Prepaint, under);
+        self.splice(node_id, MetadataPhase::Prepaint, under, depth);
     }
 
-    pub(crate) fn enter_paint(&mut self, node_id: ViewNodeId) {
-        self.splice(node_id, MetadataPhase::Paint, None);
+    pub(crate) fn enter_paint(&mut self, node_id: ViewNodeId, depth: usize) {
+        self.splice(node_id, MetadataPhase::Paint, None, depth);
     }
 
     /// Adds text looked up on the node's behalf outside its traversal, such as while
@@ -1355,6 +1384,7 @@ impl ViewTree {
         self.dirty_count = 0;
         self.frame_bound_count = 0;
         self.traversal_stack.clear();
+        self.traversal_depths.clear();
         self.roots.clear();
         self.next_roots.clear();
         self.full_refresh = true;
@@ -1370,6 +1400,7 @@ impl ViewTree {
     }
 
     fn pop_traversal(&mut self, node_id: ViewNodeId) {
+        self.traversal_depths.pop();
         let popped = self.traversal_stack.pop();
         debug_assert_eq!(popped.map(|(node_id, _)| node_id), Some(node_id));
     }

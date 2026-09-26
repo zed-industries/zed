@@ -3717,7 +3717,8 @@ impl Window {
 
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn enter_node_layout(&mut self, node_id: ViewNodeId) {
-        self.view_tree.enter_layout(node_id);
+        self.view_tree
+            .enter_layout(node_id, self.element_id_stack.len());
         self.text_system.begin_text_use();
     }
 
@@ -3726,13 +3727,14 @@ impl Window {
     pub(crate) fn enter_node_prepaint(&mut self, node_id: ViewNodeId) {
         let tree = &self.next_frame.dispatch_tree;
         self.view_tree
-            .enter_prepaint(node_id, tree.active_node_id());
+            .enter_prepaint(node_id, tree.active_node_id(), self.element_id_stack.len());
         self.view_tree.begin_dispatch_range(node_id, tree.len());
         self.text_system.begin_text_use();
     }
 
     pub(crate) fn enter_node_paint(&mut self, node_id: ViewNodeId) {
-        self.view_tree.enter_paint(node_id);
+        self.view_tree
+            .enter_paint(node_id, self.element_id_stack.len());
         self.text_system.begin_text_use();
     }
 
