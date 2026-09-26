@@ -1588,7 +1588,12 @@ impl Editor {
                         // ToggleComments with `comment_empty_lines: true` would add comment to the block,
                         // even though it should be uncommented
                         if !is_blank {
-                            if prefix_range.is_empty() {
+                            // A matching prefix may open non-comment syntax, such as a PHP attribute.
+                            if prefix_range.is_empty()
+                                || is_outside_comment(
+                                    snapshot.language_scope_at(prefix_range.start),
+                                )
+                            {
                                 uncommented_lines += 1;
                             } else {
                                 commented_lines += 1;
@@ -2457,6 +2462,15 @@ impl NewlineConfig {
     }
 }
 
+/// Whether the override scope indicates that this is neither a comment nor a string.
+fn is_outside_comment(scope: Option<LanguageScope>) -> bool {
+    scope.is_some_and(|scope| {
+        scope
+            .override_name()
+            .is_some_and(|name| !matches!(name, "comment" | "string"))
+    })
+}
+
 fn comment_delimiter_for_newline(
     start_point: &Point,
     buffer: &MultiBufferSnapshot,
@@ -2514,6 +2528,10 @@ fn comment_delimiter_for_newline(
     let cursor_is_placed_after_comment_marker =
         num_of_whitespaces + trimmed_len <= start_point.column as usize;
     if cursor_is_placed_after_comment_marker {
+        if is_outside_comment(buffer.language_scope_at(*start_point)) {
+            return None;
+        }
+
         if !is_repl {
             return Some(delimiter.clone());
         }
