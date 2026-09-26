@@ -177,6 +177,45 @@ For a Bedrock API key, choose API key authentication:
 
 The API key itself is stored in the system keychain, not in `settings.json`.
 
+### Bedrock Custom Endpoints {#bedrock-custom-endpoints}
+
+To send Bedrock requests to a proxy or gateway instead of AWS, set `endpoint_url`:
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "endpoint_url": "https://gateway.example.com/bedrock",
+      "region": "us-east-1",
+      "authentication_method": "api_key"
+    }
+  }
+}
+```
+
+`endpoint_url` applies only to the Bedrock Converse API. The built-in GPT and Grok models are [Mantle models](#bedrock-mantle-models), which are called through a different service with a different request shape, so they ignore `endpoint_url` and go to AWS.
+
+If a gateway exposes the Bedrock Converse API but not an OpenAI-compatible one, declare its models under `available_models` so they're called over the Converse wire instead:
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "endpoint_url": "https://gateway.example.com/bedrock",
+      "available_models": [
+        {
+          "name": "us.openai.gpt-5.6-luna",
+          "display_name": "GPT-5.6 Luna",
+          "max_tokens": 200000
+        }
+      ]
+    }
+  }
+}
+```
+
+Model names in `available_models` are sent verbatim, without a cross-region inference prefix, so include the `us.` or `eu.` prefix yourself if the endpoint expects one.
+
 ### Bedrock Cross-Region Inference {#bedrock-cross-region-inference}
 
 Zed uses [Cross-Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) for Bedrock on a best-effort basis.
