@@ -303,22 +303,6 @@ async fn build_remote_server_from_source(
         Ok(())
     }
 
-    async fn ensure_cargo_tool(
-        tool_name: &str,
-        delegate: &dyn crate::RemoteClientDelegate,
-        cx: &mut AsyncApp,
-    ) -> Result<()> {
-        if which(tool_name, cx).await?.is_none() {
-            delegate.set_status(
-                Some(&format!("Installing {tool_name} for cross-compilation")),
-                cx,
-            );
-            log::info!("installing {tool_name}");
-            run_cmd(new_command("cargo").args(["install", "--locked", tool_name])).await?;
-        };
-        Ok(())
-    }
-
     enum RemoteServerBuildMode {
         Native,
         Xwin,
@@ -390,7 +374,13 @@ async fn build_remote_server_from_source(
             }
 
             ensure_rustup_target(&triple, delegate, cx).await?;
-            ensure_cargo_tool("cargo-zigbuild", delegate, cx).await?;
+
+            if which("cargo-zigbuild", cx).await?.is_none() {
+                delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
+                log::info!("installing cargo-zigbuild");
+                run_cmd(new_command("cargo").args(["install", "--locked", "cargo-zigbuild"]))
+                    .await?;
+            }
 
             delegate.set_status(
                 Some(&format!(
@@ -401,8 +391,25 @@ async fn build_remote_server_from_source(
             log::info!("building remote binary from source for {triple} with Zig");
         }
         RemoteServerBuildMode::Xwin => {
+            if which("clang", cx).await?.is_none() {
+                anyhow::bail!(
+                    "clang not found on $PATH, install clang to cross-compile the Windows remote server (see https://clang.llvm.org/)"
+                );
+            }
+
+            if which("cargo-xwin", cx).await?.is_none() {
+                anyhow::bail!(
+                    "cargo-xwin not found on $PATH.Install it with `cargo install --locked cargo-xwin`.\n\n\
+                     Note that cargo-xwin downloads Microsoft's CRT and Windows SDK; by using it you\
+                     accept Microsoft's license (see https://go.microsoft.com/fwlink/?LinkId=2086102)"
+                );
+            }
+
             ensure_rustup_target(&triple, delegate, cx).await?;
-            ensure_cargo_tool("cargo-xwin", delegate, cx).await?;
+
+            delegate.set_status(Some("Adding llvm-tools for cross-compilation"), cx);
+            log::info!("adding llvm-tools component");
+            run_cmd(new_command("rustup").args(["component", "add", "llvm-tools"])).await?;
 
             delegate.set_status(
                 Some(&format!(
