@@ -256,9 +256,7 @@ impl RenderOnce for ThreadItem {
         // fade into, so it renders as a visible patch; truncate the title instead.
         let opaque_window =
             cx.theme().window_background_appearance() == WindowBackgroundAppearance::Opaque;
-        let sidebar_base_bg = color
-            .title_bar_background
-            .blend(color.panel_background.opacity(0.25));
+        let sidebar_base_bg = color.surface_background;
 
         let raw_bg = self.base_bg.unwrap_or(sidebar_base_bg);
         let apparent_bg = color.background.blend(raw_bg);
@@ -645,9 +643,7 @@ impl Component for ThreadItem {
 
     fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let color = cx.theme().colors();
-        let bg = color
-            .title_bar_background
-            .blend(color.panel_background.opacity(0.25));
+        let bg = color.surface_background;
 
         let container = || {
             v_flex()
