@@ -2261,6 +2261,98 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_open_file_on_image_section_opens_image_viewer(cx: &mut TestAppContext) {
+        assert_open_file_opens_image_viewer(DiffViewStyle::Unified, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_open_file_on_split_image_section_opens_image_viewer(cx: &mut TestAppContext) {
+        assert_open_file_opens_image_viewer(DiffViewStyle::Split, cx).await;
+    }
+
+    async fn assert_open_file_opens_image_viewer(
+        diff_view_style: DiffViewStyle,
+        cx: &mut TestAppContext,
+    ) {
+        use crate::image_diff_view::png_bytes;
+        use editor::Editor;
+        use git::repository::repo_path;
+        use image_viewer::ImageView;
+
+        init_test(cx);
+        cx.update(|cx| {
+            image_viewer::init(cx);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.diff_view_style = Some(diff_view_style);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({ ".git": {} }))
+            .await;
+        fs.insert_file(path!("/project/logo.png"), png_bytes(4, 4))
+            .await;
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state
+                .head_contents
+                .insert(repo_path("logo.png"), png_bytes(2, 2));
+            state
+                .index_contents
+                .insert(repo_path("logo.png"), png_bytes(2, 2));
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        cx.run_until_parked();
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let splittable_editor = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<ProjectDiff>(cx)
+                .unwrap()
+                .read(cx)
+                .editor(cx)
+        });
+        let source_editor = splittable_editor.read_with(cx, |editor, _| match diff_view_style {
+            DiffViewStyle::Split => editor
+                .lhs_editor()
+                .expect("split diff should have a left editor")
+                .clone(),
+            _ => editor.rhs_editor().clone(),
+        });
+        source_editor.update_in(cx, |editor, window, cx| {
+            editor.open_excerpts(&editor::actions::OpenExcerpts, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(
+                workspace.active_item_as::<ImageView>(cx).is_some(),
+                "{diff_view_style:?}: expected the image viewer to be active"
+            );
+            let opened_path = workspace
+                .active_item(cx)
+                .and_then(|item| item.project_path(cx))
+                .map(|project_path| project_path.path.as_unix_str().to_string());
+            assert_eq!(opened_path.as_deref(), Some("logo.png"));
+            assert_eq!(
+                workspace.items_of_type::<Editor>(cx).count(),
+                0,
+                "{diff_view_style:?}: the placeholder buffer must not open in a text editor"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_project_diff_shows_changed_images(cx: &mut TestAppContext) {
         use crate::image_diff_view::png_bytes;
         use git::repository::repo_path;
@@ -2342,6 +2434,197 @@ mod tests {
         assert_eq!(paths, vec!["gone.png", "new.png", "notes.txt"]);
         let block_count = diff.read_with(cx, |diff, cx| diff.diff.read(cx).image_block_count());
         assert_eq!(block_count, 2);
+    }
+
+    #[gpui::test]
+    async fn test_image_diff_ignores_unrelated_status_changes(cx: &mut TestAppContext) {
+        use crate::image_diff_view::png_bytes;
+        use git::repository::repo_path;
+
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "notes.txt": "new notes\n",
+            }),
+        )
+        .await;
+        fs.insert_file(path!("/project/logo.png"), png_bytes(4, 4))
+            .await;
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            for (path, contents) in [
+                ("notes.txt", b"old notes\n".to_vec()),
+                ("logo.png", png_bytes(2, 2)),
+            ] {
+                state
+                    .head_contents
+                    .insert(repo_path(path), contents.clone());
+                state.index_contents.insert(repo_path(path), contents);
+            }
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        cx.run_until_parked();
+
+        let reload_count = |cx: &mut VisualTestContext| {
+            diff.read_with(cx, |diff, cx| diff.diff.read(cx).image_reload_counts(cx))
+                .into_iter()
+                .find(|(path, _)| path == "logo.png")
+                .map(|(_, count)| count)
+                .expect("logo.png has an image diff")
+        };
+        let initial_count = reload_count(cx);
+
+        fs.insert_file(
+            path!("/project/notes.txt"),
+            b"newer notes\nand more\n".to_vec(),
+        )
+        .await;
+        cx.run_until_parked();
+        let mut paths = diff.read_with(cx, |diff, cx| diff.excerpt_file_paths(cx));
+        paths.sort();
+        assert_eq!(paths, vec!["logo.png", "notes.txt"]);
+        assert_eq!(reload_count(cx), initial_count);
+
+        fs.insert_file(path!("/project/logo.png"), png_bytes(6, 6))
+            .await;
+        cx.run_until_parked();
+        let count_after_rewrite = reload_count(cx);
+        assert!(count_after_rewrite > initial_count);
+        let sides = diff.read_with(cx, |diff, cx| diff.diff.read(cx).image_diff_sides(cx));
+        assert_eq!(
+            sides,
+            vec![(
+                "logo.png".into(),
+                "Loaded(2x2)".into(),
+                "Loaded(6x6)".into()
+            )]
+        );
+
+        // Staging the working tree version while moving HEAD changes the image's status entry.
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state
+                .head_contents
+                .insert(repo_path("logo.png"), png_bytes(7, 7));
+            state
+                .index_contents
+                .insert(repo_path("logo.png"), png_bytes(6, 6));
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(reload_count(cx) > count_after_rewrite);
+        let sides = diff.read_with(cx, |diff, cx| diff.diff.read(cx).image_diff_sides(cx));
+        assert_eq!(
+            sides,
+            vec![(
+                "logo.png".into(),
+                "Loaded(7x7)".into(),
+                "Loaded(6x6)".into()
+            )]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_image_diff_follows_deleted_status(cx: &mut TestAppContext) {
+        use crate::image_diff_view::png_bytes;
+        use git::repository::repo_path;
+
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({ ".git": {} }))
+            .await;
+        fs.insert_file(path!("/project/logo.png"), png_bytes(4, 4))
+            .await;
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state
+                .head_contents
+                .insert(repo_path("logo.png"), png_bytes(2, 2));
+            state
+                .index_contents
+                .insert(repo_path("logo.png"), png_bytes(2, 2));
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        cx.run_until_parked();
+
+        let image_state = |cx: &mut VisualTestContext| {
+            diff.update(cx, |diff, cx| {
+                diff.diff.update(cx, |diff, cx| {
+                    (
+                        diff.image_diff_sides(cx),
+                        diff.image_can_open(cx),
+                        diff.image_block_count(),
+                        diff.rhs_custom_block_count(cx),
+                    )
+                })
+            })
+        };
+        assert_eq!(
+            image_state(cx),
+            (
+                vec![(
+                    "logo.png".into(),
+                    "Loaded(2x2)".into(),
+                    "Loaded(4x4)".into()
+                )],
+                vec![("logo.png".into(), true)],
+                1,
+                1
+            )
+        );
+
+        project::Fs::remove_file(
+            fs.as_ref(),
+            path!("/project/logo.png").as_ref(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            image_state(cx),
+            (
+                vec![("logo.png".into(), "Loaded(2x2)".into(), "Absent".into())],
+                vec![("logo.png".into(), false)],
+                1,
+                1
+            )
+        );
+
+        fs.insert_file(path!("/project/logo.png"), png_bytes(3, 3))
+            .await;
+        cx.run_until_parked();
+        assert_eq!(
+            image_state(cx),
+            (
+                vec![(
+                    "logo.png".into(),
+                    "Loaded(2x2)".into(),
+                    "Loaded(3x3)".into()
+                )],
+                vec![("logo.png".into(), true)],
+                1,
+                1
+            )
+        );
     }
 
     #[gpui::test]
