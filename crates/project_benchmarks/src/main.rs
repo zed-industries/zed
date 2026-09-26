@@ -78,6 +78,7 @@ impl RemoteClientDelegate for BenchmarkRemoteClient {
 
     fn download_server_binary_locally(
         &self,
+        _host: String,
         _platform: remote::RemotePlatform,
         _release_channel: ReleaseChannel,
         _version: Option<Version>,

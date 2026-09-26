@@ -238,9 +238,11 @@ pub struct Completion {
 }
 
 pub struct Copilot {
+    project: Option<WeakEntity<Project>>,
     fs: Arc<dyn Fs>,
     node_runtime: NodeRuntime,
     server: CopilotServer,
+    refresh_task: Option<Task<()>>,
     buffers: HashSet<WeakEntity<Buffer>>,
     server_id: LanguageServerId,
     _subscriptions: Vec<Subscription>,
@@ -321,6 +323,7 @@ impl Copilot {
         node_runtime: NodeRuntime,
         cx: &mut Context<Self>,
     ) -> Self {
+        let project_scope = project.as_ref().map(Entity::downgrade);
         let send_focus_notification = project.map(|project| {
             cx.subscribe(&project, |this, project, e: &project::Event, cx| {
                 if let project::Event::ActiveEntryChanged(new_entry) = e
@@ -374,9 +377,11 @@ impl Copilot {
             .chain(global_authentication_events)
             .collect();
         let mut this = Self {
+            project: project_scope,
             server_id: new_server_id,
             fs,
             node_runtime,
+            refresh_task: None,
             server: CopilotServer::Disabled,
             buffers: Default::default(),
             _subscriptions,
@@ -388,6 +393,7 @@ impl Copilot {
             if ai_disabled {
                 // Stop the server if AI is disabled
                 if !matches!(this.server, CopilotServer::Disabled) {
+                    this.refresh_task.take();
                     let shutdown = match mem::replace(&mut this.server, CopilotServer::Disabled) {
                         CopilotServer::Running(server) => {
                             let shutdown_future = server.lsp.shutdown();
@@ -427,6 +433,7 @@ impl Copilot {
         &mut self,
         _cx: &mut Context<Self>,
     ) -> impl Future<Output = ()> + use<> {
+        self.refresh_task.take();
         let shutdown = match mem::replace(&mut self.server, CopilotServer::Disabled) {
             CopilotServer::Running(server) => Some(Box::pin(async move { server.lsp.shutdown() })),
             _ => None,
@@ -536,9 +543,11 @@ impl Copilot {
         let node_runtime = NodeRuntime::unavailable();
         let send_focus_notification = Subscription::new(|| {});
         let this = cx.new(|cx| Self {
+            project: None,
             server_id: LanguageServerId(0),
             fs: FakeFs::new(cx.background_executor().clone()),
             node_runtime,
+            refresh_task: None,
             server: CopilotServer::Running(RunningCopilotServer {
                 lsp: Arc::new(server),
                 sign_in_status: SignInStatus::Authorized,
@@ -563,7 +572,21 @@ impl Copilot {
         cx: &mut AsyncApp,
     ) {
         let start_language_server = async {
-            let server_path = get_copilot_lsp(fs, node_runtime, cx).await?;
+            let project = this.read_with(cx, |copilot, _| copilot.project.clone())?;
+            let node_runtime =
+                cx.update(|cx| copilot_node_runtime(&node_runtime, project.clone(), cx));
+            let (server_path, refresh_task) = loop {
+                await_copilot_permission(project.as_ref(), cx).await?;
+                match get_copilot_lsp(fs.clone(), node_runtime.clone(), project.clone(), cx).await {
+                    Ok(binary) => break binary,
+                    Err(error) => {
+                        if !error.is::<util::ToolPermissionDenied>() {
+                            return Err(error);
+                        }
+                    }
+                }
+            };
+            this.update(cx, |copilot, _| copilot.refresh_task = refresh_task)?;
 
             let arguments: Vec<OsString> = vec!["--stdio".into()];
             let binary = LanguageServerBinary {
@@ -579,6 +602,7 @@ impl Copilot {
             };
 
             let server_name = LanguageServerName("copilot".into());
+            await_copilot_permission(project.as_ref(), cx).await?;
             let server = LanguageServer::new(
                 Arc::new(Mutex::new(None)),
                 new_server_id,
@@ -1349,42 +1373,45 @@ const COPILOT_PACKAGE_NAME: &str = "@github/copilot-language-server";
 async fn get_copilot_lsp(
     fs: Arc<dyn Fs>,
     node_runtime: NodeRuntime,
+    project: Option<WeakEntity<Project>>,
     cx: &AsyncApp,
-) -> anyhow::Result<PathBuf> {
+) -> anyhow::Result<(PathBuf, Option<Task<()>>)> {
     let binary_path = copilot_lsp_native_binary_path()?;
 
     // A usable local server exists; return it immediately and refresh the
     // install in the background so startup never blocks on (or fails from) the
     // npm registry.
     if fs.is_file(&binary_path).await {
-        cx.spawn(async move |cx| {
-            let wait = cx.update(|cx| {
-                project::binary_downloads::BinaryDownloads::try_get_global(cx).and_then(|store| {
-                    store.update(cx, |store, cx| {
-                        store.wait_until_tool_allowed(None, COPILOT_PACKAGE_NAME, cx)
-                    })
-                })
-            });
-            if !project::binary_downloads::await_downloads_allowed(wait, COPILOT_PACKAGE_NAME).await
-            {
-                return;
+        let refresh = cx.spawn(async move |cx| {
+            loop {
+                if await_copilot_permission(project.as_ref(), cx)
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                let result = cx
+                    .background_spawn(install_latest_copilot_lsp(fs.clone(), node_runtime.clone()))
+                    .await;
+                match result {
+                    Ok(()) => return,
+                    Err(error) if error.is::<util::ToolPermissionDenied>() => continue,
+                    Err(error) => {
+                        log::error!("Copilot refresh failed: {error:#}");
+                        return;
+                    }
+                }
             }
-            cx.background_spawn(async move {
-                install_latest_copilot_lsp(fs, node_runtime).await.log_err();
-            })
-            .await;
-        })
-        .detach();
-        return Ok(binary_path);
+        });
+        return Ok((binary_path, Some(refresh)));
     }
 
-    let blocked = cx.update(|cx| {
-        project::binary_downloads::request_tool_install(None, COPILOT_PACKAGE_NAME, cx).is_some()
-    });
+    let blocked = cx
+        .update(|cx| request_copilot_install(project.as_ref(), cx))?
+        .is_some();
     anyhow::ensure!(
         !blocked,
-        "{}",
-        util::downloads_disabled_error_with_retry(COPILOT_PACKAGE_NAME, "restart Copilot")
+        util::ToolPermissionDenied(COPILOT_PACKAGE_NAME.to_string())
     );
 
     fs.create_dir(paths::copilot_dir()).await?;
@@ -1394,7 +1421,75 @@ async fn get_copilot_lsp(
         fs.is_file(&binary_path).await,
         "GitHub Copilot native language server binary was not installed"
     );
-    Ok(binary_path)
+    Ok((binary_path, None))
+}
+
+async fn await_copilot_permission(
+    project: Option<&WeakEntity<Project>>,
+    cx: &AsyncApp,
+) -> Result<()> {
+    loop {
+        let wait = cx.update(|cx| request_copilot_install(project, cx))?;
+        let Some(wait) = wait else {
+            return Ok(());
+        };
+        anyhow::ensure!(
+            project::binary_downloads::await_downloads_allowed(Some(wait), COPILOT_PACKAGE_NAME)
+                .await,
+            "Copilot permission wait cancelled"
+        );
+    }
+}
+
+fn request_copilot_install(
+    project: Option<&WeakEntity<Project>>,
+    cx: &mut App,
+) -> Result<Option<postage::watch::Receiver<bool>>> {
+    let Some(project) = project else {
+        return Ok(project::binary_downloads::request_tool_install(
+            None,
+            COPILOT_PACKAGE_NAME,
+            cx,
+        ));
+    };
+    let (worktree_store, worktrees) = project.read_with(cx, |project, cx| {
+        (
+            project.worktree_store(),
+            project
+                .worktrees(cx)
+                .map(|worktree| worktree.read(cx).id())
+                .collect::<Vec<_>>(),
+        )
+    })?;
+    anyhow::ensure!(!worktrees.is_empty(), "Copilot project has no worktrees");
+    let mut wait = None;
+    for worktree in worktrees {
+        anyhow::ensure!(
+            project::trusted_worktrees::worktree_trusted(&worktree_store, worktree, cx),
+            "Copilot worktree is not trusted"
+        );
+        let permission = project::binary_downloads::request_tool_install(
+            Some(worktree),
+            COPILOT_PACKAGE_NAME,
+            cx,
+        );
+        if wait.is_none() {
+            wait = permission;
+        }
+    }
+    Ok(wait)
+}
+
+fn copilot_node_runtime(
+    runtime: &NodeRuntime,
+    project: Option<WeakEntity<Project>>,
+    cx: &mut App,
+) -> NodeRuntime {
+    project::binary_downloads::node_runtime_with_permission(
+        runtime,
+        move |cx| request_copilot_install(project.as_ref(), cx).is_ok_and(|wait| wait.is_none()),
+        cx,
+    )
 }
 
 async fn install_latest_copilot_lsp(
@@ -1464,7 +1559,7 @@ fn copilot_lsp_native_binary_path() -> anyhow::Result<PathBuf> {
 mod tests {
     use super::*;
     use fs::FakeFs;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, UpdateGlobal};
     use language::language_settings::AllLanguageSettings;
     use node_runtime::NodeRuntime;
     use settings::{Settings, SettingsStore};
@@ -1487,9 +1582,11 @@ mod tests {
         });
 
         let copilot = cx.new(|cx| Copilot {
+            project: None,
             server_id: LanguageServerId(0),
             fs: FakeFs::new(cx.background_executor().clone()),
             node_runtime: NodeRuntime::unavailable(),
+            refresh_task: None,
             server: CopilotServer::Disabled,
             buffers: Default::default(),
             _subscriptions: vec![],
@@ -1833,9 +1930,11 @@ mod tests {
         });
 
         let copilot = cx.new(|cx| Copilot {
+            project: None,
             server_id: LanguageServerId(0),
             fs: FakeFs::new(cx.background_executor().clone()),
             node_runtime: NodeRuntime::unavailable(),
+            refresh_task: None,
             server: CopilotServer::Disabled,
             buffers: Default::default(),
             _subscriptions: vec![],
@@ -1890,9 +1989,10 @@ mod tests {
         fs.create_dir(parent).await.expect("create parent dirs");
         fs.insert_file(&binary_path, Vec::new()).await;
 
-        let resolved_path = get_copilot_lsp(fs.clone(), NodeRuntime::unavailable(), &cx.to_async())
-            .await
-            .expect("local binary must be returned even when npm is unavailable");
+        let (resolved_path, _refresh) =
+            get_copilot_lsp(fs.clone(), NodeRuntime::unavailable(), None, &cx.to_async())
+                .await
+                .expect("local binary must be returned even when npm is unavailable");
         assert_eq!(resolved_path, binary_path);
         cx.run_until_parked();
     }
@@ -1900,8 +2000,110 @@ mod tests {
     #[gpui::test]
     async fn test_get_copilot_lsp_errors_without_local_binary_or_network(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.background_executor.clone());
-        let result = get_copilot_lsp(fs, NodeRuntime::unavailable(), &cx.to_async()).await;
+        let result = get_copilot_lsp(fs, NodeRuntime::unavailable(), None, &cx.to_async()).await;
         assert!(result.is_err());
+    }
+
+    #[gpui::test]
+    async fn test_copilot_permission_covers_each_project_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().forbid_parking();
+        cx.update(project::binary_downloads::init);
+        let fs = FakeFs::new(cx.executor());
+        for root in [path!("/root-a"), path!("/root-b"), path!("/root-c")] {
+            fs.create_dir(Path::new(root)).await.unwrap();
+        }
+        let project = Project::test(
+            fs,
+            [Path::new(path!("/root-a")), Path::new(path!("/root-b"))],
+            cx,
+        )
+        .await;
+        let worktrees = project.read_with(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .map(|worktree| worktree.read(cx).id())
+                .collect::<Vec<_>>()
+        });
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.project.allow_binary_downloads = Some(true)
+                });
+                settings
+                    .set_local_settings(
+                        worktrees[1],
+                        settings::LocalSettingsPath::InWorktree(Arc::from(RelPath::empty())),
+                        settings::LocalSettingsKind::Settings,
+                        Some("{\"allow_binary_downloads\":false}"),
+                        cx,
+                    )
+                    .unwrap();
+            });
+            assert!(
+                request_copilot_install(Some(&project.downgrade()), cx)
+                    .unwrap()
+                    .is_some()
+            );
+            project::binary_downloads::BinaryDownloads::try_get_global(cx)
+                .unwrap()
+                .update(cx, |downloads, cx| {
+                    assert_eq!(
+                        downloads.pending_tool_installs(),
+                        vec![project::binary_downloads::ToolInstall {
+                            worktree_id: Some(worktrees[1]),
+                            tool: COPILOT_PACKAGE_NAME.into()
+                        }]
+                    );
+                    downloads.approve_tool_install(Some(worktrees[0]), COPILOT_PACKAGE_NAME, cx);
+                });
+            assert!(
+                request_copilot_install(Some(&project.downgrade()), cx)
+                    .unwrap()
+                    .is_some()
+            );
+            project::binary_downloads::BinaryDownloads::try_get_global(cx)
+                .unwrap()
+                .update(cx, |downloads, cx| {
+                    downloads.approve_tool_install(Some(worktrees[1]), COPILOT_PACKAGE_NAME, cx);
+                });
+            assert!(
+                request_copilot_install(Some(&project.downgrade()), cx)
+                    .unwrap()
+                    .is_none()
+            );
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.project.allow_binary_downloads = Some(false)
+                });
+            });
+            assert!(
+                project::binary_downloads::request_tool_install(
+                    Some(worktrees[1]),
+                    "unrelated",
+                    cx
+                )
+                .is_some()
+            );
+        });
+        let runtime = cx.update(|cx| {
+            copilot_node_runtime(&NodeRuntime::unavailable(), Some(project.downgrade()), cx)
+        });
+        let npm = runtime.run_npm_subcommand(None, "info", &[]);
+        futures::pin_mut!(npm);
+        assert!(futures::poll!(npm.as_mut()).is_pending());
+        cx.run_until_parked();
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(Path::new(path!("/root-c")), true, cx)
+            })
+            .await
+            .unwrap();
+        assert!(npm.await.unwrap_err().is::<util::ToolPermissionDenied>());
+        let weak_project = project.downgrade();
+        drop(project);
+        cx.run_until_parked();
+        cx.update(|cx| assert!(request_copilot_install(Some(&weak_project), cx).is_err()));
     }
 
     fn init_test(cx: &mut TestAppContext) {

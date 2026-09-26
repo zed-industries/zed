@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use fs::Fs;
+use futures::{FutureExt, future::BoxFuture};
 use gpui::AppContext;
 use gpui::Entity;
 use gpui::Task;
@@ -8,7 +9,7 @@ use gpui::WeakEntity;
 use http_client::anyhow;
 use picker::Picker;
 use picker::PickerDelegate;
-use project::ProjectEnvironment;
+use project::{ProjectEnvironment, WorktreeId, binary_downloads::DownloadGate};
 use settings::RegisterSetting;
 use settings::Settings;
 use std::collections::HashMap;
@@ -102,18 +103,30 @@ pub struct DevContainerContext {
     pub fs: Arc<dyn Fs>,
     pub http_client: Arc<dyn HttpClient>,
     pub environment: WeakEntity<ProjectEnvironment>,
+    pub worktree_id: WorktreeId,
+    download_consent: DownloadConsent,
 }
 
 impl DevContainerContext {
-    pub fn from_workspace(workspace: &Workspace, cx: &App) -> Option<Self> {
-        let project_directory = workspace.project().read(cx).active_project_directory(cx)?;
+    pub fn from_workspace(workspace: &Workspace, cx: &mut App) -> Option<Self> {
+        let project = workspace.project().read(cx);
+        let project_directory = project.active_project_directory(cx)?;
+        let worktree_id = project
+            .find_worktree(&project_directory, cx)?
+            .0
+            .read(cx)
+            .id();
         let settings = DevContainerSettings::get_global(cx);
         let use_podman = settings.use_podman;
         let use_buildkit = settings.use_buildkit;
         let http_client = cx.http_client().clone();
         let fs = workspace.app_state().fs.clone();
         let environment = workspace.project().read(cx).environment().downgrade();
+        let download_consent = DownloadConsent::new(worktree_id, cx)
+            .scoped(format!("project {}", project_directory.display()));
         Some(Self {
+            worktree_id,
+            download_consent,
             project_directory,
             use_podman,
             use_buildkit,
@@ -132,6 +145,59 @@ impl DevContainerContext {
         task.await
             .map(|env| env.into_iter().collect::<std::collections::HashMap<_, _>>())
             .unwrap_or_default()
+    }
+}
+
+#[derive(Clone)]
+struct DownloadConsent {
+    request: Arc<dyn Fn(String) -> BoxFuture<'static, bool> + Send + Sync>,
+    scope: String,
+}
+
+impl Default for DownloadConsent {
+    fn default() -> Self {
+        Self {
+            request: Arc::new(|_| async { false }.boxed()),
+            scope: String::new(),
+        }
+    }
+}
+
+impl DownloadConsent {
+    fn new(worktree_id: WorktreeId, cx: &mut App) -> Self {
+        let Some(gate) = DownloadGate::new(Some(worktree_id), cx) else {
+            return Self::default();
+        };
+        Self {
+            request: Arc::new(move |tool| {
+                let gate = gate.clone();
+                async move { gate.permit(&tool).await && gate.is_allowed(&tool).await }.boxed()
+            }),
+            scope: String::new(),
+        }
+    }
+
+    fn scoped(&self, scope: String) -> Self {
+        Self {
+            request: self.request.clone(),
+            scope: if self.scope.is_empty() {
+                scope
+            } else {
+                format!("{} / {scope}", self.scope)
+            },
+        }
+    }
+
+    async fn require(&self, purpose: &str, destination: &str) -> Result<(), DevContainerError> {
+        let tool = format!(
+            "Dev container: {purpose}; destination: {destination}; {}",
+            self.scope
+        );
+        if (self.request)(tool.clone()).await {
+            Ok(())
+        } else {
+            Err(DevContainerError::DownloadNotAllowed(tool))
+        }
     }
 }
 
@@ -1512,19 +1578,8 @@ fn dispatch_apply_templates(
 ) {
     cx.spawn_in(window, async move |this, cx| {
         let Some((tree_id, context)) = workspace.update(cx, |workspace, cx| {
-            let worktree = workspace
-                .project()
-                .read(cx)
-                .visible_worktrees(cx)
-                .find_map(|tree| {
-                    tree.read(cx)
-                        .root_entry()?
-                        .is_dir()
-                        .then_some(tree.read(cx))
-                });
-            let tree_id = worktree.map(|w| w.id())?;
             let context = DevContainerContext::from_workspace(workspace, cx)?;
-            Some((tree_id, context))
+            Some((context.worktree_id, context))
         }) else {
             return;
         };
@@ -1553,7 +1608,10 @@ fn dispatch_apply_templates(
             });
 
             let files = match apply_devcontainer_template(
-                worktree.unwrap(),
+                match worktree {
+                    Some(worktree) => worktree,
+                    None => return,
+                },
                 &template_entry.template,
                 &template_entry.options_selected,
                 &template_entry.features_selected,

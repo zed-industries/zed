@@ -38,11 +38,12 @@ impl LspInstaller for CssLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
         self.node
+            .with_install_gate(Some(delegate.tool_install_gate(self.name())))
             .npm_package_latest_version("vscode-langservers-extracted")
             .await
     }
@@ -69,9 +70,11 @@ impl LspInstaller for CssLspAdapter {
         &self,
         _latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
-        let node = self.node.clone();
+        let node = self
+            .node
+            .with_install_gate(Some(delegate.tool_install_gate(self.name())));
 
         async move {
             let server_path = container_dir.join(SERVER_PATH);
@@ -91,9 +94,11 @@ impl LspInstaller for CssLspAdapter {
         &self,
         version: &Self::BinaryVersion,
         container_dir: &PathBuf,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Option<LanguageServerBinary>> + use<> {
-        let node = self.node.clone();
+        let node = self
+            .node
+            .with_install_gate(Some(delegate.tool_install_gate(self.name())));
         let version = version.clone();
         let container_dir = container_dir.clone();
 
@@ -124,9 +129,15 @@ impl LspInstaller for CssLspAdapter {
     async fn cached_server_binary(
         &self,
         container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
+        get_cached_server_binary(
+            container_dir,
+            &self
+                .node
+                .with_install_gate(Some(delegate.tool_install_gate(self.name()))),
+        )
+        .await
     }
 }
 

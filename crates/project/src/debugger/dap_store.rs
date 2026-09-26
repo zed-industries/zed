@@ -8,7 +8,7 @@ use remote::Interactive;
 
 use crate::{
     InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState,
-    binary_downloads::DownloadGate,
+    binary_downloads::{BinaryDownloads, DownloadGate, scoped_node_runtime},
     debugger::session::SessionQuirks,
     project_settings::{DapBinary, ProjectSettings},
     worktree_store::WorktreeStore,
@@ -17,7 +17,8 @@ use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
-    Capabilities, DapRegistry, DebugRequest, EvaluateArgumentsContext, StackFrameId,
+    Capabilities, DapExecutionApproval, DapRegistry, DebugRequest, EvaluateArgumentsContext,
+    StackFrameId,
     adapters::{
         DapDelegate, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition, TcpArguments,
     },
@@ -67,6 +68,26 @@ pub enum DapStoreEvent {
     },
     Notification(String),
     RemoteHasInitialized,
+}
+
+pub(super) fn require_execution_approval(
+    adapter: &DebugAdapterName,
+    worktree_id: WorktreeId,
+    cx: &mut App,
+) -> Result<()> {
+    let tool = dap::adapters::execution_tool(adapter.as_ref());
+    let store = BinaryDownloads::try_get_global(cx).context("missing binary downloads store")?;
+    let blocked = store.update(cx, |store, cx| {
+        store
+            .request_tool_install(Some(worktree_id), tool.clone(), cx)
+            .is_some()
+    });
+    anyhow::ensure!(
+        !blocked,
+        "{}",
+        util::downloads_disabled_error_with_retry(&tool, "start the debug session again")
+    );
+    Ok(())
 }
 
 enum DapStoreMode {
@@ -279,7 +300,7 @@ impl DapStore {
                 let user_args = dap_settings.and_then(|s| s.args.clone());
                 let user_env = dap_settings.and_then(|s| s.env.clone());
 
-                let delegate = self.delegate(worktree, console, cx);
+                let delegate = self.delegate(worktree, &definition.adapter, console, cx);
 
                 let worktree = worktree.clone();
                 cx.spawn(async move |this, cx| {
@@ -310,6 +331,9 @@ impl DapStore {
                         binary.envs = env;
                     }
 
+                    cx.update(|cx| {
+                        require_execution_approval(&definition.adapter, worktree_id, cx)
+                    })?;
                     Ok(binary)
                 })
             }
@@ -410,19 +434,34 @@ impl DapStore {
                 let executor = cx.background_executor().clone();
 
                 if let Some(locator) = locator.cloned() {
+                    let worktree_id = build_command.cwd.as_ref().and_then(|cwd| {
+                        self.worktree_store
+                            .read(cx)
+                            .find_worktree(cwd, cx)
+                            .map(|(worktree, _)| worktree.read(cx).id())
+                    });
+                    let gate = DownloadGate::new(worktree_id, cx);
+                    let tool = format!("debug locator {locator_name} execution");
+                    let require_approval: DapExecutionApproval = Arc::new(move || {
+                        let gate = gate.clone();
+                        let tool = tool.clone();
+                        Box::pin(async move {
+                            let gate = gate.context("missing binary downloads store")?;
+                            anyhow::ensure!(
+                                gate.permit(&tool).await,
+                                "{}",
+                                util::downloads_disabled_error_with_retry(
+                                    &tool,
+                                    "start the debug session again"
+                                )
+                            );
+                            Ok(())
+                        })
+                    });
                     cx.background_spawn(async move {
-                        let result = locator
-                            .run(build_command.clone(), executor)
+                        locator
+                            .run_with_execution_approval(build_command, executor, require_approval)
                             .await
-                            .log_with_level(log::Level::Error);
-                        if let Some(result) = result {
-                            return Ok(result);
-                        }
-
-                        anyhow::bail!(
-                            "None of the locators for task `{}` completed successfully",
-                            build_command.label
-                        )
                     })
                 } else {
                     Task::ready(Err(anyhow!(
@@ -604,6 +643,7 @@ impl DapStore {
     fn delegate(
         &self,
         worktree: &Entity<Worktree>,
+        adapter: &DebugAdapterName,
         console: UnboundedSender<String>,
         cx: &mut App,
     ) -> Arc<dyn DapDelegate> {
@@ -611,13 +651,20 @@ impl DapStore {
             unimplemented!("Starting session on remote side");
         };
 
-        let binary_downloads = DownloadGate::new(Some(worktree.read(cx).id()), cx);
+        let worktree_id = worktree.read(cx).id();
+        let binary_downloads = DownloadGate::new(Some(worktree_id), cx);
+        let node_runtime = scoped_node_runtime(
+            &local_store.node_runtime,
+            Some(worktree_id),
+            adapter.0.clone(),
+            cx,
+        );
 
         Arc::new(DapAdapterDelegate::new(
             local_store.fs.clone(),
             worktree.read(cx).snapshot(),
             console,
-            local_store.node_runtime.clone(),
+            node_runtime,
             local_store.http_client.clone(),
             local_store.toolchain_store.clone(),
             local_store
@@ -1033,7 +1080,7 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
 
     async fn request_binary_download_approval(&self, tool: &str) -> bool {
         let Some(gate) = &self.binary_downloads else {
-            return true;
+            return false;
         };
         let permitted = gate.permit(tool).await;
         if !permitted {
@@ -1045,11 +1092,11 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
         permitted
     }
 
-    async fn wait_until_binary_downloads_allowed(&self, tool: &str) -> bool {
+    async fn binary_downloads_allowed(&self, tool: &str) -> bool {
         let Some(gate) = &self.binary_downloads else {
-            return true;
+            return false;
         };
-        gate.permit_silent(tool).await
+        gate.is_allowed(tool).await
     }
 
     fn toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {

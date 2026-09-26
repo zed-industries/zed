@@ -107,7 +107,9 @@ impl LspInstaller for EsLintLspAdapter {
         delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
         let delegate = delegate.clone();
-        let node = self.node.clone();
+        let node = self
+            .node
+            .with_install_gate(Some(delegate.tool_install_gate(self.name())));
 
         async move {
             let destination_path = Self::build_destination_path(&container_dir);
@@ -117,7 +119,7 @@ impl LspInstaller for EsLintLspAdapter {
                 remove_matching(&container_dir, |_| true).await;
 
                 download_server_binary(
-                    &*delegate.http_client(),
+                    &*delegate.http_client_for_tool(Self::SERVER_NAME),
                     &version.url,
                     None,
                     &destination_path,
@@ -144,9 +146,11 @@ impl LspInstaller for EsLintLspAdapter {
                     .await?;
                 }
 
+                delegate.authorize_tool(&Self::SERVER_NAME).await?;
                 node.run_npm_subcommand(Some(&repo_root), "install", &[])
                     .await?;
 
+                delegate.authorize_tool(&Self::SERVER_NAME).await?;
                 node.run_npm_subcommand(Some(&repo_root), "run-script", &["compile"])
                     .await?;
             }
@@ -162,13 +166,18 @@ impl LspInstaller for EsLintLspAdapter {
     async fn cached_server_binary(
         &self,
         container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         let server_path =
             Self::build_destination_path(&container_dir).join(EsLintLspAdapter::SERVER_PATH);
         fs::metadata(&server_path).await.ok()?;
         Some(LanguageServerBinary {
-            path: self.node.binary_path().await.ok()?,
+            path: self
+                .node
+                .with_install_gate(Some(delegate.tool_install_gate(self.name())))
+                .binary_path()
+                .await
+                .ok()?,
             env: None,
             arguments: eslint_server_binary_arguments(&server_path),
         })
@@ -430,7 +439,7 @@ async fn find_eslint_version(
     }
 
     Ok(delegate
-        .npm_package_installed_version("eslint")
+        .npm_package_installed_version(&EsLintLspAdapter::SERVER_NAME, "eslint")
         .await?
         .map(|(_, version)| version))
 }

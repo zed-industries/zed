@@ -155,11 +155,12 @@ impl LspInstaller for JsonLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
         self.node
+            .with_install_gate(Some(delegate.tool_install_gate(self.name())))
             .npm_package_latest_version(Self::PACKAGE_NAME)
             .await
     }
@@ -186,9 +187,11 @@ impl LspInstaller for JsonLspAdapter {
         &self,
         version: &Self::BinaryVersion,
         container_dir: &PathBuf,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Option<LanguageServerBinary>> + use<> {
-        let node = self.node.clone();
+        let node = self
+            .node
+            .with_install_gate(Some(delegate.tool_install_gate(self.name())));
         let version = version.clone();
         let container_dir = container_dir.clone();
 
@@ -220,9 +223,11 @@ impl LspInstaller for JsonLspAdapter {
         &self,
         _latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
-        let node = self.node.clone();
+        let node = self
+            .node
+            .with_install_gate(Some(delegate.tool_install_gate(self.name())));
 
         async move {
             let server_path = container_dir.join(SERVER_PATH);
@@ -241,9 +246,15 @@ impl LspInstaller for JsonLspAdapter {
     async fn cached_server_binary(
         &self,
         container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
+        get_cached_server_binary(
+            container_dir,
+            &self
+                .node
+                .with_install_gate(Some(delegate.tool_install_gate(self.name()))),
+        )
+        .await
     }
 }
 
@@ -447,7 +458,7 @@ impl LspInstaller for NodeVersionAdapter {
             "zed-industries/package-version-server",
             true,
             false,
-            delegate.http_client(),
+            delegate.http_client_for_tool(Self::SERVER_NAME),
         )
         .await?;
         let os = match consts::OS {
@@ -508,7 +519,7 @@ impl LspInstaller for NodeVersionAdapter {
                 container_dir.join(format!("{}-{}-tmp", Self::SERVER_NAME, version.name));
             if fs::metadata(&destination_path).await.is_err() {
                 let mut response = delegate
-                    .http_client()
+                    .http_client_for_tool(Self::SERVER_NAME)
                     .get(&version.url, Default::default(), true)
                     .await
                     .context("downloading release")?;

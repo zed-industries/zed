@@ -6,7 +6,7 @@ use std::{
 };
 
 use futures::TryFutureExt;
-use gpui::{AsyncWindowContext, Entity};
+use gpui::{AppContext, Entity};
 use project::Worktree;
 use serde::Deserialize;
 use settings::{DevContainerConnection, infer_json_indent_size, replace_value_in_json_text};
@@ -70,6 +70,7 @@ pub(crate) struct DevContainerApply {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DevContainerError {
     CommandFailed(String),
+    DownloadNotAllowed(String),
     DockerNotAvailable,
     ContainerNotValid(String),
     DevContainerTemplateApplyFailed(String),
@@ -94,6 +95,8 @@ impl Display for DevContainerError {
             f,
             "{}",
             match self {
+                DevContainerError::DownloadNotAllowed(tool) =>
+                    format!("Download approval required for {tool}. Approve the request and retry."),
                 DevContainerError::DockerNotAvailable =>
                     "docker CLI not found on $PATH".to_string(),
                 DevContainerError::ContainerNotValid(id) => format!(
@@ -104,8 +107,8 @@ impl Display for DevContainerError {
                 DevContainerError::DevContainerUpFailed(_) => {
                     "DevContainer creation failed".to_string()
                 }
-                DevContainerError::DevContainerTemplateApplyFailed(_) => {
-                    "DevContainer template apply failed".to_string()
+                DevContainerError::DevContainerTemplateApplyFailed(error) => {
+                    format!("DevContainer template apply failed: {error}")
                 }
                 DevContainerError::DevContainerNotFound =>
                     "No valid dev container definition found in project".to_string(),
@@ -257,7 +260,7 @@ pub async fn start_dev_container_with_config(
     config: Option<DevContainerConfig>,
     environment: HashMap<String, String>,
 ) -> Result<(DevContainerConnection, String), DevContainerError> {
-    check_for_docker(context.use_podman).await?;
+    check_for_docker(&context).await?;
 
     let Some(actual_config) = config.clone() else {
         return Err(DevContainerError::NotInValidProject);
@@ -298,7 +301,8 @@ pub async fn start_dev_container_with_config(
 
             Ok((connection, remote_workspace_folder))
         }
-        Err(err @ DevContainerError::MultipleMatchingContainers(_)) => Err(err),
+        Err(err @ DevContainerError::MultipleMatchingContainers(_))
+        | Err(err @ DevContainerError::DownloadNotAllowed(_)) => Err(err),
         Err(err) => {
             let message = format!("Failed with nested error: {:?}", err);
             Err(DevContainerError::DevContainerUpFailed(message))
@@ -306,8 +310,20 @@ pub async fn start_dev_container_with_config(
     }
 }
 
-async fn check_for_docker(use_podman: bool) -> Result<(), DevContainerError> {
-    let mut command = if use_podman {
+async fn check_for_docker(context: &DevContainerContext) -> Result<(), DevContainerError> {
+    let engine = if context.use_podman {
+        "podman"
+    } else {
+        "docker"
+    };
+    context
+        .download_consent
+        .require(
+            "container engine execution and dependency downloads",
+            engine,
+        )
+        .await?;
+    let mut command = if context.use_podman {
         util::command::new_command("podman")
     } else {
         util::command::new_command("docker")
@@ -329,8 +345,14 @@ pub(crate) async fn apply_devcontainer_template(
     template_options: &HashMap<String, String>,
     features_selected: &HashSet<DevContainerFeature>,
     context: &DevContainerContext,
-    cx: &mut AsyncWindowContext,
+    cx: &mut impl AppContext,
 ) -> Result<DevContainerApply, DevContainerError> {
+    let purpose = format!("download template {}", template.id);
+    let destination = context.project_directory.display().to_string();
+    context
+        .download_consent
+        .require(&purpose, &destination)
+        .await?;
     let token = get_oci_token(
         ghcr_registry(),
         devcontainer_templates_repository(),
@@ -372,6 +394,10 @@ pub(crate) async fn apply_devcontainer_template(
         DevContainerError::FilesystemError
     })?;
 
+    context
+        .download_consent
+        .require(&purpose, &destination)
+        .await?;
     download_oci_tarball(
         &token.token,
         ghcr_registry(),
@@ -486,11 +512,19 @@ fn get_backup_project_name(remote_workspace_folder: &str, container_id: &str) ->
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{
+        collections::{HashMap, HashSet},
+        path::PathBuf,
+    };
 
-    use crate::devcontainer_api::{DevContainerConfig, find_configs_in_snapshot};
+    use crate::devcontainer_api::{
+        DevContainerConfig, DevContainerError, apply_devcontainer_template,
+        find_configs_in_snapshot,
+    };
+    use crate::{DevContainerContext, DevContainerTemplate, DownloadConsent};
     use fs::FakeFs;
     use gpui::TestAppContext;
+    use http_client::FakeHttpClient;
     use project::Project;
     use serde_json::json;
     use settings::SettingsStore;
@@ -501,6 +535,51 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[gpui::test]
+    async fn download_consent_blocks_template_acquisition(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (worktree, context) = project.read_with(cx, |project, cx| {
+            let worktree = project.visible_worktrees(cx).next().expect("worktree");
+            let context = DevContainerContext {
+                project_directory: project
+                    .active_project_directory(cx)
+                    .expect("project directory"),
+                use_podman: false,
+                use_buildkit: None,
+                fs,
+                http_client: FakeHttpClient::create(|_| async {
+                    panic!("unapproved template request")
+                }),
+                environment: project.environment().downgrade(),
+                worktree_id: worktree.read(cx).id(),
+                download_consent: DownloadConsent::default(),
+            };
+            (worktree, context)
+        });
+        let template = DevContainerTemplate {
+            id: "rust".to_string(),
+            name: "Rust".to_string(),
+            options: None,
+            source_repository: None,
+        };
+        let result = apply_devcontainer_template(
+            worktree,
+            &template,
+            &HashMap::new(),
+            &HashSet::new(),
+            &context,
+            cx,
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(DevContainerError::DownloadNotAllowed(_))
+        ));
     }
 
     #[gpui::test]

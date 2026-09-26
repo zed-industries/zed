@@ -6,10 +6,11 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, Task};
 use http_proxy::Allowlist;
 use language::LanguageRegistry;
 use markdown::Markdown;
-use project::Project;
+use project::{Project, WorktreeId, binary_downloads::DownloadGate};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap as StdHashMap,
+    fmt,
     path::PathBuf,
     sync::{
         Arc,
@@ -67,6 +68,58 @@ pub struct SandboxWrap {
     /// the release can't be determined, in which case the WSL backend falls back
     /// to running bwrap without in-sandbox bind validation.
     pub wsl_zed_release: Option<(String, String)>,
+    pub wsl_helper_download_consent: WslHelperDownloadConsent,
+}
+
+#[derive(Clone, Default)]
+pub struct WslHelperDownloadConsent {
+    gate: Option<DownloadGate>,
+}
+
+impl WslHelperDownloadConsent {
+    pub fn new(worktree_id: Option<WorktreeId>, cx: &mut App) -> Self {
+        Self {
+            gate: worktree_id.and_then(|worktree_id| DownloadGate::new(Some(worktree_id), cx)),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn download_gate(&self) -> sandbox::WslHelperDownloadGate {
+        let consent = self.clone();
+        Arc::new(move |request| {
+            let consent = consent.clone();
+            async move {
+                consent
+                    .require(&request.distro, &request.channel, &request.version)
+                    .await
+            }
+            .boxed()
+        })
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn require(&self, distro: &str, channel: &str, version: &str) -> Result<()> {
+        let tool = format!(
+            "WSL sandbox helper for agent terminal isolation and write-grant validation; distro: {distro:?}; channel: {channel:?}; version: {version:?}"
+        );
+        let Some(gate) = &self.gate else {
+            bail!("Download consent is unavailable for {tool}: no worktree-scoped download gate");
+        };
+        anyhow::ensure!(
+            gate.permit(&tool).await,
+            "Download approval required for {tool}. Approve this helper in the binary-downloads dialog and retry the command; the sandbox remains enabled."
+        );
+        Ok(())
+    }
+}
+
+impl fmt::Debug for WslHelperDownloadConsent {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WslHelperDownloadConsent")
+            .field("has_gate", &self.gate.is_some())
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -383,6 +436,8 @@ pub(crate) async fn prepare_sandbox_wrap(
     if let Some((channel, version)) = sandbox_wrap.wsl_zed_release.clone() {
         sandbox.set_wsl_zed_release(channel, version);
     }
+    #[cfg(target_os = "windows")]
+    sandbox.set_wsl_helper_download_gate(sandbox_wrap.wsl_helper_download_consent.download_gate());
     let command = sandbox::CommandAndArgs {
         program,
         args,

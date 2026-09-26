@@ -8,298 +8,36 @@ use std::{
     time::{Duration, Instant},
 };
 
-use collections::HashMap;
+use client::{Client, UserStore};
+use clock::FakeSystemClock;
+use collections::{HashMap, HashSet};
 use fs::{FakeFs, Fs};
-use futures::{FutureExt, StreamExt, lock::OwnedMutexGuard};
-use gpui::{AsyncApp, Entity, TestAppContext, UpdateGlobal};
+use futures::{FutureExt, StreamExt, channel::oneshot};
+use gpui::{AppContext as _, AsyncApp, Entity, TestAppContext, UpdateGlobal};
+use http_client::FakeHttpClient;
 use language::{
-    BinaryStatus, Buffer, CodeLabel, DiagnosticSourceKind, DynLspInstaller, FakeLspAdapter,
-    HighlightId, LanguageName, LanguageServerBinaryLocations, LocalFile, LspAdapter,
-    LspAdapterDelegate, Toolchain, rust_lang,
+    Buffer, CodeLabel, DiagnosticSourceKind, FakeLspAdapter, HighlightId, LanguageName,
+    LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller, rust_lang,
 };
-use lsp::{
-    LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId, LanguageServerName, Uri,
-};
+use lsp::{LanguageServerBinary, LanguageServerId, LanguageServerName, Uri};
+use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
 use project::{
-    DiagnosticSummary, Event, Project,
+    DiagnosticSummary, Event, LocalProjectFlags, Project,
     lsp_store::{
         log_store::{TestRpcLogHeaderState, TestRpcRequestTracker},
         *,
     },
 };
 use serde_json::json;
-use settings::{LocalSettingsKind, LocalSettingsPath, Settings, SettingsStore};
+use settings::SettingsStore;
 use unindent::Unindent;
-use util::{
-    path,
-    rel_path::{RelPath, rel_path},
-};
-
-use crate::init_test;
-
-#[derive(Clone, Default)]
-struct DownloadOnlyLspAdapter {
-    fetch_count: Arc<AtomicUsize>,
-}
-
-#[async_trait::async_trait(?Send)]
-impl DynLspInstaller for DownloadOnlyLspAdapter {
-    async fn try_fetch_server_binary(
-        &self,
-        _: &Arc<dyn LspAdapterDelegate>,
-        _: PathBuf,
-        _: bool,
-        _: &mut AsyncApp,
-    ) -> anyhow::Result<LanguageServerBinary> {
-        unreachable!()
-    }
-
-    fn get_language_server_command(
-        self: Arc<Self>,
-        delegate: Arc<dyn LspAdapterDelegate>,
-        _: Option<Toolchain>,
-        binary_options: LanguageServerBinaryOptions,
-        _: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
-        _: AsyncApp,
-    ) -> LanguageServerBinaryLocations {
-        async move {
-            if !binary_options.fetch_when_missing {
-                let reason = util::downloads_disabled_error(self.name().0);
-                delegate.update_status(
-                    self.name(),
-                    BinaryStatus::DownloadBlocked {
-                        reason: reason.clone(),
-                    },
-                );
-                return (Err(anyhow::anyhow!(reason)), None);
-            }
-
-            self.fetch_count.fetch_add(1, Ordering::SeqCst);
-            (
-                Ok(LanguageServerBinary {
-                    path: "/downloaded/lsp".into(),
-                    arguments: Vec::new(),
-                    env: None,
-                }),
-                None,
-            )
-        }
-        .boxed_local()
-    }
-}
-
-impl LspAdapter for DownloadOnlyLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        LanguageServerName::new_static("download-only-language-server")
-    }
-
-    fn language_ids(&self) -> collections::HashMap<LanguageName, String> {
-        collections::HashMap::from_iter([("Rust".into(), "rust".to_string())])
-    }
-}
-
-#[derive(Clone, Default)]
-struct DiskBinaryWithDownloaderLspAdapter {
-    fetch_count: Arc<AtomicUsize>,
-}
-
-#[async_trait::async_trait(?Send)]
-impl DynLspInstaller for DiskBinaryWithDownloaderLspAdapter {
-    async fn try_fetch_server_binary(
-        &self,
-        _: &Arc<dyn LspAdapterDelegate>,
-        _: PathBuf,
-        _: bool,
-        _: &mut AsyncApp,
-    ) -> anyhow::Result<LanguageServerBinary> {
-        unreachable!()
-    }
-
-    fn get_language_server_command(
-        self: Arc<Self>,
-        _: Arc<dyn LspAdapterDelegate>,
-        _: Option<Toolchain>,
-        _: LanguageServerBinaryOptions,
-        _: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
-        _: AsyncApp,
-    ) -> LanguageServerBinaryLocations {
-        async move {
-            let fetch_count = self.fetch_count.clone();
-            (
-                Ok(LanguageServerBinary {
-                    path: "/existing/lsp".into(),
-                    arguments: Vec::new(),
-                    env: None,
-                }),
-                Some(
-                    async move {
-                        fetch_count.fetch_add(1, Ordering::SeqCst);
-                        Ok(LanguageServerBinary {
-                            path: "/downloaded/lsp".into(),
-                            arguments: Vec::new(),
-                            env: None,
-                        })
-                    }
-                    .boxed_local(),
-                ),
-            )
-        }
-        .boxed_local()
-    }
-}
-
-impl LspAdapter for DiskBinaryWithDownloaderLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        LanguageServerName::new_static("disk-binary-language-server")
-    }
-
-    fn language_ids(&self) -> collections::HashMap<LanguageName, String> {
-        collections::HashMap::from_iter([("Rust".into(), "rust".to_string())])
-    }
-
-    fn is_extension(&self) -> bool {
-        true
-    }
-}
+use util::{path, rel_path::rel_path};
 
 #[gpui::test]
-async fn test_allow_binary_downloads_false_holds_lsp_until_allowed(cx: &mut TestAppContext) {
+async fn test_user_installed_lsp_waits_for_execution_consent(cx: &mut TestAppContext) {
     init_test(cx);
-    cx.executor().allow_parking();
-    cx.update(|cx| project::binary_downloads::init(cx));
-
-    cx.update(|cx| {
-        SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings(cx, |settings| {
-                settings.project.allow_binary_downloads = Some(false);
-            });
-        });
-    });
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/the-root"), json!({ "main.rs": "fn main() {}" }))
-        .await;
-
-    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(rust_lang());
-    let adapter = DownloadOnlyLspAdapter::default();
-    let adapter_name = adapter.name();
-    language_registry.register_lsp_adapter("Rust".into(), Arc::new(adapter));
-    let mut fake_servers = language_registry.register_fake_lsp_server(
-        adapter_name.clone(),
-        lsp::ServerCapabilities::default(),
-        None,
-    );
-
-    let (_buffer, _handle) = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    let mut next_server = fake_servers.next().fuse();
-    let mut timeout = cx.executor().timer(Duration::from_secs(1)).fuse();
-    futures::select! {
-        _ = next_server => panic!("language server started while downloads were disabled"),
-        _ = timeout => {}
-    }
-
-    cx.update(|cx| {
-        SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings(cx, |settings| {
-                settings.project.allow_binary_downloads = Some(true);
-            });
-        });
-    });
-
-    let mut next_server = fake_servers.next().fuse();
-    let mut timeout = cx.executor().timer(Duration::from_secs(1)).fuse();
-    futures::select! {
-        server = next_server => assert_eq!(server.is_some(), true),
-        _ = timeout => panic!("timed out waiting for language server after enabling downloads"),
-    }
-}
-
-#[gpui::test]
-async fn test_allow_binary_downloads_can_be_enabled_for_a_project(cx: &mut TestAppContext) {
-    init_test(cx);
-    cx.executor().allow_parking();
-    cx.update(|cx| project::binary_downloads::init(cx));
-
-    cx.update(|cx| {
-        SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings(cx, |settings| {
-                settings.project.allow_binary_downloads = Some(false);
-            });
-        });
-    });
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/the-root"), json!({ "main.rs": "fn main() {}" }))
-        .await;
-
-    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
-    let worktree_id = project.update(cx, |project, cx| {
-        project.worktrees(cx).next().unwrap().read(cx).id()
-    });
-    cx.update_global::<SettingsStore, _>(|store, cx| {
-        store
-            .set_local_settings(
-                worktree_id,
-                LocalSettingsPath::InWorktree(Arc::from(RelPath::empty())),
-                LocalSettingsKind::Settings,
-                Some(r#"{ "allow_binary_downloads": true }"#),
-                cx,
-            )
-            .unwrap();
-    });
-    project.read_with(cx, |_, cx| {
-        assert_eq!(
-            project::project_settings::ProjectSettings::get(
-                Some(settings::SettingsLocation {
-                    worktree_id,
-                    path: RelPath::empty(),
-                }),
-                cx,
-            )
-            .allow_binary_downloads,
-            true,
-        );
-    });
-
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(rust_lang());
-    let adapter = DownloadOnlyLspAdapter::default();
-    let adapter_name = adapter.name();
-    language_registry.register_lsp_adapter("Rust".into(), Arc::new(adapter));
-    let mut fake_servers = language_registry.register_fake_lsp_server(
-        adapter_name,
-        lsp::ServerCapabilities::default(),
-        None,
-    );
-
-    let (_buffer, _handle) = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    let mut next_server = fake_servers.next().fuse();
-    let mut timeout = cx.executor().timer(Duration::from_secs(1)).fuse();
-    futures::select! {
-        server = next_server => assert_eq!(server.is_some(), true),
-        _ = timeout => panic!("timed out waiting for language server"),
-    }
-}
-
-#[gpui::test]
-async fn test_user_installed_lsp_starts_with_downloads_disabled(cx: &mut TestAppContext) {
-    init_test(cx);
-    cx.executor().allow_parking();
+    cx.executor().forbid_parking();
     cx.update(|cx| project::binary_downloads::init(cx));
 
     cx.update(|cx| {
@@ -348,90 +86,359 @@ async fn test_user_installed_lsp_starts_with_downloads_disabled(cx: &mut TestApp
         .await
         .unwrap();
 
-    let mut next_server = fake_servers.next().fuse();
-    let mut timeout = cx.executor().timer(Duration::from_secs(1)).fuse();
-    futures::select! {
-        server = next_server => assert_eq!(server.is_some(), true),
-        _ = timeout => {
-            panic!("user-installed language server should start even while downloads are disabled")
-        }
-    }
+    cx.run_until_parked();
+    assert!(fake_servers.next().now_or_never().is_none());
+    let worktree_id = _buffer.read_with(cx, |buffer, cx| buffer.file().unwrap().worktree_id(cx));
+    cx.update(|cx| {
+        project::binary_downloads::BinaryDownloads::try_get_global(cx)
+            .unwrap()
+            .update(cx, |store, cx| {
+                assert_eq!(
+                    store.pending_tool_installs(),
+                    vec![project::binary_downloads::ToolInstall {
+                        worktree_id: Some(worktree_id),
+                        tool: "user-installed-language-server".into(),
+                    }]
+                );
+                store.approve_tool_install(Some(worktree_id), "user-installed-language-server", cx);
+            });
+    });
+    let server =
+        next_installer_test_server(&mut fake_servers, "approved explicit binary", cx).await;
+    assert_eq!(
+        server.binary.path,
+        PathBuf::from(path!("/the-root/.bin/user-installed-language-server.exe"))
+    );
 }
 
 #[gpui::test]
-async fn test_disk_binary_starts_without_download_and_refreshes_when_downloads_enabled(
-    cx: &mut TestAppContext,
-) {
+async fn test_production_installer_requires_consent_for_cached_lsp(cx: &mut TestAppContext) {
     init_test(cx);
-    cx.executor().allow_parking();
+    cx.executor().forbid_parking();
     cx.update(|cx| project::binary_downloads::init(cx));
-
-    cx.update(|cx| {
-        SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings(cx, |settings| {
-                settings.project.allow_binary_downloads = Some(false);
-            });
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings.project.allow_binary_downloads = Some(false);
         });
     });
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/the-root"), json!({ "main.rs": "fn main() {}" }))
-        .await;
-
-    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(rust_lang());
-    let adapter = DiskBinaryWithDownloaderLspAdapter::default();
-    let fetch_count = adapter.fetch_count.clone();
-    let adapter_name = adapter.name();
-    language_registry.register_lsp_adapter("Rust".into(), Arc::new(adapter));
-    let mut fake_servers = language_registry.register_fake_lsp_server(
-        adapter_name,
-        lsp::ServerCapabilities::default(),
-        None,
-    );
-
-    let (_buffer, _handle) = project
+    let adapter = Arc::new(ProductionDiskBinaryTestAdapter {
+        cached_binary: true,
+        ..ProductionDiskBinaryTestAdapter::default()
+    });
+    let (project, mut fake_servers, _download_dir) =
+        project_with_production_installer(adapter.clone(), cx).await;
+    let (buffer, _handle) = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
+            project.open_local_buffer_with_lsp(path!("/root-a/main.rs"), cx)
         })
         .await
         .unwrap();
-
-    let mut next_server = fake_servers.next().fuse();
-    let mut timeout = cx.executor().timer(Duration::from_secs(1)).fuse();
-    futures::select! {
-        server = next_server => assert_eq!(server.is_some(), true),
-        _ = timeout => {
-            panic!("server should start from the existing binary while downloads are disabled")
-        }
-    }
+    cx.run_until_parked();
+    assert!(fake_servers.next().now_or_never().is_none());
+    assert_eq!(adapter.cached_lookups.load(Ordering::SeqCst), 0);
+    let worktree_id = buffer.read_with(cx, |buffer, cx| buffer.file().unwrap().worktree_id(cx));
+    cx.update(|cx| {
+        project::binary_downloads::BinaryDownloads::try_get_global(cx)
+            .unwrap()
+            .update(cx, |store, cx| {
+                store.approve_tool_install(Some(worktree_id), adapter.name().0, cx);
+            });
+    });
+    let first_server = next_installer_test_server(&mut fake_servers, "initial startup", cx).await;
     assert_eq!(
-        fetch_count.load(Ordering::SeqCst),
-        0,
-        "the downloader must not run while downloads are disabled"
+        first_server.binary.path,
+        PathBuf::from(path!("/existing/lsp"))
     );
+    cx.run_until_parked();
+    assert_eq!(*adapter.fetch_worktrees.lock(), vec![worktree_id]);
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    lsp_store.update(cx, |store, cx| {
+        store.restart_language_servers_for_buffers(
+            vec![buffer.clone()],
+            HashSet::default(),
+            true,
+            cx,
+        );
+    });
+    let restarted_server =
+        next_installer_test_server(&mut fake_servers, "cached restart", cx).await;
+    assert_eq!(
+        restarted_server.binary.path,
+        PathBuf::from(path!("/downloaded/lsp"))
+    );
+    assert_eq!(*adapter.fetch_worktrees.lock(), vec![worktree_id]);
+    cx.run_until_parked();
+    lsp_store
+        .update(cx, |store, cx| {
+            store.stop_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        lsp_store.read_with(cx, |store, _| store
+            .as_local()
+            .unwrap()
+            .language_servers
+            .len()),
+        0,
+    );
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings.project.allow_binary_downloads = Some(true);
+        });
+    });
+    cx.run_until_parked();
+    assert_eq!(*adapter.fetch_worktrees.lock(), vec![worktree_id]);
+    assert!(fake_servers.next().now_or_never().is_none());
+    lsp_store.update(cx, |store, cx| {
+        store.restart_language_servers_for_buffers(
+            vec![buffer.clone()],
+            HashSet::default(),
+            true,
+            cx,
+        );
+    });
+    let server = next_installer_test_server(&mut fake_servers, "allowed cached startup", cx).await;
+    assert_eq!(server.binary.path, PathBuf::from(path!("/downloaded/lsp")));
+    cx.run_until_parked();
+    let worktree_id = buffer.read_with(cx, |buffer, cx| buffer.file().unwrap().worktree_id(cx));
+    assert_eq!(*adapter.fetch_worktrees.lock(), vec![worktree_id]);
+    lsp_store.update(cx, |store, cx| {
+        store.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), true, cx);
+    });
+    let server =
+        next_installer_test_server(&mut fake_servers, "refreshed cached startup", cx).await;
+    assert_eq!(server.binary.path, PathBuf::from(path!("/downloaded/lsp")));
+    assert_eq!(*adapter.fetch_worktrees.lock(), vec![worktree_id]);
+}
+
+#[gpui::test]
+async fn test_production_installer_scopes_and_deduplicates_downloads(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().forbid_parking();
+    cx.update(|cx| project::binary_downloads::init(cx));
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings.project.allow_binary_downloads = Some(false);
+        });
+    });
+    let (finish_fetch, fetch_barrier) = oneshot::channel();
+    let adapter = Arc::new(ProductionDiskBinaryTestAdapter {
+        fetch_barrier: Mutex::new(Some(fetch_barrier)),
+        ..ProductionDiskBinaryTestAdapter::default()
+    });
+    let (project, mut fake_servers, _download_dir) =
+        project_with_production_installer(adapter.clone(), cx).await;
+    let (buffer_a, _handle_a) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/root-a/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    let (buffer_b, _handle_b) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/root-b/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    let worktree_a = buffer_a.read_with(cx, |buffer, cx| buffer.file().unwrap().worktree_id(cx));
+    let worktree_b = buffer_b.read_with(cx, |buffer, cx| buffer.file().unwrap().worktree_id(cx));
     let store =
         cx.update(|cx| project::binary_downloads::BinaryDownloads::try_get_global(cx).unwrap());
+    let pending_worktrees = store.read_with(cx, |store, _| {
+        let mut worktrees = store
+            .pending_tool_installs()
+            .into_iter()
+            .map(|install| install.worktree_id.unwrap())
+            .collect::<Vec<_>>();
+        worktrees.sort();
+        worktrees
+    });
+    let mut expected_worktrees = vec![worktree_a, worktree_b];
+    expected_worktrees.sort();
+    assert_eq!(pending_worktrees, expected_worktrees);
+    assert_eq!(*adapter.fetch_worktrees.lock(), Vec::new());
+    store.update(cx, |store, cx| {
+        store.approve_tool_install(Some(worktree_b), adapter.name().0, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(*adapter.fetch_worktrees.lock(), vec![worktree_b]);
+    assert!(fake_servers.next().now_or_never().is_none());
+    store.update(cx, |store, cx| {
+        store.approve_tool_install(Some(worktree_a), adapter.name().0, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(*adapter.fetch_worktrees.lock(), vec![worktree_b]);
+    assert!(fake_servers.next().now_or_never().is_none());
+    finish_fetch.send(()).unwrap();
+    let server_b = next_installer_test_server(&mut fake_servers, "approved worktree", cx).await;
     assert_eq!(
-        store.read_with(cx, |store, _| store.pending_tool_installs()),
-        Vec::new(),
-        "starting from a disk binary must not register a pending install"
+        server_b.binary.path,
+        PathBuf::from(path!("/downloaded/lsp"))
     );
+    let server_a = next_installer_test_server(&mut fake_servers, "shared cached binary", cx).await;
+    assert_eq!(
+        server_a.binary.path,
+        PathBuf::from(path!("/downloaded/lsp"))
+    );
+    assert_eq!(*adapter.fetch_worktrees.lock(), vec![worktree_b]);
+}
 
-    cx.update(|cx| {
-        SettingsStore::update_global(cx, |store, cx| {
+#[gpui::test]
+async fn test_production_installer_rechecks_permission_after_lookup(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().forbid_parking();
+    cx.update(|cx| project::binary_downloads::init(cx));
+    for cached_binary in [false, true] {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.project.allow_binary_downloads = Some(true);
             });
         });
-    });
-    cx.run_until_parked();
+        let (finish_lookup, lookup_barrier) = oneshot::channel();
+        let adapter = Arc::new(ProductionDiskBinaryTestAdapter {
+            cached_binary,
+            lookup_barrier: Mutex::new(Some(lookup_barrier)),
+            ..ProductionDiskBinaryTestAdapter::default()
+        });
+        let (project, mut fake_servers, _download_dir) =
+            project_with_production_installer(adapter.clone(), cx).await;
+        let (buffer_a, _handle_a) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/root-a/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(adapter.cached_lookups.load(Ordering::SeqCst), 1);
+        assert!(adapter.lookup_barrier.lock().is_none());
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.allow_binary_downloads = Some(false);
+            });
+        });
+        finish_lookup.send(()).unwrap();
+        cx.run_until_parked();
+        assert_eq!(*adapter.fetch_worktrees.lock(), Vec::new());
+        assert!(fake_servers.next().now_or_never().is_none());
+        let (buffer_b, _handle_b) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/root-b/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(adapter.cached_lookups.load(Ordering::SeqCst), 1);
+        let worktree_a =
+            buffer_a.read_with(cx, |buffer, cx| buffer.file().unwrap().worktree_id(cx));
+        let worktree_b =
+            buffer_b.read_with(cx, |buffer, cx| buffer.file().unwrap().worktree_id(cx));
+        let downloads =
+            cx.update(|cx| project::binary_downloads::BinaryDownloads::try_get_global(cx).unwrap());
+        downloads.update(cx, |downloads, cx| {
+            downloads.approve_tool_install(Some(worktree_a), adapter.name().0, cx);
+        });
+        let server =
+            next_installer_test_server(&mut fake_servers, "approved startup after revocation", cx)
+                .await;
+        assert_eq!(
+            server.binary.path,
+            PathBuf::from(if cached_binary {
+                path!("/existing/lsp")
+            } else {
+                path!("/downloaded/lsp")
+            })
+        );
+        cx.run_until_parked();
+        assert_eq!(*adapter.fetch_worktrees.lock(), vec![worktree_a]);
+        assert!(fake_servers.next().now_or_never().is_none());
+        assert_eq!(
+            downloads.read_with(cx, |downloads, _| downloads.pending_tool_installs()),
+            vec![project::binary_downloads::ToolInstall {
+                worktree_id: Some(worktree_b),
+                tool: adapter.name().0,
+            }]
+        );
+    }
+}
 
+#[gpui::test]
+async fn test_lsp_prerequisites_keep_worktree_and_tool_authority(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().forbid_parking();
+    cx.update(|cx| project::binary_downloads::init(cx));
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings.project.allow_binary_downloads = Some(false)
+        });
+    });
+    let adapter = Arc::new(ProductionDiskBinaryTestAdapter {
+        cached_binary: true,
+        ..ProductionDiskBinaryTestAdapter::default()
+    });
+    let (project, _servers, directory) =
+        project_with_production_installer(adapter.clone(), cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let (delegate_a, delegate_b) = lsp_store.update(cx, |store, cx| {
+        let local = store.as_local().unwrap();
+        let mut worktrees = local.worktree_store.read(cx).worktrees();
+        let worktree_a = worktrees.next().unwrap();
+        let worktree_b = worktrees.next().unwrap();
+        drop(worktrees);
+        (
+            LocalLspAdapterDelegate::from_local_lsp(local, &worktree_a, cx),
+            LocalLspAdapterDelegate::from_local_lsp(local, &worktree_b, cx),
+        )
+    });
+    let downloads =
+        cx.update(|cx| project::binary_downloads::BinaryDownloads::try_get_global(cx).unwrap());
+    downloads.update(cx, |downloads, cx| {
+        downloads.approve_tool_install(Some(delegate_a.worktree_id()), adapter.name().0, cx);
+    });
+    assert!(
+        adapter
+            .cached_server_binary(directory.path().to_path_buf(), delegate_b.as_ref())
+            .await
+            .is_some()
+    );
+    let node_path = directory.path().join("missing-node");
+    assert!(!node_path.exists());
+    let (_options, receiver) = watch::channel(Some(NodeBinaryOptions {
+        allow_path_lookup: false,
+        allow_binary_downloads: true,
+        use_paths: Some((node_path, directory.path().join("missing-npm"))),
+    }));
+    let runtime = NodeRuntime::new(FakeHttpClient::with_404_response(), None, receiver, None);
+    let node_b = runtime.with_install_gate(Some(delegate_b.tool_install_gate(adapter.name())));
+    assert!(node_b.binary_path().await.is_err());
     assert_eq!(
-        fetch_count.load(Ordering::SeqCst),
-        1,
-        "enabling downloads must run the deferred downloader once"
+        downloads.read_with(cx, |downloads, _| downloads.pending_tool_installs()),
+        vec![project::binary_downloads::ToolInstall {
+            worktree_id: Some(delegate_b.worktree_id()),
+            tool: adapter.name().0,
+        }]
+    );
+    let unrelated = LanguageServerName::new_static("unrelated-server");
+    assert!(
+        delegate_a
+            .authorize_tool(&unrelated)
+            .await
+            .unwrap_err()
+            .is::<language::ToolPermissionDenied>()
+    );
+    downloads.update(cx, |downloads, cx| {
+        downloads.approve_tool_install(Some(delegate_b.worktree_id()), adapter.name().0, cx);
+    });
+    delegate_b.authorize_tool(&adapter.name()).await.unwrap();
+    assert!(node_b.binary_path().await.is_err());
+    assert_eq!(
+        downloads.read_with(cx, |downloads, _| downloads.pending_tool_installs()),
+        vec![project::binary_downloads::ToolInstall {
+            worktree_id: Some(delegate_a.worktree_id()),
+            tool: unrelated.0,
+        }]
     );
 }
 
@@ -554,6 +561,91 @@ async fn test_diagnostic_batches_skip_paths_without_worktrees(cx: &mut TestAppCo
             }
         }
     }
+}
+
+#[gpui::test]
+async fn test_invisible_worktree_does_not_inherit_lsp_consent(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().forbid_parking();
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/the-root"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+    fs.insert_tree(
+        path!("/the-registry"),
+        json!({ "dep.rs": "pub fn dep() {}" }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let languages = project.read_with(cx, |project, _| project.languages().clone());
+    languages.add(rust_lang());
+    let mut servers = languages.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "reuse-server",
+            ..FakeLspAdapter::default()
+        },
+    );
+    let (_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let mut server = next_installer_test_server(&mut servers, "source worktree startup", cx).await;
+    server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+    cx.update_global::<SettingsStore, _>(|settings, cx| {
+        settings.update_user_settings(cx, |settings| {
+            settings.project.allow_binary_downloads = Some(false)
+        });
+    });
+    let server_id = project.read_with(cx, |project, cx| {
+        project
+            .lsp_store()
+            .read(cx)
+            .language_server_statuses()
+            .next()
+            .unwrap()
+            .0
+    });
+    let external = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_via_lsp(
+                Uri::from_file_path(path!("/the-registry/dep.rs")).unwrap(),
+                server_id,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    let worktree = external.read_with(cx, |buffer, cx| buffer.file().unwrap().worktree_id(cx));
+    let _handle = project.update(cx, |project, cx| {
+        project.register_buffer_with_language_servers(&external, cx)
+    });
+    cx.run_until_parked();
+    assert!(
+        server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .now_or_never()
+            .is_none()
+    );
+    assert!(servers.next().now_or_never().is_none());
+    cx.update(|cx| {
+        project::binary_downloads::BinaryDownloads::try_get_global(cx)
+            .unwrap()
+            .update(cx, |downloads, cx| {
+                assert_eq!(
+                    downloads.pending_tool_installs(),
+                    vec![project::binary_downloads::ToolInstall {
+                        worktree_id: Some(worktree),
+                        tool: "reuse-server".into()
+                    }]
+                );
+                downloads.approve_tool_install(Some(worktree), "reuse-server", cx);
+            });
+    });
+    next_installer_test_server(&mut servers, "independently approved external worktree", cx).await;
 }
 
 #[gpui::test]
@@ -1484,4 +1576,157 @@ fn worktree_entries(project: &Entity<Project>, cx: &TestAppContext) -> Vec<Strin
             .map(|entry| entry.path.as_unix_str().to_string())
             .collect()
     })
+}
+
+fn init_test(cx: &mut TestAppContext) {
+    crate::init_test(cx);
+    cx.update(project::binary_downloads::init);
+}
+
+async fn project_with_production_installer(
+    adapter: Arc<ProductionDiskBinaryTestAdapter>,
+    cx: &mut TestAppContext,
+) -> (
+    Entity<Project>,
+    futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer>,
+    tempfile::TempDir,
+) {
+    let fs = FakeFs::new(cx.executor());
+    for root in [path!("/root-a"), path!("/root-b")] {
+        fs.insert_tree(root, json!({ "main.rs": "fn main() {}" }))
+            .await;
+    }
+    let adapter_name = adapter.name();
+    let download_dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(download_dir.path().join(adapter_name.0.as_ref())).unwrap();
+    let mut languages = LanguageRegistry::test(cx.executor());
+    languages.set_language_server_download_dir(Arc::<Path>::from(download_dir.path()));
+    let languages = Arc::new(languages);
+    languages.add(rust_lang());
+    languages.register_lsp_adapter("Rust".into(), adapter);
+    let fake_servers =
+        languages.register_fake_lsp_server(adapter_name, lsp::ServerCapabilities::default(), None);
+    let client = cx.update(|cx| {
+        Client::new(
+            Arc::new(FakeSystemClock::new()),
+            FakeHttpClient::with_404_response(),
+            cx,
+        )
+    });
+    let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+    let project = cx.update(|cx| {
+        Project::local(
+            client,
+            NodeRuntime::unavailable(),
+            user_store,
+            languages,
+            fs,
+            None,
+            LocalProjectFlags {
+                init_worktree_trust: false,
+                ..LocalProjectFlags::default()
+            },
+            cx,
+        )
+    });
+    for root in [path!("/root-a"), path!("/root-b")] {
+        let (worktree, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(root, true, cx)
+            })
+            .await
+            .unwrap();
+        worktree
+            .read_with(cx, |worktree, _| {
+                worktree.as_local().unwrap().scan_complete()
+            })
+            .await;
+    }
+    (project, fake_servers, download_dir)
+}
+
+async fn next_installer_test_server(
+    servers: &mut futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer>,
+    phase: &str,
+    cx: &TestAppContext,
+) -> lsp::FakeLanguageServer {
+    let mut next_server = servers.next().fuse();
+    let mut timeout = cx.executor().timer(Duration::from_secs(1)).fuse();
+    futures::select! {
+        server = next_server => server.expect("language server stream closed"),
+        _ = timeout => panic!("{phase} did not complete within one simulated second"),
+    }
+}
+
+#[derive(Default)]
+struct ProductionDiskBinaryTestAdapter {
+    cached_binary: bool,
+    cached_lookups: AtomicUsize,
+    lookup_barrier: Mutex<Option<oneshot::Receiver<()>>>,
+    fetch_worktrees: Mutex<Vec<WorktreeId>>,
+    fetch_barrier: Mutex<Option<oneshot::Receiver<()>>>,
+}
+
+impl LspAdapter for ProductionDiskBinaryTestAdapter {
+    fn name(&self) -> LanguageServerName {
+        LanguageServerName::new_static("production-disk-binary-test-server")
+    }
+
+    fn language_ids(&self) -> HashMap<LanguageName, String> {
+        HashMap::from_iter([("Rust".into(), "rust".to_string())])
+    }
+
+    fn is_extension(&self) -> bool {
+        true
+    }
+}
+
+impl LspInstaller for ProductionDiskBinaryTestAdapter {
+    type BinaryVersion = ();
+
+    async fn fetch_latest_server_version(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> anyhow::Result<Self::BinaryVersion> {
+        self.fetch_worktrees.lock().push(delegate.worktree_id());
+        let barrier = self.fetch_barrier.lock().take();
+        if let Some(barrier) = barrier {
+            barrier.await?;
+        }
+        Ok(())
+    }
+
+    fn fetch_server_binary(
+        &self,
+        _: (),
+        _: PathBuf,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = anyhow::Result<LanguageServerBinary>> + use<> {
+        async {
+            Ok(LanguageServerBinary {
+                path: PathBuf::from(path!("/downloaded/lsp")),
+                arguments: Vec::new(),
+                env: None,
+            })
+        }
+    }
+
+    async fn cached_server_binary(
+        &self,
+        _: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        self.cached_lookups.fetch_add(1, Ordering::SeqCst);
+        let barrier = self.lookup_barrier.lock().take();
+        if let Some(barrier) = barrier {
+            barrier.await.unwrap();
+        }
+        self.cached_binary.then(|| LanguageServerBinary {
+            path: PathBuf::from(path!("/existing/lsp")),
+            arguments: Vec::new(),
+            env: None,
+        })
+    }
 }

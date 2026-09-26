@@ -4,16 +4,16 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 pub use dap_types::{StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest};
-use fs::Fs;
-use futures::{StreamExt as _, io::BufReader};
-use gpui::{AppContext as _, AsyncApp, SharedString};
+use fs::{Fs, RemoveOptions, RenameOptions};
+use futures::{FutureExt as _, StreamExt as _, io::BufReader};
+use gpui::{AsyncApp, BackgroundExecutor, SharedString};
 pub use http_client::{HttpClient, github::latest_github_release};
 use language::{LanguageName, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::WorktreeId;
-use smol::fs::File;
+use smol::{fs::File, lock::OnceCell};
 use std::{
     borrow::Borrow,
     ffi::OsStr,
@@ -22,8 +22,8 @@ use std::{
     net::IpAddr,
     ops::Deref,
     path::{Path, PathBuf},
-    pin::Pin,
-    sync::{Arc, OnceLock},
+    sync::Arc,
+    time::Duration,
 };
 use task::{DebugScenario, TcpArgumentsTemplate, ZedDebugConfig};
 use util::{archive::extract_zip, rel_path::RelPath};
@@ -50,14 +50,12 @@ pub trait DapDelegate: Send + Sync + 'static {
     async fn shell_env(&self) -> collections::HashMap<String, String>;
     fn is_headless(&self) -> bool;
 
-    /// Call right before a debug adapter binary would be downloaded; blocks
-    /// until downloads are permitted. Default allows immediately.
     async fn request_binary_download_approval(&self, _tool: &str) -> bool {
-        true
+        false
     }
 
-    async fn wait_until_binary_downloads_allowed(&self, _tool: &str) -> bool {
-        true
+    async fn binary_downloads_allowed(&self, _tool: &str) -> bool {
+        false
     }
 }
 
@@ -283,33 +281,40 @@ pub struct GithubRepo {
     pub repo_owner: String,
 }
 
+pub fn execution_tool(adapter: &str) -> String {
+    format!("debug adapter {adapter} execution")
+}
+
 pub async fn download_adapter_from_github(
     adapter_name: DebugAdapterName,
     github_version: AdapterVersion,
     file_type: DownloadedFileType,
+    binary_relative_path: &Path,
     delegate: &dyn DapDelegate,
 ) -> Result<PathBuf> {
     let adapter_path = paths::debug_adapters_dir().join(&adapter_name.as_ref());
     let version_path = adapter_path.join(format!("{}_{}", adapter_name, github_version.tag_name));
     let fs = delegate.fs();
 
-    if version_path.exists() {
+    fs.create_dir(&adapter_path).await?;
+    let installed_path =
+        latest_installed_version_path(adapter_name.as_ref(), binary_relative_path, delegate).await;
+    remove_other_adapter_versions(
+        &adapter_path,
+        &installed_path
+            .iter()
+            .map(PathBuf::as_path)
+            .collect::<Vec<_>>(),
+        fs.as_ref(),
+    )
+    .await?;
+
+    if fs.is_file(&version_path.join(binary_relative_path)).await {
         return Ok(version_path);
     }
 
-    anyhow::ensure!(
-        delegate
-            .request_binary_download_approval(adapter_name.as_ref())
-            .await,
-        "{}",
-        util::downloads_disabled_error_with_retry(adapter_name, "start the debug session again")
-    );
-
-    if !adapter_path.exists() {
-        fs.create_dir(adapter_path.as_path())
-            .await
-            .context("Failed creating adapter path")?;
-    }
+    let staging_path = adapter_path.join(".download");
+    fs.create_dir(&staging_path).await?;
 
     log::debug!(
         "Downloading adapter {} from {}",
@@ -318,6 +323,13 @@ pub async fn download_adapter_from_github(
     );
     delegate.output_to_console(format!("Downloading from {}...", github_version.url));
 
+    anyhow::ensure!(
+        delegate
+            .request_binary_download_approval(adapter_name.as_ref())
+            .await,
+        "{}",
+        util::downloads_disabled_error_with_retry(adapter_name, "start the debug session again")
+    );
     let mut response = delegate
         .http_client()
         .get(&github_version.url, Default::default(), true)
@@ -334,93 +346,101 @@ pub async fn download_adapter_from_github(
         DownloadedFileType::GzipTar => {
             let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
             let archive = Archive::new(decompressed_bytes);
-            archive.unpack(&version_path).await?;
+            archive.unpack(&staging_path).await?;
         }
         DownloadedFileType::Zip | DownloadedFileType::Vsix => {
-            let zip_path = version_path.with_extension("zip");
+            let zip_path = adapter_path.join(".download.zip");
             let mut file = File::create(&zip_path).await?;
             futures::io::copy(response.body_mut(), &mut file).await?;
             let file = File::open(&zip_path).await?;
-            extract_zip(&version_path, file)
+            extract_zip(&staging_path, file)
                 .await
                 // we cannot check the status as some adapter include files with names that trigger `Illegal byte sequence`
                 .inspect_err(|e| log::warn!("ZIP extraction error: {}. Ignoring...", e))
                 .ok();
 
-            util::fs::remove_matching(&adapter_path, |entry| {
-                entry
-                    .file_name()
-                    .is_some_and(|file| file.to_string_lossy().ends_with(".zip"))
-            })
-            .await;
+            fs.remove_file(&zip_path, RemoveOptions::default()).await?;
         }
     }
 
-    // remove older versions
-    util::fs::remove_matching(&adapter_path, |entry| {
-        entry.to_string_lossy() != version_path.to_string_lossy()
-    })
-    .await;
+    anyhow::ensure!(
+        fs.is_file(&staging_path.join(binary_relative_path)).await,
+        "downloaded {adapter_name} is missing {}",
+        binary_relative_path.display()
+    );
+    fs.rename(&staging_path, &version_path, RenameOptions::default())
+        .await?;
 
     Ok(version_path)
 }
 
-/// Returns the locally installed adapter path when `probe_installed` finds one
-/// (spawning `refresh_in_background` at most once per process, gated
-/// silently); otherwise requests download approval fail-fast and awaits
-/// `download`. A successful foreground download also marks the refresh as
-/// done.
+pub async fn remove_other_adapter_versions(
+    adapter_path: &Path,
+    retained_paths: &[&Path],
+    fs: &dyn Fs,
+) -> Result<()> {
+    let mut entries = fs.read_dir(adapter_path).await?;
+    while let Some(entry) = entries.next().await {
+        let entry = entry?;
+        if retained_paths.iter().any(|retained| *retained == entry) {
+            continue;
+        }
+        let options = RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: true,
+        };
+        if fs.is_dir(&entry).await {
+            fs.remove_dir(&entry, options).await?;
+        } else {
+            fs.remove_file(&entry, options).await?;
+        }
+    }
+    Ok(())
+}
+
 pub async fn get_or_download_adapter(
     tool_name: &'static str,
     delegate: &Arc<dyn DapDelegate>,
     probe_installed: impl Future<Output = Option<PathBuf>>,
     download: impl Future<Output = Result<PathBuf>>,
-    refresh_in_background: Option<(
-        &OnceLock<()>,
-        &AsyncApp,
-        Pin<Box<dyn Future<Output = ()> + Send + 'static>>,
-    )>,
+    resolved_path: &OnceCell<PathBuf>,
+    executor: &BackgroundExecutor,
 ) -> Result<PathBuf> {
-    match probe_installed.await {
-        Some(installed_path) => {
-            if let Some((refresh_done, cx, refresh)) = refresh_in_background
-                && refresh_done.set(()).is_ok()
-            {
-                cx.background_spawn({
-                    let delegate = delegate.clone();
-                    async move {
-                        if delegate
-                            .wait_until_binary_downloads_allowed(tool_name)
-                            .await
-                        {
-                            refresh.await;
-                        }
+    resolved_path
+        .get_or_try_init(|| async {
+            if let Some(installed_path) = probe_installed.await {
+                if delegate.binary_downloads_allowed(tool_name).await {
+                    let timeout = executor.timer(Duration::from_secs(10)).fuse();
+                    let refresh = download.fuse();
+                    futures::pin_mut!(timeout, refresh);
+                    futures::select_biased! {
+                        _ = timeout => log::warn!("Timed out updating {tool_name}; using cached adapter"),
+                        result = refresh => match result {
+                            Ok(path) => return Ok(path),
+                            Err(error) => log::warn!("Failed to update {tool_name}: {error:#}"),
+                        },
                     }
-                })
-                .detach();
+                }
+                Ok(installed_path)
+            } else {
+                anyhow::ensure!(
+                    delegate.request_binary_download_approval(tool_name).await,
+                    "{}",
+                    util::downloads_disabled_error_with_retry(
+                        tool_name,
+                        "start the debug session again"
+                    )
+                );
+                download.await
             }
-            Ok(installed_path)
-        }
-        None => {
-            anyhow::ensure!(
-                delegate.request_binary_download_approval(tool_name).await,
-                "{}",
-                util::downloads_disabled_error_with_retry(
-                    tool_name,
-                    "start the debug session again"
-                )
-            );
-            let downloaded_path = download.await?;
-            if let Some((refresh_done, _, _)) = refresh_in_background {
-                refresh_done.set(()).ok();
-            }
-            Ok(downloaded_path)
-        }
-    }
+        })
+        .await
+        .cloned()
 }
 
 pub async fn latest_installed_version_path(
     adapter_dir_name: &str,
+    binary_relative_path: &Path,
     delegate: &dyn DapDelegate,
 ) -> Option<PathBuf> {
     let adapter_dir = paths::debug_adapters_dir().join(adapter_dir_name);
@@ -439,7 +459,7 @@ pub async fn latest_installed_version_path(
         else {
             continue;
         };
-        if !fs.is_dir(&path).await {
+        if !fs.is_file(&path.join(binary_relative_path)).await {
             continue;
         }
         let key = version_sort_key(version);

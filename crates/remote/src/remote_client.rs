@@ -132,7 +132,65 @@ pub enum Interactive {
     No,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DownloadRequest {
+    pub host: String,
+    pub purpose: String,
+}
+
+pub struct DownloadAuthorization {
+    request: DownloadRequest,
+    permitted: Box<dyn Fn(&mut AsyncApp) -> bool + Send + Sync>,
+}
+
+impl DownloadAuthorization {
+    pub fn new(
+        request: DownloadRequest,
+        permitted: impl Fn(&mut AsyncApp) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            request,
+            permitted: Box::new(permitted),
+        }
+    }
+
+    pub fn check(&self, request: &DownloadRequest, cx: &mut AsyncApp) -> Result<()> {
+        if request != &self.request || !(self.permitted)(cx) {
+            return Err(DownloadDenied(format!("{} on {}", request.purpose, request.host)).into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Download not authorized: {0}")]
+pub struct DownloadDenied(pub String);
+
 pub trait RemoteClientDelegate: Send + Sync {
+    fn download_allowed(&self, _request: &DownloadRequest, _cx: &App) -> bool {
+        false
+    }
+
+    fn cached_server_binary_locally(
+        &self,
+        _platform: RemotePlatform,
+        _release_channel: ReleaseChannel,
+        _version: Option<Version>,
+        _cx: &mut AsyncApp,
+    ) -> Task<Result<Option<PathBuf>>> {
+        Task::ready(Ok(None))
+    }
+
+    fn authorize_download(
+        &self,
+        request: DownloadRequest,
+        _cx: &mut AsyncApp,
+    ) -> Task<Result<DownloadAuthorization, DownloadDenied>> {
+        Task::ready(Err(DownloadDenied(format!(
+            "{} on {}",
+            request.purpose, request.host
+        ))))
+    }
     fn ask_password(
         &self,
         prompt: String,
@@ -149,6 +207,7 @@ pub trait RemoteClientDelegate: Send + Sync {
     ) -> Task<Result<Option<String>>>;
     fn download_server_binary_locally(
         &self,
+        host: String,
         platform: RemotePlatform,
         release_channel: ReleaseChannel,
         version: Option<Version>,
@@ -1336,6 +1395,30 @@ pub enum RemoteConnectionOptions {
 }
 
 impl RemoteConnectionOptions {
+    pub fn download_host(&self) -> String {
+        match self {
+            Self::Ssh(options) => format!("SSH {}", options.connection_string()),
+            Self::Wsl(options) => format!(
+                "WSL {} (user: {})",
+                options.distro_name,
+                options.user.as_deref().unwrap_or("default")
+            ),
+            Self::Docker(options) => format!(
+                "{} {} ({}, user: {})",
+                if options.use_podman {
+                    "Podman"
+                } else {
+                    "Docker"
+                },
+                options.name,
+                options.container_id,
+                options.remote_user
+            ),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Mock(options) => format!("mock-{}", options.id),
+        }
+    }
+
     pub fn display_name(&self) -> String {
         match self {
             RemoteConnectionOptions::Ssh(opts) => opts

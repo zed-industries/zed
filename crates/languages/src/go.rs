@@ -92,8 +92,13 @@ impl LspInstaller for GoLspAdapter {
             );
         }
 
-        let release =
-            latest_github_release("golang/tools", false, false, delegate.http_client()).await?;
+        let release = latest_github_release(
+            "golang/tools",
+            false,
+            false,
+            delegate.http_client_for_tool(Self::SERVER_NAME),
+        )
+        .await?;
         let version: Option<String> = release.tag_name.strip_prefix("gopls/v").map(str::to_string);
         if version.is_none() {
             log::warn!(
@@ -128,6 +133,7 @@ impl LspInstaller for GoLspAdapter {
 
         async move {
             let go = delegate.which("go".as_ref()).await.unwrap_or("go".into());
+            delegate.authorize_tool(&Self::SERVER_NAME).await?;
             let go_version_output = util::command::new_command(&go)
                 .args(["version"])
                 .output()
@@ -157,6 +163,7 @@ impl LspInstaller for GoLspAdapter {
 
             let gobin_dir = container_dir.join("gobin");
             fs::create_dir_all(&gobin_dir).await?;
+            delegate.authorize_tool(&Self::SERVER_NAME).await?;
             let install_output = util::command::new_command(go)
                 .env("GO111MODULE", "on")
                 .env("GOBIN", &gobin_dir)
@@ -176,6 +183,7 @@ impl LspInstaller for GoLspAdapter {
             }
 
             let installed_binary_path = gobin_dir.join(BINARY);
+            delegate.authorize_tool(&Self::SERVER_NAME).await?;
             let version_output = util::command::new_command(&installed_binary_path)
                 .arg("version")
                 .output()

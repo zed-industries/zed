@@ -13,6 +13,7 @@ use log::trace;
 use futures::{
     FutureExt,
     channel::mpsc::{UnboundedReceiver, unbounded},
+    future::BoxFuture,
 };
 
 use alacritty_terminal::grid::Dimensions as _;
@@ -932,7 +933,7 @@ fn init_command_startup_marker_command(shell_kind: ShellKind, marker_id: u64) ->
 ///
 /// Task modes must be created with [`TerminalMode::task`] so their completion
 /// sender and receiver remain paired.
-pub struct TerminalMode(TerminalModeKind);
+pub struct TerminalMode(TerminalModeKind, Option<BoxFuture<'static, Result<()>>>);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MouseInputMode {
@@ -952,25 +953,36 @@ enum TerminalModeKind {
 impl TerminalMode {
     /// Creates a terminal for an interactive shell.
     pub fn interactive() -> Self {
-        Self(TerminalModeKind::Interactive)
+        Self(TerminalModeKind::Interactive, None)
     }
 
     /// Creates an interactive terminal that reports when its shell exits.
     pub fn interactive_with_completion(completion_tx: Sender<Option<ExitStatus>>) -> Self {
-        Self(TerminalModeKind::InteractiveWithCompletion(completion_tx))
+        Self(
+            TerminalModeKind::InteractiveWithCompletion(completion_tx),
+            None,
+        )
     }
 
     /// Creates a running task terminal with an internally paired completion channel.
     pub fn task(spawned_task: SpawnInTerminal) -> Self {
         let (completion_tx, completion_rx) = async_channel::bounded(1);
-        Self(TerminalModeKind::Task {
-            state: TaskState {
-                status: TaskStatus::Running,
-                completion_rx,
-                spawned_task,
+        Self(
+            TerminalModeKind::Task {
+                state: TaskState {
+                    status: TaskStatus::Running,
+                    completion_rx,
+                    spawned_task,
+                },
+                completion_tx,
             },
-            completion_tx,
-        })
+            None,
+        )
+    }
+
+    pub fn with_pre_spawn(mut self, pre_spawn: BoxFuture<'static, Result<()>>) -> Self {
+        self.1 = Some(pre_spawn);
+        self
     }
 }
 
@@ -1225,6 +1237,9 @@ impl TerminalBuilder {
             // When `no_pty` is set (headless hosts), run the task as a plain
             // subprocess and pump its piped output into the same emulator the
             // PTY path would feed.
+            if let Some(pre_spawn) = mode.1 {
+                pre_spawn.await?;
+            }
             let (terminal_type, subprocess) = if no_pty {
                 let (program, args) = match &shell_params {
                     Some(params) => (

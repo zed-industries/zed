@@ -5,23 +5,22 @@ use crate::wasm_host::{
 use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
 use anyhow::{Context as _, Result, bail};
-use async_compression::futures::bufread::GzipDecoder;
-use async_tar::Archive;
+
 use extension::{ExtensionLanguageServerProxy, KeyValueStoreDelegate, WorktreeDelegate};
+use futures::FutureExt as _;
 use futures::{AsyncReadExt, lock::Mutex};
-use futures::{FutureExt as _, io::BufReader};
 use gpui::BackgroundExecutor;
 use language::LanguageName;
 use language::{BinaryStatus, language_settings::AllLanguageSettings};
 use project::project_settings::ProjectSettings;
 use semver::Version;
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, OnceLock},
 };
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
-use util::{archive::extract_zip, fs::make_file_executable, maybe};
+use util::{fs::make_file_executable, maybe};
 use wasmtime::component::{Linker, Resource};
 
 use super::{latest, since_v0_6_0};
@@ -315,7 +314,7 @@ impl http_client::Host for WasmState {
         maybe!(async {
             let url = &request.url;
             let request = convert_request(&request)?;
-            let mut response = self.host.http_client.send(request).await?;
+            let mut response = latest::send_extension_request(self, request).await?;
 
             if response.status().is_client_error() || response.status().is_server_error() {
                 bail!("failed to fetch '{url}': status code {}", response.status())
@@ -331,9 +330,8 @@ impl http_client::Host for WasmState {
         request: http_client::HttpRequest,
     ) -> wasmtime::Result<Result<Resource<ExtensionHttpResponseStream>, String>> {
         let request = convert_request(&request).into_wasmtime_result()?;
-        let response = self.host.http_client.send(request);
         maybe!(async {
-            let response = response.await?;
+            let response = latest::send_extension_request(self, request).await?;
             let stream = Arc::new(Mutex::new(response));
             let resource = self.table.push(stream)?;
             Ok(resource)
@@ -522,70 +520,9 @@ impl ExtensionImports for WasmState {
         path: String,
         file_type: DownloadedFileType,
     ) -> wasmtime::Result<Result<(), String>> {
-        maybe!(async {
-            let path = PathBuf::from(path);
-            let extension_work_dir = self.host.work_dir.join(self.manifest.id.as_ref());
-
-            self.host.fs.create_dir(&extension_work_dir).await?;
-
-            let destination_path = self
-                .host
-                .writeable_path_from_extension(&self.manifest.id, &path)
-                .await?;
-
-            let mut response = self
-                .host
-                .http_client
-                .get(&url, Default::default(), true)
-                .await
-                .context("downloading release")?;
-
-            anyhow::ensure!(
-                response.status().is_success(),
-                "download failed with status {}",
-                response.status()
-            );
-            let mut body = BufReader::new(response.body_mut());
-
-            match file_type {
-                DownloadedFileType::Uncompressed => {
-                    futures::pin_mut!(body);
-                    self.host
-                        .fs
-                        .create_file_with(&destination_path, body)
-                        .await?;
-                }
-                DownloadedFileType::Gzip => {
-                    let body = GzipDecoder::new(body);
-                    futures::pin_mut!(body);
-                    self.host
-                        .fs
-                        .create_file_with(&destination_path, body)
-                        .await?;
-                }
-                DownloadedFileType::GzipTar => {
-                    let mut tar_gz_bytes = Vec::new();
-                    body.read_to_end(&mut tar_gz_bytes).await?;
-                    let decompressed_bytes =
-                        GzipDecoder::new(BufReader::new(tar_gz_bytes.as_slice()));
-                    futures::pin_mut!(decompressed_bytes);
-                    self.host
-                        .fs
-                        .extract_tar_file(&destination_path, Archive::new(decompressed_bytes))
-                        .await?;
-                }
-                DownloadedFileType::Zip => {
-                    futures::pin_mut!(body);
-                    extract_zip(&destination_path, body)
-                        .await
-                        .with_context(|| format!("unzipping {path:?} archive"))?;
-                }
-            }
-
-            Ok(())
-        })
-        .await
-        .to_wasmtime_result()
+        latest::download_file(self, &url, &path, file_type.into())
+            .await
+            .to_wasmtime_result()
     }
 
     async fn make_file_executable(&mut self, path: String) -> wasmtime::Result<Result<(), String>> {

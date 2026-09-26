@@ -10,8 +10,8 @@ use collections::HashMap;
 use fs::{Fs, RemoveOptions};
 use futures::StreamExt;
 use gpui::{
-    AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
-    TaskExt,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription,
+    Task, TaskExt,
 };
 use http_client::{HttpClient, github::AssetKind};
 use node_runtime::NodeRuntime;
@@ -19,7 +19,7 @@ use percent_encoding::percent_decode_str;
 use remote::RemoteClient;
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
 use schemars::JsonSchema;
-use semver::Version;
+use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use settings::{AgentConfigOptionValue, RegisterSetting, SettingsStore, update_settings_file};
 use sha2::{Digest, Sha256};
@@ -39,6 +39,21 @@ pub struct AgentServerCommand {
     #[serde(default)]
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
+}
+
+pub fn require_agent_execution_approval(agent_id: &AgentId, cx: &mut App) -> Result<()> {
+    let tool = format!("agent {agent_id} execution");
+    let store = binary_downloads::BinaryDownloads::try_get_global(cx)
+        .context("missing binary downloads store")?;
+    let blocked = store.update(cx, |store, cx| {
+        store.request_tool_install(None, tool.clone(), cx).is_some()
+    });
+    anyhow::ensure!(
+        !blocked,
+        "{}",
+        util::downloads_disabled_error_with_retry(&tool, "relaunch the agent")
+    );
+    Ok(())
 }
 
 impl std::fmt::Debug for AgentServerCommand {
@@ -365,6 +380,7 @@ impl AgentServerStore {
                         agent_name.clone(),
                         ExternalAgentEntry::new(
                             Box::new(LocalCustomAgent {
+                                name: agent_name.clone(),
                                 command: command.clone(),
                                 project_environment: project_environment.clone(),
                             }) as Box<dyn ExternalAgentServer>,
@@ -698,6 +714,9 @@ impl AgentServerStore {
                 anyhow::Ok(agent.get_command(vec![], extra_env, &mut cx.to_async()))
             })?
             .await?;
+        cx.update(|cx| {
+            require_agent_execution_approval(&AgentId::new(envelope.payload.name.clone()), cx)
+        })?;
         Ok(proto::AgentServerCommand {
             path: command.path.to_string_lossy().into_owned(),
             args: command.args,
@@ -1123,9 +1142,13 @@ async fn remove_stale_versioned_archive_cache_dirs(
 /// Agent servers are not worktree-scoped, so the install request uses the
 /// global scope.
 fn require_tool_install_approval(tool: &SharedString, cx: &mut AsyncApp) -> Result<()> {
-    let blocked = cx
-        .update(|cx| binary_downloads::request_tool_install(None, tool.clone(), cx))
-        .is_some();
+    let blocked = cx.update(|cx| {
+        let store = binary_downloads::BinaryDownloads::try_get_global(cx)
+            .context("missing binary downloads store")?;
+        anyhow::Ok(store.update(cx, |store, cx| {
+            store.request_tool_install(None, tool.clone(), cx).is_some()
+        }))
+    })?;
     anyhow::ensure!(
         !blocked,
         "{}",
@@ -1187,6 +1210,9 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         let loading_status_tx = self.loading_status_tx.take();
 
         cx.spawn(async move |cx| {
+            let node_runtime = cx.update(|cx| {
+                binary_downloads::scoped_node_runtime(&node_runtime, None, name.clone(), cx)
+            });
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
                     project_environment.default_environment(cx)
@@ -1278,6 +1304,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                     None
                 };
 
+                require_tool_install_approval(&name, cx)?;
                 match registry_archive_kind_for_url(archive_url)? {
                     RegistryArchiveKind::Archive(asset_kind) => {
                         ::http_client::github_download::download_server_binary(
@@ -1402,6 +1429,9 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
         let settings_env = self.settings_env.clone();
 
         cx.spawn(async move |cx| {
+            let node_runtime = cx.update(|cx| {
+                binary_downloads::scoped_node_runtime(&node_runtime, None, name.clone(), cx)
+            });
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
                     project_environment.default_environment(cx)
@@ -1415,10 +1445,8 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
             let node_modules_dir = installation_dir.join("node_modules");
 
             let mut executable = None;
-            // Reuse only an exact match of the range ceiling: an older install
-            // may be upgradable within the range, so re-run the gated install
-            // rather than freezing on it.
-            if let Some(pinned_version) = pinned_npm_package_version(&package) {
+            if let Some(ceiling) = pinned_npm_package_version(&package) {
+                let requirement = VersionReq::parse(&format!(">=0.0.0, <={ceiling}"))?;
                 let installed_version = node_runtime::read_package_installed_version(
                     node_modules_dir.clone(),
                     package_name,
@@ -1426,14 +1454,22 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 .await
                 .log_err()
                 .flatten();
-                if installed_version == Some(pinned_version)
-                    && let Some(path) = node_runtime::read_package_executable(
-                        node_modules_dir.clone(),
-                        package_name,
-                    )
-                    .await
-                    .log_err()
+                let downloads_allowed =
+                    cx.update(|cx| binary_downloads::tool_download_allowed(None, name.clone(), cx));
+                if installed_version.as_ref().is_some_and(|version| {
+                    requirement.matches(version)
+                        && (!downloads_allowed || version.cmp_precedence(&ceiling).is_eq())
+                }) && let Some(path) =
+                    node_runtime::read_package_executable(node_modules_dir.clone(), package_name)
+                        .await
+                        .log_err()
                     && fs.is_file(&path).await
+                    && let Some(package_directory) = fs
+                        .canonicalize(&node_modules_dir.join(package_name))
+                        .await
+                        .log_err()
+                    && let Some(path) = fs.canonicalize(&path).await.log_err()
+                    && path.starts_with(&package_directory)
                 {
                     executable = Some(path);
                 }
@@ -1447,7 +1483,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                         .run_npm_subcommand(
                             Some(&installation_dir),
                             "install",
-                            &[package_spec.as_str(), "--save-exact"],
+                            &[package_spec.as_str()],
                         )
                         .await?;
                     node_runtime::read_package_executable(node_modules_dir, package_name).await?
@@ -1526,6 +1562,7 @@ fn pinned_npm_package_version(package_spec: &str) -> Option<Version> {
 }
 
 struct LocalCustomAgent {
+    name: AgentId,
     project_environment: Entity<ProjectEnvironment>,
     command: AgentServerCommand,
 }
@@ -1537,6 +1574,7 @@ impl ExternalAgentServer for LocalCustomAgent {
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
+        let name = self.name.clone();
         let mut command = self.command.clone();
         let project_environment = self.project_environment.downgrade();
         cx.spawn(async move |cx| {
@@ -1550,6 +1588,7 @@ impl ExternalAgentServer for LocalCustomAgent {
             env.extend(extra_env);
             command.env = Some(env);
             command.args.extend(extra_args);
+            cx.update(|cx| require_agent_execution_approval(&name, cx))?;
             Ok(command)
         })
     }
@@ -1748,7 +1787,6 @@ mod tests {
     };
     use crate::binary_downloads::{BinaryDownloads, BinaryDownloadsEvent};
     use crate::worktree_store::{WorktreeIdCounter, WorktreeStore};
-    use futures::FutureExt as _;
     use gpui::{TestAppContext, UpdateGlobal as _};
     #[cfg(feature = "test-support")]
     use http_client::{AsyncBody, FakeHttpClient, Response};
@@ -1843,6 +1881,7 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            binary_downloads::init(cx);
         });
     }
 
@@ -2579,7 +2618,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn npx_agent_with_matching_local_copy_skips_install_and_prompt(cx: &mut TestAppContext) {
+    async fn npx_agent_with_compatible_local_copy_skips_install_and_prompt(
+        cx: &mut TestAppContext,
+    ) {
         init_test_settings(cx);
         cx.executor().allow_parking();
         cx.update(|cx| binary_downloads::init(cx));
@@ -2587,30 +2628,101 @@ mod tests {
         let requests = handle_install_requests(cx, false, Arc::new(AtomicUsize::new(0)));
 
         let temp_dir = tempfile::tempdir().expect("creating a temp dir");
-        let installation_dir = temp_dir.path().join("npx-agent");
-        let package_dir = installation_dir.join("node_modules").join("test-package");
-        std::fs::create_dir_all(&package_dir).expect("creating the package dir");
-        std::fs::write(
-            package_dir.join("package.json"),
-            r#"{ "version": "1.2.3", "bin": "cli.js" }"#,
-        )
-        .expect("writing package.json");
-        std::fs::write(package_dir.join("cli.js"), b"").expect("writing the executable");
+        let mut expected_requests = Vec::new();
+        for (index, (ceiling, version, executable, reuse)) in [
+            ("1.2.3", "1.2.3", "cli.js", true),
+            ("1.2.3", "1.2.2", "cli.js", true),
+            ("1.2.3", "0.0.0", "cli.js", true),
+            ("1.2.3", "1.2.4", "cli.js", false),
+            ("1.2.3", "1.2.3-beta.1", "cli.js", false),
+            ("1.2.3-beta.2", "1.2.3-beta.1", "cli.js", true),
+            ("1.2.3-beta.2", "1.2.2-beta.1", "cli.js", false),
+            ("1.2.3", "1.2.3+cached", "cli.js", true),
+            ("1.2.3", "1.2.2", "missing.js", false),
+            ("1.2.3", "1.2.2", "../outside.js", false),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let installation_dir = temp_dir.path().join(index.to_string());
+            let package_dir = installation_dir.join("node_modules/test-package");
+            std::fs::create_dir_all(&package_dir).expect("creating the package dir");
+            std::fs::write(
+                package_dir.join("package.json"),
+                serde_json::json!({ "version": version, "bin": executable }).to_string(),
+            )
+            .expect("writing package.json");
+            std::fs::write(package_dir.join("cli.js"), b"").expect("writing the executable");
+            std::fs::write(installation_dir.join("node_modules/outside.js"), b"")
+                .expect("writing an unrelated executable");
 
-        let mut agent = make_local_npx_agent(cx, installation_dir, "test-package@1.2.3");
-        let mut get_command = cx
-            .update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()))
-            .fuse();
-        let mut timeout = cx.executor().timer(Duration::from_secs(5)).fuse();
-        futures::select! {
-            result = get_command => {
-                result.expect_err("the unavailable node runtime should fail after the reuse");
+            let mut agent =
+                make_local_npx_agent(cx, installation_dir, &format!("test-package@{ceiling}"));
+            agent.name = SharedString::from(format!("npx-agent-{index}"));
+            let error = cx
+                .update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()))
+                .await
+                .expect_err("the node runtime is unavailable");
+            cx.run_until_parked();
+            if reuse {
+                assert_eq!(
+                    error.to_string(),
+                    "`node` settings do not allow any way to use Node.js",
+                    "case {index}",
+                );
+            } else {
+                assert_eq!(
+                    error.to_string(),
+                    util::downloads_disabled_error_with_retry(&agent.name, "relaunch the agent"),
+                    "case {index}",
+                );
+                expected_requests.push((agent.name.to_string(), 0));
             }
-            _ = timeout => {
-                panic!("get_command should not wait for approval when a local copy exists")
-            }
+            assert_eq!(*requests.borrow(), expected_requests, "case {index}");
         }
-        assert_eq!(requests.borrow().clone(), Vec::<(String, usize)>::new());
+    }
+
+    #[cfg(feature = "test-support")]
+    #[gpui::test]
+    async fn archive_agent_rechecks_approval_after_metadata(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        cx.executor().allow_parking();
+        cx.update(binary_downloads::init);
+        let (metadata_started_tx, metadata_started_rx) = async_channel::bounded(1);
+        let (metadata_done_tx, metadata_done_rx) = async_channel::bounded(1);
+        let requests = Arc::new(AtomicUsize::new(0));
+        let http_client = FakeHttpClient::create({
+            let requests = requests.clone();
+            move |_| {
+                let request = requests.fetch_add(1, Ordering::SeqCst);
+                let metadata_started_tx = metadata_started_tx.clone();
+                let metadata_done_rx = metadata_done_rx.clone();
+                async move {
+                    if request == 0 {
+                        metadata_started_tx.send(()).await?;
+                        metadata_done_rx.recv().await?;
+                    }
+                    anyhow::bail!("offline")
+                }
+            }
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let mut agent =
+            make_registry_archive_agent(cx, directory.path().join("agent"), http_client, None);
+        for target in agent.targets.values_mut() {
+            target.archive =
+                String::from("https://github.com/example/agent/releases/download/v1.0/agent");
+        }
+        let command =
+            cx.update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()));
+        metadata_started_rx.recv().await.unwrap();
+        disable_binary_downloads(cx);
+        metadata_done_tx.send(()).await.unwrap();
+        assert_eq!(
+            command.await.unwrap_err().to_string(),
+            util::downloads_disabled_error_with_retry(&agent.name, "relaunch the agent")
+        );
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
     }
 
     #[gpui::test]

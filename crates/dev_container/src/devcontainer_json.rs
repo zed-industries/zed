@@ -391,16 +391,23 @@ impl LifecycleScript {
             .collect()
     }
 
-    pub async fn run(
+    pub(crate) async fn run(
         &self,
         command_runnder: &Arc<dyn CommandRunner>,
         working_directory: &Path,
+        download_consent: &crate::DownloadConsent,
     ) -> Result<(), DevContainerError> {
         for (command_name, mut command) in self.script_commands() {
             log::debug!("Running script {command_name}");
 
             command.current_dir(working_directory);
 
+            download_consent
+                .require(
+                    "run initialize scripts (may download)",
+                    &format!("host {}", working_directory.display()),
+                )
+                .await?;
             let output = command_runnder
                 .run_command(&mut command)
                 .await

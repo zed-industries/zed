@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use collections::FxHashMap;
+use futures::future::BoxFuture;
 use gpui::{App, BackgroundExecutor, Global, SharedString};
 use language::LanguageName;
 use parking_lot::RwLock;
@@ -10,6 +11,8 @@ use task::{
 
 use crate::adapters::{DebugAdapter, DebugAdapterName};
 use std::{collections::BTreeMap, sync::Arc};
+
+pub type DapExecutionApproval = Arc<dyn Fn() -> BoxFuture<'static, Result<()>> + Send + Sync>;
 
 /// Given a user build configuration, locator creates a fill-in debug target ([DebugScenario]) on behalf of the user.
 #[async_trait]
@@ -25,9 +28,21 @@ pub trait DapLocator: Send + Sync {
 
     async fn run(
         &self,
+        _build_config: SpawnInTerminal,
+        _executor: BackgroundExecutor,
+    ) -> Result<DebugRequest> {
+        anyhow::bail!("debug locator {} requires execution approval", self.name())
+    }
+
+    async fn run_with_execution_approval(
+        &self,
         build_config: SpawnInTerminal,
         executor: BackgroundExecutor,
-    ) -> Result<DebugRequest>;
+        require_approval: DapExecutionApproval,
+    ) -> Result<DebugRequest> {
+        require_approval().await?;
+        self.run(build_config, executor).await
+    }
 }
 
 #[derive(Default)]

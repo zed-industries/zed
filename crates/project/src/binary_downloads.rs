@@ -8,6 +8,7 @@
 //! [`BinaryDownloads`] entity, and each [`crate::Project`] (or `HeadlessProject`)
 //! registers its [`WorktreeStore`] via [`track_binary_downloads`].
 
+use anyhow::{Context as _, Result};
 use client::ProjectId;
 use collections::{HashMap, HashSet};
 use futures::{
@@ -21,9 +22,14 @@ use gpui::{
 use postage::{sink::Sink as _, stream::Stream as _, watch};
 use rpc::{AnyProtoClient, proto};
 use settings::{Settings as _, SettingsLocation, SettingsStore, WorktreeId};
-use util::{ResultExt as _, rel_path::RelPath};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
+use util::rel_path::RelPath;
 
 use crate::{
+    Project,
     project_settings::ProjectSettings,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
@@ -35,11 +41,8 @@ pub fn init(cx: &mut App) {
     }
 }
 
-/// Registers `worktree_store` so that subsequent setting changes that flip
-/// `allow_binary_downloads` for any of its worktrees emit a
-/// [`BinaryDownloadsEvent`]. Safe to call on hosts where [`init`] was not
-/// invoked: it just becomes a no-op.
 pub fn track_binary_downloads(worktree_store: Entity<WorktreeStore>, cx: &mut App) {
+    init(cx);
     let Some(entity) = BinaryDownloads::try_get_global(cx) else {
         return;
     };
@@ -48,14 +51,12 @@ pub fn track_binary_downloads(worktree_store: Entity<WorktreeStore>, cx: &mut Ap
     });
 }
 
-/// Registers a remote project's worktree store so pending installs pushed from
-/// the headless host are listed locally and approvals are forwarded upstream;
-/// a no-op without [`init`].
 pub fn track_remote_binary_downloads(
     worktree_store: Entity<WorktreeStore>,
     upstream_client: (AnyProtoClient, ProjectId),
     cx: &mut App,
 ) {
+    init(cx);
     let Some(entity) = BinaryDownloads::try_get_global(cx) else {
         return;
     };
@@ -81,6 +82,18 @@ pub struct ToolInstall {
     pub tool: SharedString,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PendingToolInstall {
+    pub install: ToolInstall,
+    pub origin: ToolInstallOrigin,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ToolInstallOrigin {
+    Local,
+    Remote(WeakEntity<WorktreeStore>),
+}
+
 #[derive(Debug)]
 pub enum BinaryDownloadsEvent {
     /// `allow_binary_downloads` flipped from `false` to `true` for the listed
@@ -97,11 +110,13 @@ impl EventEmitter<BinaryDownloadsEvent> for BinaryDownloadsStore {}
 
 pub struct BinaryDownloadsStore {
     approved_tools: HashSet<ToolInstall>,
+    removed_worktrees: HashSet<WorktreeId>,
+    generation: Arc<AtomicU64>,
     waiters: HashMap<ToolInstall, Waiter>,
-    worktree_stores: Vec<WeakEntity<WorktreeStore>>,
+
     upstream_clients: HashMap<WeakEntity<WorktreeStore>, (AnyProtoClient, ProjectId)>,
     remote_pending: HashMap<WeakEntity<WorktreeStore>, Vec<ToolInstall>>,
-    _worktree_subscriptions: HashMap<WeakEntity<WorktreeStore>, Subscription>,
+    _worktree_subscriptions: HashMap<WeakEntity<WorktreeStore>, [Subscription; 2]>,
     _settings_subscription: Subscription,
 }
 
@@ -115,8 +130,10 @@ impl BinaryDownloadsStore {
         let settings_subscription = cx.observe_global::<SettingsStore>(Self::on_settings_changed);
         Self {
             approved_tools: HashSet::default(),
+            removed_worktrees: HashSet::default(),
+            generation: Arc::new(AtomicU64::new(0)),
             waiters: HashMap::default(),
-            worktree_stores: Vec::new(),
+
             upstream_clients: HashMap::default(),
             remote_pending: HashMap::default(),
             _worktree_subscriptions: HashMap::default(),
@@ -140,6 +157,9 @@ impl BinaryDownloadsStore {
         tool: impl Into<SharedString>,
         cx: &App,
     ) -> Option<watch::Receiver<bool>> {
+        if worktree_id.is_some_and(|id| self.removed_worktrees.contains(&id)) {
+            return Some(watch::channel::<bool>().1);
+        }
         let key = ToolInstall {
             worktree_id,
             tool: tool.into(),
@@ -179,6 +199,9 @@ impl BinaryDownloadsStore {
         tool: impl Into<SharedString>,
         cx: &mut Context<Self>,
     ) -> Option<watch::Receiver<bool>> {
+        if worktree_id.is_some_and(|id| self.removed_worktrees.contains(&id)) {
+            return Some(watch::channel::<bool>().1);
+        }
         let key = ToolInstall {
             worktree_id,
             tool: tool.into(),
@@ -213,26 +236,37 @@ impl BinaryDownloadsStore {
             worktree_id,
             tool: tool.into(),
         };
+        self.invalidate_pending_responses();
         self.approved_tools.insert(key.clone());
         if let Some(mut waiter) = self.waiters.remove(&key) {
             waiter.sender.blocking_send(true).ok();
         }
-        for (worktree_store, pending) in self.remote_pending.iter_mut() {
-            if let Some(position) = pending.iter().position(|install| install == &key) {
-                pending.remove(position);
-                if let Some((client, project_id)) = self.upstream_clients.get(worktree_store) {
-                    client
-                        .send(proto::ApproveToolInstall {
-                            project_id: project_id.0,
-                            worktree_id: key.worktree_id.map(|id| id.to_proto()),
-                            tool: key.tool.to_string(),
-                        })
-                        .log_err();
-                }
-            }
-        }
+
         cx.emit(BinaryDownloadsEvent::InstallResolved(key));
         cx.notify();
+    }
+
+    pub fn approve_remote_tool_install(
+        &self,
+        worktree_store: &WeakEntity<WorktreeStore>,
+        install: &ToolInstall,
+    ) -> Result<()> {
+        anyhow::ensure!(worktree_store.is_upgradable(), "Remote project is closed");
+        anyhow::ensure!(
+            self.remote_pending
+                .get(worktree_store)
+                .is_some_and(|pending| pending.contains(install)),
+            "Remote install request is no longer pending"
+        );
+        let (client, project_id) = self
+            .upstream_clients
+            .get(worktree_store)
+            .context("Remote project is not connected")?;
+        client.send(proto::ApproveToolInstall {
+            project_id: project_id.0,
+            worktree_id: install.worktree_id.map(|id| id.to_proto()),
+            tool: install.tool.to_string(),
+        })
     }
 
     /// Read-only check: true when downloads are enabled for the scope or the
@@ -244,6 +278,9 @@ impl BinaryDownloadsStore {
         tool: impl Into<SharedString>,
         cx: &App,
     ) -> bool {
+        if worktree_id.is_some_and(|id| self.removed_worktrees.contains(&id)) {
+            return false;
+        }
         if Self::allow_binary_downloads(worktree_id, cx) {
             return true;
         }
@@ -257,43 +294,69 @@ impl BinaryDownloadsStore {
     /// Tools that requested a one-off install while downloads are disabled and
     /// still await approval. Silent waiters are excluded.
     pub fn pending_tool_installs(&self) -> Vec<ToolInstall> {
-        let mut installs = self
-            .waiters
+        self.waiters
             .iter()
             .filter(|(_, waiter)| waiter.pending_install)
             .map(|(key, _)| key.clone())
-            .collect::<Vec<_>>();
-        for install in self.remote_pending.values().flatten() {
-            if !installs.contains(install) {
-                installs.push(install.clone());
-            }
-        }
-        installs
+            .collect()
     }
 
-    /// Replaces the pending installs mirrored for the given remote project's
-    /// store, emitting events for the diff.
+    pub fn pending_tool_installs_for_project(
+        &self,
+        project: &Project,
+        cx: &App,
+    ) -> Vec<PendingToolInstall> {
+        let worktree_store = project.worktree_store();
+        let worktree_ids = worktree_store
+            .read(cx)
+            .worktrees()
+            .map(|worktree| worktree.read(cx).id())
+            .collect::<HashSet<_>>();
+        let mut pending = self
+            .pending_tool_installs()
+            .into_iter()
+            .filter(|install| {
+                install.worktree_id.is_none_or(|worktree_id| {
+                    !project.is_via_collab() && worktree_ids.contains(&worktree_id)
+                })
+            })
+            .map(|install| PendingToolInstall {
+                install,
+                origin: ToolInstallOrigin::Local,
+            })
+            .collect::<Vec<_>>();
+        if !project.is_via_collab() {
+            let origin = worktree_store.downgrade();
+            if let Some(installs) = self.remote_pending.get(&origin) {
+                pending.extend(installs.iter().cloned().map(|install| PendingToolInstall {
+                    install,
+                    origin: ToolInstallOrigin::Remote(origin.clone()),
+                }));
+            }
+        }
+        pending.sort_by(|a, b| {
+            a.install
+                .tool
+                .cmp(&b.install.tool)
+                .then_with(|| {
+                    (a.origin != ToolInstallOrigin::Local)
+                        .cmp(&(b.origin != ToolInstallOrigin::Local))
+                })
+                .then_with(|| a.install.worktree_id.cmp(&b.install.worktree_id))
+        });
+        pending
+    }
+
     pub fn set_remote_pending_installs(
         &mut self,
         worktree_store: WeakEntity<WorktreeStore>,
         pending: Vec<ToolInstall>,
         cx: &mut Context<Self>,
     ) {
-        let previous = self
-            .remote_pending
-            .insert(worktree_store, pending.clone())
-            .unwrap_or_default();
-        for install in &previous {
-            if !pending.contains(install) {
-                cx.emit(BinaryDownloadsEvent::InstallResolved(install.clone()));
-            }
+        if worktree_store.is_upgradable() {
+            self.remote_pending.insert(worktree_store, pending);
+            cx.notify();
         }
-        for install in pending {
-            if !previous.contains(&install) {
-                cx.emit(BinaryDownloadsEvent::InstallRequested(install));
-            }
-        }
-        cx.notify();
     }
 
     fn add_worktree_store(
@@ -301,14 +364,25 @@ impl BinaryDownloadsStore {
         worktree_store: Entity<WorktreeStore>,
         cx: &mut Context<Self>,
     ) {
-        self.worktree_stores.retain(|ws| ws.is_upgradable());
         self._worktree_subscriptions
             .retain(|ws, _| ws.is_upgradable());
 
         let weak = worktree_store.downgrade();
         let subscription = cx.subscribe(&worktree_store, Self::on_worktree_store_event);
-        self.worktree_stores.push(weak.clone());
-        self._worktree_subscriptions.insert(weak, subscription);
+        let release_subscription = cx.observe_release(&worktree_store, {
+            let weak = weak.clone();
+            move |store, worktrees, cx| {
+                for worktree in worktrees.worktrees() {
+                    store.remove_worktree(worktree.read(cx).id());
+                }
+                store.upstream_clients.remove(&weak);
+                store.remote_pending.remove(&weak);
+                store._worktree_subscriptions.remove(&weak);
+                cx.notify();
+            }
+        });
+        self._worktree_subscriptions
+            .insert(weak, [subscription, release_subscription]);
     }
 
     fn add_upstream_client(
@@ -317,22 +391,25 @@ impl BinaryDownloadsStore {
         upstream_client: (AnyProtoClient, ProjectId),
         cx: &mut Context<Self>,
     ) {
-        self.upstream_clients.retain(|ws, _| ws.is_upgradable());
-        self.remote_pending.retain(|ws, _| ws.is_upgradable());
-        self._worktree_subscriptions
-            .retain(|ws, _| ws.is_upgradable());
+        self.add_worktree_store(worktree_store.clone(), cx);
+        self.upstream_clients
+            .insert(worktree_store.downgrade(), upstream_client);
+    }
 
-        let weak = worktree_store.downgrade();
-        let subscription = cx.subscribe(&worktree_store, Self::on_worktree_store_event);
-        self.upstream_clients.insert(weak.clone(), upstream_client);
-        self._worktree_subscriptions.insert(weak, subscription);
+    fn invalidate_pending_responses(&self) {
+        self.generation
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
+                value.checked_add(1)
+            })
+            .ok();
     }
 
     fn on_settings_changed(&mut self, cx: &mut Context<Self>) {
+        self.invalidate_pending_responses();
         let unblocked_keys = self
             .waiters
             .keys()
-            .filter(|key| Self::allow_binary_downloads(key.worktree_id, cx))
+            .filter(|key| self.tool_download_allowed(key.worktree_id, key.tool.clone(), cx))
             .cloned()
             .collect::<Vec<_>>();
         for key in unblocked_keys {
@@ -346,50 +423,34 @@ impl BinaryDownloadsStore {
         cx.notify();
     }
 
-    /// Second-line backstop for npm installs; first-line consent lives at the
-    /// tool call sites. Passes once any consent exists, so approved tools are
-    /// not double-prompted under their package names.
-    pub fn npm_install_backstop_permitted(
-        &self,
-        worktree_id: Option<WorktreeId>,
-        tool: impl Into<SharedString>,
-        cx: &App,
-    ) -> bool {
-        self.tool_download_allowed(worktree_id, tool, cx)
-            || self.node_downloads_allowed(cx)
-            || !self.approved_tools.is_empty()
-    }
-
-    /// True when downloads are enabled in any scope. One-off tool approvals
-    /// deliberately do not unlock the managed Node.js download.
     pub fn node_downloads_allowed(&self, cx: &App) -> bool {
         Self::allow_binary_downloads(None, cx)
-            || self.worktree_stores.iter().any(|worktree_store| {
-                worktree_store.upgrade().is_some_and(|worktree_store| {
-                    worktree_store
-                        .read(cx)
-                        .visible_worktrees(cx)
-                        .any(|worktree| {
-                            Self::allow_binary_downloads(Some(worktree.read(cx).id()), cx)
-                        })
-                })
-            })
+    }
+
+    fn remove_worktree(&mut self, worktree_id: WorktreeId) {
+        self.removed_worktrees.insert(worktree_id);
+        self.invalidate_pending_responses();
+        self.waiters
+            .retain(|key, _| key.worktree_id != Some(worktree_id));
+        self.approved_tools
+            .retain(|key| key.worktree_id != Some(worktree_id));
     }
 
     fn on_worktree_store_event(
         &mut self,
-        _: Entity<WorktreeStore>,
+        worktree_store: Entity<WorktreeStore>,
         event: &WorktreeStoreEvent,
         cx: &mut Context<Self>,
     ) {
         match event {
+            WorktreeStoreEvent::WorktreeAdded(_) => self.invalidate_pending_responses(),
             WorktreeStoreEvent::WorktreeRemoved(_, worktree_id)
             | WorktreeStoreEvent::WorktreeReleased(_, worktree_id) => {
-                self.waiters
-                    .retain(|key, _| key.worktree_id != Some(*worktree_id));
-                for pending in self.remote_pending.values_mut() {
+                let origin = worktree_store.downgrade();
+                if let Some(pending) = self.remote_pending.get_mut(&origin) {
                     pending.retain(|key| key.worktree_id != Some(*worktree_id));
                 }
+                self.remove_worktree(*worktree_id);
                 cx.notify();
             }
             _ => {}
@@ -405,10 +466,11 @@ pub fn request_tool_install(
     tool: impl Into<SharedString>,
     cx: &mut App,
 ) -> Option<watch::Receiver<bool>> {
-    BinaryDownloads::try_get_global(cx).and_then(|store| {
-        store.update(cx, |store, cx| {
-            store.request_tool_install(worktree_id, tool, cx)
-        })
+    let Some(store) = BinaryDownloads::try_get_global(cx) else {
+        return Some(watch::channel::<bool>().1);
+    };
+    store.update(cx, |store, cx| {
+        store.request_tool_install(worktree_id, tool, cx)
     })
 }
 
@@ -419,7 +481,7 @@ pub fn tool_download_allowed(
 ) -> bool {
     match BinaryDownloads::try_get_global(cx) {
         Some(store) => store.read(cx).tool_download_allowed(worktree_id, tool, cx),
-        None => true,
+        None => false,
     }
 }
 
@@ -430,6 +492,7 @@ pub fn tool_download_allowed(
 #[derive(Clone)]
 pub struct DownloadGate {
     requests: mpsc::UnboundedSender<GateRequest>,
+    generation: Arc<AtomicU64>,
 }
 
 enum GateResponse {
@@ -438,55 +501,54 @@ enum GateResponse {
     Blocked,
 }
 
+#[derive(Clone, Copy)]
 enum GateMode {
+    Query,
     Request,
     Silent,
-    Backstop,
 }
 
 struct GateRequest {
     tool: SharedString,
     mode: GateMode,
-    respond: oneshot::Sender<GateResponse>,
+    respond: oneshot::Sender<(u64, GateResponse)>,
 }
 
 impl DownloadGate {
     /// Returns `None` when no binary-downloads store is installed.
     pub fn new(worktree_id: Option<WorktreeId>, cx: &mut App) -> Option<Self> {
         let store = BinaryDownloads::try_get_global(cx)?;
-        let (requests_tx, mut requests_rx) = mpsc::unbounded::<GateRequest>();
-        cx.spawn(async move |cx| {
-            while let Some(request) = requests_rx.next().await {
-                let response = cx.update(|cx| {
-                    store.update(cx, |store, cx| match request.mode {
-                        GateMode::Silent => {
-                            match store.wait_until_tool_allowed(worktree_id, request.tool, cx) {
-                                Some(receiver) => GateResponse::WaitForSetting(receiver),
-                                None => GateResponse::Proceed,
-                            }
+        Self::with_handler(
+            move |tool, mode, cx| {
+                store.update(cx, |store, cx| match mode {
+                    GateMode::Query => {
+                        if store.tool_download_allowed(worktree_id, tool, cx) {
+                            GateResponse::Proceed
+                        } else {
+                            GateResponse::Blocked
                         }
-                        GateMode::Request => {
-                            match store.request_tool_install(worktree_id, request.tool, cx) {
-                                Some(_) => GateResponse::Blocked,
-                                None => GateResponse::Proceed,
-                            }
+                    }
+                    GateMode::Silent => {
+                        match store.wait_until_tool_allowed(worktree_id, tool, cx) {
+                            Some(receiver) => GateResponse::WaitForSetting(receiver),
+                            None => GateResponse::Proceed,
                         }
-                        GateMode::Backstop => {
-                            if store.npm_install_backstop_permitted(worktree_id, request.tool, cx) {
-                                GateResponse::Proceed
-                            } else {
-                                GateResponse::Blocked
-                            }
-                        }
-                    })
-                });
-                request.respond.send(response).ok();
-            }
-        })
-        .detach();
-        Some(Self {
-            requests: requests_tx,
-        })
+                    }
+                    GateMode::Request => match store.request_tool_install(worktree_id, tool, cx) {
+                        Some(_) => GateResponse::Blocked,
+                        None => GateResponse::Proceed,
+                    },
+                })
+            },
+            cx,
+        )
+    }
+
+    pub async fn is_allowed(&self, tool: &str) -> bool {
+        matches!(
+            self.request_permit(tool, GateMode::Query).await,
+            GateResponse::Proceed
+        )
     }
 
     pub async fn permit(&self, tool: &str) -> bool {
@@ -503,30 +565,56 @@ impl DownloadGate {
         match self.request_permit(tool, GateMode::Silent).await {
             GateResponse::Proceed => true,
             GateResponse::WaitForSetting(receiver) => {
-                await_downloads_allowed(Some(receiver), tool).await
+                await_downloads_allowed(Some(receiver), tool).await && self.is_allowed(tool).await
             }
             GateResponse::Blocked => false,
         }
     }
 
-    pub async fn permit_backstop(&self, tool: &str) -> bool {
-        !matches!(
-            self.request_permit(tool, GateMode::Backstop).await,
-            GateResponse::Blocked
-        )
+    fn with_handler(
+        handler: impl Fn(SharedString, GateMode, &mut App) -> GateResponse + 'static,
+        cx: &mut App,
+    ) -> Option<Self> {
+        let store = BinaryDownloads::try_get_global(cx)?;
+        let generation = store.read(cx).generation.clone();
+        let (requests_tx, mut requests_rx) = mpsc::unbounded::<GateRequest>();
+        cx.spawn(async move |cx| {
+            while let Some(request) = requests_rx.next().await {
+                let response = cx.update(|cx| {
+                    let response = handler(request.tool, request.mode, cx);
+                    (store.read(cx).generation.load(Ordering::SeqCst), response)
+                });
+                request.respond.send(response).ok();
+            }
+        })
+        .detach();
+        Some(Self {
+            requests: requests_tx,
+            generation,
+        })
     }
 
     async fn request_permit(&self, tool: &str, mode: GateMode) -> GateResponse {
-        let (respond_tx, respond_rx) = oneshot::channel();
-        let request = GateRequest {
-            tool: tool.to_string().into(),
-            mode,
-            respond: respond_tx,
-        };
-        if self.requests.unbounded_send(request).is_err() {
-            return GateResponse::Blocked;
+        loop {
+            let (respond_tx, respond_rx) = oneshot::channel();
+            let request = GateRequest {
+                tool: tool.to_string().into(),
+                mode,
+                respond: respond_tx,
+            };
+            if self.requests.unbounded_send(request).is_err() {
+                return GateResponse::Blocked;
+            }
+            let Ok((generation, response)) = respond_rx.await else {
+                return GateResponse::Blocked;
+            };
+            if generation == u64::MAX {
+                return GateResponse::Blocked;
+            }
+            if generation == self.generation.load(Ordering::SeqCst) {
+                return response;
+            }
         }
-        respond_rx.await.unwrap_or(GateResponse::Blocked)
     }
 }
 
@@ -534,14 +622,54 @@ pub fn npm_install_gate(cx: &mut App) -> Option<node_runtime::NpmInstallGate> {
     let gate = DownloadGate::new(None, cx)?;
     Some(std::sync::Arc::new(move |package| {
         let gate = gate.clone();
-        futures::FutureExt::boxed(async move { gate.permit_backstop(&package).await })
+        futures::FutureExt::boxed(async move { gate.is_allowed(&package).await })
+    }))
+}
+
+pub fn scoped_node_runtime(
+    runtime: &node_runtime::NodeRuntime,
+    worktree_id: Option<WorktreeId>,
+    tool: impl Into<SharedString>,
+    cx: &mut App,
+) -> node_runtime::NodeRuntime {
+    let tool = tool.into();
+    let gate = DownloadGate::new(worktree_id, cx).map(|gate| {
+        std::sync::Arc::new(move |_package: String| {
+            let gate = gate.clone();
+            let tool = tool.clone();
+            futures::FutureExt::boxed(async move { gate.permit(&tool).await })
+        }) as node_runtime::NpmInstallGate
+    });
+    runtime.with_install_gate(gate)
+}
+
+pub fn node_runtime_with_permission(
+    runtime: &node_runtime::NodeRuntime,
+    permission: impl Fn(&mut App) -> bool + 'static,
+    cx: &mut App,
+) -> node_runtime::NodeRuntime {
+    let gate = DownloadGate::with_handler(
+        move |_, _, cx| {
+            if permission(cx) {
+                GateResponse::Proceed
+            } else {
+                GateResponse::Blocked
+            }
+        },
+        cx,
+    );
+    runtime.with_install_gate(gate.map(|gate| {
+        Arc::new(move |package: String| {
+            let gate = gate.clone();
+            futures::FutureExt::boxed(async move { gate.permit(&package).await })
+        }) as node_runtime::NpmInstallGate
     }))
 }
 
 pub fn node_downloads_allowed(cx: &App) -> bool {
     match BinaryDownloads::try_get_global(cx) {
         Some(store) => store.read(cx).node_downloads_allowed(cx),
-        None => ProjectSettings::get_global(cx).allow_binary_downloads,
+        None => false,
     }
 }
 

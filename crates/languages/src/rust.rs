@@ -1,8 +1,8 @@
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::StreamExt;
 use futures::lock::OwnedMutexGuard;
+use futures::{FutureExt as _, StreamExt};
 use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
@@ -141,12 +141,13 @@ impl RustLspAdapter {
     }
 
     #[cfg(target_os = "linux")]
-    async fn determine_libc_type() -> LibcType {
+    async fn determine_libc_type(delegate: &dyn LspAdapterDelegate) -> LibcType {
         use futures::pin_mut;
 
-        async fn from_ldd_version() -> Option<LibcType> {
+        async fn from_ldd_version(delegate: &dyn LspAdapterDelegate) -> Option<LibcType> {
             use util::command::new_command;
 
+            delegate.authorize_tool(&SERVER_NAME).await.ok()?;
             let ldd_output = new_command("ldd").arg("--version").output().await.ok()?;
             let ldd_version = String::from_utf8_lossy(&ldd_output.stdout);
 
@@ -159,7 +160,7 @@ impl RustLspAdapter {
             }
         }
 
-        if let Some(libc_type) = from_ldd_version().await {
+        if let Some(libc_type) = from_ldd_version(delegate).await {
             return libc_type;
         }
 
@@ -191,8 +192,8 @@ impl RustLspAdapter {
     }
 
     #[cfg(target_os = "linux")]
-    async fn build_arch_server_name_linux() -> String {
-        let libc = match Self::determine_libc_type().await {
+    async fn build_arch_server_name_linux(delegate: &dyn LspAdapterDelegate) -> String {
+        let libc = match Self::determine_libc_type(delegate).await {
             LibcType::Musl => "musl",
             LibcType::Gnu => "gnu",
         };
@@ -210,9 +211,11 @@ impl RustLspAdapter {
         let rustup = delegate.which("rustup".as_ref()).await?;
         let env = delegate.shell_env().await;
         let worktree_root = delegate.worktree_root_path();
+        delegate.authorize_tool(&SERVER_NAME).await.ok()?;
         let output = new_command(rustup)
             .args(["which", "rust-analyzer"])
             .envs(env.iter())
+            .env("RUSTUP_AUTO_INSTALL", "0")
             .current_dir(worktree_root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -252,7 +255,7 @@ impl RustLspAdapter {
         false
     }
 
-    async fn build_asset_name() -> String {
+    async fn build_asset_name(_delegate: &dyn LspAdapterDelegate) -> String {
         let extension = match Self::GITHUB_ASSET_KIND {
             AssetKind::TarGz => "tar.gz",
             AssetKind::TarBz2 => "tar.bz2",
@@ -261,7 +264,7 @@ impl RustLspAdapter {
         };
 
         #[cfg(target_os = "linux")]
-        let arch_server_name = Self::build_arch_server_name_linux().await;
+        let arch_server_name = Self::build_arch_server_name_linux(_delegate).await;
         #[cfg(not(target_os = "linux"))]
         let arch_server_name = Self::ARCH_SERVER_NAME.to_string();
 
@@ -620,8 +623,11 @@ impl LspAdapter for RustLspAdapter {
             .0
             .ok()?;
 
+        delegate.authorize_tool(&SERVER_NAME).await.ok()?;
         let mut command = util::command::new_command(&binary.path);
         command
+            .envs(binary.env.unwrap_or_default())
+            .env("RUSTUP_AUTO_INSTALL", "0")
             .arg("--print-config-schema")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -756,11 +762,14 @@ impl LspInstaller for RustLspAdapter {
             let env = delegate.shell_env().await;
             if let Some(path) = Self::rustup_rust_analyzer_for_worktree(delegate.as_ref()).await {
                 let result = delegate
-                    .try_exec(LanguageServerBinary {
-                        path: path.clone(),
-                        arguments: vec!["--help".into()],
-                        env: Some(env.clone()),
-                    })
+                    .try_exec(
+                        &SERVER_NAME,
+                        LanguageServerBinary {
+                            path: path.clone(),
+                            arguments: vec!["--help".into()],
+                            env: Some(env.clone()),
+                        },
+                    )
                     .await;
                 if result.is_ok() {
                     log::debug!("found rust-analyzer in rustup toolchain override");
@@ -778,11 +787,14 @@ impl LspInstaller for RustLspAdapter {
             // /usr/bin/rust-analyzer that fails when you run it; so we need to test it.
             log::debug!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
             let result = delegate
-                .try_exec(LanguageServerBinary {
-                    path: path.clone(),
-                    arguments: vec!["--help".into()],
-                    env: Some(env.clone()),
-                })
+                .try_exec(
+                    &SERVER_NAME,
+                    LanguageServerBinary {
+                        path: path.clone(),
+                        arguments: vec!["--help".into()],
+                        env: Some(env.clone()),
+                    },
+                )
                 .await;
             if let Err(err) = result {
                 log::debug!(
@@ -812,10 +824,10 @@ impl LspInstaller for RustLspAdapter {
             "rust-lang/rust-analyzer",
             true,
             pre_release,
-            delegate.http_client(),
+            delegate.http_client_for_tool(SERVER_NAME),
         )
         .await?;
-        let asset_name = Self::build_asset_name().await;
+        let asset_name = Self::build_asset_name(delegate.as_ref()).await;
         let asset = release
             .assets
             .into_iter()
@@ -861,11 +873,14 @@ impl LspInstaller for RustLspAdapter {
             if let Some(metadata) = metadata {
                 let validity_check = async || {
                     delegate
-                        .try_exec(LanguageServerBinary {
-                            path: server_path.clone(),
-                            arguments: vec!["--version".into()],
-                            env: None,
-                        })
+                        .try_exec(
+                            &SERVER_NAME,
+                            LanguageServerBinary {
+                                path: server_path.clone(),
+                                arguments: vec!["--version".into()],
+                                env: None,
+                            },
+                        )
                         .await
                         .inspect_err(|err| {
                             log::warn!(
@@ -891,7 +906,7 @@ impl LspInstaller for RustLspAdapter {
             }
 
             download_server_binary(
-                &*delegate.http_client(),
+                &*delegate.http_client_for_tool(SERVER_NAME),
                 &url,
                 expected_digest.as_deref(),
                 &destination_path,
@@ -992,18 +1007,36 @@ impl ContextProvider for RustContextProvider {
         {
             variables.insert(RUST_DOC_TEST_NAME_TASK_VARIABLE, doc_test_name.into());
         }
+        let worktree_id = project::File::from_dyn(location.file_location.buffer.read(cx).file())
+            .map(|file| file.worktree_id(cx));
+        let gate = project::binary_downloads::DownloadGate::new(worktree_id, cx);
+        let permission: ToolPermission = Arc::new(move || {
+            let gate = gate.clone();
+            async move {
+                anyhow::ensure!(
+                    match gate {
+                        Some(gate) => gate.permit("cargo").await,
+                        None => false,
+                    },
+                    "{}",
+                    util::downloads_disabled_error("cargo")
+                );
+                Ok(())
+            }
+            .boxed()
+        });
         cx.background_spawn(async move {
             if let Some(path) = local_abs_path
                 .as_deref()
                 .and_then(|local_abs_path| local_abs_path.parent())
                 && let Some(package_name) =
-                    human_readable_package_name(path, project_env.as_ref()).await
+                    human_readable_package_name(path, project_env.as_ref(), &permission).await
             {
                 variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
             }
             if let Some(path) = local_abs_path.as_ref()
                 && let Some((target, manifest_path)) =
-                    target_info_from_abs_path(path, project_env.as_ref()).await?
+                    target_info_from_abs_path(path, project_env.as_ref(), &permission).await?
             {
                 if let Some(target) = target {
                     variables.extend(TaskVariables::from_iter([
@@ -1269,12 +1302,15 @@ struct TargetInfo {
 async fn target_info_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
+    permission: &ToolPermission,
 ) -> Result<Option<(Option<TargetInfo>, Arc<Path>)>> {
     let mut command = util::command::new_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
+    permission().await?;
     let output = command
+        .env("RUSTUP_AUTO_INSTALL", "0")
         .current_dir(
             abs_path
                 .parent()
@@ -1351,13 +1387,16 @@ fn target_info_from_metadata(
 async fn human_readable_package_name(
     package_directory: &Path,
     project_env: Option<&HashMap<String, String>>,
+    permission: &ToolPermission,
 ) -> Option<String> {
     let mut command = util::command::new_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
+    permission().await.ok()?;
     let pkgid = String::from_utf8(
         command
+            .env("RUSTUP_AUTO_INSTALL", "0")
             .current_dir(package_directory)
             .arg("pkgid")
             .output()
@@ -2304,7 +2343,9 @@ mod tests {
         std::fs::write(&cargo_toml_path, "invalid_toml = {[[{").unwrap();
         std::fs::write(&main_rs_path, "// rust").unwrap();
 
-        let e = smol::block_on(target_info_from_abs_path(&main_rs_path, None)).unwrap_err();
+        let permission: ToolPermission = Arc::new(|| async { Ok(()) }.boxed());
+        let e = smol::block_on(target_info_from_abs_path(&main_rs_path, None, &permission))
+            .unwrap_err();
         assert!(e.to_string().contains("Cargo metadata failed"));
     }
 

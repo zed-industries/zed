@@ -40,6 +40,7 @@ use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
 use project::{
     DebugScenarioContext, Project, WorktreeId,
+    binary_downloads::ToolInstall,
     debugger::session::{self, Session, SessionEvent, SessionStateEvent, ThreadId, ThreadStatus},
 };
 use rpc::proto::ViewId;
@@ -1196,8 +1197,12 @@ impl RunningState {
 
                 let terminal = project
                     .update(cx, |project, cx| {
-                        project.create_terminal_task(
+                        project.create_terminal_task_with_permission(
                             task_with_shell.clone(),
+                            Some(ToolInstall {
+                                worktree_id,
+                                tool: SharedString::from(dap::adapters::execution_tool(&adapter)),
+                            }),
                             cx,
                         )
                     }).await?;
@@ -1368,8 +1373,16 @@ impl RunningState {
         let workspace = self.workspace.clone();
         let weak_project = project.downgrade();
 
-        let terminal_task =
-            project.update(cx, |project, cx| project.create_terminal_task(kind, cx));
+        let Some(worktree) = session.worktree() else {
+            return Task::ready(Err(anyhow!("debug session worktree is unavailable")));
+        };
+        let permission = ToolInstall {
+            worktree_id: Some(worktree.read(cx).id()),
+            tool: SharedString::from(dap::adapters::execution_tool(session.adapter().as_ref())),
+        };
+        let terminal_task = project.update(cx, |project, cx| {
+            project.create_terminal_task_with_permission(kind, Some(permission), cx)
+        });
         let terminal_task = cx.spawn_in(window, async move |_, cx| {
             let terminal = terminal_task.await?;
 

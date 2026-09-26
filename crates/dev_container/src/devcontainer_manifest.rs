@@ -13,7 +13,7 @@ use http_client::HttpClient;
 use util::{ResultExt, command::Command, normalize_path};
 
 use crate::{
-    DevContainerConfig, DevContainerContext,
+    DevContainerConfig, DevContainerContext, DownloadConsent,
     command_json::{CommandRunner, DefaultCommandRunner},
     devcontainer_api::{DevContainerError, DevContainerUp},
     devcontainer_json::{
@@ -52,6 +52,7 @@ struct DevContainerManifest {
     fs: Arc<dyn Fs>,
     docker_client: Arc<dyn DockerClient>,
     command_runner: Arc<dyn CommandRunner>,
+    download_consent: DownloadConsent,
     raw_config: String,
     config: ConfigStatus,
     local_environment: HashMap<String, String>,
@@ -98,6 +99,9 @@ impl DevContainerManifest {
             http_client: context.http_client.clone(),
             docker_client,
             command_runner,
+            download_consent: context
+                .download_consent
+                .scoped(format!("configuration {}", config_path.display())),
             raw_config: devcontainer_contents,
             config: ConfigStatus::Deserialized(devcontainer),
             local_project_directory: local_project_path.to_path_buf(),
@@ -108,6 +112,30 @@ impl DevContainerManifest {
             features_build_info: None,
             features: Vec::new(),
         })
+    }
+
+    async fn require_build_downloads(&self) -> Result<(), DevContainerError> {
+        self.download_consent
+            .require(
+                "build images and run build scripts (may download)",
+                &format!("{} image store", self.docker_client.docker_cli()),
+            )
+            .await
+    }
+
+    async fn require_lifecycle_downloads(
+        &self,
+        container: &DevContainerUp,
+    ) -> Result<(), DevContainerError> {
+        self.download_consent
+            .require(
+                "run lifecycle scripts (may download)",
+                &format!(
+                    "container {}:{}",
+                    container.container_id, container.remote_workspace_folder
+                ),
+            )
+            .await
     }
 
     fn devcontainer_id(&self) -> String {
@@ -534,6 +562,14 @@ impl DevContainerManifest {
                     );
                     DevContainerError::DevContainerParseFailed
                 })?;
+                let purpose = format!("download OCI feature {feature_ref}");
+                let destination = format!(
+                    "host feature staging for {}",
+                    self.local_project_directory.display()
+                );
+                self.download_consent
+                    .require(&purpose, &destination)
+                    .await?;
                 let TokenResponse { token } =
                     get_oci_token(&oci_ref.registry, &oci_ref.path, &self.http_client)
                         .await
@@ -571,6 +607,9 @@ impl DevContainerManifest {
                         DevContainerError::ResourceFetchFailed
                     })?
                     .digest;
+                self.download_consent
+                    .require(&purpose, &destination)
+                    .await?;
                 download_oci_tarball(
                     &token,
                     &oci_ref.registry,
@@ -1188,6 +1227,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             let project_name = self.project_name().await?;
             let compose_services =
                 compose_service_list(&main_service_name, dev_container.run_services.as_ref());
+            self.require_build_downloads().await?;
             self.docker_client
                 .docker_compose_build(
                     &docker_compose_resources.files,
@@ -1287,6 +1327,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 let project_name = self.project_name().await?;
                 let compose_services =
                     compose_service_list(&main_service_name, dev_container.run_services.as_ref());
+                self.require_build_downloads().await?;
                 self.docker_client
                     .docker_compose_build(
                         &docker_compose_resources.files,
@@ -1609,8 +1650,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             }
         };
 
+        self.require_build_downloads().await?;
         let mut command = self.create_docker_build()?;
-
         let output = self
             .command_runner
             .run_command(&mut command)
@@ -1766,6 +1807,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         command.args(["--build-arg", &format!("IMAGE_USER={}", image_user)]);
         command.arg(features_build_info.empty_context_dir.display().to_string());
 
+        self.require_build_downloads().await?;
         let output = self
             .command_runner
             .run_command(&mut command)
@@ -1874,6 +1916,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             &features_content_dir.display().to_string(),
         ]);
 
+        self.require_build_downloads().await?;
         let output = self
             .command_runner
             .run_command(&mut command)
@@ -2046,6 +2089,12 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             command.args(services);
         }
 
+        self.download_consent
+            .require(
+                "start Compose services, pull/build images and run scripts (may download)",
+                &format!("{} project {project_name}", self.docker_client.docker_cli()),
+            )
+            .await?;
         let output = self
             .command_runner
             .run_command(&mut command)
@@ -2072,6 +2121,16 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
     ) -> Result<DockerInspect, DevContainerError> {
         let mut docker_run_command = self.create_docker_run_command(build_resources)?;
 
+        self.download_consent
+            .require(
+                "create container, pull images and run entrypoint scripts (may download)",
+                &format!(
+                    "{} containers for {}",
+                    self.docker_client.docker_cli(),
+                    self.local_project_directory.display()
+                ),
+            )
+            .await?;
         let output = self
             .command_runner
             .run_command(&mut docker_run_command)
@@ -2335,6 +2394,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             if let Some(on_create_command) = &config.on_create_command {
                 for (command_name, command) in on_create_command.script_commands() {
                     log::debug!("Running on create command {command_name}");
+                    self.require_lifecycle_downloads(devcontainer_up).await?;
                     self.docker_client
                         .run_docker_exec(
                             &devcontainer_up.container_id,
@@ -2349,6 +2409,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             if let Some(update_content_command) = &config.update_content_command {
                 for (command_name, command) in update_content_command.script_commands() {
                     log::debug!("Running update content command {command_name}");
+                    self.require_lifecycle_downloads(devcontainer_up).await?;
                     self.docker_client
                         .run_docker_exec(
                             &devcontainer_up.container_id,
@@ -2364,6 +2425,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             if let Some(post_create_command) = &config.post_create_command {
                 for (command_name, command) in post_create_command.script_commands() {
                     log::debug!("Running post create command {command_name}");
+                    self.require_lifecycle_downloads(devcontainer_up).await?;
                     self.docker_client
                         .run_docker_exec(
                             &devcontainer_up.container_id,
@@ -2384,6 +2446,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                         log::debug!("Running post start command {command_name}");
                     }
                     let script = post_start_marker_script(started_at, script_commands);
+                    self.require_lifecycle_downloads(devcontainer_up).await?;
                     self.docker_client
                         .run_docker_exec(
                             &devcontainer_up.container_id,
@@ -2397,6 +2460,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             } else if container_started {
                 for (command_name, command) in script_commands {
                     log::debug!("Running post start command {command_name}");
+                    self.require_lifecycle_downloads(devcontainer_up).await?;
                     self.docker_client
                         .run_docker_exec(
                             &devcontainer_up.container_id,
@@ -2412,6 +2476,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         if let Some(post_attach_command) = &config.post_attach_command {
             for (command_name, command) in post_attach_command.script_commands() {
                 log::debug!("Running post attach command {command_name}");
+                self.require_lifecycle_downloads(devcontainer_up).await?;
                 self.docker_client
                     .run_docker_exec(
                         &devcontainer_up.container_id,
@@ -2436,7 +2501,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         if let Some(initialize_command) = &config.initialize_command {
             log::debug!("Running initialize command");
             initialize_command
-                .run(&self.command_runner, &self.local_project_directory)
+                .run(
+                    &self.command_runner,
+                    &self.local_project_directory,
+                    &self.download_consent,
+                )
                 .await
         } else {
             log::warn!("No initialize command found");
@@ -2461,7 +2530,15 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                         self.start_docker_compose_services(&resources, ComposeUpBehavior::Resume)
                             .await?
                     }
-                    _ => self.docker_client.start_container(&docker_ps.id).await?,
+                    _ => {
+                        self.download_consent
+                            .require(
+                                "start container and run entrypoint scripts (may download)",
+                                &format!("container {}", docker_ps.id),
+                            )
+                            .await?;
+                        self.docker_client.start_container(&docker_ps.id).await?;
+                    }
                 }
                 docker_inspect = self.docker_client.inspect(&docker_ps.id).await?;
             }
@@ -2691,11 +2768,22 @@ pub(crate) async fn read_devcontainer_configuration(
     context: &DevContainerContext,
     environment: HashMap<String, String>,
 ) -> Result<DevContainer, DevContainerError> {
-    let docker = if context.use_podman {
-        Docker::new("podman", context.use_buildkit).await
-    } else {
-        Docker::new("docker", context.use_buildkit).await
-    };
+    let docker = Docker::new(
+        if context.use_podman {
+            "podman"
+        } else {
+            "docker"
+        },
+        context.use_buildkit,
+        context.download_consent.scoped(format!(
+            "configuration {}",
+            context
+                .project_directory
+                .join(&config.config_path)
+                .display()
+        )),
+    )
+    .await?;
     let mut dev_container = DevContainerManifest::new(
         context,
         environment,
@@ -2715,11 +2803,19 @@ pub(crate) async fn spawn_dev_container(
     config: DevContainerConfig,
     local_project_path: &Path,
 ) -> Result<DevContainerUp, DevContainerError> {
-    let docker = if context.use_podman {
-        Docker::new("podman", context.use_buildkit).await
-    } else {
-        Docker::new("docker", context.use_buildkit).await
-    };
+    let docker = Docker::new(
+        if context.use_podman {
+            "podman"
+        } else {
+            "docker"
+        },
+        context.use_buildkit,
+        context.download_consent.scoped(format!(
+            "configuration {}",
+            local_project_path.join(&config.config_path).display()
+        )),
+    )
+    .await?;
     let mut devcontainer_manifest = DevContainerManifest::new(
         context,
         environment,
@@ -3493,7 +3589,7 @@ mod test {
     use util::{command::Command, paths::SanitizedPath};
 
     use crate::{
-        DevContainerConfig, DevContainerContext,
+        DevContainerConfig, DevContainerContext, DownloadConsent,
         command_json::CommandRunner,
         devcontainer_api::{DevContainerError, DevContainerUp},
         devcontainer_json::MountDefinition,
@@ -3619,6 +3715,11 @@ mod test {
             fs: fs.clone(),
             http_client: http_client.clone(),
             environment: project_environment.downgrade(),
+            worktree_id: project::WorktreeId::from_usize(1),
+            download_consent: DownloadConsent {
+                request: Arc::new(|_| Box::pin(async { true })),
+                scope: String::new(),
+            },
         };
 
         let test_dependencies = TestDependencies {
@@ -3638,6 +3739,118 @@ mod test {
         .await?;
 
         Ok((test_dependencies, manifest))
+    }
+
+    #[gpui::test]
+    async fn download_consent_blocks_scripts_in_new_and_reused_containers(cx: &mut TestAppContext) {
+        for (phase, new_container, container_started, started_at) in [
+            ("initializeCommand", true, true, None),
+            ("onCreateCommand", true, true, None),
+            ("updateContentCommand", true, true, None),
+            ("postCreateCommand", true, true, None),
+            ("postStartCommand", false, true, None),
+            ("postStartCommand", false, false, Some("already-started")),
+            ("postAttachCommand", false, false, None),
+        ] {
+            let contents = serde_json::json!({
+                "image": "test_image:latest",
+                phase: ["project-bootstrap", "install"],
+            })
+            .to_string();
+            let (dependencies, mut manifest) = init_default_devcontainer_manifest(cx, &contents)
+                .await
+                .expect("manifest");
+            manifest.parse_nonremote_vars().expect("parse variables");
+            manifest.download_consent = DownloadConsent::default();
+            let container = DevContainerUp {
+                container_id: "cached-container".to_string(),
+                remote_user: "root".to_string(),
+                remote_workspace_folder: "/workspaces/project".to_string(),
+                extension_ids: Vec::new(),
+                remote_env: HashMap::new(),
+                started_at: started_at.map(str::to_string),
+            };
+            let result = if phase == "initializeCommand" {
+                manifest.run_initialize_commands().await
+            } else {
+                manifest
+                    .run_remote_scripts(&container, new_container, container_started)
+                    .await
+            };
+            assert!(
+                matches!(result, Err(DevContainerError::DownloadNotAllowed(_))),
+                "{phase}: {result:?}"
+            );
+            assert_eq!(
+                dependencies
+                    .command_runner
+                    .commands_recorded
+                    .lock()
+                    .expect("commands")
+                    .len(),
+                0
+            );
+            assert_eq!(
+                dependencies
+                    .docker
+                    .exec_commands_recorded
+                    .lock()
+                    .expect("commands")
+                    .len(),
+                0
+            );
+            if let ConfigStatus::VariableParsed(config) = &mut manifest.config {
+                config.initialize_command = None;
+                config.on_create_command = None;
+                config.update_content_command = None;
+                config.post_create_command = None;
+                config.post_start_command = None;
+                config.post_attach_command = None;
+            }
+            assert_eq!(manifest.run_initialize_commands().await, Ok(()));
+            assert_eq!(
+                manifest.run_remote_scripts(&container, false, false).await,
+                Ok(())
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn download_consent_blocks_oci_features_and_image_builds(cx: &mut TestAppContext) {
+        let (dependencies, mut manifest) = init_default_devcontainer_manifest(
+            cx,
+            r#"{
+            "image": "test_image:latest",
+            "features": {"registry.example/features/runtime:1": {}}
+        }"#,
+        )
+        .await
+        .expect("manifest");
+        manifest.parse_nonremote_vars().expect("parse variables");
+        manifest.download_consent = DownloadConsent::default();
+        manifest.http_client =
+            FakeHttpClient::create(|_| async { panic!("unapproved HTTP request") });
+        assert!(matches!(
+            manifest.download_feature_and_dockerfile_resources().await,
+            Err(DevContainerError::DownloadNotAllowed(_))
+        ));
+        assert!(matches!(
+            manifest.build_docker_image().await,
+            Err(DevContainerError::DownloadNotAllowed(_))
+        ));
+        assert_eq!(
+            dependencies
+                .command_runner
+                .commands_recorded
+                .lock()
+                .expect("commands")
+                .len(),
+            0
+        );
+        if let ConfigStatus::VariableParsed(config) = &mut manifest.config {
+            config.features = None;
+        }
+        assert!(manifest.build_docker_image().await.is_ok());
     }
 
     #[gpui::test]

@@ -1,7 +1,6 @@
 use std::{
     env::consts,
     path::{Path, PathBuf},
-    sync::OnceLock,
 };
 
 use anyhow::{Context as _, Result};
@@ -10,17 +9,14 @@ use collections::HashMap;
 use dap::adapters::{DebugTaskDefinition, latest_github_release};
 use gpui::AsyncApp;
 use serde_json::Value;
+use smol::lock::OnceCell;
 use task::{DebugRequest, DebugScenario, ZedDebugConfig};
-use util::{ResultExt as _, fs::remove_matching};
 
 use crate::*;
 
 #[derive(Default)]
 pub(crate) struct CodeLldbDebugAdapter {
-    /// Gates the background update check to once per process; the resolved
-    /// path is deliberately not cached because a refresh deletes the old
-    /// version dir.
-    checked: OnceLock<()>,
+    binary_path: OnceCell<PathBuf>,
 }
 
 impl CodeLldbDebugAdapter {
@@ -66,16 +62,12 @@ impl CodeLldbDebugAdapter {
         let version = Self::fetch_latest_adapter_version(delegate).await?;
         adapters::download_adapter_from_github(
             DebugAdapterName::from(Self::ADAPTER_NAME),
-            version.clone(),
+            version,
             adapters::DownloadedFileType::Vsix,
+            &Self::binary_path_in_version_dir(Path::new("")),
             delegate.as_ref(),
         )
-        .await?;
-        let adapter_path = paths::debug_adapters_dir().join(Self::ADAPTER_NAME);
-        let version_path =
-            adapter_path.join(format!("{}_{}", Self::ADAPTER_NAME, version.tag_name));
-        remove_matching(&adapter_path, |entry| entry != version_path).await;
-        Ok(version_path)
+        .await
     }
 
     async fn fetch_latest_adapter_version(
@@ -374,26 +366,18 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                 async {
                     let version_path = adapters::latest_installed_version_path(
                         Self::ADAPTER_NAME,
+                        &Self::binary_path_in_version_dir(Path::new("")),
                         delegate.as_ref(),
                     )
                     .await?;
-                    let binary_path = Self::binary_path_in_version_dir(&version_path);
-                    delegate
-                        .fs()
-                        .is_file(&binary_path)
-                        .await
-                        .then_some(binary_path)
+                    Some(Self::binary_path_in_version_dir(&version_path))
                 },
                 async {
                     let version_path = Self::download_latest(delegate).await?;
                     Ok(Self::binary_path_in_version_dir(&version_path))
                 },
-                Some((&self.checked, cx, {
-                    let delegate = delegate.clone();
-                    Box::pin(async move {
-                        Self::download_latest(&delegate).await.log_err();
-                    })
-                })),
+                &self.binary_path,
+                cx.background_executor(),
             )
             .await?;
             binary_path.to_string_lossy().into_owned()

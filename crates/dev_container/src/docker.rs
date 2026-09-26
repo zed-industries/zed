@@ -5,6 +5,7 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 use util::command::Command;
 
 use crate::{
+    DownloadConsent,
     command_json::{evaluate_json_command, evaluate_yaml_command},
     devcontainer_api::DevContainerError,
     devcontainer_json::MountDefinition,
@@ -193,6 +194,7 @@ pub(crate) struct DockerComposeConfig {
 pub(crate) struct Docker {
     docker_cli: String,
     has_buildx: bool,
+    download_consent: DownloadConsent,
 }
 
 impl DockerInspect {
@@ -202,7 +204,11 @@ impl DockerInspect {
 }
 
 impl Docker {
-    pub(crate) async fn new(docker_cli: &str, use_buildkit: Option<bool>) -> Self {
+    pub(crate) async fn new(
+        docker_cli: &str,
+        use_buildkit: Option<bool>,
+        download_consent: DownloadConsent,
+    ) -> Result<Self, DevContainerError> {
         let has_buildx = if docker_cli == "podman" {
             false
         } else if let Some(use_buildkit) = use_buildkit {
@@ -215,6 +221,12 @@ impl Docker {
             // multi-stage `FROM`.
             use_buildkit
         } else {
+            download_consent
+                .require(
+                    "container engine execution and dependency downloads",
+                    docker_cli,
+                )
+                .await?;
             let output = Command::new(docker_cli)
                 .args(["buildx", "version"])
                 .output()
@@ -226,10 +238,11 @@ impl Docker {
                 "Using the classic Docker builder for dev container builds (BuildKit unavailable or disabled)"
             );
         }
-        Self {
+        Ok(Self {
             docker_cli: docker_cli.to_string(),
             has_buildx,
-        }
+            download_consent,
+        })
     }
 
     fn is_podman(&self) -> bool {
@@ -237,6 +250,12 @@ impl Docker {
     }
 
     async fn pull_image(&self, image: &String) -> Result<(), DevContainerError> {
+        self.download_consent
+            .require(
+                &format!("pull image {image}"),
+                &format!("{} image store", self.docker_cli),
+            )
+            .await?;
         let mut command = Command::new(&self.docker_cli);
         command.args(&["pull", "--", image]);
 
@@ -287,15 +306,27 @@ impl DockerClient for Docker {
     async fn inspect(&self, id: &String) -> Result<DockerInspect, DevContainerError> {
         // Always try inspect first — avoid pulling unless necessary.
         let command = self.create_docker_inspect(id);
+        self.download_consent
+            .require(
+                "container engine execution and dependency downloads",
+                &self.docker_cli,
+            )
+            .await?;
         match evaluate_json_command::<DockerInspect>(command).await {
             Ok(Some(docker_inspect)) => return Ok(docker_inspect),
             Ok(None) | Err(_) => {}
         }
 
         // Inspect failed — try pulling and retry.
-        self.pull_image(id).await.ok();
+        self.pull_image(id).await?;
 
         let command = self.create_docker_inspect(id);
+        self.download_consent
+            .require(
+                "container engine execution and dependency downloads",
+                &self.docker_cli,
+            )
+            .await?;
         let Some(docker_inspect): Option<DockerInspect> = evaluate_json_command(command).await?
         else {
             log::error!("Docker inspect produced no deserializable output");
@@ -308,6 +339,12 @@ impl DockerClient for Docker {
         &self,
         config_files: &Vec<PathBuf>,
     ) -> Result<Option<DockerComposeConfig>, DevContainerError> {
+        self.download_consent
+            .require(
+                "resolve Compose configuration (may download)",
+                "host Compose cache",
+            )
+            .await?;
         let command = self.create_docker_compose_config_command(config_files);
         evaluate_yaml_command(command).await
     }
@@ -339,6 +376,12 @@ impl DockerClient for Docker {
             command.args(services);
         }
 
+        self.download_consent
+            .require(
+                "build images and run build scripts (may download)",
+                &format!("{} image store", self.docker_cli),
+            )
+            .await?;
         let output = command.output().await.map_err(|e| {
             log::error!("Error running docker compose up: {e}");
             DevContainerError::CommandFailed(command.get_program().display().to_string())
@@ -385,6 +428,12 @@ impl DockerClient for Docker {
         inner_program_script.append(&mut args);
         command.args(&["-c", &inner_program_script.join(" ")]);
 
+        self.download_consent
+            .require(
+                "run lifecycle scripts (may download)",
+                &format!("container {container_id}:{remote_folder}"),
+            )
+            .await?;
         let output = command.output().await.map_err(|e| {
             log::error!("Error running command {e} in container exec");
             DevContainerError::ContainerNotValid(container_id.to_string())
@@ -404,6 +453,12 @@ impl DockerClient for Docker {
 
         command.args(&["start", id]);
 
+        self.download_consent
+            .require(
+                "start container and run entrypoint scripts (may download)",
+                &format!("container {id}"),
+            )
+            .await?;
         let output = command.output().await.map_err(|e| {
             log::error!("Error running docker start: {e}");
             DevContainerError::CommandFailed(command.get_program().display().to_string())
@@ -425,6 +480,12 @@ impl DockerClient for Docker {
         filters: Vec<String>,
     ) -> Result<Option<DockerPs>, DevContainerError> {
         let mut command = self.create_docker_query_containers(filters);
+        self.download_consent
+            .require(
+                "container engine execution and dependency downloads",
+                &self.docker_cli,
+            )
+            .await?;
         let output = command.output().await.map_err(|e| {
             log::error!("Error running command {:?}: {e}", command);
             DevContainerError::CommandFailed(command.get_program().display().to_string())
@@ -759,6 +820,7 @@ mod test {
     };
 
     use crate::{
+        DownloadConsent,
         command_json::deserialize_json_output,
         devcontainer_api::DevContainerError,
         devcontainer_json::MountDefinition,
@@ -768,27 +830,90 @@ mod test {
             parse_find_process_output,
         },
     };
-    #[cfg(not(target_os = "windows"))]
     use util::command::Command;
+
+    #[test]
+    fn download_consent_blocks_docker_execution_boundaries() {
+        let docker = Docker {
+            docker_cli: "zed-test-missing-container-runtime".to_string(),
+            has_buildx: false,
+            download_consent: DownloadConsent::default(),
+        };
+        futures::executor::block_on(async {
+            assert!(matches!(
+                Docker::new(&docker.docker_cli, None, DownloadConsent::default()).await,
+                Err(DevContainerError::DownloadNotAllowed(_))
+            ));
+            assert!(matches!(
+                docker.inspect(&"image:latest".to_string()).await,
+                Err(DevContainerError::DownloadNotAllowed(_))
+            ));
+            assert!(matches!(
+                docker.find_process_by_filters(Vec::new()).await,
+                Err(DevContainerError::DownloadNotAllowed(_))
+            ));
+            assert!(matches!(
+                docker.pull_image(&"image:latest".to_string()).await,
+                Err(DevContainerError::DownloadNotAllowed(_))
+            ));
+            assert!(matches!(
+                docker
+                    .docker_compose_build(&Vec::new(), "project", None)
+                    .await,
+                Err(DevContainerError::DownloadNotAllowed(_))
+            ));
+            assert!(matches!(
+                docker.start_container("cached-container").await,
+                Err(DevContainerError::DownloadNotAllowed(_))
+            ));
+            assert!(matches!(
+                docker
+                    .run_docker_exec(
+                        "cached-container",
+                        "/project",
+                        "root",
+                        &HashMap::new(),
+                        Command::new("project-bootstrap")
+                    )
+                    .await,
+                Err(DevContainerError::DownloadNotAllowed(_))
+            ));
+        });
+    }
 
     #[test]
     fn use_buildkit_setting_overrides_buildx_detection() {
         // `Some(_)` short-circuits the `buildx version` probe, so these run
         // without invoking docker.
-        let forced_off = futures::executor::block_on(Docker::new("docker", Some(false)));
+        let forced_off = futures::executor::block_on(Docker::new(
+            "docker",
+            Some(false),
+            DownloadConsent::default(),
+        ))
+        .unwrap();
         assert!(
             !forced_off.supports_compose_buildkit(),
             "use_buildkit=false must force the classic builder"
         );
 
-        let forced_on = futures::executor::block_on(Docker::new("docker", Some(true)));
+        let forced_on = futures::executor::block_on(Docker::new(
+            "docker",
+            Some(true),
+            DownloadConsent::default(),
+        ))
+        .unwrap();
         assert!(
             forced_on.supports_compose_buildkit(),
             "use_buildkit=true must enable BuildKit"
         );
 
         // podman never supports the BuildKit/buildx path, regardless of the setting.
-        let podman = futures::executor::block_on(Docker::new("podman", Some(true)));
+        let podman = futures::executor::block_on(Docker::new(
+            "podman",
+            Some(true),
+            DownloadConsent::default(),
+        ))
+        .unwrap();
         assert!(!podman.supports_compose_buildkit());
     }
 
@@ -875,6 +1000,7 @@ mod test {
         let docker = Docker {
             docker_cli: "docker".to_string(),
             has_buildx: false,
+            download_consent: DownloadConsent::default(),
         };
         let given_id = "given_docker_id";
 
@@ -896,6 +1022,10 @@ mod test {
         let docker = Docker {
             docker_cli: "false".to_string(),
             has_buildx: false,
+            download_consent: DownloadConsent {
+                request: std::sync::Arc::new(|_| Box::pin(async { true })),
+                scope: String::new(),
+            },
         };
 
         let result = gpui::block_on(docker.run_docker_exec(

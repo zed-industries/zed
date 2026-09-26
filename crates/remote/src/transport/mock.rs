@@ -332,6 +332,7 @@ impl RemoteClientDelegate for MockDelegate {
 
     fn download_server_binary_locally(
         &self,
+        _host: String,
         _platform: crate::RemotePlatform,
         _release_channel: release_channel::ReleaseChannel,
         _version: Option<semver::Version>,

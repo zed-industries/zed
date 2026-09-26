@@ -4,15 +4,16 @@ use collections::HashMap;
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
 use serde_json::Value;
-use std::{path::PathBuf, sync::OnceLock};
+use smol::lock::OnceCell;
+use std::path::{Path, PathBuf};
 use task::DebugRequest;
-use util::{ResultExt, maybe, shell::ShellKind};
+use util::{maybe, shell::ShellKind};
 
 use crate::*;
 
 #[derive(Debug, Default)]
 pub(crate) struct JsDebugAdapter {
-    checked: OnceLock<()>,
+    binary_path: OnceCell<PathBuf>,
 }
 
 impl JsDebugAdapter {
@@ -501,15 +502,11 @@ impl DebugAdapter for JsDebugAdapter {
                 async {
                     let version_path = adapters::latest_installed_version_path(
                         Self::ADAPTER_NAME,
+                        Path::new(Self::ADAPTER_PATH),
                         delegate.as_ref(),
                     )
                     .await?;
-                    let adapter_path = version_path.join(Self::ADAPTER_PATH);
-                    delegate
-                        .fs()
-                        .is_file(&adapter_path)
-                        .await
-                        .then_some(adapter_path)
+                    Some(version_path.join(Self::ADAPTER_PATH))
                 },
                 async {
                     delegate.output_to_console(format!(
@@ -521,29 +518,14 @@ impl DebugAdapter for JsDebugAdapter {
                         self.name(),
                         version,
                         adapters::DownloadedFileType::GzipTar,
+                        Path::new(Self::ADAPTER_PATH),
                         delegate.as_ref(),
                     )
                     .await?;
                     Ok(version_path.join(Self::ADAPTER_PATH))
                 },
-                Some((&self.checked, cx, {
-                    let delegate = delegate.clone();
-                    Box::pin(async move {
-                        if let Some(version) = Self::fetch_latest_adapter_version(&delegate)
-                            .await
-                            .log_err()
-                        {
-                            adapters::download_adapter_from_github(
-                                DebugAdapterName::from(Self::ADAPTER_NAME),
-                                version,
-                                adapters::DownloadedFileType::GzipTar,
-                                delegate.as_ref(),
-                            )
-                            .await
-                            .log_err();
-                        }
-                    })
-                })),
+                &self.binary_path,
+                cx.background_executor(),
             )
             .await?
         };

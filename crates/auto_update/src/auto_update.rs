@@ -7,7 +7,9 @@ use gpui::{
     Task, TaskExt, Window, actions,
 };
 use http_client::{HttpClient, HttpClientWithUrl};
-use paths::remote_servers_dir;
+use project::binary_downloads::{
+    await_downloads_allowed, request_tool_install, tool_download_allowed,
+};
 use release_channel::{AppCommitSha, ReleaseChannel};
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -593,6 +595,43 @@ impl AutoUpdater {
         true
     }
 
+    pub async fn cached_remote_server_release(
+        release_channel: ReleaseChannel,
+        version: Option<Version>,
+        os: &str,
+        arch: &str,
+        cx: &mut AsyncApp,
+    ) -> Result<Option<PathBuf>> {
+        let version = if let Some(mut version) = version {
+            version.pre = semver::Prerelease::EMPTY;
+            version.build = semver::BuildMetadata::EMPTY;
+            version.to_string()
+        } else {
+            let updater = cx.update(|cx| {
+                cx.default_global::<GlobalAutoUpdate>()
+                    .0
+                    .clone()
+                    .context("auto-update not initialized")
+            })?;
+            Self::get_release_asset(
+                &updater,
+                release_channel,
+                None,
+                "zed-remote-server",
+                os,
+                arch,
+                cx,
+            )
+            .await?
+            .version
+        };
+        let path = paths::remote_servers_dir()
+            .join(release_channel.dev_name())
+            .join(format!("{os}-{arch}"))
+            .join(format!("{version}.gz"));
+        Ok(remote_server_archive_cached(&path).await.then_some(path))
+    }
+
     // If you are packaging Zed and need to override the place it downloads SSH remotes from,
     // you can override this function. You should also update get_remote_server_release_url to return
     // Ok(None).
@@ -602,8 +641,16 @@ impl AutoUpdater {
         os: &str,
         arch: &str,
         set_status: impl Fn(&str, &mut AsyncApp) + Send + 'static,
+        mut authorize_download: impl AsyncFnMut(&ReleaseAsset, &mut AsyncApp) -> Result<()>,
         cx: &mut AsyncApp,
     ) -> Result<PathBuf> {
+        if version.is_some()
+            && let Some(path) =
+                Self::cached_remote_server_release(release_channel, version.clone(), os, arch, cx)
+                    .await?
+        {
+            return Ok(path);
+        }
         let this = cx.update(|cx| {
             cx.default_global::<GlobalAutoUpdate>()
                 .0
@@ -627,17 +674,20 @@ impl AutoUpdater {
         let channel_dir = servers_dir.join(release_channel.dev_name());
         let platform_dir = channel_dir.join(format!("{}-{}", os, arch));
         let version_path = platform_dir.join(format!("{}.gz", release.version));
-        smol::fs::create_dir_all(&platform_dir).await.ok();
+        smol::fs::create_dir_all(&platform_dir).await?;
 
         let client = this.read_with(cx, |this, _| this.client.http_client());
 
-        if smol::fs::metadata(&version_path).await.is_err() {
+        if !remote_server_archive_cached(&version_path).await {
             log::info!(
                 "downloading zed-remote-server {os} {arch} version {}",
                 release.version
             );
             set_status("Downloading remote server", cx);
-            download_remote_server_binary(&version_path, release, client).await?;
+            download_remote_server_binary(&version_path, &release, client, async || {
+                authorize_download(&release, cx).await
+            })
+            .await?;
         }
 
         if let Err(error) =
@@ -784,6 +834,17 @@ impl AutoUpdater {
             return Ok(());
         };
 
+        let purpose = format!(
+            "Zed update {} {} on this computer",
+            release_channel.dev_name(),
+            fetched_release_data.version
+        );
+        let permission = cx.update(|cx| request_tool_install(None, purpose.clone(), cx));
+        anyhow::ensure!(
+            await_downloads_allowed(permission, &purpose).await,
+            "Download not authorized: {purpose}"
+        );
+
         this.update(cx, |this, cx| {
             this.status = AutoUpdateStatus::Downloading {
                 version: newer_version.clone(),
@@ -798,10 +859,18 @@ impl AutoUpdater {
         let target_path = Self::target_path(&installer_dir).await?;
         let progress_entity = this.clone();
         let mut progress_cx = cx.clone();
+        let permission_cx = cx.clone();
         download_release(
             &target_path,
             fetched_release_data,
             client,
+            move || {
+                anyhow::ensure!(
+                    permission_cx.update(|cx| tool_download_allowed(None, purpose.clone(), cx)),
+                    "Download not authorized: {purpose}"
+                );
+                Ok(())
+            },
             move |progress| {
                 progress_entity.update(&mut progress_cx, |this, cx| {
                     if let AutoUpdateStatus::Downloading {
@@ -996,14 +1065,29 @@ impl AutoUpdater {
     }
 }
 
+async fn remote_server_archive_cached(path: &Path) -> bool {
+    fs::metadata(path)
+        .await
+        .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
+}
+
 async fn download_remote_server_binary(
-    target_path: &PathBuf,
-    release: ReleaseAsset,
+    target_path: &Path,
+    release: &ReleaseAsset,
     client: Arc<HttpClientWithUrl>,
+    authorize_download: impl AsyncFnOnce() -> Result<()>,
 ) -> Result<()> {
-    let temp = tempfile::Builder::new().tempfile_in(remote_servers_dir())?;
+    if remote_server_archive_cached(target_path).await {
+        return Ok(());
+    }
+    let temp = tempfile::Builder::new().tempfile_in(
+        target_path
+            .parent()
+            .context("remote server cache has no parent")?,
+    )?;
     let mut temp_file = File::create(&temp).await?;
 
+    authorize_download().await?;
     let mut response = client.get(&release.url, Default::default(), true).await?;
     anyhow::ensure!(
         response.status().is_success(),
@@ -1077,10 +1161,12 @@ async fn download_release(
     target_path: &Path,
     release: ReleaseAsset,
     client: Arc<HttpClientWithUrl>,
+    mut authorize_download: impl FnMut() -> Result<()>,
     mut on_progress: impl FnMut(Option<f32>),
 ) -> Result<()> {
     let mut target_file = File::create(&target_path).await?;
 
+    authorize_download()?;
     let mut response = client.get(&release.url, Default::default(), true).await?;
     anyhow::ensure!(
         response.status().is_success(),
@@ -1360,8 +1446,9 @@ pub async fn finalize_auto_update_on_quit() {
 mod tests {
     use client::Client;
     use clock::FakeSystemClock;
+    use db::AppDatabase;
     use futures::channel::oneshot;
-    use gpui::TestAppContext;
+    use gpui::{BorrowAppContext as _, TestAppContext};
     use http_client::{FakeHttpClient, Response};
     use settings::default_settings;
     use std::{
@@ -1407,7 +1494,9 @@ mod tests {
         let (dmg_tx, dmg_rx) = oneshot::channel::<String>();
 
         cx.update(|cx| {
+            cx.set_global(AppDatabase::test_new());
             settings::init(cx);
+            project::binary_downloads::init(cx);
 
             let current_version = semver::Version::new(0, 100, 0);
             release_channel::init_test(current_version, ReleaseChannel::Stable, cx);
@@ -1511,6 +1600,125 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_disabled_updates_only_check_metadata(cx: &mut TestAppContext) {
+        let requests = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let updater =
+            cx.update(|cx| {
+                settings::init(cx);
+                project::binary_downloads::init(cx);
+                cx.update_global::<SettingsStore, _>(|store, cx| {
+                    store
+                        .set_user_settings(r#"{"allow_binary_downloads":false}"#, cx)
+                        .unwrap();
+                });
+                let version = Version::new(0, 100, 0);
+                release_channel::init_test(version.clone(), ReleaseChannel::Stable, cx);
+                let client =
+                    FakeHttpClient::create({
+                        let requests = requests.clone();
+                        move |request| {
+                            requests.lock().push(request.uri().path().to_string());
+                            async {
+                                Ok(Response::builder().status(200).body(
+                            r#"{"version":"0.100.1","url":"https://test.example/update"}"#.into()
+                        ).unwrap())
+                            }
+                        }
+                    });
+                let client = Client::new(Arc::new(FakeSystemClock::new()), client, cx);
+                cx.new(|cx| AutoUpdater::new(version, client, cx))
+            });
+        for check_type in [UpdateCheckType::Automatic, UpdateCheckType::Manual] {
+            requests.lock().clear();
+            updater.update(cx, |updater, cx| updater.poll(check_type, cx));
+            cx.run_until_parked();
+            assert_eq!(*requests.lock(), vec!["/releases/stable/latest/asset"]);
+            let pending = cx.update(|cx| {
+                project::binary_downloads::BinaryDownloads::try_get_global(cx)
+                    .unwrap()
+                    .read(cx)
+                    .pending_tool_installs()
+            });
+            assert_eq!(
+                pending,
+                vec![project::binary_downloads::ToolInstall {
+                    worktree_id: None,
+                    tool: "Zed update stable 0.100.1 on this computer".into(),
+                }]
+            );
+            drop(updater.update(cx, |updater, _| updater.pending_poll.take()));
+        }
+    }
+
+    #[gpui::test]
+    async fn test_payload_denial_and_remote_cache_reuse(cx: &mut TestAppContext) {
+        cx.background_executor.allow_parking();
+        let requests = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let client = FakeHttpClient::create({
+            let requests = requests.clone();
+            move |request| {
+                requests.lock().push(request.uri().path().to_string());
+                async {
+                    Ok(Response::builder()
+                        .status(200)
+                        .body("unexpected payload".into())
+                        .unwrap())
+                }
+            }
+        });
+        let directory = tempdir().unwrap();
+        let release = ReleaseAsset {
+            version: "1.0.0".to_string(),
+            url: "https://test.example/payload".to_string(),
+        };
+        let update_path = directory.path().join("update");
+        let result = download_release(
+            &update_path,
+            release.clone(),
+            client.clone(),
+            || {
+                assert!(update_path.is_file());
+                anyhow::bail!("revoked during preparation")
+            },
+            |_| {},
+        )
+        .await;
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "revoked during preparation"
+        );
+        let remote_path = directory.path().join("server.gz");
+        let result =
+            download_remote_server_binary(&remote_path, &release, client.clone(), async || {
+                anyhow::bail!("denied")
+            })
+            .await;
+        assert_eq!(result.unwrap_err().to_string(), "denied");
+        assert!(!remote_path.exists());
+        std::fs::write(&remote_path, "").unwrap();
+        let result =
+            download_remote_server_binary(&remote_path, &release, client.clone(), async || {
+                anyhow::bail!("empty archive is not reusable")
+            })
+            .await;
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "empty archive is not reusable"
+        );
+        std::fs::write(&remote_path, "cached server").unwrap();
+        download_remote_server_binary(&remote_path, &release, client, async || {
+            anyhow::bail!("cache reuse must not request permission")
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(remote_path).unwrap(),
+            "cached server"
+        );
+        assert_eq!(*requests.lock(), Vec::<String>::new());
+    }
+
+    #[gpui::test]
     async fn test_download_release_reports_progress(cx: &mut TestAppContext) {
         cx.background_executor.allow_parking();
 
@@ -1539,7 +1747,7 @@ mod tests {
         };
 
         let reported = Rc::new(std::cell::RefCell::new(Vec::<f32>::new()));
-        download_release(&target_path, release, client, {
+        download_release(&target_path, release, client, || Ok(()), {
             let reported = reported.clone();
             move |fraction| {
                 if let Some(fraction) = fraction {
@@ -1599,7 +1807,7 @@ mod tests {
         };
 
         let reported = Rc::new(std::cell::RefCell::new(Vec::<Option<f32>>::new()));
-        download_release(&target_path, release, client, {
+        download_release(&target_path, release, client, || Ok(()), {
             let reported = reported.clone();
             move |fraction| {
                 reported.borrow_mut().push(fraction);

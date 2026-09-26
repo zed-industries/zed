@@ -224,6 +224,7 @@ impl WslRemoteConnection {
         #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
         if let Some(remote_server_path) = super::build_remote_server_from_source(
             &self.platform,
+            &RemoteConnectionOptions::Wsl(self.connection_options.clone()).download_host(),
             delegate.as_ref(),
             binary_exists_on_server,
             cx,
@@ -255,7 +256,13 @@ impl WslRemoteConnection {
         };
 
         let src_path = delegate
-            .download_server_binary_locally(self.platform, release_channel, wanted_version, cx)
+            .download_server_binary_locally(
+                RemoteConnectionOptions::Wsl(self.connection_options.clone()).download_host(),
+                self.platform,
+                release_channel,
+                wanted_version,
+                cx,
+            )
             .await?;
 
         let tmp_path = format!(

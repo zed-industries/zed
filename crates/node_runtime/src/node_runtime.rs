@@ -1,16 +1,15 @@
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use chrono::{DateTime, Utc};
 use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::BoxFuture, future::Shared};
 use http_client::{Host, HttpClient, Url};
-use log::Level;
 use semver::{Version, VersionReq};
 use serde::Deserialize;
 use smol::io::BufReader;
 use smol::{fs, lock::Mutex};
 use std::collections::HashMap;
-use std::fmt::Display;
+
 use std::{
     env::{self, consts},
     ffi::OsString,
@@ -20,8 +19,8 @@ use std::{
     process::Output,
     sync::Arc,
 };
-use util::ResultExt;
 use util::archive::extract_zip;
+use util::{ResultExt, ToolPermissionDenied};
 
 const NODE_CA_CERTS_ENV_VAR: &str = "NODE_EXTRA_CA_CERTS";
 
@@ -32,8 +31,6 @@ pub struct NodeBinaryOptions {
     pub use_paths: Option<(PathBuf, PathBuf)>,
 }
 
-/// Awaited (by package name) before each npm package install. Set via
-/// [`NodeRuntime::set_install_gate`].
 pub type NpmInstallGate = Arc<dyn Fn(String) -> BoxFuture<'static, bool> + Send + Sync>;
 
 /// Use this when you need to launch npm as a long-lived process (for example, an agent server),
@@ -53,7 +50,10 @@ pub enum VersionStrategy<'a> {
 }
 
 #[derive(Clone)]
-pub struct NodeRuntime(Arc<Mutex<NodeRuntimeState>>);
+pub struct NodeRuntime {
+    state: Arc<Mutex<NodeRuntimeState>>,
+    install_gate: Option<NpmInstallGate>,
+}
 
 struct NodeRuntimeState {
     http: Arc<dyn HttpClient>,
@@ -61,7 +61,6 @@ struct NodeRuntimeState {
     last_options: Option<NodeBinaryOptions>,
     options: watch::Receiver<Option<NodeBinaryOptions>>,
     shell_env_loaded: Shared<oneshot::Receiver<()>>,
-    install_gate: Option<NpmInstallGate>,
 }
 
 impl NodeRuntime {
@@ -71,29 +70,48 @@ impl NodeRuntime {
         options: watch::Receiver<Option<NodeBinaryOptions>>,
         install_gate: Option<NpmInstallGate>,
     ) -> Self {
-        NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
-            http,
-            instance: None,
-            last_options: None,
-            options,
-            shell_env_loaded: shell_env_loaded.unwrap_or(oneshot::channel().1).shared(),
+        Self {
+            state: Arc::new(Mutex::new(NodeRuntimeState {
+                http,
+                instance: None,
+                last_options: None,
+                options,
+                shell_env_loaded: shell_env_loaded.unwrap_or(oneshot::channel().1).shared(),
+            })),
             install_gate,
-        })))
+        }
     }
 
     pub fn unavailable() -> Self {
-        NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
-            http: Arc::new(http_client::BlockedHttpClient),
-            instance: None,
-            last_options: None,
-            options: watch::channel(Some(NodeBinaryOptions::default())).1,
-            shell_env_loaded: oneshot::channel().1.shared(),
+        Self {
+            state: Arc::new(Mutex::new(NodeRuntimeState {
+                http: Arc::new(http_client::BlockedHttpClient),
+                instance: Some(Box::new(UnavailableNodeRuntime)),
+                last_options: Some(NodeBinaryOptions::default()),
+                options: watch::channel(Some(NodeBinaryOptions::default())).1,
+                shell_env_loaded: oneshot::channel().1.shared(),
+            })),
             install_gate: None,
-        })))
+        }
     }
 
-    async fn instance(&self) -> Box<dyn NodeRuntimeTrait> {
-        let mut state = self.0.lock().await;
+    pub fn with_install_gate(&self, gate: Option<NpmInstallGate>) -> Self {
+        Self {
+            state: self.state.clone(),
+            install_gate: gate,
+        }
+    }
+
+    async fn instance(&self) -> Result<Box<dyn NodeRuntimeTrait>> {
+        self.instance_with_managed_dir(&paths::data_dir().join("node"))
+            .await
+    }
+
+    async fn instance_with_managed_dir(
+        &self,
+        managed_dir: &Path,
+    ) -> Result<Box<dyn NodeRuntimeTrait>> {
+        let mut state = self.state.lock().await;
 
         let options = loop {
             if let Some(options) = state.options.borrow().as_ref() {
@@ -103,9 +121,7 @@ impl NodeRuntime {
                 Ok(()) => {}
                 // failure case not cached
                 Err(err) => {
-                    return Box::new(UnavailableNodeRuntime {
-                        error_message: err.to_string().into(),
-                    }) as Box<dyn NodeRuntimeTrait>;
+                    return Err(err.into());
                 }
             }
         };
@@ -114,40 +130,39 @@ impl NodeRuntime {
             state.instance.take();
         }
         if let Some(instance) = state.instance.as_ref() {
-            return instance.boxed_clone();
+            return Ok(instance.boxed_clone());
         }
 
         if let Some((node, npm)) = options.use_paths.as_ref() {
-            let instance = match SystemNodeRuntime::new(node.clone(), npm.clone()).await {
-                Ok(instance) => {
-                    log::info!("using Node.js from `node.path` in settings: {:?}", instance);
-                    Box::new(instance)
-                }
-                Err(err) => {
-                    // failure case not cached, since it's cheap to check again
-                    return Box::new(UnavailableNodeRuntime {
-                        error_message: format!(
-                            "failure checking Node.js from `node.path` in settings ({}): {:?}",
-                            node.display(),
-                            err
-                        )
-                        .into(),
-                    });
-                }
-            };
+            let instance =
+                match SystemNodeRuntime::new(node.clone(), npm.clone(), self.install_gate.as_ref())
+                    .await
+                {
+                    Ok(instance) => {
+                        log::info!("using Node.js from `node.path` in settings: {:?}", instance);
+                        Box::new(instance)
+                    }
+                    Err(err) => {
+                        // failure case not cached, since it's cheap to check again
+                        return Err(err.context(format!(
+                            "failure checking Node.js from `node.path` in settings ({})",
+                            node.display()
+                        )));
+                    }
+                };
             state.instance = Some(instance.boxed_clone());
             state.last_options = Some(options);
-            return instance;
+            return Ok(instance);
         }
 
         let system_node_error = if options.allow_path_lookup {
             state.shell_env_loaded.clone().await.ok();
-            match SystemNodeRuntime::detect().await {
+            match SystemNodeRuntime::detect(self.install_gate.as_ref()).await {
                 Ok(instance) => {
                     log::info!("using Node.js found on PATH: {:?}", instance);
                     state.instance = Some(instance.boxed_clone());
                     state.last_options = Some(options);
-                    return Box::new(instance) as Box<dyn NodeRuntimeTrait>;
+                    return Ok(Box::new(instance));
                 }
                 Err(err) => Some(err),
             }
@@ -155,66 +170,39 @@ impl NodeRuntime {
             None
         };
 
-        let instance = if options.allow_binary_downloads {
-            let (log_level, why_using_managed) = match system_node_error {
-                Some(err @ DetectError::Other(_)) => (Level::Warn, err.to_string()),
-                Some(err @ DetectError::NotInPath(_)) => (Level::Info, err.to_string()),
-                None => (
-                    Level::Info,
-                    "`node.ignore_system_version` is `true` in settings".to_string(),
-                ),
-            };
-            match ManagedNodeRuntime::install_if_needed(&state.http).await {
-                Ok(instance) => {
-                    log::log!(
-                        log_level,
-                        "using Zed managed Node.js at {} since {}",
-                        instance.installation_path.display(),
-                        why_using_managed
-                    );
-                    Box::new(instance) as Box<dyn NodeRuntimeTrait>
+        let instance = match ManagedNodeRuntime::install_if_needed(
+            &state.http,
+            managed_dir,
+            self.install_gate.as_ref(),
+        )
+        .await
+        {
+            Ok(instance) => Box::new(instance) as Box<dyn NodeRuntimeTrait>,
+            Err(error) => {
+                if let Some(system_error) = system_node_error {
+                    if system_error.is::<ToolPermissionDenied>() {
+                        return Err(system_error.context(format!(
+                            "cannot use Zed managed Node.js: {error:#}; system Node.js unavailable"
+                        )));
+                    }
+                    return Err(error.context(format!(
+                        "cannot use Zed managed Node.js; system Node.js: {system_error:#}"
+                    )));
                 }
-                Err(err) => {
-                    // failure case is cached, since downloading + installing may be expensive. The
-                    // downside of this is that it may fail due to an intermittent network issue.
-                    //
-                    // TODO: Have `install_if_needed` indicate which failure cases are retryable
-                    // and/or have shared tracking of when internet is available.
-                    Box::new(UnavailableNodeRuntime {
-                        error_message: format!(
-                            "failure while downloading and/or installing Zed managed Node.js, \
-                            restart Zed to retry: {}",
-                            err
-                        )
-                        .into(),
-                    }) as Box<dyn NodeRuntimeTrait>
-                }
+                return Err(error.context("cannot use Zed managed Node.js"));
             }
-        } else if let Some(system_node_error) = system_node_error {
-            // failure case not cached, since it's cheap to check again
-            return Box::new(UnavailableNodeRuntime {
-                error_message: format!(
-                    "failure while checking system Node.js from PATH, and binary downloads are disabled: {}",
-                    system_node_error
-                )
-                .into(),
-            });
-        } else {
-            // failure case is cached because it will always happen with these options
-            Box::new(UnavailableNodeRuntime {
-                error_message: "`node` settings do not allow any way to use Node.js"
-                    .to_string()
-                    .into(),
-            })
         };
 
         state.instance = Some(instance.boxed_clone());
         state.last_options = Some(options);
-        instance
+        Ok(instance)
     }
 
     pub async fn binary_path(&self) -> Result<PathBuf> {
-        self.instance().await.binary_path()
+        let instance = self.instance().await?;
+        let path = instance.binary_path()?;
+        require_install_gate(self.install_gate.as_ref(), &["Node.js"]).await?;
+        Ok(path)
     }
 
     pub async fn run_npm_subcommand(
@@ -223,10 +211,7 @@ impl NodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> Result<Output> {
-        let http = self.0.lock().await.http.clone();
-        self.instance()
-            .await
-            .run_npm_subcommand(directory, http.proxy(), subcommand, args)
+        self.run_npm_subcommand_for_tools(directory, subcommand, args, &["npm"])
             .await
     }
 
@@ -235,10 +220,7 @@ impl NodeRuntime {
         local_package_directory: &Path,
         name: &str,
     ) -> Result<Option<Version>> {
-        self.instance()
-            .await
-            .npm_package_installed_version(local_package_directory, name)
-            .await
+        read_package_installed_version(local_package_directory.join("node_modules"), name).await
     }
 
     pub async fn npm_command(
@@ -247,11 +229,9 @@ impl NodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> Result<NpmCommand> {
-        let http = self.0.lock().await.http.clone();
-        self.instance()
+        self.prepare_npm_command(prefix_dir, subcommand, args, &["npm"])
             .await
-            .npm_command(prefix_dir, http.proxy(), subcommand, args)
-            .await
+            .map(|(command, _)| command)
     }
 
     pub async fn npm_package_latest_version(&self, name: &str) -> Result<Version> {
@@ -264,12 +244,9 @@ impl NodeRuntime {
         name: &str,
         version_requirement: Option<&VersionReq>,
     ) -> Result<Version> {
-        let http = self.0.lock().await.http.clone();
-        let instance = self.instance().await;
-        let output = instance
-            .run_npm_subcommand(
+        let output = self
+            .run_npm_subcommand_for_tools(
                 None,
-                http.proxy(),
                 "info",
                 &[
                     name,
@@ -281,6 +258,7 @@ impl NodeRuntime {
                     "--fetch-timeout",
                     "5000",
                 ],
+                &[name],
             )
             .await?;
 
@@ -290,11 +268,17 @@ impl NodeRuntime {
                 String::from_utf8_lossy(&output.stdout)
             )
         })?;
-        let before = npm_config_before(instance.as_ref(), http.proxy())
+        let before = match npm_config_before(self, name)
             .await
             .context("getting npm before config")
-            .log_err()
-            .flatten();
+        {
+            Ok(before) => before,
+            Err(error) if error.is::<ToolPermissionDenied>() => return Err(error),
+            Err(error) => {
+                log::error!("{error:#}");
+                None
+            }
+        };
         let latest_dist_tag = info.dist_tags.latest.clone();
         let selected_version =
             select_npm_package_version(name, info, before.as_deref(), version_requirement)?;
@@ -313,16 +297,6 @@ impl NodeRuntime {
             return Ok(());
         }
 
-        if let Some(gate) = self.0.lock().await.install_gate.clone() {
-            for (name, _) in packages {
-                anyhow::ensure!(
-                    gate(name.to_string()).await,
-                    "{}",
-                    util::downloads_disabled_error(format_args!("npm package {name}"))
-                );
-            }
-        }
-
         log::debug!(
             "installing npm packages directory={} packages={packages:?}",
             directory.display()
@@ -331,8 +305,8 @@ impl NodeRuntime {
         let arguments = build_npm_install_args(packages);
         let arguments = arguments.iter().map(String::as_str).collect::<Vec<_>>();
 
-        // This is also wrong because the directory is wrong.
-        self.run_npm_subcommand(Some(directory), "install", &arguments)
+        let tools = packages.iter().map(|(name, _)| *name).collect::<Vec<_>>();
+        self.run_npm_subcommand_for_tools(Some(directory), "install", &arguments, &tools)
             .await?;
         Ok(())
     }
@@ -396,6 +370,73 @@ impl NodeRuntime {
         );
         should_install
     }
+
+    async fn prepare_npm_command(
+        &self,
+        directory: Option<&Path>,
+        subcommand: &str,
+        args: &[&str],
+        tools: &[&str],
+    ) -> Result<(NpmCommand, bool)> {
+        require_install_gate(self.install_gate.as_ref(), tools).await?;
+        let http = self.state.lock().await.http.clone();
+        let instance = self.instance().await?;
+        let command = instance
+            .npm_command(directory, http.proxy(), subcommand, args)
+            .await?;
+        require_install_gate(self.install_gate.as_ref(), tools).await?;
+        Ok((command, instance.is_managed()))
+    }
+
+    async fn run_npm_subcommand_for_tools(
+        &self,
+        directory: Option<&Path>,
+        subcommand: &str,
+        args: &[&str],
+        tools: &[&str],
+    ) -> Result<Output> {
+        let mut retry = false;
+        loop {
+            let (npm_command, managed) = self
+                .prepare_npm_command(directory, subcommand, args, tools)
+                .await?;
+            let mut command = util::command::new_command(npm_command.path);
+            command.kill_on_drop(true);
+            command.args(npm_command.args);
+            command.envs(npm_command.env);
+            if let Some(directory) = directory {
+                command.current_dir(directory);
+            }
+            let output = match command.output().await {
+                Ok(output) => output,
+                Err(_) if managed && !retry => {
+                    retry = true;
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            };
+            anyhow::ensure!(
+                output.status.success(),
+                "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return Ok(output);
+        }
+    }
+}
+
+async fn require_install_gate(gate: Option<&NpmInstallGate>, tools: &[&str]) -> Result<()> {
+    for tool in tools {
+        anyhow::ensure!(
+            match gate {
+                Some(gate) => gate(tool.to_string()).await,
+                None => false,
+            },
+            ToolPermissionDenied(tool.to_string())
+        );
+    }
+    Ok(())
 }
 
 fn should_install_npm_package_version(
@@ -468,14 +509,11 @@ struct NpmConfig {
     before: Option<String>,
 }
 
-async fn npm_config_before(
-    node_runtime: &dyn NodeRuntimeTrait,
-    proxy: Option<&Url>,
-) -> Result<Option<String>> {
+async fn npm_config_before(node_runtime: &NodeRuntime, package: &str) -> Result<Option<String>> {
     // `npm config get before` renders Date values for display. The JSON config output keeps the
     // computed cutoff in the same ISO format used by `npm info --json` release times.
     let output = node_runtime
-        .run_npm_subcommand(None, proxy, "config", &["list", "--json"])
+        .run_npm_subcommand_for_tools(None, "config", &["list", "--json"], &[package])
         .await?;
     let config: NpmConfig = serde_json::from_slice(&output.stdout)?;
     Ok(config
@@ -570,13 +608,9 @@ trait NodeRuntimeTrait: Send + Sync {
     fn boxed_clone(&self) -> Box<dyn NodeRuntimeTrait>;
     fn binary_path(&self) -> Result<PathBuf>;
 
-    async fn run_npm_subcommand(
-        &self,
-        directory: Option<&Path>,
-        proxy: Option<&Url>,
-        subcommand: &str,
-        args: &[&str],
-    ) -> Result<Output>;
+    fn is_managed(&self) -> bool {
+        false
+    }
 
     async fn npm_command(
         &self,
@@ -585,12 +619,6 @@ trait NodeRuntimeTrait: Send + Sync {
         subcommand: &str,
         args: &[&str],
     ) -> Result<NpmCommand>;
-
-    async fn npm_package_installed_version(
-        &self,
-        local_package_directory: &Path,
-        name: &str,
-    ) -> Result<Option<Version>>;
 }
 
 #[derive(Clone)]
@@ -611,7 +639,11 @@ impl ManagedNodeRuntime {
     #[cfg(windows)]
     const NPM_PATH: &str = "node_modules/npm/bin/npm-cli.js";
 
-    async fn install_if_needed(http: &Arc<dyn HttpClient>) -> Result<Self> {
+    async fn install_if_needed(
+        http: &Arc<dyn HttpClient>,
+        node_containing_dir: &Path,
+        install_gate: Option<&NpmInstallGate>,
+    ) -> Result<Self> {
         log::info!("Node runtime install_if_needed");
 
         let os = match consts::OS {
@@ -629,13 +661,19 @@ impl ManagedNodeRuntime {
 
         let version = Self::VERSION;
         let folder_name = format!("node-{version}-{os}-{arch}");
-        let node_containing_dir = paths::data_dir().join("node");
         let node_dir = node_containing_dir.join(folder_name);
         let node_binary = node_dir.join(Self::NODE_PATH);
         let npm_file = node_dir.join(Self::NPM_PATH);
         let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
 
-        let valid = if fs::metadata(&node_binary).await.is_ok() {
+        let valid = if fs::metadata(&node_binary)
+            .await
+            .is_ok_and(|metadata| metadata.is_file())
+            && fs::metadata(&npm_file)
+                .await
+                .is_ok_and(|metadata| metadata.is_file())
+        {
+            require_install_gate(install_gate, &["Node.js"]).await?;
             let result = util::command::new_command(&node_binary)
                 .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
                 .arg(npm_file)
@@ -660,8 +698,7 @@ impl ManagedNodeRuntime {
                 }
                 Err(err) => {
                     log::warn!(
-                        "Zed managed Node.js binary at {} failed check, so re-downloading it. \
-                        Error: {}",
+                        "Zed managed Node.js binary at {} failed check. Error: {}",
                         node_binary.display(),
                         err
                     );
@@ -672,7 +709,14 @@ impl ManagedNodeRuntime {
             false
         };
 
-        if !valid {
+        if valid {
+            return Ok(Self {
+                installation_path: node_dir,
+            });
+        }
+
+        require_install_gate(install_gate, &["Node.js"]).await?;
+        {
             _ = fs::remove_dir_all(&node_containing_dir).await;
             fs::create_dir(&node_containing_dir)
                 .await
@@ -695,6 +739,7 @@ impl ManagedNodeRuntime {
 
             let url = format!("https://nodejs.org/dist/{version}/{file_name}");
             log::info!("Downloading Node.js binary from {url}");
+            require_install_gate(install_gate, &["Node.js"]).await?;
             let mut response = http
                 .get(&url, Default::default(), true)
                 .await
@@ -715,7 +760,6 @@ impl ManagedNodeRuntime {
 
         _ = fs::remove_dir_all(node_dir.join("cache")).await;
 
-        // Note: Not in the `if !valid {}` so we can populate these for existing installations
         _ = fs::create_dir(node_dir.join("cache")).await;
         _ = fs::write(node_dir.join("blank_user_npmrc"), []).await;
         _ = fs::write(node_dir.join("blank_global_npmrc"), []).await;
@@ -757,44 +801,8 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
         Ok(self.installation_path.join(Self::NODE_PATH))
     }
 
-    async fn run_npm_subcommand(
-        &self,
-        directory: Option<&Path>,
-        proxy: Option<&Url>,
-        subcommand: &str,
-        args: &[&str],
-    ) -> Result<Output> {
-        let attempt = || async {
-            let npm_command = self.npm_command(directory, proxy, subcommand, args).await?;
-            let mut command = util::command::new_command(npm_command.path);
-            command.args(npm_command.args);
-            command.envs(npm_command.env);
-            if let Some(directory) = directory {
-                command.current_dir(directory);
-            }
-            command.output().await.map_err(|e| anyhow!("{e}"))
-        };
-
-        let mut output = attempt().await;
-        if output.is_err() {
-            output = attempt().await;
-            anyhow::ensure!(
-                output.is_ok(),
-                "failed to launch npm subcommand {subcommand} subcommand\nerr: {:?}",
-                output.err()
-            );
-        }
-
-        if let Ok(output) = &output {
-            anyhow::ensure!(
-                output.status.success(),
-                "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-
-        output.map_err(|e| anyhow!("{e}"))
+    fn is_managed(&self) -> bool {
+        true
     }
 
     async fn npm_command(
@@ -834,14 +842,6 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
             env: command_env,
         })
     }
-
-    async fn npm_package_installed_version(
-        &self,
-        local_package_directory: &Path,
-        name: &str,
-    ) -> Result<Option<Version>> {
-        read_package_installed_version(local_package_directory.join("node_modules"), name).await
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -853,8 +853,14 @@ pub struct SystemNodeRuntime {
 
 impl SystemNodeRuntime {
     const MIN_VERSION: semver::Version = Version::new(22, 0, 0);
-    async fn new(node: PathBuf, npm: PathBuf) -> Result<Self> {
+    async fn new(
+        node: PathBuf,
+        npm: PathBuf,
+        install_gate: Option<&NpmInstallGate>,
+    ) -> Result<Self> {
+        require_install_gate(install_gate, &["Node.js"]).await?;
         let output = util::command::new_command(&node)
+            .kill_on_drop(true)
             .arg("--version")
             .output()
             .await
@@ -889,28 +895,12 @@ impl SystemNodeRuntime {
         })
     }
 
-    async fn detect() -> std::result::Result<Self, DetectError> {
-        let node = which::which("node").map_err(DetectError::NotInPath)?;
-        let npm = which::which("npm").map_err(DetectError::NotInPath)?;
-        Self::new(node, npm).await.map_err(DetectError::Other)
-    }
-}
-
-enum DetectError {
-    NotInPath(which::Error),
-    Other(anyhow::Error),
-}
-
-impl Display for DetectError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DetectError::NotInPath(err) => {
-                write!(f, "system Node.js wasn't found on PATH: {}", err)
-            }
-            DetectError::Other(err) => {
-                write!(f, "checking system Node.js failed with error: {}", err)
-            }
-        }
+    async fn detect(install_gate: Option<&NpmInstallGate>) -> Result<Self> {
+        let node = which::which("node").context("system Node.js wasn't found on PATH")?;
+        let npm = which::which("npm").context("system npm wasn't found on PATH")?;
+        Self::new(node, npm, install_gate)
+            .await
+            .context("checking system Node.js")
     }
 }
 
@@ -922,30 +912,6 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
 
     fn binary_path(&self) -> Result<PathBuf> {
         Ok(self.node.clone())
-    }
-
-    async fn run_npm_subcommand(
-        &self,
-        directory: Option<&Path>,
-        proxy: Option<&Url>,
-        subcommand: &str,
-        args: &[&str],
-    ) -> anyhow::Result<Output> {
-        let npm_command = self.npm_command(directory, proxy, subcommand, args).await?;
-        let mut command = util::command::new_command(npm_command.path);
-        command.args(npm_command.args);
-        command.envs(npm_command.env);
-        if let Some(directory) = directory {
-            command.current_dir(directory);
-        }
-        let output = command.output().await?;
-        anyhow::ensure!(
-            output.status.success(),
-            "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(output)
     }
 
     async fn npm_command(
@@ -972,15 +938,6 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
             args: command_args,
             env: command_env,
         })
-    }
-
-    async fn npm_package_installed_version(
-        &self,
-        local_package_directory: &Path,
-        name: &str,
-    ) -> Result<Option<Version>> {
-        read_package_installed_version(local_package_directory.join("node_modules"), name).await
-        // todo: allow returning a globally installed version (requires callers not to hard-code the path)
     }
 }
 
@@ -1060,9 +1017,7 @@ pub async fn read_package_executable(
 }
 
 #[derive(Clone)]
-pub struct UnavailableNodeRuntime {
-    error_message: Arc<String>,
-}
+pub struct UnavailableNodeRuntime;
 
 #[async_trait::async_trait]
 impl NodeRuntimeTrait for UnavailableNodeRuntime {
@@ -1070,17 +1025,7 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
         Box::new(self.clone())
     }
     fn binary_path(&self) -> Result<PathBuf> {
-        bail!("{}", self.error_message)
-    }
-
-    async fn run_npm_subcommand(
-        &self,
-        _: Option<&Path>,
-        _: Option<&Url>,
-        _: &str,
-        _: &[&str],
-    ) -> anyhow::Result<Output> {
-        bail!("{}", self.error_message)
+        bail!("`node` settings do not allow any way to use Node.js")
     }
 
     async fn npm_command(
@@ -1090,15 +1035,7 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
         _subcommand: &str,
         _args: &[&str],
     ) -> Result<NpmCommand> {
-        bail!("{}", self.error_message)
-    }
-
-    async fn npm_package_installed_version(
-        &self,
-        _local_package_directory: &Path,
-        _: &str,
-    ) -> Result<Option<Version>> {
-        bail!("{}", self.error_message)
+        bail!("`node` settings do not allow any way to use Node.js")
     }
 }
 
@@ -1123,9 +1060,6 @@ fn build_npm_install_args(packages: &[(&str, &str)]) -> Vec<String> {
         .map(|(name, version)| format!("{name}@{version}"))
         .chain(
             [
-                "--no-package-lock",
-                "--save-exact",
-                "--ignore-scripts",
                 "--fetch-retry-mintimeout",
                 "2000",
                 "--fetch-retry-maxtimeout",
@@ -1171,7 +1105,31 @@ fn build_npm_command_args(
         command_args.push("--proxy".into());
         command_args.push(proxy_arg);
     }
-    command_args.extend(args.into_iter().map(|a| a.to_string()));
+    let (options, positional) = args.split_at(
+        args.iter()
+            .position(|arg| *arg == "--")
+            .unwrap_or(args.len()),
+    );
+    command_args.extend(options.iter().map(|arg| arg.to_string()));
+    if matches!(
+        subcommand,
+        "install"
+            | "add"
+            | "i"
+            | "in"
+            | "ins"
+            | "inst"
+            | "insta"
+            | "instal"
+            | "isnt"
+            | "isnta"
+            | "isntal"
+            | "isntall"
+    ) {
+        command_args
+            .extend(["--no-package-lock", "--save-exact", "--ignore-scripts"].map(String::from));
+    }
+    command_args.extend(positional.iter().map(|arg| arg.to_string()));
     command_args
 }
 
@@ -1212,11 +1170,24 @@ mod tests {
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
+    #[cfg(unix)]
+    use std::{
+        os::unix::fs::symlink,
+        path::PathBuf,
+        task::Poll,
+        time::{Duration, Instant},
+    };
 
     use anyhow::{Result, bail};
     use futures::FutureExt as _;
     use http_client::Url;
+    #[cfg(unix)]
+    use http_client::http::HeaderValue;
     use semver::{Version, VersionReq};
+    #[cfg(unix)]
+    use std::sync::atomic::AtomicBool;
+    #[cfg(unix)]
+    use util::{ResultExt as _, ToolPermissionDenied, command::new_command};
 
     use super::{
         NodeBinaryOptions, NodeRuntime, NpmInfo, NpmInstallGate, VersionStrategy,
@@ -1304,6 +1275,65 @@ mod tests {
                 "--yes".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn test_build_npm_command_args_secures_raw_installs() {
+        let args = build_npm_command_args(
+            None,
+            None,
+            Path::new("cache"),
+            None,
+            None,
+            None,
+            "install",
+            &["agent-package@0.0.0 - 1.2.3", "--before=2026-01-01"],
+        );
+        assert_eq!(
+            args,
+            [
+                "install",
+                "--cache=cache",
+                "agent-package@0.0.0 - 1.2.3",
+                "--before=2026-01-01",
+                "--no-package-lock",
+                "--save-exact",
+                "--ignore-scripts",
+            ]
+        );
+        for subcommand in ["install", "i", "add"] {
+            let args = build_npm_command_args(
+                None,
+                None,
+                Path::new("cache"),
+                None,
+                None,
+                None,
+                subcommand,
+                &[
+                    "--ignore-scripts=false",
+                    "--package-lock",
+                    "--save-exact=false",
+                    "--",
+                    "agent-package@0.0.0 - 1.2.3",
+                ],
+            );
+            assert_eq!(
+                args,
+                [
+                    subcommand,
+                    "--cache=cache",
+                    "--ignore-scripts=false",
+                    "--package-lock",
+                    "--save-exact=false",
+                    "--no-package-lock",
+                    "--save-exact",
+                    "--ignore-scripts",
+                    "--",
+                    "agent-package@0.0.0 - 1.2.3",
+                ]
+            );
+        }
     }
 
     #[test]
@@ -1683,80 +1713,553 @@ mod tests {
     }
 
     #[test]
-    fn test_npm_install_packages_blocked_by_install_gate_mentions_downloads_off() {
-        let gate_calls = Arc::new(AtomicUsize::new(0));
-        let gate: NpmInstallGate = Arc::new({
-            let gate_calls = gate_calls.clone();
-            move |_package| {
-                gate_calls.fetch_add(1, Ordering::SeqCst);
-                futures::future::ready(false).boxed()
-            }
-        });
-        let runtime = gated_node_runtime(Some(gate));
-
-        let error = smol::block_on(
-            runtime.npm_install_packages(Path::new("/tmp"), &[("left-pad", "1.0.0")]),
-        )
-        .expect_err("a closed gate must block the install");
-
-        assert_eq!(
-            error.to_string().contains("Downloads Off"),
-            true,
-            "the error must point at the downloads indicator, got: {error}"
-        );
-        assert_eq!(gate_calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn test_npm_install_packages_proceeds_past_open_install_gate() {
-        let gate_calls = Arc::new(AtomicUsize::new(0));
-        let gate: NpmInstallGate = Arc::new({
-            let gate_calls = gate_calls.clone();
-            move |_package| {
-                gate_calls.fetch_add(1, Ordering::SeqCst);
-                futures::future::ready(true).boxed()
-            }
-        });
-        let runtime = gated_node_runtime(Some(gate));
-
-        let error = smol::block_on(
-            runtime.npm_install_packages(Path::new("/tmp"), &[("left-pad", "1.0.0")]),
-        )
-        .expect_err("no node instance is available with default options");
-
-        assert_eq!(
-            error.to_string().contains("Downloads Off"),
-            false,
-            "an open gate must not block the install, got: {error}"
-        );
-        assert_eq!(
-            error
-                .to_string()
-                .contains("do not allow any way to use Node.js"),
-            true,
-            "the failure must come from the node instance lookup, got: {error}"
-        );
-        assert_eq!(gate_calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
     fn test_npm_install_args_disable_lifecycle_scripts_and_pin_versions() {
         let args = build_npm_install_args(&[("prettier", "3.0.0"), ("typescript", "5.4.2")]);
-        assert_eq!(args[0], "prettier@3.0.0");
-        assert_eq!(args[1], "typescript@5.4.2");
+        let args = args.iter().map(String::as_str).collect::<Vec<_>>();
         assert_eq!(
-            args.iter().filter(|arg| *arg == "--ignore-scripts").count(),
-            1
+            build_npm_command_args(
+                None,
+                None,
+                Path::new("cache"),
+                None,
+                None,
+                None,
+                "install",
+                &args
+            ),
+            [
+                "install",
+                "--cache=cache",
+                "prettier@3.0.0",
+                "typescript@5.4.2",
+                "--fetch-retry-mintimeout",
+                "2000",
+                "--fetch-retry-maxtimeout",
+                "5000",
+                "--fetch-timeout",
+                "5000",
+                "--no-package-lock",
+                "--save-exact",
+                "--ignore-scripts",
+            ]
         );
-        assert_eq!(args.iter().filter(|arg| *arg == "--save-exact").count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_managed_node_reuses_approved_cache_without_repairs() -> Result<()> {
+        smol::block_on(async {
+            let directory = TestDirectory::new()?;
+            let os = if cfg!(target_os = "macos") {
+                "darwin"
+            } else {
+                "linux"
+            };
+            let arch = if cfg!(target_arch = "aarch64") {
+                "arm64"
+            } else {
+                "x64"
+            };
+            let installation = directory.0.join(format!("node-v24.11.0-{os}-{arch}"));
+            std::fs::create_dir_all(installation.join("bin"))?;
+            let node = installation.join("bin/node");
+            let npm = installation.join("bin/npm");
+            symlink("/bin/sh", &node)?;
+            let marker = directory.0.join("probe");
+            std::fs::write(
+                &npm,
+                format!("printf '10.0.0\\n'\nprintf probe > {marker:?}\n"),
+            )?;
+            let http = Arc::new(NoNetworkHttpClient) as Arc<dyn http_client::HttpClient>;
+            let mut options = NodeBinaryOptions {
+                allow_binary_downloads: true,
+                ..NodeBinaryOptions::default()
+            };
+            let (mut sender, receiver) = watch::channel(Some(options.clone()));
+            let runtime = NodeRuntime::new(http.clone(), None, receiver, None);
+            assert!(
+                runtime
+                    .instance_with_managed_dir(&directory.0)
+                    .await
+                    .err()
+                    .unwrap()
+                    .is::<ToolPermissionDenied>()
+            );
+            assert!(!marker.exists());
+            let runtime =
+                runtime.with_install_gate(Some(Arc::new(|_| futures::future::ready(true).boxed())));
+            assert_eq!(
+                runtime
+                    .instance_with_managed_dir(&directory.0)
+                    .await?
+                    .binary_path()?,
+                node
+            );
+
+            std::fs::create_dir(installation.join("cache"))?;
+            std::fs::write(installation.join("cache/keep"), "cached")?;
+            std::fs::write(installation.join("blank_user_npmrc"), "user")?;
+            std::fs::write(installation.join("blank_global_npmrc"), "global")?;
+            options.allow_binary_downloads = false;
+            sender.send(Some(options.clone()))?;
+            assert_eq!(
+                runtime
+                    .instance_with_managed_dir(&directory.0)
+                    .await?
+                    .binary_path()?,
+                node
+            );
+
+            options.use_paths = Some((directory.0.join("missing-node"), npm.clone()));
+            sender.send(Some(options.clone()))?;
+            assert!(
+                runtime
+                    .instance_with_managed_dir(&directory.0)
+                    .await
+                    .and_then(|instance| instance.binary_path())
+                    .is_err()
+            );
+            options.use_paths = None;
+            sender.send(Some(options.clone()))?;
+            assert_eq!(
+                runtime
+                    .instance_with_managed_dir(&directory.0)
+                    .await?
+                    .binary_path()?,
+                node
+            );
+
+            let cold_runtime = NodeRuntime::new(http, None, watch::channel(Some(options)).1, None);
+            std::fs::remove_file(&npm)?;
+            assert!(
+                cold_runtime
+                    .instance_with_managed_dir(&directory.0)
+                    .await
+                    .and_then(|instance| instance.binary_path())
+                    .is_err()
+            );
+            std::fs::write(&npm, "exit 1\n")?;
+            assert!(
+                cold_runtime
+                    .instance_with_managed_dir(&directory.0)
+                    .await
+                    .and_then(|instance| instance.binary_path())
+                    .is_err()
+            );
+            assert_eq!(std::fs::read_to_string(&npm)?, "exit 1\n");
+            std::fs::write(&npm, "printf '10.0.0\\n'\n")?;
+            let cold_runtime = cold_runtime.with_install_gate(runtime.install_gate.clone());
+            assert_eq!(
+                cold_runtime
+                    .instance_with_managed_dir(&directory.0)
+                    .await?
+                    .binary_path()?,
+                node
+            );
+            assert_eq!(
+                std::fs::read_to_string(installation.join("cache/keep"))?,
+                "cached"
+            );
+            assert_eq!(
+                std::fs::read_to_string(installation.join("blank_user_npmrc"))?,
+                "user"
+            );
+            assert_eq!(
+                std::fs::read_to_string(installation.join("blank_global_npmrc"))?,
+                "global"
+            );
+            assert!(
+                NodeRuntime::unavailable()
+                    .instance_with_managed_dir(&directory.0)
+                    .await
+                    .and_then(|instance| instance.binary_path())
+                    .is_err()
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_managed_npm_cancellation_kills_child() -> Result<()> {
+        smol::block_on(assert_npm_cancellation(true))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_system_npm_cancellation_kills_child() -> Result<()> {
+        smol::block_on(assert_npm_cancellation(false))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_npm_authorization_is_rechecked_after_preparation() -> Result<()> {
+        smol::block_on(async {
+            let directory = TestDirectory::new()?;
+            let admitted = directory.0.join("admitted");
+            let allowed = Arc::new(AtomicBool::new(true));
+            let revoke = Arc::new(AtomicBool::new(true));
+            let runtime = gated_node_runtime(Some(Arc::new({
+                let allowed = allowed.clone();
+                move |_| futures::future::ready(allowed.load(Ordering::SeqCst)).boxed()
+            })));
+            runtime.state.lock().await.instance = Some(Box::new(PreparingNodeRuntime {
+                admitted: admitted.clone(),
+                allowed: allowed.clone(),
+                revoke: revoke.clone(),
+            }));
+
+            for subcommand in ["install", "exec", "run-script", "config"] {
+                allowed.store(true, Ordering::SeqCst);
+                revoke.store(true, Ordering::SeqCst);
+                let error = runtime
+                    .run_npm_subcommand(None, subcommand, &[])
+                    .await
+                    .unwrap_err();
+                assert!(error.is::<ToolPermissionDenied>());
+                assert_eq!(error.to_string(), util::downloads_disabled_error("npm"));
+                assert!(!admitted.exists());
+            }
+            allowed.store(true, Ordering::SeqCst);
+            revoke.store(true, Ordering::SeqCst);
+            let error = runtime.npm_command(None, "exec", &[]).await.unwrap_err();
+            assert_eq!(error.to_string(), util::downloads_disabled_error("npm"));
+            assert!(!admitted.exists());
+
+            allowed.store(true, Ordering::SeqCst);
+            revoke.store(true, Ordering::SeqCst);
+            let error = runtime
+                .npm_install_packages(&directory.0, &[("package", "1.0.0")])
+                .await
+                .unwrap_err();
+            assert_eq!(error.to_string(), util::downloads_disabled_error("package"));
+            assert!(!admitted.exists());
+
+            allowed.store(true, Ordering::SeqCst);
+            let denied = runtime.with_install_gate(None);
+            assert_eq!(
+                denied.binary_path().await.unwrap_err().to_string(),
+                util::downloads_disabled_error("Node.js")
+            );
+            assert_eq!(
+                denied
+                    .run_npm_subcommand(None, "exec", &[])
+                    .await
+                    .unwrap_err()
+                    .to_string(),
+                util::downloads_disabled_error("npm")
+            );
+            assert!(!admitted.exists());
+            runtime.run_npm_subcommand(None, "exec", &[]).await?;
+            assert_eq!(std::fs::read_to_string(&admitted)?, "admitted");
+            Ok(())
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_managed_node_acquisition_requires_live_gate_without_caching_denial() -> Result<()> {
+        smol::block_on(async {
+            let directory = TestDirectory::new()?;
+            let http = Arc::new(RecordingHttpClient(AtomicUsize::new(0)));
+            let (mut options, receiver) = watch::channel(Some(NodeBinaryOptions {
+                allow_binary_downloads: true,
+                ..NodeBinaryOptions::default()
+            }));
+            let runtime = NodeRuntime::new(http.clone(), None, receiver, None);
+            let denied = format!(
+                "cannot use Zed managed Node.js: {}",
+                util::downloads_disabled_error("Node.js")
+            );
+            let error = runtime
+                .instance_with_managed_dir(&directory.0)
+                .await
+                .and_then(|instance| instance.binary_path())
+                .unwrap_err();
+            assert!(error.is::<ToolPermissionDenied>());
+            assert_eq!(format!("{error:#}"), denied);
+            assert_eq!(http.0.load(Ordering::SeqCst), 0);
+            assert!(runtime.state.lock().await.instance.is_none());
+
+            let checks = Arc::new(AtomicUsize::new(0));
+            let revoked = runtime.with_install_gate(Some(Arc::new({
+                let checks = checks.clone();
+                move |_| futures::future::ready(checks.fetch_add(1, Ordering::SeqCst) == 0).boxed()
+            })));
+            let error = revoked
+                .instance_with_managed_dir(&directory.0)
+                .await
+                .and_then(|instance| instance.binary_path())
+                .unwrap_err();
+            assert!(error.is::<ToolPermissionDenied>());
+            assert_eq!(format!("{error:#}"), denied);
+            assert_eq!(checks.load(Ordering::SeqCst), 2);
+            assert_eq!(http.0.load(Ordering::SeqCst), 0);
+
+            options.send(Some(NodeBinaryOptions::default()))?;
+            let approved =
+                runtime.with_install_gate(Some(Arc::new(|_| futures::future::ready(true).boxed())));
+            assert!(
+                approved
+                    .instance_with_managed_dir(&directory.0)
+                    .await
+                    .and_then(|instance| instance.binary_path())
+                    .is_err()
+            );
+            assert_eq!(http.0.load(Ordering::SeqCst), 1);
+            let error = runtime
+                .instance_with_managed_dir(&directory.0)
+                .await
+                .and_then(|instance| instance.binary_path())
+                .unwrap_err();
+            assert!(error.is::<ToolPermissionDenied>());
+            assert_eq!(format!("{error:#}"), denied);
+            assert_eq!(http.0.load(Ordering::SeqCst), 1);
+            assert!(runtime.state.lock().await.instance.is_none());
+            Ok(())
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_system_node_probe_requires_execution_consent() -> Result<()> {
+        smol::block_on(async {
+            let directory = TestDirectory::new()?;
+            let error = super::SystemNodeRuntime::new(
+                directory.0.join("untrusted-wrapper"),
+                directory.0.join("npm"),
+                None,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error.to_string(), util::downloads_disabled_error("Node.js"));
+            Ok(())
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_installed_version_query_never_resolves_node() -> Result<()> {
+        smol::block_on(async {
+            let directory = TestDirectory::new()?;
+            let package = directory.0.join("node_modules/package");
+            std::fs::create_dir_all(&package)?;
+            std::fs::write(package.join("package.json"), r#"{"version":"1.2.3"}"#)?;
+            let runtime = NodeRuntime::new(
+                Arc::new(NoNetworkHttpClient),
+                None,
+                watch::channel(Some(NodeBinaryOptions {
+                    allow_binary_downloads: true,
+                    use_paths: Some((
+                        directory.0.join("untrusted-wrapper"),
+                        directory.0.join("npm"),
+                    )),
+                    ..NodeBinaryOptions::default()
+                }))
+                .1,
+                Some(Arc::new(|_| {
+                    panic!("filesystem queries must not request execution consent")
+                })),
+            );
+            assert_eq!(
+                runtime
+                    .npm_package_installed_version(&directory.0, "package")
+                    .await?,
+                Some(Version::new(1, 2, 3))
+            );
+            assert_eq!(
+                runtime
+                    .npm_package_installed_version(&directory.0, "missing")
+                    .await?,
+                None
+            );
+            assert!(runtime.state.lock().await.instance.is_none());
+            Ok(())
+        })
+    }
+
+    #[cfg(unix)]
+    async fn assert_npm_cancellation(managed: bool) -> Result<()> {
+        let directory = TestDirectory::new()?;
+        std::fs::create_dir(directory.0.join("bin"))?;
+        let node = directory.0.join("bin/node");
+        let npm = directory.0.join("bin/npm");
+        let pid_file = directory.0.join("bin/npm.pid");
+        symlink("/bin/sh", &node)?;
+        std::fs::write(
+            &npm,
+            "printf '%s\\n' \"$$\" > \"$0.pid\"\nexec /bin/sleep 60\n",
+        )?;
+        let instance: Box<dyn super::NodeRuntimeTrait> = if managed {
+            Box::new(super::ManagedNodeRuntime {
+                installation_path: directory.0.clone(),
+            })
+        } else {
+            Box::new(super::SystemNodeRuntime {
+                node,
+                npm: PathBuf::from("/bin/sh"),
+                scratch_dir: directory.0.clone(),
+            })
+        };
+        let runtime = gated_node_runtime(Some(Arc::new(|_| futures::future::ready(true).boxed())));
+        runtime.state.lock().await.instance = Some(instance);
+        let npm = npm.to_string_lossy();
+        let mut command = runtime.run_npm_subcommand(None, &npm, &[]).boxed();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let pid = loop {
+            if let Poll::Ready(output) = futures::poll!(command.as_mut()) {
+                bail!("fake npm exited before cancellation: {output:?}");
+            }
+            match std::fs::read_to_string(&pid_file) {
+                Ok(contents) if contents.ends_with('\n') => {
+                    break contents.trim().parse::<u32>()?;
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+            anyhow::ensure!(Instant::now() < deadline, "fake npm did not start");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        drop(command);
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let output = new_command("/bin/kill")
+                .args(["-0", &pid.to_string()])
+                .output()
+                .await?;
+            if !output.status.success() {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                new_command("/bin/kill")
+                    .args(["-KILL", &pid.to_string()])
+                    .output()
+                    .await?;
+                bail!("npm child {pid} survived cancellation");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     fn gated_node_runtime(install_gate: Option<NpmInstallGate>) -> NodeRuntime {
-        NodeRuntime::new(
-            Arc::new(http_client::BlockedHttpClient),
-            None,
-            watch::channel(Some(NodeBinaryOptions::default())).1,
-            install_gate,
-        )
+        NodeRuntime::unavailable().with_install_gate(install_gate)
+    }
+
+    #[cfg(unix)]
+    struct TestDirectory(PathBuf);
+
+    #[cfg(unix)]
+    impl TestDirectory {
+        fn new() -> Result<Self> {
+            static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "zed-node-runtime-{}-{}",
+                std::process::id(),
+                NEXT_ID.fetch_add(1, Ordering::SeqCst),
+            ));
+            std::fs::create_dir(&path)?;
+            Ok(Self(path))
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).log_err();
+        }
+    }
+
+    #[cfg(unix)]
+    #[derive(Clone)]
+    struct PreparingNodeRuntime {
+        admitted: PathBuf,
+        allowed: Arc<AtomicBool>,
+        revoke: Arc<AtomicBool>,
+    }
+
+    #[cfg(unix)]
+    #[async_trait::async_trait]
+    impl super::NodeRuntimeTrait for PreparingNodeRuntime {
+        fn boxed_clone(&self) -> Box<dyn super::NodeRuntimeTrait> {
+            Box::new(self.clone())
+        }
+
+        fn binary_path(&self) -> Result<PathBuf> {
+            Ok(PathBuf::from("/bin/sh"))
+        }
+
+        async fn npm_command(
+            &self,
+            _: Option<&Path>,
+            _: Option<&Url>,
+            _: &str,
+            _: &[&str],
+        ) -> Result<super::NpmCommand> {
+            smol::future::yield_now().await;
+            if self.revoke.swap(false, Ordering::SeqCst) {
+                self.allowed.store(false, Ordering::SeqCst);
+            }
+            Ok(super::NpmCommand {
+                path: PathBuf::from("/bin/sh"),
+                args: vec![
+                    "-c".to_string(),
+                    "printf admitted > \"$1\"".to_string(),
+                    "probe".to_string(),
+                    self.admitted.to_string_lossy().into_owned(),
+                ],
+                env: std::collections::HashMap::new(),
+            })
+        }
+    }
+
+    #[cfg(unix)]
+    struct RecordingHttpClient(AtomicUsize);
+
+    #[cfg(unix)]
+    impl http_client::HttpClient for RecordingHttpClient {
+        fn user_agent(&self) -> Option<&HeaderValue> {
+            None
+        }
+
+        fn proxy(&self) -> Option<&Url> {
+            None
+        }
+
+        fn send(
+            &self,
+            _: http_client::Request<http_client::AsyncBody>,
+        ) -> futures::future::BoxFuture<
+            'static,
+            Result<http_client::Response<http_client::AsyncBody>>,
+        > {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            futures::future::ready(Err(anyhow::anyhow!("HTTP request admitted"))).boxed()
+        }
+    }
+
+    #[cfg(unix)]
+    struct NoNetworkHttpClient;
+
+    #[cfg(unix)]
+    impl http_client::HttpClient for NoNetworkHttpClient {
+        fn user_agent(&self) -> Option<&HeaderValue> {
+            None
+        }
+
+        fn proxy(&self) -> Option<&Url> {
+            None
+        }
+
+        fn send(
+            &self,
+            _: http_client::Request<http_client::AsyncBody>,
+        ) -> futures::future::BoxFuture<
+            'static,
+            Result<http_client::Response<http_client::AsyncBody>>,
+        > {
+            panic!("managed Node validation must not send HTTP requests")
+        }
     }
 }

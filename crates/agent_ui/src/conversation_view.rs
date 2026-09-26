@@ -13,7 +13,7 @@ use agent_client_protocol::schema::v1 as acp;
 use agent_servers::AgentServerDelegate;
 use agent_servers::{AgentServer, GEMINI_TERMINAL_AUTH_METHOD_ID};
 use agent_settings::{AgentProfileId, AgentSettings};
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 #[cfg(feature = "audio")]
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
@@ -41,7 +41,10 @@ use markdown::{
     CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont, MarkdownStyle,
 };
 use parking_lot::{Mutex, RwLock};
-use project::{AgentId, AgentServerStore, Project, ProjectEntryId, ProjectPath};
+use project::{
+    AgentId, AgentServerStore, Project, ProjectEntryId, ProjectPath,
+    binary_downloads::{ToolInstall, scoped_node_runtime},
+};
 
 use crate::conversation_view::elicitation::{
     ElicitationCard, ElicitationCardHandlers, ElicitationFormState, should_render_elicitation,
@@ -1974,6 +1977,7 @@ impl ConversationView {
         };
 
         let agent_telemetry_id = connection.telemetry_id();
+        let agent_id = connection.agent_id();
 
         if let Some(login_task) = connection.terminal_auth_task(&method, cx) {
             pending_auth_method.replace(method.clone());
@@ -1988,6 +1992,7 @@ impl ConversationView {
                         this.update_in(cx, |_this, window, cx| {
                             Self::spawn_external_agent_login(
                                 login,
+                                agent_id,
                                 workspace,
                                 project,
                                 method.clone(),
@@ -2151,6 +2156,7 @@ impl ConversationView {
 
     fn spawn_external_agent_login(
         login: task::SpawnInTerminal,
+        agent_id: AgentId,
         workspace: Entity<Workspace>,
         project: Entity<Project>,
         method: acp::AuthMethodId,
@@ -2163,35 +2169,40 @@ impl ConversationView {
         };
 
         window.spawn(cx, async move |cx| {
+            let permission = ToolInstall {
+                worktree_id: None,
+                tool: SharedString::from(format!("agent {agent_id} execution")),
+            };
             let mut task = login.clone();
             if let Some(cmd) = &task.command {
                 // Have "node" command use Zed's managed Node runtime by default
                 if cmd == "node" {
-                    let resolved_node_runtime = project.update(cx, |project, cx| {
-                        let agent_server_store = project.agent_server_store().clone();
-                        agent_server_store.update(cx, |store, cx| {
-                            store.node_runtime().map(|node_runtime| {
-                                cx.background_spawn(async move { node_runtime.binary_path().await })
-                            })
-                        })
-                    });
-
-                    if let Some(resolve_task) = resolved_node_runtime {
-                        if let Ok(node_path) = resolve_task.await {
-                            task.command = Some(node_path.to_string_lossy().to_string());
-                        }
-                    }
+                    let node_runtime = project.update(cx, |project, cx| {
+                        let runtime = project
+                            .agent_server_store()
+                            .read(cx)
+                            .node_runtime()
+                            .context("Node runtime unavailable for agent authentication")?;
+                        anyhow::Ok(scoped_node_runtime(
+                            &runtime,
+                            None,
+                            permission.tool.clone(),
+                            cx,
+                        ))
+                    })?;
+                    let node_path = node_runtime.binary_path().await?;
+                    task.command = Some(node_path.to_string_lossy().into_owned());
                 }
             }
             task.shell = task::Shell::WithArguments {
-                program: task.command.take().expect("login command should be set"),
+                program: task.command.take().context("login command is missing")?,
                 args: std::mem::take(&mut task.args),
                 title_override: None,
             };
 
             let terminal = terminal_panel
                 .update_in(cx, |terminal_panel, window, cx| {
-                    terminal_panel.spawn_task(&task, window, cx)
+                    terminal_panel.spawn_task_with_permission(&task, Some(permission), window, cx)
                 })?
                 .await?;
 
@@ -2257,6 +2268,7 @@ impl ConversationView {
                                 .update(|window, cx| {
                                     Self::spawn_external_agent_login(
                                         login,
+                                        agent_id,
                                         workspace,
                                         project.clone(),
                                         method,

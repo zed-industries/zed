@@ -5,7 +5,10 @@ use futures::{
     future::BoxFuture, io::BufReader, stream::BoxStream,
 };
 use gpui::{AsyncApp, Entity};
-use project::{Project, agent_server_store::AgentServerCommand};
+use project::{
+    AgentId, Project,
+    agent_server_store::{AgentServerCommand, require_agent_execution_approval},
+};
 use remote::remote_client::Interactive;
 use std::{io, pin::Pin, process::Stdio};
 use task::{Shell, ShellBuilder};
@@ -21,6 +24,7 @@ pub(super) struct StdioProcess {
 }
 
 pub(super) fn spawn_stdio(
+    agent_id: &AgentId,
     project: &Entity<Project>,
     command: AgentServerCommand,
     cx: &AsyncApp,
@@ -69,7 +73,10 @@ pub(super) fn spawn_stdio(
     }) {
         child.current_dir(cwd);
     }
-    let mut child = Child::spawn(child, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
+    let mut child = cx.update(|cx| {
+        require_agent_execution_approval(agent_id, cx)?;
+        Child::spawn(child, Stdio::piped(), Stdio::piped(), Stdio::piped())
+    })?;
 
     let stdout = child.stdout.take().context("Failed to take stdout")?;
     let stdin = child.stdin.take().context("Failed to take stdin")?;
@@ -140,12 +147,14 @@ mod tests {
     use collections::HashMap;
     use futures::SinkExt as _;
     use gpui::TestAppContext;
+    use project::binary_downloads;
 
     #[gpui::test]
     async fn repeated_spawns_preserve_command_and_stdio(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
+            binary_downloads::init(cx);
         });
         cx.executor().allow_parking();
         let directory = tempfile::tempdir().expect("create working directory");
@@ -173,8 +182,13 @@ mod tests {
                 mut outgoing,
                 stderr,
                 debug_log,
-            } = spawn_stdio(&project, command.clone(), &cx.to_async())
-                .expect("spawn fresh transport");
+            } = spawn_stdio(
+                &AgentId::new("test-agent"),
+                &project,
+                command.clone(),
+                &cx.to_async(),
+            )
+            .expect("spawn fresh transport");
             let stderr_task = cx.background_executor.spawn(stderr);
             let params = serde_json::json!({ "attempt": attempt });
             let request = serde_json::json!({

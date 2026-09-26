@@ -105,6 +105,7 @@ impl HeadlessProject {
         cx: &mut Context<Self>,
     ) -> Self {
         debug_adapter_extension::init(proxy.clone(), cx);
+
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
 
         let worktree_store = cx.new(|cx| {
@@ -138,19 +139,22 @@ impl HeadlessProject {
                 if pending == last_sent_installs {
                     return;
                 }
-                last_sent_installs = pending.clone();
-                downstream_session
+                if downstream_session
                     .send(proto::UpdatePendingToolInstalls {
                         project_id: REMOTE_SERVER_PROJECT_ID,
                         pending_installs: pending
-                            .into_iter()
+                            .iter()
                             .map(|install| proto::PendingToolInstall {
                                 worktree_id: install.worktree_id.map(|id| id.to_proto()),
                                 tool: install.tool.to_string(),
                             })
                             .collect(),
                     })
-                    .log_err();
+                    .log_err()
+                    .is_some()
+                {
+                    last_sent_installs = pending;
+                }
             })
             .detach();
         }
@@ -354,6 +358,7 @@ impl HeadlessProject {
             extensions.downgrade(),
             HeadlessExtensionStore::handle_sync_extensions,
         );
+
         session.add_request_handler(
             extensions.downgrade(),
             HeadlessExtensionStore::handle_install_extension,

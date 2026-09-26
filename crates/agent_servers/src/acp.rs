@@ -25,6 +25,7 @@ use futures::future::Shared;
 use futures::{Future, FutureExt as _, StreamExt as _};
 use project::agent_server_store::{
     AgentServerCommand, AgentServerStore, AllAgentServersSettings, CustomAgentServerSettings,
+    require_agent_execution_approval,
 };
 use project::{AgentId, Project};
 use serde::Deserialize;
@@ -693,7 +694,7 @@ impl AcpConnection {
             outgoing,
             stderr,
             debug_log,
-        } = transport::spawn_stdio(&project, command, cx)?;
+        } = transport::spawn_stdio(&agent_id, &project, command, cx)?;
         let sessions = Rc::new(RefCell::new(HashMap::default()));
 
         let (release_channel, version): (Option<&str>, String) = cx.update(|cx| {
@@ -1791,11 +1792,17 @@ impl AgentConnection for AcpConnection {
                         })?
                         .context("Failed to get agent command")?
                         .await?;
+                    cx.update(|cx| require_agent_execution_approval(&agent_id, cx))?;
                     Ok(terminal_auth_task(&command, &agent_id, &terminal))
                 }))
             }
-            _ => meta_terminal_auth_task(&self.id, method_id, method)
-                .map(|task| Task::ready(Ok(task))),
+            _ => meta_terminal_auth_task(&self.id, method_id, method).map(|task| {
+                let agent_id = self.id.clone();
+                cx.spawn(async move |cx| {
+                    cx.update(|cx| require_agent_execution_approval(&agent_id, cx))?;
+                    Ok(task)
+                })
+            }),
         }
     }
 
@@ -2587,6 +2594,7 @@ mod tests {
             let mut settings_store = SettingsStore::test(cx);
             settings_store.register_setting::<feature_flags::FeatureFlagsSettings>();
             cx.set_global(settings_store);
+            project::binary_downloads::init(cx);
             cx.update_flags(false, vec![]);
         });
     }
@@ -3629,6 +3637,7 @@ mod tests {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
+            project::binary_downloads::init(cx);
         });
         cx.executor().allow_parking();
 
@@ -3710,6 +3719,7 @@ mod tests {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
+            project::binary_downloads::init(cx);
         });
         cx.executor().allow_parking();
 

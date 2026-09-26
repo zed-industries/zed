@@ -40,6 +40,7 @@ pub fn init(cx: &mut App) -> Arc<AgentCliAppState> {
 
     let settings_store = SettingsStore::new(cx, &settings::default_settings());
     cx.set_global(settings_store);
+    project::binary_downloads::init(cx);
     theme_settings::init(theme::LoadThemes::JustBase, cx);
 
     let user_agent = format!(
@@ -78,10 +79,9 @@ pub fn init(cx: &mut App) -> Arc<AgentCliAppState> {
 
     extension::init(cx);
 
-    let (mut node_options_tx, node_options_rx) = watch::channel(None);
-    cx.observe_global::<SettingsStore>(move |cx| {
+    fn node_binary_options(cx: &App) -> NodeBinaryOptions {
         let settings = ProjectSettings::get_global(cx);
-        let options = NodeBinaryOptions {
+        NodeBinaryOptions {
             allow_path_lookup: !settings.node.ignore_system_version,
             allow_binary_downloads: settings.allow_binary_downloads,
             use_paths: settings.node.path.as_ref().map(|node_path| {
@@ -99,11 +99,21 @@ pub fn init(cx: &mut App) -> Arc<AgentCliAppState> {
                     }),
                 )
             }),
-        };
-        node_options_tx.send(Some(options)).log_err();
+        }
+    }
+    let (mut node_options_tx, node_options_rx) = watch::channel(Some(node_binary_options(cx)));
+    cx.observe_global::<SettingsStore>(move |cx| {
+        node_options_tx
+            .send(Some(node_binary_options(cx)))
+            .log_err();
     })
     .detach();
-    let node_runtime = NodeRuntime::new(client.http_client(), None, node_options_rx, None);
+    let node_runtime = NodeRuntime::new(
+        client.http_client(),
+        None,
+        node_options_rx,
+        project::binary_downloads::npm_install_gate(cx),
+    );
 
     let extension_host_proxy = ExtensionHostProxy::global(cx);
     debug_adapter_extension::init(extension_host_proxy.clone(), cx);

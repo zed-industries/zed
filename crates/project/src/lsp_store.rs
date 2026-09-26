@@ -320,6 +320,7 @@ pub struct LocalLspStore {
     language_server_ids: HashMap<LanguageServerSeed, UnifiedLanguageServer>,
     yarn: Entity<YarnPathStore>,
     pub language_servers: HashMap<LanguageServerId, LanguageServerState>,
+    language_server_binary_refreshes: HashMap<LanguageServerId, Task<()>>,
     buffers_being_formatted: HashSet<BufferId>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
     language_server_watched_paths: HashMap<LanguageServerId, LanguageServerWatchedPaths>,
@@ -475,6 +476,7 @@ impl LocalLspStore {
             path: RelPath::empty(),
         };
         let binary = self.get_language_server_binary(
+            server_id,
             worktree_abs_path.clone(),
             worktree_id,
             adapter.clone(),
@@ -489,12 +491,15 @@ impl LocalLspStore {
         let pending_server = cx.spawn({
             let adapter = adapter.clone();
             let server_name = adapter.name.clone();
+            let delegate: Arc<dyn LspAdapterDelegate> = delegate.clone();
             let stderr_capture = stderr_capture.clone();
             #[cfg(any(test, feature = "test-support"))]
             let lsp_store = self.weak.clone();
             let pending_workspace_folders = pending_workspace_folders.clone();
             async move |cx| {
                 let binary = binary.await?;
+                gate_lsp_download(&server_name, worktree_id, &worktree_abs_path, &delegate, cx)
+                    .await?;
                 #[cfg(any(test, feature = "test-support"))]
                 if let Some(server) = lsp_store
                     .update(&mut cx.clone(), |this, cx| {
@@ -639,6 +644,13 @@ impl LocalLspStore {
                     }
 
                     Err(err) => {
+                        lsp_store
+                            .update(cx, |lsp_store, _| {
+                                if let Some(local) = lsp_store.as_local_mut() {
+                                    local.language_server_binary_refreshes.remove(&server_id);
+                                }
+                            })
+                            .ok();
                         let log = stderr_capture.lock().take().unwrap_or_default();
                         delegate.update_status(
                             adapter.name(),
@@ -683,6 +695,7 @@ impl LocalLspStore {
 
     fn get_language_server_binary(
         &self,
+        server_id: LanguageServerId,
         worktree_abs_path: Arc<Path>,
         worktree_id: WorktreeId,
         adapter: Arc<CachedLspAdapter>,
@@ -775,6 +788,7 @@ impl LocalLspStore {
                 .and_then(|f| f.pre_release)
                 .unwrap_or(false),
         };
+        let lsp_store = self.weak.clone();
 
         cx.spawn(async move |cx| {
             anyhow::ensure!(
@@ -789,55 +803,105 @@ impl LocalLspStore {
                 adapter.name()
             );
 
-            let (existing_binary, maybe_download_binary) = adapter
-                .clone()
-                .get_language_server_command(delegate.clone(), toolchain, lsp_binary_options, cx)
-                .await
-                .await;
-
-            let mut binary = match (existing_binary, maybe_download_binary) {
-                (binary, None) => {
-                    delegate.update_status(adapter.name.clone(), BinaryStatus::None);
-                    binary?
-                }
-                (Err(_), Some(downloader)) => {
-                    gate_lsp_download(
-                        &adapter.name(),
-                        worktree_id,
-                        &worktree_abs_path,
-                        &delegate,
+            let mut binary = loop {
+                gate_lsp_download(
+                    &adapter.name,
+                    worktree_id,
+                    &worktree_abs_path,
+                    &delegate,
+                    cx,
+                )
+                .await?;
+                let (existing_binary, maybe_download_binary) = adapter
+                    .clone()
+                    .get_language_server_command(
+                        delegate.clone(),
+                        toolchain.clone(),
+                        lsp_binary_options.clone(),
                         cx,
                     )
-                    .await?;
-                    downloader.await?
-                }
-                (Ok(existing_binary), Some(downloader)) => {
-                    // A working local binary exists, so the server starts from
-                    // disk right away; the downloader refreshes it in the
-                    // background once downloads are allowed.
-                    delegate.update_status(adapter.name.clone(), BinaryStatus::None);
-                    let wait_until_downloads_allowed =
-                        wait_until_lsp_downloads_allowed(&adapter.name(), worktree_id, cx);
-                    let name = adapter.name();
-                    cx.spawn(async move |_| {
-                        if wait_until_downloads_allowed.is_some() {
-                            log::debug!(
-                                "Language server {name} started from disk; will refresh once binary downloads are enabled"
-                            );
+                    .await
+                    .await;
+
+                match (existing_binary, maybe_download_binary) {
+                    (binary, None) => {
+                        delegate.update_status(adapter.name.clone(), BinaryStatus::None);
+                        match binary {
+                            Ok(binary) => break binary,
+                            Err(error) => {
+                                if error.is::<language::ToolPermissionDenied>() {
+                                    continue;
+                                }
+                                return Err(error);
+                            }
                         }
-                        if binary_downloads::await_downloads_allowed(
-                            wait_until_downloads_allowed,
-                            &name.0,
-                        )
-                        .await
-                        {
-                            downloader.await
-                        } else {
-                            Err(anyhow!("binary downloads refresh cancelled for {name}"))
+                    }
+                    (Err(_), Some(downloader)) => {
+                        let wait_until_downloads_allowed =
+                            request_lsp_install(&adapter.name, worktree_id, cx);
+                        if wait_until_downloads_allowed.is_none() {
+                            delegate.update_status(adapter.name.clone(), BinaryStatus::None);
+                            match downloader.await {
+                                Ok(binary) => break binary,
+                                Err(error) => {
+                                    if error.is::<language::ToolPermissionDenied>() {
+                                        continue;
+                                    }
+                                    return Err(error);
+                                }
+                            }
                         }
-                    })
-                    .detach();
-                    existing_binary
+                        drop(downloader);
+                        mark_lsp_download_disabled(
+                            wait_until_downloads_allowed.as_ref(),
+                            &adapter.name,
+                            &delegate,
+                        );
+                        anyhow::ensure!(
+                            await_lsp_downloads_allowed(
+                                wait_until_downloads_allowed,
+                                &worktree_abs_path,
+                                adapter.name(),
+                                &delegate,
+                            )
+                            .await,
+                            "binary downloads wait cancelled for language server {}",
+                            adapter.name
+                        );
+                    }
+                    (Ok(existing_binary), Some(downloader)) => {
+                        drop(downloader);
+                        delegate.update_status(adapter.name.clone(), BinaryStatus::None);
+                        let adapter = adapter.clone();
+                        let delegate = delegate.clone();
+                        let toolchain = toolchain.clone();
+                        let lsp_binary_options = lsp_binary_options.clone();
+                        lsp_store
+                            .update(cx, move |lsp_store, cx| {
+                                let Some(local) = lsp_store.as_local_mut() else {
+                                    return;
+                                };
+                                if local.language_servers.contains_key(&server_id) {
+                                    let refresh = cx.spawn(async move |_, cx| {
+                                        Self::refresh_language_server_binary(
+                                            adapter,
+                                            delegate,
+                                            toolchain,
+                                            lsp_binary_options,
+                                            worktree_id,
+                                            cx,
+                                        )
+                                        .await
+                                        .log_err();
+                                    });
+                                    local
+                                        .language_server_binary_refreshes
+                                        .insert(server_id, refresh);
+                                }
+                            })
+                            .ok();
+                        break existing_binary;
+                    }
                 }
             };
             let mut shell_env = delegate.shell_env().await;
@@ -856,6 +920,69 @@ impl LocalLspStore {
             binary.env = Some(shell_env);
             Ok(binary)
         })
+    }
+
+    async fn refresh_language_server_binary(
+        adapter: Arc<CachedLspAdapter>,
+        delegate: Arc<dyn LspAdapterDelegate>,
+        toolchain: Option<Toolchain>,
+        binary_options: LanguageServerBinaryOptions,
+        worktree_id: WorktreeId,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        let mut wait_until_downloads_allowed =
+            wait_until_lsp_downloads_allowed(&adapter.name, worktree_id, cx);
+        loop {
+            if !binary_downloads::await_downloads_allowed(
+                wait_until_downloads_allowed.take(),
+                &adapter.name.0,
+            )
+            .await
+            {
+                return Ok(());
+            }
+            gate_lsp_download(
+                &adapter.name,
+                worktree_id,
+                delegate.worktree_root_path(),
+                &delegate,
+                cx,
+            )
+            .await?;
+            let (existing_binary, downloader) = adapter
+                .clone()
+                .get_language_server_command(
+                    delegate.clone(),
+                    toolchain.clone(),
+                    binary_options.clone(),
+                    cx,
+                )
+                .await
+                .await;
+            let Some(downloader) = downloader else {
+                match existing_binary {
+                    Ok(_) => return Ok(()),
+                    Err(error) if error.is::<language::ToolPermissionDenied>() => continue,
+                    Err(error) => return Err(error),
+                }
+            };
+            wait_until_downloads_allowed =
+                wait_until_lsp_downloads_allowed(&adapter.name, worktree_id, cx);
+            if wait_until_downloads_allowed.is_none() {
+                match downloader.await {
+                    Ok(_) => return Ok(()),
+                    Err(error) => {
+                        if !error.is::<language::ToolPermissionDenied>() {
+                            return Err(error);
+                        }
+                        wait_until_downloads_allowed =
+                            wait_until_lsp_downloads_allowed(&adapter.name, worktree_id, cx);
+                    }
+                }
+            } else {
+                drop(downloader);
+            }
+        }
     }
 
     fn setup_lsp_messages(
@@ -1325,6 +1452,7 @@ impl LocalLspStore {
     }
 
     fn shutdown_language_servers_on_quit(&mut self) -> impl Future<Output = ()> + use<> {
+        self.language_server_binary_refreshes.clear();
         let shutdown_futures = self
             .language_servers
             .drain()
@@ -3033,6 +3161,9 @@ impl LocalLspStore {
         let worktree = worktree.read(cx);
         let worktree_id = worktree.id();
         debug_assert!(!worktree.is_visible());
+        if !crate::trusted_worktrees::worktree_trusted(&self.worktree_store, worktree_id, cx) {
+            return;
+        }
         let Some(mut origin_seed) = self
             .language_server_ids
             .iter()
@@ -3040,6 +3171,13 @@ impl LocalLspStore {
         else {
             return;
         };
+        if !BinaryDownloads::try_get_global(cx).is_some_and(|downloads| {
+            downloads
+                .read(cx)
+                .tool_download_allowed(Some(worktree_id), &origin_seed.name.0, cx)
+        }) {
+            return;
+        }
         origin_seed.worktree_id = worktree_id;
         self.language_server_ids
             .entry(origin_seed)
@@ -3253,7 +3391,13 @@ impl LocalLspStore {
         Arc<LocalLspAdapterDelegate>,
         impl FnOnce(&mut LanguageServerTree) -> Vec<LanguageServerTreeNode> + use<'lang_name>,
     )> {
-        if worktree.read(cx).is_visible() {
+        if worktree.read(cx).is_visible()
+            || !crate::trusted_worktrees::worktree_trusted(
+                &self.worktree_store,
+                worktree.read(cx).id(),
+                cx,
+            )
+        {
             return None;
         }
 
@@ -3292,6 +3436,17 @@ impl LocalLspStore {
             .max_by_key(|servers| servers.len())?;
 
         let worktree_id = worktree.read(cx).id();
+        if !BinaryDownloads::try_get_global(cx).is_some_and(|downloads| {
+            servers.iter().all(|server| {
+                server.name().is_some_and(|name| {
+                    downloads
+                        .read(cx)
+                        .tool_download_allowed(Some(worktree_id), &name.0, cx)
+                })
+            })
+        }) {
+            return None;
+        }
         let apply = move |tree: &mut LanguageServerTree| {
             for server_node in &servers {
                 tree.register_reused(worktree_id, language_name.clone(), server_node.clone());
@@ -3996,6 +4151,8 @@ impl LocalLspStore {
             self.last_workspace_edits_by_language_server
                 .remove(server_id_to_remove);
             self.language_servers.remove(server_id_to_remove);
+            self.language_server_binary_refreshes
+                .remove(server_id_to_remove);
             self.language_server_dynamic_registrations
                 .remove(server_id_to_remove);
             self.initial_server_capabilities.remove(server_id_to_remove);
@@ -4849,6 +5006,7 @@ impl LspStore {
                 languages: languages.clone(),
                 language_server_ids: Default::default(),
                 language_servers: Default::default(),
+                language_server_binary_refreshes: HashMap::default(),
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_watched_paths: Default::default(),
                 language_server_paths_watched_for_rename: Default::default(),
@@ -12851,6 +13009,7 @@ impl LspStore {
             .language_server_dynamic_registrations
             .remove(&server_id);
         local.initial_server_capabilities.remove(&server_id);
+        local.language_server_binary_refreshes.remove(&server_id);
 
         let server_state = local.language_servers.remove(&server_id);
         self.cleanup_lsp_data(server_id);
@@ -15196,26 +15355,14 @@ async fn await_worktree_trust(
     true
 }
 
-/// Requests a one-off install permission for a language server that has no
-/// local copy, routing through the global [`BinaryDownloadsStore`] so the user
-/// can be prompted. Returns `None` when the download may proceed immediately.
 fn request_lsp_install(
     name: &LanguageServerName,
     worktree_id: WorktreeId,
     cx: &mut AsyncApp,
 ) -> Option<watch::Receiver<bool>> {
-    cx.update(|cx| {
-        BinaryDownloads::try_get_global(cx).and_then(|binary_downloads| {
-            binary_downloads.update(cx, |binary_downloads, cx| {
-                binary_downloads.request_tool_install(Some(worktree_id), name.0.clone(), cx)
-            })
-        })
-    })
+    cx.update(|cx| binary_downloads::request_tool_install(Some(worktree_id), name.0.clone(), cx))
 }
 
-/// No local binary was found: a download is the only way to run this server.
-/// When downloads are disabled, registers a one-off install request and parks
-/// until the user approves it or the setting flips on.
 async fn gate_lsp_download(
     name: &LanguageServerName,
     worktree_id: WorktreeId,
@@ -15223,20 +15370,28 @@ async fn gate_lsp_download(
     delegate: &Arc<dyn LspAdapterDelegate>,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<()> {
-    let wait_until_downloads_allowed = request_lsp_install(name, worktree_id, cx);
-    mark_lsp_download_disabled(wait_until_downloads_allowed.as_ref(), name, delegate);
-    anyhow::ensure!(
-        await_lsp_downloads_allowed(
-            wait_until_downloads_allowed,
-            worktree_abs_path,
-            name.clone(),
-            delegate,
-        )
-        .await,
-        "binary downloads wait cancelled for language server {name}"
-    );
-    delegate.update_status(name.clone(), BinaryStatus::None);
-    Ok(())
+    loop {
+        match delegate.authorize_tool(name).await {
+            Ok(()) => {
+                delegate.update_status(name.clone(), BinaryStatus::None);
+                return Ok(());
+            }
+            Err(error) if error.is::<language::ToolPermissionDenied>() => {}
+            Err(error) => return Err(error),
+        }
+        let wait_until_downloads_allowed = request_lsp_install(name, worktree_id, cx);
+        mark_lsp_download_disabled(wait_until_downloads_allowed.as_ref(), name, delegate);
+        anyhow::ensure!(
+            await_lsp_downloads_allowed(
+                wait_until_downloads_allowed,
+                worktree_abs_path,
+                name.clone(),
+                delegate,
+            )
+            .await,
+            "binary downloads wait cancelled for language server {name}"
+        );
+    }
 }
 
 /// Waits for the `allow_binary_downloads` setting to be turned on for the
@@ -16470,6 +16625,10 @@ pub struct LocalLspAdapterDelegate {
     http_client: Arc<dyn HttpClient>,
     language_registry: Arc<LanguageRegistry>,
     load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
+    permission_requests:
+        futures::channel::mpsc::UnboundedSender<(LanguageServerName, oneshot::Sender<Result<()>>)>,
+    permission_task: Arc<Task<()>>,
+    download_gate: Option<binary_downloads::DownloadGate>,
 }
 
 impl LocalLspAdapterDelegate {
@@ -16484,6 +16643,53 @@ impl LocalLspAdapterDelegate {
     ) -> Arc<Self> {
         let load_shell_env_task =
             environment.update(cx, |env, cx| env.worktree_environment(worktree.clone(), cx));
+        let worktree_id = worktree.read(cx).id();
+        let (permission_requests, mut requests) =
+            futures::channel::mpsc::unbounded::<(LanguageServerName, oneshot::Sender<Result<()>>)>(
+            );
+        let permission_task = Arc::new(cx.spawn({
+            let lsp_store = lsp_store.clone();
+            async move |cx| {
+                while let Some((name, respond)) = requests.next().await {
+                    let allowed = lsp_store
+                        .update(cx, |lsp_store, cx| {
+                            let local = lsp_store
+                                .as_local()
+                                .context("LSP store is no longer local")?;
+                            anyhow::ensure!(
+                                local
+                                    .worktree_store
+                                    .read(cx)
+                                    .worktree_for_id(worktree_id, cx)
+                                    .is_some(),
+                                "LSP worktree no longer exists"
+                            );
+                            anyhow::ensure!(
+                                crate::trusted_worktrees::worktree_trusted(
+                                    &local.worktree_store,
+                                    worktree_id,
+                                    cx
+                                ),
+                                "LSP worktree is no longer trusted"
+                            );
+                            if binary_downloads::request_tool_install(
+                                Some(worktree_id),
+                                name.0.clone(),
+                                cx,
+                            )
+                            .is_some()
+                            {
+                                return Err(anyhow::Error::new(language::ToolPermissionDenied(
+                                    name.0.to_string(),
+                                )));
+                            }
+                            Ok(())
+                        })
+                        .and_then(|result| result);
+                    respond.send(allowed).ok();
+                }
+            }
+        }));
 
         Arc::new(Self {
             lsp_store,
@@ -16492,6 +16698,9 @@ impl LocalLspAdapterDelegate {
             http_client,
             language_registry,
             load_shell_env_task,
+            permission_requests,
+            permission_task,
+            download_gate: binary_downloads::DownloadGate::new(Some(worktree_id), cx),
         })
     }
 
@@ -16526,6 +16735,34 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         self.http_client.clone()
     }
 
+    fn tool_permission(&self, name: LanguageServerName) -> language::ToolPermission {
+        let requests = self.permission_requests.clone();
+        let permission_task = self.permission_task.clone();
+        let download_gate = self.download_gate.clone();
+        Arc::new(move || {
+            let requests = requests.clone();
+            let name = name.clone();
+            let permission_task = permission_task.clone();
+            let download_gate = download_gate.clone();
+            async move {
+                let _permission_task = permission_task;
+                let (respond, response) = oneshot::channel();
+                requests
+                    .unbounded_send((name.clone(), respond))
+                    .map_err(|_| anyhow!("LSP permission task cancelled"))?;
+                response.await.context("LSP permission task cancelled")??;
+                if let Some(gate) = download_gate
+                    && gate.permit(&name.0).await
+                {
+                    Ok(())
+                } else {
+                    Err(language::ToolPermissionDenied(name.0.to_string()).into())
+                }
+            }
+            .boxed()
+        })
+    }
+
     fn worktree_id(&self) -> WorktreeId {
         self.worktree.id()
     }
@@ -16545,6 +16782,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
 
     async fn npm_package_installed_version(
         &self,
+        tool: &LanguageServerName,
         package_name: &str,
     ) -> Result<Option<(PathBuf, Version)>> {
         let local_package_directory = self.worktree_root_path();
@@ -16564,6 +16802,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         };
 
         let env = self.shell_env().await;
+        self.authorize_tool(tool).await?;
         let output = util::command::new_command(&npm)
             .args(["root", "-g"])
             .envs(env)
@@ -16594,14 +16833,20 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         which::which_in(command, shell_path.as_ref(), worktree_abs_path).ok()
     }
 
-    async fn try_exec(&self, command: LanguageServerBinary) -> Result<()> {
+    async fn try_exec(
+        &self,
+        tool: &LanguageServerName,
+        command: LanguageServerBinary,
+    ) -> Result<()> {
         let mut working_dir = self.worktree_root_path().to_path_buf();
         if self.fs.is_file(&working_dir).await {
             working_dir.pop();
         }
+        self.authorize_tool(tool).await?;
         let output = util::command::new_command(&command.path)
             .args(command.arguments)
             .envs(command.env.clone().unwrap_or_default())
+            .env("RUSTUP_AUTO_INSTALL", "0")
             .current_dir(working_dir)
             .output()
             .await?;

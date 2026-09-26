@@ -32,7 +32,10 @@ use smol::process::{Command, Stdio};
 
 use anyhow::{Context as _, Result, bail, ensure};
 
-use crate::WSL_SANDBOX_UNAVAILABLE_PREFIX;
+use crate::{
+    WSL_SANDBOX_UNAVAILABLE_PREFIX,
+    wsl_helper::{WslHelperDownloadGate, WslHelperDownloadRequest, prepare_helper},
+};
 
 /// Per-command relaxations of the WSL/Bubblewrap sandbox. Windows can only
 /// toggle network access wholesale (no loopback-proxy confinement yet), so this
@@ -110,6 +113,10 @@ if [ "$version" != "latest" ] && [ "$(cat "$marker" 2>/dev/null || true)" = "$wa
         printf 'zed-wsl-helper: %s\n' "$helper"
         exit 0
     fi
+fi
+
+if [ "$3" != "download" ]; then
+    exit 43
 fi
 
 arch=$(uname -m)
@@ -318,6 +325,14 @@ pub async fn resolve_canonical_for_grant(
     requested: PathBuf,
     wsl_zed_release: (String, String),
 ) -> Result<ResolvedGrant> {
+    resolve_canonical_for_grant_with_download_gate(requested, wsl_zed_release, None).await
+}
+
+pub async fn resolve_canonical_for_grant_with_download_gate(
+    requested: PathBuf,
+    wsl_zed_release: (String, String),
+    download_gate: Option<&WslHelperDownloadGate>,
+) -> Result<ResolvedGrant> {
     let path_string = requested.to_string_lossy();
 
     // A Windows drive grant (NTFS) is resolved on the Windows host, which is
@@ -368,20 +383,19 @@ pub async fn resolve_canonical_for_grant(
         )));
     }
 
-    // Translate + existence-check the path inside WSL, then resolve its
-    // symlink-free canonical (and classify its filesystem) via the helper. No
-    // distro is pinned — a sandboxed command runs in one distro.
-    let translated = resolve_paths(&wsl_exe, None, &[(mapping, "writable path", true)])
+    let distro = resolve_wsl_distro(&wsl_exe, None).await?;
+    let translated = resolve_paths(&wsl_exe, Some(&distro), &[(mapping, "writable path", true)])
         .await?
         .into_iter()
         .next()
         .context("bug: missing resolved writable path")?
         .context("bug: required writable path resolved as missing")?;
     let (channel, version) = wsl_zed_release;
-    let helper = ensure_wsl_zed_helper(&wsl_exe, None, &channel, &version).await?;
+    let helper =
+        ensure_wsl_zed_helper(&wsl_exe, &distro, &channel, &version, download_gate).await?;
     let output = run_wsl_command(
         &wsl_exe,
-        None,
+        Some(&distro),
         [
             "--exec",
             helper.as_str(),
@@ -471,6 +485,7 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
     // the helper closes. Callers that can determine the running release should
     // always pass `Some`.
     wsl_zed_release: Option<(String, String)>,
+    download_gate: Option<&WslHelperDownloadGate>,
 ) -> Result<(String, Vec<String>)> {
     // Mapping failures are bad requests (a path that doesn't exist or has a
     // shape WSL can't address), not environment problems, so no
@@ -528,6 +543,11 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
             wsl_exe.display()
         )));
     }
+    let distro = if wsl_zed_release.is_some() {
+        Some(resolve_wsl_distro(&wsl_exe, distro.as_deref()).await?)
+    } else {
+        distro
+    };
     let environment = probe_environment(&wsl_exe, distro.as_deref()).await?;
 
     // Resolve all paths (translating native drive-letter paths with `wslpath`
@@ -579,8 +599,16 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
         // verifies and pins the persisted canonical writable paths WSL-side,
         // then validates them again after bwrap's mounts.
         Some((channel, version)) => {
-            let helper =
-                ensure_wsl_zed_helper(&wsl_exe, distro.as_deref(), &channel, &version).await?;
+            let helper = ensure_wsl_zed_helper(
+                &wsl_exe,
+                distro
+                    .as_deref()
+                    .context("missing sandbox helper distribution")?,
+                &channel,
+                &version,
+                download_gate,
+            )
+            .await?;
             wsl_args.extend(["--exec".to_string(), helper]);
             // Protocol (decoded by `linux_bubblewrap::decode_wsl_helper_args`):
             //   <flag> <bwrap_path> <n_base> <base...> <n_writable> <writable...> -- <prog> <args>
@@ -857,9 +885,10 @@ fn parse_probe_output(stdout: &str) -> Result<EnvironmentProbe> {
 /// error can retry without restarting Zed.
 async fn ensure_wsl_zed_helper(
     wsl_exe: &Path,
-    distro: Option<&str>,
+    distro: &str,
     channel: &str,
     version: &str,
+    download_gate: Option<&WslHelperDownloadGate>,
 ) -> Result<String> {
     // TODO: Remove this development override once WSL canonical-path handling is released.
     if let Some(helper) = std::env::var_os("ZED_WSL_SANDBOX_HELPER") {
@@ -873,15 +902,11 @@ async fn ensure_wsl_zed_helper(
         return Ok(helper);
     }
 
-    type HelperCache = HashMap<(Option<String>, String, String), String>;
+    type HelperCache = HashMap<(String, String, String), String>;
     static CACHE: OnceLock<Mutex<HelperCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
 
-    let key = (
-        distro.map(str::to_string),
-        channel.to_string(),
-        version.to_string(),
-    );
+    let key = (distro.to_string(), channel.to_string(), version.to_string());
     if let Some(path) = cache
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -890,30 +915,81 @@ async fn ensure_wsl_zed_helper(
         return Ok(path.clone());
     }
 
-    // A login shell (`-lc`) is used so a profile-managed PATH (where `zed` or
-    // `curl` may live) is honored. `channel`/`version` are passed as positional
-    // args (`$1`/`$2`), never interpolated into the script body.
+    let request = WslHelperDownloadRequest {
+        distro: distro.to_string(),
+        channel: channel.to_string(),
+        version: version.to_string(),
+    };
+    let path = prepare_helper(
+        request,
+        download_gate,
+        run_helper_script(wsl_exe, distro, channel, version, "probe"),
+        async || {
+            run_helper_script(wsl_exe, distro, channel, version, "download")
+                .await?
+                .context("WSL sandbox helper provisioning returned no executable")
+        },
+    )
+    .await?;
+    cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(key, path.clone());
+    Ok(path)
+}
+
+async fn resolve_wsl_distro(wsl_exe: &Path, distro: Option<&str>) -> Result<String> {
     let output = run_wsl_command(
         wsl_exe,
         distro,
+        ["--exec", "sh", "-c", "printf '%s' \"$WSL_DISTRO_NAME\""],
+        "identify the sandbox helper's WSL distribution",
+    )
+    .await?;
+    ensure!(
+        output.status.success(),
+        "Could not identify the sandbox helper's WSL distribution"
+    );
+    let distro = String::from_utf8(output.stdout)?.trim().to_string();
+    ensure!(
+        !distro.is_empty(),
+        "WSL did not identify the sandbox helper's distribution"
+    );
+    Ok(distro)
+}
+
+async fn run_helper_script(
+    wsl_exe: &Path,
+    distro: &str,
+    channel: &str,
+    version: &str,
+    mode: &str,
+) -> Result<Option<String>> {
+    let output = run_wsl_command(
+        wsl_exe,
+        Some(distro),
         [
             "--exec",
             "sh",
-            "-lc",
+            if mode == "probe" { "-c" } else { "-lc" },
             HELPER_PROVISION_SCRIPT,
             "zed-wsl-sandbox-helper",
             channel,
             version,
+            mode,
         ],
         "provision the Linux `zed` sandbox helper",
     )
     .await?;
+    if mode == "probe" && output.status.code() == Some(43) {
+        return Ok(None);
+    }
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stderr = stderr.trim();
         return Err(unavailable(format!(
             "failed to provision a Linux `zed` sandbox helper in {}{}",
-            wsl_distro_label(distro),
+            wsl_distro_label(Some(distro)),
             if stderr.is_empty() {
                 String::new()
             } else {
@@ -931,7 +1007,7 @@ async fn ensure_wsl_zed_helper(
         .with_context(|| {
             unavailable(format!(
                 "no helper result line in sandbox-helper provisioning output from {}: {stdout:?}",
-                wsl_distro_label(distro)
+                wsl_distro_label(Some(distro))
             ))
         })?;
     ensure!(
@@ -939,11 +1015,7 @@ async fn ensure_wsl_zed_helper(
         "the WSL `zed` sandbox helper resolved to {path:?} rather than an absolute path"
     );
 
-    cache
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(key, path.clone());
-    Ok(path)
+    Ok(Some(path))
 }
 
 /// Shell script that resolves and existence-checks paths in a single WSL
@@ -1541,6 +1613,7 @@ mod tests {
             SandboxPermissions::default(),
             None,
             HashMap::<String, String>::new(),
+            None,
             None,
         ));
     }

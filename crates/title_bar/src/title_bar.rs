@@ -54,7 +54,9 @@ use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
     AccessibleMode, MultiWorkspace, ToggleWorktreeSecurity, Workspace,
-    binary_downloads_modal::project_blocks_binary_downloads,
+    binary_downloads_modal::{
+        BinaryDownloadsModal, pending_tool_installs_for_project, scope_for_project,
+    },
     notifications::{NotifyResultExt, NotifyTaskExt as _},
 };
 
@@ -754,37 +756,15 @@ impl TitleBar {
         }
     }
 
-    /// Compact indicator shown next to the title bar when the project has
-    /// `allow_binary_downloads` effectively disabled. Restricted Mode takes
-    /// precedence: this indicator is only shown when Restricted Mode isn't.
     pub fn render_binary_downloads_disabled(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let project = self.project.read(cx);
-        if TrustedWorktrees::has_restricted_worktrees(&project.worktree_store(), cx) {
+        scope_for_project(project, cx)?;
+        let pending_installs = pending_tool_installs_for_project(project, cx).len();
+        let has_restricted_worktrees =
+            TrustedWorktrees::has_restricted_worktrees(&project.worktree_store(), cx);
+        if has_restricted_worktrees && pending_installs == 0 {
             return None;
         }
-        if !project_blocks_binary_downloads(project, cx) {
-            return None;
-        }
-
-        let project_worktrees = project
-            .worktree_store()
-            .read(cx)
-            .worktrees()
-            .map(|worktree| worktree.read(cx).id())
-            .collect::<std::collections::HashSet<_>>();
-        let pending_installs = BinaryDownloads::try_get_global(cx)
-            .map(|store| {
-                store
-                    .read(cx)
-                    .pending_tool_installs()
-                    .into_iter()
-                    .filter(|install| match install.worktree_id {
-                        Some(worktree_id) => project_worktrees.contains(&worktree_id),
-                        None => true,
-                    })
-                    .count()
-            })
-            .unwrap_or(0);
         let label = if pending_installs > 0 {
             format!("Downloads Off ({pending_installs})")
         } else {
@@ -797,6 +777,7 @@ impl TitleBar {
             (ButtonStyle::Subtle, Color::Muted)
         };
         let button = Button::new("binary_downloads_disabled_trigger", label)
+            .tab_index(0isize)
             .style(button_style)
             .label_size(LabelSize::Small)
             .color(tint)
@@ -805,21 +786,15 @@ impl TitleBar {
                     .size(IconSize::Small)
                     .color(tint),
             )
-            .tooltip(|_, cx| {
+            .tooltip(move |_, cx| {
                 Tooltip::with_meta(
-                    "Tool downloads disabled",
-                    Some(&ToggleWorktreeSecurity),
-                    "Zed won't download language servers, formatters, debug adapters, agent servers, extensions, npm packages, or Node.js",
+                    "Tool execution and download permissions",
+                    (!has_restricted_worktrees).then_some(&ToggleWorktreeSecurity),
+                    "Review requests for this computer and the connected host",
                     cx,
                 )
             })
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.workspace
-                    .update(cx, |workspace, cx| {
-                        workspace.show_worktree_trust_security_modal(true, window, cx)
-                    })
-                    .log_err();
-            }));
+            .on_click(cx.listener(Self::toggle_binary_downloads_modal));
 
         if ui::utils::MACOS_SDK_26_OR_LATER {
             Some(div().child(button).ml_0p5().into_any_element())
@@ -1521,6 +1496,25 @@ impl TitleBar {
                 .into()
             })
             .anchor(Anchor::TopRight)
+    }
+
+    fn toggle_binary_downloads_modal(
+        &mut self,
+        _: &gpui::ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(scope) = scope_for_project(self.project.read(cx), cx) else {
+            return;
+        };
+        let project = self.project.clone();
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.toggle_modal(window, cx, |_, cx| {
+                    BinaryDownloadsModal::new(&project, scope, cx)
+                });
+            })
+            .ok();
     }
 }
 

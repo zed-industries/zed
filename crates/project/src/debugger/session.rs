@@ -9,8 +9,8 @@ use super::dap_command::{
     StackTraceCommand, StepBackCommand, StepCommand, StepInCommand, StepOutCommand,
     TerminateCommand, TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
-use super::dap_store::DapStore;
-use crate::binary_downloads::{BinaryDownloads, await_downloads_allowed, request_tool_install};
+use super::dap_store::{DapStore, require_execution_approval};
+use crate::binary_downloads::{BinaryDownloads, await_downloads_allowed, scoped_node_runtime};
 use crate::debugger::breakpoint_store::BreakpointSessionState;
 use crate::debugger::dap_command::{DataBreakpointContext, ReadMemory};
 use crate::debugger::memory::{self, Memory, MemoryIterator, MemoryPageBuilder, PageAddress};
@@ -951,8 +951,10 @@ impl Session {
         self.background_tasks = background_tasks;
         let id = self.id;
         let parent_session = self.parent_session.clone();
+        let adapter = self.adapter.clone();
 
         cx.spawn(async move |this, cx| {
+            cx.update(|cx| require_execution_approval(&adapter, worktree.read(cx).id(), cx))?;
             let mode = RunningMode::new(
                 id,
                 parent_session,
@@ -1134,6 +1136,13 @@ impl Session {
         }
     }
 
+    fn require_execution(&self, cx: &mut App) -> Result<()> {
+        let worktree = self
+            .worktree()
+            .context("debug session worktree is unavailable")?;
+        require_execution_approval(&self.adapter, worktree.read(cx).id(), cx)
+    }
+
     fn handle_start_debugging_request(
         &mut self,
         request: dap::messages::Request,
@@ -1215,14 +1224,18 @@ impl Session {
         let seq = request.seq;
 
         let (tx, mut rx) = mpsc::channel::<Result<u32>>(1);
-        cx.emit(SessionEvent::RunInTerminal {
-            request: request_args,
-            sender: tx,
-        });
-        cx.notify();
+        let permission = self.require_execution(cx);
+        if permission.is_ok() {
+            cx.emit(SessionEvent::RunInTerminal {
+                request: request_args,
+                sender: tx,
+            });
+            cx.notify();
+        }
 
         cx.spawn(async move |session, cx| {
             let result = util::maybe!(async move {
+                permission?;
                 rx.next().await.ok_or_else(|| {
                     anyhow!("failed to receive response from spawn terminal".to_string())
                 })?
@@ -1320,6 +1333,9 @@ impl Session {
         dap_store: WeakEntity<DapStore>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if let Err(error) = self.require_execution(cx) {
+            return Task::ready(Err(error));
+        }
         match &self.state {
             SessionState::Running(local_mode) => {
                 local_mode.initialize_sequence(&self.capabilities, initialize_rx, dap_store, cx)
@@ -2221,6 +2237,13 @@ impl Session {
 
         self.restart_task = Some(cx.spawn(async move |this, cx| {
             this.update(cx, |session, cx| {
+                if let Err(error) = session.require_execution(cx) {
+                    session
+                        .console_output(cx)
+                        .unbounded_send(error.to_string())
+                        .ok();
+                    return Task::ready(None);
+                }
                 if supports_dap_restart {
                     session.request(
                         RestartCommand {
@@ -3014,14 +3037,16 @@ impl Session {
             };
 
             let mut companion_process = None;
+            let mut companion_refresh = None;
             let companion_port =
                 if let Some(companion_port) = this.read_with(cx, |this, _| this.companion_port)? {
                     companion_port
                 } else {
                     let task = cx.spawn(async move |cx| spawn_companion(node_runtime, cx).await);
                     match task.await {
-                        Ok((port, child)) => {
+                        Ok((port, child, refresh)) => {
                             companion_process = Some(child);
+                            companion_refresh = refresh;
                             port
                         }
                         Err(e) => {
@@ -3034,7 +3059,7 @@ impl Session {
                     }
                 };
 
-            let mut background_tasks = Vec::new();
+            let mut background_tasks = companion_refresh.into_iter().collect::<Vec<_>>();
             if let Some(mut forward_ports_process) = forward_ports_process {
                 background_tasks.push(cx.spawn(async move |_| {
                     forward_ports_process.status().await.log_err();
@@ -3106,6 +3131,7 @@ impl Session {
                 bail!("Browser companion failed to start");
             }
 
+            cx.update(|cx| require_companion_approval("js-debug-companion execution", cx))?;
             let response = http_client
                 .post_json(
                     &format!("http://{companion_address}/launch-and-attach"),
@@ -3187,14 +3213,14 @@ struct KillCompanionBrowserParams {
 async fn spawn_companion(
     node_runtime: NodeRuntime,
     cx: &mut AsyncApp,
-) -> Result<(u16, util::command::Child)> {
+) -> Result<(u16, util::command::Child, Option<Task<()>>)> {
+    let node_runtime =
+        cx.update(|cx| scoped_node_runtime(&node_runtime, None, "js-debug-companion", cx));
+    let (path, refresh) = get_or_install_companion(node_runtime.clone(), cx).await?;
     let binary_path = node_runtime
         .binary_path()
         .await
         .context("getting node path")?;
-    let path = cx
-        .spawn(async move |cx| get_or_install_companion(node_runtime, cx).await)
-        .await?;
     log::info!("will launch js-debug-companion version {path:?}");
 
     let port = {
@@ -3209,7 +3235,9 @@ async fn spawn_companion(
         .to_string_lossy()
         .to_string();
 
+    cx.update(|cx| require_companion_approval("js-debug-companion execution", cx))?;
     let child = new_command(binary_path)
+        .kill_on_drop(true)
         .arg(path)
         .args([
             format!("--listen=127.0.0.1:{port}"),
@@ -3221,10 +3249,26 @@ async fn spawn_companion(
         .spawn()
         .context("spawning companion child process")?;
 
-    Ok((port, child))
+    Ok((port, child, refresh))
 }
 
-async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Result<PathBuf> {
+fn require_companion_approval(tool: &str, cx: &mut App) -> Result<()> {
+    let store = BinaryDownloads::try_get_global(cx).context("missing binary downloads store")?;
+    let blocked = store.update(cx, |store, cx| {
+        store.request_tool_install(None, tool, cx).is_some()
+    });
+    anyhow::ensure!(
+        !blocked,
+        "{}",
+        util::downloads_disabled_error_with_retry(tool, "start the debug session again")
+    );
+    Ok(())
+}
+
+async fn get_or_install_companion(
+    node: NodeRuntime,
+    cx: &mut AsyncApp,
+) -> Result<(PathBuf, Option<Task<()>>)> {
     const PACKAGE_NAME: &str = "@zed-industries/js-debug-companion-cli";
     const TOOL_NAME: &str = "js-debug-companion";
 
@@ -3276,18 +3320,21 @@ async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Resul
         })
         .await?;
 
+    let mut refresh = None;
     let path = if let Some((installed_path, installed_version)) = latest_installed_version {
-        cx.spawn({
+        refresh = Some(cx.spawn({
             let dir = dir.clone();
             let node = node.clone();
             async move |cx| {
-                let wait = cx.update(|cx| {
-                    BinaryDownloads::try_get_global(cx).and_then(|store| {
+                let Some(wait) = cx.update(|cx| {
+                    BinaryDownloads::try_get_global(cx).map(|store| {
                         store.update(cx, |store, cx| {
                             store.wait_until_tool_allowed(None, TOOL_NAME, cx)
                         })
                     })
-                });
+                }) else {
+                    return;
+                };
                 if !await_downloads_allowed(wait, TOOL_NAME).await {
                     return;
                 }
@@ -3303,25 +3350,20 @@ async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Resul
                 })
                 .await;
             }
-        })
-        .detach();
+        }));
         Ok(installed_path)
     } else {
-        let blocked = cx
-            .update(|cx| request_tool_install(None, TOOL_NAME, cx))
-            .is_some();
-        anyhow::ensure!(
-            !blocked,
-            "{}",
-            util::downloads_disabled_error_with_retry(TOOL_NAME, "start the debug session again")
-        );
+        cx.update(|cx| require_companion_approval(TOOL_NAME, cx))?;
         cx.background_spawn(install_latest_version(dir.clone(), node.clone()))
             .await
     };
 
-    Ok(path?
-        .join("node_modules")
-        .join(PACKAGE_NAME)
-        .join("out")
-        .join("cli.js"))
+    Ok((
+        path?
+            .join("node_modules")
+            .join(PACKAGE_NAME)
+            .join("out")
+            .join("cli.js"),
+        refresh,
+    ))
 }

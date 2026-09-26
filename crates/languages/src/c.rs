@@ -29,9 +29,13 @@ impl LspInstaller for CLspAdapter {
     ) -> Result<GitHubLspBinaryVersion> {
         ensure_arch_compatibility()?;
 
-        let release =
-            latest_github_release("clangd/clangd", true, pre_release, delegate.http_client())
-                .await?;
+        let release = latest_github_release(
+            "clangd/clangd",
+            true,
+            pre_release,
+            delegate.http_client_for_tool(Self::SERVER_NAME),
+        )
+        .await?;
         let os_suffix = match consts::OS {
             "macos" => "mac",
             "linux" => "linux",
@@ -100,11 +104,14 @@ impl LspInstaller for CLspAdapter {
             if let Some(metadata) = metadata {
                 let validity_check = async || {
                     delegate
-                        .try_exec(LanguageServerBinary {
-                            path: binary_path.clone(),
-                            arguments: vec!["--version".into()],
-                            env: None,
-                        })
+                        .try_exec(
+                            &Self::SERVER_NAME,
+                            LanguageServerBinary {
+                                path: binary_path.clone(),
+                                arguments: vec!["--version".into()],
+                                env: None,
+                            },
+                        )
                         .await
                         .inspect_err(|err| {
                             log::warn!(
@@ -129,7 +136,7 @@ impl LspInstaller for CLspAdapter {
                 }
             }
             download_server_binary(
-                &*delegate.http_client(),
+                &*delegate.http_client_for_tool(Self::SERVER_NAME),
                 &url,
                 expected_digest.as_deref(),
                 &container_dir,

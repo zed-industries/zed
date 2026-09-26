@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
+use dap::{DapExecutionApproval, DapLocator, DebugRequest, adapters::DebugAdapterName};
 use gpui::{BackgroundExecutor, SharedString};
 use serde_json::{Value, json};
 use smol::{io::AsyncReadExt, process::Stdio as SmolStdio};
@@ -14,12 +14,15 @@ async fn find_best_executable(
     executables: &[String],
     test_name: &str,
     executor: BackgroundExecutor,
-) -> Option<String> {
+    require_approval: DapExecutionApproval,
+) -> Result<Option<String>> {
     if executables.len() == 1 {
-        return executables.first().cloned();
+        return Ok(executables.first().cloned());
     }
     for executable in executables {
+        require_approval().await?;
         let Some(mut child) = new_command(&executable)
+            .kill_on_drop(true)
             .arg("--list")
             .stdout(Stdio::piped())
             .spawn()
@@ -46,13 +49,13 @@ async fn find_best_executable(
         } else {
             for line in test_lines.lines() {
                 if line.contains(&test_name) {
-                    return Some(executable.clone());
+                    return Ok(Some(executable.clone()));
                 }
             }
         }
         let _ = child.kill();
     }
-    None
+    Ok(None)
 }
 #[async_trait]
 impl DapLocator for CargoLocator {
@@ -113,16 +116,18 @@ impl DapLocator for CargoLocator {
         })
     }
 
-    async fn run(
+    async fn run_with_execution_approval(
         &self,
         build_config: SpawnInTerminal,
         executor: BackgroundExecutor,
+        require_approval: DapExecutionApproval,
     ) -> Result<DebugRequest> {
         let cwd = build_config
             .cwd
             .clone()
             .context("Couldn't get cwd from debug config which is needed for locators")?;
         let builder = ShellBuilder::new(&build_config.shell, cfg!(windows)).non_interactive();
+        require_approval().await?;
         let mut child = builder
             .build_smol_command(
                 Some("cargo".into()),
@@ -134,6 +139,7 @@ impl DapLocator for CargoLocator {
                     .chain(Some("--message-format=json".to_owned()))
                     .collect::<Vec<_>>(),
             )
+            .kill_on_drop(true)
             .envs(build_config.env.iter().map(|(k, v)| (k.clone(), v.clone())))
             .current_dir(cwd)
             .stdout(SmolStdio::piped())
@@ -198,7 +204,7 @@ impl DapLocator for CargoLocator {
                     .map(|name| build_config.env.get(name))
                     .unwrap_or(Some(name))
             }) {
-                find_best_executable(&executables, name, executor).await
+                find_best_executable(&executables, name, executor, require_approval).await?
             } else {
                 None
             }

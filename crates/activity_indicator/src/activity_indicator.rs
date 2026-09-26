@@ -612,10 +612,16 @@ impl ActivityIndicator {
         }
 
         if !disabled.is_empty() {
+            let is_guest = self.project.read(cx).is_via_collab();
+            let instruction = if is_guest {
+                "Ask the host to allow execution and downloads."
+            } else {
+                "Click to review execution and download permissions."
+            };
             return Some(Content {
                 icon: ActivityIcon::Icon(IconName::Warning),
                 message: format!(
-                    "{} blocked from downloading. Click to review.",
+                    "Permission required for {}. {instruction}",
                     disabled
                         .iter()
                         .map(|name| name.as_ref())
@@ -627,9 +633,13 @@ impl ActivityIndicator {
                             acc
                         })
                 ),
-                on_click: Some(Arc::new(|_, window, cx| {
-                    window.dispatch_action(Box::new(workspace::ToggleWorktreeSecurity), cx);
-                })),
+                on_click: if is_guest {
+                    None
+                } else {
+                    Some(Arc::new(|_, window, cx| {
+                        window.dispatch_action(Box::new(workspace::ToggleWorktreeSecurity), cx);
+                    }))
+                },
                 tooltip_message: None,
             });
         }

@@ -22,7 +22,10 @@ use util::{
     command::new_std_command, get_default_system_shell, get_system_shell, maybe, rel_path::RelPath,
 };
 
-use crate::{Project, ProjectPath};
+use crate::{
+    Project, ProjectPath,
+    binary_downloads::{self, DownloadGate, ToolInstall},
+};
 
 pub struct Terminals {
     pub(crate) local_handles: Vec<WeakEntity<terminal::Terminal>>,
@@ -66,6 +69,42 @@ impl Project {
         spawn_task: SpawnInTerminal,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
+        self.create_terminal_task_with_permission(spawn_task, None, cx)
+    }
+
+    pub fn create_terminal_task_with_permission(
+        &mut self,
+        spawn_task: SpawnInTerminal,
+        permission: Option<ToolInstall>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Terminal>>> {
+        let mut terminal_mode = TerminalMode::task(spawn_task.clone());
+        if let Some(permission) = permission {
+            if binary_downloads::request_tool_install(
+                permission.worktree_id,
+                permission.tool.clone(),
+                cx,
+            )
+            .is_some()
+            {
+                return Task::ready(Err(
+                    util::ToolPermissionDenied(permission.tool.to_string()).into()
+                ));
+            }
+            let gate = DownloadGate::new(permission.worktree_id, cx);
+            terminal_mode = terminal_mode.with_pre_spawn(
+                async move {
+                    if let Some(gate) = gate
+                        && gate.permit(&permission.tool).await
+                    {
+                        Ok(())
+                    } else {
+                        Err(util::ToolPermissionDenied(permission.tool.to_string()).into())
+                    }
+                }
+                .boxed(),
+            );
+        }
         let is_via_remote = self.remote_client.is_some();
 
         let path: Option<Arc<Path>> = if let Some(cwd) = &spawn_task.cwd {
@@ -91,8 +130,6 @@ impl Project {
         }
         let settings = TerminalSettings::get(settings_location, cx).clone();
         let detect_venv = settings.detect_venv.as_option().is_some();
-
-        let terminal_mode = TerminalMode::task(spawn_task.clone());
 
         let local_path = if is_via_remote { None } else { path.clone() };
         let remote_client = self.remote_client.clone();

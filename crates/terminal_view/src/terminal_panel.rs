@@ -16,7 +16,7 @@ use gpui::{
     Window, actions,
 };
 use itertools::Itertools;
-use project::{Fs, Project};
+use project::{Fs, Project, binary_downloads::ToolInstall};
 
 use settings::{Settings, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
@@ -635,6 +635,16 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
+        self.spawn_task_with_permission(task, None, window, cx)
+    }
+
+    pub fn spawn_task_with_permission(
+        &mut self,
+        task: &SpawnInTerminal,
+        permission: Option<ToolInstall>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<WeakEntity<Terminal>>> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(Err(anyhow!("failed to read workspace")));
         };
@@ -662,18 +672,19 @@ impl TerminalPanel {
         let task = prepare_task_for_spawn(task, &shell, is_windows);
 
         if task.allow_concurrent_runs && task.use_new_terminal {
-            return self.spawn_in_new_terminal(task, window, cx);
+            return self.spawn_in_new_terminal(task, permission, window, cx);
         }
 
         let mut terminals_for_task = self.terminals_for_task(&task.full_label, cx);
         let Some(existing) = terminals_for_task.pop() else {
-            return self.spawn_in_new_terminal(task, window, cx);
+            return self.spawn_in_new_terminal(task, permission, window, cx);
         };
 
         let (existing_item_index, task_pane, existing_terminal) = existing;
         if task.allow_concurrent_runs {
             return self.replace_terminal(
                 task,
+                permission,
                 task_pane,
                 existing_item_index,
                 existing_terminal,
@@ -690,10 +701,11 @@ impl TerminalPanel {
                 wait_for_terminals_tasks(terminals_for_task, cx).await;
                 let task = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
                     if task.use_new_terminal {
-                        terminal_panel.spawn_in_new_terminal(task, window, cx)
+                        terminal_panel.spawn_in_new_terminal(task, permission, window, cx)
                     } else {
                         terminal_panel.replace_terminal(
                             task,
+                            permission,
                             task_pane,
                             existing_item_index,
                             existing_terminal,
@@ -714,6 +726,7 @@ impl TerminalPanel {
     fn spawn_in_new_terminal(
         &mut self,
         spawn_task: SpawnInTerminal,
+        permission: Option<ToolInstall>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
@@ -724,11 +737,13 @@ impl TerminalPanel {
                 .workspace
                 .update(cx, |workspace, cx| {
                     Self::add_center_terminal(workspace, window, cx, |project, cx| {
-                        project.create_terminal_task(spawn_task, cx)
+                        project.create_terminal_task_with_permission(spawn_task, permission, cx)
                     })
                 })
                 .unwrap_or_else(|e| Task::ready(Err(e))),
-            RevealTarget::Dock => self.add_terminal_task(spawn_task, reveal, window, cx),
+            RevealTarget::Dock => {
+                self.add_terminal_task_with_permission(spawn_task, permission, reveal, window, cx)
+            }
         }
     }
 
@@ -885,6 +900,17 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
+        self.add_terminal_task_with_permission(task, None, reveal_strategy, window, cx)
+    }
+
+    fn add_terminal_task_with_permission(
+        &mut self,
+        task: SpawnInTerminal,
+        permission: Option<ToolInstall>,
+        reveal_strategy: RevealStrategy,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<WeakEntity<Terminal>>> {
         let workspace = self.workspace.clone();
         self.spawn_pending_terminal(window, cx, async move |terminal_panel, cx| {
             if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
@@ -892,7 +918,9 @@ impl TerminalPanel {
             }
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = project
-                .update(cx, |project, cx| project.create_terminal_task(task, cx))
+                .update(cx, |project, cx| {
+                    project.create_terminal_task_with_permission(task, permission, cx)
+                })
                 .await?;
             let pane = terminal_panel
                 .read_with(cx, |terminal_panel, _| terminal_panel.active_pane.clone())?;
@@ -1096,6 +1124,7 @@ impl TerminalPanel {
     fn replace_terminal(
         &self,
         spawn_task: SpawnInTerminal,
+        permission: Option<ToolInstall>,
         task_pane: Entity<Pane>,
         terminal_item_index: usize,
         terminal_to_replace: Entity<TerminalView>,
@@ -1111,7 +1140,7 @@ impl TerminalPanel {
             })??;
             let new_terminal = project
                 .update(cx, |project, cx| {
-                    project.create_terminal_task(spawn_task, cx)
+                    project.create_terminal_task_with_permission(spawn_task, permission, cx)
                 })
                 .await?;
             terminal_to_replace.update_in(cx, |terminal_to_replace, window, cx| {

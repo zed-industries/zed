@@ -1,13 +1,15 @@
 //! REPL operations on an [`Editor`].
 
 use std::ops::Range;
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use editor::{Editor, MultiBufferOffset};
-use gpui::{App, Entity, WeakEntity, Window, prelude::*};
+use gpui::{App, Entity, PromptLevel, SharedString, WeakEntity, Window, prelude::*};
 use language::{BufferSnapshot, Language, LanguageName, Point};
-use project::{ProjectItem as _, WorktreeId};
+use project::{ProjectItem as _, WorktreeId, binary_downloads::BinaryDownloads};
+use util::command::{Child, Stdio};
 use workspace::{Workspace, notifications::NotificationId};
 
 use crate::kernels::PythonEnvKernelSpecification;
@@ -85,61 +87,81 @@ pub fn install_ipykernel_and_assign(
         return assign_kernelspec(kernel_specification, weak_editor, window, cx);
     };
 
+    if env_spec.has_ipykernel {
+        return assign_kernelspec(kernel_specification, weak_editor, window, cx);
+    }
+    let worktree_id =
+        worktree_id_for_editor(weak_editor.clone(), cx).context("editor is not in a worktree")?;
     let python_path = env_spec.path.clone();
     let env_name = env_spec.name.clone();
     let is_uv = env_spec.is_uv();
     let env_spec = env_spec.clone();
+    let confirmation = window.prompt(
+        PromptLevel::Warning,
+        "Install ipykernel and select this environment?",
+        Some(&format!(
+            "This downloads and installs ipykernel and its dependencies into {} using {}.",
+            python_path.display(),
+            if is_uv { "uv" } else { "pip" }
+        )),
+        &["Install ipykernel and select", "Cancel"],
+        cx,
+    );
 
     struct IpykernelInstall;
     let notification_id = NotificationId::unique::<IpykernelInstall>();
 
     let workspace = Workspace::for_window(window, cx);
-    if let Some(workspace) = &workspace {
-        workspace.update(cx, |workspace, cx| {
-            workspace.show_toast(
-                workspace::Toast::new(
-                    notification_id.clone(),
-                    format!("Installing ipykernel in {}...", env_name),
-                ),
-                cx,
-            );
-        });
-    }
 
     let weak_workspace = workspace.map(|w| w.downgrade());
     let window_handle = window.window_handle();
 
-    let install_task = cx.background_spawn(async move {
-        let output = if is_uv {
-            util::command::new_command("uv")
-                .args(&[
-                    "pip",
-                    "install",
-                    "ipykernel",
-                    "--python",
-                    &python_path.to_string_lossy(),
-                ])
-                .output()
-                .await
-                .context("failed to run uv pip install ipykernel")?
-        } else {
-            util::command::new_command(python_path.to_string_lossy().as_ref())
-                .args(&["-m", "pip", "install", "ipykernel"])
-                .output()
-                .await
-                .context("failed to run pip install ipykernel")?
-        };
-
-        if output.status.success() {
-            anyhow::Ok(())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("{}", stderr.lines().last().unwrap_or("unknown error"))
-        }
-    });
-
     cx.spawn(async move |cx| {
-        let result = install_task.await;
+        if confirmation.await.ok() != Some(0) {
+            return;
+        }
+        let result = async {
+            let child = cx.update(|cx| {
+                anyhow::ensure!(
+                    worktree_id_for_editor(weak_editor.clone(), cx) == Some(worktree_id),
+                    "The editor worktree changed before installation"
+                );
+                let downloads = BinaryDownloads::try_get_global(cx)
+                    .context("Binary download consent is unavailable")?;
+                downloads.update(cx, |downloads, cx| {
+                    downloads.approve_tool_install(
+                        Some(worktree_id),
+                        ipykernel_install_tool(&python_path, is_uv),
+                        cx,
+                    );
+                });
+                spawn_ipykernel_install(&python_path, is_uv, worktree_id, cx)
+            })?;
+            if let Some(weak_workspace) = &weak_workspace {
+                weak_workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.show_toast(
+                            workspace::Toast::new(
+                                notification_id.clone(),
+                                format!("Installing ipykernel in {env_name}..."),
+                            ),
+                            cx,
+                        );
+                    })
+                    .ok();
+            }
+            let output = child
+                .output()
+                .await
+                .context("failed to install ipykernel")?;
+            anyhow::ensure!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            anyhow::Ok(())
+        }
+        .await;
 
         match result {
             Ok(()) => {
@@ -161,6 +183,9 @@ pub fn install_ipykernel_and_assign(
 
                 window_handle
                     .update(cx, |_, window, cx| {
+                        if worktree_id_for_editor(weak_editor.clone(), cx) != Some(worktree_id) {
+                            return;
+                        }
                         let store = ReplStore::global(cx);
                         store.update(cx, |store, cx| {
                             store.mark_ipykernel_installed(cx, &env_spec);
@@ -577,6 +602,49 @@ fn jupytext_cells(
     (snippets, None)
 }
 
+fn ipykernel_install_tool(python_path: &Path, is_uv: bool) -> SharedString {
+    let installer = if is_uv { "uv" } else { "pip" };
+    format!("ipykernel via {installer} for interpreter {python_path:?}").into()
+}
+
+fn spawn_ipykernel_install(
+    python_path: &Path,
+    is_uv: bool,
+    worktree_id: WorktreeId,
+    cx: &App,
+) -> Result<Child> {
+    let downloads =
+        BinaryDownloads::try_get_global(cx).context("Binary download consent is unavailable")?;
+    anyhow::ensure!(
+        downloads.read(cx).tool_download_allowed(
+            Some(worktree_id),
+            ipykernel_install_tool(python_path, is_uv),
+            cx,
+        ),
+        "Download approval required to install ipykernel into {}",
+        python_path.display()
+    );
+    let mut command = if is_uv {
+        let mut command = util::command::new_command("uv");
+        command
+            .args(["pip", "install", "ipykernel", "--python"])
+            .arg(python_path);
+        command
+    } else {
+        let mut command = util::command::new_command(python_path);
+        command.args(["-m", "pip", "install", "ipykernel"]);
+        command
+    };
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    command
+        .spawn()
+        .context("failed to launch ipykernel installer")
+}
+
 fn runnable_ranges(
     buffer: &BufferSnapshot,
     range: Range<Point>,
@@ -681,9 +749,70 @@ fn get_language(editor: WeakEntity<Editor>, cx: &mut App) -> Option<Arc<Language
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::App;
+    use gpui::{App, UpdateGlobal};
     use indoc::indoc;
     use language::{Buffer, Language, LanguageConfig, LanguageRegistry};
+    use project::binary_downloads;
+    use settings::SettingsStore;
+
+    #[gpui::test]
+    fn ipykernel_install_requires_exact_worktree_interpreter_and_installer(cx: &mut App) {
+        settings::init(cx);
+        binary_downloads::init(cx);
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.allow_binary_downloads = Some(false);
+            });
+        });
+        let worktree_id = WorktreeId::from_usize(1);
+        let python_path = Path::new("/zed-test-missing-interpreter/python");
+        let expected_error = format!(
+            "Download approval required to install ipykernel into {}",
+            python_path.display()
+        );
+        for is_uv in [false, true] {
+            assert_eq!(
+                spawn_ipykernel_install(python_path, is_uv, worktree_id, cx)
+                    .err()
+                    .map(|error| error.to_string()),
+                Some(expected_error.clone()),
+            );
+        }
+        BinaryDownloads::try_get_global(cx)
+            .expect("consent store")
+            .update(cx, |store, cx| {
+                store.approve_tool_install(
+                    Some(worktree_id),
+                    ipykernel_install_tool(python_path, false),
+                    cx,
+                );
+            });
+        assert_eq!(
+            spawn_ipykernel_install(python_path, false, worktree_id, cx)
+                .err()
+                .map(|error| error.to_string()),
+            Some("failed to launch ipykernel installer".to_string()),
+        );
+        for (worktree_id, python_path, is_uv) in [
+            (WorktreeId::from_usize(2), python_path, false),
+            (
+                worktree_id,
+                Path::new("/zed-test-other-interpreter/python"),
+                false,
+            ),
+            (worktree_id, python_path, true),
+        ] {
+            assert_eq!(
+                spawn_ipykernel_install(python_path, is_uv, worktree_id, cx)
+                    .err()
+                    .map(|error| error.to_string()),
+                Some(format!(
+                    "Download approval required to install ipykernel into {}",
+                    python_path.display()
+                )),
+            );
+        }
+    }
 
     #[gpui::test]
     fn test_snippet_ranges(cx: &mut App) {

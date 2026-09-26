@@ -60,6 +60,17 @@ pub const fn is_utf8_char_boundary(u8: u8) -> bool {
     (u8 as i8) >= -0x40
 }
 
+#[derive(Clone, Debug)]
+pub struct ToolPermissionDenied(pub String);
+
+impl std::fmt::Display for ToolPermissionDenied {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&downloads_disabled_error(&self.0))
+    }
+}
+
+impl std::error::Error for ToolPermissionDenied {}
+
 pub fn downloads_disabled_error(tool: impl std::fmt::Display) -> String {
     format!(
         "binary downloads are disabled; approve installing {tool} via the \"Downloads Off\" indicator in the title bar, or enable `allow_binary_downloads`"

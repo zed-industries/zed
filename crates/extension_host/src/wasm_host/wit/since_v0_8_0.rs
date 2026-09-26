@@ -22,7 +22,7 @@ use semver::Version;
 use std::{
     env,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    path::{Path, PathBuf},
+    path::Path,
     str::FromStr,
     sync::{Arc, OnceLock},
 };
@@ -638,7 +638,7 @@ impl http_client::Host for WasmState {
         maybe!(async {
             let url = &request.url;
             let request = convert_request(&request)?;
-            let mut response = self.host.http_client.send(request).await?;
+            let mut response = send_extension_request(self, request).await?;
 
             if response.status().is_client_error() || response.status().is_server_error() {
                 bail!("failed to fetch '{url}': status code {}", response.status())
@@ -654,9 +654,8 @@ impl http_client::Host for WasmState {
         request: http_client::HttpRequest,
     ) -> wasmtime::Result<Result<Resource<ExtensionHttpResponseStream>, String>> {
         let request = convert_request(&request).into_wasmtime_result()?;
-        let response = self.host.http_client.send(request);
         maybe!(async {
-            let response = response.await?;
+            let response = send_extension_request(self, request).await?;
             let stream = Arc::new(Mutex::new(response));
             let resource = self.table.push(stream)?;
             Ok(resource)
@@ -755,6 +754,95 @@ async fn convert_response(
     Ok(extension_response)
 }
 
+pub(super) async fn download_file(
+    state: &mut WasmState,
+    url: &str,
+    path: &str,
+    file_type: DownloadedFileType,
+) -> Result<()> {
+    ensure_extension_downloads_allowed(state).await?;
+    let path = Path::new(path);
+    let extension_work_dir = state.host.work_dir.join(state.manifest.id.as_ref());
+    state.host.fs.create_dir(&extension_work_dir).await?;
+    let destination_path = state
+        .host
+        .writeable_path_from_extension(&state.manifest.id, path)
+        .await?;
+    let request = ::http_client::Request::builder()
+        .uri(url)
+        .follow_redirects(::http_client::RedirectPolicy::FollowAll)
+        .body(AsyncBody::empty())?;
+    let mut response = send_extension_request(state, request).await?;
+    anyhow::ensure!(
+        response.status().is_success(),
+        "download failed with status {}",
+        response.status()
+    );
+    let mut body = BufReader::new(response.body_mut());
+    match file_type {
+        DownloadedFileType::Uncompressed => {
+            futures::pin_mut!(body);
+            state
+                .host
+                .fs
+                .create_file_with(&destination_path, body)
+                .await?;
+        }
+        DownloadedFileType::Gzip => {
+            let body = GzipDecoder::new(body);
+            futures::pin_mut!(body);
+            state
+                .host
+                .fs
+                .create_file_with(&destination_path, body)
+                .await?;
+        }
+        DownloadedFileType::GzipTar => {
+            let mut tar_gz_bytes = Vec::new();
+            body.read_to_end(&mut tar_gz_bytes).await?;
+            let decompressed_bytes = GzipDecoder::new(BufReader::new(tar_gz_bytes.as_slice()));
+            futures::pin_mut!(decompressed_bytes);
+            state
+                .host
+                .fs
+                .extract_tar_file(&destination_path, Archive::new(decompressed_bytes))
+                .await?;
+        }
+        DownloadedFileType::Zip => {
+            futures::pin_mut!(body);
+            extract_zip(&destination_path, body)
+                .await
+                .with_context(|| format!("unzipping {path:?} archive"))?;
+        }
+    }
+    Ok(())
+}
+
+pub(super) async fn send_extension_request(
+    state: &mut WasmState,
+    request: ::http_client::Request<AsyncBody>,
+) -> Result<::http_client::Response<AsyncBody>> {
+    let client = state.host.http_client.clone();
+    let tool = extension_downloads_key(state);
+    state
+        .on_main_thread(move |cx| {
+            async move {
+                let response = cx.update(|cx| {
+                    anyhow::ensure!(
+                        project::binary_downloads::request_tool_install(None, tool.clone(), cx)
+                            .is_none(),
+                        "{}",
+                        util::downloads_disabled_error(&tool)
+                    );
+                    anyhow::Ok(client.send(request))
+                })?;
+                response.await
+            }
+            .boxed_local()
+        })
+        .await
+}
+
 fn extension_downloads_key(state: &WasmState) -> String {
     format!("extension `{}`", state.manifest.id)
 }
@@ -763,7 +851,7 @@ fn extension_downloads_key(state: &WasmState) -> String {
 /// binary, exactly as when offline; blocking here would deadlock extensions
 /// whose local copy is fine. One approval per extension covers its version
 /// checks, file downloads, and npm installs.
-async fn ensure_extension_downloads_allowed(state: &mut WasmState) -> Result<()> {
+pub(super) async fn ensure_extension_downloads_allowed(state: &mut WasmState) -> Result<()> {
     let tool = extension_downloads_key(state);
     let blocked = state
         .on_main_thread({
@@ -782,10 +870,25 @@ async fn ensure_extension_downloads_allowed(state: &mut WasmState) -> Result<()>
     Ok(())
 }
 
+async fn extension_node_runtime(state: &mut WasmState) -> node_runtime::NodeRuntime {
+    let runtime = state.host.node_runtime.clone();
+    let tool = extension_downloads_key(state);
+    state
+        .on_main_thread(move |cx| {
+            async move {
+                cx.update(|cx| {
+                    project::binary_downloads::scoped_node_runtime(&runtime, None, tool, cx)
+                })
+            }
+            .boxed_local()
+        })
+        .await
+}
+
 impl nodejs::Host for WasmState {
     async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
-        self.host
-            .node_runtime
+        extension_node_runtime(self)
+            .await
             .binary_path()
             .await
             .map(|path| path.to_string_lossy().into_owned())
@@ -798,11 +901,9 @@ impl nodejs::Host for WasmState {
     ) -> wasmtime::Result<Result<String, String>> {
         maybe!(async {
             ensure_extension_downloads_allowed(self).await?;
-            let version = self
-                .host
-                .node_runtime
-                .npm_package_latest_version(&package_name)
-                .await?;
+            let runtime = extension_node_runtime(self).await;
+            ensure_extension_downloads_allowed(self).await?;
+            let version = runtime.npm_package_latest_version(&package_name).await?;
             Ok(version.to_string())
         })
         .await
@@ -813,8 +914,8 @@ impl nodejs::Host for WasmState {
         &mut self,
         package_name: String,
     ) -> wasmtime::Result<Result<Option<String>, String>> {
-        self.host
-            .node_runtime
+        extension_node_runtime(self)
+            .await
             .npm_package_installed_version(&self.work_dir(), &package_name)
             .await
             .map(|option| option.map(|version| version.to_string()))
@@ -832,8 +933,9 @@ impl nodejs::Host for WasmState {
 
         maybe!(async {
             ensure_extension_downloads_allowed(self).await?;
-            self.host
-                .node_runtime
+            let runtime = extension_node_runtime(self).await;
+            ensure_extension_downloads_allowed(self).await?;
+            runtime
                 .npm_install_packages(&self.work_dir(), &[(&package_name, &version)])
                 .await
         })
@@ -1118,70 +1220,9 @@ impl ExtensionImports for WasmState {
         file_type: DownloadedFileType,
     ) -> wasmtime::Result<Result<(), String>> {
         maybe!(async {
-            ensure_extension_downloads_allowed(self).await?;
             let parsed_url = Url::parse(&url)?;
             self.capability_granter.grant_download_file(&parsed_url)?;
-
-            let path = PathBuf::from(path);
-            let extension_work_dir = self.host.work_dir.join(self.manifest.id.as_ref());
-
-            self.host.fs.create_dir(&extension_work_dir).await?;
-
-            let destination_path = self
-                .host
-                .writeable_path_from_extension(&self.manifest.id, &path)
-                .await?;
-
-            let mut response = self
-                .host
-                .http_client
-                .get(&url, Default::default(), true)
-                .await
-                .context("downloading release")?;
-
-            anyhow::ensure!(
-                response.status().is_success(),
-                "download failed with status {}",
-                response.status()
-            );
-            let mut body = BufReader::new(response.body_mut());
-
-            match file_type {
-                DownloadedFileType::Uncompressed => {
-                    futures::pin_mut!(body);
-                    self.host
-                        .fs
-                        .create_file_with(&destination_path, body)
-                        .await?;
-                }
-                DownloadedFileType::Gzip => {
-                    let body = GzipDecoder::new(body);
-                    futures::pin_mut!(body);
-                    self.host
-                        .fs
-                        .create_file_with(&destination_path, body)
-                        .await?;
-                }
-                DownloadedFileType::GzipTar => {
-                    let mut tar_gz_bytes = Vec::new();
-                    body.read_to_end(&mut tar_gz_bytes).await?;
-                    let decompressed_bytes =
-                        GzipDecoder::new(BufReader::new(tar_gz_bytes.as_slice()));
-                    futures::pin_mut!(decompressed_bytes);
-                    self.host
-                        .fs
-                        .extract_tar_file(&destination_path, Archive::new(decompressed_bytes))
-                        .await?;
-                }
-                DownloadedFileType::Zip => {
-                    futures::pin_mut!(body);
-                    extract_zip(&destination_path, body)
-                        .await
-                        .with_context(|| format!("unzipping {path:?} archive"))?;
-                }
-            }
-
-            Ok(())
+            download_file(self, &url, &path, file_type).await
         })
         .await
         .to_wasmtime_result()

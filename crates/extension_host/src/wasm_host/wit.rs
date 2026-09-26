@@ -1306,3 +1306,193 @@ impl<T> ToWasmtimeResult<T> for Result<T> {
         Ok(self.map_err(|error| format!("{error:?}")))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{capability_granter::CapabilityGranter, wasm_host::WasmHost};
+    use extension::{ExtensionHostProxy, ExtensionManifest};
+    use fs::{FakeFs, Fs};
+    use gpui::{TestAppContext, UpdateGlobal as _};
+    use http_client::{FakeHttpClient, Response};
+    use node_runtime::NodeRuntime;
+    use project::binary_downloads::{self, BinaryDownloads, ToolInstall};
+    use settings::SettingsStore;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use wasmtime::component::ResourceTable;
+    use wasmtime_wasi::WasiCtxBuilder;
+
+    #[gpui::test]
+    async fn test_extension_download_permission_across_api_versions(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            release_channel::init(Version::new(0, 0, 0), cx);
+            extension::init(cx);
+            binary_downloads::init(cx);
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.allow_binary_downloads = Some(false);
+                });
+            });
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(PathBuf::from("/work/test-extension").as_path())
+            .await
+            .unwrap();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let client = FakeHttpClient::create({
+            let requests = requests.clone();
+            move |_| {
+                requests.fetch_add(1, Ordering::SeqCst);
+                async { Ok(Response::builder().status(200).body("binary".into())?) }
+            }
+        });
+        let host = cx.update(|cx| {
+            WasmHost::new(
+                fs.clone(),
+                client,
+                NodeRuntime::unavailable(),
+                Arc::new(ExtensionHostProxy::default()),
+                PathBuf::from("/work"),
+                cx,
+            )
+        });
+        let manifest = toml::from_str::<ExtensionManifest>(
+            "id = 'test-extension'\nname = 'Test'\nversion = '1.0.0'\nschema_version = 0",
+        )
+        .unwrap();
+        let manifest = Arc::new(manifest);
+        let mut state = WasmState {
+            capability_granter: CapabilityGranter::new(
+                host.granted_capabilities.clone(),
+                manifest.clone(),
+            ),
+            manifest,
+            table: ResourceTable::new(),
+            ctx: WasiCtxBuilder::new().build(),
+            host,
+            language_server_status_source: None,
+        };
+        let tool = "extension `test-extension`";
+        let expected_error = util::downloads_disabled_error(tool);
+        for approval in [None, Some(tool)] {
+            let allowed = approval == Some(tool);
+            if let Some(approval) = approval {
+                cx.update(|cx| {
+                    BinaryDownloads::try_get_global(cx)
+                        .unwrap()
+                        .update(cx, |store, cx| {
+                            store.approve_tool_install(None, approval, cx);
+                        });
+                });
+            }
+            for legacy in [true, false] {
+                let download = if legacy {
+                    since_v0_1_0::ExtensionImports::download_file(
+                        &mut state,
+                        "https://example.com/tool".to_owned(),
+                        "legacy".to_owned(),
+                        since_v0_1_0::DownloadedFileType::Uncompressed,
+                    )
+                    .await
+                    .unwrap()
+                } else {
+                    latest::ExtensionImports::download_file(
+                        &mut state,
+                        "https://example.com/tool".to_owned(),
+                        "current".to_owned(),
+                        latest::DownloadedFileType::Uncompressed,
+                    )
+                    .await
+                    .unwrap()
+                };
+                for result in [
+                    download,
+                    fetch_extension_data(&mut state, legacy, false).await,
+                    fetch_extension_data(&mut state, legacy, true).await,
+                ] {
+                    if allowed {
+                        assert_eq!(result, Ok(()));
+                    } else {
+                        let error = result.expect_err("request must require approval");
+                        assert_eq!(error.lines().next(), Some(expected_error.as_str()));
+                    }
+                }
+            }
+            assert_eq!(requests.load(Ordering::SeqCst), if allowed { 6 } else { 0 });
+            assert_eq!(
+                fs.is_file(PathBuf::from("/work/test-extension/legacy").as_path())
+                    .await,
+                allowed
+            );
+            assert_eq!(
+                fs.is_file(PathBuf::from("/work/test-extension/current").as_path())
+                    .await,
+                allowed
+            );
+            cx.update(|cx| {
+                assert_eq!(
+                    BinaryDownloads::try_get_global(cx)
+                        .unwrap()
+                        .read(cx)
+                        .pending_tool_installs(),
+                    if allowed {
+                        Vec::new()
+                    } else {
+                        vec![ToolInstall {
+                            worktree_id: None,
+                            tool: tool.into(),
+                        }]
+                    },
+                );
+            });
+        }
+    }
+
+    async fn fetch_extension_data(
+        state: &mut WasmState,
+        legacy: bool,
+        streaming: bool,
+    ) -> Result<(), String> {
+        if legacy {
+            let request = since_v0_1_0::http_client::HttpRequest {
+                method: since_v0_1_0::http_client::HttpMethod::Get,
+                url: "https://example.com/tool".to_owned(),
+                headers: Vec::new(),
+                body: None,
+                redirect_policy: since_v0_1_0::http_client::RedirectPolicy::FollowAll,
+            };
+            if streaming {
+                since_v0_1_0::http_client::Host::fetch_stream(state, request)
+                    .await
+                    .unwrap()
+                    .map(|_| ())
+            } else {
+                since_v0_1_0::http_client::Host::fetch(state, request)
+                    .await
+                    .unwrap()
+                    .map(|_| ())
+            }
+        } else {
+            let request = latest::http_client::HttpRequest {
+                method: latest::http_client::HttpMethod::Get,
+                url: "https://example.com/tool".to_owned(),
+                headers: Vec::new(),
+                body: None,
+                redirect_policy: latest::http_client::RedirectPolicy::FollowAll,
+            };
+            if streaming {
+                latest::http_client::Host::fetch_stream(state, request)
+                    .await
+                    .unwrap()
+                    .map(|_| ())
+            } else {
+                latest::http_client::Host::fetch(state, request)
+                    .await
+                    .unwrap()
+                    .map(|_| ())
+            }
+        }
+    }
+}

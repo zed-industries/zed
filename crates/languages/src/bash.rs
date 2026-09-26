@@ -73,7 +73,14 @@ impl LspInstaller for BashLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<lsp::LanguageServerBinary> {
         let env = delegate.shell_env().await;
-        Self::get_cached_server_binary(container_dir, env, &self.node).await
+        Self::get_cached_server_binary(
+            container_dir,
+            env,
+            &self
+                .node
+                .with_install_gate(Some(delegate.tool_install_gate(self.name()))),
+        )
+        .await
     }
 
     async fn check_if_user_installed(
@@ -98,7 +105,9 @@ impl LspInstaller for BashLspAdapter {
         container_dir: &PathBuf,
         delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Option<lsp::LanguageServerBinary>> + use<> {
-        let node = self.node.clone();
+        let node = self
+            .node
+            .with_install_gate(Some(delegate.tool_install_gate(self.name())));
         let version = version.clone();
         let container_dir = container_dir.clone();
         let delegate = delegate.clone();
@@ -132,11 +141,12 @@ impl LspInstaller for BashLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut gpui::AsyncApp,
     ) -> Result<Self::BinaryVersion> {
         self.node
+            .with_install_gate(Some(delegate.tool_install_gate(self.name())))
             .npm_package_latest_version(Self::PACKAGE_NAME)
             .await
     }
@@ -147,7 +157,9 @@ impl LspInstaller for BashLspAdapter {
         container_dir: std::path::PathBuf,
         delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<lsp::LanguageServerBinary>> + use<> {
-        let node = self.node.clone();
+        let node = self
+            .node
+            .with_install_gate(Some(delegate.tool_install_gate(self.name())));
         let delegate = delegate.clone();
 
         async move {

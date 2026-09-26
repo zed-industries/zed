@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::{future::Future, io::Write};
 
 use crate::{
     RemoteArch, RemoteOs, RemotePlatform,
@@ -19,6 +19,17 @@ pub mod docker;
 pub mod mock;
 pub mod ssh;
 pub mod wsl;
+
+async fn try_download_on_host(download: impl Future<Output = Result<()>>) -> Result<bool> {
+    match download.await {
+        Ok(()) => Ok(true),
+        Err(error) if error.downcast_ref::<crate::DownloadDenied>().is_some() => Err(error),
+        Err(error) => {
+            log::error!("Remote download failed; trying local download and upload: {error:#}");
+            Ok(false)
+        }
+    }
+}
 
 /// Parses the output of `uname -sm` to determine the remote platform.
 /// Takes the last line to skip possible shell initialization output.
@@ -241,6 +252,7 @@ fn handle_rpc_messages_over_child_process_stdio(
 #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
 async fn build_remote_server_from_source(
     platform: &crate::RemotePlatform,
+    host: &str,
     delegate: &dyn crate::RemoteClientDelegate,
     binary_exists_on_server: bool,
     cx: &mut AsyncApp,
@@ -320,11 +332,28 @@ async fn build_remote_server_from_source(
             rust_flags.push_str(&format!(" -C link-arg=-L{path}"));
         }
     }
-    if platform.arch.as_str() == std::env::consts::ARCH
-        && platform.os.as_str() == std::env::consts::OS
-    {
+    let native_build = platform.arch.as_str() == std::env::consts::ARCH
+        && platform.os.as_str() == std::env::consts::OS;
+    let request = crate::DownloadRequest {
+        host: host.to_string(),
+        purpose: if native_build {
+            format!(
+                "Build remote server for {triple} locally, including Cargo dependencies and Rust toolchain downloads"
+            )
+        } else {
+            format!(
+                "Cross-compile remote server for {triple} locally, including Rust target, cargo-zigbuild and Cargo dependency downloads"
+            )
+        },
+    };
+    if binary_exists_on_server && !cx.update(|cx| delegate.download_allowed(&request, cx)) {
+        return Ok(None);
+    }
+    if native_build {
         delegate.set_status(Some("Building remote server binary from source"), cx);
         log::info!("building remote server binary from source");
+        let authorization = delegate.authorize_download(request.clone(), cx).await?;
+        authorization.check(&request, cx)?;
         run_cmd(
             new_command("cargo")
                 .current_dir(
@@ -359,9 +388,12 @@ async fn build_remote_server_from_source(
             .context("rustup not found on $PATH, install rustup (see https://rustup.rs/)")?;
         delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
         log::info!("adding rustup target");
+        let authorization = delegate.authorize_download(request.clone(), cx).await?;
+        authorization.check(&request, cx)?;
         run_cmd(new_command(rustup).args(["target", "add"]).arg(&triple)).await?;
 
         if which("cargo-zigbuild", cx).await?.is_none() {
+            authorization.check(&request, cx)?;
             delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
             log::info!("installing cargo-zigbuild");
             run_cmd(new_command("cargo").args(["install", "--locked", "cargo-zigbuild"])).await?;
@@ -374,6 +406,7 @@ async fn build_remote_server_from_source(
             cx,
         );
         log::info!("building remote binary from source for {triple} with Zig");
+        authorization.check(&request, cx)?;
         run_cmd(
             new_command("cargo")
                 .current_dir(
@@ -463,6 +496,88 @@ async fn which(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{DownloadAuthorization, DownloadDenied, DownloadRequest};
+    use futures::channel::oneshot;
+    use gpui::TestAppContext;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    #[test]
+    fn denied_download_never_reaches_fallback() {
+        for denied in [true, false] {
+            let mut fallbacks = 0;
+            let result = futures::executor::block_on(async {
+                let error = if denied {
+                    anyhow::Error::from(crate::DownloadDenied(
+                        "server on SSH user@host:2222".to_string(),
+                    ))
+                    .context("bootstrap preparation")
+                } else {
+                    anyhow::anyhow!("connection failed")
+                };
+                if !try_download_on_host(async { Err(error) }).await? {
+                    fallbacks += 1;
+                }
+                anyhow::Ok(())
+            });
+            if denied {
+                assert_eq!(
+                    result.unwrap_err().root_cause().to_string(),
+                    "Download not authorized: server on SSH user@host:2222"
+                );
+                assert_eq!(fallbacks, 0);
+            } else {
+                result.unwrap();
+                assert_eq!(fallbacks, 1);
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn revocation_during_probe_blocks_download_fallbacks(cx: &mut TestAppContext) {
+        for downloader_available in [true, false] {
+            let permitted = Arc::new(AtomicBool::new(true));
+            let request = DownloadRequest {
+                host: "SSH user@host:2222".to_string(),
+                purpose: "server".to_string(),
+            };
+            let authorization = DownloadAuthorization::new(request.clone(), {
+                let permitted = permitted.clone();
+                move |_| permitted.load(Ordering::SeqCst)
+            });
+            let mut async_cx = cx.to_async();
+            authorization.check(&request, &mut async_cx).unwrap();
+            let (resume, probe) = oneshot::channel();
+            let mut downloads = 0;
+            let mut download = Box::pin(try_download_on_host(async {
+                let downloader_available = probe.await?;
+                authorization.check(&request, &mut async_cx)?;
+                if downloader_available {
+                    anyhow::bail!("transport failed")
+                }
+                downloads += 1;
+                Ok(())
+            }));
+            assert!(futures::poll!(&mut download).is_pending());
+            permitted.store(false, Ordering::SeqCst);
+            resume.send(downloader_available).unwrap();
+            let result = download.await;
+            if let Ok(false) = result {
+                downloads += 1;
+            }
+            assert_eq!(
+                result
+                    .unwrap_err()
+                    .downcast_ref::<DownloadDenied>()
+                    .unwrap()
+                    .0,
+                "server on SSH user@host:2222"
+            );
+            assert_eq!(downloads, 0);
+        }
+    }
 
     #[test]
     fn test_parse_platform() {

@@ -277,8 +277,10 @@ impl Prettier {
         prettier_dir: PathBuf,
         _: NodeRuntime,
         _: Duration,
-        _: AsyncApp,
+        permission: impl Fn(&mut gpui::App) -> anyhow::Result<()>,
+        cx: AsyncApp,
     ) -> anyhow::Result<Self> {
+        cx.update(permission)?;
         Ok(Self::Test(TestPrettier {
             default: prettier_dir == default_prettier_dir().as_path(),
             prettier_dir,
@@ -291,6 +293,7 @@ impl Prettier {
         prettier_dir: PathBuf,
         node: NodeRuntime,
         request_timeout: Duration,
+        permission: impl Fn(&mut gpui::App) -> anyhow::Result<()>,
         mut cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         use lsp::{LanguageServerBinary, LanguageServerName};
@@ -316,6 +319,7 @@ impl Prettier {
             env: None,
         };
 
+        cx.update(permission)?;
         let server = LanguageServer::new(
             Arc::new(parking_lot::Mutex::new(None)),
             server_id,
@@ -371,24 +375,8 @@ impl Prettier {
                             "Prettier node_modules dir does not exist: {prettier_node_modules:?}"
                         );
                         let plugin_name_into_path = |plugin_name: &str| {
-                            let prettier_plugin_dir = prettier_node_modules.join(plugin_name);
-                            [
-                                prettier_plugin_dir.join("dist").join("index.mjs"),
-                                prettier_plugin_dir.join("dist").join("index.js"),
-                                prettier_plugin_dir.join("dist").join("plugin.js"),
-                                prettier_plugin_dir.join("src").join("plugin.js"),
-                                prettier_plugin_dir.join("lib").join("index.js"),
-                                prettier_plugin_dir.join("index.mjs"),
-                                prettier_plugin_dir.join("index.js"),
-                                prettier_plugin_dir.join("plugin.js"),
-                                // this one is for @prettier/plugin-php
-                                prettier_plugin_dir.join("standalone.js"),
-                                // this one is for prettier-plugin-latex
-                                prettier_plugin_dir.join("dist").join("prettier-plugin-latex.js"),
-                                prettier_plugin_dir,
-                            ]
-                            .into_iter()
-                            .find(|possible_plugin_path| possible_plugin_path.is_file())
+                            plugin_entry_points(prettier_node_modules.join(plugin_name))
+                                .find(|possible_plugin_path| possible_plugin_path.is_file())
                         };
 
                         // Tailwind plugin requires being added last
@@ -585,6 +573,27 @@ impl Prettier {
             Self::Test(test_prettier) => &test_prettier.prettier_dir,
         }
     }
+}
+
+pub fn plugin_entry_points(prettier_plugin_dir: PathBuf) -> impl Iterator<Item = PathBuf> {
+    [
+        prettier_plugin_dir.join("dist").join("index.mjs"),
+        prettier_plugin_dir.join("dist").join("index.js"),
+        prettier_plugin_dir.join("dist").join("plugin.js"),
+        prettier_plugin_dir.join("src").join("plugin.js"),
+        prettier_plugin_dir.join("lib").join("index.js"),
+        prettier_plugin_dir.join("index.mjs"),
+        prettier_plugin_dir.join("index.js"),
+        prettier_plugin_dir.join("plugin.js"),
+        // this one is for @prettier/plugin-php
+        prettier_plugin_dir.join("standalone.js"),
+        // this one is for prettier-plugin-latex
+        prettier_plugin_dir
+            .join("dist")
+            .join("prettier-plugin-latex.js"),
+        prettier_plugin_dir,
+    ]
+    .into_iter()
 }
 
 fn prettier_parser_name(

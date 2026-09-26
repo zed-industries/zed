@@ -37,7 +37,13 @@ pub use util::{
     resolve_canonical,
 };
 #[cfg(target_os = "windows")]
-pub use windows_wsl::{ResolvedGrant, resolve_canonical_for_grant};
+pub use windows_wsl::{
+    ResolvedGrant, resolve_canonical_for_grant, resolve_canonical_for_grant_with_download_gate,
+};
+#[cfg(any(target_os = "windows", test))]
+mod wsl_helper;
+#[cfg(target_os = "windows")]
+pub use wsl_helper::{WslHelperDownloadGate, WslHelperDownloadRequest};
 
 #[cfg(target_os = "windows")]
 pub(crate) const WSL_SANDBOX_UNAVAILABLE_PREFIX: &str = "Windows sandboxing via WSL is unavailable";
@@ -410,6 +416,7 @@ pub enum SandboxError {
     BridgeExecutableUnavailable(String),
     /// Windows sandboxing through WSL is unavailable.
     WslUnavailable(String),
+    DownloadDenied(String),
     /// The requested sandbox policy is not supported on this platform.
     UnsupportedPolicy(String),
     /// The sandbox request is invalid (e.g. a malformed allowed-domain).
@@ -444,6 +451,9 @@ impl fmt::Display for SandboxError {
                 "failed to resolve sandbox bridge executable: {message}"
             ),
             SandboxError::WslUnavailable(message) => write!(formatter, "{message}"),
+            SandboxError::DownloadDenied(message) => {
+                write!(formatter, "Download not authorized: {message}")
+            }
             SandboxError::UnsupportedPolicy(message) => write!(formatter, "{message}"),
             SandboxError::InvalidRequest(message) => write!(formatter, "{message}"),
             SandboxError::Io(message) => write!(formatter, "{message}"),
@@ -505,6 +515,8 @@ pub struct Sandbox {
     /// validation.
     #[cfg(target_os = "windows")]
     wsl_zed_release: Option<(String, String)>,
+    #[cfg(target_os = "windows")]
+    wsl_helper_download_gate: Option<WslHelperDownloadGate>,
     #[cfg(target_os = "macos")]
     seatbelt_config: Option<macos_seatbelt::SeatbeltConfigFile>,
 }
@@ -555,6 +567,8 @@ impl Sandbox {
             validation_fd_sender: None,
             #[cfg(target_os = "windows")]
             wsl_zed_release: None,
+            #[cfg(target_os = "windows")]
+            wsl_helper_download_gate: None,
             #[cfg(target_os = "macos")]
             seatbelt_config: None,
         })
@@ -569,6 +583,11 @@ impl Sandbox {
     #[cfg(target_os = "windows")]
     pub fn set_wsl_zed_release(&mut self, channel: String, version: String) {
         self.wsl_zed_release = Some((channel, version));
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn set_wsl_helper_download_gate(&mut self, gate: WslHelperDownloadGate) {
+        self.wsl_helper_download_gate = Some(gate);
     }
 
     /// Check whether the platform sandbox can be created on this host without
@@ -903,6 +922,7 @@ impl Sandbox {
             command.cwd.clone(),
             command.env.clone(),
             self.wsl_zed_release.clone(),
+            self.wsl_helper_download_gate.as_ref(),
         )
         .await
         .map_err(map_anyhow_error)?;
@@ -1123,6 +1143,9 @@ fn map_linux_status(status: linux_bubblewrap::LauncherStatus) -> SandboxError {
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn map_anyhow_error(error: anyhow::Error) -> SandboxError {
+    if let Some(error @ SandboxError::DownloadDenied(_)) = error.downcast_ref::<SandboxError>() {
+        return error.clone();
+    }
     #[cfg(target_os = "windows")]
     if let Some(error) = error.downcast_ref::<windows_wsl::WslSandboxUnavailable>() {
         return SandboxError::WslUnavailable(error.to_string());

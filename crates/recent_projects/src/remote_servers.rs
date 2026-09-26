@@ -262,7 +262,7 @@ impl PickerDelegate for DevContainerPickerDelegate {
                     modal.edit_in_dev_container_json(selected_config.clone(), window, cx);
                 } else if let Some((app_state, context)) = modal
                     .workspace
-                    .read_with(cx, |workspace, cx| {
+                    .update(cx, |workspace, cx| {
                         let app_state = workspace.app_state().clone();
                         let context = DevContainerContext::from_workspace(workspace, cx)?;
                         Some((app_state, context))
@@ -2216,7 +2216,7 @@ impl RemoteServerProjects {
             cx.notify();
         } else if let Some((app_state, context)) = self
             .workspace
-            .read_with(cx, |workspace, cx| {
+            .update(cx, |workspace, cx| {
                 let app_state = workspace.app_state().clone();
                 let context = DevContainerContext::from_workspace(workspace, cx)?;
                 Some((app_state, context))

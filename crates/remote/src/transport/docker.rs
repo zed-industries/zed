@@ -243,6 +243,7 @@ impl DockerExecConnection {
         #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
         if let Some(remote_server_path) = super::build_remote_server_from_source(
             &remote_platform,
+            &RemoteConnectionOptions::Docker(self.connection_options.clone()).download_host(),
             delegate.as_ref(),
             binary_exists_on_server,
             cx,
@@ -285,6 +286,14 @@ impl DockerExecConnection {
             _ => Ok(Some(AppVersion::global(cx))),
         })?;
 
+        let cached_binary = delegate
+            .cached_server_binary_locally(
+                remote_platform,
+                release_channel,
+                wanted_version.clone(),
+                cx,
+            )
+            .await?;
         let tmp_path_gz = paths::remote_server_dir_relative().join(
             RelPath::from_unix_str(&format!(
                 "{}-download-{}.gz",
@@ -293,39 +302,49 @@ impl DockerExecConnection {
             ))
             .unwrap(),
         );
-        if !self.connection_options.upload_binary_over_docker_exec
+        if cached_binary.is_none()
+            && !self.connection_options.upload_binary_over_docker_exec
             && let Some(url) = delegate
                 .get_download_url(remote_platform, release_channel, wanted_version.clone(), cx)
                 .await?
         {
-            match self
-                .download_binary_on_server(&url, &tmp_path_gz, &remote_dir_for_server, delegate, cx)
-                .await
+            if super::try_download_on_host(self.download_binary_on_server(
+                &url,
+                &tmp_path_gz,
+                &remote_dir_for_server,
+                delegate,
+                cx,
+            ))
+            .await?
             {
-                Ok(_) => {
-                    self.extract_server_binary(
-                        &dst_path,
-                        &tmp_path_gz,
-                        &remote_dir_for_server,
-                        delegate,
-                        cx,
-                    )
-                    .await
-                    .context("extracting server binary")?;
-                    return Ok(dst_path.into());
-                }
-                Err(e) => {
-                    log::error!(
-                        "Failed to download binary on server, attempting to download locally and then upload it the server: {e:#}",
-                    )
-                }
+                self.extract_server_binary(
+                    &dst_path,
+                    &tmp_path_gz,
+                    &remote_dir_for_server,
+                    delegate,
+                    cx,
+                )
+                .await
+                .context("extracting server binary")?;
+                return Ok(dst_path.into());
             }
         }
 
-        let src_path = delegate
-            .download_server_binary_locally(remote_platform, release_channel, wanted_version, cx)
-            .await
-            .context("downloading server binary locally")?;
+        let src_path = if let Some(path) = cached_binary {
+            path
+        } else {
+            delegate
+                .download_server_binary_locally(
+                    RemoteConnectionOptions::Docker(self.connection_options.clone())
+                        .download_host(),
+                    remote_platform,
+                    release_channel,
+                    wanted_version,
+                    cx,
+                )
+                .await
+                .context("downloading server binary locally")?
+        };
         self.upload_local_server_binary(
             &src_path,
             &tmp_path_gz,
@@ -586,6 +605,12 @@ impl DockerExecConnection {
             .await?;
         }
 
+        let request = crate::DownloadRequest {
+            host: RemoteConnectionOptions::Docker(self.connection_options.clone()).download_host(),
+            purpose: format!("Remote development server from {url}"),
+        };
+        let authorization = delegate.authorize_download(request.clone(), cx).await?;
+        authorization.check(&request, cx)?;
         delegate.set_status(Some("Downloading remote development server on host"), cx);
 
         match self
@@ -605,11 +630,12 @@ impl DockerExecConnection {
         {
             Ok(_) => {}
             Err(e) => {
-                if self
+                let curl_available = self
                     .run_docker_exec("which", None, &Default::default(), &["curl"])
                     .await
-                    .is_ok()
-                {
+                    .is_ok();
+                authorization.check(&request, cx)?;
+                if curl_available {
                     return Err(e);
                 }
 
@@ -625,11 +651,12 @@ impl DockerExecConnection {
                 {
                     Ok(_) => {}
                     Err(e) => {
-                        if self
+                        let wget_available = self
                             .run_docker_exec("which", None, &Default::default(), &["wget"])
                             .await
-                            .is_ok()
-                        {
+                            .is_ok();
+                        authorization.check(&request, cx)?;
+                        if wget_available {
                             return Err(e);
                         } else {
                             anyhow::bail!("Neither curl nor wget is available");

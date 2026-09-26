@@ -42,7 +42,9 @@ use node_runtime::NodeRuntime;
 use project::{
     CompletionSource, LanguageServerLogType, ProgressToken, Project, ProjectPath,
     agent_server_store::AgentServerCommand,
-    binary_downloads::{self, BinaryDownloads, ToolInstall},
+    binary_downloads::{
+        self, BinaryDownloads, DownloadGate, PendingToolInstall, ToolInstall, ToolInstallOrigin,
+    },
     image_store,
     lsp_store::log_store::{
         GlobalLogStore, LanguageServerKind, LanguageServerLogKey, LogKind, LogStore,
@@ -5643,6 +5645,7 @@ async fn test_log_store_keys_remote_events_by_primary_kind_on_supplementary_id_c
 async fn test_remote_binary_download_one_off_approvals(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
+    other_server_cx: &mut TestAppContext,
 ) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
@@ -5684,6 +5687,26 @@ async fn test_remote_binary_download_one_off_approvals(
     cx.run_until_parked();
     let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
 
+    let other_fs = FakeFs::new(other_server_cx.executor());
+    other_fs
+        .insert_tree(path!("/code/project1"), json!({"README.md": ""}))
+        .await;
+    other_server_cx.update(binary_downloads::init);
+    let (other_project, _other_headless) = init_test(&other_fs, cx, other_server_cx).await;
+    other_server_cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.allow_binary_downloads = Some(false);
+            });
+        });
+    });
+    let other_store = other_server_cx.update(|cx| BinaryDownloads::try_get_global(cx).unwrap());
+    let other_wait = other_store
+        .update(other_server_cx, |store, cx| {
+            store.request_tool_install(None, "copilot", cx)
+        })
+        .unwrap();
+
     let server_store = server_cx.update(|cx| BinaryDownloads::try_get_global(cx).unwrap());
     let client_store = cx.update(|cx| BinaryDownloads::try_get_global(cx).unwrap());
 
@@ -5699,7 +5722,12 @@ async fn test_remote_binary_download_one_off_approvals(
         .expect("a global install request must be blocked while downloads are disabled");
     cx.run_until_parked();
 
-    let mut pending = client_store.read_with(cx, |store, _| store.pending_tool_installs());
+    let local_wait = client_store
+        .update(cx, |store, cx| {
+            store.request_tool_install(None, "copilot", cx)
+        })
+        .unwrap();
+    let mut pending = pending_remote_installs(&project, cx);
     pending.sort_by(|a, b| a.tool.cmp(&b.tool));
     assert_eq!(
         pending,
@@ -5718,9 +5746,11 @@ async fn test_remote_binary_download_one_off_approvals(
     assert_eq!(*worktree_wait.borrow(), false);
     assert_eq!(*global_wait.borrow(), false);
 
-    client_store.update(cx, |store, cx| {
-        store.approve_tool_install(Some(worktree_id), "rust-analyzer", cx);
-        store.approve_tool_install(None, "copilot", cx);
+    let origin = project.read_with(cx, |project, _| project.worktree_store().downgrade());
+    client_store.update(cx, |store, _| {
+        for install in &pending {
+            store.approve_remote_tool_install(&origin, install).unwrap();
+        }
     });
     cx.run_until_parked();
 
@@ -5739,11 +5769,73 @@ async fn test_remote_binary_download_one_off_approvals(
         Vec::new(),
         "approvals should resolve the host-side pending installs"
     );
+    assert_eq!(pending_remote_installs(&project, cx), Vec::new());
+    assert!(!*local_wait.borrow());
+    assert!(!*other_wait.borrow());
+    let other_pending = pending_remote_installs(&other_project, cx);
     assert_eq!(
-        client_store.read_with(cx, |store, _| store.pending_tool_installs()),
-        Vec::new(),
-        "resolved installs should clear the client-side mirror"
+        other_pending,
+        vec![ToolInstall {
+            worktree_id: None,
+            tool: "copilot".into(),
+        }]
     );
+    client_store.read_with(cx, |store, cx| {
+        assert!(!store.tool_download_allowed(None, "copilot", cx));
+        assert_eq!(store.pending_tool_installs(), other_pending);
+    });
+    client_store.update(cx, |store, cx| {
+        store.approve_tool_install(None, "copilot", cx);
+    });
+    cx.run_until_parked();
+    assert!(*local_wait.borrow());
+    assert!(!*other_wait.borrow());
+    assert_eq!(pending_remote_installs(&other_project, cx), other_pending);
+    let other_origin =
+        other_project.read_with(cx, |project, _| project.worktree_store().downgrade());
+    client_store.update(cx, |store, _| {
+        store
+            .approve_remote_tool_install(&other_origin, &other_pending[0])
+            .unwrap();
+    });
+    cx.run_until_parked();
+    assert!(*other_wait.borrow());
+    assert_eq!(pending_remote_installs(&other_project, cx), Vec::new());
+
+    let gate = cx.update(|cx| DownloadGate::new(Some(worktree_id), cx).unwrap());
+    assert!(!gate.permit("remote-launch").await);
+    project.read_with(cx, |project, cx| {
+        assert_eq!(
+            client_store
+                .read(cx)
+                .pending_tool_installs_for_project(project, cx),
+            vec![PendingToolInstall {
+                install: ToolInstall {
+                    worktree_id: Some(worktree_id),
+                    tool: "remote-launch".into()
+                },
+                origin: ToolInstallOrigin::Local,
+            }]
+        );
+    });
+    let abandoned = client_store.update(cx, |store, cx| {
+        store.approve_tool_install(Some(worktree_id), "remote-launch", cx);
+        store
+            .request_tool_install(Some(worktree_id), "abandoned-launch", cx)
+            .unwrap()
+    });
+    assert!(gate.is_allowed("remote-launch").await);
+    assert!(
+        !server_store.read_with(server_cx, |store, cx| store.tool_download_allowed(
+            Some(worktree_id),
+            "remote-launch",
+            cx
+        ))
+    );
+    cx.update(|_| drop(project));
+    cx.run_until_parked();
+    assert!(!gate.is_allowed("remote-launch").await);
+    assert!(!binary_downloads::await_downloads_allowed(Some(abandoned), "abandoned-launch").await);
 }
 
 #[gpui::test]
@@ -5790,7 +5882,7 @@ async fn test_remote_pending_tool_installs_survive_reconnect(
     });
     cx.run_until_parked();
     assert_eq!(
-        client_store.read_with(cx, |store, _| store.pending_tool_installs()),
+        pending_remote_installs(&project, cx),
         vec![ToolInstall {
             worktree_id: None,
             tool: "tool-before-disconnect".into(),
@@ -5802,7 +5894,7 @@ async fn test_remote_pending_tool_installs_survive_reconnect(
         store.set_remote_pending_installs(worktree_store, Vec::new(), cx);
     });
     assert_eq!(
-        client_store.read_with(cx, |store, _| store.pending_tool_installs()),
+        pending_remote_installs(&project, cx),
         Vec::new(),
         "the client mirror is out of sync with the host before reconnecting"
     );
@@ -5814,7 +5906,7 @@ async fn test_remote_pending_tool_installs_survive_reconnect(
     cx.run_until_parked();
 
     assert_eq!(
-        client_store.read_with(cx, |store, _| store.pending_tool_installs()),
+        pending_remote_installs(&project, cx),
         vec![ToolInstall {
             worktree_id: None,
             tool: "tool-before-disconnect".into(),
@@ -5900,4 +5992,17 @@ fn build_project(ssh: Entity<RemoteClient>, cx: &mut TestAppContext) -> Entity<P
     });
 
     cx.update(|cx| Project::remote(ssh, client, node, user_store, languages, fs, false, cx))
+}
+
+fn pending_remote_installs(project: &Entity<Project>, cx: &TestAppContext) -> Vec<ToolInstall> {
+    project.read_with(cx, |project, cx| {
+        BinaryDownloads::try_get_global(cx)
+            .unwrap()
+            .read(cx)
+            .pending_tool_installs_for_project(project, cx)
+            .into_iter()
+            .filter(|pending| pending.origin != ToolInstallOrigin::Local)
+            .map(|pending| pending.install)
+            .collect()
+    })
 }

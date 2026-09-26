@@ -9,8 +9,12 @@ use gpui::{
     ParentElement as _, Render, SharedString, Task, TextStyleRefinement, WeakEntity,
 };
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
+use project::binary_downloads::{BinaryDownloads, tool_download_allowed};
 use release_channel::ReleaseChannel;
-use remote::{ConnectionIdentifier, RemoteClient, RemoteConnectionOptions, RemotePlatform};
+use remote::{
+    ConnectionIdentifier, DownloadAuthorization, DownloadDenied, DownloadRequest, RemoteClient,
+    RemoteConnectionOptions, RemotePlatform,
+};
 use semver::Version;
 use settings::Settings;
 use theme_settings::ThemeSettings;
@@ -460,6 +464,28 @@ impl RemoteClientDelegate {
 }
 
 impl remote::RemoteClientDelegate for RemoteClientDelegate {
+    fn download_allowed(&self, request: &DownloadRequest, cx: &App) -> bool {
+        download_allowed(request, cx)
+    }
+
+    fn cached_server_binary_locally(
+        &self,
+        platform: RemotePlatform,
+        release_channel: ReleaseChannel,
+        version: Option<Version>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<Option<PathBuf>>> {
+        cached_server_binary_locally(platform, release_channel, version, cx)
+    }
+
+    fn authorize_download(
+        &self,
+        request: DownloadRequest,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<DownloadAuthorization, DownloadDenied>> {
+        authorize_download(Some(self.window), request, cx)
+    }
+
     fn ask_password(
         &self,
         prompt: String,
@@ -487,12 +513,14 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
 
     fn download_server_binary_locally(
         &self,
+        host: String,
         platform: RemotePlatform,
         release_channel: ReleaseChannel,
         version: Option<Version>,
         cx: &mut AsyncApp,
     ) -> Task<anyhow::Result<PathBuf>> {
         let this = self.clone();
+        let window = self.window;
         cx.spawn(async move |cx| {
             AutoUpdater::download_remote_server_release(
                 release_channel,
@@ -500,6 +528,18 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
                 platform.os.as_str(),
                 platform.arch.as_str(),
                 move |status, cx| this.set_status(Some(status), cx),
+                async |release, cx| {
+                    let request = DownloadRequest {
+                        host: host.clone(),
+                        purpose: format!(
+                            "Remote development server {} ({}, {}) from {}",
+                            release.version, platform.os, platform.arch, release.url
+                        ),
+                    };
+                    let authorization =
+                        authorize_download(Some(window), request.clone(), cx).await?;
+                    authorization.check(&request, cx)
+                },
                 cx,
             )
             .await
@@ -637,6 +677,28 @@ pub fn connect_reusing_pool(
 struct BackgroundRemoteClientDelegate;
 
 impl remote::RemoteClientDelegate for BackgroundRemoteClientDelegate {
+    fn download_allowed(&self, request: &DownloadRequest, cx: &App) -> bool {
+        download_allowed(request, cx)
+    }
+
+    fn cached_server_binary_locally(
+        &self,
+        platform: RemotePlatform,
+        release_channel: ReleaseChannel,
+        version: Option<Version>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<Option<PathBuf>>> {
+        cached_server_binary_locally(platform, release_channel, version, cx)
+    }
+
+    fn authorize_download(
+        &self,
+        request: DownloadRequest,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<DownloadAuthorization, DownloadDenied>> {
+        authorize_download(None, request, cx)
+    }
+
     fn ask_password(
         &self,
         prompt: String,
@@ -654,6 +716,7 @@ impl remote::RemoteClientDelegate for BackgroundRemoteClientDelegate {
 
     fn download_server_binary_locally(
         &self,
+        host: String,
         platform: RemotePlatform,
         release_channel: ReleaseChannel,
         version: Option<Version>,
@@ -666,6 +729,17 @@ impl remote::RemoteClientDelegate for BackgroundRemoteClientDelegate {
                 platform.os.as_str(),
                 platform.arch.as_str(),
                 |_status, _cx| {},
+                async |release, cx| {
+                    let request = DownloadRequest {
+                        host: host.clone(),
+                        purpose: format!(
+                            "Remote development server {} ({}, {}) from {}",
+                            release.version, platform.os, platform.arch, release.url
+                        ),
+                    };
+                    let authorization = authorize_download(None, request.clone(), cx).await?;
+                    authorization.check(&request, cx)
+                },
                 cx,
             )
             .await
@@ -736,6 +810,70 @@ pub fn connect(
 
         cx.update(|cx| remote::RemoteClient::new(unique_identifier, connection, rx, delegate, cx))
             .await
+    })
+}
+
+fn cached_server_binary_locally(
+    platform: RemotePlatform,
+    release_channel: ReleaseChannel,
+    version: Option<Version>,
+    cx: &mut AsyncApp,
+) -> Task<Result<Option<PathBuf>>> {
+    cx.spawn(async move |cx| {
+        AutoUpdater::cached_remote_server_release(
+            release_channel,
+            version,
+            platform.os.as_str(),
+            platform.arch.as_str(),
+            cx,
+        )
+        .await
+    })
+}
+
+fn download_allowed(request: &DownloadRequest, cx: &App) -> bool {
+    BinaryDownloads::try_get_global(cx).is_some()
+        && tool_download_allowed(None, format!("{} on {}", request.purpose, request.host), cx)
+}
+
+fn authorize_download(
+    window: Option<AnyWindowHandle>,
+    request: DownloadRequest,
+    cx: &mut AsyncApp,
+) -> Task<Result<DownloadAuthorization, DownloadDenied>> {
+    cx.spawn(async move |cx| {
+        let key = format!("{} on {}", request.purpose, request.host);
+        if cx.update(|cx| download_allowed(&request, cx)) {
+            let authorized_request = request.clone();
+            return Ok(DownloadAuthorization::new(request, move |cx| {
+                cx.update(|cx| download_allowed(&authorized_request, cx))
+            }));
+        }
+        let window = window.or_else(|| {
+            cx.update(|cx| cx.active_window().or_else(|| cx.windows().first().copied()))
+        });
+        let Some(window) = window else {
+            return Err(DownloadDenied(key));
+        };
+        let detail = format!(
+            "Host: {}\nPurpose: {}\n\nAllow downloads for this operation only?",
+            request.host, request.purpose
+        );
+        let response = window
+            .update(cx, |_, window, cx| {
+                window.prompt(
+                    gpui::PromptLevel::Warning,
+                    "Allow remote bootstrap downloads?",
+                    Some(&detail),
+                    &["Download for This Operation", "Cancel"],
+                    cx,
+                )
+            })
+            .map_err(|_| DownloadDenied(key.clone()))?;
+        if response.await.ok() != Some(0) {
+            return Err(DownloadDenied(key));
+        }
+        Ok(DownloadAuthorization::new(request, |_| true))
     })
 }
 
@@ -840,6 +978,90 @@ mod tests {
         cx.run_until_parked();
 
         assert!(prompt.read_with(cx, |prompt, _| prompt.prompt.is_some()));
+    }
+
+    #[gpui::test]
+    async fn bootstrap_consent_is_explicit_and_host_scoped(cx: &mut TestAppContext) {
+        initialize_test(cx);
+        cx.update(|cx| {
+            project::binary_downloads::init(cx);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.allow_binary_downloads = Some(false)
+                });
+            });
+        });
+        let window = cx.add_window(|window, cx| Editor::single_line(window, cx));
+        let request = DownloadRequest {
+            host: "SSH user@example.com:2222".to_string(),
+            purpose: "Remote development server 1.0.0".to_string(),
+        };
+        for answer in ["Cancel", "Download for This Operation"] {
+            let mut async_cx = cx.to_async();
+            let authorization =
+                authorize_download(Some(window.into()), request.clone(), &mut async_cx);
+            cx.run_until_parked();
+            assert_eq!(cx.pending_prompt(), Some((
+                "Allow remote bootstrap downloads?".to_string(),
+                "Host: SSH user@example.com:2222\nPurpose: Remote development server 1.0.0\n\nAllow downloads for this operation only?".to_string(),
+            )));
+            cx.simulate_prompt_answer(answer);
+            let result = authorization.await;
+            if answer == "Cancel" {
+                assert_eq!(
+                    result.err().unwrap().to_string(),
+                    "Download not authorized: Remote development server 1.0.0 on SSH user@example.com:2222"
+                );
+            } else {
+                let authorization = result.unwrap();
+                authorization.check(&request, &mut async_cx).unwrap();
+                let other_host = DownloadRequest {
+                    host: "SSH another-host".to_string(),
+                    ..request.clone()
+                };
+                assert!(authorization.check(&other_host, &mut async_cx).is_err());
+                let other_purpose = DownloadRequest {
+                    purpose: "Rust target installation".to_string(),
+                    ..request.clone()
+                };
+                assert!(authorization.check(&other_purpose, &mut async_cx).is_err());
+            }
+            assert!(!cx.update(|cx| download_allowed(&request, cx)));
+        }
+    }
+
+    #[gpui::test]
+    async fn bootstrap_setting_authority_is_revocable(cx: &mut TestAppContext) {
+        initialize_test(cx);
+        cx.update(project::binary_downloads::init);
+        let request = DownloadRequest {
+            host: "Docker project (abc123, user: dev)".to_string(),
+            purpose: "Remote development server 1.0.0".to_string(),
+        };
+        let mut async_cx = cx.to_async();
+        let authorization = authorize_download(None, request.clone(), &mut async_cx)
+            .await
+            .unwrap();
+        assert!(!cx.has_pending_prompt());
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.allow_binary_downloads = Some(false)
+                });
+            })
+        });
+        assert_eq!(
+            authorization
+                .check(&request, &mut async_cx)
+                .unwrap_err()
+                .to_string(),
+            "Download not authorized: Remote development server 1.0.0 on Docker project (abc123, user: dev)"
+        );
+        assert!(
+            authorize_download(None, request, &mut async_cx)
+                .await
+                .is_err()
+        );
     }
 
     fn initialize_test(cx: &mut TestAppContext) {

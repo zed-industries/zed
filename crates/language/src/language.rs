@@ -37,7 +37,7 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
 use futures::Future;
-use futures::future::LocalBoxFuture;
+use futures::future::{BoxFuture, LocalBoxFuture};
 use futures::lock::OwnedMutexGuard;
 use gpui::{App, AsyncApp, Entity, EntityId};
 use http_client::HttpClient;
@@ -99,6 +99,7 @@ pub use toolchain::{
     ToolchainMetadata, ToolchainScope,
 };
 use tree_sitter::{self, QueryCursor, WasmStore, wasmtime};
+pub use util::ToolPermissionDenied;
 use util::rel_path::RelPath;
 
 pub use available_languages::AvailableLanguage;
@@ -492,6 +493,23 @@ impl CachedLspAdapter {
 pub trait LspAdapterDelegate: Send + Sync {
     fn show_notification(&self, message: &str, cx: &mut App);
     fn http_client(&self) -> Arc<dyn HttpClient>;
+    fn tool_permission(&self, name: LanguageServerName) -> ToolPermission;
+    fn tool_install_gate(&self, name: LanguageServerName) -> ToolInstallGate {
+        let permission = self.tool_permission(name);
+        Arc::new(move |_| {
+            let permission = permission.clone();
+            async move { permission().await.is_ok() }.boxed()
+        })
+    }
+    fn http_client_for_tool(&self, name: LanguageServerName) -> Arc<dyn HttpClient> {
+        Arc::new(ToolHttpClient {
+            client: self.http_client(),
+            permission: self.tool_permission(name),
+        })
+    }
+    async fn authorize_tool(&self, name: &LanguageServerName) -> Result<()> {
+        self.tool_permission(name.clone())().await
+    }
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
     fn resolve_relative_path(&self, path: PathBuf) -> PathBuf;
@@ -502,13 +520,18 @@ pub trait LspAdapterDelegate: Send + Sync {
 
     async fn npm_package_installed_version(
         &self,
+        tool: &LanguageServerName,
         package_name: &str,
     ) -> Result<Option<(PathBuf, Version)>>;
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
     async fn shell_env(&self) -> HashMap<String, String>;
     async fn read_text_file(&self, path: &RelPath) -> Result<String>;
-    async fn try_exec(&self, binary: LanguageServerBinary) -> Result<()>;
+    async fn try_exec(&self, tool: &LanguageServerName, binary: LanguageServerBinary)
+    -> Result<()>;
 }
+
+pub type ToolInstallGate = Arc<dyn Fn(String) -> BoxFuture<'static, bool> + Send + Sync>;
+pub type ToolPermission = Arc<dyn Fn() -> BoxFuture<'static, Result<()>> + Send + Sync>;
 
 #[async_trait(?Send)]
 pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
@@ -1728,11 +1751,89 @@ fn test_language(name: &str, grammar: tree_sitter::Language) -> Arc<Language> {
     )
 }
 
+struct ToolHttpClient {
+    client: Arc<dyn HttpClient>,
+    permission: ToolPermission,
+}
+
+impl HttpClient for ToolHttpClient {
+    fn user_agent(&self) -> Option<&http_client::http::HeaderValue> {
+        self.client.user_agent()
+    }
+
+    fn proxy(&self) -> Option<&http_client::Url> {
+        self.client.proxy()
+    }
+
+    fn send(
+        &self,
+        request: http_client::Request<http_client::AsyncBody>,
+    ) -> BoxFuture<'static, Result<http_client::Response<http_client::AsyncBody>>> {
+        let client = self.client.clone();
+        let permission = self.permission.clone();
+        async move {
+            permission().await?;
+            client.send(request).await
+        }
+        .boxed()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use gpui::{TestAppContext, rgba};
     use pretty_assertions::assert_matches;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    #[gpui::test]
+    async fn test_tool_http_client_rechecks_permission_before_send() {
+        let allowed = Arc::new(AtomicBool::new(true));
+        let requests = Arc::new(AtomicUsize::new(0));
+        let client = ToolHttpClient {
+            client: http_client::FakeHttpClient::create({
+                let requests = requests.clone();
+                move |_| {
+                    requests.fetch_add(1, Ordering::SeqCst);
+                    async { Ok(http_client::Response::new(http_client::AsyncBody::empty())) }
+                }
+            }),
+            permission: Arc::new({
+                let allowed = allowed.clone();
+                move || {
+                    let allowed = allowed.clone();
+                    async move {
+                        if allowed.load(Ordering::SeqCst) {
+                            Ok(())
+                        } else {
+                            Err(anyhow::Error::new(ToolPermissionDenied(
+                                "test-server".to_string(),
+                            )))
+                        }
+                    }
+                    .boxed()
+                }
+            }),
+        };
+        let request = client.get(
+            "https://example.invalid/server",
+            http_client::AsyncBody::empty(),
+            true,
+        );
+        allowed.store(false, Ordering::SeqCst);
+        assert!(request.await.err().unwrap().is::<ToolPermissionDenied>());
+        assert_eq!(requests.load(Ordering::SeqCst), 0);
+        allowed.store(true, Ordering::SeqCst);
+        client
+            .get(
+                "https://example.invalid/server",
+                http_client::AsyncBody::empty(),
+                true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+    }
 
     #[test]
     fn test_highlight_map() {

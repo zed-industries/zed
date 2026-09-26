@@ -8,10 +8,11 @@ use dap::{
     },
 };
 use fs::Fs;
-use gpui::{AsyncApp, SharedString};
+use gpui::{AsyncApp, BackgroundExecutor, SharedString};
 use language::LanguageName;
 use log::warn;
 use serde_json::{Map, Value};
+use smol::lock::OnceCell;
 use task::TcpArgumentsTemplate;
 use util;
 
@@ -20,14 +21,13 @@ use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::OnceLock,
 };
 
 use crate::*;
 
 #[derive(Default, Debug)]
 pub(crate) struct GoDebugAdapter {
-    shim_path: OnceLock<PathBuf>,
+    shim_path: OnceCell<PathBuf>,
 }
 
 impl GoDebugAdapter {
@@ -66,22 +66,24 @@ impl GoDebugAdapter {
             url: asset.browser_download_url.clone(),
         })
     }
-    async fn install_shim(&self, delegate: &Arc<dyn DapDelegate>) -> anyhow::Result<PathBuf> {
-        if let Some(path) = self.shim_path.get().cloned() {
-            return Ok(path);
-        }
-
+    async fn install_shim(
+        &self,
+        delegate: &Arc<dyn DapDelegate>,
+        executor: &BackgroundExecutor,
+    ) -> anyhow::Result<PathBuf> {
         let binary_name = format!("delve-shim-dap{}", consts::EXE_SUFFIX);
 
-        let path = adapters::get_or_download_adapter(
+        adapters::get_or_download_adapter(
             "delve-shim-dap",
             delegate,
             async {
-                let version_dir =
-                    adapters::latest_installed_version_path("delve-shim-dap", delegate.as_ref())
-                        .await?;
-                let candidate = version_dir.join(&binary_name);
-                delegate.fs().is_file(&candidate).await.then_some(candidate)
+                let version_dir = adapters::latest_installed_version_path(
+                    "delve-shim-dap",
+                    Path::new(&binary_name),
+                    delegate.as_ref(),
+                )
+                .await?;
+                Some(version_dir.join(&binary_name))
             },
             async {
                 let asset = Self::fetch_latest_adapter_version(delegate).await?;
@@ -94,17 +96,16 @@ impl GoDebugAdapter {
                     DebugAdapterName::from("delve-shim-dap"),
                     asset,
                     ty,
+                    Path::new(&binary_name),
                     delegate.as_ref(),
                 )
                 .await?;
                 Ok(version_path.join(&binary_name))
             },
-            None,
+            &self.shim_path,
+            executor,
         )
-        .await?;
-        self.shim_path.set(path.clone()).ok();
-
-        Ok(path)
+        .await
     }
 }
 
@@ -423,7 +424,7 @@ impl DebugAdapter for GoDebugAdapter {
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
         user_env: Option<HashMap<String, String>>,
-        _cx: &mut AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
         let dlv_binary = format!("dlv{}", consts::EXE_SUFFIX);
@@ -450,6 +451,7 @@ impl DebugAdapter for GoDebugAdapter {
             let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
 
             let install_output = util::command::new_command(&go)
+                .kill_on_drop(true)
                 .env("GO111MODULE", "on")
                 .env("GOBIN", &adapter_path)
                 .args(&["install", "github.com/go-delve/delve/cmd/dlv@latest"])
@@ -511,7 +513,9 @@ impl DebugAdapter for GoDebugAdapter {
                 timeout,
             });
         } else {
-            let minidelve_path = self.install_shim(delegate).await?;
+            let minidelve_path = self
+                .install_shim(delegate, cx.background_executor())
+                .await?;
             let (host, port, _) =
                 crate::configure_tcp_connection(TcpArgumentsTemplate::default()).await?;
             command = Some(minidelve_path.to_string_lossy().into_owned());

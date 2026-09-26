@@ -423,26 +423,41 @@ async fn run_terminal_tool(
     let selection = input.selection;
     let sandbox_input = input.sandbox.clone().unwrap_or_default();
 
-    let (working_dir, authorize, sandboxing, is_local_project, wsl_zed_release) =
-        cx.update(|cx| {
-            let working_dir =
-                working_dir(&input.cd, &project, cx).map_err(|err| err.to_string())?;
-            let context =
-                crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
-            let authorize =
-                event_stream.authorize(SharedString::new(input.command.clone()), context, cx);
-            let sandboxing =
-                input.sandbox.is_some() && sandboxing_enabled_for_project(project.read(cx), cx);
-            let is_local_project = project.read(cx).is_local();
-            let wsl_zed_release = wsl_zed_release(cx);
-            Result::<_, String>::Ok((
-                working_dir,
-                authorize,
-                sandboxing,
-                is_local_project,
-                wsl_zed_release,
-            ))
-        })?;
+    let (
+        working_dir,
+        authorize,
+        sandboxing,
+        is_local_project,
+        wsl_zed_release,
+        wsl_helper_download_consent,
+    ) = cx.update(|cx| {
+        let working_dir = working_dir(&input.cd, &project, cx).map_err(|err| err.to_string())?;
+        let context =
+            crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
+        let authorize =
+            event_stream.authorize(SharedString::new(input.command.clone()), context, cx);
+        let sandboxing =
+            input.sandbox.is_some() && sandboxing_enabled_for_project(project.read(cx), cx);
+        let is_local_project = project.read(cx).is_local();
+        let wsl_zed_release = wsl_zed_release(cx);
+        let wsl_helper_download_consent = if sandboxing && cfg!(target_os = "windows") {
+            let worktree_id = working_dir
+                .as_deref()
+                .and_then(|directory| project.read(cx).find_worktree(directory, cx))
+                .map(|(worktree, _)| worktree.read(cx).id());
+            acp_thread::WslHelperDownloadConsent::new(worktree_id, cx)
+        } else {
+            acp_thread::WslHelperDownloadConsent::default()
+        };
+        Result::<_, String>::Ok((
+            working_dir,
+            authorize,
+            sandboxing,
+            is_local_project,
+            wsl_zed_release,
+            wsl_helper_download_consent,
+        ))
+    })?;
 
     authorize.await.map_err(|e| e.to_string())?;
 
@@ -599,23 +614,26 @@ async fn run_terminal_tool(
         let Some(release) = wsl_zed_release.clone() else {
             return Err("Could not select a Linux Zed release for WSL sandboxing".to_string());
         };
+        let download_gate = wsl_helper_download_consent.download_gate();
         let mut resolved_paths = Vec::with_capacity(write_paths.len());
         for requested in write_paths {
-            match sandbox::resolve_canonical_for_grant(requested.clone(), release.clone()).await {
-                Ok(resolved) => {
-                    resolved_paths.push(settings::GrantedWritePath::resolved_on_fs(
-                        requested,
-                        resolved.canonical,
-                        resolved.on_windows_fs,
-                    ));
-                }
-                Err(error) => {
-                    log::warn!(
-                        "could not resolve sandbox write path {} in WSL: {error:#}",
-                        requested.display()
-                    );
-                }
-            }
+            let resolved = sandbox::resolve_canonical_for_grant_with_download_gate(
+                requested.clone(),
+                release.clone(),
+                Some(&download_gate),
+            )
+            .await
+            .map_err(|error| {
+                format!(
+                    "Cannot resolve sandbox write path {} in WSL: {error:#}",
+                    requested.display()
+                )
+            })?;
+            resolved_paths.push(settings::GrantedWritePath::resolved_on_fs(
+                requested,
+                resolved.canonical,
+                resolved.on_windows_fs,
+            ));
         }
         resolved_paths
     };
@@ -748,6 +766,7 @@ async fn run_terminal_tool(
                 allow_fs_write: effective.allow_fs_write_all,
                 is_local: is_local_project,
                 wsl_zed_release: wsl_zed_release.clone(),
+                wsl_helper_download_consent: wsl_helper_download_consent.clone(),
             };
 
             // The viability check runs a brief probe subprocess, so do it off
@@ -879,14 +898,8 @@ async fn run_terminal_tool(
             // sandbox-creation problem the user can act on. A bad request (a
             // missing writable path, mixed distros) — or any failure once we're
             // already running unsandboxed — goes straight back to the model.
-            let Some(message) = effective_wrap.as_ref().and_then(|_| {
-                error
-                    .downcast_ref::<sandbox::SandboxError>()
-                    .and_then(|error| match error {
-                        sandbox::SandboxError::WslUnavailable(message) => Some(message.clone()),
-                        _ => None,
-                    })
-            }) else {
+            let Some(message) = wsl_sandbox_fallback_message(&error, effective_wrap.is_some())
+            else {
                 return Err(format!("{error:#}"));
             };
             let sandbox_error = acp_thread::LinuxWslSandboxError::Other(message);
@@ -1042,6 +1055,17 @@ async fn run_terminal_tool(
     } else {
         format!("{}\n\n{result}", notes.join("\n\n"))
     })
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn wsl_sandbox_fallback_message(error: &anyhow::Error, sandboxed: bool) -> Option<String> {
+    if !sandboxed {
+        return None;
+    }
+    match error.downcast_ref::<sandbox::SandboxError>() {
+        Some(sandbox::SandboxError::WslUnavailable(message)) => Some(message.clone()),
+        _ => None,
+    }
 }
 
 /// Resolve model-requested write paths into absolute paths.
@@ -1417,6 +1441,30 @@ fn resolve_cd_in_worktrees(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wsl_helper_download_denial_does_not_offer_unsandboxed_fallback() {
+        let message = "Download approval required for the WSL sandbox helper";
+        for error in [
+            sandbox::SandboxError::DownloadDenied(message.to_string()),
+            sandbox::SandboxError::Other(message.to_string()),
+        ] {
+            let denied = anyhow::Error::new(error).context("wrapping terminal");
+            assert_eq!(wsl_sandbox_fallback_message(&denied, true), None);
+        }
+        assert_eq!(
+            wsl_sandbox_fallback_message(&anyhow::anyhow!(message), true),
+            None
+        );
+        let unavailable = anyhow::Error::new(sandbox::SandboxError::WslUnavailable(
+            "WSL is unavailable".to_string(),
+        ));
+        assert_eq!(
+            wsl_sandbox_fallback_message(&unavailable, true),
+            Some("WSL is unavailable".to_string())
+        );
+        assert_eq!(wsl_sandbox_fallback_message(&unavailable, false), None);
+    }
 
     #[test]
     fn test_resolve_cd_uses_project_path_style() {
