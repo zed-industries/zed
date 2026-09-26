@@ -16,7 +16,8 @@ use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockPosition, DockSide, IntoGpui, LanguageModelParameters, LanguageModelSelection,
+    DockPosition, DockSide, ImageReadMode, IntoGpui, LanguageModelParameters,
+    LanguageModelSelection,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
     SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
     update_settings_file, update_settings_file_with_completion,
@@ -242,6 +243,7 @@ pub struct AgentSettings {
     pub expand_terminal_card: bool,
     pub terminal_init_command: Option<String>,
     pub thinking_display: ThinkingBlockDisplay,
+    pub image_read_mode: ImageReadMode,
     pub cancel_generation_on_terminal_stop: bool,
     pub use_modifier_to_send: bool,
     pub message_editor_min_lines: usize,
@@ -261,6 +263,17 @@ pub struct ThreadsSidebarSettings {
 impl AgentSettings {
     pub fn enabled(&self, cx: &App) -> bool {
         self.enabled && !DisableAiSettings::get_global(cx).disable_ai
+    }
+
+    /// The maximum length, in pixels, of the longest side of images sent to
+    /// the model, or `None` to keep the original dimensions.
+    pub fn image_max_dimension(&self) -> Option<u32> {
+        match self.image_read_mode {
+            ImageReadMode::Small => Some(768),
+            ImageReadMode::Standard => Some(language_model::DEFAULT_IMAGE_MAX_DIMENSION),
+            ImageReadMode::Large => Some(2576),
+            ImageReadMode::Original => None,
+        }
     }
 
     pub fn temperature_for_model(model: &LanguageModel, cx: &App) -> Option<f32> {
@@ -837,6 +850,7 @@ impl Settings for AgentSettings {
                 .terminal_init_command
                 .filter(|command| !command.trim().is_empty()),
             thinking_display: agent.thinking_display.unwrap(),
+            image_read_mode: agent.image_read_mode.unwrap(),
             cancel_generation_on_terminal_stop: agent.cancel_generation_on_terminal_stop.unwrap(),
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),

@@ -126,6 +126,13 @@ pub const MIN_COMPACTION_CONTEXT_WINDOW: u64 = 80_000;
 // Using the heuristic that 1 token is about 4 bytes, keep the last 80K bytes of user-message content (~20k tokens).
 const COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET: usize = 80_000;
 
+/// Every turn resends the whole history, so images accumulate in the request until providers
+/// reject it as too large (Anthropic caps requests at 32 MB). Keep the newest images within
+/// this base64 budget, leaving headroom for the rest of the request, and omit older ones.
+const REQUEST_IMAGES_BASE64_BYTE_BUDGET: usize = 20 * 1024 * 1024;
+const IMAGE_OMITTED_FROM_REQUEST_MESSAGE: &str =
+    "[Image omitted from this request to keep it within the model provider's request size limit]";
+
 /// Returned when a turn is attempted but no language model has been selected.
 #[derive(Debug)]
 pub struct NoModelConfiguredError;
@@ -4396,6 +4403,7 @@ impl Thread {
             messages.extend(message.to_request());
         }
 
+        omit_images_over_budget(&mut messages, REQUEST_IMAGES_BASE64_BYTE_BUDGET);
         messages
     }
 
@@ -4569,7 +4577,11 @@ impl Thread {
             prompt_id: Some(self.prompt_id.to_string()),
             intent: Some(CompletionIntent::ThreadContextSummarization),
             temperature: AgentSettings::temperature_for_model(&model, cx),
-            messages: self.build_request_messages_until(Vec::new(), insertion_ix, cx),
+            messages: {
+                let mut messages = self.build_request_messages_until(Vec::new(), insertion_ix, cx);
+                omit_images_over_budget(&mut messages, REQUEST_IMAGES_BASE64_BYTE_BUDGET);
+                messages
+            },
             ..Default::default()
         };
 
@@ -4920,6 +4932,44 @@ pub(crate) fn messages_to_markdown(messages: &[Arc<Message>]) -> String {
         markdown.push_str(&message.to_markdown());
     }
     markdown
+}
+
+/// Replaces images with a text placeholder, oldest first, until the base64 payload of the
+/// remaining images fits within `budget`. Newer images are kept because they are more
+/// likely to be relevant to the current turn.
+fn omit_images_over_budget(messages: &mut [LanguageModelRequestMessage], budget: usize) {
+    let mut remaining_budget = budget;
+    let mut fits_budget = |image: &LanguageModelImage| {
+        if image.len() <= remaining_budget {
+            remaining_budget -= image.len();
+            true
+        } else {
+            false
+        }
+    };
+
+    for message in messages.iter_mut().rev() {
+        for content in message.content.iter_mut().rev() {
+            match content {
+                MessageContent::Image(image) => {
+                    if !fits_budget(image) {
+                        *content = MessageContent::Text(IMAGE_OMITTED_FROM_REQUEST_MESSAGE.into());
+                    }
+                }
+                MessageContent::ToolResult(tool_result) => {
+                    for part in tool_result.content.iter_mut().rev() {
+                        if let LanguageModelToolResultContent::Image(image) = part
+                            && !fits_budget(image)
+                        {
+                            *part =
+                                LanguageModelToolResultContent::Text(IMAGE_OMITTED_FROM_REQUEST_MESSAGE.into());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 fn extend_request_history_until(
@@ -6997,6 +7047,60 @@ mod tests {
     use serde_json::json;
     use settings::LanguageModelProviderSetting;
     use std::sync::Arc;
+
+    #[test]
+    fn omit_images_over_budget_keeps_newest_images() {
+        let image = |size: usize| LanguageModelImage {
+            source: "a".repeat(size).into(),
+        };
+        let placeholder = || MessageContent::Text(IMAGE_OMITTED_FROM_REQUEST_MESSAGE.into());
+        let tool_result = |content| {
+            MessageContent::ToolResult(LanguageModelToolResult {
+                tool_use_id: LanguageModelToolUseId::from("tool"),
+                tool_name: "read_file".into(),
+                is_error: false,
+                content,
+                output: None,
+            })
+        };
+        let user_message = |content| LanguageModelRequestMessage {
+            role: Role::User,
+            content,
+            cache: false,
+            reasoning_details: None,
+        };
+
+        let mut messages = vec![
+            user_message(vec![MessageContent::Image(image(4))]),
+            user_message(vec![tool_result(vec![
+                LanguageModelToolResultContent::Image(image(6)),
+            ])]),
+            user_message(vec![
+                MessageContent::Text("newest".into()),
+                MessageContent::Image(image(3)),
+            ]),
+        ];
+
+        omit_images_over_budget(&mut messages, 8);
+
+        assert_eq!(messages[0].content, vec![MessageContent::Image(image(4))]);
+        assert_eq!(
+            messages[1].content,
+            vec![tool_result(vec![LanguageModelToolResultContent::Text(
+                IMAGE_OMITTED_FROM_REQUEST_MESSAGE.into()
+            )])]
+        );
+        assert_eq!(
+            messages[2].content,
+            vec![
+                MessageContent::Text("newest".into()),
+                MessageContent::Image(image(3))
+            ]
+        );
+
+        omit_images_over_budget(&mut messages, 3);
+        assert_eq!(messages[0].content, vec![placeholder()]);
+    }
 
     #[test]
     fn compaction_capacity_respects_prompt_and_combined_limits() {

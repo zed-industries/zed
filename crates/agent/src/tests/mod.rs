@@ -2149,7 +2149,11 @@ async fn test_mcp_tool_multi_content_response(cx: &mut TestAppContext) {
         language_model::LanguageModelToolResultContent::Text(Arc::from("Some text"))
     );
     let expected_image =
-        language_model::LanguageModelImage::from_base64_image(image_data, "image/png")
+        language_model::LanguageModelImage::from_base64_image(
+            image_data,
+            "image/png",
+            Some(language_model::DEFAULT_IMAGE_MAX_DIMENSION),
+        )
             .expect("image conversion should not error")
             .expect("image conversion should succeed");
     assert_eq!(
