@@ -172,8 +172,14 @@ pub(crate) struct ViewTree {
     /// attached by `defer_draw` in priority order, then the prompt, drag overlay or
     /// tooltip. Walking them in order reproduces the frame. `roots` is the frame drawn
     /// last, which events are dispatched against; `next_roots` is the frame being drawn.
+    /// They are in prepaint order, which prepaints nested deferred draws in a round after
+    /// their owners'.
     roots: Vec<ViewNodeId>,
     next_roots: Vec<ViewNodeId>,
+    /// The same roots in paint order, which paints every deferred draw in one priority
+    /// order; walks visit paint output in this order.
+    paint_roots: Vec<ViewNodeId>,
+    next_paint_roots: Vec<ViewNodeId>,
     full_refresh: bool,
     /// Counts from one, so a phase that has never drawn (`text_frame` zero) is not
     /// mistaken for one drawn in the frame before the first.
@@ -215,6 +221,8 @@ impl ViewTree {
             invalidation_scratch: Vec::new(),
             roots: Vec::new(),
             next_roots: Vec::new(),
+            paint_roots: Vec::new(),
+            next_paint_roots: Vec::new(),
             full_refresh: true,
             frame: 1,
             #[cfg(test)]
@@ -464,10 +472,12 @@ impl ViewTree {
         }
     }
 
-    fn frame_roots(&self, frame: FrameOutput) -> &[ViewNodeId] {
-        match frame {
-            FrameOutput::Rendered => &self.roots,
-            FrameOutput::Next => &self.next_roots,
+    fn frame_roots(&self, frame: FrameOutput, phase: MetadataPhase) -> &[ViewNodeId] {
+        match (frame, phase) {
+            (FrameOutput::Rendered, MetadataPhase::Paint) => &self.paint_roots,
+            (FrameOutput::Rendered, _) => &self.roots,
+            (FrameOutput::Next, MetadataPhase::Paint) => &self.next_paint_roots,
+            (FrameOutput::Next, _) => &self.next_roots,
         }
     }
 
@@ -484,7 +494,7 @@ impl ViewTree {
             MetadataPhase::Prepaint,
             MetadataPhase::Paint,
         ] {
-            for root in self.frame_roots(frame) {
+            for root in self.frame_roots(frame, phase) {
                 if self.walk_output(*root, phase, &mut visit).is_break() {
                     return;
                 }
@@ -503,7 +513,7 @@ impl ViewTree {
             MetadataPhase::Prepaint,
             MetadataPhase::Layout,
         ] {
-            for root in self.frame_roots(frame).iter().rev() {
+            for root in self.frame_roots(frame, phase).iter().rev() {
                 if self.walk_output_rev(*root, phase, &mut visit).is_break() {
                     return;
                 }
@@ -846,7 +856,8 @@ impl ViewTree {
 
     /// Enters `phase` of `node`. Inside another node, records where the node's output of
     /// that phase belongs in the enclosing output; at the top level, the node is a root of
-    /// the frame, registered in drawing order when its prepaint is entered.
+    /// the frame, registered in drawing order when its prepaint is entered, and in paint
+    /// order when its paint is.
     fn splice(
         &mut self,
         node: ViewNodeId,
@@ -855,8 +866,15 @@ impl ViewTree {
         depth: usize,
     ) {
         if self.traversal_stack.is_empty() {
-            if phase == MetadataPhase::Prepaint && !self.next_roots.contains(&node) {
-                self.next_roots.push(node);
+            let roots = match phase {
+                MetadataPhase::Layout => None,
+                MetadataPhase::Prepaint => Some(&mut self.next_roots),
+                MetadataPhase::Paint => Some(&mut self.next_paint_roots),
+            };
+            if let Some(roots) = roots
+                && !roots.contains(&node)
+            {
+                roots.push(node);
             }
         } else {
             self.push(OutputItem::Child(node, phase));
@@ -1471,6 +1489,8 @@ impl ViewTree {
             }
         }
         self.next_roots = stale_roots;
+        std::mem::swap(&mut self.paint_roots, &mut self.next_paint_roots);
+        self.next_paint_roots.clear();
         self.full_refresh = false;
         self.frame_stats.live_nodes = self.nodes.len();
         self.frame_stats.frame_bound_scopes = self.frame_bound_count;
@@ -1489,6 +1509,8 @@ impl ViewTree {
         self.traversal_depths.clear();
         self.roots.clear();
         self.next_roots.clear();
+        self.paint_roots.clear();
+        self.next_paint_roots.clear();
         self.full_refresh = true;
         self.changed_bounds = None;
     }

@@ -1750,9 +1750,50 @@ mod tests {
         assert_eq!(sorted(&states), before);
     }
 
+    /// Deferred draws prepaint round by round, a nested one after its owner, but paint in
+    /// one priority order. Mouse listeners are registered at paint, so they bubble in
+    /// reverse paint order: here a nested deferred draw of lower priority is painted
+    /// first, under its owner, and hears the event after it.
+    #[gpui::test]
+    fn mouse_listeners_of_nested_deferred_draws_follow_paint_order(cx: &mut TestAppContext) {
+        struct Host(Rc<std::cell::RefCell<Vec<&'static str>>>);
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let layer = |name: &'static str, heard: &Rc<std::cell::RefCell<Vec<_>>>| {
+                    let heard = heard.clone();
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size(px(50.))
+                        .on_mouse_down(crate::MouseButton::Left, move |_, _, _| {
+                            heard.borrow_mut().push(name)
+                        })
+                };
+                div().size_full().child(
+                    deferred(
+                        layer("owner", &self.0)
+                            .child(deferred(layer("nested", &self.0)).with_priority(1)),
+                    )
+                    .with_priority(2),
+                )
+            }
+        }
+        let heard = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let window = cx.open_window(size(px(100.), px(100.)), |_, _| Host(heard.clone()));
+        cx.run_until_parked();
+        let mut visual = crate::VisualTestContext::from_window(window.into(), cx);
+        visual.simulate_mouse_down(
+            crate::point(px(10.), px(10.)),
+            crate::MouseButton::Left,
+            crate::Modifiers::default(),
+        );
+        assert_eq!(*heard.borrow(), ["owner", "nested"]);
+    }
+
     use crate::{
         App, Component, Context, Entity, FocusHandle, Render, StyleRefinement, TestAppContext,
-        Window, canvas, div, prelude::*, px, rgb, size,
+        Window, canvas, deferred, div, prelude::*, px, rgb, size,
     };
     use std::{cell::Cell, rc::Rc};
 
