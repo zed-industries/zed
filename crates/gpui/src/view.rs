@@ -1391,9 +1391,112 @@ mod tests {
         );
     }
 
+    /// `Window::transact` discards a prepaint that fails, as a list does when it scrolls and
+    /// lays its items out again. Views mounted by the failed attempt must be discarded with
+    /// it: the retry mounts them once, the frame commits only what the retry drew, and the
+    /// next frame reuses or rebuilds them like any other view.
+    #[gpui::test]
+    fn rolled_back_prepaint_is_not_committed(cx: &mut TestAppContext) {
+        struct Inner;
+        impl Render for Inner {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().key_context("Inner").size(px(10.)).bg(rgb(0x123456))
+            }
+        }
+        struct Leaf {
+            inner: Entity<Inner>,
+            color: u32,
+            renders: Rc<Cell<usize>>,
+        }
+        impl Render for Leaf {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders.set(self.renders.get() + 1);
+                div()
+                    .key_context("Leaf")
+                    .size(px(20.))
+                    .bg(rgb(self.color))
+                    .child(self.inner.clone())
+            }
+        }
+        struct Host {
+            leaf: Entity<Leaf>,
+            retry: bool,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let leaf = self.leaf.clone();
+                let retry = self.retry;
+                canvas(
+                    move |bounds, window, cx| {
+                        let draw = |window: &mut Window, cx: &mut App| {
+                            let mut element = leaf.clone().into_any_element();
+                            element.layout_as_root(bounds.size.into(), window, cx);
+                            element.prepaint_at(bounds.origin, window, cx);
+                            element
+                        };
+                        let attempt: Result<(), ()> = window.transact(|window| {
+                            draw(window, cx);
+                            Err(())
+                        });
+                        assert!(attempt.is_err());
+                        retry.then(|| draw(window, cx))
+                    },
+                    |_, element, window, cx| {
+                        if let Some(mut element) = element {
+                            element.paint(window, cx);
+                        }
+                    },
+                )
+                .size_full()
+            }
+        }
+        let renders = Rc::new(Cell::new(0));
+        let window = cx.open_window(size(px(100.), px(100.)), |_, cx| Host {
+            leaf: cx.new(|cx| Leaf {
+                inner: cx.new(|_| Inner),
+                color: 0x336699,
+                renders: renders.clone(),
+            }),
+            retry: true,
+        });
+        cx.run_until_parked();
+        let drawn = |cx: &mut TestAppContext| {
+            window
+                .update(cx, |_, window, _| {
+                    (
+                        window.rendered_frame.scene.quads.len(),
+                        window.rendered_frame.dispatch_tree.len(),
+                    )
+                })
+                .expect("window open")
+        };
+        let expected = drawn(cx);
+        assert_eq!(expected.0, 2, "the retry draws the leaf and its child once");
+        for (retry, notify_leaf) in [(true, false), (true, true), (false, true), (true, false)] {
+            window
+                .update(cx, |host, _, cx| {
+                    host.retry = retry;
+                    if notify_leaf {
+                        host.leaf.update(cx, |leaf, cx| {
+                            leaf.color += 1;
+                            cx.notify();
+                        });
+                    }
+                    cx.notify();
+                })
+                .expect("window open");
+            cx.run_until_parked();
+            if retry {
+                assert_eq!(drawn(cx), expected);
+            } else {
+                assert_eq!(drawn(cx).0, 0, "a rolled-back attempt draws nothing");
+            }
+        }
+    }
+
     use crate::{
-        Component, Context, Entity, Render, StyleRefinement, TestAppContext, Window, div,
-        prelude::*, px, rgb, size,
+        App, Component, Context, Entity, Render, StyleRefinement, TestAppContext, Window, canvas,
+        div, prelude::*, px, rgb, size,
     };
     use std::{cell::Cell, rc::Rc};
 

@@ -10,10 +10,25 @@ use slotmap::SlotMap;
 use smallvec::SmallVec;
 use std::{any::TypeId, ops::ControlFlow, ops::Range};
 
-/// A point in a scope's output that `ViewTree::rollback` returns to. `None` when taken
-/// outside every node, where nothing is recorded.
+/// A point in the frame being drawn that `ViewTree::rollback` returns to: the output of the
+/// scope being drawn (`None` outside every node, where nothing is recorded), with the
+/// children it has mounted, and how many nodes the frame has mounted and renders it has
+/// noted so far.
 #[derive(Clone, Copy)]
-pub(crate) struct OutputCheckpoint(Option<(ViewNodeId, MetadataPhase, usize, usize)>);
+pub(crate) struct OutputCheckpoint {
+    output: Option<OutputPosition>,
+    mounted: usize,
+    rendered_phases: usize,
+}
+
+#[derive(Clone, Copy)]
+struct OutputPosition {
+    node_id: ViewNodeId,
+    phase: MetadataPhase,
+    items: usize,
+    dispatch: usize,
+    next_children: usize,
+}
 
 /// Which frame's roots a query walks: the frame drawn last, which events are dispatched
 /// against, or the one being drawn.
@@ -149,6 +164,9 @@ pub(crate) struct ViewTree {
     /// The layouts and prepaints rendered this frame, each with what the node had read by
     /// its end, for `finish_unpainted_renders`.
     rendered_phases: Vec<(ViewNodeId, MetadataPhase, DependencySet)>,
+    /// The nodes mounted this frame, in order, each with whether it was created by the
+    /// mount, so `rollback` can undo mounts.
+    mounted_this_frame: Vec<(ViewNodeId, bool)>,
     /// A frame is its roots, in drawing order: the window's root view, then the roots
     /// attached by `defer_draw` in priority order, then the prompt, drag overlay or
     /// tooltip. Walking them in order reproduces the frame. `roots` is the frame drawn
@@ -191,6 +209,7 @@ impl ViewTree {
             grafted_dispatch: FxHashMap::default(),
             painted_grafts: Vec::new(),
             rendered_phases: Vec::new(),
+            mounted_this_frame: Vec::new(),
             spare_scenes: Vec::new(),
             invalidation_scratch: Vec::new(),
             roots: Vec::new(),
@@ -388,22 +407,57 @@ impl ViewTree {
     /// A point in the output being drawn that `rollback` can return to, discarding
     /// everything drawn after it.
     pub(crate) fn checkpoint(&mut self) -> OutputCheckpoint {
-        OutputCheckpoint(self.current_output().map(|(node_id, phase, output)| {
-            (
-                node_id,
-                phase,
-                output.phase(phase).items.len(),
-                output.dispatch.len(),
-            )
-        }))
+        let output = self
+            .traversal_stack
+            .last()
+            .copied()
+            .and_then(|(node_id, phase)| {
+                let node = self.nodes.get(node_id)?;
+                Some(OutputPosition {
+                    node_id,
+                    phase,
+                    items: node.output.phase(phase).items.len(),
+                    dispatch: node.output.dispatch.len(),
+                    next_children: node.next_children.len(),
+                })
+            });
+        OutputCheckpoint {
+            output,
+            mounted: self.mounted_this_frame.len(),
+            rendered_phases: self.rendered_phases.len(),
+        }
     }
 
+    /// Discards what was drawn since `checkpoint`, as if it had not been drawn: the scope's
+    /// output and the children it mounted, the renders noted for the end of the frame, and
+    /// the mounts themselves. A node created since the checkpoint is removed; one that
+    /// existed is no longer mounted this frame, so a retry finds it again rather than
+    /// mounting a second node for the same view, and is dirty, since its render may have
+    /// replaced its record with a partial one.
     pub(crate) fn rollback(&mut self, checkpoint: OutputCheckpoint) {
-        if let Some((node_id, phase, items, dispatch)) = checkpoint.0
-            && let Some(node) = self.nodes.get_mut(node_id)
+        if let Some(position) = checkpoint.output
+            && let Some(node) = self.nodes.get_mut(position.node_id)
         {
-            node.output.phase_mut(phase).items.truncate(items);
-            node.output.dispatch.truncate(dispatch);
+            node.output
+                .phase_mut(position.phase)
+                .items
+                .truncate(position.items);
+            node.output.dispatch.truncate(position.dispatch);
+            node.next_children.truncate(position.next_children);
+        }
+        let discarded = self.rendered_phases.split_off(checkpoint.rendered_phases);
+        for (_, _, accessed) in discarded {
+            self.recycle_dependency_set(accessed);
+        }
+        let rolled_back = self.mounted_this_frame.split_off(checkpoint.mounted);
+        for (node_id, created) in rolled_back {
+            if created {
+                self.remove_subtree(node_id);
+            } else if let Some(node) = self.nodes.get_mut(node_id) {
+                node.mounted_frame = 0;
+                node.next_children.clear();
+                self.set_dirty(node_id);
+            }
         }
     }
 
@@ -824,6 +878,7 @@ impl ViewTree {
         self.full_refresh = full_refresh_reason.is_some();
         self.frame += 1;
         self.grafted_dispatch.clear();
+        self.discard_frame_records();
         self.frame_stats = ViewTreeStats {
             full_refresh_reason,
             ..ViewTreeStats::default()
@@ -841,6 +896,17 @@ impl ViewTree {
     /// advances as if a frame had been drawn: no node's record is from the previous frame.
     pub(crate) fn skip_frame(&mut self) {
         self.frame += 1;
+        self.discard_frame_records();
+    }
+
+    /// Drops what an earlier frame noted for its own end, if that end never came (a test's
+    /// `draw` between frames).
+    fn discard_frame_records(&mut self) {
+        self.mounted_this_frame.clear();
+        let rendered = std::mem::take(&mut self.rendered_phases);
+        for (_, _, accessed) in rendered {
+            self.recycle_dependency_set(accessed);
+        }
     }
 
     /// Marks dirty every node whose recorded output was computed from a read of one of
@@ -975,6 +1041,7 @@ impl ViewTree {
     ) -> ViewNodeId {
         let (occurrence, node_id) = self.next_occurrence(element, path_hash);
         let parent = occurrence.parent;
+        let created = node_id.is_none();
         let node_id = if let Some(node_id) = node_id {
             node_id
         } else {
@@ -999,6 +1066,7 @@ impl ViewTree {
             node_id
         };
         self.nodes[node_id].mounted_frame = self.frame;
+        self.mounted_this_frame.push((node_id, created));
 
         if let Some(parent_id) = parent
             && let Some(parent_node) = self.nodes.get_mut(parent_id)
@@ -1445,7 +1513,8 @@ impl ViewTree {
         }
         self.recycle_dependency_set(node.accessed_entities);
         self.include_changed_bounds(node.cache_key.bounds);
-        for child_id in node.children {
+        // Children mounted this frame are in `next_children` until reconciliation.
+        for child_id in node.children.into_iter().chain(node.next_children) {
             self.remove_subtree(child_id);
         }
         self.occurrences.remove(&node.occurrence);
