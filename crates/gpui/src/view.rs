@@ -1444,6 +1444,84 @@ mod tests {
         );
     }
 
+    /// A reused view's dispatch nodes are copied in one block ahead of its children's, but
+    /// focus registrations must resolve as in a fresh frame, where the last node to track a
+    /// handle wins: here the view's own element, drawn after a child view that tracks the
+    /// same handle.
+    #[gpui::test]
+    fn replayed_focus_registrations_follow_drawing_order(cx: &mut TestAppContext) {
+        struct Child {
+            focus: FocusHandle,
+        }
+        impl Render for Child {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .key_context("Child")
+                    .track_focus(&self.focus)
+                    .size(px(10.))
+            }
+        }
+        struct Parent {
+            child: Entity<Child>,
+            focus: FocusHandle,
+        }
+        impl Render for Parent {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().child(self.child.clone()).child(
+                    div()
+                        .key_context("Sibling")
+                        .track_focus(&self.focus)
+                        .size(px(10.)),
+                )
+            }
+        }
+        struct Host {
+            parent: Entity<Parent>,
+            revision: usize,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .child(div().size(px(10.)).bg(rgb(self.revision as u32)))
+                    .child(self.parent.clone())
+            }
+        }
+        let focus = cx.update(|cx| cx.focus_handle());
+        let window = cx.open_window(size(px(100.), px(100.)), |_, cx| Host {
+            parent: cx.new(|cx| Parent {
+                child: cx.new(|_| Child {
+                    focus: focus.clone(),
+                }),
+                focus: focus.clone(),
+            }),
+            revision: 0,
+        });
+        cx.run_until_parked();
+        let winner = |cx: &mut TestAppContext| {
+            window
+                .update(cx, |_, window, _| {
+                    let tree = &window.rendered_frame.dispatch_tree;
+                    let node = tree.focusable_node_id(focus.id)?;
+                    let context = tree.node(node).context.as_ref()?;
+                    Some(if context.contains("Sibling") {
+                        "Sibling"
+                    } else {
+                        "Child"
+                    })
+                })
+                .expect("window open")
+        };
+        assert_eq!(winner(cx), Some("Sibling"), "fresh frame");
+        window
+            .update(cx, |host, _, cx| {
+                host.revision += 1;
+                cx.notify();
+            })
+            .expect("window open");
+        cx.run_until_parked();
+        assert_eq!(winner(cx), Some("Sibling"), "replayed frame");
+    }
+
     /// `Window::transact` discards a prepaint that fails, as a list does when it scrolls and
     /// lays its items out again. Views mounted by the failed attempt must be discarded with
     /// it: the retry mounts them once, the frame commits only what the retry drew, and the
@@ -1548,8 +1626,8 @@ mod tests {
     }
 
     use crate::{
-        App, Component, Context, Entity, Render, StyleRefinement, TestAppContext, Window, canvas,
-        div, prelude::*, px, rgb, size,
+        App, Component, Context, Entity, FocusHandle, Render, StyleRefinement, TestAppContext,
+        Window, canvas, div, prelude::*, px, rgb, size,
     };
     use std::{cell::Cell, rc::Rc};
 

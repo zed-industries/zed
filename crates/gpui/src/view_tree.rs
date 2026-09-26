@@ -625,11 +625,17 @@ impl ViewTree {
         if let Some(first) = rebuilt.first() {
             grafted.insert(node_id, first.index());
         }
+        let mut registered = 0;
         for op in &output.dispatch {
             let (link, child) = match *op {
                 DispatchOp::Child(child, link) => (link, Some(child)),
                 DispatchOp::Root(_, _, link) => (link, None),
             };
+            let preceding = (link.preceding as usize).clamp(registered, rebuilt.len());
+            for copy in &rebuilt[registered..preceding] {
+                tree.register_recorded(*copy);
+            }
+            registered = preceding;
             let under = match link.resolved {
                 DispatchParent::Recorded(index) => rebuilt.get(index as usize).copied(),
                 DispatchParent::Attachment => attachment,
@@ -653,6 +659,9 @@ impl ViewTree {
                 }
                 _ => {}
             }
+        }
+        for copy in &rebuilt[registered..] {
+            tree.register_recorded(*copy);
         }
         contains_focus
     }
@@ -713,6 +722,23 @@ impl ViewTree {
             }),
             DispatchOp::Root(..) => None,
         }));
+        // Pushes are sequential, so the scope's nodes pushed before a child are those below
+        // where the child's range starts. A root registers nothing in replay, so it takes
+        // the previous child's position.
+        let mut position = range.start;
+        let attachment_positions: SmallVec<[usize; 8]> = node
+            .output
+            .dispatch
+            .iter()
+            .map(|op| {
+                if let DispatchOp::Child(child, _) = op
+                    && let Some(child) = self.nodes.get(*child)
+                {
+                    position = child.output.dispatch_range.start as usize;
+                }
+                position
+            })
+            .collect();
         let mut next_child_ranges = child_ranges.iter().peekable();
         let mut kept = 0u32;
         let mut live = range.start;
@@ -749,12 +775,13 @@ impl ViewTree {
             }
             live += 1;
         }
-        for op in &mut output.dispatch {
-            match op {
-                DispatchOp::Child(_, link) | DispatchOp::Root(_, _, link) => {
-                    link.resolved = resolve(&resolution, link.live);
-                }
-            }
+        for (op, position) in output.dispatch.iter_mut().zip(attachment_positions) {
+            let (DispatchOp::Child(_, link) | DispatchOp::Root(_, _, link)) = op;
+            link.resolved = resolve(&resolution, link.live);
+            link.preceding = output
+                .dispatch_nodes
+                .partition_point(|recorded| recorded.source.index() < position)
+                as u32;
         }
         self.dispatch_resolution = resolution;
         self.child_dispatch_ranges = child_ranges;

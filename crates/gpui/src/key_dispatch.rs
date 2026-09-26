@@ -275,7 +275,8 @@ impl DispatchTree {
     }
 
     /// Adds a copy of node `recorded` of `source`, the frame a reused view last drew in,
-    /// under `parent`, with what prepaint gave it: its focus and view. What paint gave it
+    /// under `parent`, with what prepaint gave it: its focus and view, which take effect
+    /// once [`register_recorded`](Self::register_recorded) is called. What paint gave it
     /// is added by [`fill_recorded`](Self::fill_recorded) when the view's paint is replayed
     /// too. Nothing is being drawn, so the node, context and view stacks are left alone.
     pub(crate) fn push_recorded_under(
@@ -296,13 +297,21 @@ impl DispatchTree {
             parent,
             ..Default::default()
         });
-        if let Some(focus_id) = focus_id {
+        node_id
+    }
+
+    /// Makes a node added by [`push_recorded_under`](Self::push_recorded_under) the one its
+    /// focus and view resolve to, replacing any node registered before it.
+    pub(crate) fn register_recorded(&mut self, node_id: DispatchNodeId) {
+        let Some(node) = self.nodes.get(node_id.0) else {
+            return;
+        };
+        if let Some(focus_id) = node.focus_id {
             self.focusable_node_ids.insert(focus_id, node_id);
         }
-        if let Some(view_id) = view_id {
+        if let Some(view_id) = node.view_id {
             self.view_node_ids.insert(view_id, node_id);
         }
-        node_id
     }
 
     /// Adds to a node pushed by [`push_recorded_under`](Self::push_recorded_under) what

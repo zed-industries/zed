@@ -235,6 +235,10 @@ pub(crate) enum DispatchParent {
 pub(crate) struct DispatchLink {
     pub(crate) live: Option<crate::DispatchNodeId>,
     pub(crate) resolved: DispatchParent,
+    /// How many of the scope's recorded nodes were pushed before the attachment. Replay
+    /// copies the scope's nodes in one block, but registers their focus and view with
+    /// the children's in drawing order, since the last registration of a handle wins.
+    pub(crate) preceding: u32,
 }
 
 impl DispatchLink {
@@ -242,6 +246,7 @@ impl DispatchLink {
         Self {
             live: under,
             resolved: DispatchParent::Attachment,
+            preceding: 0,
         }
     }
 }
