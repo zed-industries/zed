@@ -74,6 +74,10 @@ pub struct WindowsWindowState {
     pub force_render_pending: Cell<bool>,
 
     pub click_state: ClickState,
+    pub(crate) touch_state: RefCell<WindowsTouchState>,
+    /// Native mode gives Windows the entire contact sequence. It is immutable
+    /// for a window, so a contact can never switch owners mid-stream.
+    pub(crate) touch_input_mode: TouchInputMode,
     pub current_cursor: Cell<Option<HCURSOR>>,
     /// Shared with [`WindowsPlatformState::cursor_visible`].
     pub cursor_visible: Arc<AtomicBool>,
@@ -122,6 +126,7 @@ impl WindowsWindowState {
         disable_direct_composition: bool,
         invalidate_devices: Arc<AtomicBool>,
         draw_coordinator: Rc<DrawCoordinator>,
+        touch_input_mode: TouchInputMode,
     ) -> Result<Self> {
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
@@ -154,8 +159,12 @@ impl WindowsWindowState {
         let fullscreen = None;
         let initial_placement = None;
 
-        let direct_manipulation = DirectManipulationHandler::new(hwnd, scale_factor)
-            .context("initializing Direct Manipulation")?;
+        let direct_manipulation = DirectManipulationHandler::new(
+            hwnd,
+            scale_factor,
+            touch_input_mode == TouchInputMode::Native,
+        )
+        .context("initializing Direct Manipulation")?;
 
         Ok(Self {
             origin: Cell::new(origin),
@@ -178,6 +187,8 @@ impl WindowsWindowState {
             renderer: RefCell::new(renderer),
             force_render_pending: Cell::new(false),
             click_state,
+            touch_state: RefCell::new(WindowsTouchState::default()),
+            touch_input_mode,
             current_cursor: Cell::new(current_cursor),
             cursor_visible,
             nc_button_pressed: Cell::new(nc_button_pressed),
@@ -278,6 +289,7 @@ impl WindowsWindowInner {
             context.disable_direct_composition,
             context.invalidate_devices.clone(),
             context.draw_coordinator.clone(),
+            context.touch_input_mode,
         )?;
 
         Ok(Rc::new(Self {
@@ -428,6 +440,7 @@ struct WindowCreateContext {
     directx_devices: DirectXDevices,
     invalidate_devices: Arc<AtomicBool>,
     draw_coordinator: Rc<DrawCoordinator>,
+    touch_input_mode: TouchInputMode,
     parent_hwnd: Option<HWND>,
 }
 
@@ -541,6 +554,7 @@ impl WindowsWindow {
             directx_devices,
             invalidate_devices,
             draw_coordinator,
+            touch_input_mode: params.touch_input_mode,
             parent_hwnd,
         };
         let creation_result = unsafe {
@@ -1309,7 +1323,20 @@ impl ClickState {
 
     /// update self and return the needed click count
     pub fn update(&self, button: MouseButton, new_position: Point<DevicePixels>) -> usize {
-        if self.button.get() == button && self.is_double_click(new_position) {
+        self.update_with_minimum_spatial_tolerance(button, new_position, 0)
+    }
+
+    /// タッチから昇格した互換マウスは指の重心が揺れる。物理マウスの Windows 設定値は
+    /// 保ったまま、呼び出し元が指定した最小の位置許容だけを追加できる。
+    pub fn update_with_minimum_spatial_tolerance(
+        &self,
+        button: MouseButton,
+        new_position: Point<DevicePixels>,
+        minimum_spatial_tolerance: i32,
+    ) -> usize {
+        if self.button.get() == button
+            && self.is_double_click(new_position, minimum_spatial_tolerance)
+        {
             self.current_count.update(|it| it + 1);
         } else {
             self.current_count.set(1);
@@ -1319,6 +1346,21 @@ impl ClickState {
         self.button.set(button);
 
         self.current_count.get()
+    }
+
+    /// Windows が認定済みの double-click を受け取った時は、マウス座標で再判定しない。
+    /// タッチから昇格した互換マウスでは指の重心が少し動くため、この再判定だと本来の
+    /// double-tap を single click 二回へ落としてしまう。
+    pub fn update_system_double_click(
+        &self,
+        button: MouseButton,
+        new_position: Point<DevicePixels>,
+    ) -> usize {
+        self.button.set(button);
+        self.last_click.set(Instant::now());
+        self.last_position.set(new_position);
+        self.current_count.set(2);
+        2
     }
 
     pub fn system_update(&self, wparam: usize) {
@@ -1340,12 +1382,24 @@ impl ClickState {
     }
 
     #[inline]
-    fn is_double_click(&self, new_position: Point<DevicePixels>) -> bool {
+    fn is_double_click(
+        &self,
+        new_position: Point<DevicePixels>,
+        minimum_spatial_tolerance: i32,
+    ) -> bool {
         let diff = self.last_position.get() - new_position;
+        let tolerance_width = self
+            .double_click_spatial_tolerance_width
+            .get()
+            .max(minimum_spatial_tolerance);
+        let tolerance_height = self
+            .double_click_spatial_tolerance_height
+            .get()
+            .max(minimum_spatial_tolerance);
 
         self.last_click.get().elapsed() < self.double_click_interval.get()
-            && diff.x.0.abs() <= self.double_click_spatial_tolerance_width.get()
-            && diff.y.0.abs() <= self.double_click_spatial_tolerance_height.get()
+            && diff.x.0.abs() <= tolerance_width
+            && diff.y.0.abs() <= tolerance_height
     }
 }
 
@@ -1423,7 +1477,7 @@ fn register_window_class(icon_handle: HICON) {
             lpfnWndProc: Some(window_procedure),
             hIcon: icon_handle,
             lpszClassName: PCWSTR(WINDOW_CLASS_NAME.as_ptr()),
-            style: CS_HREDRAW | CS_VREDRAW,
+            style: CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS,
             hInstance: get_module_handle().into(),
             hbrBackground: unsafe { CreateSolidBrush(COLORREF(0x00000000)) },
             ..Default::default()
@@ -1728,6 +1782,39 @@ mod tests {
         assert_eq!(
             state.update(MouseButton::Right, point(DevicePixels(10), DevicePixels(0))),
             1
+        );
+    }
+
+    #[test]
+    fn system_double_click_overrides_local_position_inference() {
+        let state = ClickState::new();
+        assert_eq!(
+            state.update(MouseButton::Left, point(DevicePixels(0), DevicePixels(0))),
+            1
+        );
+        assert_eq!(
+            state.update_system_double_click(
+                MouseButton::Left,
+                point(DevicePixels(100), DevicePixels(0))
+            ),
+            2
+        );
+    }
+
+    #[test]
+    fn touch_double_click_uses_the_larger_requested_spatial_tolerance() {
+        let state = ClickState::new();
+        assert_eq!(
+            state.update(MouseButton::Left, point(DevicePixels(0), DevicePixels(0))),
+            1
+        );
+        assert_eq!(
+            state.update_with_minimum_spatial_tolerance(
+                MouseButton::Left,
+                point(DevicePixels(16), DevicePixels(0)),
+                16,
+            ),
+            2
         );
     }
 }

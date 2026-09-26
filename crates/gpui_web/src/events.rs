@@ -269,6 +269,7 @@ impl WebWindowInner {
                         .set(Some((event.pointer_id(), position)));
                 }
                 this.dispatch_input(PlatformInput::Touch(TouchEvent {
+                    timestamp: None,
                     id: touch_id,
                     phase: TouchPhase::Started,
                     position,
@@ -342,6 +343,7 @@ impl WebWindowInner {
                 // call, so the text-input check below sees the state the tap
                 // produced.
                 let dispatch_result = this.dispatch_input(PlatformInput::Touch(TouchEvent {
+                    timestamp: None,
                     id: touch_id,
                     phase: TouchPhase::Ended,
                     position,
@@ -454,6 +456,7 @@ impl WebWindowInner {
                     this.touch_tap_candidate.set(None);
                 }
                 this.dispatch_input(PlatformInput::Touch(TouchEvent {
+                    timestamp: None,
                     id: touch_id,
                     phase: TouchPhase::Cancelled,
                     position: pointer_position_in_element(&event),
@@ -584,6 +587,7 @@ impl WebWindowInner {
                     this.touch_tap_candidate.set(None);
                 }
                 this.dispatch_input(PlatformInput::Touch(TouchEvent {
+                    timestamp: None,
                     id: touch_id,
                     phase: TouchPhase::Moved,
                     position,
