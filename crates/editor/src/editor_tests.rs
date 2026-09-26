@@ -3929,6 +3929,84 @@ async fn test_cursor_animation_remains_active_during_keyboard_autoscroll(cx: &mu
 }
 
 #[gpui::test]
+async fn test_cursor_animation_supports_underline_shape(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.cursor_blink = Some(false);
+        settings.cursor_animation.get_or_insert_default().enabled = Some(true);
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇabc");
+    cx.update_editor(|editor, _, cx| {
+        editor.set_cursor_shape(CursorShape::Underline, cx);
+    });
+    cx.update(|window, cx| {
+        window.refresh();
+        let _ = window.draw(cx);
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_right(&MoveRight, window, cx);
+    });
+    cx.update(|window, cx| {
+        window.refresh();
+        let _ = window.draw(cx);
+    });
+
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            editor.cursor_animations.has_active_animation(),
+            "underline cursor movement should animate"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_cursor_animation_starts_when_keyboard_movement_interrupts_blink(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.cursor_blink = Some(true);
+        settings.cursor_animation.get_or_insert_default().enabled = Some(true);
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇabc");
+    cx.update(|window, cx| {
+        window.refresh();
+        let _ = window.draw(cx);
+    });
+
+    cx.update_editor(|editor, _, cx| {
+        editor
+            .blink_manager
+            .update(cx, |blink_manager, _| blink_manager.hide_cursor());
+        assert!(!editor.blink_manager.read(cx).visible());
+    });
+    cx.update(|window, cx| {
+        window.refresh();
+        let _ = window.draw(cx);
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_right(&MoveRight, window, cx);
+    });
+    cx.update(|window, cx| {
+        window.refresh();
+        let _ = window.draw(cx);
+    });
+
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            editor.cursor_animations.has_active_animation(),
+            "cursor movement should animate after interrupting the hidden phase of a blink"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_autoscroll_relative(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
