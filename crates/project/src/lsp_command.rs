@@ -3886,9 +3886,52 @@ impl LspCommand for OnTypeFormatting {
 }
 
 impl InlayHints {
+    fn project_hint_kind(kind: Option<lsp::InlayHintKind>) -> Option<InlayHintKind> {
+        kind.and_then(|kind| match kind {
+            lsp::InlayHintKind::TYPE => Some(InlayHintKind::Type),
+            lsp::InlayHintKind::PARAMETER => Some(InlayHintKind::Parameter),
+            _ => None,
+        })
+    }
+
+    /// Returns the clipped position and the bias to use for this hint in isolation.
+    fn hint_position_and_bias(
+        lsp_hint: &lsp::InlayHint,
+        snapshot: &BufferSnapshot,
+    ) -> (PointUtf16, Bias) {
+        let position = snapshot.clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
+        let bias = match Self::project_hint_kind(lsp_hint.kind) {
+            Some(InlayHintKind::Type) => Bias::Right,
+            Some(InlayHintKind::Parameter) => Bias::Left,
+            // `None`-kinded hints can go either way: rust-analyzer's `Lifetime` before `str`
+            // in `&str` is a prefix, while `ClosingBrace` after `}` is a suffix. Asymmetric
+            // padding is a reliable signal: space before the hint (`padding_left`) means it is
+            // a suffix attached to the left → Right; space after (`padding_right`) means it is
+            // a prefix attached to the right → Left. When padding is ambiguous, fall back to
+            // `surrounding_word`, which uses the greater of `prev` and `next` as the word-kind
+            // level: if the previous character's kind is greater than or equal to the next
+            // character's kind, the hint is a suffix → Right; otherwise, it is a prefix → Left.
+            // `None` covers both directions.
+            None => match (lsp_hint.padding_left, lsp_hint.padding_right) {
+                (Some(true), Some(false)) => Bias::Right,
+                (Some(false), Some(true)) => Bias::Left,
+                _ => {
+                    let offset = position.to_offset(snapshot);
+                    let (range, _) = snapshot.surrounding_word(offset, None);
+                    if range.start < offset {
+                        Bias::Right
+                    } else {
+                        Bias::Left
+                    }
+                }
+            },
+        };
+        (position, bias)
+    }
+
     pub fn lsp_to_project_hint(
         lsp_hint: lsp::InlayHint,
-        snapshot: &BufferSnapshot,
+        position: Anchor,
         server_id: LanguageServerId,
         resolve_state: ResolveState,
         force_no_type_left_padding: bool,
@@ -3898,13 +3941,6 @@ impl InlayHints {
             lsp::InlayHintKind::PARAMETER => Some(InlayHintKind::Parameter),
             _ => None,
         });
-
-        let position = snapshot.clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
-        let position = if kind == Some(InlayHintKind::Parameter) {
-            snapshot.anchor_before(position)
-        } else {
-            snapshot.anchor_after(position)
-        };
 
         let label = Self::lsp_inlay_label_to_project(lsp_hint.label, server_id);
         let padding_left = if force_no_type_left_padding && kind == Some(InlayHintKind::Type) {
@@ -4348,20 +4384,43 @@ impl LspCommand for InlayHints {
 
         let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
         let last_row = snapshot.max_point().row;
-        let hints = message
+        let lsp_hints: Vec<(lsp::InlayHint, PointUtf16, Bias)> = message
             .unwrap_or_default()
             .into_iter()
             .filter(|lsp_hint| lsp_hint.position.line <= last_row)
             .map(|lsp_hint| {
+                let (position, bias) = InlayHints::hint_position_and_bias(&lsp_hint, &snapshot);
+                (lsp_hint, position, bias)
+            })
+            .collect();
+
+        // All hints at the same position must share a single bias: mixing Left and Right
+        // anchors would trap the cursor between them and scramble insertion order.
+        // On conflict, fall back to Right.
+        let mut bias_by_position: collections::HashMap<PointUtf16, Bias> = Default::default();
+        for (_, position, bias) in &lsp_hints {
+            bias_by_position
+                .entry(*position)
+                .and_modify(|existing| {
+                    if *existing != *bias {
+                        *existing = Bias::Right;
+                    }
+                })
+                .or_insert(*bias);
+        }
+
+        let hints = lsp_hints
+            .into_iter()
+            .map(|(lsp_hint, position, _)| {
                 let resolve_state = if can_resolve {
                     ResolveState::CanResolve(lsp_server.server_id(), lsp_hint.data.clone())
                 } else {
                     ResolveState::Resolved
                 };
-
+                let bias = bias_by_position[&position];
                 InlayHints::lsp_to_project_hint(
                     lsp_hint,
-                    &snapshot,
+                    snapshot.anchor_at(position, bias),
                     server_id,
                     resolve_state,
                     force_no_type_left_padding,
