@@ -2177,7 +2177,9 @@ pub struct WindowOptions {
     /// - `Some(WindowBounds)`: Open a window with corresponding state and its restore size.
     pub window_bounds: Option<WindowBounds>,
 
-    /// The titlebar configuration of the window
+    /// The titlebar configuration of the window.
+    ///
+    /// On macOS, [`WindowKind::PopUp`] windows with no titlebar have no native border or shadow.
     pub titlebar: Option<TitlebarOptions>,
 
     /// Whether the window should be focused when created
