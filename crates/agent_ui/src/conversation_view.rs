@@ -2144,6 +2144,7 @@ impl ConversationView {
                     return;
                 };
                 connected.threads.insert(subagent_session_id, view);
+                cx.notify();
             })
         })
         .detach();
@@ -7302,6 +7303,312 @@ pub(crate) mod tests {
                     assert!(entry_view_state.entry(2).is_none());
                     assert!(entry_view_state.entry(3).is_none());
                 });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_cancelled_tool_call_visibility(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (view, cx) = setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(view.clone(), true, cx);
+        let thread = active_thread(&view, cx).read_with(cx, |view, _| view.thread.clone());
+        let calls = [
+            acp::ToolCall::new("empty", "Empty call").name("read_file"),
+            acp::ToolCall::new("output", "Call with output")
+                .name("read_file")
+                .content(vec!["partial output".into()]),
+            acp::ToolCall::new("spawn-before-session", "Unstarted child").name("spawn_agent"),
+            acp::ToolCall::new("spawn-with-session", "Retained child")
+                .name("spawn_agent")
+                .meta(acp::Meta::from_iter([(
+                    acp_thread::SUBAGENT_SESSION_INFO_META_KEY.into(),
+                    json!(acp_thread::SubagentSessionInfo {
+                        session_id: acp::SessionId::new("child"),
+                        message_start_index: 0,
+                        message_end_index: None,
+                    }),
+                )])),
+        ];
+        for call in calls {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .upsert_tool_call_inner(call.into(), ToolCallStatus::Canceled, cx)
+                    .expect("cancelled tool call");
+            });
+            cx.run_until_parked();
+        }
+        assert!(cx.debug_bounds("tool-call-empty-standalone").is_none());
+        assert!(cx.debug_bounds("tool-call-output-standalone").is_some());
+        assert!(
+            cx.debug_bounds("tool-call-spawn-before-session-standalone")
+                .is_none()
+        );
+        assert!(
+            cx.debug_bounds("tool-call-spawn-with-session-standalone")
+                .is_some()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cancelled_subagent_card_preserves_access(cx: &mut TestAppContext) {
+        assert_cancelled_subagent_access(false, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_cancelled_subagent_card_preserves_access_after_reopening(
+        cx: &mut TestAppContext,
+    ) {
+        assert_cancelled_subagent_access(true, cx).await;
+    }
+
+    async fn assert_cancelled_subagent_access(reopen: bool, cx: &mut TestAppContext) {
+        use language_model::{
+            CompletionIntent, LanguageModelCompletionEvent, LanguageModelRegistry,
+            LanguageModelToolUse, LanguageModelToolUseInput, MessageContent,
+        };
+
+        init_test(cx);
+        let fake = cx.update(|cx| {
+            cx.update_flags(true, vec!["subagents".to_string()]);
+            LanguageModelRegistry::test(cx)
+        });
+        let model = fake.model("thread");
+        let fs = FakeFs::new(cx.executor());
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let native_agent = cx.update(|cx| {
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+            agent::NativeAgent::new(thread_store, agent::Templates::new(), fs, cx)
+        });
+        let connection = agent::NativeAgentConnection(native_agent);
+        let (view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        let parent = active_thread(&view, cx).read_with(cx, |view, _| view.thread.clone());
+        let parent_id = parent.read_with(cx, |thread, _| thread.session_id().clone());
+        cx.update(|_, cx| {
+            connection
+                .thread(&parent_id, cx)
+                .expect("native parent")
+                .update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+        });
+        if !reopen {
+            add_to_workspace_with_size(view.clone(), true, cx);
+        }
+
+        let send = parent.update(cx, |thread, cx| thread.send_raw("Start a child", cx));
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("parent request");
+        let input = json!({"label": "Child task", "message": "Work on the child task"});
+        fake.send_event(
+            &model,
+            &request,
+            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                id: "child".into(),
+                name: "spawn_agent".into(),
+                raw_input: input.to_string(),
+                input: LanguageModelToolUseInput::Json(input),
+                is_input_complete: true,
+                thought_signature: None,
+            }),
+        );
+        fake.end_stream(&model, &request);
+        cx.run_until_parked();
+        let child_id = parent.read_with(cx, |thread, _| {
+            thread
+                .tool_call(&acp::ToolCallId::new("1:child"))
+                .expect("spawn call")
+                .1
+                .subagent_session_info
+                .as_ref()
+                .expect("child metadata")
+                .session_id
+                .clone()
+        });
+        let child = view.read_with(cx, |view, cx| {
+            view.as_connected()
+                .expect("connected parent")
+                .threads
+                .get(&child_id)
+                .expect("loaded child view")
+                .read(cx)
+                .thread
+                .clone()
+        });
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("child request");
+        assert_eq!(request.intent, Some(CompletionIntent::Subagent));
+        fake.send_text(&model, &request, "Partial child progress");
+        cx.run_until_parked();
+        if !reopen {
+            assert!(cx.debug_bounds("subagent-title-1:child").is_some());
+        }
+        parent.update(cx, |thread, cx| thread.cancel(cx)).await;
+        send.await.expect("parent cancellation");
+
+        let view = if reopen {
+            let weak_parent = parent.downgrade();
+            let weak_child = child.downgrade();
+            let (server, connection_store, connection_key, workspace, project, thread_store) = view
+                .read_with(cx, |view, _| {
+                    (
+                        view.agent.clone(),
+                        view.connection_store.clone(),
+                        view.connection_key.clone(),
+                        view.workspace.clone(),
+                        view.project.clone(),
+                        view.thread_store.clone(),
+                    )
+                });
+            // Close before draining cancellation cleanup, not just after a settled turn
+            drop(child);
+            drop(parent);
+            drop(view);
+            release_dropped_entities(cx);
+            assert!(!weak_parent.is_upgradable());
+            assert!(!weak_child.is_upgradable());
+            let view = cx.update(|window, cx| {
+                cx.new(|cx| {
+                    ConversationView::new(
+                        server,
+                        connection_store,
+                        connection_key,
+                        Some(parent_id.clone()),
+                        None,
+                        None,
+                        None,
+                        None,
+                        workspace,
+                        project,
+                        thread_store,
+                        AgentThreadSource::AgentPanel,
+                        window,
+                        cx,
+                    )
+                })
+            });
+            add_to_workspace_with_size(view.clone(), true, cx);
+            view
+        } else {
+            view
+        };
+        cx.run_until_parked();
+        assert!(fake.is_stream_closed(&model, &request));
+        fake.end_stream(&model, &request);
+        let parent_view = active_thread(&view, cx);
+        let parent = parent_view.read_with(cx, |view, _| view.thread.clone());
+        parent.read_with(cx, |thread, _| {
+            let call = thread
+                .tool_call_for_subagent(&child_id)
+                .expect("retained child metadata");
+            if !reopen {
+                assert!(matches!(call.status, ToolCallStatus::Canceled));
+                assert!(call.content().is_empty());
+            }
+        });
+        let child = view.read_with(cx, |view, cx| {
+            view.as_connected()
+                .expect("connected parent")
+                .threads
+                .get(&child_id)
+                .expect("hydrated child view")
+                .read(cx)
+                .thread
+                .clone()
+        });
+        let expected_history =
+            "## User\n\nWork on the child task\n\n## Assistant\n\nPartial child progress\n\n";
+        child.read_with(cx, |thread, cx| {
+            assert_eq!(thread.to_markdown(cx), expected_history)
+        });
+        let header = cx
+            .debug_bounds("subagent-title-1:child")
+            .expect("cancelled child card remains visible");
+        cx.simulate_click(header.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        parent_view.read_with(cx, |view, cx| {
+            assert!(
+                view.entry_view_state
+                    .read(cx)
+                    .is_tool_call_expanded(&acp::ToolCallId::new("1:child"))
+            );
+        });
+        let fullscreen = cx
+            .debug_bounds("subagent-fullscreen-1:child")
+            .expect("child history navigation");
+        cx.simulate_click(fullscreen.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        active_thread(&view, cx).read_with(cx, |view, cx| {
+            assert_eq!(view.thread.read(cx).session_id(), &child_id);
+            assert_eq!(view.thread.read(cx).to_markdown(cx), expected_history);
+        });
+        view.update_in(cx, |view, window, cx| {
+            view.navigate_to_thread(parent_id.clone(), window, cx)
+        });
+        let send = parent.update(cx, |thread, cx| {
+            thread.send_raw("Continue the child session", cx)
+        });
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("follow-up request");
+        let result = request
+            .messages
+            .iter()
+            .flat_map(|message| &message.content)
+            .find_map(|content| match content {
+                MessageContent::ToolResult(result) => Some(result),
+                _ => None,
+            })
+            .expect("model-visible session id");
+        let output: serde_json::Value =
+            serde_json::from_str(&result.text_contents()).expect("spawn result");
+        assert_eq!(output["session_id"], json!(child_id));
+        let input = json!({"label": "Continue child", "message": "Continue your work", "session_id": child_id});
+        fake.send_event(
+            &model,
+            &request,
+            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                id: "resume-child".into(),
+                name: "spawn_agent".into(),
+                raw_input: input.to_string(),
+                input: LanguageModelToolUseInput::Json(input),
+                is_input_complete: true,
+                thought_signature: None,
+            }),
+        );
+        fake.end_stream(&model, &request);
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("resumed child request");
+        assert_eq!(request.intent, Some(CompletionIntent::Subagent));
+        let history = request
+            .messages
+            .iter()
+            .map(|message| message.string_contents())
+            .collect::<Vec<_>>();
+        assert!(history.contains(&"Work on the child task".to_string()));
+        assert!(history.contains(&"Partial child progress".to_string()));
+        assert!(history.contains(&"Continue your work".to_string()));
+        assert_eq!(request.thread_id.as_deref(), Some(child_id.0.as_ref()));
+        fake.send_text(&model, &request, "Resumed child response");
+        fake.end_stream(&model, &request);
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("parent response");
+        fake.send_text(&model, &request, "Done");
+        fake.end_stream(&model, &request);
+        send.await.expect("resumed turn");
+        child.read_with(cx, |thread, cx| {
+            assert_eq!(thread.to_markdown(cx), format!("{expected_history}## User\n\nContinue your work\n\n## Assistant\n\nResumed child response\n\n"));
         });
     }
 
