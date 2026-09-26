@@ -1159,6 +1159,7 @@ pub(super) fn keystroke_from_xkb(
             if key_sym.is_keypad_key() {
                 name.replace("kp_", "")
             } else if let Some(key) = key_utf8.chars().next()
+                && key_utf32 != 0
                 && key_utf8.len() == 1
                 && key.is_ascii()
             {

@@ -1091,7 +1091,9 @@ impl X11Client {
                     }
 
                     if let Some(mut compose_state) = state.compose_state.take() {
-                        compose_state.feed(keysym);
+                        if !keystroke.modifiers.control && !keystroke.modifiers.platform {
+                            compose_state.feed(keysym);
+                        }
                         match compose_state.status() {
                             xkbc::Status::Composed => {
                                 state.pre_edit_text.take();
