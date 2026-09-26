@@ -531,6 +531,12 @@ pub struct ScrollWheelEvent {
 
     /// The phase of the touch event.
     pub touch_phase: TouchPhase,
+
+    /// Whether the platform synthesized this event from the momentum of a
+    /// gesture whose input has already ended. Momentum events continue the
+    /// gesture: they follow its [`TouchPhase::Ended`] event, and the last of
+    /// them is [`TouchPhase::Ended`] itself.
+    pub momentum: bool,
 }
 
 impl Sealed for ScrollWheelEvent {}

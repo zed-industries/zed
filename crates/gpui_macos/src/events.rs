@@ -256,11 +256,23 @@ pub(crate) unsafe fn platform_input_from_native(
                 })
             }),
             NSEventType::NSScrollWheel => window_height.map(|window_height| {
-                let phase = match native_event.phase() {
-                    NSEventPhase::NSEventPhaseMayBegin | NSEventPhase::NSEventPhaseBegan => {
+                // Momentum follows the gesture's own `NSEventPhaseEnded`, with
+                // `phase` unset and `momentumPhase` running began/changed/ended.
+                // It continues that gesture, so its beginning is not a `Started`.
+                let momentum_phase = native_event.momentumPhase();
+                let momentum = momentum_phase != NSEventPhase::NSEventPhaseNone;
+                let phase = match if momentum {
+                    momentum_phase
+                } else {
+                    native_event.phase()
+                } {
+                    NSEventPhase::NSEventPhaseMayBegin | NSEventPhase::NSEventPhaseBegan
+                        if !momentum =>
+                    {
                         TouchPhase::Started
                     }
                     NSEventPhase::NSEventPhaseEnded => TouchPhase::Ended,
+                    NSEventPhase::NSEventPhaseCancelled => TouchPhase::Cancelled,
                     _ => TouchPhase::Moved,
                 };
 
@@ -282,6 +294,7 @@ pub(crate) unsafe fn platform_input_from_native(
                     ),
                     delta,
                     touch_phase: phase,
+                    momentum,
                     modifiers: read_modifiers(native_event),
                 })
             }),

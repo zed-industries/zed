@@ -735,6 +735,18 @@ pub(crate) struct HitTest {
     pub(crate) hover_hitbox_count: usize,
 }
 
+/// A scroll gesture that has started and not yet ended. Its events go to the
+/// views drawn under the pointer when it started, the way a platform scroll
+/// view keeps a gesture once it has begun: a fling carries on scrolling the
+/// content it began on when something opens over it, and stops when that
+/// content goes away instead of scrolling whatever is drawn in its place.
+struct ScrollGesture {
+    views: SmallVec<[EntityId; 8]>,
+    /// The input has ended, and only its momentum can still continue the
+    /// gesture.
+    released: bool,
+}
+
 /// A type of window control area that corresponds to the platform window.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WindowControlArea {
@@ -807,8 +819,18 @@ impl HitboxId {
     /// Typically this should only be used when handling `ScrollWheelEvent`, and otherwise
     /// `is_hovered` should be used. See the documentation of `Hitbox::is_hovered` for details about
     /// this distinction.
+    ///
+    /// While a scroll gesture is in progress, this answers for the content the gesture started
+    /// on: the hitbox handles the gesture's events if the view that inserted it was under the
+    /// pointer when the gesture began, even once something else has been drawn over it, and it
+    /// does not handle them otherwise.
     pub fn should_handle_scroll(self, window: &Window) -> bool {
-        window.mouse_hit_test.ids.contains(&self)
+        window
+            .scroll_hit_test
+            .as_ref()
+            .unwrap_or(&window.mouse_hit_test)
+            .ids
+            .contains(&self)
     }
 
     fn next(mut self) -> HitboxId {
@@ -984,6 +1006,10 @@ pub(crate) struct Frame {
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) hitboxes: Vec<Hitbox>,
+    /// The view that inserted each hitbox, parallel to `hitboxes`. Hitbox ids
+    /// are minted afresh every frame, so this is what lets a scroll gesture
+    /// keep following the content it started on across redraws.
+    pub(crate) hitbox_views: Vec<EntityId>,
     pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
@@ -1040,6 +1066,7 @@ impl Frame {
             dispatch_tree,
             scene: Scene::default(),
             hitboxes: Vec::new(),
+            hitbox_views: Vec::new(),
             window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
             input_handlers: Vec::new(),
@@ -1070,6 +1097,7 @@ impl Frame {
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
         self.hitboxes.clear();
+        self.hitbox_views.clear();
         self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
         self.tab_stops.clear();
@@ -1104,9 +1132,26 @@ impl Frame {
     }
 
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
+        self.hit_test_where(position, |_| true)
+    }
+
+    /// Hit-tests only the hitboxes inserted by `views`, so content drawn by
+    /// any other view neither receives the hit nor blocks it.
+    pub(crate) fn hit_test_in_views(&self, position: Point<Pixels>, views: &[EntityId]) -> HitTest {
+        self.hit_test_where(position, |view| views.contains(&view))
+    }
+
+    fn hit_test_where(
+        &self,
+        position: Point<Pixels>,
+        include_view: impl Fn(EntityId) -> bool,
+    ) -> HitTest {
         let mut set_hover_hitbox_count = false;
         let mut hit_test = HitTest::default();
-        for hitbox in self.hitboxes.iter().rev() {
+        for (hitbox, view) in self.hitboxes.iter().zip(&self.hitbox_views).rev() {
+            if !include_view(*view) {
+                continue;
+            }
             let bounds = hitbox.bounds.intersect(&hitbox.content_mask.bounds);
             if bounds.contains(&position) {
                 hit_test.ids.push(hitbox.id);
@@ -1200,6 +1245,10 @@ pub struct Window {
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     mouse_hit_test: HitTest,
+    scroll_gesture: Option<ScrollGesture>,
+    /// The hit test scroll listeners consult while one of a scroll gesture's
+    /// events is being dispatched, in place of `mouse_hit_test`.
+    scroll_hit_test: Option<HitTest>,
     modifiers: Modifiers,
     capslock: Capslock,
     scale_factor: f32,
@@ -2056,6 +2105,8 @@ impl Window {
             default_prevented: true,
             mouse_position,
             mouse_hit_test: HitTest::default(),
+            scroll_gesture: None,
+            scroll_hit_test: None,
             modifiers,
             capslock,
             scale_factor,
@@ -3817,6 +3868,9 @@ impl Window {
                 .iter()
                 .cloned(),
         );
+        self.next_frame.hitbox_views.extend(
+            &self.rendered_frame.hitbox_views[range.start.hitboxes_index..range.end.hitboxes_index],
+        );
         self.next_frame.tooltip_requests.extend(
             self.rendered_frame.tooltip_requests
                 [range.start.tooltips_index..range.end.tooltips_index]
@@ -4056,6 +4110,7 @@ impl Window {
         let result = f(self);
         if result.is_err() {
             self.next_frame.hitboxes.truncate(index.hitboxes_index);
+            self.next_frame.hitbox_views.truncate(index.hitboxes_index);
             self.next_frame
                 .tooltip_requests
                 .truncate(index.tooltips_index);
@@ -5119,6 +5174,7 @@ impl Window {
             behavior,
         };
         self.next_frame.hitboxes.push(hitbox.clone());
+        self.next_frame.hitbox_views.push(self.current_view());
         hitbox
     }
 
@@ -5747,6 +5803,9 @@ impl Window {
             self.mouse_hit_test = hit_test;
             self.reset_cursor_style(cx);
         }
+        let scroll_hit_test = event
+            .downcast_ref::<crate::ScrollWheelEvent>()
+            .and_then(|event| self.track_scroll_gesture(event));
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         if self.is_inspector_picking(cx) {
@@ -5756,6 +5815,7 @@ impl Window {
         }
 
         let mut mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
+        self.scroll_hit_test = scroll_hit_test;
 
         // Capture phase, events bubble from back to front. Handlers for this phase are used for
         // special purposes, such as detecting events outside of a given Bounds.
@@ -5778,6 +5838,7 @@ impl Window {
             }
         }
 
+        self.scroll_hit_test = None;
         self.rendered_frame.mouse_listeners = mouse_listeners;
 
         if cx.has_active_drag() {
@@ -5797,6 +5858,45 @@ impl Window {
         if event.is::<MouseUpEvent>() && self.captured_hitbox.is_some() {
             self.captured_hitbox = None;
         }
+    }
+
+    /// Keeps a scroll gesture with the views it started on. Returns the hit
+    /// test scroll listeners should use for this event, or `None` when the
+    /// event is not part of a gesture and the pointer's hit test applies.
+    fn track_scroll_gesture(&mut self, event: &crate::ScrollWheelEvent) -> Option<HitTest> {
+        // Momentum only ever continues a gesture, whatever phase a platform
+        // reports its first event with.
+        if event.touch_phase == crate::TouchPhase::Started && !event.momentum {
+            let frame = &self.rendered_frame;
+            let mut views = SmallVec::new();
+            for (hitbox, view) in frame.hitboxes.iter().zip(&frame.hitbox_views) {
+                if self.mouse_hit_test.ids.contains(&hitbox.id) && !views.contains(view) {
+                    views.push(*view);
+                }
+            }
+            self.scroll_gesture = Some(ScrollGesture {
+                views,
+                released: false,
+            });
+            return None;
+        }
+
+        let gesture = self.scroll_gesture.as_mut()?;
+        // Once the input has ended, only its momentum continues the gesture.
+        // Anything else comes from a device that doesn't report phases.
+        if gesture.released && !event.momentum {
+            self.scroll_gesture = None;
+            return None;
+        }
+        let hit_test = self
+            .rendered_frame
+            .hit_test_in_views(self.mouse_position, &gesture.views);
+        match event.touch_phase {
+            crate::TouchPhase::Ended if !event.momentum => gesture.released = true,
+            crate::TouchPhase::Ended | crate::TouchPhase::Cancelled => self.scroll_gesture = None,
+            crate::TouchPhase::Started | crate::TouchPhase::Moved => {}
+        }
+        Some(hit_test)
     }
 
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
@@ -7668,13 +7768,14 @@ mod tests {
 
     use crate::{
         AnyWindowHandle, AppContext as _, Bounds, ContentMask, Context, DispatchPhase,
-        DragMoveEvent, Empty, ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent,
-        FocusHandle, InputEvent as _, InteractiveElement as _, IntoElement, KeyDownEvent,
-        Keystroke, LongPressEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement,
-        Pixels, PlatformInput, Point, Render, RequestFrameOptions, ScaledPixels,
-        StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent, TouchEvent,
-        TouchId, TouchPhase, Underline, UnderlineStyle, Window, WindowAppearance, WindowOptions,
-        canvas, div, hsla, point, px, size,
+        DragMoveEvent, Empty, Entity, ExternalDragPayload, ExternalPaths, FileDragPaths,
+        FileDropEvent, FocusHandle, InputEvent as _, InteractiveElement as _, IntoElement,
+        KeyDownEvent, Keystroke, LongPressEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+        ParentElement, Pixels, PlatformInput, Point, Render, RequestFrameOptions, ScaledPixels,
+        ScrollDelta, ScrollHandle, ScrollWheelEvent, StatefulInteractiveElement as _, Styled,
+        TestAppContext, TouchDragEvent, TouchEvent, TouchId, TouchPhase, Underline, UnderlineStyle,
+        Window, WindowAppearance, WindowHandle, WindowOptions, canvas, div, hsla, point, px, size,
+        util::FluentBuilder as _,
     };
 
     /// Visibility transitions reach observers exactly once each, with the new
@@ -9131,6 +9232,295 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    /// A view whose whole area is a vertically scrollable div.
+    struct ScrollableView {
+        scroll: ScrollHandle,
+    }
+
+    impl Render for ScrollableView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("scrollable")
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(&self.scroll)
+                .child(div().w_full().h(px(10_000.)))
+        }
+    }
+
+    /// Draws one of two scrollable views in the same place, and optionally a
+    /// third one over it that blocks the pointer, like a modal.
+    struct ScrollGestureRoot {
+        first: Entity<ScrollableView>,
+        second: Entity<ScrollableView>,
+        overlay: Entity<ScrollableView>,
+        show_second: bool,
+        show_overlay: bool,
+    }
+
+    impl Render for ScrollGestureRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let page = if self.show_second {
+                self.second.clone()
+            } else {
+                self.first.clone()
+            };
+            div()
+                .relative()
+                .size_full()
+                .child(page)
+                .when(self.show_overlay, |this| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size_full()
+                            .occlude()
+                            .child(self.overlay.clone()),
+                    )
+                })
+        }
+    }
+
+    fn scroll_gesture_window(cx: &mut TestAppContext) -> WindowHandle<ScrollGestureRoot> {
+        cx.add_window(|_, cx| ScrollGestureRoot {
+            first: cx.new(|_| ScrollableView {
+                scroll: ScrollHandle::new(),
+            }),
+            second: cx.new(|_| ScrollableView {
+                scroll: ScrollHandle::new(),
+            }),
+            overlay: cx.new(|_| ScrollableView {
+                scroll: ScrollHandle::new(),
+            }),
+            show_second: false,
+            show_overlay: false,
+        })
+    }
+
+    fn dispatch_scroll(
+        window: WindowHandle<ScrollGestureRoot>,
+        cx: &mut TestAppContext,
+        touch_phase: TouchPhase,
+        delta_y: f32,
+        momentum: bool,
+    ) {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.dispatch_event(
+                ScrollWheelEvent {
+                    position: point(px(50.), px(50.)),
+                    delta: ScrollDelta::Pixels(point(px(0.), px(delta_y))),
+                    modifiers: Default::default(),
+                    touch_phase,
+                    momentum,
+                }
+                .to_platform_input(),
+                cx,
+            );
+        })
+        .unwrap();
+    }
+
+    fn scroll_offsets(
+        window: WindowHandle<ScrollGestureRoot>,
+        cx: &mut TestAppContext,
+    ) -> [Pixels; 3] {
+        window
+            .read_with(cx, |root, cx| {
+                [&root.first, &root.second, &root.overlay]
+                    .map(|view| view.read(cx).scroll.offset().y)
+            })
+            .unwrap()
+    }
+
+    #[gpui::test]
+    fn scroll_gesture_ends_with_the_content_it_started_on(cx: &mut TestAppContext) {
+        let window = scroll_gesture_window(cx);
+
+        dispatch_scroll(window, cx, TouchPhase::Started, 0., false);
+        dispatch_scroll(window, cx, TouchPhase::Moved, -10., false);
+        dispatch_scroll(window, cx, TouchPhase::Ended, 0., false);
+        assert_eq!(scroll_offsets(window, cx), [px(-10.), px(0.), px(0.)]);
+
+        // The content the fling started on is replaced while its momentum is
+        // still arriving: the momentum must not scroll what took its place.
+        window
+            .update(cx, |root, _, cx| {
+                root.show_second = true;
+                cx.notify();
+            })
+            .unwrap();
+        dispatch_scroll(window, cx, TouchPhase::Moved, -10., true);
+        dispatch_scroll(window, cx, TouchPhase::Ended, 0., true);
+        assert_eq!(scroll_offsets(window, cx), [px(-10.), px(0.), px(0.)]);
+
+        // Once the momentum has ended, input from a device that reports no
+        // phases scrolls whatever is under the pointer again.
+        dispatch_scroll(window, cx, TouchPhase::Moved, -10., false);
+        assert_eq!(scroll_offsets(window, cx), [px(-10.), px(-10.), px(0.)]);
+    }
+
+    #[gpui::test]
+    fn momentum_keeps_scrolling_the_content_it_started_on(cx: &mut TestAppContext) {
+        let window = scroll_gesture_window(cx);
+
+        dispatch_scroll(window, cx, TouchPhase::Started, 0., false);
+        dispatch_scroll(window, cx, TouchPhase::Moved, -10., false);
+        dispatch_scroll(window, cx, TouchPhase::Ended, 0., false);
+        assert_eq!(scroll_offsets(window, cx), [px(-10.), px(0.), px(0.)]);
+
+        // Something opens over the content mid-fling. The momentum carries on
+        // scrolling the content beneath it rather than the overlay.
+        window
+            .update(cx, |root, _, cx| {
+                root.show_overlay = true;
+                cx.notify();
+            })
+            .unwrap();
+        dispatch_scroll(window, cx, TouchPhase::Moved, -10., true);
+        dispatch_scroll(window, cx, TouchPhase::Ended, 0., true);
+        assert_eq!(scroll_offsets(window, cx), [px(-20.), px(0.), px(0.)]);
+
+        // The next gesture starts on the overlay, which now owns it.
+        dispatch_scroll(window, cx, TouchPhase::Started, 0., false);
+        dispatch_scroll(window, cx, TouchPhase::Moved, -10., false);
+        assert_eq!(scroll_offsets(window, cx), [px(-20.), px(0.), px(-10.)]);
+    }
+
+    #[gpui::test]
+    fn momentum_never_starts_a_gesture_of_its_own(cx: &mut TestAppContext) {
+        let window = scroll_gesture_window(cx);
+
+        dispatch_scroll(window, cx, TouchPhase::Started, 0., false);
+        dispatch_scroll(window, cx, TouchPhase::Moved, -10., false);
+        dispatch_scroll(window, cx, TouchPhase::Ended, 0., false);
+        window
+            .update(cx, |root, _, cx| {
+                root.show_second = true;
+                cx.notify();
+            })
+            .unwrap();
+
+        // The content changes between the fingers lifting and the momentum's
+        // first event. Even reported with `Started`, that event continues the
+        // gesture rather than capturing what is under the pointer now.
+        dispatch_scroll(window, cx, TouchPhase::Started, -10., true);
+        dispatch_scroll(window, cx, TouchPhase::Moved, -10., true);
+        dispatch_scroll(window, cx, TouchPhase::Ended, 0., true);
+        assert_eq!(scroll_offsets(window, cx), [px(-10.), px(0.), px(0.)]);
+    }
+
+    #[gpui::test]
+    fn ended_input_without_momentum_releases_the_scroll_gesture(cx: &mut TestAppContext) {
+        let window = scroll_gesture_window(cx);
+
+        dispatch_scroll(window, cx, TouchPhase::Started, 0., false);
+        dispatch_scroll(window, cx, TouchPhase::Moved, -10., false);
+        dispatch_scroll(window, cx, TouchPhase::Ended, 0., false);
+        window
+            .update(cx, |root, _, cx| {
+                root.show_second = true;
+                cx.notify();
+            })
+            .unwrap();
+
+        // No momentum followed, so a plain wheel event is not part of the old
+        // gesture and scrolls the content under the pointer.
+        dispatch_scroll(window, cx, TouchPhase::Moved, -10., false);
+        assert_eq!(scroll_offsets(window, cx), [px(-10.), px(-10.), px(0.)]);
+    }
+
+    fn dispatch_touch_at(
+        window: WindowHandle<ScrollGestureRoot>,
+        cx: &mut TestAppContext,
+        touch_phase: TouchPhase,
+        y: f32,
+    ) {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.dispatch_event(
+                TouchEvent {
+                    id: TouchId(1),
+                    phase: touch_phase,
+                    position: point(px(50.), px(y)),
+                    predicted_position: None,
+                    force: None,
+                }
+                .to_platform_input(),
+                cx,
+            );
+        })
+        .unwrap();
+    }
+
+    /// One iteration of the platform's frame loop: the callbacks scheduled
+    /// with `on_next_frame` run, then the window is drawn. Returns how many
+    /// callbacks ran.
+    fn draw_frame(window: WindowHandle<ScrollGestureRoot>, cx: &mut TestAppContext) -> usize {
+        cx.update_window(window.into(), |_, window, cx| {
+            let callbacks = window.simulate_next_frame(cx);
+            window.draw(cx).clear(cx);
+            callbacks
+        })
+        .unwrap()
+    }
+
+    /// The same as `scroll_gesture_ends_with_the_content_it_started_on`, but
+    /// through the touch path: raw touches recognized into a pan, and the
+    /// momentum ticked from the next-frame callbacks the recognizer schedules.
+    #[gpui::test]
+    fn touch_fling_momentum_stops_when_the_content_it_started_on_is_replaced(
+        cx: &mut TestAppContext,
+    ) {
+        let window = scroll_gesture_window(cx);
+
+        // The samples arrive microseconds apart, so the release velocity the
+        // recognizer estimates is far above its fling threshold.
+        dispatch_touch_at(window, cx, TouchPhase::Started, 400.);
+        for y in [360., 320., 280., 240.] {
+            dispatch_touch_at(window, cx, TouchPhase::Moved, y);
+        }
+        dispatch_touch_at(window, cx, TouchPhase::Ended, 240.);
+        assert_eq!(scroll_offsets(window, cx), [px(-160.), px(0.), px(0.)]);
+
+        // The fling's curve runs on wall-clock time, so each tick needs some
+        // of it to pass to produce a step.
+        let mut flung_to = px(-160.);
+        for _ in 0..2 {
+            std::thread::sleep(Duration::from_millis(10));
+            assert_eq!(draw_frame(window, cx), 1, "a momentum tick is pending");
+            let [first, second, overlay] = scroll_offsets(window, cx);
+            assert!(first < flung_to, "momentum keeps scrolling: {first:?}");
+            assert_eq!([second, overlay], [px(0.), px(0.)]);
+            flung_to = first;
+        }
+
+        // The content the fling started on is replaced while its momentum is
+        // still ticking: the momentum must not scroll what took its place.
+        window
+            .update(cx, |root, _, cx| {
+                root.show_second = true;
+                cx.notify();
+            })
+            .unwrap();
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        let [removed_at, ..] = scroll_offsets(window, cx);
+        for _ in 0..3 {
+            std::thread::sleep(Duration::from_millis(10));
+            assert_eq!(draw_frame(window, cx), 1, "a momentum tick is pending");
+            assert_eq!(scroll_offsets(window, cx), [removed_at, px(0.), px(0.)]);
+        }
+
+        // A touch catches the fling, which ends it, and pans the content
+        // under the finger now. The touch stays down: lifting it this quickly
+        // would fling again.
+        dispatch_touch_at(window, cx, TouchPhase::Started, 400.);
+        dispatch_touch_at(window, cx, TouchPhase::Moved, 360.);
+        assert_eq!(scroll_offsets(window, cx), [removed_at, px(-40.), px(0.)]);
     }
 }
 
