@@ -18,7 +18,7 @@
 use std::fmt;
 
 use gpui::{
-    BenchAppContext, Context,
+    BenchAppContext, Context, Window,
     randomized_element_tree::{
         ChangeLocality, RandomizedElementTree, RandomizedElementTreeBounds,
         RandomizedElementTreeConfig, RandomizedElementTreeMutation,
@@ -134,13 +134,27 @@ fn inputs() -> Vec<TreeInput> {
 
 /// Builds the tree, draws it once so layout and the scene are warm, and measures
 /// `mutate` once per frame. Returns how many frames were measured, after checking that
-/// the last frame did render something: a frame that skipped the changed element would
-/// be fast and wrong.
+/// the frames did render something: a frame that skipped the changed element would be
+/// fast and wrong.
 fn measure(
     input: &TreeInput,
     cx: &mut BenchAppContext,
     mut mutate: impl FnMut(&mut RandomizedElementTree, &mut Context<RandomizedElementTree>),
 ) -> usize {
+    measure_in_window(input, cx, |tree, _, cx| mutate(tree, cx)).frames
+}
+
+/// What a measured loop did: frames measured, and the entity renders the frames showed.
+struct Measured {
+    frames: usize,
+    entity_renders: usize,
+}
+
+fn measure_in_window(
+    input: &TreeInput,
+    cx: &mut BenchAppContext,
+    mut mutate: impl FnMut(&mut RandomizedElementTree, &mut Window, &mut Context<RandomizedElementTree>),
+) -> Measured {
     let config = input.config;
     let mut window = cx.add_empty_window();
     let tree = window.update(|window, cx| {
@@ -168,22 +182,46 @@ fn measure(
     // a renderer that skipped the changed element would see none in any of them.
     let mut frames = 0;
     let mut frames_that_rendered = 0;
-    cx.bench_renderer(tree, |tree, _window, cx| {
+    let mut entity_renders = 0;
+    cx.bench_renderer(tree, |tree, window, cx| {
         let previous = tree.work_counters();
+        entity_renders += previous.entity_render_count();
         if previous.root_render_count() + previous.entity_render_count() >= 1
             && previous.element_render_count() >= 1
         {
             frames_that_rendered += 1;
         }
         tree.reset_work_counters();
-        mutate(tree, cx);
+        mutate(tree, window, cx);
         frames += 1;
     });
     assert!(
         frames_that_rendered * 2 >= frames,
         "the notified root or entity re-rendered in {frames_that_rendered} of {frames} frames"
     );
-    frames
+    Measured {
+        frames,
+        entity_renders,
+    }
+}
+
+/// A frame that rebuilds everything: `Window::refresh`, the fallback GPUI uses whenever
+/// it cannot tell what changed (window activation, theme or settings changes via
+/// `refresh_windows`, an inspector toggle). Nothing in the tree changes, so this is the
+/// pure cost of the known-good path, and the renderer's worst case: every view and element
+/// rendered again, none reused. Its difference between two GPUI revisions is the price of
+/// a full refresh on the newer one.
+#[gpui::bench(inputs = inputs(), input_name = "tree", group = "RandomizedTree/full refresh", fps = 120)]
+fn full_refresh(input: &TreeInput, cx: &mut BenchAppContext) {
+    let measured = measure_in_window(input, cx, |_, window, _| window.refresh());
+    assert!(measured.frames > 0);
+    // A full refresh renders every entity; a renderer that replayed them would render none.
+    if input.config.entity_density() >= 0.25 {
+        assert!(
+            measured.entity_renders > 0,
+            "a full refresh re-renders entities"
+        );
+    }
 }
 
 /// A frame in which the root is notified but nothing in the tree changed. On a renderer
@@ -370,6 +408,7 @@ fn changing_share(input: &ChangingShareInput, cx: &mut BenchAppContext) {
 
 gpui::bench_group!(
     benches,
+    full_refresh,
     unchanged,
     leaf_style,
     leaf_bounds,
