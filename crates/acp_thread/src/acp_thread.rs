@@ -1011,6 +1011,9 @@ impl ToolCall {
             sandbox_not_applied,
         };
         result.update_raw_output_content(&language_registry, cx);
+        if result.kind == acp::ToolKind::Execute {
+            result.update_execute_label(cx);
+        }
         Ok(result)
     }
 
@@ -1052,6 +1055,28 @@ impl ToolCall {
                 Markdown::new(text, Some(language_registry), None, cx)
             }
         })
+    }
+
+    fn update_execute_label(&mut self, cx: &mut App) {
+        let command = self
+            .raw_input
+            .as_ref()
+            .and_then(|input| input.get("command"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(SharedString::from);
+        let text = command
+            .or_else(|| self.title.as_ref().filter(|s| !s.trim().is_empty()).cloned())
+            .or_else(|| {
+                self.tool_name
+                    .as_ref()
+                    .filter(|name| !name.trim().is_empty())
+                    .cloned()
+            })
+            .unwrap_or_else(|| "Tool call".into());
+        if self.label.read(cx).source() != &text {
+            self.label.update(cx, |label, cx| label.replace(text, cx));
+        }
     }
 
     fn update_fields(
@@ -1112,6 +1137,15 @@ impl ToolCall {
             self.sandbox_not_applied = Some(sandbox_not_applied);
         }
 
+        // Store raw_input before title so update_execute_label() sees it regardless of order.
+        if let Some(raw_input) = raw_input {
+            self.raw_input_markdown = markdown_for_raw_output(&raw_input, &language_registry, cx);
+            self.raw_input = Some(raw_input);
+            if self.kind == acp::ToolKind::Execute {
+                label_changed = true;
+            }
+        }
+
         if let Some(title) = title {
             self.title = Some(SharedString::from(title)).filter(|title| !title.trim().is_empty());
             if self.kind == acp::ToolKind::Execute
@@ -1126,20 +1160,24 @@ impl ToolCall {
             }
         }
         if label_changed {
-            let is_plain_text = self.title.is_none() || self.kind == acp::ToolKind::Execute;
-            if was_plain_text != is_plain_text {
-                self.label = Self::new_label(
-                    self.title.as_ref(),
-                    self.tool_name.as_ref(),
-                    self.kind,
-                    language_registry.clone(),
-                    cx,
-                );
+            if self.kind == acp::ToolKind::Execute {
+                self.update_execute_label(cx);
             } else {
-                let text =
-                    Self::label_text(self.title.as_ref(), self.tool_name.as_ref(), self.kind);
-                if self.label.read(cx).source() != &text {
-                    self.label.update(cx, |label, cx| label.replace(text, cx));
+                let is_plain_text = self.title.is_none() || self.kind == acp::ToolKind::Execute;
+                if was_plain_text != is_plain_text {
+                    self.label = Self::new_label(
+                        self.title.as_ref(),
+                        self.tool_name.as_ref(),
+                        self.kind,
+                        language_registry.clone(),
+                        cx,
+                    );
+                } else {
+                    let text =
+                        Self::label_text(self.title.as_ref(), self.tool_name.as_ref(), self.kind);
+                    if self.label.read(cx).source() != &text {
+                        self.label.update(cx, |label, cx| label.replace(text, cx));
+                    }
                 }
             }
         }
@@ -1170,11 +1208,6 @@ impl ToolCall {
 
         if let Some(locations) = locations {
             self.locations = locations;
-        }
-
-        if let Some(raw_input) = raw_input {
-            self.raw_input_markdown = markdown_for_raw_output(&raw_input, &language_registry, cx);
-            self.raw_input = Some(raw_input);
         }
 
         if let Some(raw_output) = raw_output {
