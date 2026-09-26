@@ -6,6 +6,7 @@ use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use util::ResultExt;
 
 use super::symbol_locator::CodeActionStore;
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
@@ -111,14 +112,21 @@ impl AgentTool for ApplyCodeActionTool {
             let buffer = pending.buffer.clone();
 
             let apply_task = project.update(cx, |project, cx| {
-                project.apply_code_action(buffer, action, true, cx)
+                project.apply_code_action_with_client_command(buffer, action, true, cx)
             });
 
-            let transaction = apply_task
+            let (transaction, client_command) = apply_task
                 .await
                 .map_err(|e| format!("Failed to apply code action '{title}': {e}"))?;
 
             if transaction.0.is_empty() {
+                if let Some(client_command) = client_command {
+                    return Ok(format!(
+                        "Code action '{title}' was applied, but {}",
+                        client_command_not_applied_message(&client_command),
+                    ));
+                }
+
                 return Ok(format!(
                     "Code action '{title}' was applied but made no changes.",
                 ));
@@ -135,11 +143,32 @@ impl AgentTool for ApplyCodeActionTool {
                         .file()
                         .map(|f| f.full_path(cx).display().to_string())
                         .unwrap_or_else(|| "<untitled>".to_string());
-                    writeln!(output, "- {path}").ok();
+                    writeln!(output, "- {path}").log_err();
                 });
+            }
+
+            if let Some(client_command) = client_command {
+                writeln!(
+                    output,
+                    "\nThe code action also requested an editor command, but {}",
+                    client_command_not_applied_message(&client_command),
+                )
+                .log_err();
             }
 
             Ok(output)
         })
+    }
+}
+
+fn client_command_not_applied_message(client_command: &language::ClientCommand) -> String {
+    match client_command {
+        language::ClientCommand::ShowLocations(_) => {
+            "the editor must open the requested locations interactively".to_string()
+        }
+        language::ClientCommand::ScheduleTask(task_template) => format!(
+            "the editor must schedule the task '{}' interactively",
+            task_template.label
+        ),
     }
 }
