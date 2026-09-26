@@ -649,14 +649,20 @@ impl WebWindowInner {
             let position = mouse_position_in_element(mouse_event);
             let modifiers = modifiers_from_wheel_event(mouse_event, this.is_mac);
 
+            // A mouse wheel reports only `deltaY`, and every desktop platform
+            // treats shift+wheel as the horizontal axis. A trackpad already
+            // sends a real `deltaX`, so the swap is taken only when `deltaX`
+            // is zero and a true horizontal gesture is left untouched.
+            let (delta_x, delta_y) = if modifiers.shift && event.delta_x() == 0.0 {
+                (event.delta_y(), 0.0)
+            } else {
+                (event.delta_x(), event.delta_y())
+            };
             let delta_mode = event.delta_mode();
             let delta = if delta_mode == 1 {
-                ScrollDelta::Lines(point(-event.delta_x() as f32, -event.delta_y() as f32))
+                ScrollDelta::Lines(point(-delta_x as f32, -delta_y as f32))
             } else {
-                ScrollDelta::Pixels(point(
-                    px(-event.delta_x() as f32),
-                    px(-event.delta_y() as f32),
-                ))
+                ScrollDelta::Pixels(point(px(-delta_x as f32), px(-delta_y as f32)))
             };
 
             {
@@ -1080,6 +1086,11 @@ impl WebWindowInner {
                     this.with_input_handler(|handler| {
                         handler.paste(ClipboardItem::new_string(text));
                     });
+                    // Paste cancels the DOM edit, so the mirror still holds
+                    // the pre-paste text. Refresh it from the application's
+                    // replacement before the next IME edit is diffed against
+                    // it, or that text gets duplicated or eaten.
+                    this.schedule_ime_mirror_sync();
                 }
                 return;
             }
@@ -1109,6 +1120,9 @@ impl WebWindowInner {
                 this.with_input_handler(|handler| {
                     handler.paste(ClipboardItem { entries });
                 });
+                // Same fix for the async image/mixed paste, which resolves a
+                // frame or more after the handler returns.
+                this.schedule_ime_mirror_sync();
             });
         })
     }
