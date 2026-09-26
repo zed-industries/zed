@@ -1534,7 +1534,7 @@ fn wrapping_right_single(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayP
     }
 }
 
-fn up_down_buffer_rows(
+pub(crate) fn up_down_buffer_rows(
     map: &DisplaySnapshot,
     mut point: DisplayPoint,
     mut goal: SelectionGoal,
