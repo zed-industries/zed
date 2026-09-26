@@ -75,7 +75,7 @@ trait AssertionFn: 'static + Send + Sync {
     fn assert<'a>(
         &'a self,
         sample: &'a EvalSample,
-        judge_model: Arc<dyn LanguageModel>,
+        judge_model: LanguageModel,
         cx: &'a mut TestAppContext,
     ) -> LocalBoxFuture<'a, Result<EvalAssertionOutcome>>;
 }
@@ -85,16 +85,12 @@ where
     F: 'static
         + Send
         + Sync
-        + AsyncFn(
-            &EvalSample,
-            Arc<dyn LanguageModel>,
-            &mut TestAppContext,
-        ) -> Result<EvalAssertionOutcome>,
+        + AsyncFn(&EvalSample, LanguageModel, &mut TestAppContext) -> Result<EvalAssertionOutcome>,
 {
     fn assert<'a>(
         &'a self,
         sample: &'a EvalSample,
-        judge_model: Arc<dyn LanguageModel>,
+        judge_model: LanguageModel,
         cx: &'a mut TestAppContext,
     ) -> LocalBoxFuture<'a, Result<EvalAssertionOutcome>> {
         (self)(sample, judge_model, cx).boxed_local()
@@ -110,11 +106,7 @@ impl EvalAssertion {
         F: 'static
             + Send
             + Sync
-            + AsyncFn(
-                &EvalSample,
-                Arc<dyn LanguageModel>,
-                &mut TestAppContext,
-            ) -> Result<EvalAssertionOutcome>,
+            + AsyncFn(&EvalSample, LanguageModel, &mut TestAppContext) -> Result<EvalAssertionOutcome>,
     {
         EvalAssertion(Arc::new(f))
     }
@@ -159,9 +151,11 @@ impl EvalAssertion {
                     .map(|effort_level| effort_level.value.to_string()),
                 ..Default::default()
             };
+            let provider =
+                cx.update(|cx| LanguageModelRegistry::read_global(cx).provider_for_model(&judge))?;
             let mut response = retry_on_rate_limit(async || {
-                Ok(judge
-                    .stream_completion_text(request.clone(), &cx.to_async())
+                Ok(provider
+                    .stream_completion_text(&judge, request.clone(), &cx.to_async())
                     .await?)
             })
             .await?;
@@ -190,7 +184,7 @@ impl EvalAssertion {
     async fn run(
         &self,
         input: &EvalSample,
-        judge_model: Arc<dyn LanguageModel>,
+        judge_model: LanguageModel,
         cx: &mut TestAppContext,
     ) -> Result<EvalAssertionOutcome> {
         self.0.assert(input, judge_model, cx).await
@@ -224,8 +218,8 @@ struct EvalAssertionOutcome {
 struct EditToolTest {
     fs: Arc<FakeFs>,
     project: Entity<Project>,
-    model: Arc<dyn LanguageModel>,
-    judge_model: Arc<dyn LanguageModel>,
+    model: LanguageModel,
+    judge_model: LanguageModel,
     model_thinking_effort: Option<String>,
 }
 
@@ -309,7 +303,7 @@ impl EditToolTest {
     async fn load_model(
         selected_model: &SelectedModel,
         cx: &mut AsyncApp,
-    ) -> Result<Arc<dyn LanguageModel>> {
+    ) -> Result<LanguageModel> {
         cx.update(|cx| {
             let registry = LanguageModelRegistry::read_global(cx);
             let provider = registry
@@ -319,13 +313,14 @@ impl EditToolTest {
         })
         .await?;
         Ok(cx.update(|cx| {
-            let models = LanguageModelRegistry::read_global(cx);
-            models
-                .available_models(cx)
-                .find(|model| {
-                    model.provider_id() == selected_model.provider
-                        && model.id() == selected_model.model
-                })
+            let registry = LanguageModelRegistry::read_global(cx);
+            let provider = registry
+                .provider(&selected_model.provider)
+                .expect("Provider not found");
+            provider
+                .provided_models(cx)
+                .into_iter()
+                .find(|model| model.id() == selected_model.model)
                 .unwrap_or_else(|| panic!("Model {} not found", selected_model.model.0))
         }))
     }
@@ -482,9 +477,13 @@ impl EditToolTest {
         let model = self.model.clone();
         let events = cx
             .update(|cx| {
+                let provider = LanguageModelRegistry::read_global(cx).provider_for_model(&model);
                 let async_cx = cx.to_async();
-                cx.foreground_executor()
-                    .spawn(async move { model.stream_completion(request, &async_cx).await })
+                cx.foreground_executor().spawn(async move {
+                    provider?
+                        .stream_completion(&model, request, &async_cx)
+                        .await
+                })
             })
             .await
             .map_err(|err| anyhow::anyhow!("completion error: {}", err))?;

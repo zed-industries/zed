@@ -7706,12 +7706,14 @@ dependencies = [
 name = "gpui_platform"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "console_error_panic_hook",
  "criterion",
  "gpui",
  "gpui_linux",
  "gpui_macos",
  "gpui_web",
+ "gpui_wgpu",
  "gpui_windows",
 ]
 
@@ -7782,6 +7784,7 @@ dependencies = [
  "etagere",
  "gpui",
  "gpui_util",
+ "image",
  "itertools 0.14.0",
  "log",
  "naga",
@@ -9730,7 +9733,6 @@ dependencies = [
  "ai_onboarding",
  "anthropic",
  "anyhow",
- "async-lock",
  "aws-config",
  "aws-credential-types",
  "aws-sigv4",
@@ -9782,7 +9784,6 @@ dependencies = [
  "settings",
  "sha2",
  "strum 0.28.0",
- "tokio",
  "ui",
  "ui_input",
  "util",

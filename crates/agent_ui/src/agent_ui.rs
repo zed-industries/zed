@@ -56,7 +56,7 @@ use language::{
     language_settings::{AllLanguageSettings, EditPredictionProvider},
 };
 use language_model::{
-    ConfiguredModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
+    LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::{AgentId, DisableAiSettings};
 use prompt_store::{self, PromptBuilder, rules_to_skills_migration};
@@ -538,7 +538,7 @@ pub(crate) enum ModelUsageContext {
 }
 
 impl ModelUsageContext {
-    pub fn configured_model(&self, cx: &App) -> Option<ConfiguredModel> {
+    pub fn model(&self, cx: &App) -> Option<LanguageModel> {
         match self {
             Self::InlineAssistant => {
                 LanguageModelRegistry::read_global(cx).inline_assistant_model()
