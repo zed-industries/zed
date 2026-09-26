@@ -5117,8 +5117,8 @@ impl InputHandler for MarkdownInputHandler {
 mod tests {
     use super::*;
     use gpui::{
-        DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId, LineLayout, Modifiers,
-        NoopTextSystem, PlatformTextSystem, RenderGlyphParams, RenderImage, ScrollDelta,
+        Background, DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId, LineLayout,
+        Modifiers, NoopTextSystem, PlatformTextSystem, RenderGlyphParams, RenderImage, ScrollDelta,
         ScrollWheelEvent, Size, TestAppContext, TestDispatcher, TextRenderingMode, TouchPhase,
         UpdateGlobal, VisualTestContext, size,
     };
@@ -7743,6 +7743,75 @@ mod tests {
         assert!(quad_bounds.left() < px(0.));
         assert!(visible_bounds.left() >= px(0.));
         assert!(visible_bounds.right() <= window_width);
+    }
+
+    #[gpui::test]
+    fn test_search_and_selection_below_aligned_inline_code(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        for alignment in ["---", ":---:", "---:"] {
+            for text in ["xx", "é中🙂"] {
+                let source = format!(
+                    "| WWWWWWWWWWWWWWWWWWWWWWWWWWWWWW |\n| {alignment} |\n| ~~`{text}`~~ |\n"
+                );
+                let start = source.find(text).expect("inline code is present");
+                let range = start..start + text.len();
+                let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+                markdown.update(cx, |markdown, cx| {
+                    markdown.selection.start = range.start;
+                    markdown.selection.end = range.end;
+                    markdown.set_search_highlights(vec![range], None, cx);
+                });
+                let (_, cx) = cx.add_window_view(move |_, _| MarkdownTestView {
+                    markdown,
+                    style: MarkdownStyle {
+                        inline_code: TextStyleRefinement {
+                            background_color: Some(gpui::green()),
+                            ..TextStyleRefinement::default()
+                        },
+                        selection_background_color: gpui::red(),
+                        ..MarkdownStyle::default()
+                    },
+                    code_span_link: None,
+                    rendered_text: Rc::new(RefCell::new(None)),
+                });
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    let quads = window.painted_quads();
+                    let selection_bounds = quads
+                        .iter()
+                        .find(|quad| quad.background == Background::from(gpui::red()))
+                        .expect("selection is painted")
+                        .bounds;
+                    let order_for_color = |color| {
+                        let orders = quads
+                            .iter()
+                            .filter(|quad| {
+                                quad.background == Background::from(color)
+                                    && quad.bounds.intersects(&selection_bounds)
+                            })
+                            .map(|quad| quad.order)
+                            .collect::<Vec<_>>();
+                        assert_eq!(orders.len(), 1);
+                        orders[0]
+                    };
+                    let chip_order = order_for_color(gpui::green());
+                    let search_order = order_for_color(cx.theme().colors().search_match_background);
+                    let selection_order = order_for_color(gpui::red());
+                    let text_order = window
+                        .painted_underlines()
+                        .iter()
+                        .map(|underline| underline.order)
+                        .min()
+                        .expect("strikethrough is painted");
+                    assert!(chip_order < search_order);
+                    assert!(search_order < selection_order);
+                    assert!(
+                        selection_order < text_order,
+                        "alignment={alignment}, text={text}, selection={selection_order}, glyphs={text_order}",
+                    );
+                });
+            }
+        }
     }
 
     #[gpui::test]
