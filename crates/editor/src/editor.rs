@@ -808,6 +808,18 @@ pub trait Addon: 'static {
         None
     }
 
+    /// Opens `buffer` in place of the default text editor when it stands in for something that
+    /// cannot be shown as text. Returns whether the buffer was handled.
+    fn open_buffer(
+        &self,
+        _: &Entity<language::Buffer>,
+        _split: bool,
+        _: &mut Window,
+        _: &mut App,
+    ) -> bool {
+        false
+    }
+
     fn to_any(&self) -> &dyn std::any::Any;
 
     fn to_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
@@ -10602,6 +10614,7 @@ impl Editor {
 
         new_selections_by_buffer
             .retain(|buffer, _| buffer.read(cx).file().is_none_or(|file| file.can_open()));
+        self.open_buffers_with_addons(&mut new_selections_by_buffer, split, window, cx);
 
         if new_selections_by_buffer.is_empty() {
             return;
@@ -10614,6 +10627,25 @@ impl Editor {
             window,
             cx,
         );
+    }
+
+    /// Lets addons open buffers themselves, removing the ones they handled.
+    pub(crate) fn open_buffers_with_addons<T>(
+        &self,
+        buffers: &mut HashMap<Entity<language::Buffer>, T>,
+        split: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if self.addons.is_empty() {
+            return;
+        }
+        buffers.retain(|buffer, _| {
+            !self
+                .addons
+                .values()
+                .any(|addon| addon.open_buffer(buffer, split, window, cx))
+        });
     }
 
     pub(crate) fn open_buffers_in_workspace(
