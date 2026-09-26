@@ -29,7 +29,7 @@ use std::{path::PathBuf, rc::Rc};
 use theme_settings::ThemeSettings;
 use ui::{CopyButton, Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
 use url::Url;
-use util::TryFutureExt;
+use util::{ResultExt as _, TryFutureExt};
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
@@ -58,15 +58,50 @@ pub fn hover_at(
             return;
         }
 
+        let settings = EditorSettings::get_global(cx);
+        let hover_popover_sticky = settings.hover_popover_sticky;
+        let hover_popover_hiding_delay =
+            Duration::from_millis(settings.hover_popover_hiding_delay.0);
+
         if let Some(anchor) = anchor {
+            let is_hovering_existing_popover = editor.hover_state.visible() && {
+                let snapshot = editor.snapshot(window, cx);
+                same_info_hover(editor, &snapshot, anchor)
+                    || same_diagnostic_hover(editor, &snapshot, anchor)
+            };
+
+            let is_transitioning_to_existing_popover =
+                mouse_position.is_some_and(|mouse_position| {
+                    editor
+                        .hover_state
+                        .is_mouse_in_hover_transition(mouse_position)
+                });
+
+            // Crossing text on the way to the popover still produces a valid anchor.
+            // Preserve the current hover before show_hover can replace it for that anchor.
+            if !is_hovering_existing_popover
+                && hover_popover_sticky
+                && is_transitioning_to_existing_popover
+            {
+                let getting_closer = mouse_position.is_some_and(|mouse_position| {
+                    editor.hover_state.is_mouse_getting_closer(mouse_position)
+                });
+
+                // Moving away within the corridor lets an existing timer expire.
+                if getting_closer || editor.hover_state.hiding_delay_task.is_none() {
+                    start_hiding_hover_delay(editor, hover_popover_hiding_delay, cx);
+                }
+                return;
+            }
+
             editor.hover_state.hiding_delay_task = None;
             editor.hover_state.closest_mouse_distance = None;
             show_hover(editor, anchor, false, window, cx);
+            editor.hover_state.source_mouse_position = mouse_position;
         } else if !editor.hover_state.visible() {
             editor.hover_state.info_task = None;
         } else {
-            let settings = EditorSettings::get_global(cx);
-            if !settings.hover_popover_sticky {
+            if !hover_popover_sticky {
                 hide_hover(editor, cx);
                 return;
             }
@@ -82,17 +117,21 @@ pub fn hover_at(
             }
 
             // If we are moving closer, or if no timer is running at all, start/restart the timer.
-            let delay = Duration::from_millis(settings.hover_popover_hiding_delay.0);
-            let task = cx.spawn(async move |this, cx| {
-                cx.background_executor().timer(delay).await;
-                this.update(cx, |editor, cx| {
-                    hide_hover(editor, cx);
-                })
-                .ok();
-            });
-            editor.hover_state.hiding_delay_task = Some(task);
+            start_hiding_hover_delay(editor, hover_popover_hiding_delay, cx);
         }
     }
+}
+
+fn start_hiding_hover_delay(editor: &mut Editor, delay: Duration, cx: &mut Context<Editor>) {
+    let task = cx.spawn(async move |this, cx| {
+        cx.background_executor().timer(delay).await;
+        this.update(cx, |editor, cx| {
+            hide_hover(editor, cx);
+        })
+        .log_err();
+    });
+    // Replacing the stored GPUI task cancels the previous timer before it can hide the hover.
+    editor.hover_state.hiding_delay_task = Some(task);
 }
 
 pub fn show_keyboard_hover(
@@ -255,6 +294,7 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut Context<Editor>) -> bool {
     editor.hover_state.info_task = None;
     editor.hover_state.hiding_delay_task = None;
     editor.hover_state.closest_mouse_distance = None;
+    editor.hover_state.source_mouse_position = None;
 
     editor.clear_background_highlights(HighlightKey::HoverState, cx);
 
@@ -1087,6 +1127,9 @@ pub struct HoverState {
     pub info_task: Option<Task<Option<()>>>,
     pub closest_mouse_distance: Option<Pixels>,
     pub hiding_delay_task: Option<Task<()>>,
+    // Keep the departure point fixed during a transition so the corridor cannot
+    // follow the mouse onto unrelated text. Re-hovering the source updates it.
+    pub source_mouse_position: Option<gpui::Point<Pixels>>,
 }
 
 impl HoverState {
@@ -1130,6 +1173,92 @@ impl HoverState {
         self.closest_mouse_distance =
             Some(distance.min(self.closest_mouse_distance.unwrap_or(distance)));
         true
+    }
+
+    fn is_mouse_in_hover_transition(&self, mouse_position: gpui::Point<Pixels>) -> bool {
+        let Some(source_mouse_position) = self.source_mouse_position else {
+            return false;
+        };
+
+        self.info_popovers
+            .iter()
+            .filter_map(|popover| popover.last_bounds.get())
+            .chain(
+                self.diagnostic_popover
+                    .as_ref()
+                    .and_then(|popover| popover.last_bounds.get()),
+            )
+            .any(|popover_bounds| {
+                Self::mouse_is_in_hover_corridor(
+                    source_mouse_position,
+                    popover_bounds,
+                    mouse_position,
+                )
+            })
+    }
+
+    fn mouse_is_in_hover_corridor(
+        source_mouse_position: gpui::Point<Pixels>,
+        popover_bounds: Bounds<Pixels>,
+        mouse_position: gpui::Point<Pixels>,
+    ) -> bool {
+        if popover_bounds.contains(&mouse_position) {
+            return true;
+        }
+
+        // Use the mouse's departure point instead of the symbol's layout anchor: the
+        // popover can touch the source line and the mouse can be anywhere in the symbol.
+        // Checking every edge also handles wide or shifted popovers without guessing
+        // which side faces the source from the relative positions of their centers.
+        let corners = [
+            popover_bounds.origin,
+            popover_bounds.top_right(),
+            popover_bounds.bottom_right(),
+            popover_bounds.bottom_left(),
+        ];
+        corners
+            .iter()
+            .zip(corners.iter().cycle().skip(1))
+            .any(|(&start, &end)| {
+                Self::point_is_in_triangle(mouse_position, source_mouse_position, start, end)
+            })
+    }
+
+    fn point_is_in_triangle(
+        point: gpui::Point<Pixels>,
+        first: gpui::Point<Pixels>,
+        second: gpui::Point<Pixels>,
+        third: gpui::Point<Pixels>,
+    ) -> bool {
+        fn signed_area(
+            first: gpui::Point<Pixels>,
+            second: gpui::Point<Pixels>,
+            third: gpui::Point<Pixels>,
+        ) -> f32 {
+            let first_x: f32 = first.x.into();
+            let first_y: f32 = first.y.into();
+            let second_x: f32 = second.x.into();
+            let second_y: f32 = second.y.into();
+            let third_x: f32 = third.x.into();
+            let third_y: f32 = third.y.into();
+
+            (first_x - third_x) * (second_y - third_y) - (second_x - third_x) * (first_y - third_y)
+        }
+
+        // Collinear vertices have no interior; the sign checks alone could accept
+        // points anywhere along that line, even beyond the transition corridor.
+        if signed_area(first, second, third) == 0.0 {
+            return false;
+        }
+
+        let first_sign = signed_area(point, first, second);
+        let second_sign = signed_area(point, second, third);
+        let third_sign = signed_area(point, third, first);
+
+        let has_negative = first_sign < 0.0 || second_sign < 0.0 || third_sign < 0.0;
+        let has_positive = first_sign > 0.0 || second_sign > 0.0 || third_sign > 0.0;
+
+        !(has_negative && has_positive)
     }
 
     fn distance_from_point_to_bounds(
@@ -1496,6 +1625,53 @@ mod tests {
 
     fn get_hover_popover_delay(cx: &gpui::TestAppContext) -> u64 {
         cx.read(|cx: &App| -> u64 { EditorSettings::get_global(cx).hover_popover_delay.0 })
+    }
+
+    #[test]
+    fn test_hover_transition_corridor_uses_mouse_departure_position() {
+        use gpui::{point, size};
+
+        let source = point(px(160.), px(210.));
+        for (bounds, towards, away) in [
+            (
+                Bounds::new(point(px(100.), px(0.)), size(px(400.), px(200.))),
+                point(px(180.), px(205.)),
+                point(px(140.), px(215.)),
+            ),
+            (
+                Bounds::new(point(px(100.), px(220.)), size(px(400.), px(200.))),
+                point(px(180.), px(215.)),
+                point(px(140.), px(205.)),
+            ),
+            (
+                Bounds::new(point(px(0.), px(100.)), size(px(150.), px(200.))),
+                point(px(155.), px(230.)),
+                point(px(165.), px(190.)),
+            ),
+            (
+                Bounds::new(point(px(170.), px(100.)), size(px(400.), px(200.))),
+                point(px(165.), px(230.)),
+                point(px(155.), px(190.)),
+            ),
+        ] {
+            assert!(HoverState::mouse_is_in_hover_corridor(
+                source, bounds, towards
+            ));
+            assert!(!HoverState::mouse_is_in_hover_corridor(
+                source, bounds, away
+            ));
+        }
+    }
+
+    #[test]
+    fn test_hover_transition_corridor_rejects_points_beyond_collinear_edges() {
+        use gpui::{point, size};
+
+        assert!(!HoverState::mouse_is_in_hover_corridor(
+            point(px(100.), px(210.)),
+            Bounds::new(point(px(100.), px(0.)), size(px(400.), px(200.))),
+            point(px(100.), px(250.)),
+        ));
     }
 
     #[gpui::test]
@@ -3058,6 +3234,20 @@ mod tests {
     async fn test_hover_popover_hiding_delay_restarts_when_mouse_gets_closer(
         cx: &mut gpui::TestAppContext,
     ) {
+        assert_hover_popover_hiding_delay_restarts(cx, false).await;
+    }
+
+    #[gpui::test]
+    async fn test_hover_popover_hiding_delay_restarts_while_mouse_transitions_to_popover(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        assert_hover_popover_hiding_delay_restarts(cx, true).await;
+    }
+
+    async fn assert_hover_popover_hiding_delay_restarts(
+        cx: &mut gpui::TestAppContext,
+        over_text: bool,
+    ) {
         init_test(cx, |_| {});
 
         let custom_delay_ms = 600u64;
@@ -3086,6 +3276,10 @@ mod tests {
         let hover_point = cx.display_point(indoc! {"
             fn test() { printˇln!(); }
         "});
+        let outside_hover_point = cx.display_point(indoc! {"
+            fn ˇtest() { println!(); }
+        "});
+        let source_mouse_position = cx.pixel_position_for(hover_point);
         let symbol_range = cx.lsp_range(indoc! {"
             fn test() { «println!»(); }
         "});
@@ -3104,46 +3298,65 @@ mod tests {
             let anchor = snapshot
                 .buffer_snapshot()
                 .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
-            hover_at(editor, Some(anchor), None, window, cx)
+            hover_at(
+                editor,
+                Some(anchor),
+                Some(source_mouse_position),
+                window,
+                cx,
+            )
         });
         cx.background_executor
             .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         requests.next().await;
+        cx.run_until_parked();
 
-        cx.editor(|editor, _, _| {
-            assert!(editor.hover_state.visible());
+        // Read the rendered bounds so cursor blinks and other redraws cannot
+        // replace synthetic geometry halfway through the timer assertion.
+        let popover_bounds = cx.editor(|editor, _, _| {
+            editor
+                .hover_state
+                .info_popovers
+                .first()
+                .unwrap()
+                .last_bounds
+                .get()
+                .unwrap()
         });
-
-        cx.update_editor(|editor, _, _| {
-            let popover = editor.hover_state.info_popovers.first().unwrap();
-            popover.last_bounds.set(Some(Bounds {
-                origin: gpui::Point {
-                    x: px(100.0),
-                    y: px(100.0),
-                },
-                size: Size {
-                    width: px(100.0),
-                    height: px(60.0),
-                },
-            }));
+        let target_position = gpui::point(
+            popover_bounds.center().x,
+            if source_mouse_position.y < popover_bounds.top() {
+                popover_bounds.top()
+            } else {
+                popover_bounds.bottom()
+            },
+        );
+        let transition_point =
+            source_mouse_position + (target_position - source_mouse_position) * 0.25;
+        assert!(!popover_bounds.contains(&transition_point));
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let anchor = over_text.then(|| {
+                snapshot
+                    .buffer_snapshot()
+                    .anchor_before(outside_hover_point.to_offset(&snapshot, Bias::Left))
+            });
+            hover_at(editor, anchor, Some(transition_point), window, cx)
         });
-
-        let far_point = gpui::Point {
-            x: px(260.0),
-            y: px(130.0),
-        };
-        cx.update_editor(|editor, window, cx| hover_at(editor, None, Some(far_point), window, cx));
 
         cx.background_executor
             .advance_clock(Duration::from_millis(400));
         cx.background_executor.run_until_parked();
 
-        let closer_point = gpui::Point {
-            x: px(220.0),
-            y: px(130.0),
-        };
+        let closer_point = source_mouse_position + (target_position - source_mouse_position) * 0.75;
         cx.update_editor(|editor, window, cx| {
-            hover_at(editor, None, Some(closer_point), window, cx)
+            let snapshot = editor.snapshot(window, cx);
+            let anchor = over_text.then(|| {
+                snapshot
+                    .buffer_snapshot()
+                    .anchor_before(outside_hover_point.to_offset(&snapshot, Bias::Left))
+            });
+            hover_at(editor, anchor, Some(closer_point), window, cx)
         });
 
         cx.background_executor
