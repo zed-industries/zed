@@ -8371,7 +8371,7 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
-    fn git_hunks_section() -> [SettingsPageItem; 5] {
+    fn git_hunks_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("Git Hunks"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8434,6 +8434,22 @@ fn version_control_page() -> SettingsPage {
                             .git
                             .get_or_insert_default()
                             .show_stage_restore_buttons = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Hunk Controls Position",
+                description: "Which side of the line the diff hunk controls (stage/restore/next-hunk toolbar) are shown on.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.hunk_controls_position"),
+                    pick: |settings_content| {
+                        settings_content.git.as_ref()?.hunk_controls_position.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.git.get_or_insert_default().hunk_controls_position = value;
                     },
                 }),
                 metadata: None,
