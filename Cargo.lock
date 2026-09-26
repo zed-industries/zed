@@ -7631,6 +7631,7 @@ dependencies = [
  "smallvec",
  "smol",
  "strum 0.28.0",
+ "theme",
  "url",
  "uuid",
  "wayland-backend",
