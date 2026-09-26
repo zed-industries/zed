@@ -1052,7 +1052,15 @@ pub async fn stream_response(
 
 #[inline(never)]
 fn decode_stream_event(line: &str) -> serde_json::Result<StreamEvent> {
-    serde_json::from_str(line)
+    serde_json::from_str(line).or_else(|error| {
+        // Deserialize provider errors that are missing a `type`.
+        match serde_json::from_str::<GenericStreamErrorPayload>(line) {
+            Ok(payload) if payload.error.is_some() => {
+                Ok(StreamEvent::GenericError { error: payload })
+            }
+            _ => Err(error),
+        }
+    })
 }
 
 #[cfg(test)]
@@ -1063,6 +1071,17 @@ mod tests {
     use language_model_core::OPEN_AI_PROVIDER_ID;
     use serde_json::json;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn decode_stream_event_accepts_bare_error_envelope() {
+        let line = r#"{"error": {"message": "litellm.APIError: The server had an error", "type": null, "param": null, "code": "500"}}"#;
+        let Ok(StreamEvent::GenericError { error }) = decode_stream_event(line) else {
+            panic!("expected a generic error event");
+        };
+        let error = error.into_response_error();
+        assert_eq!(error.message, "litellm.APIError: The server had an error");
+        assert_eq!(error.code.as_deref(), Some("500"));
+    }
 
     #[test]
     fn count_input_tokens_preserves_structured_input_without_generation_fields() {
