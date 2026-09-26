@@ -19,6 +19,7 @@ use language_model::{
 use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
 use ui::IconName;
+use util::ResultExt;
 
 use anthropic::completion::collect_compaction_result;
 pub use anthropic::completion::{AnthropicEventMapper, AnthropicPromptCacheMode, into_anthropic};
@@ -53,7 +54,8 @@ pub struct State {
     credentials_provider: Arc<dyn CredentialsProvider>,
     http_client: Arc<dyn HttpClient>,
     fetched_models: Vec<anthropic::Model>,
-    fetch_models_task: Option<Task<Result<()>>>,
+    fetch_models_task: Option<Task<()>>,
+    last_fetch_models_error: Option<String>,
 }
 
 impl State {
@@ -133,7 +135,16 @@ impl State {
     }
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
-        let task = self.fetch_models(cx);
+        let fetch_task = self.fetch_models(cx);
+        let task = cx.spawn(async move |this, cx| {
+            let result = fetch_task.await;
+            this.update(cx, |this, _cx| {
+                this.last_fetch_models_error =
+                    result.as_ref().err().map(|error| format!("{error:#}"));
+            })
+            .ok();
+            result.log_err();
+        });
         self.fetch_models_task.replace(task);
     }
 }
@@ -172,6 +183,7 @@ impl AnthropicLanguageModelProvider {
                 http_client: http_client.clone(),
                 fetched_models: Vec::new(),
                 fetch_models_task: None,
+                last_fetch_models_error: None,
             }
         });
 
@@ -845,6 +857,82 @@ mod tests {
             })
         );
         assert!(body["tools"].is_null());
+    }
+
+    #[gpui::test]
+    async fn restart_fetch_models_task_records_error_on_failure(cx: &mut gpui::TestAppContext) {
+        let http_client = FakeHttpClient::create(|_request| async move {
+            Ok(http_client::Response::builder()
+                .status(401)
+                .body(AsyncBody::from(
+                    r#"{"error":{"message":"invalid x-api-key"}}"#,
+                ))?)
+        });
+        let provider = direct_anthropic_test_provider(http_client, cx);
+
+        cx.update(|cx| provider.set_api_key(Some("test-key".to_string()), cx))
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        let error = cx.read(|cx| provider.state.read(cx).last_fetch_models_error.clone());
+        assert!(
+            error.is_some(),
+            "a failed model fetch should be recorded, not silently dropped"
+        );
+    }
+
+    #[gpui::test]
+    async fn restart_fetch_models_task_cancels_the_previous_fetch(cx: &mut gpui::TestAppContext) {
+        let (release_tx, release_rx) = futures::channel::oneshot::channel();
+        let release_rx = Arc::new(Mutex::new(Some(release_rx)));
+        let call_count = Arc::new(Mutex::new(0));
+        let call_count_for_handler = call_count.clone();
+        let http_client = FakeHttpClient::create(move |_request| {
+            let release_rx = release_rx.clone();
+            let call_count = call_count_for_handler.clone();
+            async move {
+                let call_index = {
+                    let mut call_count = call_count.lock().unwrap();
+                    *call_count += 1;
+                    *call_count
+                };
+                if call_index == 1 {
+                    let release_rx = release_rx.lock().unwrap().take();
+                    if let Some(release_rx) = release_rx {
+                        release_rx.await.ok();
+                    }
+                    Ok(http_client::Response::builder()
+                        .status(401)
+                        .body(AsyncBody::from(r#"{"error":{"message":"stale"}}"#))?)
+                } else {
+                    Ok(http_client::Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from(r#"{"data":[]}"#))?)
+                }
+            }
+        });
+        let provider = direct_anthropic_test_provider(http_client, cx);
+
+        cx.update(|cx| provider.set_api_key(Some("test-key".to_string()), cx))
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+        assert_eq!(*call_count.lock().unwrap(), 1);
+
+        cx.update(|cx| provider.set_api_key(Some("test-key".to_string()), cx))
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        release_tx.send(()).ok();
+        cx.executor().run_until_parked();
+
+        let error = cx.read(|cx| provider.state.read(cx).last_fetch_models_error.clone());
+        assert!(
+            error.is_none(),
+            "the cancelled first fetch's stale 401 must not overwrite the second fetch's success"
+        );
     }
 
     fn direct_anthropic_test_provider(
