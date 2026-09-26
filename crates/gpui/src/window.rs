@@ -1541,6 +1541,7 @@ impl Window {
             tabbing_identifier,
         } = options;
 
+        let has_tabbing_identifier = tabbing_identifier.is_some();
         let initial_window_title = titlebar
             .as_ref()
             .and_then(|titlebar| titlebar.title.clone());
@@ -1571,6 +1572,18 @@ impl Window {
         SystemWindowTabController::init_visible(cx, tab_bar_visible);
         if let Some(tabs) = platform_window.tabbed_windows() {
             SystemWindowTabController::add_tab(cx, handle.window_id(), tabs);
+        } else if has_tabbing_identifier {
+            // A standalone window is not in a native tab group yet, so `tabbed_windows()`
+            // is `None`. Register it anyway; otherwise Merge All Windows no-ops because
+            // the controller has never heard of this window.
+            let title = initial_window_title
+                .clone()
+                .unwrap_or_else(|| SharedString::from(""));
+            SystemWindowTabController::add_tab(
+                cx,
+                handle.window_id(),
+                vec![SystemWindowTab::new(title, handle)],
+            );
         }
 
         let display_id = platform_window.display().map(|display| display.id());
@@ -1971,13 +1984,37 @@ impl Window {
             })
         });
         platform_window.on_merge_all_windows({
-            let mut cx = cx.to_async();
+            let cx = cx.to_async();
+            let foreground_executor = cx.foreground_executor().clone();
             Box::new(move || {
-                handle
-                    .update(&mut cx, |_, _window, cx| {
-                        SystemWindowTabController::merge_all_windows(cx, handle.window_id());
+                let mut cx = cx.clone();
+                // AppKit calls this synchronously from the menu tracking loop, while `App`
+                // may already be borrowed. Defer so the controller update is not dropped.
+                foreground_executor
+                    .spawn(async move {
+                        handle
+                            .update(&mut cx, |_, window, cx| {
+                                let window_id = handle.window_id();
+                                if let Some(tabs) = window.platform_window.tabbed_windows()
+                                    && tabs.len() > 1
+                                {
+                                    SystemWindowTabController::sync_tabs(cx, tabs);
+                                    SystemWindowTabController::set_visible(cx, true);
+                                    return;
+                                }
+                                SystemWindowTabController::merge_all_windows(cx, window_id);
+                                let tab_count = cx
+                                    .global::<SystemWindowTabController>()
+                                    .tabs(window_id)
+                                    .map(|tabs| tabs.len())
+                                    .unwrap_or(0);
+                                if tab_count > 1 {
+                                    SystemWindowTabController::set_visible(cx, true);
+                                }
+                            })
+                            .log_err();
                     })
-                    .log_err();
+                    .detach();
             })
         });
         platform_window.on_select_next_tab({

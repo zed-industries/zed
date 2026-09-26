@@ -983,10 +983,12 @@ impl MacWindow {
             let pool = NSAutoreleasePool::new(nil);
 
             let allows_automatic_window_tabbing = tabbing_identifier.is_some();
+            // Only enable tabbing here. Disabling it is global, so a later window
+            // opened without an identifier (prompts, notifications) would turn tabbing
+            // off for the whole app and Merge All Windows would no-op. The off state
+            // is applied once at startup, and again via `set_tabbing_identifier(None)`.
             if allows_automatic_window_tabbing {
                 let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: YES];
-            } else {
-                let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: NO];
             }
 
             let mut style_mask;
