@@ -138,6 +138,7 @@ To disable this behavior use:
     "show_branch_status_icon": false, // Show git status on branch icon
     "show_branch_name": true,       // Show/hide branch name
     "show_worktree_name": true,     // Show/hide worktree name
+    "show_active_file": "off",      // "off", "file_name" or "relative_path"
     "show_project_items": true,     // Show/hide project host and name
     "show_onboarding_banner": true, // Show/hide onboarding banners
     "show_user_picture": true,      // Show/hide user avatar

@@ -614,6 +614,15 @@
     "show_branch_name": true,
     // Whether to show the worktree name button in the titlebar.
     "show_worktree_name": true,
+    // Whether to show the active file in the titlebar, and how.
+    //
+    // 1. Don't show it:
+    //     "off"
+    // 2. Show only the file name (e.g. `main.rs`):
+    //     "file_name"
+    // 3. Show the path relative to the project (e.g. `src/main.rs`):
+    //     "relative_path"
+    "show_active_file": "off",
     // Whether to show the project host and name in the titlebar.
     "show_project_items": true,
     // Whether to show onboarding banners in the titlebar.

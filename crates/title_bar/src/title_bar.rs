@@ -26,6 +26,7 @@ use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
 use command_palette_hooks::CommandPaletteFilter;
 
+use file_icons::FileIcons;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, Context, Element, Entity, Focusable,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
@@ -38,7 +39,7 @@ use project::{
     trusted_worktrees::TrustedWorktrees,
 };
 use remote::RemoteConnectionOptions;
-use settings::{Settings as _, SettingsStore};
+use settings::{Settings as _, SettingsStore, ShowActiveFile};
 
 use std::any::TypeId;
 use std::path::Path;
@@ -64,6 +65,7 @@ pub use onboarding_banner::restore_banner;
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
 const MAX_SHORT_SHA_LENGTH: usize = 8;
+const MAX_ACTIVE_FILE_PATH_LENGTH: usize = 80;
 
 fn linked_worktree_name_anchor<'a>(
     main_worktree_path: Option<&'a Path>,
@@ -312,7 +314,8 @@ impl Render for TitleBar {
                 .gap_0p5()
                 .map(|title_bar| {
                     let mut render_project_items = title_bar_settings.show_branch_name
-                        || title_bar_settings.show_project_items;
+                        || title_bar_settings.show_project_items
+                        || title_bar_settings.show_active_file != ShowActiveFile::Off;
                     title_bar
                         .when_some(
                             self.application_menu.clone().filter(|_| !show_menus),
@@ -329,22 +332,29 @@ impl Render for TitleBar {
                         )
                         .children(self.render_restricted_mode(cx))
                         .when(render_project_items, |title_bar| {
+                            let worktree_and_branch = repository
+                                .filter(|_| is_git_enabled)
+                                .and_then(|repository| {
+                                    self.render_worktree_and_branch(
+                                        repository,
+                                        linked_worktree_name,
+                                        cx,
+                                    )
+                                });
+                            let show_active_file_separator = title_bar_settings.show_project_items
+                                || worktree_and_branch.is_some();
                             title_bar
                                 .when(title_bar_settings.show_project_items, |title_bar| {
                                     title_bar
                                         .children(self.render_project_host(cx))
                                         .child(self.render_project_name(project_name, window, cx))
                                 })
-                                .when_some(
-                                    repository.filter(|_| is_git_enabled),
-                                    |title_bar, repository| {
-                                        title_bar.children(self.render_worktree_and_branch(
-                                            repository,
-                                            linked_worktree_name,
-                                            cx,
-                                        ))
-                                    },
-                                )
+                                .children(worktree_and_branch)
+                                .children(self.render_active_file(
+                                    title_bar_settings.show_active_file,
+                                    show_active_file_separator,
+                                    cx,
+                                ))
                         })
                 })
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -924,6 +934,68 @@ impl TitleBar {
                 },
             )
             .anchor(gpui::Anchor::TopLeft)
+    }
+
+    fn render_active_file(
+        &self,
+        mode: ShowActiveFile,
+        show_separator: bool,
+        cx: &App,
+    ) -> Option<impl IntoElement> {
+        if mode == ShowActiveFile::Off {
+            return None;
+        }
+        let project_path = self
+            .workspace
+            .upgrade()?
+            .read(cx)
+            .active_item(cx)?
+            .project_path(cx)?;
+        let project = self.project.read(cx);
+        let label = match project_path.path.file_name() {
+            Some(file_name) if mode == ShowActiveFile::FileName => file_name.to_string(),
+            Some(_) => project_path
+                .path
+                .display(project.path_style(cx))
+                .to_string(),
+            // Single-file worktrees have an empty relative path.
+            None => project
+                .worktree_for_id(project_path.worktree_id, cx)?
+                .read(cx)
+                .root_name_str()
+                .to_string(),
+        };
+        let icon_file_name = project_path.path.file_name().unwrap_or(&label);
+        let icon = FileIcons::get_icon(Path::new(icon_file_name), cx)
+            .map(Icon::from_path)
+            .unwrap_or_else(|| Icon::new(IconName::File));
+
+        Some(
+            h_flex()
+                .gap_px()
+                .when(show_separator, |this| {
+                    this.child(
+                        Label::new("/")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .alpha(0.25),
+                    )
+                })
+                .child(
+                    h_flex()
+                        .px_1()
+                        .gap_1()
+                        .child(icon.size(IconSize::XSmall).color(Color::Muted))
+                        .child(
+                            Label::new(util::truncate_and_remove_front(
+                                &label,
+                                MAX_ACTIVE_FILE_PATH_LENGTH,
+                            ))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                        ),
+                ),
+        )
     }
 
     fn render_worktree_and_branch(
