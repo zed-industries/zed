@@ -2136,6 +2136,77 @@ mod tests {
     /// instead surface the kernel launch error as an error output on the cell.
     #[gpui::test]
     async fn test_run_cell_with_missing_interpreter_shows_error(cx: &mut TestAppContext) {
+        let missing_interpreter = path!("/nonexistent/python3");
+        let traceback = run_cell_with_broken_kernel(
+            vec![
+                missing_interpreter.to_string(),
+                "-m".to_string(),
+                "ipykernel_launcher".to_string(),
+                "-f".to_string(),
+                "{connection_file}".to_string(),
+            ],
+            cx,
+        )
+        .await;
+        assert!(
+            traceback.contains("the kernel failed to launch"),
+            "error output should explain why the cell could not run, got: {traceback}"
+        );
+    }
+
+    /// When the kernel process starts but exits before binding its sockets (e.g.
+    /// `ipykernel` is not installed), the launch must fail with the kernel's stderr
+    /// instead of leaving the notebook stuck on "the kernel is still starting".
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_run_cell_with_kernel_that_exits_early_shows_error(cx: &mut TestAppContext) {
+        // Connecting to the kernel goes through zeromq, which schedules its
+        // connection retries on this dispatcher. The test platform dispatcher
+        // doesn't support delayed tasks, so run them on real threads instead.
+        struct ThreadDispatcher;
+
+        impl async_dispatcher::Dispatcher for ThreadDispatcher {
+            fn dispatch(&self, runnable: async_dispatcher::Runnable) {
+                std::thread::spawn(move || runnable.run());
+            }
+
+            fn dispatch_after(
+                &self,
+                duration: std::time::Duration,
+                runnable: async_dispatcher::Runnable,
+            ) {
+                std::thread::spawn(move || {
+                    std::thread::sleep(duration);
+                    runnable.run();
+                });
+            }
+        }
+
+        async_dispatcher::set_dispatcher(ThreadDispatcher);
+
+        let traceback = run_cell_with_broken_kernel(
+            vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "echo 'python3: No module named ipykernel_launcher' >&2; exit 1".to_string(),
+                "{connection_file}".to_string(),
+            ],
+            cx,
+        )
+        .await;
+        assert!(
+            traceback.contains("No module named ipykernel_launcher"),
+            "error output should include the kernel's stderr, got: {traceback}"
+        );
+        assert!(
+            traceback.contains("pip install ipykernel"),
+            "error output should suggest installing ipykernel, got: {traceback}"
+        );
+    }
+
+    /// Launches a notebook whose kernel cannot start, runs its only cell, and
+    /// returns the traceback of the resulting error output.
+    async fn run_cell_with_broken_kernel(argv: Vec<String>, cx: &mut TestAppContext) -> String {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -2143,35 +2214,26 @@ mod tests {
             editor::init(cx);
         });
 
+        // The kernel is a real process whose working directory is the worktree
+        // root, so the root must also exist on the real filesystem.
+        let root = std::env::temp_dir();
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/notebooks"),
-            json!({ "test.ipynb": NOTEBOOK_WITH_ONE_CODE_CELL }),
-        )
-        .await;
+        fs.insert_tree(&root, json!({ "test.ipynb": NOTEBOOK_WITH_ONE_CODE_CELL }))
+            .await;
 
-        let project = Project::test(fs.clone(), [path!("/notebooks").as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [root.as_path()], cx).await;
         cx.update(|cx| ReplStore::init(fs.clone(), cx));
 
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
 
-        // Select a kernel whose interpreter doesn't exist, simulating a machine
-        // where Python isn't installed properly. This is the same path the
-        // kernel picker uses.
-        let missing_interpreter = path!("/nonexistent/python3");
+        // Select the broken kernel through the same path the kernel picker uses.
         let broken_spec = KernelSpecification::Jupyter(LocalKernelSpecification {
             name: "python3".to_string(),
-            path: PathBuf::from(missing_interpreter),
+            path: PathBuf::from(&argv[0]),
             kernelspec: JupyterKernelspec {
-                argv: vec![
-                    missing_interpreter.to_string(),
-                    "-m".to_string(),
-                    "ipykernel_launcher".to_string(),
-                    "-f".to_string(),
-                    "{connection_file}".to_string(),
-                ],
+                argv,
                 display_name: "Python 3".to_string(),
                 language: "python".to_string(),
                 interrupt_mode: None,
@@ -2215,7 +2277,7 @@ mod tests {
         });
 
         // Creating the editor launches the kernel. Wait for the actual launch
-        // task, which fails because the interpreter cannot be spawned.
+        // task, which fails because the kernel cannot start.
         let pending_kernel = editor.read_with(cx, |editor, _| match &editor.kernel {
             Kernel::StartingKernel(task) => task.clone(),
             _ => panic!("kernel should be starting right after the editor is created"),
@@ -2253,15 +2315,11 @@ mod tests {
             match outputs.as_slice() {
                 [nbformat::v4::Output::Error(error)] => {
                     assert_eq!(error.ename, "Kernel Error");
-                    let traceback = error.traceback.join("\n");
-                    assert!(
-                        traceback.contains("the kernel failed to launch"),
-                        "error output should explain why the cell could not run, got: {traceback}"
-                    );
+                    error.traceback.join("\n")
                 }
                 other => panic!("expected a single error output, got: {other:?}"),
             }
-        });
+        })
     }
 
     /// Opening a notebook as a single file (its own worktree) leaves the
