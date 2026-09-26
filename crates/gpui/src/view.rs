@@ -976,6 +976,79 @@ mod tests {
         }
     }
 
+    /// Key contexts and action listeners are added to dispatch nodes during paint. A view
+    /// that painted while visible and is then hidden without re-rendering must not keep
+    /// its key context in the frame's dispatch tree, as it would not on a frame drawn from
+    /// scratch.
+    #[gpui::test]
+    fn hidden_views_do_not_keep_their_key_contexts(cx: &mut TestAppContext) {
+        struct Panel;
+        impl Render for Panel {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().key_context("Panel").size(px(20.))
+            }
+        }
+        struct Host {
+            panel: Entity<Panel>,
+            hidden: bool,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let panel = div().child(self.panel.clone());
+                div().size_full().child(if self.hidden {
+                    panel.invisible()
+                } else {
+                    panel
+                })
+            }
+        }
+        let build = |engine| {
+            move |window: &mut Window, cx: &mut Context<Host>| {
+                window.view_tree = engine;
+                Host {
+                    panel: cx.new(|_| Panel),
+                    hidden: false,
+                }
+            }
+        };
+        let eager = cx.open_window(
+            size(px(100.), px(100.)),
+            build(crate::ViewTree::new_eager()),
+        );
+        let memoized = cx.open_window(size(px(100.), px(100.)), build(crate::ViewTree::new()));
+        cx.run_until_parked();
+        let has_panel_context = |handle: crate::WindowHandle<Host>, cx: &mut TestAppContext| {
+            handle
+                .update(cx, |_, window, _| {
+                    let tree = &window.rendered_frame.dispatch_tree;
+                    (0..tree.len()).any(|index| {
+                        tree.node(crate::DispatchNodeId::from_index(index))
+                            .context
+                            .as_ref()
+                            .is_some_and(|context| context.contains("Panel"))
+                    })
+                })
+                .expect("window open")
+        };
+        assert!(has_panel_context(eager, cx) && has_panel_context(memoized, cx));
+        for step in 0..3 {
+            for handle in [eager, memoized] {
+                handle
+                    .update(cx, |host, _, cx| {
+                        host.hidden = step < 2;
+                        cx.notify();
+                    })
+                    .expect("window open");
+            }
+            cx.run_until_parked();
+            assert_eq!(
+                has_panel_context(memoized, cx),
+                has_panel_context(eager, cx),
+                "step {step}: the key context follows visibility"
+            );
+        }
+    }
+
     /// Group styles resolve through per-frame bookkeeping that every prepaint of a grouped
     /// element writes. That bookkeeping is drawing, not state: a view whose subtree uses
     /// `.group()` and `group_hover` stays clean across frames nothing changed, and its

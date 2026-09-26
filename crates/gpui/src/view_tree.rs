@@ -1,8 +1,8 @@
 use crate::{
     Bounds, EntityId, GlobalElementId, LayoutId, Pixels, ViewNode, ViewNodeCacheKey,
     view_node::{
-        DispatchOp, DispatchParent, MetadataPhase, NodeOutput, OutputItem, OutputSlot,
-        RecordedDispatchNode, ViewNodeScene,
+        DispatchLink, DispatchOp, DispatchParent, MetadataPhase, NodeOutput, OutputItem,
+        OutputSlot, RecordedDispatchNode, ViewNodeScene,
     },
 };
 use collections::{FxHashMap, FxHashSet};
@@ -115,6 +115,12 @@ pub(crate) struct ViewTree {
     /// Scratch for `snapshot_dispatch_nodes`: where each live dispatch node in the scope's
     /// range resolves to, so parents of later nodes resolve in one step.
     dispatch_resolution: Vec<DispatchParent>,
+    /// For each node whose prepaint was grafted this frame, the frame's dispatch node its
+    /// first recorded node was reproduced as; the rest follow it consecutively. Grafting
+    /// the node's paint fills those nodes with what paint gave them.
+    grafted_dispatch: FxHashMap<ViewNodeId, usize>,
+    /// Nodes whose paint was grafted by the replay in progress, awaiting that fill.
+    painted_grafts: Vec<ViewNodeId>,
     /// A frame is its roots, in drawing order: the window's root view, then the roots
     /// attached by `defer_draw` in priority order, then the prompt, drag overlay or
     /// tooltip. Walking them in order reproduces the frame. `roots` is the frame drawn
@@ -152,6 +158,8 @@ impl ViewTree {
             retired_layouts: Vec::new(),
             traversal_stack: Vec::new(),
             dispatch_resolution: Vec::new(),
+            grafted_dispatch: FxHashMap::default(),
+            painted_grafts: Vec::new(),
             spare_scenes: Vec::new(),
             invalidation_scratch: Vec::new(),
             roots: Vec::new(),
@@ -245,6 +253,28 @@ impl ViewTree {
         let recorded = scene.finish_node_scene(node_id);
         self.store_scene(node_id, recorded);
         self.spare_scenes.push(previous);
+        self.painted_grafts.push(node_id);
+    }
+
+    /// Gives the dispatch nodes of the nodes whose paint was just grafted what their paint
+    /// gave them when recorded: key contexts and listeners. Their prepaint graft reproduced
+    /// the nodes themselves.
+    pub(crate) fn fill_painted_grafts(&mut self, tree: &mut crate::key_dispatch::DispatchTree) {
+        let mut painted = std::mem::take(&mut self.painted_grafts);
+        for node_id in painted.drain(..) {
+            let (Some(start), Some(node)) =
+                (self.grafted_dispatch.get(&node_id), self.nodes.get(node_id))
+            else {
+                continue;
+            };
+            for (offset, recorded) in node.output.dispatch_nodes.iter().enumerate() {
+                tree.fill_recorded(
+                    crate::DispatchNodeId::from_index(start + offset),
+                    &recorded.node,
+                );
+            }
+        }
+        self.painted_grafts = painted;
     }
 
     pub(crate) fn current_node(&self) -> Option<ViewNodeId> {
@@ -313,11 +343,9 @@ impl ViewTree {
         under: Option<crate::DispatchNodeId>,
     ) {
         if let Some((_, _, output)) = self.current_output() {
-            output.dispatch.push(DispatchOp::Root(
-                node,
-                priority,
-                DispatchParent::Live(under),
-            ));
+            output
+                .dispatch
+                .push(DispatchOp::Root(node, priority, DispatchLink::live(under)));
         }
     }
 
@@ -451,13 +479,32 @@ impl ViewTree {
     /// while prepainting, hanging the node's top-level ones from `attachment`. Roots the
     /// subtree attached are reported to `attach_root` with the dispatch node they hang from.
     /// Returns whether one of the rebuilt nodes is `focus`.
+    ///
+    /// Only what prepaint gave the nodes is rebuilt here; `fill_painted_grafts` adds what
+    /// paint gave them for the nodes whose paint is replayed too.
     pub(crate) fn replay_dispatch(
+        &mut self,
+        node_id: ViewNodeId,
+        attachment: Option<crate::DispatchNodeId>,
+        tree: &mut crate::key_dispatch::DispatchTree,
+        focus: Option<crate::FocusId>,
+        attach_root: &mut impl FnMut(ViewNodeId, usize, crate::DispatchNodeId),
+    ) -> bool {
+        let mut grafted = std::mem::take(&mut self.grafted_dispatch);
+        let contains_focus =
+            self.replay_dispatch_into(node_id, attachment, tree, focus, attach_root, &mut grafted);
+        self.grafted_dispatch = grafted;
+        contains_focus
+    }
+
+    fn replay_dispatch_into(
         &self,
         node_id: ViewNodeId,
         attachment: Option<crate::DispatchNodeId>,
         tree: &mut crate::key_dispatch::DispatchTree,
         focus: Option<crate::FocusId>,
         attach_root: &mut impl FnMut(ViewNodeId, usize, crate::DispatchNodeId),
+        grafted: &mut FxHashMap<ViewNodeId, usize>,
     ) -> bool {
         // A child that was removed since its parent last drew is skipped.
         let Some(output) = self.output(node_id) else {
@@ -470,30 +517,26 @@ impl ViewTree {
             let parent = match recorded.parent {
                 DispatchParent::Recorded(index) => rebuilt.get(index as usize).copied(),
                 DispatchParent::Attachment => attachment,
-                DispatchParent::Live(_) => {
-                    debug_assert!(false, "a reused scope's dispatch nodes were snapshotted");
-                    attachment
-                }
             };
             rebuilt.push(tree.push_recorded_under(parent, &recorded.node));
             contains_focus |= focus.is_some() && recorded.node.focus_id == focus;
         }
+        if let Some(first) = rebuilt.first() {
+            grafted.insert(node_id, first.index());
+        }
         for op in &output.dispatch {
-            let (parent, child) = match *op {
-                DispatchOp::Child(child, parent) => (parent, Some(child)),
-                DispatchOp::Root(_, _, parent) => (parent, None),
+            let (link, child) = match *op {
+                DispatchOp::Child(child, link) => (link, Some(child)),
+                DispatchOp::Root(_, _, link) => (link, None),
             };
-            let under = match parent {
+            let under = match link.resolved {
                 DispatchParent::Recorded(index) => rebuilt.get(index as usize).copied(),
                 DispatchParent::Attachment => attachment,
-                DispatchParent::Live(_) => {
-                    debug_assert!(false, "a reused scope's attachments were resolved");
-                    attachment
-                }
             };
             match (*op, child) {
                 (_, Some(child)) => {
-                    contains_focus |= self.replay_dispatch(child, under, tree, focus, attach_root);
+                    contains_focus |=
+                        self.replay_dispatch_into(child, under, tree, focus, attach_root, grafted);
                 }
                 (DispatchOp::Root(root, priority, _), None) => {
                     if let Some(under) = under {
@@ -520,12 +563,15 @@ impl ViewTree {
         }
     }
 
-    /// Copies the dispatch nodes a node pushed while prepainting out of the frame's tree,
-    /// now that painting has added their listeners and contexts. Its pushes are the range
-    /// recorded by `begin_dispatch_range`/`end_dispatch_range`, minus its children's ranges,
-    /// which the children copy themselves. Empty nodes — most elements' — are left out, and
-    /// whatever hung from one is resolved to its nearest kept ancestor or, above the range,
-    /// to the scope's attachment point.
+    /// Copies the dispatch nodes a node pushed while prepainting out of the frame's tree.
+    /// Its pushes are the range recorded by `begin_dispatch_range`/`end_dispatch_range`,
+    /// minus its children's ranges, which the children copy themselves. Empty nodes — most
+    /// elements' — are left out, and whatever hung from one is resolved to its nearest kept
+    /// ancestor or, above the range, to the scope's attachment point.
+    ///
+    /// Called after the node prepaints and again after it paints, which adds key contexts
+    /// and listeners: an element can prepaint a child view without painting it, and the
+    /// record must then hold what a fresh frame would have held, with every link resolved.
     pub(crate) fn snapshot_dispatch_nodes(
         &mut self,
         node_id: ViewNodeId,
@@ -600,10 +646,8 @@ impl ViewTree {
         }
         for op in &mut output.dispatch {
             match op {
-                DispatchOp::Child(_, parent) | DispatchOp::Root(_, _, parent) => {
-                    if let DispatchParent::Live(live) = *parent {
-                        *parent = resolve(&resolution, live);
-                    }
+                DispatchOp::Child(_, link) | DispatchOp::Root(_, _, link) => {
+                    link.resolved = resolve(&resolution, link.live);
                 }
             }
         }
@@ -660,7 +704,7 @@ impl ViewTree {
             {
                 output
                     .dispatch
-                    .push(DispatchOp::Child(node, DispatchParent::Live(under)));
+                    .push(DispatchOp::Child(node, DispatchLink::live(under)));
             }
         }
         self.traversal_stack.push((node, phase));
@@ -701,6 +745,7 @@ impl ViewTree {
         };
         self.full_refresh = full_refresh_reason.is_some();
         self.frame += 1;
+        self.grafted_dispatch.clear();
         self.frame_stats = ViewTreeStats {
             full_refresh_reason,
             ..ViewTreeStats::default()

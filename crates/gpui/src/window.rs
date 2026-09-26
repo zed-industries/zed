@@ -3716,6 +3716,12 @@ impl Window {
         if self.view_tree.current_phase() == Some(MetadataPhase::Prepaint) {
             self.view_tree
                 .end_dispatch_range(node_id, self.next_frame.dispatch_tree.len());
+            // Recorded now as well as after paint, since paint may not follow: an element
+            // can prepaint a child view without painting it.
+            if rendered {
+                self.view_tree
+                    .snapshot_dispatch_nodes(node_id, &self.next_frame.dispatch_tree);
+            }
         }
         self.view_tree.finish_phase(node_id, rendered, text);
     }
@@ -3786,13 +3792,16 @@ impl Window {
         self.next_frame.dispatch_tree.pop_node();
     }
 
-    /// Replays a reused node's scene into the frame, splicing it into the parent's.
+    /// Replays a reused node's paint into the frame: its scene, spliced into the parent's,
+    /// and the key contexts and listeners its dispatch nodes were given while painting.
     pub(crate) fn graft_view_node_paint(&mut self, node_id: ViewNodeId) {
         self.view_tree.replay_scene(
             node_id,
             &self.rendered_frame.scene,
             &mut self.next_frame.scene,
         );
+        self.view_tree
+            .fill_painted_grafts(&mut self.next_frame.dispatch_tree);
     }
 
     /// Push a text style onto the stack, and call a function with that style active.

@@ -274,7 +274,9 @@ impl DispatchTree {
         self.node_stack.pop();
     }
 
-    /// Adds a node reproduced from one recorded while a reused view drew, under `parent`.
+    /// Adds a node reproduced from one recorded while a reused view drew, under `parent`,
+    /// with what prepaint gave it: its focus and view. What paint gave it is added by
+    /// [`fill_recorded`](Self::fill_recorded) when the view's paint is replayed too.
     /// Nothing is being drawn, so the node, context and view stacks are left alone.
     pub(crate) fn push_recorded_under(
         &mut self,
@@ -283,13 +285,10 @@ impl DispatchTree {
     ) -> DispatchNodeId {
         let node_id = DispatchNodeId(self.nodes.len());
         self.nodes.push(DispatchNode {
-            key_listeners: recorded.key_listeners.clone(),
-            action_listeners: recorded.action_listeners.clone(),
-            modifiers_changed_listeners: recorded.modifiers_changed_listeners.clone(),
-            context: recorded.context.clone(),
             focus_id: recorded.focus_id,
             view_id: recorded.view_id,
             parent,
+            ..Default::default()
         });
         if let Some(focus_id) = recorded.focus_id {
             self.focusable_node_ids.insert(focus_id, node_id);
@@ -298,6 +297,19 @@ impl DispatchTree {
             self.view_node_ids.insert(view_id, node_id);
         }
         node_id
+    }
+
+    /// Adds to a node pushed by [`push_recorded_under`](Self::push_recorded_under) what
+    /// paint gave the recorded node: its key context and listeners.
+    pub(crate) fn fill_recorded(&mut self, node_id: DispatchNodeId, recorded: &DispatchNode) {
+        let Some(node) = self.nodes.get_mut(node_id.0) else {
+            return;
+        };
+        node.key_listeners.clone_from(&recorded.key_listeners);
+        node.action_listeners.clone_from(&recorded.action_listeners);
+        node.modifiers_changed_listeners
+            .clone_from(&recorded.modifiers_changed_listeners);
+        node.context.clone_from(&recorded.context);
     }
 
     /// The tree's dispatch-relevant content, independent of node order and of empty

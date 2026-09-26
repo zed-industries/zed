@@ -217,21 +217,42 @@ pub(crate) enum OutputItem {
 // the widest common variant; anything wider is boxed.
 const _: () = assert!(size_of::<OutputItem>() <= 56);
 
-/// Where a recorded dispatch node, child or root hangs in the frame's dispatch tree.
-/// Recorded as the live node active when it was drawn; once the scope has painted and
-/// its dispatch nodes are copied out, resolved to one of the copies or to the scope's
-/// attachment point, which is whatever is active where the scope is grafted.
+/// Where a recorded dispatch node, child or root hangs when the scope is replayed: under
+/// one of the scope's recorded nodes, or at the scope's attachment point, which is
+/// whatever dispatch node is active where the scope is grafted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DispatchParent {
-    Live(Option<crate::DispatchNodeId>),
-    /// A recorded node of this scope, by index in [`PhaseOutput::dispatch_nodes`].
+    /// A recorded node of this scope, by index in [`NodeOutput::dispatch_nodes`].
     Recorded(u32),
     Attachment,
 }
 
+/// Where a child or root a scope attached hangs in the dispatch tree: the live node it
+/// was attached under while the scope drew, and that node resolved against the scope's
+/// recorded nodes, which is what replay uses. The live node is kept because the scope
+/// is copied out twice in a frame, after prepaint and after paint, and the nodes kept
+/// can differ between the two: paint may give an empty node a key context.
+#[derive(Clone, Copy)]
+pub(crate) struct DispatchLink {
+    pub(crate) live: Option<crate::DispatchNodeId>,
+    pub(crate) resolved: DispatchParent,
+}
+
+impl DispatchLink {
+    pub(crate) fn live(under: Option<crate::DispatchNodeId>) -> Self {
+        Self {
+            live: under,
+            resolved: DispatchParent::Attachment,
+        }
+    }
+}
+
 /// A dispatch node a scope pushed while prepainting that has listeners, a key context, a
 /// focus or a view; empty ones are left out, since a walk of the tree cannot tell they
-/// were there.
+/// were there. Replay follows the phases that produced it: grafting the scope's prepaint
+/// adds the node with its focus and view, grafting its paint adds the key context and
+/// listeners. A scope that is prepainted but not painted (under `visibility: hidden`)
+/// therefore gets the same nodes a fresh frame would give it.
 pub(crate) struct RecordedDispatchNode {
     pub(crate) parent: DispatchParent,
     pub(crate) node: crate::key_dispatch::DispatchNode,
@@ -243,12 +264,12 @@ pub(crate) struct RecordedDispatchNode {
 /// only where children and roots hang needs remembering.
 #[derive(Clone, Copy)]
 pub(crate) enum DispatchOp {
-    Child(crate::view_tree::ViewNodeId, DispatchParent),
+    Child(crate::view_tree::ViewNodeId, DispatchLink),
     /// A root this scope attached to the frame with `defer_draw`, drawn after the tree at
     /// the given priority. Rendering the scope emits it; replaying the scope re-attaches
     /// the same root, so a deferred draw survives exactly as long as some drawn output
     /// says it is there. Not descended into: roots are walked from the frame's root list.
-    Root(crate::view_tree::ViewNodeId, usize, DispatchParent),
+    Root(crate::view_tree::ViewNodeId, usize, DispatchLink),
 }
 
 /// What one scope produced in one phase.
@@ -273,7 +294,8 @@ pub(crate) struct NodeOutput {
     /// The live dispatch nodes pushed while the scope prepainted, children's included:
     /// pushes are sequential, so they are a range of the frame's tree.
     pub(crate) dispatch_range: Range<u32>,
-    /// The scope's own non-empty dispatch nodes, in push order, copied out after paint.
+    /// The scope's own non-empty dispatch nodes, in push order, copied out after prepaint
+    /// and again after paint.
     pub(crate) dispatch_nodes: Vec<RecordedDispatchNode>,
     /// The primitives painted, with the children spliced where they were painted.
     pub(crate) scene: ViewNodeScene,
