@@ -945,7 +945,7 @@ mod tests {
     use acp_thread::{
         ContentBlock, ContextCompaction, ContextCompactionId, ContextCompactionStatus,
     };
-    use agent_client_protocol::schema::v1 as acp;
+    use agent_client_protocol::schema::v1 as acp_v1;
     use language::LanguageRegistry;
 
     #[gpui::test]
@@ -954,7 +954,11 @@ mod tests {
         let error = cx.new(|cx| Markdown::new("error match".into(), None, None, cx));
         let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let unsupported_block = ContentBlock::new_output(
-            acp::ContentBlock::Audio(acp::AudioContent::new("YXVkaW8=", "audio/wav")),
+            acp_thread::content::from_v1(acp_v1::ContentBlock::Audio(acp_v1::AudioContent::new(
+                "YXVkaW8=",
+                "audio/wav",
+            )))
+            .expect("known v1 audio content"),
             &language_registry,
             cx,
         );
