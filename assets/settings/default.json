@@ -118,6 +118,8 @@
     "font_family": null,
     // The font family for code blocks in the markdown preview. Falls back to the editor font family if unset.
     "code_font_family": null,
+    // The font weight for headings in the markdown preview, in CSS units from 100 to 900.
+    "heading_font_weight": 600,
     // Whether to automatically open Markdown files in the preview.
     "open_markdown_files_in_preview": false,
     // Whether to limit the width of the rendered markdown content. When
