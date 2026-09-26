@@ -5,6 +5,8 @@ extern crate self as util;
 pub mod archive;
 #[cfg(not(target_family = "wasm"))]
 pub mod command;
+#[cfg(target_os = "linux")]
+pub mod fd;
 #[cfg(not(target_family = "wasm"))]
 pub mod fs;
 #[cfg(not(target_family = "wasm"))]
