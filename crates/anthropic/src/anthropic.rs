@@ -22,7 +22,10 @@ pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 pub const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
 
 pub fn supports_fast_mode(model_id: &str) -> bool {
-    matches!(model_id, "claude-opus-5" | "claude-opus-4-8")
+    matches!(
+        model_id,
+        "claude-opus-5-5" | "claude-opus-5" | "claude-opus-4-8"
+    )
 }
 
 /// Model IDs where adaptive thinking runs by default when a request omits the
@@ -45,11 +48,14 @@ pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
 pub const THINKING_BINDING_CONTROLS_BETA_HEADER: &str = "thinking-binding-controls-2026-08-01";
 
 pub fn binds_thinking_blocks_to_prefix(model_id: &str) -> bool {
-    matches!(model_id, "claude-fable-5-1")
+    matches!(model_id, "claude-opus-5-5" | "claude-fable-5-1")
 }
 
 pub fn supports_forced_tool_use(model_id: &str) -> bool {
-    !matches!(model_id, "claude-fable-5-1" | "claude-mythos-5-1")
+    !matches!(
+        model_id,
+        "claude-opus-5-5" | "claude-fable-5-1" | "claude-mythos-5-1"
+    )
 }
 
 /// <https://platform.claude.com/docs/en/build-with-claude/compaction>
@@ -192,7 +198,8 @@ impl Model {
         // <https://platform.claude.com/docs/en/build-with-claude/compaction#supported-models>
         let supports_compaction = matches!(
             entry.id.as_str(),
-            "claude-fable-5-1"
+            "claude-opus-5-5"
+                | "claude-fable-5-1"
                 | "claude-fable-5"
                 | "claude-mythos-5-1"
                 | "claude-mythos-5"
@@ -423,6 +430,45 @@ pub async fn non_streaming_completion(
     }
 }
 
+/// Estimates input tokens without generating a message.
+///
+/// Anthropic's estimate may differ slightly from usage reported during generation.
+pub async fn count_input_tokens(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    request: CountTokensRequest,
+    beta_headers: Option<String>,
+    extra_headers: &CustomHeaders,
+) -> Result<u64, AnthropicError> {
+    let (mut response, rate_limits) = send_request_to_route(
+        client,
+        api_url,
+        "/v1/messages/count_tokens",
+        api_key,
+        request,
+        beta_headers,
+        extra_headers,
+    )
+    .await?;
+    if !response.status().is_success() {
+        return Err(handle_error_response(response, rate_limits).await);
+    }
+    let mut body = String::new();
+    response
+        .body_mut()
+        .read_to_string(&mut body)
+        .await
+        .map_err(AnthropicError::ReadResponse)?;
+    #[derive(Deserialize)]
+    struct CountTokensResponse {
+        input_tokens: u64,
+    }
+    serde_json::from_str::<CountTokensResponse>(&body)
+        .map(|response| response.input_tokens)
+        .map_err(AnthropicError::DeserializeResponse)
+}
+
 async fn send_request(
     client: &dyn HttpClient,
     api_url: &str,
@@ -431,7 +477,28 @@ async fn send_request(
     beta_headers: Option<String>,
     extra_headers: &CustomHeaders,
 ) -> Result<(http::Response<AsyncBody>, RateLimitInfo), AnthropicError> {
-    let uri = format!("{api_url}/v1/messages");
+    send_request_to_route(
+        client,
+        api_url,
+        "/v1/messages",
+        api_key,
+        request,
+        beta_headers,
+        extra_headers,
+    )
+    .await
+}
+
+async fn send_request_to_route(
+    client: &dyn HttpClient,
+    api_url: &str,
+    route: &str,
+    api_key: &str,
+    request: impl Serialize,
+    beta_headers: Option<String>,
+    extra_headers: &CustomHeaders,
+) -> Result<(http::Response<AsyncBody>, RateLimitInfo), AnthropicError> {
+    let uri = format!("{api_url}{route}");
 
     let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
@@ -949,7 +1016,36 @@ pub struct Request {
     pub top_p: Option<f32>,
 }
 
+/// Input counted by Anthropic, excluding generation and service settings.
+#[derive(Serialize, Debug)]
+pub struct CountTokensRequest {
+    pub model: String,
+    pub messages: Vec<Message>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<Tool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system: Option<StringOrContents>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<Thinking>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_management: Option<ContextManagement>,
+}
+
 impl Request {
+    pub fn into_count_tokens_request(self) -> CountTokensRequest {
+        CountTokensRequest {
+            model: self.model,
+            messages: self.messages,
+            tools: self.tools,
+            tool_choice: self.tool_choice,
+            system: self.system,
+            thinking: self.thinking,
+            context_management: self.context_management,
+        }
+    }
+
     /// Configures this request to stop after native compaction.
     ///
     /// Tool definitions remain in the request so the trigger observes the same
@@ -1358,6 +1454,115 @@ mod tests {
     use http_client::FakeHttpClient;
 
     #[test]
+    fn count_input_tokens_preserves_input_without_generation_fields() {
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 1234,
+            "temperature": 0.5,
+            "system": "Be precise",
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "Describe this"},
+                {"type": "image", "source": {
+                    "type": "base64", "media_type": "image/png", "data": "aW1hZ2U="
+                }}
+            ]}],
+            "tools": [{"name": "look", "description": "Look up data", "input_schema": {"type": "object"}}],
+            "tool_choice": {"type": "auto"},
+            "context_management": {"edits": [{"type": "compact_20260112"}]}
+        })).expect("generation request");
+        let generation = serde_json::to_value(&request).expect("generation payload");
+        assert_eq!(generation["max_tokens"], 1234);
+        assert_eq!(generation["temperature"], 0.5);
+        let client = FakeHttpClient::create(move |mut request| async move {
+            assert_eq!(request.method(), Method::POST);
+            assert_eq!(
+                request.uri(),
+                "https://api.anthropic.com/v1/messages/count_tokens"
+            );
+            assert!(
+                request
+                    .headers()
+                    .get("X-Api-Key")
+                    .is_some_and(|value| value == "test-key")
+            );
+            assert_eq!(request.headers()["Anthropic-Version"], "2023-06-01");
+            assert_eq!(request.headers()["Anthropic-Beta"], "test-beta");
+            let mut body = String::new();
+            request.body_mut().read_to_string(&mut body).await?;
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&body)?,
+                serde_json::json!({
+                    "model": "claude-sonnet-4-6",
+                    "system": "Be precise",
+                    "messages": [{"role": "user", "content": [
+                        {"type": "text", "text": "Describe this"},
+                        {"type": "image", "source": {
+                            "type": "base64", "media_type": "image/png", "data": "aW1hZ2U="
+                        }}
+                    ]}],
+                    "tools": [{"name": "look", "description": "Look up data", "input_schema": {"type": "object"}}],
+                    "tool_choice": {"type": "auto"},
+                    "context_management": {"edits": [{"type": "compact_20260112"}]}
+                })
+            );
+            Ok(http::Response::builder()
+                .status(200)
+                .body(AsyncBody::from(r#"{"input_tokens":321}"#))?)
+        });
+        let count = futures::executor::block_on(count_input_tokens(
+            client.as_ref(),
+            ANTHROPIC_API_URL,
+            " test-key ",
+            request.into_count_tokens_request(),
+            Some("test-beta".into()),
+            &CustomHeaders::default(),
+        ))
+        .expect("count succeeds");
+        assert_eq!(count, 321);
+    }
+
+    #[test]
+    fn count_input_tokens_preserves_typed_errors() {
+        for (status, body) in [
+            (
+                401,
+                r#"{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#,
+            ),
+            (200, "{}"),
+        ] {
+            let client = FakeHttpClient::create(move |_| async move {
+                Ok(http::Response::builder()
+                    .status(status)
+                    .body(AsyncBody::from(body))?)
+            });
+            let request: Request = serde_json::from_value(serde_json::json!({
+                "model": "claude-sonnet-4-6", "max_tokens": 100, "messages": []
+            }))
+            .expect("request");
+            let error = futures::executor::block_on(count_input_tokens(
+                client.as_ref(),
+                ANTHROPIC_API_URL,
+                "test-key",
+                request.into_count_tokens_request(),
+                None,
+                &CustomHeaders::default(),
+            ))
+            .expect_err("count fails");
+            if status == 401 {
+                assert!(matches!(
+                    error,
+                    AnthropicError::ApiError {
+                        status: Some(StatusCode::UNAUTHORIZED),
+                        ..
+                    }
+                ));
+            } else {
+                assert!(matches!(error, AnthropicError::DeserializeResponse(_)));
+            }
+        }
+    }
+
+    #[test]
     fn list_models_preserves_anthropic_api_errors() {
         let client = FakeHttpClient::create(|_| async move {
             Ok(http::Response::builder()
@@ -1636,7 +1841,7 @@ mod tests {
 
     #[test]
     fn from_listed_enables_fast_mode_and_compaction_for_supported_opus_models() {
-        for model_id in ["claude-opus-5", "claude-opus-4-8"] {
+        for model_id in ["claude-opus-5-5", "claude-opus-5", "claude-opus-4-8"] {
             let model = Model::from_listed(listed_entry(model_id, ModelCapabilities::default()));
 
             assert!(model.supports_speed);

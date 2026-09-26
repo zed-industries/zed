@@ -63,19 +63,18 @@ impl std::fmt::Display for MaxOutputTokensError {
 
 impl std::error::Error for MaxOutputTokensError {}
 
-/// Key used in ACP ToolCall meta to store the tool's programmatic name.
-/// This is a workaround since ACP's ToolCall doesn't have a dedicated name field.
+/// Legacy ACP metadata key used before tool calls had a dedicated name field.
 pub const TOOL_NAME_META_KEY: &str = "tool_name";
 
-/// Helper to extract tool name from ACP meta
+/// Extracts a tool name from the legacy ACP metadata field.
 pub fn tool_name_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
     meta.as_ref()
-        .and_then(|m| m.get(TOOL_NAME_META_KEY))
-        .and_then(|v| v.as_str())
-        .map(|s| SharedString::from(s.to_owned()))
+        .and_then(|meta| meta.get(TOOL_NAME_META_KEY))
+        .and_then(|value| value.as_str())
+        .map(|name| SharedString::from(name.to_owned()))
 }
 
-/// Helper to create meta with tool name
+/// Creates ACP metadata containing the legacy tool-name field.
 pub fn meta_with_tool_name(tool_name: &str) -> acp::Meta {
     acp::Meta::from_iter([(TOOL_NAME_META_KEY.into(), tool_name.into())])
 }
@@ -297,8 +296,7 @@ pub struct UserMessage {
     pub protocol_id: Option<acp::MessageId>,
     pub client_id: Option<ClientUserMessageId>,
     pub is_optimistic: bool,
-    pub content: ContentBlock,
-    pub chunks: Vec<acp::ContentBlock>,
+    pub content: MessageContent,
     pub checkpoint: Option<Checkpoint>,
     pub indented: bool,
 }
@@ -351,11 +349,11 @@ impl AssistantMessage {
 pub enum AssistantMessageChunk {
     Message {
         id: Option<acp::MessageId>,
-        block: ContentBlock,
+        block: MessageContent,
     },
     Thought {
         id: Option<acp::MessageId>,
-        block: ContentBlock,
+        block: MessageContent,
     },
 }
 
@@ -368,13 +366,13 @@ impl AssistantMessageChunk {
     ) -> Self {
         Self::Message {
             id: None,
-            block: ContentBlock::new(chunk.into(), language_registry, path_style, cx),
+            block: MessageContent::new(chunk.into(), language_registry, path_style, cx),
         }
     }
 
     fn to_markdown(&self, cx: &App) -> String {
         match self {
-            Self::Message { block, .. } => block.to_markdown(cx).to_string(),
+            Self::Message { block, .. } => block.to_markdown(cx),
             Self::Thought { block, .. } => {
                 format!("<thinking>\n{}\n</thinking>", block.to_markdown(cx))
             }
@@ -398,7 +396,6 @@ pub enum AgentThreadEntry {
     AssistantMessage(AssistantMessage),
     ToolCall(ToolCall),
     Elicitation(ElicitationEntryId),
-    CompletedPlan(Vec<PlanEntry>),
     ContextCompaction(ContextCompaction),
 }
 
@@ -423,9 +420,15 @@ pub enum ElicitationStatus {
     Completed,
 }
 
+enum ElicitationChange {
+    Responded,
+    Updated,
+}
+
 #[derive(Clone, Debug)]
 pub enum ElicitationStoreEvent {
     ElicitationRequested(ElicitationEntryId),
+    /// The request left `Pending`; this does not imply delivery to its response waiter.
     ElicitationResponded(ElicitationEntryId),
     ElicitationUpdated(ElicitationEntryId),
 }
@@ -478,23 +481,22 @@ impl ElicitationStore {
         (id, response_rx)
     }
 
-    fn response_task<T>(
-        id: ElicitationEntryId,
+    fn response_task(
         response_rx: oneshot::Receiver<acp::CreateElicitationResponse>,
-        cx: &mut Context<T>,
-        emit_responded: impl FnOnce(&mut T, &mut Context<T>, ElicitationEntryId) + 'static,
-    ) -> Task<acp::CreateElicitationResponse>
-    where
-        T: 'static,
-    {
-        cx.spawn(async move |this, cx| {
-            let response = response_rx.await.unwrap_or_else(|oneshot::Canceled| {
+        cx: &App,
+    ) -> Task<acp::CreateElicitationResponse> {
+        cx.foreground_executor().spawn(async move {
+            response_rx.await.unwrap_or_else(|oneshot::Canceled| {
                 acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel)
-            });
-            this.update(cx, |this, cx| emit_responded(this, cx, id))
-                .ok();
-            response
+            })
         })
+    }
+
+    fn emit_change(id: ElicitationEntryId, change: ElicitationChange, cx: &mut Context<Self>) {
+        cx.emit(ElicitationStoreEvent::ElicitationUpdated(id.clone()));
+        if matches!(change, ElicitationChange::Responded) {
+            cx.emit(ElicitationStoreEvent::ElicitationResponded(id));
+        }
     }
 
     fn respond_to_elicitation_entry(
@@ -510,7 +512,9 @@ impl ElicitationStore {
         ) else {
             return false;
         };
-        respond_tx.send(response).ok();
+        if respond_tx.send(response).is_err() {
+            log::debug!("Elicitation waiter closed before its response was delivered");
+        }
         true
     }
 
@@ -528,28 +532,27 @@ impl ElicitationStore {
         }
     }
 
-    fn cancel_elicitation_entry(
-        elicitation: &mut Elicitation,
-        cancel_accepted_url_elicitations: bool,
-    ) -> bool {
+    fn cancel_elicitation_entry(elicitation: &mut Elicitation) -> Option<ElicitationChange> {
         match mem::replace(&mut elicitation.status, ElicitationStatus::Canceled) {
             ElicitationStatus::Pending { respond_tx } => {
-                respond_tx
+                if respond_tx
                     .send(acp::CreateElicitationResponse::new(
                         acp::ElicitationAction::Cancel,
                     ))
-                    .ok();
-                true
+                    .is_err()
+                {
+                    log::debug!("Elicitation waiter closed before cancellation was delivered");
+                }
+                Some(ElicitationChange::Responded)
             }
             ElicitationStatus::Accepted
-                if cancel_accepted_url_elicitations
-                    && matches!(&elicitation.request.mode, acp::ElicitationMode::Url(_)) =>
+                if matches!(&elicitation.request.mode, acp::ElicitationMode::Url(_)) =>
             {
-                true
+                Some(ElicitationChange::Updated)
             }
             previous_status => {
                 elicitation.status = previous_status;
-                false
+                None
             }
         }
     }
@@ -572,15 +575,9 @@ impl ElicitationStore {
         Self::complete_url_elicitation_entry(elicitation)
     }
 
-    fn cancel_elicitation_by_id(
-        &mut self,
-        id: &ElicitationEntryId,
-        cancel_accepted_url_elicitations: bool,
-    ) -> bool {
-        let Some((_, elicitation)) = self.elicitation_mut(id) else {
-            return false;
-        };
-        Self::cancel_elicitation_entry(elicitation, cancel_accepted_url_elicitations)
+    fn cancel_elicitation_by_id(&mut self, id: &ElicitationEntryId) -> Option<ElicitationChange> {
+        let (_, elicitation) = self.elicitation_mut(id)?;
+        Self::cancel_elicitation_entry(elicitation)
     }
 
     pub fn request_elicitation(
@@ -602,11 +599,7 @@ impl ElicitationStore {
         cx.emit(ElicitationStoreEvent::ElicitationRequested(id.clone()));
         cx.notify();
 
-        let task = Self::response_task(id.clone(), response_rx, cx, |_store, cx, id| {
-            cx.emit(ElicitationStoreEvent::ElicitationResponded(id));
-            cx.notify();
-        });
-
+        let task = Self::response_task(response_rx, cx);
         Ok((id, task))
     }
 
@@ -620,7 +613,7 @@ impl ElicitationStore {
             return;
         }
 
-        cx.emit(ElicitationStoreEvent::ElicitationUpdated(id.clone()));
+        Self::emit_change(id.clone(), ElicitationChange::Responded, cx);
         cx.notify();
     }
 
@@ -641,27 +634,26 @@ impl ElicitationStore {
     }
 
     pub fn cancel_elicitation(&mut self, id: &ElicitationEntryId, cx: &mut Context<Self>) {
-        if !self.cancel_elicitation_by_id(id, true) {
+        let Some(change) = self.cancel_elicitation_by_id(id) else {
             return;
-        }
+        };
 
-        cx.emit(ElicitationStoreEvent::ElicitationUpdated(id.clone()));
+        Self::emit_change(id.clone(), change, cx);
         cx.notify();
     }
 
     pub fn cancel_all(&mut self, cx: &mut Context<Self>) {
-        let canceled_ids = self.cancel_pending(|_| true);
-        for id in canceled_ids {
-            cx.emit(ElicitationStoreEvent::ElicitationUpdated(id));
+        for (id, change) in self.cancel_pending(|_| true) {
+            Self::emit_change(id, change, cx);
         }
         cx.notify();
     }
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
-        let canceled_ids = self.cancel_pending(|_| true);
+        let changes = self.cancel_pending(|_| true);
         self.elicitations.clear();
-        for id in canceled_ids {
-            cx.emit(ElicitationStoreEvent::ElicitationUpdated(id));
+        for (id, change) in changes {
+            Self::emit_change(id, change, cx);
         }
         cx.notify();
     }
@@ -691,14 +683,14 @@ impl ElicitationStore {
     }
 
     pub fn cancel_request(&mut self, request_id: &acp::RequestId, cx: &mut Context<Self>) {
-        let canceled_ids = self.cancel_pending(|elicitation| {
+        let changes = self.cancel_pending(|elicitation| {
             matches!(
                 elicitation.request.scope(),
                 acp::ElicitationScope::Request(scope) if &scope.request_id == request_id
             )
         });
-        for id in canceled_ids {
-            cx.emit(ElicitationStoreEvent::ElicitationUpdated(id));
+        for (id, change) in changes {
+            Self::emit_change(id, change, cx);
         }
         cx.notify();
     }
@@ -741,25 +733,42 @@ impl ElicitationStore {
     fn cancel_pending(
         &mut self,
         mut should_cancel: impl FnMut(&Elicitation) -> bool,
-    ) -> Vec<ElicitationEntryId> {
-        let mut canceled_ids = Vec::new();
+    ) -> Vec<(ElicitationEntryId, ElicitationChange)> {
+        let mut changes = Vec::new();
         for elicitation in &mut self.elicitations {
-            if should_cancel(elicitation) && Self::cancel_elicitation_entry(elicitation, true) {
-                canceled_ids.push(elicitation.id.clone());
+            if should_cancel(elicitation)
+                && let Some(change) = Self::cancel_elicitation_entry(elicitation)
+            {
+                changes.push((elicitation.id.clone(), change));
             }
         }
-        canceled_ids
+        changes
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextCompactionId(pub Arc<str>);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextCompactionStatus {
     InProgress,
     Completed,
+    Failed,
     Canceled,
+    Other(Arc<str>),
+}
+
+impl From<acp::CompactionStatus> for ContextCompactionStatus {
+    fn from(status: acp::CompactionStatus) -> Self {
+        match status {
+            acp::CompactionStatus::InProgress => Self::InProgress,
+            acp::CompactionStatus::Completed => Self::Completed,
+            acp::CompactionStatus::Failed => Self::Failed,
+            acp::CompactionStatus::Cancelled => Self::Canceled,
+            acp::CompactionStatus::Other(status) => Self::Other(status.into()),
+            _ => Self::Other("unknown".into()),
+        }
+    }
 }
 
 /// A point in the thread where the conversation history was compacted to free
@@ -769,14 +778,59 @@ pub enum ContextCompactionStatus {
 pub struct ContextCompaction {
     pub id: ContextCompactionId,
     pub status: ContextCompactionStatus,
-    /// The compaction summary, streamed in as the model produces it. This is
-    /// `None` for provider-native compaction, which produces no summary to show.
-    pub summary: Option<Entity<Markdown>>,
+    pub error: Option<Entity<Markdown>>,
+    pub summary: Vec<ContentBlock>,
 }
 
 impl ContextCompaction {
     pub fn is_in_progress(&self) -> bool {
         self.status == ContextCompactionStatus::InProgress
+    }
+
+    fn apply_update(
+        &mut self,
+        update: acp::CompactionUpdate,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) {
+        self.status = update.status.into();
+        match update.summary {
+            MaybeUndefined::Undefined => {}
+            MaybeUndefined::Null => self.summary.clear(),
+            MaybeUndefined::Value(blocks) => {
+                self.summary.clear();
+                for block in blocks {
+                    self.append_summary(block, language_registry, cx);
+                }
+            }
+        }
+        match update.error {
+            MaybeUndefined::Undefined => {}
+            MaybeUndefined::Null => self.error = None,
+            MaybeUndefined::Value(error) => {
+                if let Some(markdown) = &self.error {
+                    markdown.update(cx, |markdown, cx| markdown.reset(error.into(), cx));
+                } else {
+                    self.error = Some(cx.new(|cx| Markdown::new_text(error.into(), cx)));
+                }
+            }
+        }
+    }
+
+    fn append_summary(
+        &mut self,
+        content: acp::ContentBlock,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) {
+        if let acp::ContentBlock::Text(text) = &content
+            && let Some(markdown) = self.summary.last().and_then(ContentBlock::plain_markdown)
+        {
+            markdown.update(cx, |markdown, cx| markdown.append(&text.text, cx));
+        } else {
+            self.summary
+                .push(ContentBlock::new_output(content, language_registry, cx));
+        }
     }
 }
 
@@ -794,7 +848,6 @@ impl AgentThreadEntry {
             Self::AssistantMessage(message) => message.indented,
             Self::ToolCall(_) => false,
             Self::Elicitation(_) => false,
-            Self::CompletedPlan(_) => false,
             Self::ContextCompaction(_) => false,
         }
     }
@@ -805,15 +858,27 @@ impl AgentThreadEntry {
             Self::AssistantMessage(message) => message.to_markdown(cx),
             Self::ToolCall(tool_call) => tool_call.to_markdown(cx),
             Self::Elicitation(_) => "## Input Requested\n\n".to_string(),
-            Self::CompletedPlan(entries) => {
-                let mut md = String::from("## Plan\n\n");
-                for entry in entries {
-                    let source = entry.content.read(cx).source().to_string();
-                    md.push_str(&format!("- [x] {}\n", source));
+            Self::ContextCompaction(compaction) => {
+                let status = match &compaction.status {
+                    ContextCompactionStatus::InProgress => "In Progress",
+                    ContextCompactionStatus::Completed => "Completed",
+                    ContextCompactionStatus::Failed => "Failed",
+                    ContextCompactionStatus::Canceled => "Canceled",
+                    ContextCompactionStatus::Other(status) => status,
+                };
+                let mut markdown =
+                    format!("## Context Compaction ({})\n\n", MarkdownEscaped(status));
+                for block in &compaction.summary {
+                    markdown.push_str(block.to_markdown(cx));
+                    markdown.push_str("\n\n");
                 }
-                md
+                if let Some(error) = &compaction.error {
+                    markdown.push_str("**Error:** ");
+                    markdown.push_str(&MarkdownEscaped(error.read(cx).source()).to_string());
+                    markdown.push_str("\n\n");
+                }
+                markdown
             }
-            Self::ContextCompaction(_) => "--- Context Compacted ---\n\n".to_string(),
         }
     }
 
@@ -862,14 +927,16 @@ impl AgentThreadEntry {
 pub struct ToolCall {
     pub id: acp::ToolCallId,
     pub label: Entity<Markdown>,
+    title: Option<SharedString>,
     pub kind: acp::ToolKind,
-    pub content: Vec<ToolCallContent>,
+    structured_content: Vec<ToolCallContent>,
     pub status: ToolCallStatus,
     pub locations: Vec<acp::ToolCallLocation>,
     pub resolved_locations: Vec<Option<AgentLocation>>,
     pub raw_input: Option<serde_json::Value>,
     pub raw_input_markdown: Option<Entity<Markdown>>,
     pub raw_output: Option<serde_json::Value>,
+    raw_output_content: Option<Box<ToolCallContent>>,
     pub tool_name: Option<SharedString>,
     pub subagent_session_info: Option<SubagentSessionInfo>,
     pub sandbox_authorization_details: Option<SandboxAuthorizationDetails>,
@@ -885,28 +952,16 @@ impl ToolCall {
         tool_call: acp::ToolCall,
         status: ToolCallStatus,
         language_registry: Arc<LanguageRegistry>,
-        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Self> {
-        let title = if tool_call.kind == acp::ToolKind::Execute {
-            tool_call.title
-        } else if tool_call.kind == acp::ToolKind::Edit {
-            MarkdownEscaped(tool_call.title.as_str()).to_string()
-        } else if let Some((first_line, _)) = tool_call.title.split_once("\n") {
-            first_line.to_owned() + "…"
-        } else {
-            tool_call.title
-        };
+        let title =
+            Some(SharedString::from(tool_call.title)).filter(|title| !title.trim().is_empty());
         let mut content = Vec::with_capacity(tool_call.content.len());
         for item in tool_call.content {
-            if let Some(item) = ToolCallContent::from_acp(
-                item,
-                language_registry.clone(),
-                path_style,
-                terminals,
-                cx,
-            )? {
+            if let Some(item) =
+                ToolCallContent::from_acp(item, language_registry.clone(), terminals, cx)?
+            {
                 content.push(item);
             }
         }
@@ -916,7 +971,10 @@ impl ToolCall {
             .as_ref()
             .and_then(|input| markdown_for_raw_output(input, &language_registry, cx));
 
-        let tool_name = tool_name_from_meta(&tool_call.meta);
+        let tool_name = tool_call
+            .name
+            .map(SharedString::from)
+            .or_else(|| tool_name_from_meta(&tool_call.meta));
 
         let subagent_session_info = subagent_session_info_from_meta(&tool_call.meta);
         let sandbox_authorization_details =
@@ -925,30 +983,75 @@ impl ToolCall {
             sandbox_fallback_authorization_details_from_meta(&tool_call.meta);
         let sandbox_not_applied = sandbox_not_applied_from_meta(&tool_call.meta);
 
-        let label = if tool_call.kind == acp::ToolKind::Execute {
-            cx.new(|cx| Markdown::new_text(title.into(), cx))
-        } else {
-            cx.new(|cx| Markdown::new(title.into(), Some(language_registry.clone()), None, cx))
-        };
+        let label = Self::new_label(
+            title.as_ref(),
+            tool_name.as_ref(),
+            tool_call.kind,
+            language_registry.clone(),
+            cx,
+        );
 
-        let result = Self {
+        let mut result = Self {
             id: tool_call.tool_call_id,
             label,
+            title,
             kind: tool_call.kind,
-            content,
+            structured_content: content,
             locations: tool_call.locations,
             resolved_locations: Vec::default(),
             status,
             raw_input: tool_call.raw_input,
             raw_input_markdown,
             raw_output: tool_call.raw_output,
+            raw_output_content: None,
             tool_name,
             subagent_session_info,
             sandbox_authorization_details,
             sandbox_fallback_authorization_details,
             sandbox_not_applied,
         };
+        result.update_raw_output_content(&language_registry, cx);
         Ok(result)
+    }
+
+    fn label_text(
+        title: Option<&SharedString>,
+        tool_name: Option<&SharedString>,
+        kind: acp::ToolKind,
+    ) -> SharedString {
+        let Some(title) = title else {
+            return tool_name
+                .filter(|name| !name.trim().is_empty())
+                .cloned()
+                .unwrap_or_else(|| "Tool call".into());
+        };
+
+        if kind == acp::ToolKind::Execute {
+            title.clone()
+        } else if kind == acp::ToolKind::Edit {
+            MarkdownEscaped(title).to_string().into()
+        } else if let Some((first_line, _)) = title.split_once('\n') {
+            (first_line.to_owned() + "…").into()
+        } else {
+            title.clone()
+        }
+    }
+
+    fn new_label(
+        title: Option<&SharedString>,
+        tool_name: Option<&SharedString>,
+        kind: acp::ToolKind,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> Entity<Markdown> {
+        let text = Self::label_text(title, tool_name, kind);
+        cx.new(|cx| {
+            if title.is_none() || kind == acp::ToolKind::Execute {
+                Markdown::new_text(text, cx)
+            } else {
+                Markdown::new(text, Some(language_registry), None, cx)
+            }
+        })
     }
 
     fn update_fields(
@@ -956,7 +1059,6 @@ impl ToolCall {
         fields: acp::ToolCallUpdateFields,
         meta: Option<acp::Meta>,
         language_registry: Arc<LanguageRegistry>,
-        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<()> {
@@ -964,19 +1066,33 @@ impl ToolCall {
             kind,
             status,
             title,
+            name,
             content,
             locations,
             raw_input,
             raw_output,
             ..
         } = fields;
+        let output_changed = content.is_some() || raw_output.is_some();
 
+        let was_plain_text = self.title.is_none() || self.kind == acp::ToolKind::Execute;
+        let mut label_changed = title.is_some() || kind.is_some();
         if let Some(kind) = kind {
             self.kind = kind;
         }
 
         if let Some(status) = status {
             self.update_acp_status(status);
+        }
+
+        if let Some(tool_name) = name.map(SharedString::from) {
+            self.tool_name = Some(tool_name);
+            label_changed = true;
+        } else if self.tool_name.is_none() {
+            // Legacy metadata only fills a missing name so it cannot replace a
+            // first-class name received earlier.
+            self.tool_name = tool_name_from_meta(&meta);
+            label_changed |= self.tool_name.is_some();
         }
 
         if let Some(subagent_session_info) = subagent_session_info_from_meta(&meta) {
@@ -997,24 +1113,35 @@ impl ToolCall {
         }
 
         if let Some(title) = title {
-            if self.kind == acp::ToolKind::Execute {
+            self.title = Some(SharedString::from(title)).filter(|title| !title.trim().is_empty());
+            if self.kind == acp::ToolKind::Execute
+                && let Some(title) = &self.title
+            {
+                // A missing tool title must not overwrite an actual terminal command.
                 for terminal in self.terminals() {
                     terminal.update(cx, |terminal, cx| {
-                        terminal.update_command_label(&title, cx);
+                        terminal.update_command_label(title, cx);
                     });
                 }
             }
-            self.label.update(cx, |label, cx| {
-                if self.kind == acp::ToolKind::Execute {
-                    label.replace(title, cx);
-                } else if self.kind == acp::ToolKind::Edit {
-                    label.replace(MarkdownEscaped(&title).to_string(), cx)
-                } else if let Some((first_line, _)) = title.split_once("\n") {
-                    label.replace(first_line.to_owned() + "…", cx);
-                } else {
-                    label.replace(title, cx);
+        }
+        if label_changed {
+            let is_plain_text = self.title.is_none() || self.kind == acp::ToolKind::Execute;
+            if was_plain_text != is_plain_text {
+                self.label = Self::new_label(
+                    self.title.as_ref(),
+                    self.tool_name.as_ref(),
+                    self.kind,
+                    language_registry.clone(),
+                    cx,
+                );
+            } else {
+                let text =
+                    Self::label_text(self.title.as_ref(), self.tool_name.as_ref(), self.kind);
+                if self.label.read(cx).source() != &text {
+                    self.label.update(cx, |label, cx| label.replace(text, cx));
                 }
-            });
+            }
         }
 
         if let Some(content) = content {
@@ -1022,27 +1149,23 @@ impl ToolCall {
             let mut content = content.into_iter();
 
             // Reuse existing content if we can
-            for (old, new) in self.content.iter_mut().zip(content.by_ref()) {
+            for (old, new) in self.structured_content.iter_mut().zip(content.by_ref()) {
                 let valid_content =
-                    old.update_from_acp(new, language_registry.clone(), path_style, terminals, cx)?;
+                    old.update_from_acp(new, language_registry.clone(), terminals, cx)?;
                 if !valid_content {
                     new_content_len -= 1;
                 }
             }
             for new in content {
-                if let Some(new) = ToolCallContent::from_acp(
-                    new,
-                    language_registry.clone(),
-                    path_style,
-                    terminals,
-                    cx,
-                )? {
-                    self.content.push(new);
+                if let Some(new) =
+                    ToolCallContent::from_acp(new, language_registry.clone(), terminals, cx)?
+                {
+                    self.structured_content.push(new);
                 } else {
                     new_content_len -= 1;
                 }
             }
-            self.content.truncate(new_content_len);
+            self.structured_content.truncate(new_content_len);
         }
 
         if let Some(locations) = locations {
@@ -1055,17 +1178,49 @@ impl ToolCall {
         }
 
         if let Some(raw_output) = raw_output {
-            if self.content.is_empty()
-                && let Some(markdown) = markdown_for_raw_output(&raw_output, &language_registry, cx)
-            {
-                self.content
-                    .push(ToolCallContent::ContentBlock(ContentBlock::Markdown {
-                        markdown,
-                    }));
-            }
             self.raw_output = Some(raw_output);
         }
+        if output_changed {
+            self.update_raw_output_content(&language_registry, cx);
+        }
         Ok(())
+    }
+
+    fn update_raw_output_content(
+        &mut self,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) {
+        if !self.structured_content.is_empty() {
+            self.raw_output_content = None;
+            return;
+        }
+        let Some(text) = self.raw_output.as_ref().and_then(raw_output_text) else {
+            self.raw_output_content = None;
+            return;
+        };
+        if let Some(ToolCallContent::ContentBlock(block)) = self.raw_output_content.as_deref()
+            && let Some(markdown) = block.markdown()
+        {
+            update_markdown_in_place(markdown, &text, cx);
+        } else {
+            let markdown =
+                cx.new(|cx| Markdown::new(text.into(), Some(language_registry.clone()), None, cx));
+            self.raw_output_content = Some(Box::new(ToolCallContent::ContentBlock(
+                ContentBlock::from_markdown(markdown),
+            )));
+        }
+    }
+
+    pub fn content(&self) -> &[ToolCallContent] {
+        if self.structured_content.is_empty() {
+            self.raw_output_content
+                .as_deref()
+                .map(std::slice::from_ref)
+                .unwrap_or_default()
+        } else {
+            &self.structured_content
+        }
     }
 
     fn update_status(&mut self, status: ToolCallStatus) {
@@ -1094,19 +1249,23 @@ impl ToolCall {
     }
 
     pub fn diffs(&self) -> impl Iterator<Item = &Entity<Diff>> {
-        self.content.iter().filter_map(|content| match content {
-            ToolCallContent::Diff(diff) => Some(diff),
-            ToolCallContent::ContentBlock(_) => None,
-            ToolCallContent::Terminal(_) => None,
-        })
+        self.structured_content
+            .iter()
+            .filter_map(|content| match content {
+                ToolCallContent::Diff(diff) => Some(diff),
+                ToolCallContent::ContentBlock(_) => None,
+                ToolCallContent::Terminal(_) => None,
+            })
     }
 
     pub fn terminals(&self) -> impl Iterator<Item = &Entity<Terminal>> {
-        self.content.iter().filter_map(|content| match content {
-            ToolCallContent::Terminal(terminal) => Some(terminal),
-            ToolCallContent::ContentBlock(_) => None,
-            ToolCallContent::Diff(_) => None,
-        })
+        self.structured_content
+            .iter()
+            .filter_map(|content| match content {
+                ToolCallContent::Terminal(terminal) => Some(terminal),
+                ToolCallContent::ContentBlock(_) => None,
+                ToolCallContent::Diff(_) => None,
+            })
     }
 
     pub fn is_subagent(&self) -> bool {
@@ -1115,12 +1274,14 @@ impl ToolCall {
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
-        let mut markdown = format!(
-            "**Tool Call: {}**\nStatus: {}\n\n",
-            self.label.read(cx).source(),
-            self.status
-        );
-        for content in &self.content {
+        let label = self.label.read(cx).source();
+        let label = if self.title.is_none() {
+            MarkdownEscaped(label).to_string()
+        } else {
+            label.to_string()
+        };
+        let mut markdown = format!("**Tool Call: {}**\nStatus: {}\n\n", label, self.status);
+        for content in self.content() {
             markdown.push_str(content.to_markdown(cx).as_str());
             markdown.push_str("\n\n");
         }
@@ -1345,67 +1506,67 @@ fn elicitation_status_for_response(response: &acp::CreateElicitationResponse) ->
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum ContentBlock {
-    Empty,
-    Markdown {
-        markdown: Entity<Markdown>,
-    },
-    EmbeddedResource {
-        resource: acp::EmbeddedResource,
-        markdown: Option<Entity<Markdown>>,
-    },
-    ResourceLink {
-        resource_link: acp::ResourceLink,
-    },
-    Image {
-        image: Arc<gpui::Image>,
-        dimensions: Option<gpui::Size<u32>>,
-    },
+#[derive(Debug, Default, PartialEq)]
+pub struct MessageContent {
+    source_blocks: Vec<acp::ContentBlock>,
+    blocks: Vec<RenderedMessageBlock>,
 }
 
-impl ContentBlock {
+#[derive(Debug, PartialEq)]
+struct RenderedMessageBlock {
+    render: RenderBlock,
+    source_index: Option<usize>,
+}
+
+impl MessageContent {
     pub fn new(
         block: acp::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
         path_style: PathStyle,
         cx: &mut App,
     ) -> Self {
-        let mut this = Self::Empty;
-        this.append(block, language_registry, path_style, cx);
-        this
+        let mut content = Self::default();
+        content.append(block, language_registry, path_style, cx);
+        content
     }
 
-    pub fn new_combined(
-        blocks: impl IntoIterator<Item = acp::ContentBlock>,
-        language_registry: Arc<LanguageRegistry>,
-        path_style: PathStyle,
-        cx: &mut App,
-    ) -> Self {
-        let mut this = Self::Empty;
-        for block in blocks {
-            this.append(block, &language_registry, path_style, cx);
-        }
-        this
+    /// Original content blocks, including text not yet revealed by streaming.
+    pub fn source_blocks(&self) -> &[acp::ContentBlock] {
+        &self.source_blocks
     }
 
-    pub fn new_tool_call_content(
-        block: acp::ContentBlock,
-        language_registry: &Arc<LanguageRegistry>,
-        path_style: PathStyle,
-        cx: &mut App,
-    ) -> Self {
-        match block {
-            acp::ContentBlock::Resource(resource) => {
-                if let Some((image, dimensions)) = Self::decode_embedded_resource_image(&resource) {
-                    Self::Image { image, dimensions }
-                } else {
-                    let markdown =
-                        Self::embedded_resource_markdown(&resource, language_registry, cx);
-                    Self::EmbeddedResource { resource, markdown }
-                }
-            }
-            block => Self::new(block, language_registry, path_style, cx),
+    fn shrink_source_capacity(&mut self) {
+        self.source_blocks.shrink_to_fit();
+    }
+
+    pub fn blocks(&self) -> impl ExactSizeIterator<Item = ContentBlockView<'_>> {
+        self.blocks.iter().map(|block| ContentBlockView {
+            render: &block.render,
+            source: block
+                .source_index
+                .and_then(|index| self.source_blocks.get(index)),
+        })
+    }
+
+    pub fn markdowns(&self) -> impl Iterator<Item = &Entity<Markdown>> {
+        self.blocks().filter_map(|block| block.markdown())
+    }
+
+    pub fn visible_content(&self, cx: &App) -> bool {
+        self.blocks().any(|block| block.visible_content(cx))
+    }
+
+    pub fn to_markdown(&self, cx: &App) -> String {
+        self.blocks()
+            .map(|block| block.to_markdown(cx))
+            .filter(|text| !text.is_empty())
+            .join("\n\n")
+    }
+
+    fn trailing_text(&self) -> Option<&Entity<Markdown>> {
+        match &self.blocks.last()?.render {
+            RenderBlock::Markdown { markdown } => Some(markdown),
+            _ => None,
         }
     }
 
@@ -1416,46 +1577,216 @@ impl ContentBlock {
         path_style: PathStyle,
         cx: &mut App,
     ) {
-        match (&mut *self, &block) {
-            (ContentBlock::Empty, acp::ContentBlock::ResourceLink(resource_link)) => {
-                *self = ContentBlock::ResourceLink {
-                    resource_link: resource_link.clone(),
-                };
+        self.append_rendered(&block, language_registry, path_style, cx);
+        self.source_blocks.push(block);
+    }
+
+    fn append_rendered(
+        &mut self,
+        block: &acp::ContentBlock,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        cx: &mut App,
+    ) {
+        match block {
+            acp::ContentBlock::Text(text) => self.append_text(&text.text, language_registry, cx),
+            acp::ContentBlock::ResourceLink(resource) => {
+                let mut text = ContentBlock::resource_link_md(&resource.uri, path_style);
+                if self.blocks.is_empty() {
+                    // Legacy leading links separated the next chunk. Include that separator
+                    // now because streamed text can append directly to the Markdown entity.
+                    text.push('\n');
+                }
+                self.append_text(&text, language_registry, cx);
             }
-            (ContentBlock::Empty, acp::ContentBlock::Image(image_content)) => {
-                if let Some((image, dimensions)) = Self::decode_image(image_content) {
-                    *self = ContentBlock::Image { image, dimensions };
+            _ => {
+                let render = ContentBlock::render_from_source(block, language_registry, cx);
+                let source_index = match render {
+                    RenderBlock::EmbeddedResource { .. } => Some(self.source_blocks.len()),
+                    _ => None,
+                };
+                self.blocks.push(RenderedMessageBlock {
+                    render,
+                    source_index,
+                });
+            }
+        }
+    }
+
+    fn append_text(&mut self, text: &str, language_registry: &Arc<LanguageRegistry>, cx: &mut App) {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(markdown) = self.trailing_text() {
+            markdown.update(cx, |markdown, cx| markdown.append(text, cx));
+        } else {
+            self.blocks.push(RenderedMessageBlock {
+                render: RenderBlock::Markdown {
+                    markdown: ContentBlock::create_markdown(text.to_owned(), language_registry, cx),
+                },
+                source_index: None,
+            });
+        }
+    }
+
+    fn append_deferred_text(&mut self, text: acp::TextContent) -> usize {
+        let index = self.source_blocks.len();
+        self.source_blocks.push(acp::ContentBlock::Text(text));
+        index
+    }
+
+    fn append_prompt(
+        &mut self,
+        block: acp::ContentBlock,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        cx: &mut App,
+    ) {
+        // Prompt text resources are mentions, not output previews. Keep their text
+        // inline while retaining the original payloads in the source blocks.
+        match &block {
+            acp::ContentBlock::Resource(resource)
+                if matches!(
+                    resource.resource,
+                    acp::EmbeddedResourceResource::TextResourceContents(_)
+                ) =>
+            {
+                let text = ContentBlock::embedded_resource_string_contents(resource, path_style);
+                self.append_text(&text, language_registry, cx);
+            }
+            _ => self.append_rendered(&block, language_registry, path_style, cx),
+        }
+        self.source_blocks.push(block);
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ContentBlock {
+    render: RenderBlock,
+    source: Option<acp::ContentBlock>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+enum RenderBlock {
+    Markdown {
+        markdown: Entity<Markdown>,
+    },
+    EmbeddedResource {
+        markdown: Option<Entity<Markdown>>,
+    },
+    ResourceLink,
+    Image {
+        image: Arc<gpui::Image>,
+        dimensions: Option<gpui::Size<u32>>,
+    },
+    Unsupported {
+        markdown: Entity<Markdown>,
+    },
+}
+
+#[derive(Clone, Copy)]
+pub struct ContentBlockView<'a> {
+    render: &'a RenderBlock,
+    source: Option<&'a acp::ContentBlock>,
+}
+
+impl ContentBlock {
+    pub fn from_markdown(markdown: Entity<Markdown>) -> Self {
+        Self {
+            render: RenderBlock::Markdown { markdown },
+            source: None,
+        }
+    }
+
+    fn plain_markdown(&self) -> Option<&Entity<Markdown>> {
+        match &self.render {
+            RenderBlock::Markdown { markdown } => Some(markdown),
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    fn unsupported_content(&self) -> Option<&acp::ContentBlock> {
+        self.as_view().unsupported_content()
+    }
+
+    pub fn new_output(
+        block: acp::ContentBlock,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> Self {
+        match block {
+            acp::ContentBlock::Text(text) => {
+                Self::create_markdown_block(text.text, language_registry, cx)
+            }
+            block => {
+                let render = Self::render_from_source(&block, language_registry, cx);
+                let source = match render {
+                    RenderBlock::EmbeddedResource { .. }
+                    | RenderBlock::ResourceLink
+                    | RenderBlock::Unsupported { .. } => Some(block),
+                    RenderBlock::Markdown { .. } | RenderBlock::Image { .. } => None,
+                };
+                Self { render, source }
+            }
+        }
+    }
+
+    fn render_from_source(
+        block: &acp::ContentBlock,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> RenderBlock {
+        match block {
+            acp::ContentBlock::Resource(resource) => {
+                if let Some((image, dimensions)) = Self::decode_embedded_resource_image(resource) {
+                    return RenderBlock::Image { image, dimensions };
+                }
+                if matches!(
+                    &resource.resource,
+                    acp::EmbeddedResourceResource::TextResourceContents(_)
+                        | acp::EmbeddedResourceResource::BlobResourceContents(_)
+                ) {
+                    let markdown =
+                        Self::embedded_resource_markdown(resource, language_registry, cx);
+                    RenderBlock::EmbeddedResource { markdown }
                 } else {
-                    let new_content = Self::image_md(image_content);
-                    *self = Self::create_markdown_block(new_content, language_registry, cx);
+                    Self::unsupported(block, language_registry, cx)
                 }
             }
-            (ContentBlock::Empty, _) => {
-                let new_content = Self::block_string_contents(&block, path_style);
-                *self = Self::create_markdown_block(new_content, language_registry, cx);
+            acp::ContentBlock::Image(image) => {
+                if let Some((image, dimensions)) = Self::decode_image(image) {
+                    RenderBlock::Image { image, dimensions }
+                } else {
+                    RenderBlock::Unsupported {
+                        markdown: Self::create_markdown(
+                            "Image content could not be displayed.".into(),
+                            language_registry,
+                            cx,
+                        ),
+                    }
+                }
             }
-            (ContentBlock::Markdown { markdown }, _) => {
-                let new_content = Self::block_string_contents(&block, path_style);
-                markdown.update(cx, |markdown, cx| markdown.append(&new_content, cx));
-            }
-            (ContentBlock::ResourceLink { resource_link }, _) => {
-                let existing_content = Self::resource_link_md(&resource_link.uri, path_style);
-                let new_content = Self::block_string_contents(&block, path_style);
-                let combined = format!("{}\n{}", existing_content, new_content);
-                *self = Self::create_markdown_block(combined, language_registry, cx);
-            }
-            (ContentBlock::EmbeddedResource { resource, .. }, _) => {
-                let existing_content =
-                    Self::embedded_resource_string_contents(resource, path_style);
-                let new_content = Self::block_string_contents(&block, path_style);
-                let combined = format!("{}\n{}", existing_content, new_content);
-                *self = Self::create_markdown_block(combined, language_registry, cx);
-            }
-            (ContentBlock::Image { .. }, _) => {
-                let new_content = Self::block_string_contents(&block, path_style);
-                let combined = format!("`Image`\n{}", new_content);
-                *self = Self::create_markdown_block(combined, language_registry, cx);
-            }
+            acp::ContentBlock::ResourceLink(_) => RenderBlock::ResourceLink,
+            acp::ContentBlock::Text(text) => RenderBlock::Markdown {
+                markdown: Self::create_markdown(text.text.clone(), language_registry, cx),
+            },
+            _ => Self::unsupported(block, language_registry, cx),
+        }
+    }
+
+    fn unsupported(
+        content: &acp::ContentBlock,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> RenderBlock {
+        let description = if matches!(content, acp::ContentBlock::Audio(_)) {
+            "Audio content is not supported."
+        } else {
+            "This content is not supported."
+        };
+        RenderBlock::Unsupported {
+            markdown: Self::create_markdown(description.into(), language_registry, cx),
         }
     }
 
@@ -1468,21 +1799,13 @@ impl ContentBlock {
     /// Recreating the entity on every streamed snapshot causes the rendered
     /// element to tear down and rebuild, which flickers badly.
     pub fn update_text_in_place(&mut self, block: &acp::ContentBlock, cx: &mut App) -> bool {
-        let ContentBlock::Markdown { markdown } = self else {
+        let RenderBlock::Markdown { markdown } = &self.render else {
             return false;
         };
         let acp::ContentBlock::Text(text_content) = block else {
             return false;
         };
-        let new_content = &text_content.text;
-        markdown.update(cx, |markdown, cx| {
-            let current = markdown.source().to_string();
-            match new_content.strip_prefix(&current) {
-                Some("") => {}
-                Some(suffix) => markdown.append(suffix, cx),
-                None => markdown.reset(new_content.clone().into(), cx),
-            }
-        });
+        update_markdown_in_place(markdown, &text_content.text, cx);
         true
     }
 
@@ -1540,8 +1863,11 @@ impl ContentBlock {
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> ContentBlock {
-        ContentBlock::Markdown {
-            markdown: Self::create_markdown(content, language_registry, cx),
+        ContentBlock {
+            render: RenderBlock::Markdown {
+                markdown: Self::create_markdown(content, language_registry, cx),
+            },
+            source: None,
         }
     }
 
@@ -1588,20 +1914,71 @@ impl ContentBlock {
         }
     }
 
-    pub fn text_content<'a>(&'a self, cx: &'a App) -> Option<&'a str> {
-        match self {
-            ContentBlock::Markdown { markdown } => Some(markdown.read(cx).source()),
-            ContentBlock::EmbeddedResource { resource, .. } => match &resource.resource {
-                acp::EmbeddedResourceResource::TextResourceContents(text) => Some(&text.text),
-                acp::EmbeddedResourceResource::BlobResourceContents(_) => None,
-                _ => None,
-            },
-            ContentBlock::Empty
-            | ContentBlock::ResourceLink { .. }
-            | ContentBlock::Image { .. } => None,
+    pub fn as_view(&self) -> ContentBlockView<'_> {
+        ContentBlockView {
+            render: &self.render,
+            source: self.source.as_ref(),
         }
     }
 
+    pub fn text_content<'a>(&'a self, cx: &'a App) -> Option<&'a str> {
+        self.as_view().text_content(cx)
+    }
+
+    pub fn visible_content(&self, cx: &App) -> bool {
+        self.as_view().visible_content(cx)
+    }
+
+    pub fn to_markdown<'a>(&'a self, cx: &'a App) -> &'a str {
+        self.as_view().to_markdown(cx)
+    }
+
+    pub fn markdown(&self) -> Option<&Entity<Markdown>> {
+        self.as_view().markdown()
+    }
+
+    pub fn image(&self) -> Option<(&Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
+        self.as_view().image()
+    }
+
+    fn resource_link_md(uri: &str, path_style: PathStyle) -> String {
+        if let Some(uri) = MentionUri::parse(uri, path_style).log_err() {
+            uri.as_link().to_string()
+        } else {
+            uri.to_string()
+        }
+    }
+}
+
+impl<'a> ContentBlockView<'a> {
+    #[cfg(test)]
+    fn unsupported_content(&self) -> Option<&'a acp::ContentBlock> {
+        match self.render {
+            RenderBlock::Unsupported { .. } => self.source,
+            _ => None,
+        }
+    }
+
+    pub fn text_content(&self, cx: &'a App) -> Option<&'a str> {
+        match &self.render {
+            RenderBlock::Markdown { markdown } | RenderBlock::Unsupported { markdown } => {
+                Some(markdown.read(cx).source())
+            }
+            RenderBlock::EmbeddedResource { .. } => {
+                self.embedded_resource()
+                    .and_then(|(resource, _)| match &resource.resource {
+                        acp::EmbeddedResourceResource::TextResourceContents(text) => {
+                            Some(text.text.as_str())
+                        }
+                        _ => None,
+                    })
+            }
+            RenderBlock::ResourceLink | RenderBlock::Image { .. } => None,
+        }
+    }
+}
+
+impl ContentBlock {
     fn fenced_code_block(text: &str, language: Option<&str>) -> String {
         let fence_len = text
             .as_bytes()
@@ -1657,95 +2034,83 @@ impl ContentBlock {
             _ => "",
         }
     }
+}
 
-    pub fn embedded_resource(&self) -> Option<(&acp::EmbeddedResource, Option<&Entity<Markdown>>)> {
-        match self {
-            ContentBlock::EmbeddedResource { resource, markdown } => {
-                Some((resource, markdown.as_ref()))
-            }
+impl<'a> ContentBlockView<'a> {
+    pub fn embedded_resource(
+        &self,
+    ) -> Option<(&'a acp::EmbeddedResource, Option<&'a Entity<Markdown>>)> {
+        match &self.render {
+            RenderBlock::EmbeddedResource { markdown } => match self.source {
+                Some(acp::ContentBlock::Resource(resource)) => Some((resource, markdown.as_ref())),
+                _ => None,
+            },
             _ => None,
         }
     }
 
     pub fn visible_content(&self, cx: &App) -> bool {
-        match self {
-            ContentBlock::Empty => false,
-            ContentBlock::Markdown { markdown } => !markdown.read(cx).source().trim().is_empty(),
-            ContentBlock::EmbeddedResource { resource, markdown } => match markdown {
-                Some(markdown) => !markdown.read(cx).source().trim().is_empty(),
-                None => !Self::embedded_resource_text(resource).trim().is_empty(),
-            },
-            ContentBlock::ResourceLink { .. } | ContentBlock::Image { .. } => true,
-        }
-    }
-
-    fn block_string_contents(block: &acp::ContentBlock, path_style: PathStyle) -> String {
-        match block {
-            acp::ContentBlock::Text(text_content) => text_content.text.clone(),
-            acp::ContentBlock::ResourceLink(resource_link) => {
-                Self::resource_link_md(&resource_link.uri, path_style)
+        match &self.render {
+            RenderBlock::Markdown { markdown } | RenderBlock::Unsupported { markdown } => {
+                !markdown.read(cx).source().trim().is_empty()
             }
-            acp::ContentBlock::Resource(acp::EmbeddedResource {
-                resource:
-                    acp::EmbeddedResourceResource::TextResourceContents(acp::TextResourceContents {
-                        uri,
-                        ..
-                    }),
-                ..
-            }) => Self::resource_link_md(uri, path_style),
-            acp::ContentBlock::Image(image) => Self::image_md(image),
-            _ => String::new(),
+            RenderBlock::EmbeddedResource { markdown, .. } => match markdown {
+                Some(markdown) => !markdown.read(cx).source().trim().is_empty(),
+                None => self.embedded_resource().is_some_and(|(resource, _)| {
+                    !ContentBlock::embedded_resource_text(resource)
+                        .trim()
+                        .is_empty()
+                }),
+            },
+            RenderBlock::ResourceLink | RenderBlock::Image { .. } => true,
         }
     }
 
-    fn resource_link_md(uri: &str, path_style: PathStyle) -> String {
-        if let Some(uri) = MentionUri::parse(uri, path_style).log_err() {
-            uri.as_link().to_string()
-        } else {
-            uri.to_string()
-        }
-    }
-
-    fn image_md(_image: &acp::ImageContent) -> String {
-        "`Image`".into()
-    }
-
-    pub fn to_markdown<'a>(&'a self, cx: &'a App) -> &'a str {
-        match self {
-            ContentBlock::Empty => "",
-            ContentBlock::Markdown { markdown } => markdown.read(cx).source(),
-            ContentBlock::EmbeddedResource { resource, markdown } => {
+    pub fn to_markdown(&self, cx: &'a App) -> &'a str {
+        match &self.render {
+            RenderBlock::Markdown { markdown } | RenderBlock::Unsupported { markdown } => {
+                markdown.read(cx).source()
+            }
+            RenderBlock::EmbeddedResource { markdown, .. } => {
                 if let Some(markdown) = markdown {
                     markdown.read(cx).source()
                 } else {
-                    Self::embedded_resource_label(resource)
+                    self.embedded_resource().map_or("", |(resource, _)| {
+                        ContentBlock::embedded_resource_label(resource)
+                    })
                 }
             }
-            ContentBlock::ResourceLink { resource_link } => &resource_link.uri,
-            ContentBlock::Image { .. } => "`Image`",
+            RenderBlock::ResourceLink => match self.source {
+                Some(acp::ContentBlock::ResourceLink(resource_link)) => &resource_link.uri,
+                _ => "",
+            },
+            RenderBlock::Image { .. } => "`Image`",
         }
     }
 
-    pub fn markdown(&self) -> Option<&Entity<Markdown>> {
-        match self {
-            ContentBlock::Empty => None,
-            ContentBlock::Markdown { markdown } => Some(markdown),
-            ContentBlock::EmbeddedResource { markdown, .. } => markdown.as_ref(),
-            ContentBlock::ResourceLink { .. } => None,
-            ContentBlock::Image { .. } => None,
+    pub fn markdown(&self) -> Option<&'a Entity<Markdown>> {
+        match &self.render {
+            RenderBlock::Markdown { markdown } | RenderBlock::Unsupported { markdown } => {
+                Some(markdown)
+            }
+            RenderBlock::EmbeddedResource { markdown, .. } => markdown.as_ref(),
+            RenderBlock::ResourceLink | RenderBlock::Image { .. } => None,
         }
     }
 
-    pub fn resource_link(&self) -> Option<&acp::ResourceLink> {
-        match self {
-            ContentBlock::ResourceLink { resource_link } => Some(resource_link),
+    pub fn resource_link(&self) -> Option<&'a acp::ResourceLink> {
+        match &self.render {
+            RenderBlock::ResourceLink => match self.source {
+                Some(acp::ContentBlock::ResourceLink(resource_link)) => Some(resource_link),
+                _ => None,
+            },
             _ => None,
         }
     }
 
-    pub fn image(&self) -> Option<(&Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
-        match self {
-            ContentBlock::Image { image, dimensions } => Some((image, *dimensions)),
+    pub fn image(&self) -> Option<(&'a Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
+        match &self.render {
+            RenderBlock::Image { image, dimensions } => Some((image, *dimensions)),
             _ => None,
         }
     }
@@ -1817,18 +2182,12 @@ impl ToolCallContent {
     pub fn from_acp(
         content: acp::ToolCallContent,
         language_registry: Arc<LanguageRegistry>,
-        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Option<Self>> {
         match content {
             acp::ToolCallContent::Content(acp::Content { content, .. }) => Ok(Some(
-                Self::ContentBlock(ContentBlock::new_tool_call_content(
-                    content,
-                    &language_registry,
-                    path_style,
-                    cx,
-                )),
+                Self::ContentBlock(ContentBlock::new_output(content, &language_registry, cx)),
             )),
             acp::ToolCallContent::Diff(diff) => Ok(Some(Self::Diff(cx.new(|cx| {
                 Diff::finalized(
@@ -1852,7 +2211,6 @@ impl ToolCallContent {
         &mut self,
         new: acp::ToolCallContent,
         language_registry: Arc<LanguageRegistry>,
-        path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<bool> {
@@ -1878,7 +2236,7 @@ impl ToolCallContent {
             _ => true,
         };
 
-        if let Some(update) = Self::from_acp(new, language_registry, path_style, terminals, cx)? {
+        if let Some(update) = Self::from_acp(new, language_registry, terminals, cx)? {
             if needs_update {
                 *self = update;
             }
@@ -2085,6 +2443,7 @@ pub fn refusal_fallback_model_from_meta(meta: &Option<acp::Meta>) -> Option<Shar
 
 struct RunningTurn {
     id: u32,
+    first_entry_index: usize,
     send_task: Task<()>,
 }
 
@@ -2095,6 +2454,9 @@ pub struct AcpThread {
     title: Option<SharedString>,
     provisional_title: Option<SharedString>,
     entries: Vec<AgentThreadEntry>,
+    // Notices stay with the live session, but never enter conversation history or exports.
+    notices: Vec<(usize, acp::Notice)>,
+    next_notice_id: usize,
     elicitations: ElicitationStore,
     plan: Plan,
     project: Entity<Project>,
@@ -2119,10 +2481,8 @@ pub struct AcpThread {
     draft_prompt: Option<Vec<acp::ContentBlock>>,
     /// The initial scroll position for the thread view, set during session registration.
     ui_scroll_position: Option<gpui::ListOffset>,
-    /// Buffer for smooth text streaming. Holds text that has been received from
-    /// the model but not yet revealed in the UI. A timer task drains this buffer
-    /// gradually to create a fluid typing effect instead of choppy chunk-at-a-time
-    /// updates.
+    /// A cursor over retained source, rather than a second text store, lets the UI
+    /// reveal text gradually without changing the authoritative message.
     streaming_text_buffer: Option<StreamingTextBuffer>,
     idle_sleep_prevention: IdleSleepPrevention,
 }
@@ -2134,14 +2494,59 @@ enum IdleSleepPrevention {
     Failed,
 }
 
+#[derive(Default)]
+struct TextCursor {
+    source_index: usize,
+    byte_offset: usize,
+    pending_bytes: usize,
+}
+
+impl TextCursor {
+    fn take(&mut self, sources: &[acp::ContentBlock], max_bytes: usize) -> Option<String> {
+        let max_bytes = max_bytes.min(self.pending_bytes);
+        let mut revealed = String::with_capacity(max_bytes);
+        while revealed.len() < max_bytes {
+            let acp::ContentBlock::Text(text) = sources.get(self.source_index)? else {
+                return None;
+            };
+            let pending = text.text.get(self.byte_offset..)?;
+            let boundary = pending.ceil_char_boundary(max_bytes - revealed.len());
+            self.pending_bytes = self.pending_bytes.checked_sub(boundary)?;
+            revealed.push_str(&pending[..boundary]);
+            self.byte_offset += boundary;
+            if self.byte_offset == text.text.len() {
+                self.source_index += 1;
+                self.byte_offset = 0;
+            }
+        }
+        Some(revealed)
+    }
+}
+
+#[derive(PartialEq)]
+struct StreamingTextTarget {
+    entry_index: usize,
+    chunk_index: usize,
+    markdown: Entity<Markdown>,
+}
+
+impl StreamingTextTarget {
+    fn content<'a>(&self, entries: &'a [AgentThreadEntry]) -> Option<&'a MessageContent> {
+        let AgentThreadEntry::AssistantMessage(message) = entries.get(self.entry_index)? else {
+            return None;
+        };
+        let (AssistantMessageChunk::Message { block, .. }
+        | AssistantMessageChunk::Thought { block, .. }) = message.chunks.get(self.chunk_index)?;
+        // A removed entry's position can be reused before the next reveal tick.
+        (block.trailing_text()? == &self.markdown).then_some(block)
+    }
+}
+
 struct StreamingTextBuffer {
-    /// Text received from the model but not yet appended to the Markdown source.
-    pending: String,
+    cursor: TextCursor,
     /// The number of bytes to reveal per timer turn.
     bytes_to_reveal_per_tick: usize,
-    /// The Markdown entity being streamed into.
-    target: Entity<Markdown>,
-    /// Timer task that periodically moves text from `pending` into `source`.
+    target: StreamingTextTarget,
     _reveal_task: Task<()>,
 }
 
@@ -2151,6 +2556,22 @@ impl StreamingTextBuffer {
     const TASK_UPDATE_MS: u64 = 16;
     /// The time in milliseconds to reveal the entire pending text.
     const REVEAL_TARGET: f32 = 200.0;
+
+    fn reveal(&mut self, entries: &[AgentThreadEntry], max_bytes: usize, cx: &mut App) -> bool {
+        let Some(content) = self.target.content(entries) else {
+            return false;
+        };
+        let Some(revealed) = self.cursor.take(content.source_blocks(), max_bytes) else {
+            log::error!("Invalid source cursor for streaming agent text");
+            return false;
+        };
+        if !revealed.is_empty() {
+            self.target
+                .markdown
+                .update(cx, |markdown, cx| markdown.append(&revealed, cx));
+        }
+        true
+    }
 }
 
 impl From<&AcpThread> for ActionLogTelemetry {
@@ -2168,12 +2589,14 @@ pub enum AcpThreadEvent {
     PromptUpdated,
     NewEntry,
     TitleUpdated,
+    NoticesUpdated,
     TokenUsageUpdated,
     EntryUpdated(usize),
     EntriesRemoved(Range<usize>),
     ToolAuthorizationRequested(acp::ToolCallId),
     ToolAuthorizationReceived(acp::ToolCallId),
     ElicitationRequested(ElicitationEntryId),
+    /// The request left `Pending`; this does not imply delivery to its response waiter.
     ElicitationResponded(ElicitationEntryId),
     Retry(RetryStatus),
     SubagentSpawned(acp::SessionId),
@@ -2308,6 +2731,7 @@ impl AcpThread {
                 AcpThreadEvent::PromptUpdated
                 | AcpThreadEvent::NewEntry
                 | AcpThreadEvent::TitleUpdated
+                | AcpThreadEvent::NoticesUpdated
                 | AcpThreadEvent::TokenUsageUpdated
                 | AcpThreadEvent::EntryUpdated(_)
                 | AcpThreadEvent::Retry(_)
@@ -2346,6 +2770,8 @@ impl AcpThread {
             update_last_checkpoint_if_changed_task: None,
             shared_buffers: Default::default(),
             entries: Default::default(),
+            notices: Vec::new(),
+            next_notice_id: 0,
             elicitations: ElicitationStore::default(),
             plan: Default::default(),
             title,
@@ -2438,8 +2864,21 @@ impl AcpThread {
         &self.entries
     }
 
+    pub fn notices(&self) -> &[(usize, acp::Notice)] {
+        &self.notices
+    }
+
+    pub fn dismiss_notice(&mut self, notice_id: usize, cx: &mut Context<Self>) {
+        let previous_count = self.notices.len();
+        self.notices.retain(|(id, _)| *id != notice_id);
+        if self.notices.len() != previous_count {
+            cx.emit(AcpThreadEvent::NoticesUpdated);
+            cx.notify();
+        }
+    }
+
     pub fn is_compacting(&self) -> bool {
-        self.entries.last().is_some_and(|entry| {
+        self.entries.iter().rev().any(|entry| {
             matches!(
                 entry,
                 AgentThreadEntry::ContextCompaction(compaction) if compaction.is_in_progress()
@@ -2458,7 +2897,7 @@ impl AcpThread {
                     AssistantMessageChunk::Message { block, .. } => block,
                     AssistantMessageChunk::Thought { block, .. } => block,
                 };
-                if let Some(markdown) = block.markdown() {
+                for markdown in block.markdowns() {
                     markdown.update(cx, |markdown, cx| {
                         markdown.invalidate_mermaid_cache(cx);
                     });
@@ -2516,7 +2955,6 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
-                | AgentThreadEntry::CompletedPlan(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
@@ -2546,7 +2984,6 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
-                | AgentThreadEntry::CompletedPlan(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
@@ -2567,7 +3004,6 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
-                | AgentThreadEntry::CompletedPlan(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
@@ -2580,7 +3016,6 @@ impl AcpThread {
             match entry {
                 AgentThreadEntry::UserMessage(..) => return false,
                 AgentThreadEntry::AssistantMessage(..)
-                | AgentThreadEntry::CompletedPlan(..)
                 | AgentThreadEntry::ContextCompaction(_)
                 | AgentThreadEntry::Elicitation(_) => continue,
                 AgentThreadEntry::ToolCall(..) => return true,
@@ -2613,7 +3048,7 @@ impl AcpThread {
                     })
                     .is_some_and(|message| {
                         let already_in_user_message = message.is_optimistic
-                            && message.chunks.contains(&content)
+                            && message.content.source_blocks().contains(&content)
                             && can_merge_message_chunks(
                                 message.protocol_id.as_ref(),
                                 message_id.as_ref(),
@@ -2651,8 +3086,21 @@ impl AcpThread {
             acp::SessionUpdate::ToolCallUpdate(tool_call_update) => {
                 self.update_tool_call(tool_call_update, cx)?;
             }
+            acp::SessionUpdate::CompactionUpdate(compaction_update) => {
+                self.upsert_context_compaction_update(compaction_update, cx);
+            }
+            acp::SessionUpdate::CompactionSummaryChunk(summary_chunk) => {
+                self.append_context_compaction_summary(summary_chunk, cx);
+            }
             acp::SessionUpdate::Plan(plan) => {
                 self.update_plan(plan, cx);
+            }
+            acp::SessionUpdate::Notice(notice) => {
+                let notice_id = self.next_notice_id;
+                self.next_notice_id += 1;
+                self.notices.push((notice_id, notice));
+                cx.emit(AcpThreadEvent::NoticesUpdated);
+                cx.notify();
             }
             acp::SessionUpdate::SessionInfoUpdate(info_update) => {
                 if let MaybeUndefined::Value(title) = info_update.title {
@@ -2745,13 +3193,13 @@ impl AcpThread {
         let language_registry = self.project.read(cx).languages().clone();
         let path_style = self.project.read(cx).path_style(cx);
         let entries_len = self.entries.len();
+        self.flush_streaming_text(cx);
 
         if let Some(last_entry) = self.entries.last_mut()
             && let AgentThreadEntry::UserMessage(UserMessage {
                 protocol_id: existing_protocol_id,
                 client_id: existing_client_id,
                 content,
-                chunks,
                 is_optimistic: existing_is_optimistic,
                 indented: existing_indented,
                 ..
@@ -2763,7 +3211,6 @@ impl AcpThread {
                 && existing_protocol_id.is_none()
                 && protocol_id.is_some())
         {
-            Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
             if let Some(incoming_client_id) = incoming_client_id {
                 *existing_client_id = Some(incoming_client_id);
             }
@@ -2771,19 +3218,18 @@ impl AcpThread {
             if existing_protocol_id.is_none() {
                 *existing_protocol_id = protocol_id;
             }
-            content.append(chunk.clone(), &language_registry, path_style, cx);
-            chunks.push(chunk);
+            content.append_prompt(chunk, &language_registry, path_style, cx);
             let idx = entries_len - 1;
             cx.emit(AcpThreadEvent::EntryUpdated(idx));
         } else {
-            let content = ContentBlock::new(chunk.clone(), &language_registry, path_style, cx);
+            let mut content = MessageContent::default();
+            content.append_prompt(chunk, &language_registry, path_style, cx);
             self.push_entry(
                 AgentThreadEntry::UserMessage(UserMessage {
                     protocol_id,
                     client_id: incoming_client_id,
                     is_optimistic,
                     content,
-                    chunks: vec![chunk],
                     checkpoint: None,
                     indented,
                 }),
@@ -2823,19 +3269,25 @@ impl AcpThread {
 
         // For text chunks going to an existing Markdown block, buffer for smooth
         // streaming instead of appending all at once which may feel more choppy.
-        if let acp::ContentBlock::Text(text_content) = &chunk {
-            if let Some(markdown) =
-                self.streaming_markdown_target(message_id.as_ref(), is_thought, indented)
-            {
-                let entries_len = self.entries.len();
-                cx.emit(AcpThreadEvent::EntryUpdated(entries_len - 1));
-                self.buffer_streaming_text(&markdown, text_content.text.clone(), cx);
-                return;
+        let chunk = match chunk {
+            acp::ContentBlock::Text(text) => {
+                if let Some((content, target)) =
+                    self.streaming_content_target(message_id.as_ref(), is_thought, indented)
+                {
+                    let text_len = text.text.len();
+                    let source_index = content.append_deferred_text(text);
+                    cx.emit(AcpThreadEvent::EntryUpdated(target.entry_index));
+                    self.buffer_streaming_text(target, source_index, text_len, cx);
+                    return;
+                }
+                acp::ContentBlock::Text(text)
             }
-        }
+            chunk => chunk,
+        };
 
         let language_registry = self.project.read(cx).languages().clone();
         let entries_len = self.entries.len();
+        self.flush_streaming_text(cx);
         if let Some(last_entry) = self.entries.last_mut()
             && let AgentThreadEntry::AssistantMessage(AssistantMessage {
                 chunks,
@@ -2845,7 +3297,6 @@ impl AcpThread {
             && *existing_indented == indented
         {
             let idx = entries_len - 1;
-            Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
             cx.emit(AcpThreadEvent::EntryUpdated(idx));
             match (chunks.last_mut(), is_thought) {
                 (
@@ -2868,7 +3319,7 @@ impl AcpThread {
                     block.append(chunk, &language_registry, path_style, cx)
                 }
                 _ => {
-                    let block = ContentBlock::new(chunk, &language_registry, path_style, cx);
+                    let block = MessageContent::new(chunk, &language_registry, path_style, cx);
                     if is_thought {
                         chunks.push(AssistantMessageChunk::Thought {
                             id: message_id,
@@ -2883,7 +3334,7 @@ impl AcpThread {
                 }
             }
         } else {
-            let block = ContentBlock::new(chunk, &language_registry, path_style, cx);
+            let block = MessageContent::new(chunk, &language_registry, path_style, cx);
             let chunk = if is_thought {
                 AssistantMessageChunk::Thought {
                     id: message_id,
@@ -2907,40 +3358,48 @@ impl AcpThread {
         }
     }
 
-    fn streaming_markdown_target(
+    fn streaming_content_target(
         &mut self,
         message_id: Option<&acp::MessageId>,
         is_thought: bool,
         indented: bool,
-    ) -> Option<Entity<Markdown>> {
-        let last_entry = self.entries.last_mut()?;
+    ) -> Option<(&mut MessageContent, StreamingTextTarget)> {
+        let (entry_index, last_entry) = self.entries.iter_mut().enumerate().next_back()?;
         if let AgentThreadEntry::AssistantMessage(AssistantMessage {
             chunks,
             indented: existing_indented,
             ..
         }) = last_entry
             && *existing_indented == indented
-            && let [.., chunk] = chunks.as_mut_slice()
+            && let Some((chunk_index, chunk)) = chunks.iter_mut().enumerate().next_back()
         {
             match (chunk, is_thought) {
                 (
                     AssistantMessageChunk::Message {
                         id: existing_id,
-                        block: ContentBlock::Markdown { markdown },
+                        block,
                     },
                     false,
                 )
                 | (
                     AssistantMessageChunk::Thought {
                         id: existing_id,
-                        block: ContentBlock::Markdown { markdown },
+                        block,
                     },
                     true,
                 ) if can_merge_message_chunks(existing_id.as_ref(), message_id) => {
+                    let markdown = block.trailing_text()?.clone();
                     if existing_id.is_none() {
                         *existing_id = message_id.cloned();
                     }
-                    Some(markdown.clone())
+                    Some((
+                        block,
+                        StreamingTextTarget {
+                            entry_index,
+                            chunk_index,
+                            markdown,
+                        },
+                    ))
                 }
                 _ => None,
             }
@@ -2953,31 +3412,33 @@ impl AcpThread {
     /// from thoughts to message text), flush the old buffer first.
     fn buffer_streaming_text(
         &mut self,
-        markdown: &Entity<Markdown>,
-        text: String,
+        target: StreamingTextTarget,
+        source_index: usize,
+        text_len: usize,
         cx: &mut Context<Self>,
     ) {
-        if let Some(buffer) = &mut self.streaming_text_buffer {
-            if buffer.target.entity_id() == markdown.entity_id() {
-                buffer.pending.push_str(&text);
-
-                buffer.bytes_to_reveal_per_tick = (buffer.pending.len() as f32
-                    / StreamingTextBuffer::REVEAL_TARGET
-                    * StreamingTextBuffer::TASK_UPDATE_MS as f32)
-                    .ceil() as usize;
-                return;
-            }
-            Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
+        if let Some(buffer) = &mut self.streaming_text_buffer
+            && buffer.target == target
+        {
+            buffer.cursor.pending_bytes += text_len;
+            buffer.bytes_to_reveal_per_tick = (buffer.cursor.pending_bytes as f32
+                / StreamingTextBuffer::REVEAL_TARGET
+                * StreamingTextBuffer::TASK_UPDATE_MS as f32)
+                .ceil() as usize;
+            return;
         }
+        self.flush_streaming_text(cx);
 
-        let target = markdown.clone();
         let _reveal_task = self.start_streaming_reveal(cx);
-        let pending_len = text.len();
-        let bytes_to_reveal = (pending_len as f32 / StreamingTextBuffer::REVEAL_TARGET
+        let bytes_to_reveal = (text_len as f32 / StreamingTextBuffer::REVEAL_TARGET
             * StreamingTextBuffer::TASK_UPDATE_MS as f32)
             .ceil() as usize;
         self.streaming_text_buffer = Some(StreamingTextBuffer {
-            pending: text,
+            cursor: TextCursor {
+                source_index,
+                byte_offset: 0,
+                pending_bytes: text_len,
+            },
             bytes_to_reveal_per_tick: bytes_to_reveal,
             target,
             _reveal_task,
@@ -2985,22 +3446,29 @@ impl AcpThread {
     }
 
     /// Flush all buffered streaming text into the Markdown entity immediately.
-    fn flush_streaming_text(
-        streaming_text_buffer: &mut Option<StreamingTextBuffer>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(buffer) = streaming_text_buffer.take() {
-            if !buffer.pending.is_empty() {
-                buffer
-                    .target
-                    .update(cx, |markdown, cx| markdown.append(&buffer.pending, cx));
+    fn flush_streaming_text(&mut self, cx: &mut Context<Self>) {
+        if let Some(mut buffer) = self.streaming_text_buffer.take() {
+            buffer.reveal(&self.entries, usize::MAX, cx);
+        }
+    }
+
+    fn shrink_message_source_capacity(&mut self, first_entry_index: usize) {
+        for entry in self.entries.iter_mut().skip(first_entry_index) {
+            match entry {
+                AgentThreadEntry::UserMessage(message) => message.content.shrink_source_capacity(),
+                AgentThreadEntry::AssistantMessage(message) => {
+                    for chunk in &mut message.chunks {
+                        let (AssistantMessageChunk::Message { block, .. }
+                        | AssistantMessageChunk::Thought { block, .. }) = chunk;
+                        block.shrink_source_capacity();
+                    }
+                }
+                _ => {}
             }
         }
     }
 
-    /// Spawns a foreground task that periodically drains
-    /// `streaming_text_buffer.pending` into the target `Markdown` entity,
-    /// producing smooth, continuous text output.
+    /// Reveals retained source text gradually without changing its content.
     fn start_streaming_reveal(&self, cx: &mut Context<Self>) -> Task<()> {
         cx.spawn(async move |this, cx| {
             loop {
@@ -3014,23 +3482,12 @@ impl AcpThread {
                             return false;
                         };
 
-                        if buffer.pending.is_empty() {
-                            return true;
+                        let valid =
+                            buffer.reveal(&this.entries, buffer.bytes_to_reveal_per_tick, cx);
+                        if !valid {
+                            this.streaming_text_buffer.take();
                         }
-
-                        let pending_len = buffer.pending.len();
-
-                        let byte_boundary = buffer
-                            .pending
-                            .ceil_char_boundary(buffer.bytes_to_reveal_per_tick)
-                            .min(pending_len);
-
-                        buffer.target.update(cx, |markdown: &mut Markdown, cx| {
-                            markdown.append(&buffer.pending[..byte_boundary], cx);
-                            buffer.pending.drain(..byte_boundary);
-                        });
-
-                        true
+                        valid
                     })
                     .unwrap_or(false);
 
@@ -3042,7 +3499,7 @@ impl AcpThread {
     }
 
     fn push_entry(&mut self, entry: AgentThreadEntry, cx: &mut Context<Self>) {
-        Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
+        self.flush_streaming_text(cx);
         self.entries.push(entry);
         cx.emit(AcpThreadEvent::NewEntry);
     }
@@ -3069,6 +3526,67 @@ impl AcpThread {
         }
     }
 
+    fn upsert_context_compaction_update(
+        &mut self,
+        update: acp::CompactionUpdate,
+        cx: &mut Context<Self>,
+    ) {
+        let id = ContextCompactionId(update.compaction_id.0.clone());
+        let language_registry = self.project.read(cx).languages().clone();
+
+        if let Some((entry_index, compaction)) =
+            self.entries
+                .iter_mut()
+                .enumerate()
+                .rev()
+                .find_map(|(entry_index, entry)| match entry {
+                    AgentThreadEntry::ContextCompaction(compaction) if compaction.id == id => {
+                        Some((entry_index, compaction))
+                    }
+                    _ => None,
+                })
+        {
+            compaction.apply_update(update, &language_registry, cx);
+            cx.emit(AcpThreadEvent::EntryUpdated(entry_index));
+            return;
+        }
+
+        let mut compaction = ContextCompaction {
+            id,
+            status: update.status.clone().into(),
+            error: None,
+            summary: Vec::new(),
+        };
+        compaction.apply_update(update, &language_registry, cx);
+        self.push_entry(AgentThreadEntry::ContextCompaction(compaction), cx);
+    }
+
+    fn append_context_compaction_summary(
+        &mut self,
+        chunk: acp::CompactionSummaryChunk,
+        cx: &mut Context<Self>,
+    ) {
+        let language_registry = self.project.read(cx).languages().clone();
+        if let Some((entry_index, compaction)) =
+            self.entries
+                .iter_mut()
+                .enumerate()
+                .rev()
+                .find_map(|(entry_index, entry)| match entry {
+                    AgentThreadEntry::ContextCompaction(compaction)
+                        if compaction.id.0 == chunk.compaction_id.0
+                            && compaction.is_in_progress() =>
+                    {
+                        Some((entry_index, compaction))
+                    }
+                    _ => None,
+                })
+        {
+            compaction.append_summary(chunk.content, &language_registry, cx);
+            cx.emit(AcpThreadEvent::EntryUpdated(entry_index));
+        }
+    }
+
     pub fn update_context_compaction(
         &mut self,
         update: ContextCompactionUpdate,
@@ -3089,20 +3607,11 @@ impl AcpThread {
         };
 
         if !update.summary_delta.is_empty() {
-            if compaction.summary.is_none() {
-                compaction.summary = Some(cx.new(|cx| {
-                    Markdown::new(
-                        update.summary_delta.into(),
-                        Some(language_registry),
-                        None,
-                        cx,
-                    )
-                }));
-            } else if let Some(summary) = compaction.summary.clone() {
-                summary.update(cx, |markdown, cx| {
-                    markdown.append(&update.summary_delta, cx)
-                });
-            }
+            compaction.append_summary(
+                acp::ContentBlock::Text(acp::TextContent::new(update.summary_delta)),
+                &language_registry,
+                cx,
+            );
         }
 
         if let Some(status) = update.status {
@@ -3163,7 +3672,6 @@ impl AcpThread {
     ) -> Result<()> {
         let update = update.into();
         let languages = self.project.read(cx).languages().clone();
-        let path_style = self.project.read(cx).path_style(cx);
 
         let ix = match self.index_for_tool_call(update.id()) {
             Some(ix) => ix,
@@ -3172,19 +3680,18 @@ impl AcpThread {
                 let failed_tool_call = ToolCall {
                     id: update.id().clone(),
                     label: cx.new(|cx| Markdown::new("Tool call not found".into(), None, None, cx)),
+                    title: Some("Tool call not found".into()),
                     kind: acp::ToolKind::Fetch,
-                    content: vec![ToolCallContent::ContentBlock(ContentBlock::new(
-                        "Tool call not found".into(),
-                        &languages,
-                        path_style,
-                        cx,
-                    ))],
+                    structured_content: vec![ToolCallContent::ContentBlock(
+                        ContentBlock::new_output("Tool call not found".into(), &languages, cx),
+                    )],
                     status: ToolCallStatus::Failed,
                     locations: Vec::new(),
                     resolved_locations: Vec::new(),
                     raw_input: None,
                     raw_input_markdown: None,
                     raw_output: None,
+                    raw_output_content: None,
                     tool_name: None,
                     subagent_session_info: None,
                     sandbox_authorization_details: None,
@@ -3202,14 +3709,9 @@ impl AcpThread {
         match update {
             ToolCallUpdate::UpdateFields(update) => {
                 let location_updated = update.fields.locations.is_some();
-                if let Err(error) = call.update_fields(
-                    update.fields,
-                    update.meta,
-                    languages,
-                    path_style,
-                    &self.terminals,
-                    cx,
-                ) {
+                if let Err(error) =
+                    call.update_fields(update.fields, update.meta, languages, &self.terminals, cx)
+                {
                     cx.emit(AcpThreadEvent::EntryUpdated(ix));
                     return Err(error);
                 }
@@ -3218,13 +3720,16 @@ impl AcpThread {
                 }
             }
             ToolCallUpdate::UpdateDiff(update) => {
-                call.content.clear();
-                call.content.push(ToolCallContent::Diff(update.diff));
+                call.structured_content.clear();
+                call.structured_content
+                    .push(ToolCallContent::Diff(update.diff));
+                call.update_raw_output_content(&languages, cx);
             }
             ToolCallUpdate::UpdateTerminal(update) => {
-                call.content.clear();
-                call.content
+                call.structured_content.clear();
+                call.structured_content
                     .push(ToolCallContent::Terminal(update.terminal));
+                call.update_raw_output_content(&languages, cx);
             }
         }
 
@@ -3251,7 +3756,6 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<(), acp::Error> {
         let language_registry = self.project.read(cx).languages().clone();
-        let path_style = self.project.read(cx).path_style(cx);
         let id = update.tool_call_id.clone();
 
         let agent_telemetry_id = self.connection().telemetry_id();
@@ -3281,7 +3785,6 @@ impl AcpThread {
                 update.fields,
                 update.meta,
                 language_registry,
-                path_style,
                 &self.terminals,
                 cx,
             ) {
@@ -3296,7 +3799,6 @@ impl AcpThread {
                 update.try_into()?,
                 status,
                 language_registry,
-                self.project.read(cx).path_style(cx),
                 &self.terminals,
                 cx,
             )?;
@@ -3547,12 +4049,20 @@ impl AcpThread {
         self.push_entry(AgentThreadEntry::Elicitation(id.clone()), cx);
         cx.emit(AcpThreadEvent::ElicitationRequested(id.clone()));
 
-        let task =
-            ElicitationStore::response_task(id.clone(), response_rx, cx, |_thread, cx, id| {
-                cx.emit(AcpThreadEvent::ElicitationResponded(id))
-            });
-
+        let task = ElicitationStore::response_task(response_rx, cx);
         Ok((id, task))
+    }
+
+    fn emit_elicitation_change(
+        entry_index: usize,
+        id: &ElicitationEntryId,
+        change: ElicitationChange,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(AcpThreadEvent::EntryUpdated(entry_index));
+        if matches!(change, ElicitationChange::Responded) {
+            cx.emit(AcpThreadEvent::ElicitationResponded(id.clone()));
+        }
     }
 
     pub fn respond_to_elicitation(
@@ -3568,7 +4078,7 @@ impl AcpThread {
             return;
         }
 
-        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+        Self::emit_elicitation_change(ix, id, ElicitationChange::Responded, cx);
     }
 
     pub fn complete_url_elicitation(
@@ -3596,11 +4106,11 @@ impl AcpThread {
         let Some(ix) = self.elicitation_entry_ix(id) else {
             return;
         };
-        if !self.elicitations.cancel_elicitation_by_id(id, true) {
+        let Some(change) = self.elicitations.cancel_elicitation_by_id(id) else {
             return;
-        }
+        };
 
-        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+        Self::emit_elicitation_change(ix, id, change, cx);
     }
 
     fn elicitation_entry_ix(&self, id: &ElicitationEntryId) -> Option<usize> {
@@ -3647,13 +4157,6 @@ impl AcpThread {
         self.plan.entries.truncate(new_entries_len);
 
         cx.notify();
-    }
-
-    pub fn snapshot_completed_plan(&mut self, cx: &mut Context<Self>) {
-        if !self.plan.is_empty() && self.plan.stats().pending == 0 {
-            let completed_entries = std::mem::take(&mut self.plan.entries);
-            self.push_entry(AgentThreadEntry::CompletedPlan(completed_entries), cx);
-        }
     }
 
     fn clear_completed_plan_entries(&mut self, cx: &mut Context<Self>) {
@@ -3703,13 +4206,13 @@ impl AcpThread {
         push_user_message: bool,
         cx: &mut Context<Self>,
     ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
-        let block = ContentBlock::new_combined(
-            message.clone(),
-            self.project.read(cx).languages().clone(),
-            self.project.read(cx).path_style(cx),
-            cx,
-        );
-        let request = acp::PromptRequest::new(self.session_id.clone(), message.clone());
+        let language_registry = self.project.read(cx).languages().clone();
+        let path_style = self.project.read(cx).path_style(cx);
+        let mut block = MessageContent::default();
+        for chunk in &message {
+            block.append_prompt(chunk.clone(), &language_registry, path_style, cx);
+        }
+        let request = acp::PromptRequest::new(self.session_id.clone(), message);
         let git_store = self.project.read(cx).git_store().clone();
 
         let client_user_message_ids = self.connection.client_user_message_ids(cx);
@@ -3726,7 +4229,6 @@ impl AcpThread {
                             client_id: client_id.clone(),
                             is_optimistic: true,
                             content: block,
-                            chunks: message,
                             checkpoint: None,
                             indented: false,
                         }),
@@ -3794,8 +4296,11 @@ impl AcpThread {
 
         self.turn_id += 1;
         let turn_id = self.turn_id;
+        // A continuation can extend the trailing entry rather than create a new one.
+        let first_entry_index = self.entries.len().saturating_sub(1);
         self.running_turn = Some(RunningTurn {
             id: turn_id,
+            first_entry_index,
             send_task: cx.spawn(async move |this, cx| {
                 cancel_task.await;
                 tx.send(f(this, cx).await).ok();
@@ -3836,6 +4341,10 @@ impl AcpThread {
                     this.running_turn.take();
                 }
 
+                if this.turn_id == turn_id {
+                    this.shrink_message_source_capacity(first_entry_index);
+                }
+
                 let Ok(response) = response else {
                     if is_same_turn {
                         cx.emit(AcpThreadEvent::StatusChanged);
@@ -3850,7 +4359,7 @@ impl AcpThread {
 
                 match response {
                     Ok(r) => {
-                        Self::flush_streaming_text(&mut this.streaming_text_buffer, cx);
+                        this.flush_streaming_text(cx);
 
                         if r.stop_reason == acp::StopReason::MaxTokens {
                             if is_same_turn {
@@ -3883,10 +4392,6 @@ impl AcpThread {
                         let canceled = matches!(r.stop_reason, acp::StopReason::Cancelled);
                         if canceled && is_same_turn {
                             this.cancel_pending_turn_entries(cx);
-                        }
-
-                        if !canceled {
-                            this.snapshot_completed_plan(cx);
                         }
 
                         // Handle refusal - distinguish between user prompt and tool call refusals
@@ -3944,7 +4449,7 @@ impl AcpThread {
                         if is_same_turn {
                             cx.emit(AcpThreadEvent::StatusChanged);
                         }
-                        Self::flush_streaming_text(&mut this.streaming_text_buffer, cx);
+                        this.flush_streaming_text(cx);
                         if is_same_turn {
                             this.cancel_pending_turn_entries(cx);
                         }
@@ -3973,12 +4478,13 @@ impl AcpThread {
         permission_outcome: RequestPermissionOutcome,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
+        self.flush_streaming_text(cx);
         self.cancel_outstanding_elicitations(cx);
 
         let Some(turn) = self.running_turn.take() else {
             return Task::ready(());
         };
+        self.shrink_message_source_capacity(turn.first_entry_index);
         self.mark_pending_entries_as_canceled(permission_outcome, cx);
         self.connection.cancel(&self.session_id, cx);
         cx.emit(AcpThreadEvent::StatusChanged);
@@ -4068,11 +4574,8 @@ impl AcpThread {
             let Some(AgentThreadEntry::Elicitation(elicitation_id)) = self.entries.get(ix) else {
                 continue;
             };
-            if self
-                .elicitations
-                .cancel_elicitation_by_id(elicitation_id, true)
-            {
-                cx.emit(AcpThreadEvent::EntryUpdated(ix));
+            if let Some(change) = self.elicitations.cancel_elicitation_by_id(elicitation_id) {
+                Self::emit_elicitation_change(ix, elicitation_id, change, cx);
             }
         }
     }
@@ -4122,11 +4625,12 @@ impl AcpThread {
             return Task::ready(Err(anyhow!("not supported")));
         };
 
-        Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
+        self.flush_streaming_text(cx);
         let telemetry = ActionLogTelemetry::from(&*self);
         cx.spawn(async move |this, cx| {
             cx.update(|cx| truncate.run(client_id.clone(), cx)).await?;
             this.update(cx, |this, cx| {
+                this.flush_streaming_text(cx);
                 if let Some((ix, _)) = this.user_message_mut(&client_id) {
                     // Collect all terminals from entries that will be removed
                     let terminals_to_remove: Vec<acp::TerminalId> = this.entries[ix..]
@@ -4747,30 +5251,46 @@ impl AcpThread {
                 output_byte_limit,
                 terminal,
             } => {
-                let entity = self.register_terminal_created(
-                    terminal_id.clone(),
-                    label,
-                    cwd,
-                    output_byte_limit,
-                    terminal,
-                    cx,
-                );
+                if self.terminals.contains_key(&terminal_id) {
+                    return;
+                }
+                let language_registry = self.project.read(cx).languages().clone();
+                let entity = cx.new(|cx| {
+                    Terminal::new_display(
+                        terminal_id.clone(),
+                        &label,
+                        cwd,
+                        output_byte_limit.map(|limit| limit as usize),
+                        terminal,
+                        language_registry,
+                        cx,
+                    )
+                });
+                // Provider output and exit can arrive without another tool-call update.
+                cx.observe(&entity, |this, terminal, cx| {
+                    for (index, entry) in this.entries.iter().enumerate() {
+                        if entry
+                            .terminals()
+                            .any(|entry_terminal| entry_terminal == &terminal)
+                        {
+                            cx.emit(AcpThreadEvent::EntryUpdated(index));
+                        }
+                    }
+                    cx.notify();
+                })
+                .detach();
+                self.terminals.insert(terminal_id.clone(), entity.clone());
 
                 if let Some(mut chunks) = self.pending_terminal_output.remove(&terminal_id) {
                     for data in chunks.drain(..) {
                         entity.update(cx, |term, cx| {
-                            term.inner().update(cx, |inner, cx| {
-                                inner.write_output(&data, cx);
-                            })
+                            term.write_display_output(&data, cx);
                         });
                     }
                 }
 
-                if let Some(_status) = self.pending_terminal_exit.remove(&terminal_id) {
-                    entity.update(cx, |term, cx| {
-                        term.inner().update(cx, |inner, _| inner.shrink_to_used());
-                        cx.notify();
-                    });
+                if let Some(status) = self.pending_terminal_exit.remove(&terminal_id) {
+                    entity.update(cx, |term, cx| term.finish_display(status, cx));
                 }
 
                 cx.notify();
@@ -4778,9 +5298,7 @@ impl AcpThread {
             TerminalProviderEvent::Output { terminal_id, data } => {
                 if let Some(entity) = self.terminals.get(&terminal_id) {
                     entity.update(cx, |term, cx| {
-                        term.inner().update(cx, |inner, cx| {
-                            inner.write_output(&data, cx);
-                        })
+                        term.write_display_output(&data, cx);
                     });
                 } else {
                     self.pending_terminal_output
@@ -4804,12 +5322,11 @@ impl AcpThread {
                 status,
             } => {
                 if let Some(entity) = self.terminals.get(&terminal_id) {
-                    entity.update(cx, |term, cx| {
-                        term.inner().update(cx, |inner, _| inner.shrink_to_used());
-                        cx.notify();
-                    });
+                    entity.update(cx, |term, cx| term.finish_display(status, cx));
                 } else {
-                    self.pending_terminal_exit.insert(terminal_id, status);
+                    self.pending_terminal_exit
+                        .entry(terminal_id)
+                        .or_insert(status);
                 }
             }
         }
@@ -4821,43 +5338,31 @@ fn markdown_for_raw_output(
     language_registry: &Arc<LanguageRegistry>,
     cx: &mut App,
 ) -> Option<Entity<Markdown>> {
+    let text = raw_output_text(raw_output)?;
+    Some(cx.new(|cx| Markdown::new(text.into(), Some(language_registry.clone()), None, cx)))
+}
+
+fn raw_output_text(raw_output: &serde_json::Value) -> Option<String> {
     match raw_output {
         serde_json::Value::Null => None,
-        serde_json::Value::Bool(value) => Some(cx.new(|cx| {
-            Markdown::new(
-                value.to_string().into(),
-                Some(language_registry.clone()),
-                None,
-                cx,
-            )
-        })),
-        serde_json::Value::Number(value) => Some(cx.new(|cx| {
-            Markdown::new(
-                value.to_string().into(),
-                Some(language_registry.clone()),
-                None,
-                cx,
-            )
-        })),
-        serde_json::Value::String(value) => Some(cx.new(|cx| {
-            Markdown::new(
-                value.clone().into(),
-                Some(language_registry.clone()),
-                None,
-                cx,
-            )
-        })),
-        value => Some(cx.new(|cx| {
+        serde_json::Value::Bool(value) => Some(value.to_string()),
+        serde_json::Value::Number(value) => Some(value.to_string()),
+        serde_json::Value::String(value) => Some(value.clone()),
+        value => {
             let pretty_json = to_string_pretty(value).unwrap_or_else(|_| value.to_string());
-
-            Markdown::new(
-                format!("```json\n{}\n```", pretty_json).into(),
-                Some(language_registry.clone()),
-                None,
-                cx,
-            )
-        })),
+            Some(format!("```json\n{}\n```", pretty_json))
+        }
     }
+}
+
+fn update_markdown_in_place(markdown: &Entity<Markdown>, text: &str, cx: &mut App) {
+    markdown.update(cx, |markdown, cx| {
+        match text.strip_prefix(markdown.source().as_ref()) {
+            Some("") => {}
+            Some(suffix) => markdown.append(suffix, cx),
+            None => markdown.reset(text.to_owned().into(), cx),
+        }
+    });
 }
 
 #[cfg(test)]
@@ -4883,6 +5388,111 @@ mod tests {
         time::Duration,
     };
     use util::{path, path_list::PathList};
+
+    #[test]
+    fn test_text_cursor_reads_source_on_utf8_boundaries() {
+        let sources = ["visible", "", "aé", "", "🦀b", "", "日本語"].map(acp::ContentBlock::from);
+        let whole = "aé🦀b日本語";
+        for max_bytes in 1..=whole.len() + 1 {
+            let mut cursor = TextCursor {
+                source_index: 1,
+                byte_offset: 0,
+                pending_bytes: whole.len(),
+            };
+            assert_eq!(cursor.take(&sources, 0).as_deref(), Some(""));
+
+            let mut expected = whole.to_string();
+            while !expected.is_empty() {
+                assert_eq!(cursor.pending_bytes, expected.len());
+                let boundary = expected.ceil_char_boundary(max_bytes);
+                assert_eq!(
+                    cursor.take(&sources, max_bytes),
+                    Some(expected.drain(..boundary).collect::<String>())
+                );
+            }
+            assert_eq!(cursor.pending_bytes, 0);
+            assert_eq!(cursor.take(&sources, usize::MAX).as_deref(), Some(""));
+        }
+
+        let mut sources = vec!["aé".into()];
+        let mut cursor = TextCursor {
+            pending_bytes: 3,
+            ..Default::default()
+        };
+        assert_eq!(cursor.take(&sources, 1).as_deref(), Some("a"));
+        sources.push("🦀b".into());
+        cursor.pending_bytes += 5;
+        assert_eq!(cursor.take(&sources, 3).as_deref(), Some("é🦀"));
+        sources.push("日本語".into());
+        cursor.pending_bytes += 9;
+        assert_eq!(
+            cursor.take(&sources, usize::MAX).as_deref(),
+            Some("b日本語")
+        );
+        sources.push("aé".into());
+        cursor.pending_bytes += 3;
+        assert_eq!(cursor.take(&sources, usize::MAX).as_deref(), Some("aé"));
+        assert_eq!(cursor.pending_bytes, 0);
+    }
+
+    #[gpui::test]
+    async fn test_streaming_cursor_is_flushed_before_rewind(cx: &mut TestAppContext) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("session should be created");
+        let client_id = ClientUserMessageId::new();
+
+        let previous_markdown = thread.update(cx, |thread, cx| {
+            thread.push_user_content_block(Some(client_id.clone()), "prompt".into(), cx);
+            thread.push_assistant_content_block("before".into(), false, cx);
+            thread.push_assistant_content_block(" buffered".into(), false, cx);
+            let (_, target) = thread
+                .streaming_content_target(None, false, false)
+                .expect("streaming target");
+            assert_eq!(target.markdown.read(cx).source(), "before");
+            thread.cancel(cx).detach();
+            assert_eq!(target.markdown.read(cx).source(), "before buffered");
+            assert!(thread.streaming_text_buffer.is_none());
+            target.markdown
+        });
+
+        let rewind = thread.update(cx, |thread, cx| {
+            let rewind = thread.rewind(client_id, cx);
+            thread.push_assistant_content_block(" late".into(), false, cx);
+            rewind
+        });
+        rewind.await.expect("rewind should complete");
+        thread.read_with(cx, |thread, cx| {
+            assert!(thread.entries().is_empty());
+            assert!(thread.streaming_text_buffer.is_none());
+            assert_eq!(previous_markdown.read(cx).source(), "before buffered late");
+        });
+
+        let current_markdown = thread.update(cx, |thread, cx| {
+            thread.push_user_content_block(None, "new prompt".into(), cx);
+            thread.push_assistant_content_block("fresh".into(), false, cx);
+            thread.push_assistant_content_block(" streamed".into(), false, cx);
+            let (_, target) = thread
+                .streaming_content_target(None, false, false)
+                .expect("new streaming target");
+            target.markdown
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        current_markdown.read_with(cx, |markdown, _| {
+            assert_eq!(markdown.source(), "fresh streamed");
+        });
+        previous_markdown.read_with(cx, |markdown, _| {
+            assert_eq!(markdown.source(), "before buffered late");
+        });
+    }
 
     #[test]
     fn command_category_meta_round_trips() {
@@ -4950,6 +5560,479 @@ mod tests {
         });
     }
 
+    fn message_test_image() -> acp::ContentBlock {
+        acp::ContentBlock::Image(acp::ImageContent::new(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+            "image/png",
+        ))
+    }
+
+    #[gpui::test]
+    fn test_message_content_retains_source_before_rendering(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let annotations = acp::Annotations::new().priority(0.5);
+            let blocks = vec![
+                acp::ContentBlock::Text(
+                    acp::TextContent::new("")
+                        .annotations(annotations.clone())
+                        .meta(acp::Meta::from_iter([("empty".into(), json!(true))])),
+                ),
+                acp::ContentBlock::Text(
+                    acp::TextContent::new("hello ")
+                        .meta(acp::Meta::from_iter([("part".into(), json!(1))])),
+                ),
+                acp::ContentBlock::Text(
+                    acp::TextContent::new("world")
+                        .meta(acp::Meta::from_iter([("part".into(), json!(2))])),
+                ),
+                match message_test_image() {
+                    acp::ContentBlock::Image(image) => acp::ContentBlock::Image(
+                        image
+                            .uri("file:///original.png".to_string())
+                            .annotations(annotations)
+                            .meta(acp::Meta::from_iter([("image".into(), json!(42))])),
+                    ),
+                    _ => unreachable!("fixture is an image"),
+                },
+                acp::ContentBlock::ResourceLink(
+                    acp::ResourceLink::new("original name", "https://example.com/file")
+                        .description("original description".to_string())
+                        .title("original title".to_string())
+                        .meta(acp::Meta::from_iter([("link".into(), json!("original"))])),
+                ),
+            ];
+            let mut content = MessageContent::default();
+            for block in &blocks {
+                content.append(block.clone(), &languages, PathStyle::local(), cx);
+            }
+            assert_eq!(content.source_blocks(), blocks);
+            let render_blocks = content.blocks().collect::<Vec<_>>();
+            let [first, image, last] = render_blocks.as_slice() else {
+                panic!("text coalesces, link renders as a mention, image stays an image");
+            };
+            assert!(image.image().is_some());
+            assert!(last.markdown().is_some());
+            assert_eq!(
+                first.markdown().expect("text").read(cx).source(),
+                "hello world"
+            );
+            assert_eq!(
+                content.to_markdown(cx),
+                "hello world\n\n`Image`\n\n[@https://example.com/file](https://example.com/file)"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_message_content_preserves_mixed_order(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let language_registry =
+                Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            for (chunks, expected_kinds, expected_export) in [
+                (
+                    vec!["before".into(), message_test_image()],
+                    vec!["text", "image"],
+                    "before\n\n`Image`",
+                ),
+                (
+                    vec![message_test_image(), "after".into()],
+                    vec!["image", "text"],
+                    "`Image`\n\nafter",
+                ),
+                (
+                    vec![message_test_image(), message_test_image()],
+                    vec!["image", "image"],
+                    "`Image`\n\n`Image`",
+                ),
+                (
+                    vec!["".into(), message_test_image()],
+                    vec!["image"],
+                    "`Image`",
+                ),
+            ] {
+                let mut content = MessageContent::default();
+                for chunk in chunks {
+                    content.append(chunk, &language_registry, PathStyle::local(), cx);
+                }
+                assert_eq!(
+                    content
+                        .blocks()
+                        .map(|block| match &block.render {
+                            RenderBlock::Markdown { .. } => "text",
+                            RenderBlock::Image { .. } => "image",
+                            other => panic!("unexpected block {other:?}"),
+                        })
+                        .collect::<Vec<_>>(),
+                    expected_kinds,
+                );
+                assert_eq!(content.to_markdown(cx), expected_export);
+                assert!(content.visible_content(cx));
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn test_message_content_resources_and_fallbacks(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let language_registry =
+                Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let mut content = MessageContent::default();
+            for chunk in [
+                "before".into(),
+                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                    acp::EmbeddedResourceResource::TextResourceContents(
+                        acp::TextResourceContents::new("resource text", "tool://preview"),
+                    ),
+                )),
+                acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                    "link",
+                    "https://example.com/resource",
+                )),
+                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                    acp::EmbeddedResourceResource::BlobResourceContents(
+                        acp::BlobResourceContents::new("private-blob-data", "tool://archive.bin"),
+                    ),
+                )),
+                acp::ContentBlock::Image(acp::ImageContent::new("not-base64", "image/png")),
+                acp::ContentBlock::Audio(acp::AudioContent::new("private-audio-data", "audio/wav")),
+                "after".into(),
+            ] {
+                content.append(chunk, &language_registry, PathStyle::local(), cx);
+            }
+            assert!(matches!(
+                content
+                    .blocks()
+                    .map(|block| block.render)
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+                [
+                    RenderBlock::Markdown { .. },
+                    RenderBlock::EmbeddedResource { .. },
+                    RenderBlock::Markdown { .. },
+                    RenderBlock::EmbeddedResource { markdown: None, .. },
+                    RenderBlock::Unsupported { .. },
+                    RenderBlock::Unsupported { .. },
+                    RenderBlock::Markdown { .. },
+                ]
+            ));
+            assert_eq!(
+                content.to_markdown(cx),
+                concat!(
+                    "before\n\n```\nresource text\n```\n\n",
+                    "[@https://example.com/resource](https://example.com/resource)\n\n",
+                    "tool://archive.bin\n\n",
+                    "Image content could not be displayed.\n\n",
+                    "Audio content is not supported.\n\nafter",
+                )
+            );
+            assert_eq!(
+                content
+                    .markdowns()
+                    .map(|markdown| markdown.read(cx).source())
+                    .collect::<Vec<_>>(),
+                [
+                    "before",
+                    "```\nresource text\n```",
+                    "[@https://example.com/resource](https://example.com/resource)",
+                    "Image content could not be displayed.",
+                    "Audio content is not supported.",
+                    "after",
+                ]
+            );
+            assert!(!content.to_markdown(cx).contains("private-audio-data"));
+            assert!(!content.to_markdown(cx).contains("private-blob-data"));
+            for (render_index, source_index) in [(1, 1), (3, 3)] {
+                let source = &content.source_blocks[source_index];
+                let rendered_block = content.blocks().nth(render_index).expect("rendered block");
+                assert!(matches!(
+                    rendered_block.render,
+                    RenderBlock::EmbeddedResource { .. }
+                ));
+                assert!(std::ptr::eq(
+                    source,
+                    rendered_block.source.expect("source block")
+                ));
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_message_content_preserves_streaming_entities(cx: &mut TestAppContext) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("session should be created");
+
+        let source_blocks = [
+            "before".into(),
+            acp::ContentBlock::Text(
+                acp::TextContent::new(" image")
+                    .meta(acp::Meta::from_iter([("sequence".into(), json!(2))])),
+            ),
+            message_test_image(),
+            "after".into(),
+            acp::ContentBlock::Text(
+                acp::TextContent::new(" image")
+                    .meta(acp::Meta::from_iter([("sequence".into(), json!(5))])),
+            ),
+        ];
+        let (before, after, image) = thread.update(cx, |thread, cx| {
+            thread.push_assistant_content_block(source_blocks[0].clone(), false, cx);
+            let before = thread
+                .streaming_content_target(None, false, false)
+                .map(|(_, target)| target.markdown)
+                .expect("text should have a streaming target");
+            thread.push_assistant_content_block(source_blocks[1].clone(), false, cx);
+            assert!(thread.streaming_text_buffer.is_some());
+            let (content, _) = thread
+                .streaming_content_target(None, false, false)
+                .expect("buffered text should retain its streaming target");
+            assert_eq!(content.source_blocks(), &source_blocks[..2]);
+            assert_eq!(before.read(cx).source(), "before");
+
+            thread.push_assistant_content_block(source_blocks[2].clone(), false, cx);
+            assert!(thread.streaming_text_buffer.is_none());
+            assert_eq!(before.read(cx).source(), "before image");
+            assert!(
+                thread
+                    .streaming_content_target(None, false, false)
+                    .is_none()
+            );
+
+            thread.push_assistant_content_block(source_blocks[3].clone(), false, cx);
+            let after = thread
+                .streaming_content_target(None, false, false)
+                .map(|(_, target)| target.markdown)
+                .expect("text after an image should have its own streaming target");
+            assert_ne!(before.entity_id(), after.entity_id());
+            thread.push_assistant_content_block(source_blocks[4].clone(), false, cx);
+            assert_eq!(after.read(cx).source(), "after");
+            assert_eq!(
+                thread
+                    .streaming_text_buffer
+                    .as_ref()
+                    .expect("streaming text")
+                    .target
+                    .markdown,
+                after,
+            );
+
+            let [AgentThreadEntry::AssistantMessage(message)] = thread.entries() else {
+                panic!("expected one assistant message");
+            };
+            let [AssistantMessageChunk::Message { block, .. }] = message.chunks.as_slice() else {
+                panic!("expected one message chunk");
+            };
+            assert_eq!(block.source_blocks(), source_blocks);
+            let render_blocks = block.blocks().collect::<Vec<_>>();
+            let [_, image_block, _] = render_blocks.as_slice() else {
+                panic!("expected text, image, text");
+            };
+            let (image, _) = image_block.image().expect("expected image");
+            (before, after, image.clone())
+        });
+
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(after.read(cx).source(), "after image");
+            let [AgentThreadEntry::AssistantMessage(message)] = thread.entries() else {
+                panic!("expected one assistant message");
+            };
+            let [AssistantMessageChunk::Message { block, .. }] = message.chunks.as_slice() else {
+                panic!("expected one message chunk");
+            };
+            assert_eq!(block.source_blocks(), source_blocks);
+            let render_blocks = block.blocks().collect::<Vec<_>>();
+            let [first, current_image, last] = render_blocks.as_slice() else {
+                panic!("expected text, image, text");
+            };
+            assert_eq!(first.markdown(), Some(&before));
+            assert_eq!(last.markdown(), Some(&after));
+            assert!(Arc::ptr_eq(&image, current_image.image().expect("image").0));
+        });
+
+        let whole = cx.update(|cx| {
+            let language_registry =
+                Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let mut content = MessageContent::default();
+            for chunk in [
+                "before image".into(),
+                message_test_image(),
+                "after image".into(),
+            ] {
+                content.append(chunk, &language_registry, PathStyle::local(), cx);
+            }
+            content.to_markdown(cx)
+        });
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                format!("## Assistant\n\n{whole}\n\n")
+            );
+        });
+
+        for (content, preview) in [
+            (
+                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                    acp::EmbeddedResourceResource::TextResourceContents(
+                        acp::TextResourceContents::new("Resource preview", "tool://preview")
+                            .mime_type("text/markdown".to_string()),
+                    ),
+                )),
+                "Resource preview",
+            ),
+            (
+                acp::ContentBlock::Audio(acp::AudioContent::new("private-audio-data", "audio/wav")),
+                "Audio content is not supported.",
+            ),
+        ] {
+            thread.update(cx, |thread, cx| {
+                thread.push_assistant_content_block(content, false, cx);
+                assert!(
+                    thread
+                        .streaming_content_target(None, false, false)
+                        .is_none()
+                );
+                let Some(AgentThreadEntry::AssistantMessage(message)) = thread.entries().last()
+                else {
+                    panic!("expected assistant output");
+                };
+                let Some(AssistantMessageChunk::Message { block, .. }) = message.chunks.last()
+                else {
+                    panic!("expected message content");
+                };
+                let preview_markdown = block
+                    .blocks()
+                    .last()
+                    .and_then(|block| block.markdown())
+                    .expect("Markdown-backed non-text content")
+                    .clone();
+                thread.push_assistant_content_block("Following".into(), false, cx);
+                let target = thread
+                    .streaming_content_target(None, false, false)
+                    .map(|(_, target)| target.markdown)
+                    .expect("new text target");
+                assert_ne!(target, preview_markdown);
+                thread.push_assistant_content_block(" text".into(), false, cx);
+                thread.flush_streaming_text(cx);
+                assert_eq!(target.read(cx).source(), "Following text");
+                assert_eq!(preview_markdown.read(cx).source(), preview);
+            });
+        }
+
+        let (streamed, expected) = thread.update(cx, |thread, cx| {
+            let path_style = thread.project.read(cx).path_style(cx);
+            let languages = thread.project.read(cx).languages().clone();
+            let uri = "file:///project/report.md";
+            let link = acp::ContentBlock::ResourceLink(acp::ResourceLink::new("report", uri));
+            let expected = format!(
+                "{}\n## Details\n",
+                ContentBlock::resource_link_md(uri, path_style),
+            );
+            let mut direct = MessageContent::new(link.clone(), &languages, path_style, cx);
+            direct.append("## Details\n".into(), &languages, path_style, cx);
+            assert_eq!(direct.to_markdown(cx), expected);
+
+            thread.push_user_content_block(None, "Next response".into(), cx);
+            thread.push_assistant_content_block(link, false, cx);
+            let target = thread
+                .streaming_content_target(None, false, false)
+                .map(|(_, target)| target.markdown)
+                .expect("leading link should retain its Markdown entity");
+            thread.push_assistant_content_block("## Det".into(), false, cx);
+            thread.push_assistant_content_block("ails\n".into(), false, cx);
+            assert_eq!(
+                thread
+                    .streaming_text_buffer
+                    .as_ref()
+                    .expect("buffered text")
+                    .target
+                    .markdown,
+                target,
+            );
+            (target, expected)
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        streamed.read_with(cx, |markdown, _| assert_eq!(markdown.source(), &expected));
+    }
+
+    #[gpui::test]
+    async fn test_message_content_preserves_prompt_mentions_and_raw_chunks(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("session should be created");
+        let chunks = vec![
+            "read ".into(),
+            acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                acp::EmbeddedResourceResource::TextResourceContents(
+                    acp::TextResourceContents::new(
+                        "attached file contents",
+                        "https://example.com/file",
+                    ),
+                ),
+            )),
+            " and ".into(),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                "link",
+                "https://example.com/link",
+            )),
+            message_test_image(),
+        ];
+
+        thread.update(cx, |thread, cx| {
+            for chunk in &chunks {
+                thread.push_user_content_block(None, chunk.clone(), cx);
+            }
+            let [AgentThreadEntry::UserMessage(message)] = thread.entries() else {
+                panic!("expected one user message");
+            };
+            assert_eq!(message.content.source_blocks(), chunks);
+            assert!(matches!(
+                message
+                    .content
+                    .blocks()
+                    .map(|block| block.render)
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+                [RenderBlock::Markdown { .. }, RenderBlock::Image { .. }]
+            ));
+            let expected = format!(
+                "read {} and {}\n\n`Image`",
+                ContentBlock::resource_link_md("https://example.com/file", PathStyle::local()),
+                ContentBlock::resource_link_md("https://example.com/link", PathStyle::local()),
+            );
+            assert_eq!(message.content.to_markdown(cx), expected);
+            assert!(
+                !message
+                    .content
+                    .to_markdown(cx)
+                    .contains("attached file contents")
+            );
+        });
+    }
+
     #[test]
     fn text_resource_markdown_uses_mime_type_for_code_blocks() {
         let shell = acp::TextResourceContents::new("echo 'hello from exec test'", "tool://preview")
@@ -5003,14 +6086,9 @@ mod tests {
                 ),
             ));
 
-            let block = ContentBlock::new_tool_call_content(
-                content,
-                &language_registry,
-                PathStyle::local(),
-                cx,
-            );
+            let block = ContentBlock::new_output(content, &language_registry, cx);
 
-            let ContentBlock::EmbeddedResource { resource, markdown } = &block else {
+            let Some((resource, markdown)) = block.as_view().embedded_resource() else {
                 panic!("expected embedded resource block, got {block:?}");
             };
             match &resource.resource {
@@ -5035,14 +6113,13 @@ mod tests {
             );
             assert_eq!(block.text_content(cx), Some("echo 'hello from exec test'"));
 
-            let untyped = ContentBlock::new_tool_call_content(
+            let untyped = ContentBlock::new_output(
                 acp::ContentBlock::Resource(acp::EmbeddedResource::new(
                     acp::EmbeddedResourceResource::TextResourceContents(
                         acp::TextResourceContents::new("# plain preview", "tool://preview"),
                     ),
                 )),
                 &language_registry,
-                PathStyle::local(),
                 cx,
             );
             assert_eq!(untyped.to_markdown(cx), "```\n# plain preview\n```");
@@ -5069,19 +6146,18 @@ mod tests {
                 ),
             ));
 
-            let block = ContentBlock::new_tool_call_content(
+            let block = ContentBlock::new_output(
                 image_blob,
                 &language_registry,
-                PathStyle::local(),
                 cx,
             );
 
-            let ContentBlock::Image { image, dimensions } = &block else {
+            let Some((image, dimensions)) = block.image() else {
                 panic!("expected image block, got {block:?}");
             };
             assert_eq!(image.format(), gpui::ImageFormat::Png);
             assert_eq!(
-                dimensions.as_ref().map(|size| (size.width, size.height)),
+                dimensions.map(|size| (size.width, size.height)),
                 Some((1, 1))
             );
             assert_eq!(block.to_markdown(cx), "`Image`");
@@ -5105,14 +6181,9 @@ mod tests {
                 ),
             ));
 
-            let block = ContentBlock::new_tool_call_content(
-                archive_blob,
-                &language_registry,
-                PathStyle::local(),
-                cx,
-            );
+            let block = ContentBlock::new_output(archive_blob, &language_registry, cx);
 
-            let ContentBlock::EmbeddedResource { resource, markdown } = &block else {
+            let Some((resource, markdown)) = block.as_view().embedded_resource() else {
                 panic!("expected embedded resource block, got {block:?}");
             };
             assert!(markdown.is_none());
@@ -5132,13 +6203,8 @@ mod tests {
                         .mime_type("image/png".to_string()),
                 ),
             ));
-            let invalid = ContentBlock::new_tool_call_content(
-                invalid_image_blob,
-                &language_registry,
-                PathStyle::local(),
-                cx,
-            );
-            let ContentBlock::EmbeddedResource { resource, markdown } = &invalid else {
+            let invalid = ContentBlock::new_output(invalid_image_blob, &language_registry, cx);
+            let Some((resource, markdown)) = invalid.as_view().embedded_resource() else {
                 panic!("expected embedded resource block, got {invalid:?}");
             };
             assert!(markdown.is_none());
@@ -5277,6 +6343,22 @@ mod tests {
                 cx,
             );
         });
+        cx.run_until_parked();
+        thread.update(cx, |thread, cx| {
+            let terminal = thread
+                .terminal(terminal_id.clone())
+                .expect("display terminal");
+            terminal.update(cx, |terminal, cx| {
+                assert!(!terminal.is_process_backed());
+                assert!(terminal.wait_for_exit().is_err());
+                terminal.stop_by_user(cx);
+                assert!(!terminal.was_stopped_by_user());
+                assert!(
+                    terminal.output().is_none(),
+                    "a display terminal must wait for the provider's exit event",
+                );
+            });
+        });
 
         let mut output = String::new();
         for line in 0..15_000 {
@@ -5291,17 +6373,36 @@ mod tests {
                 },
                 cx,
             );
+        });
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, cx| {
+            let terminal = thread
+                .terminal(terminal_id.clone())
+                .expect("display terminal");
+            let output = terminal.read(cx).current_output(cx);
+            assert!(output.output.contains("line 14999"));
+            assert!(output.exit_status.is_none());
+        });
+
+        thread.update(cx, |thread, cx| {
             thread.on_terminal_provider_event(
                 TerminalProviderEvent::Exit {
                     terminal_id: terminal_id.clone(),
-                    status: acp::TerminalExitStatus::new().exit_code(0),
+                    status: acp::TerminalExitStatus::new().exit_code(7),
                 },
                 cx,
             );
         });
+        cx.run_until_parked();
 
         let content = thread.read_with(cx, |thread, cx| {
             let term = thread.terminal(terminal_id.clone()).unwrap();
+            let output = term.read(cx).current_output(cx);
+            assert_eq!(
+                output.exit_status.and_then(|status| status.exit_code),
+                Some(7)
+            );
+            assert!(output.output.contains("line 14999"));
             term.read_with(cx, |term, cx| term.inner().read(cx).get_content())
         });
 
@@ -5309,6 +6410,68 @@ mod tests {
             content.contains("line 14999"),
             "expected output to remain visible after terminal exit, got: {content}"
         );
+
+        let terminal = thread.read_with(cx, |thread, _| {
+            thread
+                .terminal(terminal_id.clone())
+                .expect("display terminal")
+        });
+        let ended_at = terminal.read_with(cx, |terminal, _| {
+            terminal.output().expect("completed output").ended_at
+        });
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Created {
+                    terminal_id: terminal_id.clone(),
+                    label: "Duplicate".to_string(),
+                    cwd: None,
+                    output_byte_limit: None,
+                    terminal: lower.clone(),
+                },
+                cx,
+            );
+            assert_eq!(
+                thread
+                    .terminal(terminal_id.clone())
+                    .expect("terminal")
+                    .entity_id(),
+                terminal.entity_id(),
+            );
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Exit {
+                    terminal_id: terminal_id.clone(),
+                    status: acp::TerminalExitStatus::new().signal("SIGTERM"),
+                },
+                cx,
+            );
+        });
+        terminal.read_with(cx, |terminal, _| {
+            let output = terminal.output().expect("completed output");
+            assert_eq!(output.ended_at, ended_at);
+            assert_eq!(output.exit_status.exit_code, Some(7));
+            assert_eq!(output.exit_status.signal, None);
+            assert_eq!(output.content, content);
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Output {
+                    terminal_id,
+                    data: b"late output\n".to_vec(),
+                },
+                cx,
+            );
+        });
+        terminal.read_with(cx, |terminal, cx| {
+            let output = terminal.output().expect("completed output");
+            assert_eq!(output.ended_at, ended_at);
+            assert_eq!(output.exit_status.exit_code, Some(7));
+            assert_eq!(output.exit_status.signal, None);
+            assert!(output.content.contains("late output"));
+            assert_eq!(output.content, lower.read(cx).get_content());
+            assert_eq!(output.original_content_len, output.content.len());
+            assert_eq!(output.content_line_count, lower.read(cx).total_lines());
+        });
     }
 
     #[gpui::test]
@@ -5347,7 +6510,21 @@ mod tests {
             thread.on_terminal_provider_event(
                 TerminalProviderEvent::Exit {
                     terminal_id: terminal_id.clone(),
+                    status: acp::TerminalExitStatus::new().signal("SIGTERM"),
+                },
+                cx,
+            );
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Exit {
+                    terminal_id: terminal_id.clone(),
                     status: acp::TerminalExitStatus::new().exit_code(0),
+                },
+                cx,
+            );
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Output {
+                    terminal_id: terminal_id.clone(),
+                    data: b"\nlate output".to_vec(),
                 },
                 cx,
             );
@@ -5382,6 +6559,12 @@ mod tests {
         // Output should be present after Created (flushed from buffer)
         let content = thread.read_with(cx, |thread, cx| {
             let term = thread.terminal(terminal_id.clone()).unwrap();
+            let output = term.read(cx).current_output(cx);
+            let exit_status = output.exit_status.expect("buffered exit status");
+            assert_eq!(exit_status.signal.as_deref(), Some("SIGTERM"));
+            assert_eq!(exit_status.exit_code, None);
+            assert!(output.output.contains("pre-exit data"));
+            assert!(output.output.contains("late output"));
             term.read_with(cx, |t, cx| t.inner().read(cx).get_content())
         });
 
@@ -5401,12 +6584,24 @@ mod tests {
     #[cfg(unix)]
     #[gpui::test]
     async fn test_terminal_kill_allows_wait_for_exit_to_complete(cx: &mut gpui::TestAppContext) {
+        assert_process_terminal_can_stop(false, cx).await;
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_headless_terminal_retains_process_control(cx: &mut gpui::TestAppContext) {
+        assert_process_terminal_can_stop(true, cx).await;
+    }
+
+    #[cfg(unix)]
+    async fn assert_process_terminal_can_stop(headless: bool, cx: &mut gpui::TestAppContext) {
         use std::collections::HashMap;
         use task::Shell;
         use util::shell_builder::ShellBuilder;
 
         init_test(cx);
         cx.executor().allow_parking();
+        cx.update(|cx| cx.set_global(::terminal::HeadlessTerminal(headless)));
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
@@ -5424,7 +6619,6 @@ mod tests {
 
         let terminal_id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
 
-        // Create a real PTY terminal that runs a command which prints output then sleeps
         // We use printf instead of echo and chain with && sleep to ensure proper execution
         let (program, args) = ShellBuilder::new(&Shell::System, false).build(
             Some("printf 'output_before_kill\\n' && sleep 60".to_owned()),
@@ -5463,49 +6657,61 @@ mod tests {
             .unwrap();
 
         let lower_terminal = cx.new(|cx| builder.subscribe(cx));
+        assert_eq!(
+            lower_terminal.read_with(cx, |terminal, _| terminal.is_pty()),
+            !headless
+        );
 
         // Create the acp_thread Terminal wrapper
         thread.update(cx, |thread, cx| {
-            thread.on_terminal_provider_event(
-                TerminalProviderEvent::Created {
-                    terminal_id: terminal_id.clone(),
-                    label: "printf output_before_kill && sleep 60".to_string(),
-                    cwd: None,
-                    output_byte_limit: None,
-                    terminal: lower_terminal.clone(),
-                },
+            let terminal = thread.register_terminal_created(
+                terminal_id.clone(),
+                "printf output_before_kill && sleep 60".to_string(),
+                None,
+                None,
+                lower_terminal.clone(),
                 cx,
             );
+            assert!(terminal.read(cx).is_process_backed());
         });
 
         // Poll until the printf command produces output, rather than using a
         // fixed sleep which is flaky on loaded machines.
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        loop {
-            let has_output = thread.read_with(cx, |thread, cx| {
-                let term = thread
-                    .terminals
-                    .get(&terminal_id)
-                    .expect("terminal not found");
-                let content = term.read(cx).inner().read(cx).get_content();
-                content.contains("output_before_kill")
-            });
-            if has_output {
-                break;
+        if !headless {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                let has_output = thread.read_with(cx, |thread, cx| {
+                    let term = thread
+                        .terminals
+                        .get(&terminal_id)
+                        .expect("terminal not found");
+                    let content = term.read(cx).inner().read(cx).get_content();
+                    content.contains("output_before_kill")
+                });
+                if has_output {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Timed out waiting for printf output to appear in terminal",
+                );
+                cx.executor().timer(Duration::from_millis(50)).await;
             }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "Timed out waiting for printf output to appear in terminal",
-            );
-            cx.executor().timer(Duration::from_millis(50)).await;
         }
 
         // Get the acp_thread Terminal and kill it
+        let killed_at = std::time::Instant::now();
         let wait_for_exit = thread.update(cx, |thread, cx| {
             let term = thread.terminals.get(&terminal_id).unwrap();
-            let wait_for_exit = term.read(cx).wait_for_exit();
+            let wait_for_exit = term.read(cx).wait_for_exit().expect("process terminal");
             term.update(cx, |term, cx| {
-                term.kill(cx);
+                assert!(term.output().is_none(), "the process must still be running");
+                if headless {
+                    term.stop_by_user(cx);
+                    assert!(term.was_stopped_by_user());
+                } else {
+                    term.kill(cx);
+                }
             });
             wait_for_exit
         });
@@ -5524,22 +6730,28 @@ mod tests {
             "wait_for_exit should complete after kill, but it timed out. \
             This indicates kill_active_task is not properly killing the shell process."
         );
+        assert!(
+            killed_at.elapsed() < Duration::from_secs(5),
+            "the process must stop without waiting for its natural exit",
+        );
 
         // Give the system a chance to process any pending updates
         cx.run_until_parked();
 
-        // Verify that the underlying terminal still has the output that was
-        // written before the kill. This verifies that killing doesn't lose output.
-        let inner_content = thread.read_with(cx, |thread, cx| {
-            let term = thread.terminals.get(&terminal_id).unwrap();
-            term.read(cx).inner().read(cx).get_content()
-        });
+        if !headless {
+            // Verify that the underlying terminal still has the output that was
+            // written before the kill. This verifies that killing doesn't lose output.
+            let inner_content = thread.read_with(cx, |thread, cx| {
+                let term = thread.terminals.get(&terminal_id).unwrap();
+                term.read(cx).inner().read(cx).get_content()
+            });
 
-        assert!(
-            inner_content.contains("output_before_kill"),
-            "Underlying terminal should contain output from before kill, got: {}",
-            inner_content
-        );
+            assert!(
+                inner_content.contains("output_before_kill"),
+                "Underlying terminal should contain output from before kill, got: {}",
+                inner_content
+            );
+        }
     }
 
     #[gpui::test]
@@ -5983,7 +7195,8 @@ mod tests {
                             ContextCompaction {
                                 id: ContextCompactionId("c1".into()),
                                 status: ContextCompactionStatus::Completed,
-                                summary: None,
+                                error: None,
+                                summary: Vec::new(),
                             },
                             cx,
                         );
@@ -6447,6 +7660,879 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_context_compaction_session_updates(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("failed to create ACP thread");
+
+        thread.update(cx, |thread, cx| {
+            for summary in ["retained context", "replacement summary"] {
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::CompactionUpdate(
+                            acp::CompactionUpdate::new(
+                                "compaction",
+                                acp::CompactionStatus::Completed,
+                            )
+                            .summary(vec![acp::ContentBlock::Text(
+                                acp::TextContent::new(summary),
+                            )]),
+                        ),
+                        cx,
+                    )
+                    .expect("failed to set context compaction summary");
+                let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.last()
+                else {
+                    panic!("compaction entry must exist");
+                };
+                assert_eq!(compaction.status, ContextCompactionStatus::Completed);
+                assert!(compaction.error.is_none());
+                assert_eq!(
+                    compaction
+                        .summary
+                        .first()
+                        .map(|block| block.to_markdown(cx)),
+                    Some(summary)
+                );
+                assert_eq!(
+                    thread.to_markdown(cx),
+                    format!("## Context Compaction (Completed)\n\n{summary}\n\n")
+                );
+            }
+
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::CompactionUpdate(
+                        acp::CompactionUpdate::new("compaction", acp::CompactionStatus::Failed)
+                            .summary(None::<Vec<acp::ContentBlock>>)
+                            .error("model unavailable"),
+                    ),
+                    cx,
+                )
+                .expect("failed to record context compaction failure");
+            let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.last()
+            else {
+                panic!("compaction entry must still exist");
+            };
+            assert_eq!(compaction.status, ContextCompactionStatus::Failed);
+            assert!(compaction.summary.is_empty());
+            assert_eq!(
+                compaction
+                    .error
+                    .as_ref()
+                    .map(|error| error.read(cx).source().as_ref()),
+                Some("model unavailable")
+            );
+            assert_eq!(
+                thread.to_markdown(cx),
+                "## Context Compaction (Failed)\n\n**Error:** model unavailable\n\n"
+            );
+
+            for error in [
+                MaybeUndefined::Undefined,
+                MaybeUndefined::Value("model *still* unavailable".to_string()),
+                MaybeUndefined::Null,
+            ] {
+                let expected_error = match &error {
+                    MaybeUndefined::Undefined => Some("model unavailable".to_string()),
+                    MaybeUndefined::Value(error) => Some(error.clone()),
+                    MaybeUndefined::Null => None,
+                };
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::CompactionUpdate(
+                            acp::CompactionUpdate::new("compaction", acp::CompactionStatus::Failed)
+                                .error(error),
+                        ),
+                        cx,
+                    )
+                    .expect("failed to patch compaction error");
+                let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.last()
+                else {
+                    panic!("compaction entry must still exist");
+                };
+                assert_eq!(
+                    compaction
+                        .error
+                        .as_ref()
+                        .map(|error| error.read(cx).source().to_string()),
+                    expected_error
+                );
+                if let Some(error) = expected_error {
+                    assert!(
+                        thread
+                            .to_markdown(cx)
+                            .contains(&format!("**Error:** {}", MarkdownEscaped(&error)))
+                    );
+                }
+            }
+
+            for summary in [
+                vec![acp::ContentBlock::Text(acp::TextContent::new(""))],
+                Vec::new(),
+            ] {
+                let expected_length = summary.len();
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::CompactionUpdate(
+                            acp::CompactionUpdate::new(
+                                "compaction",
+                                acp::CompactionStatus::Completed,
+                            )
+                            .summary(summary),
+                        ),
+                        cx,
+                    )
+                    .expect("failed to patch compaction summary");
+                let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.last()
+                else {
+                    panic!("compaction entry must still exist");
+                };
+                assert_eq!(compaction.summary.len(), expected_length);
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_context_compaction_preserves_summary_content(cx: &mut TestAppContext) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("failed to create ACP thread");
+        let image_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+        let text_resource =
+            acp::EmbeddedResource::new(acp::EmbeddedResourceResource::TextResourceContents(
+                acp::TextResourceContents::new("Retained resource text", "summary://context")
+                    .mime_type("text/markdown".to_string()),
+            ));
+        let blob_resource =
+            acp::EmbeddedResource::new(acp::EmbeddedResourceResource::BlobResourceContents(
+                acp::BlobResourceContents::new("c3VtbWFyeQ==", "summary://attachment")
+                    .mime_type("application/octet-stream".to_string()),
+            ));
+        let audio = acp::ContentBlock::Audio(acp::AudioContent::new("YXVkaW8=", "audio/wav"));
+        let blocks = vec![
+            acp::ContentBlock::Text(acp::TextContent::new("retained ")),
+            acp::ContentBlock::Text(acp::TextContent::new("context")),
+            acp::ContentBlock::Resource(text_resource.clone()),
+            acp::ContentBlock::Image(acp::ImageContent::new(image_data, "image/png")),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                "Reference",
+                "https://example.com/context",
+            )),
+            audio.clone(),
+            acp::ContentBlock::Resource(blob_resource.clone()),
+        ];
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                        "compaction",
+                        acp::CompactionStatus::InProgress,
+                    )),
+                    cx,
+                )
+                .expect("failed to start compaction");
+            for block in &blocks {
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::CompactionSummaryChunk(
+                            acp::CompactionSummaryChunk::new("compaction", block.clone()),
+                        ),
+                        cx,
+                    )
+                    .expect("failed to append summary block");
+            }
+        });
+
+        for replace_summary in [false, true] {
+            thread.update(cx, |thread, cx| {
+                let mut update =
+                    acp::CompactionUpdate::new("compaction", acp::CompactionStatus::Completed);
+                if replace_summary {
+                    update = update.summary(blocks.clone());
+                }
+                thread
+                    .handle_session_update(acp::SessionUpdate::CompactionUpdate(update), cx)
+                    .expect("failed to complete compaction");
+            });
+            thread.read_with(cx, |thread, cx| {
+                let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.first()
+                else {
+                    panic!("expected compaction entry");
+                };
+                let [text, resource, image, link, unsupported, blob] =
+                    compaction.summary.as_slice()
+                else {
+                    panic!("expected six retained content blocks");
+                };
+                assert_eq!(text.to_markdown(cx), "retained context");
+                assert_eq!(
+                    resource
+                        .as_view()
+                        .embedded_resource()
+                        .map(|(resource, _)| resource),
+                    Some(&text_resource)
+                );
+                assert_eq!(resource.to_markdown(cx), "Retained resource text");
+                assert_eq!(
+                    image
+                        .image()
+                        .and_then(|(_, dimensions)| dimensions)
+                        .map(|size| (size.width, size.height)),
+                    Some((1, 1))
+                );
+                assert_eq!(
+                    link.as_view().resource_link().map(|link| link.uri.as_str()),
+                    Some("https://example.com/context")
+                );
+                let Some(content) = unsupported.unsupported_content() else {
+                    panic!("expected preserved audio with a visible fallback");
+                };
+                assert_eq!(content, &audio);
+                assert!(unsupported.visible_content(cx));
+                assert_eq!(
+                    blob.as_view()
+                        .embedded_resource()
+                        .map(|(resource, _)| resource),
+                    Some(&blob_resource)
+                );
+                assert!(blob.visible_content(cx));
+                assert_eq!(
+                    thread.to_markdown(cx),
+                    concat!(
+                        "## Context Compaction (Completed)\n\n",
+                        "retained context\n\n",
+                        "Retained resource text\n\n",
+                        "`Image`\n\n",
+                        "https://example.com/context\n\n",
+                        "Audio content is not supported.\n\n",
+                        "summary://attachment\n\n",
+                    )
+                );
+            });
+        }
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::CompactionUpdate(
+                        acp::CompactionUpdate::new("compaction", acp::CompactionStatus::Completed)
+                            .summary(vec![audio.clone()]),
+                    ),
+                    cx,
+                )
+                .expect("failed to replace summary with audio");
+        });
+        thread.read_with(cx, |thread, cx| {
+            let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.first()
+            else {
+                panic!("expected compaction entry");
+            };
+            assert!(matches!(
+                compaction.summary.as_slice(),
+                [block] if block.unsupported_content() == Some(&audio)
+            ));
+            assert!(
+                thread
+                    .to_markdown(cx)
+                    .contains("Audio content is not supported.")
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_context_compaction_updates_preserve_timeline_and_emit_events(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("failed to create ACP thread");
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let events = events.clone();
+            cx.subscribe(&thread, move |_, event, _| match event {
+                AcpThreadEvent::NewEntry => events.borrow_mut().push(None),
+                AcpThreadEvent::EntryUpdated(index) => events.borrow_mut().push(Some(*index)),
+                _ => {}
+            })
+        });
+
+        thread.update(cx, |thread, cx| {
+            for update in [
+                acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                    "first",
+                    acp::CompactionStatus::InProgress,
+                )),
+                acp::SessionUpdate::ToolCall(acp::ToolCall::new("tool", "Unrelated tool")),
+                acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                    "second",
+                    acp::CompactionStatus::InProgress,
+                )),
+                acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                    "second",
+                    acp::CompactionStatus::Completed,
+                )),
+                acp::SessionUpdate::CompactionSummaryChunk(acp::CompactionSummaryChunk::new(
+                    "first",
+                    acp::ContentBlock::Text(acp::TextContent::new("partial summary")),
+                )),
+            ] {
+                thread
+                    .handle_session_update(update, cx)
+                    .expect("failed to apply interleaved session update");
+            }
+            assert!(thread.is_compacting());
+        });
+        assert_eq!(*events.borrow(), [None, None, None, Some(2), Some(0)]);
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
+                        "first",
+                        acp::CompactionStatus::Cancelled,
+                    )),
+                    cx,
+                )
+                .expect("failed to cancel compaction");
+            assert!(!thread.is_compacting());
+        });
+        assert_eq!(
+            *events.borrow(),
+            [None, None, None, Some(2), Some(0), Some(0)]
+        );
+        thread.read_with(cx, |thread, cx| {
+            let [
+                AgentThreadEntry::ContextCompaction(first),
+                AgentThreadEntry::ToolCall(_),
+                AgentThreadEntry::ContextCompaction(second),
+            ] = thread.entries.as_slice()
+            else {
+                panic!("updates must preserve the original timeline positions");
+            };
+            assert_eq!(first.id.0.as_ref(), "first");
+            assert_eq!(first.status, ContextCompactionStatus::Canceled);
+            assert_eq!(second.id.0.as_ref(), "second");
+            assert_eq!(second.status, ContextCompactionStatus::Completed);
+            assert!(
+                thread
+                    .to_markdown(cx)
+                    .starts_with("## Context Compaction (Canceled)\n\npartial summary\n\n")
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_tool_call_label_fallback(cx: &mut TestAppContext) {
+        use markdown::parser::{MarkdownEvent, MarkdownTag};
+
+        init_test(cx);
+        let languages =
+            cx.update(|cx| Arc::new(LanguageRegistry::test(cx.background_executor().clone())));
+        for (call, expected, has_strong_text) in [
+            (
+                acp::ToolCall::new("tool", "Reading **file**").name("read_file"),
+                "Reading **file**",
+                true,
+            ),
+            (acp::ToolCall::new("tool", ""), "Tool call", false),
+            (
+                acp::ToolCall::new("tool", "\n\t ").name(" \t"),
+                "Tool call",
+                false,
+            ),
+            (
+                acp::ToolCall::new("tool", "").name("**mcp__tool**"),
+                "**mcp__tool**",
+                false,
+            ),
+            (
+                acp::ToolCall::new("tool", "\n\t ")
+                    .name("**mcp__tool**")
+                    .kind(acp::ToolKind::Edit),
+                "**mcp__tool**",
+                false,
+            ),
+            (
+                acp::ToolCall::new("tool", "")
+                    .name("**mcp__tool**")
+                    .kind(acp::ToolKind::Execute),
+                "**mcp__tool**",
+                false,
+            ),
+            (
+                acp::ToolCall::new("tool", "").meta(meta_with_tool_name("legacy_tool")),
+                "legacy_tool",
+                false,
+            ),
+        ] {
+            let call = cx.update(|cx| {
+                ToolCall::from_acp(
+                    call,
+                    ToolCallStatus::Pending,
+                    languages.clone(),
+                    &HashMap::default(),
+                    cx,
+                )
+                .expect("tool call should convert")
+            });
+            cx.run_until_parked();
+            cx.read(|cx| {
+                let label = call.label.read(cx);
+                assert_eq!(label.source().as_ref(), expected);
+                assert_eq!(
+                    label.parsed_markdown().events().iter().any(|(_, event)| {
+                        matches!(event, MarkdownEvent::Start(MarkdownTag::Strong))
+                    }),
+                    has_strong_text
+                );
+                if call.title.is_none() {
+                    assert_eq!(
+                        call.to_markdown(cx),
+                        format!(
+                            "**Tool Call: {}**\nStatus: Pending\n\n",
+                            MarkdownEscaped(expected)
+                        )
+                    );
+                }
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn test_tool_call_label_updates_preserve_titles(cx: &mut TestAppContext) {
+        use markdown::parser::{MarkdownEvent, MarkdownTag};
+
+        init_test(cx);
+        let languages =
+            cx.update(|cx| Arc::new(LanguageRegistry::test(cx.background_executor().clone())));
+        let mut call = cx.update(|cx| {
+            ToolCall::from_acp(
+                acp::ToolCall::new("tool", ""),
+                ToolCallStatus::Pending,
+                languages.clone(),
+                &HashMap::default(),
+                cx,
+            )
+            .expect("tool call should convert")
+        });
+        for (update, expected, has_strong_text) in [
+            (
+                acp::ToolCallUpdateFields::new().name("**tool_name**"),
+                "**tool_name**",
+                false,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().title("**Readable title**"),
+                "**Readable title**",
+                true,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().name("renamed_tool"),
+                "**Readable title**",
+                true,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().kind(acp::ToolKind::Execute),
+                "**Readable title**",
+                false,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().kind(acp::ToolKind::Read),
+                "**Readable title**",
+                true,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().title("\n\t "),
+                "renamed_tool",
+                false,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().name(" \t"),
+                "Tool call",
+                false,
+            ),
+            (
+                acp::ToolCallUpdateFields::new()
+                    .title("**same_name**")
+                    .name("**same_name**"),
+                "**same_name**",
+                true,
+            ),
+            (
+                acp::ToolCallUpdateFields::new().name("different_name"),
+                "**same_name**",
+                true,
+            ),
+        ] {
+            cx.update(|cx| {
+                call.update_fields(update, None, languages.clone(), &HashMap::default(), cx)
+                    .expect("tool label update should apply");
+            });
+            cx.run_until_parked();
+            cx.read(|cx| {
+                let label = call.label.read(cx);
+                assert_eq!(label.source().as_ref(), expected);
+                assert_eq!(
+                    label.parsed_markdown().events().iter().any(|(_, event)| {
+                        matches!(event, MarkdownEvent::Start(MarkdownTag::Strong))
+                    }),
+                    has_strong_text
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn test_tool_call_raw_output_creation_and_updates_export_latest_content(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let languages =
+            cx.update(|cx| Arc::new(LanguageRegistry::test(cx.background_executor().clone())));
+        let mut created_with_raw_output = cx.update(|cx| {
+            ToolCall::from_acp(
+                acp::ToolCall::new("created", "Tool").raw_output(serde_json::json!("first")),
+                ToolCallStatus::Pending,
+                languages.clone(),
+                &HashMap::default(),
+                cx,
+            )
+            .expect("raw-only tool call should convert")
+        });
+        let mut updated_with_raw_output = cx.update(|cx| {
+            ToolCall::from_acp(
+                acp::ToolCall::new("updated", "Tool"),
+                ToolCallStatus::Pending,
+                languages.clone(),
+                &HashMap::default(),
+                cx,
+            )
+            .expect("empty tool call should convert")
+        });
+
+        let created_export = cx.read(|cx| created_with_raw_output.to_markdown(cx));
+        cx.update(|cx| {
+            updated_with_raw_output
+                .update_fields(
+                    acp::ToolCallUpdateFields::new().raw_output(serde_json::json!("first")),
+                    None,
+                    languages.clone(),
+                    &HashMap::default(),
+                    cx,
+                )
+                .expect("first raw output update should apply");
+        });
+        let first_update_export = cx.read(|cx| updated_with_raw_output.to_markdown(cx));
+        let Some(ToolCallContent::ContentBlock(block)) = updated_with_raw_output.content().first()
+        else {
+            panic!("expected raw output content");
+        };
+        let raw_markdown = block
+            .markdown()
+            .expect("raw output should be Markdown")
+            .clone();
+        cx.update(|cx| {
+            created_with_raw_output
+                .update_fields(
+                    acp::ToolCallUpdateFields::new().raw_output(serde_json::json!("second")),
+                    None,
+                    languages.clone(),
+                    &HashMap::default(),
+                    cx,
+                )
+                .expect("second raw output update should apply");
+            updated_with_raw_output
+                .update_fields(
+                    acp::ToolCallUpdateFields::new().raw_output(serde_json::json!("second")),
+                    None,
+                    languages.clone(),
+                    &HashMap::default(),
+                    cx,
+                )
+                .expect("second raw output update should apply");
+        });
+        let latest_exports = cx.read(|cx| {
+            assert_eq!(raw_markdown.read(cx).source(), "second");
+            (
+                created_with_raw_output.to_markdown(cx),
+                updated_with_raw_output.to_markdown(cx),
+            )
+        });
+        assert_eq!(
+            (created_export, first_update_export, latest_exports),
+            (
+                "**Tool Call: Tool**\nStatus: Pending\n\nfirst\n\n".to_string(),
+                "**Tool Call: Tool**\nStatus: Pending\n\nfirst\n\n".to_string(),
+                (
+                    "**Tool Call: Tool**\nStatus: Pending\n\nsecond\n\n".to_string(),
+                    "**Tool Call: Tool**\nStatus: Pending\n\nsecond\n\n".to_string(),
+                ),
+            )
+        );
+    }
+
+    #[gpui::test]
+    fn test_tool_call_clearing_structured_content_restores_retained_raw_output(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let languages =
+            cx.update(|cx| Arc::new(LanguageRegistry::test(cx.background_executor().clone())));
+        let mut call = cx.update(|cx| {
+            ToolCall::from_acp(
+                acp::ToolCall::new("tool", "Tool")
+                    .content(vec!["structured".into()])
+                    .raw_output(serde_json::json!("raw")),
+                ToolCallStatus::Pending,
+                languages.clone(),
+                &HashMap::default(),
+                cx,
+            )
+            .expect("tool call should convert")
+        });
+        cx.read(|cx| {
+            assert_eq!(
+                call.to_markdown(cx),
+                "**Tool Call: Tool**\nStatus: Pending\n\nstructured\n\n"
+            );
+        });
+        cx.update(|cx| {
+            call.update_fields(
+                acp::ToolCallUpdateFields::new().raw_output(serde_json::json!("new raw")),
+                None,
+                languages.clone(),
+                &HashMap::default(),
+                cx,
+            )
+            .expect("raw output should update without replacing structured content");
+            assert_eq!(
+                call.to_markdown(cx),
+                "**Tool Call: Tool**\nStatus: Pending\n\nstructured\n\n"
+            );
+        });
+        cx.update(|cx| {
+            call.update_fields(
+                acp::ToolCallUpdateFields::new().content(vec![]),
+                None,
+                languages.clone(),
+                &HashMap::default(),
+                cx,
+            )
+            .expect("clearing structured content should apply");
+        });
+        cx.read(|cx| {
+            assert_eq!(call.raw_output, Some(serde_json::json!("new raw")));
+            assert_eq!(
+                call.to_markdown(cx),
+                "**Tool Call: Tool**\nStatus: Pending\n\nnew raw\n\n"
+            );
+        });
+        cx.update(|cx| {
+            call.update_fields(
+                acp::ToolCallUpdateFields::new().content(vec!["replacement".into()]),
+                None,
+                languages,
+                &HashMap::default(),
+                cx,
+            )
+            .expect("structured content should replace the raw fallback");
+            assert_eq!(
+                call.to_markdown(cx),
+                "**Tool Call: Tool**\nStatus: Pending\n\nreplacement\n\n"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_name_precedence_and_updates(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("failed to create ACP thread");
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new("tool-call", "Tool call")
+                            .name("first_class")
+                            .meta(meta_with_tool_name("legacy")),
+                    ),
+                    cx,
+                )
+            })
+            .expect("failed to create first-class named tool call");
+
+        thread.read_with(cx, |thread, _| {
+            let Some(AgentThreadEntry::ToolCall(tool_call)) = thread.entries.last() else {
+                unreachable!("tool call update must create a tool call entry");
+            };
+            assert_eq!(tool_call.tool_name.as_deref(), Some("first_class"));
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new("legacy-tool-call", "Legacy tool call")
+                            .meta(meta_with_tool_name("legacy")),
+                    ),
+                    cx,
+                )
+            })
+            .expect("failed to create legacy named tool call");
+
+        thread.read_with(cx, |thread, _| {
+            let Some(AgentThreadEntry::ToolCall(tool_call)) = thread.entries.last() else {
+                unreachable!("tool call update must create a tool call entry");
+            };
+            assert_eq!(tool_call.tool_name.as_deref(), Some("legacy"));
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(
+                        acp::ToolCallUpdate::new("tool-call", acp::ToolCallUpdateFields::new())
+                            .meta(meta_with_tool_name("legacy_update")),
+                    ),
+                    cx,
+                )
+            })
+            .expect("failed to apply stale legacy tool-call name update");
+
+        thread.read_with(cx, |thread, _| {
+            let Some(tool_call) = thread.entries.iter().find_map(|entry| match entry {
+                AgentThreadEntry::ToolCall(tool_call)
+                    if tool_call.id == acp::ToolCallId::new("tool-call") =>
+                {
+                    Some(tool_call)
+                }
+                _ => None,
+            }) else {
+                unreachable!("tool call update must create a tool call entry");
+            };
+            assert_eq!(tool_call.tool_name.as_deref(), Some("first_class"));
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(
+                        acp::ToolCallUpdate::new(
+                            "legacy-tool-call",
+                            acp::ToolCallUpdateFields::new().name("first_class_update"),
+                        )
+                        .meta(meta_with_tool_name("ignored_legacy_update")),
+                    ),
+                    cx,
+                )
+            })
+            .expect("failed to apply first-class tool-call name update");
+
+        thread.read_with(cx, |thread, _| {
+            let Some(tool_call) = thread.entries.iter().find_map(|entry| match entry {
+                AgentThreadEntry::ToolCall(tool_call)
+                    if tool_call.id == acp::ToolCallId::new("legacy-tool-call") =>
+                {
+                    Some(tool_call)
+                }
+                _ => None,
+            }) else {
+                unreachable!("tool call update must create a tool call entry");
+            };
+            assert_eq!(tool_call.tool_name.as_deref(), Some("first_class_update"));
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(acp::ToolCall::new(
+                        "late-legacy-tool-call",
+                        "Late legacy tool call",
+                    )),
+                    cx,
+                )
+            })
+            .expect("failed to create unnamed tool call");
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(
+                        acp::ToolCallUpdate::new(
+                            "late-legacy-tool-call",
+                            acp::ToolCallUpdateFields::new(),
+                        )
+                        .meta(meta_with_tool_name("late_legacy")),
+                    ),
+                    cx,
+                )
+            })
+            .expect("failed to apply late legacy tool-call name");
+
+        thread.read_with(cx, |thread, _| {
+            let Some(AgentThreadEntry::ToolCall(tool_call)) = thread.entries.last() else {
+                unreachable!("tool call update must preserve the tool call entry");
+            };
+            assert_eq!(tool_call.tool_name.as_deref(), Some("late_legacy"));
+        });
+    }
+
+    #[gpui::test]
+    fn test_context_compaction_exports_status(cx: &mut App) {
+        for (status, expected_label) in [
+            (acp::CompactionStatus::InProgress, "In Progress"),
+            (acp::CompactionStatus::Completed, "Completed"),
+            (acp::CompactionStatus::Failed, "Failed"),
+            (acp::CompactionStatus::Cancelled, "Canceled"),
+            (
+                acp::CompactionStatus::Other("interrupted".into()),
+                "interrupted",
+            ),
+        ] {
+            let entry = AgentThreadEntry::ContextCompaction(ContextCompaction {
+                id: ContextCompactionId("compaction".into()),
+                status: status.into(),
+                error: None,
+                summary: Vec::new(),
+            });
+            assert_eq!(
+                entry.to_markdown(cx),
+                format!("## Context Compaction ({expected_label})\n\n")
+            );
+        }
+    }
+
+    #[gpui::test]
     async fn test_tool_call_location_resolves_external_file(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -6556,8 +8642,8 @@ mod tests {
                 tool_call.status,
                 ToolCallStatus::WaitingForConfirmation { .. }
             ));
-            assert_eq!(tool_call.content.len(), 1);
-            assert_eq!(tool_call.content[0].to_markdown(cx), "updated content");
+            assert_eq!(tool_call.content().len(), 1);
+            assert_eq!(tool_call.content()[0].to_markdown(cx), "updated content");
         });
 
         thread
@@ -6584,8 +8670,8 @@ mod tests {
                 tool_call.status,
                 ToolCallStatus::WaitingForConfirmation { .. }
             ));
-            assert_eq!(tool_call.content.len(), 1);
-            assert_eq!(tool_call.content[0].to_markdown(cx), "updated again");
+            assert_eq!(tool_call.content().len(), 1);
+            assert_eq!(tool_call.content()[0].to_markdown(cx), "updated again");
         });
 
         let selected_outcome = SelectedPermissionOutcome::new(
@@ -6635,8 +8721,8 @@ mod tests {
                 .expect("tool call should exist");
             assert_eq!(tool_call.label.read(cx).source(), "Completed");
             assert!(matches!(tool_call.status, ToolCallStatus::Completed));
-            assert_eq!(tool_call.content.len(), 1);
-            assert_eq!(tool_call.content[0].to_markdown(cx), "done");
+            assert_eq!(tool_call.content().len(), 1);
+            assert_eq!(tool_call.content()[0].to_markdown(cx), "done");
         });
     }
 
@@ -8000,6 +10086,15 @@ mod tests {
         init_test(cx);
         enable_acp_beta(cx);
         let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
+        let responded_ids = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let responded_ids = responded_ids.clone();
+            cx.subscribe(&store, move |_, event, _| {
+                if let ElicitationStoreEvent::ElicitationResponded(id) = event {
+                    responded_ids.borrow_mut().push(id.clone());
+                }
+            })
+        });
 
         let response_task = store.update(cx, |store, cx| {
             store
@@ -8042,6 +10137,10 @@ mod tests {
         });
 
         assert_eq!(response_task.await.action, acp::ElicitationAction::Decline);
+        assert_eq!(
+            responded_ids.borrow().as_slice(),
+            std::slice::from_ref(&elicitation_id)
+        );
         store.read_with(cx, |store, _| {
             let Some((_, elicitation)) = store.elicitation(&elicitation_id) else {
                 panic!("missing elicitation entry");
@@ -8286,6 +10385,53 @@ mod tests {
             let Some((_, elicitation)) = store.elicitation(&elicitation_id) else {
                 panic!("missing elicitation entry");
             };
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_request_elicitation_store_emits_response_when_waiter_is_dropped(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
+        let responded_ids = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let responded_ids = responded_ids.clone();
+            cx.subscribe(&store, move |_, event, _| {
+                if let ElicitationStoreEvent::ElicitationResponded(id) = event {
+                    responded_ids.borrow_mut().push(id.clone());
+                }
+            })
+        });
+
+        let request_id = acp::RequestId::Number(1);
+        let (elicitation_id, response_task) = store.update(cx, |store, cx| {
+            store
+                .request_elicitation_with_id(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationRequestScope::new(request_id.clone()),
+                            acp::ElicitationSchema::new().string("name", true),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .expect("elicitation should succeed")
+        });
+        drop(response_task);
+        cx.run_until_parked();
+
+        store.update(cx, |store, cx| {
+            store.cancel_request(&request_id, cx);
+        });
+        assert_eq!(
+            responded_ids.borrow().as_slice(),
+            std::slice::from_ref(&elicitation_id)
+        );
+        store.read_with(cx, |store, _| {
+            let (_, elicitation) = store.elicitation(&elicitation_id).expect("elicitation");
             assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
         });
     }
@@ -8573,6 +10719,15 @@ mod tests {
         enable_acp_beta(cx);
         let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
         let url_elicitation_id = acp::ElicitationId::new("url-1");
+        let responded_ids = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let responded_ids = responded_ids.clone();
+            cx.subscribe(&store, move |_, event, _| {
+                if let ElicitationStoreEvent::ElicitationResponded(id) = event {
+                    responded_ids.borrow_mut().push(id.clone());
+                }
+            })
+        });
 
         let response_task = store.update(cx, |store, cx| {
             store
@@ -8613,9 +10768,17 @@ mod tests {
             response_task.await.action,
             acp::ElicitationAction::Accept(_)
         ));
+        assert_eq!(
+            responded_ids.borrow().as_slice(),
+            std::slice::from_ref(&entry_id)
+        );
         store.update(cx, |store, cx| {
             store.cancel_all(cx);
         });
+        assert_eq!(
+            responded_ids.borrow().as_slice(),
+            std::slice::from_ref(&entry_id)
+        );
         store.read_with(cx, |store, _| {
             let Some((_, elicitation)) = store.elicitation(&entry_id) else {
                 panic!("missing elicitation entry");
@@ -9093,26 +11256,12 @@ mod tests {
                 assert_eq!(tool_call.kind, acp::ToolKind::Fetch);
 
                 // Check that the content contains the error message
-                assert_eq!(tool_call.content.len(), 1);
-                if let ToolCallContent::ContentBlock(content_block) = &tool_call.content[0] {
-                    match content_block {
-                        ContentBlock::Markdown { markdown } => {
-                            let markdown_text = markdown.read(cx).source();
-                            assert!(markdown_text.contains("Tool call not found"));
-                        }
-                        ContentBlock::Empty => panic!("Expected markdown content, got empty"),
-                        ContentBlock::ResourceLink { .. } => {
-                            panic!("Expected markdown content, got resource link")
-                        }
-                        ContentBlock::EmbeddedResource { .. } => {
-                            panic!("Expected markdown content, got embedded resource")
-                        }
-                        ContentBlock::Image { .. } => {
-                            panic!("Expected markdown content, got image")
-                        }
-                    }
+                assert_eq!(tool_call.content().len(), 1);
+                if let ToolCallContent::ContentBlock(content_block) = &tool_call.content()[0] {
+                    let markdown = content_block.plain_markdown().expect("expected markdown");
+                    assert!(markdown.read(cx).source().contains("Tool call not found"));
                 } else {
-                    panic!("Expected ContentBlock, got: {:?}", tool_call.content[0]);
+                    panic!("Expected ContentBlock, got: {:?}", tool_call.content()[0]);
                 }
             } else {
                 panic!("Expected ToolCall entry, got: {:?}", thread.entries[0]);
@@ -9464,13 +11613,20 @@ mod tests {
         }
 
         thread.update(cx, |thread, cx| {
+            let languages = thread.project.read(cx).languages().clone();
+            let path_style = thread.project.read(cx).path_style(cx);
+            let content = MessageContent::new(
+                "Injected message (no checkpoint)".into(),
+                &languages,
+                path_style,
+                cx,
+            );
             thread.push_entry(
                 AgentThreadEntry::UserMessage(UserMessage {
                     protocol_id: None,
                     client_id: Some(ClientUserMessageId::new()),
                     is_optimistic: true,
-                    content: ContentBlock::Empty,
-                    chunks: vec!["Injected message (no checkpoint)".into()],
+                    content,
                     checkpoint: None,
                     indented: false,
                 }),
@@ -9752,7 +11908,8 @@ mod tests {
                                 ContextCompaction {
                                     id: compaction_id,
                                     status: ContextCompactionStatus::InProgress,
-                                    summary: None,
+                                    error: None,
+                                    summary: Vec::new(),
                                 },
                                 cx,
                             );
@@ -10057,6 +12214,167 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_session_notices_are_live_and_independently_dismissible(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("session should be created");
+
+        let notice_events = Rc::new(RefCell::new(0));
+        let _subscription = thread.update(cx, |_, cx| {
+            cx.subscribe_self({
+                let notice_events = notice_events.clone();
+                move |_, event, _| {
+                    assert!(matches!(event, AcpThreadEvent::NoticesUpdated));
+                    *notice_events.borrow_mut() += 1;
+                }
+            })
+        });
+
+        let warning = acp::Notice::new(acp::NoticeSeverity::Warning, "MCP server unavailable")
+            .description("Continuing without it.");
+        let notices = vec![
+            acp::Notice::new(acp::NoticeSeverity::Info, "Using default configuration"),
+            warning.clone(),
+            warning.clone(),
+            acp::Notice::new(acp::NoticeSeverity::Error, "Optional integration failed"),
+            acp::Notice::new(
+                acp::NoticeSeverity::Other("critical".into()),
+                "Future severity",
+            ),
+            acp::Notice::new(
+                acp::NoticeSeverity::Other("_custom".into()),
+                "**Plain text**, not Markdown",
+            )
+            .meta(acp::Meta::from_iter([("source".into(), "test".into())])),
+        ];
+
+        thread.update(cx, |thread, cx| {
+            for notice in &notices {
+                thread
+                    .handle_session_update(acp::SessionUpdate::Notice(notice.clone()), cx)
+                    .expect("notice should be accepted");
+            }
+            assert_eq!(
+                thread.notices(),
+                notices.iter().cloned().enumerate().collect::<Vec<_>>()
+            );
+            assert!(thread.entries().is_empty());
+            assert!(thread.to_markdown(cx).is_empty());
+            assert!(thread.is_draft_thread());
+            assert_eq!(thread.status(), ThreadStatus::Idle);
+            assert!(!thread.had_error());
+            assert!(!thread.is_waiting_for_confirmation());
+            assert!(thread.title().is_none());
+        });
+        assert_eq!(*notice_events.borrow(), notices.len());
+
+        thread.update(cx, |thread, cx| thread.dismiss_notice(1, cx));
+        assert_eq!(*notice_events.borrow(), notices.len() + 1);
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread.notices(),
+                notices
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                    .filter(|(id, _)| *id != 1)
+                    .collect::<Vec<_>>()
+            );
+        });
+
+        thread.update(cx, |thread, cx| thread.dismiss_notice(1, cx));
+        assert_eq!(*notice_events.borrow(), notices.len() + 1);
+
+        thread.update(cx, |thread, cx| {
+            for notice_id in 0..notices.len() {
+                thread.dismiss_notice(notice_id, cx);
+            }
+            assert!(thread.notices().is_empty());
+            thread
+                .handle_session_update(acp::SessionUpdate::Notice(warning.clone()), cx)
+                .expect("a repeated notice is a new live event");
+            thread.dismiss_notice(1, cx);
+            assert_eq!(thread.notices(), &[(notices.len(), warning)]);
+            assert!(thread.entries().is_empty());
+            assert!(thread.to_markdown(cx).is_empty());
+        });
+        assert_eq!(*notice_events.borrow(), notices.len() * 2 + 1);
+    }
+
+    #[gpui::test]
+    async fn test_session_notice_error_does_not_interrupt_prompt(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
+            |_, thread, mut cx| {
+                async move {
+                    thread.update(&mut cx, |thread, cx| {
+                        assert_eq!(thread.status(), ThreadStatus::Generating);
+                        let history_before_notice = thread.to_markdown(cx);
+                        let entry_count = thread.entries().len();
+                        thread.handle_session_update(
+                            acp::SessionUpdate::Notice(
+                                acp::Notice::new(
+                                    acp::NoticeSeverity::Error,
+                                    "Optional integration failed",
+                                )
+                                .description("Work will continue without the integration."),
+                            ),
+                            cx,
+                        )?;
+                        assert_eq!(thread.status(), ThreadStatus::Generating);
+                        assert!(!thread.had_error());
+                        assert_eq!(thread.entries().len(), entry_count);
+                        assert_eq!(thread.to_markdown(cx), history_before_notice);
+                        thread.handle_session_update(
+                            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                                "The response continues.".into(),
+                            )),
+                            cx,
+                        )
+                    })??;
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed_local()
+            },
+        ));
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("session should be created");
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("hello", cx))
+            .await
+            .expect("advisory errors must not fail prompts");
+
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(thread.status(), ThreadStatus::Idle);
+            assert!(!thread.had_error());
+            assert_eq!(thread.notices().len(), 1);
+            assert_eq!(thread.entries().len(), 2);
+            assert!(thread.to_markdown(cx).contains("The response continues."));
+            assert!(
+                !thread
+                    .to_markdown(cx)
+                    .contains("Optional integration failed")
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_usage_update_populates_token_usage_and_cost(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -10120,7 +12438,8 @@ mod tests {
                 ContextCompaction {
                     id: ContextCompactionId("compaction-1".into()),
                     status: ContextCompactionStatus::InProgress,
-                    summary: None,
+                    error: None,
+                    summary: Vec::new(),
                 },
                 cx,
             );
@@ -11005,6 +13324,45 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_cancel_elicitation_after_waiter_drops_resumes_idle_sleep_prevention(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+        let (elicitation_id, response) = request_test_form_elicitation(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        drop(response);
+        cx.run_until_parked();
+
+        thread.update(cx, |thread, cx| {
+            thread.cancel_elicitation(&elicitation_id, cx)
+        });
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            let (_, elicitation) = thread.elicitation(&elicitation_id).expect("elicitation");
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
+            assert!(!thread.is_waiting_for_confirmation());
+            assert_eq!(thread.status(), ThreadStatus::Generating);
+        });
+        assert_eq!(
+            cx.active_idle_sleep_preventions(),
+            1,
+            "cancelling the request must refresh generation state even without a response waiter"
+        );
+
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("turn should still be running");
+        request.await.expect("turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
     async fn test_idle_sleep_prevention_resumes_after_form_elicitation(cx: &mut TestAppContext) {
         init_test(cx);
         let thread = new_test_thread(cx).await;
@@ -11191,6 +13549,193 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_completed_turn_reclaims_source_capacity_without_changing_content(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let text = acp::ContentBlock::Text(
+            acp::TextContent::new("before")
+                .meta(acp::Meta::from_iter([("sequence".into(), json!(1))])),
+        );
+        let image = message_test_image();
+
+        thread.update(cx, |thread, cx| {
+            thread.push_user_content_block(None, "older user".into(), cx);
+            thread.push_assistant_content_block("older reply".into(), false, cx);
+            thread.push_user_content_block(None, "prompt".into(), cx);
+            for index in [0, 2] {
+                test_message_content_mut(thread, index)
+                    .source_blocks
+                    .reserve(32);
+            }
+        });
+        let (complete, request) = start_test_turn(&thread, cx);
+        let (markdown, rendered_image) = thread.update(cx, |thread, cx| {
+            thread.push_user_content_block(None, " continuation".into(), cx);
+            thread.push_assistant_content_block(image.clone(), false, cx);
+            thread.push_assistant_content_block(text.clone(), false, cx);
+            thread.push_assistant_content_block(" buffered".into(), false, cx);
+            assert!(thread.streaming_text_buffer.is_some());
+            let content = test_message_content(thread, 3);
+            let markdown = content
+                .blocks()
+                .find_map(|block| block.markdown().cloned())
+                .expect("assistant text");
+            assert_eq!(markdown.read(cx).source(), "before");
+            let rendered_image = content
+                .blocks()
+                .find_map(|block| block.image().map(|(image, _)| image.clone()))
+                .expect("assistant image");
+            for index in [2, 3] {
+                test_message_content_mut(thread, index)
+                    .source_blocks
+                    .reserve(32);
+            }
+            for index in [0, 2, 3] {
+                let content = test_message_content(thread, index);
+                assert!(content.source_blocks.capacity() > content.source_blocks.len());
+            }
+            (markdown, rendered_image)
+        });
+
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("turn should still be running");
+        request.await.expect("turn should complete");
+        thread.read_with(cx, |thread, cx| {
+            let older = test_message_content(thread, 0);
+            assert!(older.source_blocks.capacity() > older.source_blocks.len());
+            assert_eq!(older.source_blocks(), &["older user".into()]);
+            let user = test_message_content(thread, 2);
+            assert_eq!(user.source_blocks.capacity(), user.source_blocks.len());
+            assert_eq!(
+                user.source_blocks(),
+                &["prompt".into(), " continuation".into()]
+            );
+            let assistant = test_message_content(thread, 3);
+            assert_eq!(
+                assistant.source_blocks.capacity(),
+                assistant.source_blocks.len()
+            );
+            assert_eq!(
+                assistant.source_blocks(),
+                &[image.clone(), text.clone(), " buffered".into()]
+            );
+            assert_eq!(
+                assistant.blocks().find_map(|block| block.markdown()),
+                Some(&markdown)
+            );
+            assert_eq!(markdown.read(cx).source(), "before buffered");
+            assert!(assistant.blocks().any(|block| {
+                block
+                    .image()
+                    .is_some_and(|(image, _)| Arc::ptr_eq(image, &rendered_image))
+            }));
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.push_assistant_content_block(" after".into(), false, cx);
+            let assistant = test_message_content(thread, 3);
+            assert_eq!(
+                assistant.source_blocks(),
+                &[
+                    image.clone(),
+                    text.clone(),
+                    " buffered".into(),
+                    " after".into()
+                ]
+            );
+            assert_eq!(
+                assistant.blocks().find_map(|block| block.markdown()),
+                Some(&markdown)
+            );
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        markdown.read_with(cx, |markdown, _| {
+            assert_eq!(markdown.source(), "before buffered after");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_cancelled_turn_reclaims_source_capacity_before_backend_finishes(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let (complete, request) = start_test_turn(&thread, cx);
+        thread.update(cx, |thread, cx| {
+            thread.push_user_content_block(None, "prompt".into(), cx);
+            thread.push_assistant_content_block("reply".into(), false, cx);
+            thread.push_assistant_content_block(" pending".into(), false, cx);
+            for index in [0, 1] {
+                test_message_content_mut(thread, index)
+                    .source_blocks
+                    .reserve(32);
+                let content = test_message_content(thread, index);
+                assert!(content.source_blocks.capacity() > content.source_blocks.len());
+            }
+        });
+        let cancel = thread.update(cx, |thread, cx| thread.cancel(cx));
+        thread.read_with(cx, |thread, cx| {
+            for index in [0, 1] {
+                let content = test_message_content(thread, index);
+                assert_eq!(
+                    content.source_blocks.capacity(),
+                    content.source_blocks.len()
+                );
+            }
+            assert_eq!(
+                test_message_content(thread, 0).source_blocks(),
+                &["prompt".into()]
+            );
+            assert_eq!(
+                test_message_content(thread, 1).source_blocks(),
+                &["reply".into(), " pending".into()]
+            );
+            assert_eq!(
+                test_message_content(thread, 1).to_markdown(cx),
+                "reply pending"
+            );
+        });
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::Cancelled)))
+            .expect("backend should still be running");
+        cancel.await;
+        request.await.expect("turn should complete");
+    }
+
+    fn test_message_content(thread: &AcpThread, entry_index: usize) -> &MessageContent {
+        match thread.entries.get(entry_index).expect("message entry") {
+            AgentThreadEntry::UserMessage(message) => &message.content,
+            AgentThreadEntry::AssistantMessage(message) => {
+                let Some(AssistantMessageChunk::Message { block, .. }) = message.chunks.last()
+                else {
+                    panic!("expected assistant message chunk");
+                };
+                block
+            }
+            _ => panic!("expected message entry"),
+        }
+    }
+
+    fn test_message_content_mut(thread: &mut AcpThread, entry_index: usize) -> &mut MessageContent {
+        match thread.entries.get_mut(entry_index).expect("message entry") {
+            AgentThreadEntry::UserMessage(message) => &mut message.content,
+            AgentThreadEntry::AssistantMessage(message) => {
+                let Some(AssistantMessageChunk::Message { block, .. }) = message.chunks.last_mut()
+                else {
+                    panic!("expected assistant message chunk");
+                };
+                block
+            }
+            _ => panic!("expected message entry"),
+        }
+    }
+
+    #[gpui::test]
     async fn test_failed_tool_update_resumes_sleep_prevention(cx: &mut TestAppContext) {
         assert_failed_tool_update_resumes_sleep_prevention(false, cx).await;
     }
@@ -11301,11 +13846,16 @@ mod tests {
                 )
                 .expect("first backend should still be running");
             let (second_complete, second_request) = start_test_turn(&thread, cx);
-            thread.update(cx, |thread, cx| {
+            let capacities = thread.update(cx, |thread, cx| {
                 thread.push_user_content_block(None, "second".into(), cx);
                 thread.push_assistant_content_block("second reply".into(), false, cx);
                 assert_eq!(thread.running_turn.as_ref().map(|turn| turn.id), Some(2));
                 assert!(!thread.had_error());
+                [2, 3].map(|index| {
+                    let content = test_message_content_mut(thread, index);
+                    content.source_blocks.reserve(32);
+                    content.source_blocks.capacity()
+                })
             });
             let events = Rc::new(RefCell::new(Vec::new()));
             let _subscription = cx.update(|cx| {
@@ -11337,6 +13887,12 @@ mod tests {
 
             thread.read_with(cx, |thread, cx| {
                 assert_eq!(thread.entries().len(), 4);
+                for (index, capacity) in [2, 3].into_iter().zip(capacities) {
+                    assert_eq!(
+                        test_message_content(thread, index).source_blocks.capacity(),
+                        capacity
+                    );
+                }
                 assert_eq!(
                     thread.to_markdown(cx),
                     concat!(

@@ -11,7 +11,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow};
-use futures::channel::oneshot::{self, Receiver};
+use futures::channel::oneshot::Receiver;
 use gpui_util::{ResultExt, get_powershell, new_std_command};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -93,6 +93,7 @@ struct PlatformCallbacks {
     will_open_app_menu: Cell<Option<Box<dyn FnMut()>>>,
     validate_app_menu_command: Cell<Option<Box<dyn FnMut(&dyn Action) -> bool>>>,
     keyboard_layout_change: Cell<Option<Box<dyn FnMut()>>>,
+    system_sleep: Cell<Option<Box<dyn FnMut()>>>,
     system_wake: Cell<Option<Box<dyn FnMut()>>>,
 }
 
@@ -116,6 +117,9 @@ impl WindowsPlatformState {
 
 struct PowerRequest {
     handle: HANDLE,
+    // `PowerCreateRequest` retains a pointer into the reason string for the
+    // lifetime of the handle, so the UTF-16 buffer must outlive the request.
+    _reason: Vec<u16>,
 }
 
 unsafe impl Send for PowerRequest {}
@@ -138,7 +142,10 @@ impl PowerRequest {
                 .log_err();
             return Err(error).context("Failed to set the Windows power request");
         }
-        Ok(Self { handle })
+        Ok(Self {
+            handle,
+            _reason: reason,
+        })
     }
 }
 
@@ -619,7 +626,7 @@ impl Platform for WindowsPlatform {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
+    ) -> futures::channel::oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
         gpui::scap_screen_capture::scap_screen_sources(&self.foreground_executor)
     }
 
@@ -667,15 +674,13 @@ impl Platform for WindowsPlatform {
         &self,
         options: PathPromptOptions,
     ) -> Receiver<Result<Option<Vec<PathBuf>>>> {
-        let (tx, rx) = oneshot::channel();
-        let window = self.find_current_active_window();
-        self.foreground_executor()
-            .spawn(async move {
-                let _ = tx.send(file_open_dialog(options, window));
-            })
-            .detach();
-
-        rx
+        let owner = self
+            .find_current_active_window()
+            .and_then(|hwnd| self.window_from_hwnd(hwnd))
+            .map(|window| window.dialog_owner.clone());
+        crate::dialog::show_dialog(owner, &self.foreground_executor, move |window| {
+            file_open_dialog(options, Some(window))
+        })
     }
 
     fn prompt_for_new_path(
@@ -685,15 +690,13 @@ impl Platform for WindowsPlatform {
     ) -> Receiver<Result<Option<PathBuf>>> {
         let directory = directory.to_owned();
         let suggested_name = suggested_name.map(|s| s.to_owned());
-        let (tx, rx) = oneshot::channel();
-        let window = self.find_current_active_window();
-        self.foreground_executor()
-            .spawn(async move {
-                let _ = tx.send(file_save_dialog(directory, suggested_name, window));
-            })
-            .detach();
-
-        rx
+        let owner = self
+            .find_current_active_window()
+            .and_then(|hwnd| self.window_from_hwnd(hwnd))
+            .map(|window| window.dialog_owner.clone());
+        crate::dialog::show_dialog(owner, &self.foreground_executor, move |window| {
+            file_save_dialog(directory, suggested_name, Some(window))
+        })
     }
 
     fn can_select_mixed_files_and_dirs(&self) -> bool {
@@ -735,6 +738,10 @@ impl Platform for WindowsPlatform {
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
         self.inner.state.callbacks.reopen.set(Some(callback));
+    }
+
+    fn on_system_sleep(&self, callback: Box<dyn FnMut()>) {
+        self.inner.state.callbacks.system_sleep.set(Some(callback));
     }
 
     fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
@@ -907,7 +914,7 @@ impl Platform for WindowsPlatform {
             .encode_utf16()
             .chain(Some(0))
             .collect_vec();
-        self.foreground_executor().spawn(async move {
+        self.background_executor().spawn(async move {
             let credentials = CREDENTIALW {
                 LastWritten: unsafe { GetSystemTimeAsFileTime() },
                 Flags: CRED_FLAGS(0),
@@ -936,7 +943,7 @@ impl Platform for WindowsPlatform {
             .encode_utf16()
             .chain(Some(0))
             .collect_vec();
-        self.foreground_executor().spawn(async move {
+        self.background_executor().spawn(async move {
             let mut credentials: *mut CREDENTIALW = std::ptr::null_mut();
             let result = unsafe {
                 CredReadW(
@@ -957,19 +964,13 @@ impl Platform for WindowsPlatform {
             }
 
             if credentials.is_null() {
-                Ok(None)
-            } else {
-                let username: String = unsafe { (*credentials).UserName.to_string()? };
-                let credential_blob = unsafe {
-                    std::slice::from_raw_parts(
-                        (*credentials).CredentialBlob,
-                        (*credentials).CredentialBlobSize as usize,
-                    )
-                };
-                let password = credential_blob.to_vec();
-                unsafe { CredFree(credentials as *const _ as _) };
-                Ok(Some((username, password)))
+                return Ok(None);
             }
+
+            // SAFETY: `CredReadW` succeeded, so this points to a valid `CREDENTIALW` until `CredFree` below.
+            let result = unsafe { username_and_password(&*credentials) };
+            unsafe { CredFree(credentials as *const _ as _) };
+            result.map(Some)
         })
     }
 
@@ -978,7 +979,7 @@ impl Platform for WindowsPlatform {
             .encode_utf16()
             .chain(Some(0))
             .collect_vec();
-        self.foreground_executor().spawn(async move {
+        self.background_executor().spawn(async move {
             unsafe {
                 CredDeleteW(
                     PCWSTR::from_raw(target_name.as_ptr()),
@@ -1218,8 +1219,14 @@ impl WindowsPlatformInner {
     }
 
     fn handle_power_broadcast(&self, wparam: WPARAM) -> Option<isize> {
-        if wparam.0 as u32 == PBT_APMRESUMEAUTOMATIC {
-            self.with_callback(|callbacks| &callbacks.system_wake, |callback| callback());
+        match wparam.0 as u32 {
+            PBT_APMSUSPEND => {
+                self.with_callback(|callbacks| &callbacks.system_sleep, |callback| callback());
+            }
+            PBT_APMRESUMEAUTOMATIC => {
+                self.with_callback(|callbacks| &callbacks.system_wake, |callback| callback());
+            }
+            _ => {}
         }
         Some(1)
     }
@@ -1381,9 +1388,11 @@ fn file_open_dialog(
             folder_dialog.SetOkButtonLabel(&HSTRING::from(prompt))?;
         }
 
-        if folder_dialog.Show(window).is_err() {
-            // User cancelled
-            return Ok(None);
+        if let Err(error) = folder_dialog.Show(window) {
+            if error.code() == HRESULT::from_win32(ERROR_CANCELLED.0) {
+                return Ok(None);
+            }
+            return Err(error.into());
         }
     }
 
@@ -1441,9 +1450,11 @@ fn file_save_dialog(
             pszName: windows::core::w!("All files"),
             pszSpec: windows::core::w!("*.*"),
         }])?;
-        if dialog.Show(window).is_err() {
-            // User cancelled
-            return Ok(None);
+        if let Err(error) = dialog.Show(window) {
+            if error.code() == HRESULT::from_win32(ERROR_CANCELLED.0) {
+                return Ok(None);
+            }
+            return Err(error.into());
         }
     }
     let shell_item = unsafe { dialog.GetResult()? };
@@ -1617,14 +1628,104 @@ unsafe extern "system" fn window_procedure(
     result
 }
 
+/// Copies the username and secret out of a credential returned by `CredReadW`.
+///
+/// Both `UserName` and `CredentialBlob` are optional in Credential Manager and
+/// come back as null pointers when absent, so they are treated as empty here.
+///
+/// # Safety
+///
+/// A non-null `UserName` must point to a NUL-terminated wide string and a
+/// non-null `CredentialBlob` must be readable for `CredentialBlobSize` bytes,
+/// as is the case for credentials returned by `CredReadW`.
+unsafe fn username_and_password(credential: &CREDENTIALW) -> Result<(String, Vec<u8>)> {
+    let username = if credential.UserName.is_null() {
+        String::new()
+    } else {
+        // SAFETY: guaranteed by the caller.
+        unsafe { credential.UserName.to_string()? }
+    };
+    let password = if credential.CredentialBlob.is_null() {
+        Vec::new()
+    } else {
+        // SAFETY: guaranteed by the caller.
+        unsafe {
+            std::slice::from_raw_parts(
+                credential.CredentialBlob,
+                credential.CredentialBlobSize as usize,
+            )
+        }
+        .to_vec()
+    };
+    Ok((username, password))
+}
+
 #[cfg(test)]
 mod tests {
     use std::ffi::{OsStr, OsString};
 
     use crate::{read_from_clipboard, write_to_clipboard};
     use gpui::ClipboardItem;
+    use windows::Win32::Security::Credentials::{
+        CRED_PERSIST_SESSION, CRED_TYPE_GENERIC, CREDENTIALW, CredDeleteW, CredFree, CredReadW,
+        CredWriteW,
+    };
+    use windows::core::{PCWSTR, PWSTR};
 
-    use super::encode_restart_arguments;
+    use super::{encode_restart_arguments, username_and_password};
+
+    #[test]
+    fn test_read_credential_with_username() {
+        assert_eq!(
+            round_trip_credential(Some("alice"), b"secret"),
+            ("alice".to_string(), b"secret".to_vec())
+        );
+    }
+
+    #[test]
+    fn test_read_credential_without_username() {
+        assert_eq!(
+            round_trip_credential(None, b"secret"),
+            (String::new(), b"secret".to_vec())
+        );
+    }
+
+    fn round_trip_credential(username: Option<&str>, secret: &[u8]) -> (String, Vec<u8>) {
+        let mut target_name: Vec<u16> = format!(
+            "zed-test-{}-{}",
+            std::process::id(),
+            username.unwrap_or_default()
+        )
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+        let mut username: Vec<u16> = username
+            .map(|username| username.encode_utf16().chain(Some(0)).collect())
+            .unwrap_or_default();
+        let mut secret = secret.to_vec();
+        let credential = CREDENTIALW {
+            Type: CRED_TYPE_GENERIC,
+            TargetName: PWSTR::from_raw(target_name.as_mut_ptr()),
+            CredentialBlobSize: secret.len() as u32,
+            CredentialBlob: secret.as_mut_ptr(),
+            Persist: CRED_PERSIST_SESSION,
+            UserName: if username.is_empty() {
+                PWSTR::null()
+            } else {
+                PWSTR::from_raw(username.as_mut_ptr())
+            },
+            ..CREDENTIALW::default()
+        };
+        let target_name = PCWSTR::from_raw(target_name.as_ptr());
+        unsafe { CredWriteW(&credential, 0) }.unwrap();
+
+        let mut credentials: *mut CREDENTIALW = std::ptr::null_mut();
+        unsafe { CredReadW(target_name, CRED_TYPE_GENERIC, None, &mut credentials) }.unwrap();
+        let result = unsafe { username_and_password(&*credentials) };
+        unsafe { CredFree(credentials as *const _ as _) };
+        unsafe { CredDeleteW(target_name, CRED_TYPE_GENERIC, None) }.unwrap();
+        result.unwrap()
+    }
 
     #[test]
     fn test_encode_restart_arguments() {
