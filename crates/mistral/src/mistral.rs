@@ -59,21 +59,15 @@ pub enum Model {
     #[serde(rename = "mistral-small-latest", alias = "mistral-small-latest")]
     MistralSmallLatest,
 
-    #[serde(rename = "magistral-medium-latest", alias = "magistral-medium-latest")]
-    MagistralMediumLatest,
-
-    #[serde(rename = "open-mistral-nemo", alias = "open-mistral-nemo")]
-    OpenMistralNemo,
-
-    #[serde(rename = "devstral-medium-latest", alias = "devstral-medium-latest")]
-    DevstralMediumLatest,
-
     #[serde(rename = "ministral-3b-latest", alias = "ministral-3b-latest")]
     Ministral3bLatest,
     #[serde(rename = "ministral-8b-latest", alias = "ministral-8b-latest")]
     Ministral8bLatest,
     #[serde(rename = "ministral-14b-latest", alias = "ministral-14b-latest")]
     Ministral14bLatest,
+
+    #[serde(rename = "zai-glm-latest", alias = "zai-glm-latest")]
+    ZaiGlmLatest,
 
     #[serde(rename = "custom")]
     Custom {
@@ -100,9 +94,10 @@ impl Model {
             "mistral-large-latest" => Ok(Self::MistralLargeLatest),
             "mistral-medium-latest" => Ok(Self::MistralMediumLatest),
             "mistral-small-latest" => Ok(Self::MistralSmallLatest),
-            "magistral-medium-latest" => Ok(Self::MagistralMediumLatest),
-            "open-mistral-nemo" => Ok(Self::OpenMistralNemo),
-            "devstral-medium-latest" => Ok(Self::DevstralMediumLatest),
+            "ministral-3b-latest" => Ok(Self::Ministral3bLatest),
+            "ministral-8b-latest" => Ok(Self::Ministral8bLatest),
+            "ministral-14b-latest" => Ok(Self::Ministral14bLatest),
+            "zai-glm-latest" => Ok(Self::ZaiGlmLatest),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -113,12 +108,10 @@ impl Model {
             Self::MistralLargeLatest => "mistral-large-latest",
             Self::MistralMediumLatest => "mistral-medium-latest",
             Self::MistralSmallLatest => "mistral-small-latest",
-            Self::MagistralMediumLatest => "magistral-medium-latest",
-            Self::OpenMistralNemo => "open-mistral-nemo",
-            Self::DevstralMediumLatest => "devstral-medium-latest",
             Self::Ministral3bLatest => "ministral-3b-latest",
             Self::Ministral8bLatest => "ministral-8b-latest",
             Self::Ministral14bLatest => "ministral-14b-latest",
+            Self::ZaiGlmLatest => "zai-glm-latest",
             Self::Custom { name, .. } => name,
         }
     }
@@ -129,12 +122,10 @@ impl Model {
             Self::MistralLargeLatest => "mistral-large-latest",
             Self::MistralMediumLatest => "mistral-medium-latest",
             Self::MistralSmallLatest => "mistral-small-latest",
-            Self::MagistralMediumLatest => "magistral-medium-latest",
-            Self::OpenMistralNemo => "open-mistral-nemo",
-            Self::DevstralMediumLatest => "devstral-medium-latest",
             Self::Ministral3bLatest => "ministral-3b-latest",
             Self::Ministral8bLatest => "ministral-8b-latest",
             Self::Ministral14bLatest => "ministral-14b-latest",
+            Self::ZaiGlmLatest => "zai-glm-latest",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -145,14 +136,12 @@ impl Model {
         match self {
             Self::CodestralLatest => 128000,
             Self::MistralLargeLatest => 256000,
-            Self::MistralMediumLatest => 128000,
+            Self::MistralMediumLatest => 256000,
             Self::MistralSmallLatest => 256000,
-            Self::MagistralMediumLatest => 128000,
-            Self::OpenMistralNemo => 128000,
-            Self::DevstralMediumLatest => 256000,
             Self::Ministral3bLatest => 256000,
             Self::Ministral8bLatest => 256000,
             Self::Ministral14bLatest => 256000,
+            Self::ZaiGlmLatest => 1_048_576,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -172,12 +161,10 @@ impl Model {
             | Self::MistralLargeLatest
             | Self::MistralMediumLatest
             | Self::MistralSmallLatest
-            | Self::MagistralMediumLatest
-            | Self::OpenMistralNemo
-            | Self::DevstralMediumLatest
             | Self::Ministral3bLatest
             | Self::Ministral8bLatest
-            | Self::Ministral14bLatest => true,
+            | Self::Ministral14bLatest
+            | Self::ZaiGlmLatest => true,
             Self::Custom { supports_tools, .. } => supports_tools.unwrap_or(false),
         }
     }
@@ -187,11 +174,10 @@ impl Model {
             Self::MistralLargeLatest
             | Self::MistralMediumLatest
             | Self::MistralSmallLatest
-            | Self::MagistralMediumLatest
             | Self::Ministral3bLatest
             | Self::Ministral8bLatest
             | Self::Ministral14bLatest => true,
-            Self::CodestralLatest | Self::OpenMistralNemo | Self::DevstralMediumLatest => false,
+            Self::CodestralLatest | Self::ZaiGlmLatest => false,
             Self::Custom {
                 supports_images, ..
             } => supports_images.unwrap_or(false),
@@ -200,12 +186,18 @@ impl Model {
 
     pub fn supports_thinking(&self) -> bool {
         match self {
-            Self::MagistralMediumLatest => true,
+            Self::MistralMediumLatest | Self::MistralSmallLatest | Self::ZaiGlmLatest => true,
             Self::Custom {
                 supports_thinking, ..
             } => supports_thinking.unwrap_or(false),
             _ => false,
         }
+    }
+
+    /// Whether thinking can be turned off. Z.ai GLM models always think and
+    /// reject `reasoning_effort: "none"`.
+    pub fn supports_disabling_thinking(&self) -> bool {
+        !matches!(self, Self::ZaiGlmLatest)
     }
 }
 
@@ -228,6 +220,15 @@ pub struct Request {
     pub parallel_tool_calls: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    None,
+    High,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -379,6 +380,7 @@ pub struct Usage {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StreamResponse {
     pub id: String,
+    #[serde(default)]
     pub object: String,
     pub created: u64,
     pub model: String,

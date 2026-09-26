@@ -10,6 +10,7 @@ use editor::{
     EditorEvent, EditorSettings, SelectionEffects, SplittableEditor, actions::GoToHunk,
     multibuffer_context_lines, scroll::Autoscroll,
 };
+use futures::{FutureExt as _, StreamExt as _, stream};
 use futures_lite::future::yield_now;
 use git::{repository::RepoPath, status::FileStatus};
 use gpui::{
@@ -35,6 +36,10 @@ use workspace::{
     item::{Item, SaveOptions},
 };
 use ztracing::instrument;
+
+/// Loading every changed file at once makes the first one land no sooner than the
+/// last, leaving a large diff on a spinner. Throughput flattens past this point.
+const MAX_CONCURRENT_BUFFER_LOADS: usize = 16;
 
 struct BufferSubscriptions {
     _diff: Entity<BufferDiff>,
@@ -365,6 +370,28 @@ impl DiffMultibuffer {
         }
     }
 
+    pub(crate) fn restore_selected_hunks(
+        &mut self,
+        move_to_next: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let editor = self.editor.read(cx).rhs_editor().clone();
+        let ranges = self.hunk_action_ranges(cx);
+        editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let hunks: Vec<_> = editor.diff_hunks_in_ranges(&ranges, &snapshot).collect();
+            if !hunks.is_empty() {
+                editor.apply_restore(hunks, window, cx);
+            }
+        });
+        if move_to_next {
+            editor
+                .focus_handle(cx)
+                .dispatch_action(&GoToHunk, window, cx);
+        }
+    }
+
     fn handle_editor_event(
         &mut self,
         editor: &Entity<SplittableEditor>,
@@ -380,6 +407,7 @@ impl DiffMultibuffer {
                 if !editor.focus_handle(cx).contains_focused(window, cx) {
                     return;
                 }
+                cx.emit(event.clone());
                 let Some(project_path) = self.active_project_path(cx) else {
                     return;
                 };
@@ -656,17 +684,28 @@ impl DiffMultibuffer {
 
         let mut buffers_to_fold = Vec::new();
 
-        for (path_key, entry) in entries {
-            if let Some(loaded_buffer) = entry.load.await.log_err() {
-                // We might be lagging behind enough that all future entry.load futures are no longer pending.
-                // If that is the case, this task will never yield, starving the foreground thread of execution time.
-                yield_now().await;
+        // Ordered, so excerpts don't shift under the reader as later files arrive.
+        let mut loads = stream::iter(entries.into_iter().map(|(path_key, entry)| {
+            let diff_buffer_list::DiffBuffer {
+                repo_path,
+                file_status,
+                load,
+            } = entry;
+            load.map(move |loaded| (path_key, repo_path, file_status, loaded))
+        }))
+        .buffered(MAX_CONCURRENT_BUFFER_LOADS);
+
+        while let Some((path_key, repo_path, file_status, loaded)) = loads.next().await {
+            // Buffered loads can already be complete when we poll them, in which
+            // case this loop never awaits and starves the foreground thread.
+            yield_now().await;
+            if let Some(loaded_buffer) = loaded.log_err() {
                 cx.update(|window, cx| {
                     this.update(cx, |this, cx| {
                         if let Some(buffer_id) = this.register_buffer(
-                            entry.repo_path,
+                            repo_path,
                             path_key,
-                            entry.file_status,
+                            file_status,
                             loaded_buffer.display_buffer,
                             loaded_buffer.main_buffer,
                             loaded_buffer.diff,
@@ -698,12 +737,17 @@ impl DiffMultibuffer {
 
     pub(crate) fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
         let editor = self.editor.read(cx).focused_editor().read(cx);
-        let multibuffer = editor.buffer().read(cx);
+        let focused_multibuffer = editor.buffer().read(cx);
         let position = editor.selections.newest_anchor().head();
+        let focused_snapshot = focused_multibuffer.snapshot(cx);
+        let (focused_anchor, _) = focused_snapshot.anchor_to_buffer_anchor(position)?;
+        let path = focused_snapshot.path_for_buffer(focused_anchor.buffer_id)?;
+
+        let multibuffer = self.multibuffer.read(cx);
+        let position = multibuffer.location_for_path(path, cx)?;
         let snapshot = multibuffer.snapshot(cx);
         let (text_anchor, _) = snapshot.anchor_to_buffer_anchor(position)?;
         let buffer = multibuffer.buffer(text_anchor.buffer_id)?;
-
         let file = buffer.read(cx).file()?;
         Some(ProjectPath {
             worktree_id: file.worktree_id(cx),
@@ -985,7 +1029,7 @@ fn name_sort_path(repo_path: &RelPath) -> Arc<RelPath> {
         return repo_path.into_arc();
     };
     let synthetic = format!("{}/{}", file_name, repo_path.as_unix_str());
-    RelPath::unix(&synthetic)
+    RelPath::from_unix_str(&synthetic)
         .map(|path| path.into_arc())
         .unwrap_or_else(|_| repo_path.into_arc())
 }
@@ -1010,7 +1054,7 @@ fn tree_sort_path(repo_path: &RelPath) -> Arc<RelPath> {
         }
         synthetic.push_str(component);
     }
-    RelPath::unix(&synthetic)
+    RelPath::from_unix_str(&synthetic)
         .map(|path| path.into_arc())
         .unwrap_or_else(|_| repo_path.into_arc())
 }

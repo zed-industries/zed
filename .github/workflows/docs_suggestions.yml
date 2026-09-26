@@ -9,32 +9,25 @@ name: Documentation Suggestions
 # 5. Keep this workflow focused on suggestions only until that stable workflow is added.
 
 on:
-  # Run when PRs are merged to main
+  # Analyze merged PRs on main and cherry-picks to release branches. Each job
+  # further restricts the event actions and target branch that it handles.
   pull_request:
-    types: [closed]
-    branches: [main]
-    paths:
-      - 'crates/**/*.rs'
-      - '!crates/**/*_test.rs'
-      - '!crates/**/tests/**'
-
-  # Run on cherry-picks to release branches
-  pull_request_target:
-    types: [opened, synchronize]
+    types: [closed, opened, synchronize]
     branches:
-      - 'v0.*'
+      - main
+      - "v0.*"
     paths:
-      - 'crates/**/*.rs'
+      - "crates/**/*.rs"
 
   # Manual trigger for testing
   workflow_dispatch:
     inputs:
       pr_number:
-        description: 'PR number to analyze'
+        description: "PR number to analyze"
         required: true
         type: string
       mode:
-        description: 'Output mode'
+        description: "Output mode"
         required: true
         type: choice
         options:
@@ -89,7 +82,6 @@ jobs:
             fi
             sleep $((i * 5))
           done
-          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
         env:
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
 
@@ -125,6 +117,8 @@ jobs:
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
         run: |
+          export PATH="${HOME}/.local/bin:${PATH}"
+
           # Ensure gh CLI is authenticated (GH_TOKEN may not be auto-detected)
           # Unset GH_TOKEN first to allow gh auth login to store credentials
           echo "$GH_TOKEN" | (unset GH_TOKEN && gh auth login --with-token)
@@ -292,8 +286,10 @@ jobs:
       group: docs-suggestions-${{ github.event.pull_request.number || inputs.pr_number || 'manual' }}
       cancel-in-progress: true
     if: |
-      (github.event_name == 'pull_request_target' &&
+      (github.event_name == 'pull_request' &&
+       contains(fromJSON('["opened","synchronize"]'), github.event.action) &&
        startsWith(github.event.pull_request.base.ref, 'v0.') &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
        contains(fromJSON('["MEMBER","OWNER"]'),
                 github.event.pull_request.author_association)) ||
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'immediate')
@@ -303,7 +299,7 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.ref || '' }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || '' }}
           persist-credentials: false
 
       - name: Install Droid CLI
@@ -322,7 +318,6 @@ jobs:
             fi
             sleep $((i * 5))
           done
-          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
         env:
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
 
@@ -350,6 +345,8 @@ jobs:
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
         run: |
+          export PATH="${HOME}/.local/bin:${PATH}"
+
           # Ensure gh CLI is authenticated (GH_TOKEN may not be auto-detected)
           # Unset GH_TOKEN first to allow gh auth login to store credentials
           echo "$GH_TOKEN" | (unset GH_TOKEN && gh auth login --with-token)

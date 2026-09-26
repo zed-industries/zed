@@ -107,7 +107,7 @@ You can also only execute a single ESLint rule when using `fixAll`:
 ```
 
 > **Note:** the other formatter you have configured will still run, after ESLint.
-> So if your language server or Prettier configuration don't format according to
+> So if your language server or Prettier configuration doesn't format according to
 > ESLint's rules, then they will overwrite what ESLint fixed and you end up with
 > errors.
 
@@ -237,7 +237,7 @@ The following can be debugged without writing additional configuration:
 - Tasks from `package.json`
 - Tests written using several popular frameworks (Jest, Mocha, Vitest, Jasmine, Bun, Node)
 
-Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list of these predefined debug tasks.
+Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list of these predefined [debug tasks](../debugger.md).
 
 > **Note:** Bun test is automatically detected when `@types/bun` is present in `package.json`.
 

@@ -274,7 +274,7 @@ mod tests {
     use futures::StreamExt as _;
     use gpui::{AppContext as _, Entity, TestAppContext, UpdateGlobal};
     use language::language_settings::FormatOnSave;
-    use language_model::fake_provider::FakeLanguageModel;
+    use language_model::LanguageModelRegistry;
     use project::{Project, ProjectPath};
     use prompt_store::ProjectContext;
     use serde_json::json;
@@ -537,10 +537,11 @@ mod tests {
         let rust_language = Arc::new(language::Language::new(
             language::LanguageConfig {
                 name: "Rust".into(),
-                matcher: language::LanguageMatcher {
+                matcher: (language::LanguageMatcher {
                     path_suffixes: vec!["rs".to_string()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 ..Default::default()
             },
             None,
@@ -1381,7 +1382,7 @@ mod tests {
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = cx.update(|cx| LanguageModelRegistry::test(cx).model("fake"));
         let thread = cx.new(|cx| {
             crate::Thread::new(
                 project.clone(),

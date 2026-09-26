@@ -11,6 +11,12 @@ pub fn background_executor() -> gpui::BackgroundExecutor {
 }
 
 pub fn application() -> gpui::Application {
+    #[cfg(target_family = "wasm")]
+    {
+        application_with_web_backend(gpui_web::WebBackendPreference::Auto)
+    }
+
+    #[cfg(not(target_family = "wasm"))]
     gpui::Application::with_platform(current_platform(false))
 }
 
@@ -18,10 +24,25 @@ pub fn headless() -> gpui::Application {
     gpui::Application::with_platform(current_platform(true))
 }
 
+#[cfg(target_family = "wasm")]
+pub use gpui_web::WebBackendPreference;
+
+#[cfg(target_family = "wasm")]
+pub fn application_with_web_backend(backend_preference: WebBackendPreference) -> gpui::Application {
+    let platform = Rc::new(gpui_web::WebPlatform::new_with_backend(
+        true,
+        backend_preference,
+    ));
+    let http_client = std::sync::Arc::new(platform.fetch_http_client());
+    gpui::Application::with_platform(platform).with_http_client(http_client)
+}
+
 /// Unlike `application`, this function returns a single-threaded web application.
 #[cfg(target_family = "wasm")]
 pub fn single_threaded_web() -> gpui::Application {
-    gpui::Application::with_platform(Rc::new(gpui_web::WebPlatform::new(false)))
+    let platform = Rc::new(gpui_web::WebPlatform::new(false));
+    let http_client = std::sync::Arc::new(platform.fetch_http_client());
+    gpui::Application::with_platform(platform).with_http_client(http_client)
 }
 
 /// Initializes panic hooks and logging for the web platform.
@@ -60,18 +81,25 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
 }
 
 /// Returns a new [`HeadlessRenderer`] for the current platform, if available.
-#[cfg(feature = "test-support")]
-pub fn current_headless_renderer() -> Option<Box<dyn gpui::PlatformHeadlessRenderer>> {
+#[cfg(any(feature = "bench-support", feature = "test-support"))]
+pub fn current_headless_renderer() -> anyhow::Result<Option<Box<dyn gpui::PlatformHeadlessRenderer>>>
+{
     #[cfg(target_os = "macos")]
     {
-        Some(Box::new(
+        Ok(Some(Box::new(
             gpui_macos::metal_renderer::MetalHeadlessRenderer::new(),
-        ))
+        )))
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     {
-        None
+        gpui_wgpu::WgpuHeadlessRenderer::new()
+            .map(|renderer| Some(Box::new(renderer) as Box<dyn gpui::PlatformHeadlessRenderer>))
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        Ok(None)
     }
 }
 

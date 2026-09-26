@@ -641,7 +641,6 @@ pub fn render_table_row(
         Some(widths) => widths.clone().map(Some),
         None => vec![None; cols].into_table_row(cols),
     };
-
     let mut row = div()
         // NOTE: `h_flex()` sneakily applies `items_center()` which is not default behavior for div element.
         // Applying `.flex().flex_row()` manually to overcome that
@@ -652,38 +651,56 @@ pub fn render_table_row(
         .when_some(bg, |row, bg| row.bg(bg))
         .when(table_context.show_row_hover, |row| {
             row.hover(|s| s.bg(cx.theme().colors().element_hover.opacity(0.6)))
-        })
-        .when(!is_striped && table_context.show_row_borders, |row| {
-            row.border_b_1()
-                .border_color(transparent_black())
-                .when(!is_last, |row| row.border_color(cx.theme().colors().border))
         });
 
     let pinned_cols = table_context.pinned_cols;
     let column_filter = &table_context.column_filter;
 
-    if is_pinned_layout(pinned_cols, cols) {
-        let items_vec: Vec<AnyElement> = items.map(IntoElement::into_any_element).into_vec();
-        let widths_vec: Vec<Option<Length>> = column_widths.into_vec();
+    // Only `Resizable` columns (independent absolute pixel widths) should leave the wrapper
+    // hugging their combined width so the row border stops at the last column. Percentage
+    // widths (`Redistributable`) need a full-size ancestor for their fractions to resolve
+    // against, and `flex_1`/auto cells are meant to stretch across the whole row anyway.
+    let is_absolute_width_table = table_context.column_widths.as_ref().is_some_and(|widths| {
+        widths
+            .as_slice()
+            .iter()
+            .all(|width| matches!(width, Length::Definite(DefiniteLength::Absolute(_))))
+    });
 
+    let cell_iter = items
+        .into_vec()
+        .into_iter()
+        .map(IntoElement::into_any_element)
+        .zip(column_widths.into_vec())
+        .enumerate()
+        .filter(|(idx, _)| column_is_visible(column_filter, *idx))
+        .map(|(_, pair)| pair);
+
+    let render_section = |cells: Box<dyn Iterator<Item = (AnyElement, Option<Length>)>>| {
+        div()
+            .flex()
+            .flex_row()
+            .when(!is_striped && table_context.show_row_borders, |row| {
+                row.border_b_1().map(|row| {
+                    if is_last {
+                        row.border_color(transparent_black())
+                    } else {
+                        row.border_color(cx.theme().colors().border)
+                    }
+                })
+            })
+            .children(cells.map(|(cell, width)| render_cell(width, cell, &table_context, cx)))
+    };
+
+    if is_pinned_layout(pinned_cols, cols) && is_absolute_width_table {
         // Drop filtered columns before splitting into pinned/scrollable sections. The number of
         // pinned columns that survive filtering determines where the kept cells are split.
         let pinned_visible = (0..pinned_cols)
             .filter(|&idx| column_is_visible(column_filter, idx))
             .count();
-        let mut kept: Vec<(AnyElement, Option<Length>)> = items_vec
-            .into_iter()
-            .zip(widths_vec)
-            .enumerate()
-            .filter(|(idx, _)| column_is_visible(column_filter, *idx))
-            .map(|(_, pair)| pair)
-            .collect();
-        let scrollable: Vec<(AnyElement, Option<Length>)> = kept.drain(pinned_visible..).collect();
 
-        let pinned_section = div().flex().flex_row().flex_shrink_0().children(
-            kept.into_iter()
-                .map(|(cell, width)| render_cell(width, cell, &table_context, cx)),
-        );
+        let mut cells: Vec<_> = cell_iter.collect();
+        let scrollable_cells = cells.split_off(pinned_visible);
 
         // Scrollable section: overflow_x_scroll + track_scroll so GPUI handles the visual
         // shift natively without requiring per-scroll re-renders of list items.
@@ -692,31 +709,21 @@ pub fn render_table_row(
             .id(("table-row-scrollable", row_index as u64))
             .flex_grow_1()
             .overflow_x_scroll()
+            .restrict_scroll_to_axis()
             .flex()
-            .child(
-                div().flex().flex_row().children(
-                    scrollable
-                        .into_iter()
-                        .map(|(cell, width)| render_cell(width, cell, &table_context, cx)),
-                ),
-            );
+            .child(render_section(Box::new(scrollable_cells.into_iter())));
 
         if let Some(ref handle) = table_context.h_scroll_handle {
             scrollable_section = scrollable_section.track_scroll(handle);
         }
-        scrollable_section.style().restrict_scroll_to_axis = Some(true);
+
+        let pinned_section = render_section(Box::new(cells.into_iter())).flex_shrink_0();
 
         row = row.child(pinned_section).child(scrollable_section);
     } else {
-        row = row.children(
-            items
-                .map(IntoElement::into_any_element)
-                .into_vec()
-                .into_iter()
-                .zip(column_widths.into_vec())
-                .enumerate()
-                .filter(|(idx, _)| column_is_visible(column_filter, *idx))
-                .map(|(_, (cell, width))| render_cell(width, cell, &table_context, cx)),
+        row = row.child(
+            render_section(Box::new(cell_iter))
+                .when(!is_absolute_width_table, |this| this.size_full()),
         );
     }
 
@@ -817,13 +824,13 @@ pub fn render_table_header(
             .id("table-header-scrollable")
             .flex_grow_1()
             .overflow_x_scroll()
+            .restrict_scroll_to_axis()
             .flex()
             .child(inner);
 
         if let Some(ref handle) = table_context.h_scroll_handle {
             scrollable_section = scrollable_section.track_scroll(handle);
         }
-        scrollable_section.style().restrict_scroll_to_axis = Some(true);
 
         outer
             .child(pinned_section)
@@ -1062,12 +1069,12 @@ fn render_resize_handles_resizable(
         .left(pinned_width)
         .right_0()
         .overflow_x_scroll()
+        .restrict_scroll_to_axis()
         .child(inner);
 
     if let Some(handle) = h_scroll_handle {
         overlay = overlay.track_scroll(handle);
     }
-    overlay.style().restrict_scroll_to_axis = Some(true);
 
     div()
         .id("resize-handles-wrapper")
@@ -1299,14 +1306,14 @@ impl RenderOnce for Table {
 
         if let Some(state) = interaction_state.as_ref() {
             let content = if is_resizable && !uses_pinned_layout {
-                let mut h_scroll_container = div()
+                let h_scroll_container = div()
                     .id("table-h-scroll")
                     .overflow_x_scroll()
+                    .restrict_scroll_to_axis()
                     .flex_grow_1()
                     .h_full()
                     .track_scroll(&state.read(cx).horizontal_scroll_handle)
                     .child(table);
-                h_scroll_container.style().restrict_scroll_to_axis = Some(true);
                 div().size_full().child(h_scroll_container)
             } else {
                 table
@@ -1355,9 +1362,9 @@ impl RenderOnce for Table {
                     );
                 }
             }
-            content.style().restrict_scroll_to_axis = Some(true);
 
             content
+                .restrict_scroll_to_axis()
                 .track_focus(&state.read(cx).focus_handle)
                 .id(("table", state.entity_id()))
                 .into_any_element()

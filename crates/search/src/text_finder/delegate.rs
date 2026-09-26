@@ -28,15 +28,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Range, time::Duration};
 
 use collections::{HashMap, HashSet};
-use editor::{MultiBufferSnapshot, PathKey, multibuffer_context_lines};
+use editor::{Editor, MultiBufferSnapshot, PathKey, multibuffer_context_lines};
 use file_icons::FileIcons;
 use futures::StreamExt;
 use gpui::{
-    AnyElement, AppContext, AsyncApp, ClickEvent, DismissEvent, EntityId, HighlightStyle,
+    AnyElement, App, AppContext, AsyncApp, ClickEvent, DismissEvent, EntityId, HighlightStyle,
     Modifiers, StyledText, Task, TextStyle, prelude::*,
 };
-use gpui::{Entity, FocusHandle};
-use language::{Buffer, LanguageAwareStyling};
+use gpui::{Entity, FocusHandle, WeakEntity};
+use language::{Buffer, Language, LanguageAwareStyling};
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath, Search};
 use project::{SearchResults, search::SearchQuery, search::SearchResult};
@@ -45,13 +45,14 @@ use smol::future::yield_now;
 use text::Anchor;
 use theme_settings::ThemeSettings;
 use ui::{
-    Disclosure, Divider, FluentBuilder, IconButtonShape, ListItem, ListItemSpacing, Toggleable,
-    Tooltip, prelude::*, text_for_keystroke,
+    Disclosure, Divider, FluentBuilder, ListItem, ListItemSpacing, Toggleable, Tooltip, prelude::*,
+    text_for_keystroke,
 };
 use util::ResultExt;
 use workspace::SplitDirection;
 use workspace::Workspace;
 use workspace::item::ItemSettings;
+use workspace::pane::Pane;
 
 use super::{Fold, SearchMatch, Unfold};
 use crate::project_search::{ActiveSettings, ProjectSearch};
@@ -85,7 +86,28 @@ pub struct Delegate {
     /// column so every row's number right-aligns to the widest one. Recomputed in
     /// [`Delegate::rebuild_entries`].
     pub(crate) max_line_number: u32,
+    pub(crate) selected_matches: Vec<SelectedMatch>,
     pub(crate) collapsed_paths: HashSet<ProjectPath>,
+    pub(crate) query_editor: Option<Entity<Editor>>,
+    pub(crate) regex_language: Option<Arc<Language>>,
+}
+
+/// Wrapper with Eq is path + range equality
+#[derive(Clone)]
+pub(crate) struct SelectedMatch(pub SearchMatch);
+
+impl PartialEq for SelectedMatch {
+    fn eq(&self, other: &Self) -> bool {
+        *self == other.0
+    }
+}
+
+impl Eq for SelectedMatch {}
+
+impl PartialEq<SearchMatch> for SelectedMatch {
+    fn eq(&self, other: &SearchMatch) -> bool {
+        self.0.path == other.path && self.0.range == other.range
+    }
 }
 
 pub(crate) enum Entry {
@@ -305,7 +327,10 @@ impl Delegate {
                 in_progress_search,
                 unique_files: HashSet::default(),
                 max_line_number: 0,
+                selected_matches: Vec::new(),
                 collapsed_paths: HashSet::default(),
+                query_editor: None,
+                regex_language: None,
             });
 
             this
@@ -325,7 +350,7 @@ impl Delegate {
             .get(&project.downgrade())
             .cloned();
 
-        let search = cx.new(|cx| ProjectSearch::new(project, cx));
+        let search = cx.new(|cx| ProjectSearch::new(project, weak_workspace.clone(), cx));
         let project_search =
             cx.new(|cx| ProjectSearchView::new(weak_workspace, search, window, cx, settings));
         cx.spawn(async move |_, cx| Self::new_from_project_search(project_search, cx).await)
@@ -446,19 +471,100 @@ impl Delegate {
     }
 
     fn selected_search_match(&self) -> Option<&SearchMatch> {
-        match self.entries.get(self.selected_index)? {
+        self.search_match_for_entry(self.selected_index)
+    }
+
+    fn search_match_for_entry(&self, ix: usize) -> Option<&SearchMatch> {
+        match self.entries.get(ix)? {
             Entry::Match(match_index) => self.matches.get(*match_index),
             Entry::Header(_) | Entry::Separator => None,
         }
     }
 
+    pub(crate) fn prepend_selected_matches(&mut self) {
+        if self.selected_matches.is_empty() {
+            return;
+        }
+        self.matches
+            .retain(|m| !self.selected_matches.iter().any(|selected| selected == m));
+        let mut matches: Vec<SearchMatch> = self
+            .selected_matches
+            .iter()
+            .map(|selected| selected.0.clone())
+            .collect();
+        self.unique_files
+            .extend(matches.iter().map(|m| m.path.clone()));
+        matches.append(&mut self.matches);
+        self.matches = matches;
+    }
+
+    fn open_match(
+        &self,
+        search_match: &SearchMatch,
+        pane: Option<WeakEntity<Pane>>,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let path = search_match.path.clone();
+        let row = search_match.line_number.saturating_sub(1);
+        let column = search_match.match_start_byte_column;
+        let Some(workspace) = self.project_search_view.read(cx).workspace.upgrade() else {
+            return;
+        };
+        let open_task = workspace.update(cx, |workspace, cx| {
+            workspace.open_path_preview(path, pane, focus, false, true, window, cx)
+        });
+        cx.spawn_in(window, async move |_, cx| {
+            let item = open_task.await.log_err()?;
+            if let Some(active_editor) = item.downcast::<editor::Editor>() {
+                active_editor
+                    .downgrade()
+                    .update_in(cx, |editor, window, cx| {
+                        editor.go_to_singleton_buffer_point(
+                            text::Point::new(row, column),
+                            window,
+                            cx,
+                        );
+                    })
+                    .log_err();
+            }
+            Some(())
+        })
+        .detach();
+    }
+
     /// Opens the selected match in a new split in `direction`, then dismisses.
+    /// With a multi-selection, every selected match opens as a tab in a
+    /// single new split.
     pub(crate) fn open_in_split(
         &mut self,
         direction: SplitDirection,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
+        if !self.selected_matches.is_empty() {
+            let Some(workspace) = self.project_search_view.read(cx).workspace.upgrade() else {
+                return;
+            };
+            let selected = std::mem::take(&mut self.selected_matches);
+            let new_pane = workspace.update(cx, |workspace, cx| {
+                workspace.split_pane(workspace.active_pane().clone(), direction, window, cx)
+            });
+            let count = selected.len();
+            for (i, selected_match) in selected.iter().enumerate() {
+                let focus = i + 1 == count;
+                self.open_match(
+                    &selected_match.0,
+                    Some(new_pane.downgrade()),
+                    focus,
+                    window,
+                    cx,
+                );
+            }
+            cx.emit(DismissEvent);
+            return;
+        }
         let Some(selected_match) = self.selected_search_match() else {
             return;
         };
@@ -491,6 +597,35 @@ impl Delegate {
         .detach();
         cx.emit(DismissEvent);
     }
+
+    pub(crate) fn adjust_query_regex_language(&self, cx: &mut App) {
+        let Some(query_buffer) = self
+            .query_editor
+            .as_ref()
+            .and_then(|query_editor| query_editor.read(cx).buffer().read(cx).as_singleton())
+        else {
+            return;
+        };
+        let language = if self.search_options.contains(SearchOptions::REGEX) {
+            self.regex_language.clone()
+        } else {
+            None
+        };
+        query_buffer.update(cx, |query_buffer, cx| {
+            query_buffer.set_language(language, cx);
+        });
+    }
+}
+
+pub(crate) fn toggle_search_option(
+    picker: &mut Picker<Delegate>,
+    options: SearchOptions,
+    window: &mut Window,
+    cx: &mut Context<Picker<Delegate>>,
+) {
+    picker.delegate.search_options.toggle(options);
+    picker.delegate.adjust_query_regex_language(cx);
+    picker.refresh(window, cx);
 }
 
 pub(crate) enum PopulateProjectSearch {
@@ -578,9 +713,9 @@ pub(crate) async fn matches_to_multibuffer(
     PopulateProjectSearch::Completed
 }
 
-const SEARCH_DEBOUNCE_MS: u64 = 100;
-const CLICK_THRESHOLD_MS: u128 = 50;
-const DOUBLE_CLICK_THRESHOLD_MS: u128 = 300;
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(100);
+const CLICK_THRESHOLD: Duration = Duration::from_millis(50);
+const DOUBLE_CLICK_THRESHOLD: Duration = Duration::from_millis(300);
 const SEARCH_RESULTS_BATCH_SIZE: usize = 256;
 const MAX_MATCH_CONTEXT_BYTES: usize = 512;
 
@@ -617,26 +752,26 @@ impl PickerDelegate for Delegate {
             let label = option.label();
             let focus_handle = focus_handle.clone();
             let picker = picker.clone();
+
             IconButton::new(
                 ("text-finder-search-option", option as usize),
                 option.icon(),
             )
             .icon_size(IconSize::Small)
-            .shape(IconButtonShape::Square)
             .toggle_state(active.contains(options))
             .tooltip(move |_window, cx| Tooltip::for_action_in(label, action, &focus_handle, cx))
             .on_click(move |_, window, cx| {
                 picker.update(cx, |picker, cx| {
-                    picker.delegate.search_options.toggle(options);
-                    picker.refresh(window, cx);
+                    toggle_search_option(picker, options, window, cx);
                 });
             })
         });
 
         Some(
             h_flex()
-                .gap_1()
+                .gap_px()
                 .children(filter_buttons)
+                .child(Divider::vertical().ml_px().mr_0p5())
                 .children(picker::parts::project_scan_indicator(
                     self.active_query.is_some(),
                     self.project(cx),
@@ -668,7 +803,14 @@ impl PickerDelegate for Delegate {
                 workspace::pane::SplitDown::default().boxed_clone(),
             ),
             picker::PickerAction::separator(),
-            picker::PickerAction::button("Open File", menu::Confirm.boxed_clone()),
+            picker::PickerAction::button(
+                if self.selected_matches.len() > 1 {
+                    "Open Multiple"
+                } else {
+                    "Open File"
+                },
+                menu::Confirm.boxed_clone(),
+            ),
             picker::PickerAction::button("Open as Tab", super::ToProjectSearch.boxed_clone()),
         ]
     }
@@ -733,6 +875,8 @@ impl PickerDelegate for Delegate {
             self.collapsed_paths.clear();
             self.selected_index = 0;
             self.active_query = None;
+            self.prepend_selected_matches();
+            self.rebuild_entries();
             cx.notify();
             return Task::ready(());
         };
@@ -750,9 +894,7 @@ impl PickerDelegate for Delegate {
         let (signal_done, match_updating_done) = futures::channel::oneshot::channel();
         self.in_progress_search =
             InProgressSearch::Connected(cx.spawn_in(window, async move |picker, cx| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(SEARCH_DEBOUNCE_MS))
-                    .await;
+                cx.background_executor().timer(SEARCH_DEBOUNCE).await;
 
                 if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
                     return None;
@@ -790,15 +932,14 @@ impl PickerDelegate for Delegate {
         let now = std::time::Instant::now();
         let is_click = self
             .last_selection_change_time
-            .map(|t| now.duration_since(t).as_millis() < CLICK_THRESHOLD_MS)
+            .map(|t| now.duration_since(t) < CLICK_THRESHOLD)
             .unwrap_or(false);
 
         if is_click {
             let is_double_click = self
                 .last_click
                 .map(|(ix, t)| {
-                    ix == self.selected_index
-                        && now.duration_since(t).as_millis() < DOUBLE_CLICK_THRESHOLD_MS
+                    ix == self.selected_index && now.duration_since(t) < DOUBLE_CLICK_THRESHOLD
                 })
                 .unwrap_or(false);
             self.last_click = Some((self.selected_index, now));
@@ -809,41 +950,73 @@ impl PickerDelegate for Delegate {
             }
         }
 
-        let Some(selected_match) = self.selected_search_match() else {
+        let Some(selected_match) = self.selected_search_match().cloned() else {
             return;
         };
+        self.open_match(&selected_match, None, true, window, cx);
 
-        let path = selected_match.path.clone();
-        let line_number = selected_match.line_number;
-        let column = selected_match.match_start_byte_column;
+        cx.emit(DismissEvent);
+    }
 
-        let Some(workspace) = self.project_search_view.read(cx).workspace.upgrade() else {
+    fn supports_multi_select(&self) -> bool {
+        true
+    }
+
+    fn is_item_selected(&self, ix: usize) -> bool {
+        let Some(search_match) = self.search_match_for_entry(ix) else {
+            return false;
+        };
+        self.selected_matches
+            .iter()
+            .any(|selected| selected == search_match)
+    }
+
+    fn toggle_item_selected(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        // Headers and separators cannot participate in multi-selection.
+        let Some(search_match) = self.search_match_for_entry(ix).cloned() else {
             return;
         };
+        let selected = SelectedMatch(search_match);
+        if let Some(position) = self
+            .selected_matches
+            .iter()
+            .position(|existing| *existing == selected)
+        {
+            self.selected_matches.remove(position);
+        } else {
+            self.selected_matches.push(selected);
+        }
+        cx.notify();
+    }
 
-        let open_task = workspace.update(cx, |workspace, cx| {
-            workspace.open_path_preview(path, None, true, false, true, window, cx)
-        });
+    fn selected_item_count(&self) -> usize {
+        self.selected_matches.len()
+    }
 
-        let row = line_number.saturating_sub(1);
-        cx.spawn_in(window, async move |_, cx| {
-            let item = open_task.await.log_err()?;
-            if let Some(active_editor) = item.downcast::<editor::Editor>() {
-                active_editor
-                    .downgrade()
-                    .update_in(cx, |editor, window, cx| {
-                        editor.go_to_singleton_buffer_point(
-                            text::Point::new(row, column),
-                            window,
-                            cx,
-                        );
-                    })
-                    .log_err();
-            }
-            Some(())
-        })
-        .detach();
+    fn clear_selection(&mut self, _cx: &mut Context<Picker<Self>>) {
+        self.selected_matches.clear();
+    }
 
+    fn confirm_multi(
+        &mut self,
+        _secondary: bool,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let selected = std::mem::take(&mut self.selected_matches);
+        if selected.is_empty() {
+            return;
+        }
+        let count = selected.len();
+        for (i, selected_match) in selected.iter().enumerate() {
+            let is_last = i + 1 == count;
+            self.open_match(&selected_match.0, None, is_last, window, cx);
+        }
         cx.emit(DismissEvent);
     }
 
@@ -866,9 +1039,33 @@ impl PickerDelegate for Delegate {
         &self,
         ix: usize,
         selected: bool,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        self.render_match_impl(ix, selected, None, window, cx)
+    }
+
+    fn render_match_with_checkbox(
+        &self,
+        ix: usize,
+        selected: bool,
+        checkbox: AnyElement,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        self.render_match_impl(ix, selected, Some(checkbox), window, cx)
+    }
+}
+
+impl Delegate {
+    fn render_match_impl(
+        &self,
+        ix: usize,
+        selected: bool,
+        checkbox: Option<AnyElement>,
+        _: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
         match self.entries.get(ix)? {
             Entry::Separator => Some(
                 div()
@@ -986,6 +1183,7 @@ impl PickerDelegate for Delegate {
                         .spacing(ListItemSpacing::Sparse)
                         .inset(true)
                         .toggle_state(selected)
+                        .when_some(checkbox, |this, checkbox| this.start_slot(checkbox))
                         .child(
                             h_flex()
                                 .w_full()
@@ -1093,6 +1291,7 @@ async fn stream_results_to_picker(
                     .unique_files
                     .extend(batch_matches.iter().map(|m| &m.path).cloned());
                 delegate.matches.extend(batch_matches);
+                delegate.prepend_selected_matches();
                 // Rebuild the grouped view and resnap the selection onto a
                 // selectable row (the header/separator rows are not selectable).
                 delegate.rebuild_entries();
@@ -1362,7 +1561,7 @@ mod tests {
 
         // Search is debounced; advance past the debounce and let results stream in.
         cx.executor()
-            .advance_clock(std::time::Duration::from_millis(SEARCH_DEBOUNCE_MS + 50));
+            .advance_clock(SEARCH_DEBOUNCE + Duration::from_millis(50));
         cx.run_until_parked();
 
         picker.read_with(cx, |picker, _| {

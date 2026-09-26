@@ -158,9 +158,10 @@ impl Keymap {
     /// In the case of multiple bindings at the same depth, the ones added to the keymap later take
     /// precedence. User bindings are added after built-in bindings so that they take precedence.
     ///
-    /// If a user has disabled a binding with `"x": null` it will not be returned. Disabled bindings
+    /// If a binding has been disabled with `"x": null` it will not be returned. Disabled bindings
     /// are evaluated with the same precedence rules so you can disable a rule in a given context
-    /// only.
+    /// only. A disabled binding only suppresses bindings from sources with equal or weaker
+    /// precedence: a base keymap null hides default bindings, but user bindings still apply.
     pub fn bindings_for_input(
         &self,
         input: &[impl AsKeystroke],
@@ -191,20 +192,20 @@ impl Keymap {
         let mut bindings: SmallVec<[_; 1]> = SmallVec::new();
         let mut first_binding_index = None;
         let mut unbound_bindings: Vec<&KeyBinding> = Vec::new();
+        // A `NoAction` binding suppresses out-ranked bindings from sources with
+        // equal or weaker precedence, while bindings from stronger sources (a
+        // smaller meta, e.g. a user binding vs a base keymap null) still apply.
+        // Bindings without a meta are treated as user bindings.
+        let mut no_action_meta: Option<u32> = None;
 
         for (_, ix, binding) in matched_bindings {
+            let meta = binding.meta.map_or(0, |meta| meta.0);
             if is_no_action(&*binding.action) {
-                // Only break if this is a user-defined NoAction binding
-                // This allows user keymaps to override base keymap NoAction bindings
-                if let Some(meta) = binding.meta {
-                    if meta.0 == 0 {
-                        break;
-                    }
-                } else {
-                    // If no meta is set, assume it's a user binding for safety
-                    break;
-                }
-                // For non-user NoAction bindings, continue searching for user overrides
+                no_action_meta = Some(no_action_meta.map_or(meta, |existing| existing.min(meta)));
+                continue;
+            }
+
+            if no_action_meta.is_some_and(|no_action_meta| meta >= no_action_meta) {
                 continue;
             }
 
@@ -568,6 +569,75 @@ mod tests {
         );
         assert!(result.is_empty());
         assert!(!pending);
+    }
+
+    #[test]
+    fn test_disable_weaker_sources_only() {
+        const USER: KeyBindingMetaIndex = KeyBindingMetaIndex(0);
+        const VIM: KeyBindingMetaIndex = KeyBindingMetaIndex(1);
+        const BASE: KeyBindingMetaIndex = KeyBindingMetaIndex(2);
+        const DEFAULT: KeyBindingMetaIndex = KeyBindingMetaIndex(3);
+
+        let editor_context = || [KeyContext::parse("editor").unwrap()];
+        let ctrl_x = || [Keystroke::parse("ctrl-x").unwrap()];
+
+        // A base keymap null disables a default binding in the same context.
+        let mut keymap = Keymap::default();
+        keymap.add_bindings([
+            KeyBinding::new("ctrl-x", ActionAlpha {}, Some("editor")).with_meta(DEFAULT),
+            KeyBinding::new("ctrl-x", NoAction {}, Some("editor")).with_meta(BASE),
+        ]);
+        let (result, _) = keymap.bindings_for_input(&ctrl_x(), &editor_context());
+        assert!(result.is_empty());
+
+        // A user binding is not affected by base keymap or default nulls.
+        let mut keymap = Keymap::default();
+        keymap.add_bindings([
+            KeyBinding::new("ctrl-x", NoAction {}, Some("editor")).with_meta(DEFAULT),
+            KeyBinding::new("ctrl-x", NoAction {}, Some("editor")).with_meta(BASE),
+            KeyBinding::new("ctrl-x", ActionBeta {}, None).with_meta(USER),
+        ]);
+        let (result, _) = keymap.bindings_for_input(&ctrl_x(), &editor_context());
+        assert_eq!(result.len(), 1);
+        assert!(result[0].action.partial_eq(&ActionBeta {}));
+
+        // A user binding at a shallower context is not disabled by a deeper
+        // base keymap null.
+        let mut keymap = Keymap::default();
+        keymap.add_bindings([
+            KeyBinding::new("ctrl-x", NoAction {}, Some("editor")).with_meta(BASE),
+            KeyBinding::new("ctrl-x", ActionBeta {}, Some("workspace")).with_meta(USER),
+        ]);
+        let (result, _) = keymap.bindings_for_input(
+            &ctrl_x(),
+            &[
+                KeyContext::parse("workspace").unwrap(),
+                KeyContext::parse("editor").unwrap(),
+            ],
+        );
+        assert_eq!(result.len(), 1);
+        assert!(result[0].action.partial_eq(&ActionBeta {}));
+
+        // A vim binding survives a base keymap null, and a user null disables
+        // everything.
+        let mut keymap = Keymap::default();
+        keymap.add_bindings([
+            KeyBinding::new("ctrl-x", ActionAlpha {}, Some("editor")).with_meta(DEFAULT),
+            KeyBinding::new("ctrl-x", NoAction {}, Some("editor")).with_meta(BASE),
+            KeyBinding::new("ctrl-x", ActionGamma {}, Some("editor")).with_meta(VIM),
+        ]);
+        let (result, _) = keymap.bindings_for_input(&ctrl_x(), &editor_context());
+        assert_eq!(result.len(), 1);
+        assert!(result[0].action.partial_eq(&ActionGamma {}));
+
+        let mut keymap = Keymap::default();
+        keymap.add_bindings([
+            KeyBinding::new("ctrl-x", ActionAlpha {}, Some("editor")).with_meta(DEFAULT),
+            KeyBinding::new("ctrl-x", ActionGamma {}, Some("editor")).with_meta(VIM),
+            KeyBinding::new("ctrl-x", NoAction {}, Some("editor")).with_meta(USER),
+        ]);
+        let (result, _) = keymap.bindings_for_input(&ctrl_x(), &editor_context());
+        assert!(result.is_empty());
     }
 
     #[test]

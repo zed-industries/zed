@@ -2,18 +2,18 @@ use anyhow::{Result, anyhow};
 use collections::HashMap;
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
-use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use futures::{Stream, TryFutureExt, stream};
 use gpui::{App, AsyncApp, Context, Entity, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, DisabledReason, EnvVar, IconOrSvg, InlineDescription,
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestTool,
-    LanguageModelToolChoice, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
-    ProviderSettingsView, RateLimiter, Role, StopReason, SubPageProviderSettings, TokenUsage,
-    env_var,
+    LanguageModel, LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelCompletionStream, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelRequestTool, LanguageModelToolUse, LanguageModelToolUseId,
+    MessageContent, ModelRateLimiters, ProviderSettingsView, Role, StopReason,
+    SubPageProviderSettings, TokenUsage, env_var, unavailable_error,
 };
 use menu;
 use ollama::{
@@ -54,6 +54,7 @@ pub struct OllamaSettings {
 pub struct OllamaLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: Entity<State>,
+    request_limiters: ModelRateLimiters,
 }
 
 pub struct State {
@@ -234,8 +235,189 @@ impl OllamaLanguageModelProvider {
                     credentials_provider,
                 }
             }),
+            request_limiters: ModelRateLimiters::default(),
         };
         this
+    }
+
+    /// Every model this provider offers, keyed by id: the fetched list when
+    /// auto-discovery is on, with settings entries merged over it.
+    fn ollama_models(&self, cx: &App) -> HashMap<String, ollama::Model> {
+        let mut models: HashMap<String, ollama::Model> = HashMap::default();
+        let settings = OllamaLanguageModelProvider::settings(cx);
+
+        if settings.auto_discover {
+            for model in self.state.read(cx).fetched_models.iter() {
+                let mut model = model.clone();
+                if let Some(context_window) = settings.context_window {
+                    model.max_tokens = context_window;
+                }
+                models.insert(model.name.clone(), model);
+            }
+        }
+
+        merge_settings_into_models(
+            &mut models,
+            &settings.available_models,
+            settings.context_window,
+        );
+
+        models
+    }
+
+    /// The current configuration of `model`, if this provider still offers it.
+    fn config(
+        &self,
+        model: &LanguageModel,
+        cx: &App,
+    ) -> Result<ollama::Model, LanguageModelCompletionError> {
+        self.ollama_models(cx)
+            .remove(model.id.0.as_ref())
+            .ok_or_else(|| unavailable_error(model))
+    }
+
+    fn to_ollama_request(
+        config: &ollama::Model,
+        request: LanguageModelRequest,
+    ) -> Result<ChatRequest> {
+        if request.contains_custom_tool_input() {
+            anyhow::bail!("Ollama does not support custom tools");
+        }
+
+        let supports_vision = config.supports_vision.unwrap_or(false);
+
+        let mut messages = Vec::with_capacity(request.messages.len());
+
+        for mut msg in request.messages.into_iter() {
+            let images = if supports_vision {
+                msg.content
+                    .iter()
+                    .filter_map(|content| match content {
+                        MessageContent::Image(image) => Some(image.source.to_string()),
+                        _ => None,
+                    })
+                    .collect::<Vec<String>>()
+            } else {
+                vec![]
+            };
+
+            match msg.role {
+                Role::User => {
+                    for tool_result in msg
+                        .content
+                        .extract_if(.., |x| matches!(x, MessageContent::ToolResult(..)))
+                    {
+                        match tool_result {
+                            MessageContent::ToolResult(tool_result) => {
+                                let images = tool_result
+                                    .images()
+                                    .map(|image| image.source.to_string())
+                                    .collect::<Vec<_>>();
+                                messages.push(ChatMessage::Tool {
+                                    tool_name: tool_result.tool_name.to_string(),
+                                    content: tool_result.text_contents(),
+                                    images: if images.is_empty() {
+                                        None
+                                    } else {
+                                        Some(images)
+                                    },
+                                })
+                            }
+                            _ => unreachable!("Only tool result should be extracted"),
+                        }
+                    }
+                    if !msg.content.is_empty() {
+                        messages.push(ChatMessage::User {
+                            content: msg.string_contents(),
+                            images: if images.is_empty() {
+                                None
+                            } else {
+                                Some(images)
+                            },
+                        })
+                    }
+                }
+                Role::Assistant => {
+                    let mut text_content = String::new();
+                    let mut thinking = None;
+                    let mut tool_calls = Vec::new();
+                    for content in msg.content.into_iter() {
+                        match content {
+                            MessageContent::Text(text) => {
+                                text_content.push_str(&text);
+                            }
+                            MessageContent::Thinking { text, .. } if !text.is_empty() => {
+                                thinking = Some(text)
+                            }
+                            MessageContent::ToolUse(tool_use) => {
+                                tool_calls.push(OllamaToolCall {
+                                    id: tool_use.id.to_string(),
+                                    function: OllamaFunctionCall {
+                                        name: tool_use.name.to_string(),
+                                        arguments: match tool_use.input {
+                                            language_model::LanguageModelToolUseInput::Json(
+                                                input,
+                                            ) => input,
+                                            language_model::LanguageModelToolUseInput::Text(_) => {
+                                                return Err(anyhow::anyhow!(
+                                                    "Ollama does not support custom tool calls"
+                                                ));
+                                            }
+                                        },
+                                    },
+                                });
+                            }
+                            _ => (),
+                        }
+                    }
+                    messages.push(ChatMessage::Assistant {
+                        content: text_content,
+                        tool_calls: Some(tool_calls),
+                        images: if images.is_empty() {
+                            None
+                        } else {
+                            Some(images)
+                        },
+                        thinking,
+                    })
+                }
+                Role::System => messages.push(ChatMessage::System {
+                    content: msg.string_contents(),
+                }),
+            }
+        }
+        Ok(ChatRequest {
+            model: config.name.clone(),
+            messages,
+            keep_alive: config.keep_alive.clone().unwrap_or_default(),
+            stream: true,
+            options: Some(ChatOptions {
+                num_ctx: Some(config.max_tokens),
+                num_predict: request.max_output_tokens.map(isize::try_from).transpose()?,
+                // Only send stop tokens if explicitly provided. When empty/None,
+                // Ollama will use the model's default stop tokens from its Modelfile.
+                // Sending an empty array would override and disable the defaults.
+                stop: if request.stop.is_empty() {
+                    None
+                } else {
+                    Some(request.stop)
+                },
+                temperature: request.temperature.or(Some(1.0)),
+                ..Default::default()
+            }),
+            think: config
+                .supports_thinking
+                .map(|supports_thinking| supports_thinking && request.thinking_allowed),
+            tools: if config.supports_tools.unwrap_or(false) {
+                request
+                    .tools
+                    .into_iter()
+                    .map(tool_into_ollama)
+                    .collect::<Result<_>>()?
+            } else {
+                vec![]
+            },
+        })
     }
 
     fn settings(cx: &App) -> &OllamaSettings {
@@ -277,52 +459,23 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiOllama)
     }
 
-    fn default_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn default_model(&self, _: &App) -> Option<LanguageModel> {
         // We shouldn't try to select default model, because it might lead to a load call for an unloaded model.
         // In a constrained environment where user might not have enough resources it'll be a bad UX to select something
         // to load by default.
         None
     }
 
-    fn default_fast_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn default_fast_model(&self, _: &App) -> Option<LanguageModel> {
         // See explanation for default_model.
         None
     }
 
-    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models: HashMap<String, ollama::Model> = HashMap::default();
-        let settings = OllamaLanguageModelProvider::settings(cx);
-
-        if settings.auto_discover {
-            // Add models from the Ollama API
-            for model in self.state.read(cx).fetched_models.iter() {
-                let mut model = model.clone();
-                if let Some(context_window) = settings.context_window {
-                    model.max_tokens = context_window;
-                }
-                models.insert(model.name.clone(), model);
-            }
-        }
-
-        // Override with available models from settings
-        merge_settings_into_models(
-            &mut models,
-            &settings.available_models,
-            settings.context_window,
-        );
-
-        let mut models = models
-            .into_values()
-            .map(|model| {
-                Arc::new(OllamaLanguageModel {
-                    id: LanguageModelId::from(model.name.clone()),
-                    disabled: model.disabled.as_ref().map(|d| DisabledReason::new(d)),
-                    model,
-                    http_client: self.http_client.clone(),
-                    request_limiter: RateLimiter::new(4),
-                    state: self.state.clone(),
-                }) as Arc<dyn LanguageModel>
-            })
+    fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
+        let mut models = self
+            .ollama_models(cx)
+            .values()
+            .map(language_model)
             .collect::<Vec<_>>();
         models.sort_by_key(|model| model.name());
         models
@@ -350,193 +503,23 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
     }
 }
 
-pub struct OllamaLanguageModel {
-    id: LanguageModelId,
-    model: ollama::Model,
-    http_client: Arc<dyn HttpClient>,
-    request_limiter: RateLimiter,
-    state: Entity<State>,
-    disabled: Option<DisabledReason>,
-}
-
-impl OllamaLanguageModel {
-    fn to_ollama_request(&self, request: LanguageModelRequest) -> ChatRequest {
-        let supports_vision = self.model.supports_vision.unwrap_or(false);
-
-        let mut messages = Vec::with_capacity(request.messages.len());
-
-        for mut msg in request.messages.into_iter() {
-            let images = if supports_vision {
-                msg.content
-                    .iter()
-                    .filter_map(|content| match content {
-                        MessageContent::Image(image) => Some(image.source.to_string()),
-                        _ => None,
-                    })
-                    .collect::<Vec<String>>()
-            } else {
-                vec![]
-            };
-
-            match msg.role {
-                Role::User => {
-                    for tool_result in msg
-                        .content
-                        .extract_if(.., |x| matches!(x, MessageContent::ToolResult(..)))
-                    {
-                        match tool_result {
-                            MessageContent::ToolResult(tool_result) => {
-                                messages.push(ChatMessage::Tool {
-                                    tool_name: tool_result.tool_name.to_string(),
-                                    content: tool_result.text_contents(),
-                                })
-                            }
-                            _ => unreachable!("Only tool result should be extracted"),
-                        }
-                    }
-                    if !msg.content.is_empty() {
-                        messages.push(ChatMessage::User {
-                            content: msg.string_contents(),
-                            images: if images.is_empty() {
-                                None
-                            } else {
-                                Some(images)
-                            },
-                        })
-                    }
-                }
-                Role::Assistant => {
-                    let mut text_content = String::new();
-                    let mut thinking = None;
-                    let mut tool_calls = Vec::new();
-                    for content in msg.content.into_iter() {
-                        match content {
-                            MessageContent::Text(text) => {
-                                text_content.push_str(&text);
-                            }
-                            MessageContent::Thinking { text, .. } if !text.is_empty() => {
-                                thinking = Some(text)
-                            }
-                            MessageContent::ToolUse(tool_use) => {
-                                tool_calls.push(OllamaToolCall {
-                                    id: tool_use.id.to_string(),
-                                    function: OllamaFunctionCall {
-                                        name: tool_use.name.to_string(),
-                                        arguments: tool_use.input,
-                                    },
-                                });
-                            }
-                            _ => (),
-                        }
-                    }
-                    messages.push(ChatMessage::Assistant {
-                        content: text_content,
-                        tool_calls: Some(tool_calls),
-                        images: if images.is_empty() {
-                            None
-                        } else {
-                            Some(images)
-                        },
-                        thinking,
-                    })
-                }
-                Role::System => messages.push(ChatMessage::System {
-                    content: msg.string_contents(),
-                }),
-            }
-        }
-        ChatRequest {
-            model: self.model.name.clone(),
-            messages,
-            keep_alive: self.model.keep_alive.clone().unwrap_or_default(),
-            stream: true,
-            options: Some(ChatOptions {
-                num_ctx: Some(self.model.max_tokens),
-                // Only send stop tokens if explicitly provided. When empty/None,
-                // Ollama will use the model's default stop tokens from its Modelfile.
-                // Sending an empty array would override and disable the defaults.
-                stop: if request.stop.is_empty() {
-                    None
-                } else {
-                    Some(request.stop)
-                },
-                temperature: request.temperature.or(Some(1.0)),
-                ..Default::default()
-            }),
-            think: self
-                .model
-                .supports_thinking
-                .map(|supports_thinking| supports_thinking && request.thinking_allowed),
-            tools: if self.model.supports_tools.unwrap_or(false) {
-                request.tools.into_iter().map(tool_into_ollama).collect()
-            } else {
-                vec![]
-            },
-        }
-    }
-}
-
-impl LanguageModel for OllamaLanguageModel {
-    fn id(&self) -> LanguageModelId {
-        self.id.clone()
-    }
-
-    fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(self.model.display_name().to_string())
-    }
-
-    fn provider_id(&self) -> LanguageModelProviderId {
-        PROVIDER_ID
-    }
-
-    fn provider_name(&self) -> LanguageModelProviderName {
-        PROVIDER_NAME
-    }
-
-    fn supports_tools(&self) -> bool {
-        self.model.supports_tools.unwrap_or(false)
-    }
-
-    fn supports_images(&self) -> bool {
-        self.model.supports_vision.unwrap_or(false)
-    }
-
-    fn supports_thinking(&self) -> bool {
-        self.model.supports_thinking.unwrap_or(false)
-    }
-
-    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
-        match choice {
-            LanguageModelToolChoice::Auto => false,
-            LanguageModelToolChoice::Any => false,
-            LanguageModelToolChoice::None => false,
-        }
-    }
-
-    fn telemetry_id(&self) -> String {
-        format!("ollama/{}", self.model.id())
-    }
-
-    fn is_disabled(&self) -> Option<DisabledReason> {
-        self.disabled.clone()
-    }
-
-    fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
-    }
-
+impl LanguageModelClient for OllamaLanguageModelProvider {
     fn stream_completion(
         &self,
+        model: &LanguageModel,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
-            LanguageModelCompletionError,
-        >,
-    > {
-        let request = self.to_ollama_request(request);
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
+        let config = match cx.update(|cx| self.config(model, cx)) {
+            Ok(config) => config,
+            Err(error) => return async move { Err(error) }.boxed(),
+        };
+        let request_limiter = self.request_limiters.for_model(&model.id);
+        let request = match Self::to_ollama_request(&config, request) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
 
         let http_client = self.http_client.clone();
         let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
@@ -547,7 +530,7 @@ impl LanguageModel for OllamaLanguageModel {
             (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
-        let future = self.request_limiter.stream(async move {
+        let future = request_limiter.stream(async move {
             let stream = stream_chat_completion(
                 http_client.as_ref(),
                 &api_url,
@@ -561,6 +544,23 @@ impl LanguageModel for OllamaLanguageModel {
         });
 
         future.map_ok(|f| f.boxed()).boxed()
+    }
+}
+
+fn language_model(model: &ollama::Model) -> LanguageModel {
+    LanguageModel {
+        supports_tools: model.supports_tools.unwrap_or(false),
+        supports_images: model.supports_vision.unwrap_or(false),
+        supports_thinking: model.supports_thinking.unwrap_or(false),
+        disabled_reason: model.disabled.as_ref().map(|d| DisabledReason::new(d)),
+        ..LanguageModel::new(
+            LanguageModelId::from(model.name.clone()),
+            LanguageModelName::from(model.display_name().to_string()),
+            PROVIDER_ID,
+            PROVIDER_NAME,
+            format!("ollama/{}", model.id()),
+            model.max_token_count(),
+        )
     }
 }
 
@@ -621,7 +621,9 @@ fn map_to_language_model_completion_events(
                             id: LanguageModelToolUseId::from(id),
                             name: Arc::from(function.name),
                             raw_input: function.arguments.to_string(),
-                            input: function.arguments,
+                            input: language_model::LanguageModelToolUseInput::Json(
+                                function.arguments,
+                            ),
                             is_input_complete: true,
                             thought_signature: None,
                         });
@@ -1130,14 +1132,22 @@ fn merge_settings_into_models(
     }
 }
 
-fn tool_into_ollama(tool: LanguageModelRequestTool) -> ollama::OllamaTool {
-    ollama::OllamaTool::Function {
+fn tool_into_ollama(tool: LanguageModelRequestTool) -> Result<ollama::OllamaTool> {
+    let input_schema = match tool.input {
+        language_model::LanguageModelRequestToolInput::Function { input_schema, .. } => {
+            input_schema
+        }
+        language_model::LanguageModelRequestToolInput::Custom { .. } => {
+            anyhow::bail!("Ollama does not support custom tools");
+        }
+    };
+    Ok(ollama::OllamaTool::Function {
         function: OllamaFunctionTool {
             name: tool.name,
             description: Some(tool.description),
-            parameters: Some(tool.input_schema),
+            parameters: Some(input_schema),
         },
-    }
+    })
 }
 
 #[cfg(test)]

@@ -14,7 +14,7 @@ It covers which settings import automatically, which shortcuts map cleanly, and 
 Zed is available on macOS, Windows, and Linux.
 
 For macOS, you can download it from zed.dev/download, or install via Homebrew:
-`brew install zed-editor/zed/zed`
+`brew install --cask zed`
 
 For most Linux users, the easiest way to install Zed is through our installation script:
 `curl -f https://zed.dev/install.sh | sh`
@@ -62,6 +62,7 @@ The following VS Code settings are automatically imported when you use **Import 
 | `editor.hover.sticky`                       | `hover_popover_sticky`                         |
 | `editor.hover.hidingDelay`                  | `hover_popover_hiding_delay`                   |
 | `editor.parameterHints.enabled`             | `auto_signature_help`                          |
+| `workbench.editor.languageDetection`        | `language_detection`                           |
 | `editor.multiCursorModifier`                | `multi_cursor_modifier`                        |
 | `editor.selectionHighlight`                 | `selection_highlight`                          |
 | `editor.roundedSelection`                   | `rounded_selection`                            |
@@ -83,12 +84,12 @@ The following VS Code settings are automatically imported when you use **Import 
 
 | VS Code Setting             | Zed Setting                    |
 | --------------------------- | ------------------------------ |
+| `files.associations`        | `file_types`                   |
 | `files.autoSave`            | `autosave`                     |
 | `files.autoSaveDelay`       | `autosave.milliseconds`        |
+| `files.exclude`             | `file_scan_exclusions`         |
 | `files.insertFinalNewline`  | `ensure_final_newline_on_save` |
-| `files.associations`        | `file_types`                   |
-| `files.watcherExclude`      | `file_scan_exclusions`         |
-| `files.watcherInclude`      | `file_scan_inclusions`         |
+| `files.readonlyInclude`     | `read_only_files`              |
 | `files.simpleDialog.enable` | `use_system_path_prompts`      |
 | `search.smartCase`          | `use_smartcase_search`         |
 | `search.useIgnoreFiles`     | `search.include_ignored`       |
@@ -155,14 +156,14 @@ The following VS Code settings are automatically imported when you use **Import 
 
 **Other**
 
-| VS Code Setting            | Zed Setting                                              |
-| -------------------------- | -------------------------------------------------------- |
-| `http.proxy`               | `proxy`                                                  |
-| `npm.packageManager`       | `node.npm_path`                                          |
-| `telemetry.telemetryLevel` | `telemetry.metrics`, `telemetry.diagnostics`             |
-| `outline.icons`            | `outline_panel.file_icons`, `outline_panel.folder_icons` |
-| `chat.agent.enabled`       | `agent.enabled`                                          |
-| `mcp`                      | `context_servers`                                        |
+| VS Code Setting            | Zed Setting                                                  |
+| -------------------------- | ------------------------------------------------------------ |
+| `http.proxy`               | `proxy`                                                      |
+| `npm.packageManager`       | `node.npm_path`                                              |
+| `telemetry.telemetryLevel` | `telemetry.metrics`, `telemetry.diagnostics`                 |
+| `outline.icons`            | `outline_panel.file_icons`, `outline_panel.folder_indicator` |
+| `chat.agent.enabled`       | `agent.enabled`                                              |
+| `mcp`                      | `context_servers`                                            |
 
 Zed doesn’t import extensions or keybindings, but this import gets core editor behavior close to your VS Code setup. If you skip that step during setup, you can still import settings manually later via the command palette:
 
@@ -173,14 +174,15 @@ Zed doesn’t import extensions or keybindings, but this import gets core editor
 You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run {#action zed::OpenSettingsFile} from the Command Palette to edit your settings file directly.
 
 Here’s how common VS Code settings translate:
-| VS Code | Zed | Notes |
-| --- | --- | --- |
-| editor.fontFamily | buffer_font_family | Zed uses Zed Mono by default |
-| editor.fontSize | buffer_font_size | Set in pixels |
-| editor.tabSize | tab_size | Can override per language |
-| editor.insertSpaces | insert_spaces | Boolean |
-| editor.formatOnSave | format_on_save | Works with formatter enabled |
-| editor.wordWrap | soft_wrap | Supports optional wrap column |
+
+| VS Code             | Zed                | Notes                         |
+| ------------------- | ------------------ | ----------------------------- |
+| editor.fontFamily   | buffer_font_family | Zed uses Zed Mono by default  |
+| editor.fontSize     | buffer_font_size   | Set in pixels                 |
+| editor.tabSize      | tab_size           | Can override per language     |
+| editor.insertSpaces | insert_spaces      | Boolean                       |
+| editor.formatOnSave | format_on_save     | Works with formatter enabled  |
+| editor.wordWrap     | soft_wrap          | Supports optional wrap column |
 
 Zed also supports per-project settings. You can find these in the Settings Editor as well.
 
@@ -277,7 +279,7 @@ In VS Code, the standard entry point is opening a folder. From there, the left-h
 Zed takes a different approach:
 
 - You can still open folders, but you don’t need to. Opening a single file or even starting with an empty workspace is valid.
-- The Command Palette (`Cmd+Shift+P`) and File Finder (`Cmd+P`) are primary navigation tools. The File Finder searches files, symbols, and commands across the workspace.
+- The [Command Palette](../command-palette.md) (`Cmd+Shift+P`) and File Finder (`Cmd+P`) are primary navigation tools. The File Finder searches files, symbols, and commands across the workspace.
 - Instead of a persistent panel, Zed encourages you to:
   - Fuzzy-find files by name (`Cmd+P`)
   - Jump directly to symbols (`Cmd+Shift+O`)

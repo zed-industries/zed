@@ -14,7 +14,7 @@ use agent_ui::{
 };
 use chrono::DateTime;
 use fs::{FakeFs, Fs};
-use gpui::TestAppContext;
+use gpui::{TestAppContext, UpdateGlobal};
 use pretty_assertions::assert_eq;
 use project::AgentId;
 use settings::SettingsStore;
@@ -24,7 +24,23 @@ use std::{
 };
 use util::{path_list::PathList, rel_path::rel_path};
 
+fn use_unique_metadata_databases(cx: &mut TestAppContext) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT_TEST_DATABASE: AtomicUsize = AtomicUsize::new(0);
+    let test_database_id = NEXT_TEST_DATABASE.fetch_add(1, Ordering::SeqCst);
+    cx.update(|cx| {
+        cx.set_global(agent_ui::thread_metadata_store::TestMetadataDbName(
+            format!("SIDEBAR_THREAD_METADATA_{test_database_id}"),
+        ));
+        cx.set_global(TestTerminalMetadataDbName(format!(
+            "SIDEBAR_TERMINAL_THREAD_METADATA_{test_database_id}"
+        )));
+    });
+}
+
 fn init_test(cx: &mut TestAppContext) {
+    use_unique_metadata_databases(cx);
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
@@ -212,6 +228,50 @@ async fn init_test_project(
     project::Project::test(fs, [worktree_path.as_ref()], cx).await
 }
 
+#[gpui::test]
+async fn test_workspace_menu_uses_bare_repository_worktree_name(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/zed/.bare",
+        serde_json::json!({
+            "worktrees": {
+                "glossy-walrus": {
+                    "commondir": "../..",
+                    "HEAD": "ref: refs/heads/glossy-walrus",
+                },
+            },
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/worktrees/zed/glossy-walrus/zed",
+        serde_json::json!({
+            ".git": "gitdir: /zed/.bare/worktrees/glossy-walrus",
+            "src": {},
+        }),
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let project =
+        project::Project::test(fs, [Path::new("/worktrees/zed/glossy-walrus/zed")], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+    let labels = cx.update(|_window, cx| workspace_menu_worktree_labels(&workspace, cx));
+
+    assert_eq!(labels.len(), 1);
+    assert_eq!(labels[0].primary_name.as_ref(), "glossy-walrus");
+    assert_eq!(labels[0].secondary_name, None);
+}
+
 fn setup_sidebar(
     multi_workspace: &Entity<MultiWorkspace>,
     cx: &mut gpui::VisualTestContext,
@@ -236,6 +296,17 @@ fn setup_sidebar_closed(
     });
     cx.run_until_parked();
     sidebar
+}
+
+fn set_threads_sidebar_default_width(width: f32, cx: &mut App) {
+    SettingsStore::update_global(cx, |store, cx| {
+        store
+            .set_user_settings(
+                &format!(r#"{{"agent": {{"threads_sidebar": {{"default_width": {width}}}}}}}"#),
+                cx,
+            )
+            .unwrap();
+    });
 }
 
 async fn save_n_test_threads(
@@ -492,6 +563,27 @@ fn focus_sidebar(sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext) {
     cx.run_until_parked();
 }
 
+fn enter_renamed_title(
+    sidebar: &Entity<Sidebar>,
+    target: RenameTarget,
+    renamed_title: &str,
+    cx: &mut gpui::VisualTestContext,
+) {
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(sidebar.rename_target, Some(target));
+    });
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.rename_editor.update(cx, |editor, cx| {
+            editor.set_text(renamed_title, window, cx);
+        });
+    });
+    cx.run_until_parked();
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.finish_entry_rename(window, cx);
+    });
+    cx.run_until_parked();
+}
+
 fn request_test_tool_authorization(
     thread: &Entity<AcpThread>,
     tool_call_id: &str,
@@ -561,12 +653,7 @@ fn visible_entries_as_strings(
                     ""
                 };
                 match entry {
-                    ListEntry::ProjectHeader {
-                        label,
-                        key,
-                        highlight_positions: _,
-                        ..
-                    } => {
+                    ListEntry::ProjectHeader { label, key, .. } => {
                         let icon = if sidebar.is_group_collapsed(key, cx) {
                             ">"
                         } else {
@@ -796,6 +883,236 @@ async fn test_serialization_round_trip(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_width_reset_returns_configured_default(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    cx.update(|cx| set_threads_sidebar_default_width(360.0, cx));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    assert_eq!(
+        sidebar.read_with(cx, |sidebar, _| sidebar.width),
+        px(360.0),
+        "a fresh sidebar should open at the configured width"
+    );
+
+    sidebar.update_in(cx, |sidebar, _window, cx| {
+        sidebar.set_width(Some(px(420.0)), cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(420.0));
+
+    sidebar.update_in(cx, |sidebar, _window, cx| {
+        sidebar.set_width(None, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        sidebar.read_with(cx, |sidebar, _| sidebar.width),
+        px(360.0),
+        "resetting the width should return to the configured width, not a fixed default"
+    );
+}
+
+#[gpui::test]
+async fn test_width_setting_overrides_manual_resize(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    cx.update(|_window, cx| set_threads_sidebar_default_width(360.0, cx));
+    cx.run_until_parked();
+    assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(360.0));
+    assert!(!sidebar.read_with(cx, |sidebar, _| sidebar.width_set_by_user));
+
+    sidebar.update_in(cx, |sidebar, _window, cx| {
+        sidebar.set_width(Some(px(420.0)), cx);
+    });
+    cx.update(|_window, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{"agent":{"threads_sidebar":{"default_width":360,"position":"right"}}}"#,
+                    cx,
+                )
+                .expect("settings are valid");
+        });
+    });
+    cx.run_until_parked();
+    assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(420.0));
+    assert!(sidebar.read_with(cx, |sidebar, _| sidebar.width_set_by_user));
+
+    cx.update(|_window, cx| set_threads_sidebar_default_width(500.0, cx));
+    cx.run_until_parked();
+    assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(500.0));
+    assert!(!sidebar.read_with(cx, |sidebar, _| sidebar.width_set_by_user));
+
+    for (configured, expected) in [
+        (5.0, THREADS_LIST_MIN_WIDTH),
+        (360.0, px(360.0)),
+        (5000.0, THREADS_LIST_MAX_WIDTH),
+    ] {
+        cx.update(|_window, cx| set_threads_sidebar_default_width(configured, cx));
+        cx.run_until_parked();
+        assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), expected);
+        let serialized = sidebar
+            .read_with(cx, |sidebar, cx| sidebar.serialized_state(cx))
+            .expect("sidebar state is serialized");
+        let serialized: SerializedSidebar =
+            serde_json::from_str(&serialized).expect("sidebar state is valid");
+        assert_eq!(serialized.width, None);
+        assert!(!serialized.width_set_by_user);
+    }
+}
+
+#[gpui::test]
+async fn test_restored_width_preserves_legacy_resizes(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+    for (state, expected, width_set_by_user) in [
+        (r#"{"width":null}"#, 360.0, false),
+        (r#"{"width":300.0}"#, 360.0, false),
+        (r#"{"width":420.0}"#, 420.0, true),
+        (r#"{"width":300.0,"width_set_by_user":true}"#, 300.0, true),
+    ] {
+        cx.update(|_window, cx| set_threads_sidebar_default_width(360.0, cx));
+        let sidebar =
+            cx.update(|window, cx| cx.new(|cx| Sidebar::new(multi_workspace.clone(), window, cx)));
+        cx.run_until_parked();
+        sidebar.update_in(cx, |sidebar, window, cx| {
+            sidebar.restore_serialized_state(state, window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            sidebar.read_with(cx, |sidebar, _| sidebar.width),
+            px(expected)
+        );
+        assert_eq!(
+            sidebar.read_with(cx, |sidebar, _| sidebar.width_set_by_user),
+            width_set_by_user
+        );
+
+        let serialized = sidebar
+            .read_with(cx, |sidebar, cx| sidebar.serialized_state(cx))
+            .expect("sidebar state is serialized");
+        let serialized: SerializedSidebar =
+            serde_json::from_str(&serialized).expect("sidebar state is valid");
+        assert_eq!(serialized.width, width_set_by_user.then_some(expected));
+        assert_eq!(serialized.width_set_by_user, width_set_by_user);
+
+        cx.update(|_window, cx| set_threads_sidebar_default_width(500.0, cx));
+        cx.run_until_parked();
+        assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(500.0));
+        assert!(!sidebar.read_with(cx, |sidebar, _| sidebar.width_set_by_user));
+    }
+}
+
+#[gpui::test]
+async fn test_configured_width_is_clamped_into_range(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    cx.update(|cx| set_threads_sidebar_default_width(5000.0, cx));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+    let wide_sidebar =
+        cx.update(|window, cx| cx.new(|cx| Sidebar::new(multi_workspace.clone(), window, cx)));
+    cx.run_until_parked();
+    assert_eq!(
+        wide_sidebar.read_with(cx, |sidebar, _| sidebar.width),
+        THREADS_LIST_MAX_WIDTH,
+        "a configured width above the maximum should be clamped at construction"
+    );
+
+    wide_sidebar.update_in(cx, |sidebar, _window, cx| {
+        sidebar.set_width(None, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        wide_sidebar.read_with(cx, |sidebar, _| sidebar.width),
+        THREADS_LIST_MAX_WIDTH,
+        "resetting the width should not restore the unclamped configured width"
+    );
+
+    cx.update(|_window, cx| set_threads_sidebar_default_width(5.0, cx));
+    let narrow_sidebar =
+        cx.update(|window, cx| cx.new(|cx| Sidebar::new(multi_workspace.clone(), window, cx)));
+    cx.run_until_parked();
+    assert_eq!(
+        narrow_sidebar.read_with(cx, |sidebar, _| sidebar.width),
+        THREADS_LIST_MIN_WIDTH,
+        "a configured width below the minimum should be clamped at construction"
+    );
+}
+
+#[gpui::test]
+async fn test_only_a_user_chosen_width_is_persisted(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    cx.update(|cx| set_threads_sidebar_default_width(360.0, cx));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    // Serialization runs on many triggers besides resizing, so a sidebar the
+    // user has never resized must not record a width at all.
+    let untouched = sidebar
+        .read_with(cx, |sidebar, cx| sidebar.serialized_state(cx))
+        .expect("serialized_state should return Some");
+    assert!(
+        !untouched.contains("360"),
+        "an unresized sidebar should not persist its width, got {untouched}"
+    );
+
+    // A legacy width matching the old default is ambiguous, so the setting takes precedence
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.restore_serialized_state(r#"{"width":300.0}"#, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        sidebar.read_with(cx, |sidebar, _| sidebar.width),
+        px(360.0),
+        "the legacy default width falls back to the setting"
+    );
+
+    // A width the user picked survives, and keeps surviving across restores.
+    sidebar.update_in(cx, |sidebar, _window, cx| {
+        sidebar.set_width(Some(px(420.0)), cx);
+    });
+    cx.run_until_parked();
+    let resized = sidebar
+        .read_with(cx, |sidebar, cx| sidebar.serialized_state(cx))
+        .expect("serialized_state should return Some");
+
+    let restored =
+        cx.update(|window, cx| cx.new(|cx| Sidebar::new(multi_workspace.clone(), window, cx)));
+    cx.run_until_parked();
+    restored.update_in(cx, |sidebar, window, cx| {
+        sidebar.restore_serialized_state(&resized, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        restored.read_with(cx, |sidebar, _| sidebar.width),
+        px(420.0),
+        "a user-chosen width should survive a restore"
+    );
+
+    // Resetting gives the width back to the setting, and stops persisting it.
+    restored.update_in(cx, |sidebar, _window, cx| {
+        sidebar.set_width(None, cx);
+    });
+    cx.run_until_parked();
+    let after_reset = restored
+        .read_with(cx, |sidebar, cx| sidebar.serialized_state(cx))
+        .expect("serialized_state should return Some");
+    assert!(
+        !after_reset.contains("420"),
+        "resetting should stop persisting the width, got {after_reset}"
+    );
+}
+
+#[gpui::test]
 async fn test_restore_serialized_archive_view_does_not_panic(cx: &mut TestAppContext) {
     // A regression test to ensure that restoring a serialized archive view does not panic.
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
@@ -808,6 +1125,7 @@ async fn test_restore_serialized_archive_view_does_not_panic(cx: &mut TestAppCon
 
     let serialized = serde_json::to_string(&SerializedSidebar {
         width: Some(400.0),
+        width_set_by_user: true,
         active_view: SerializedSidebarView::History,
     })
     .expect("serialization should succeed");
@@ -1053,6 +1371,80 @@ async fn test_collapse_state_survives_worktree_key_change(cx: &mut TestAppContex
         visible_entries_as_strings(&sidebar, cx),
         vec!["> [project-a, project-b]"]
     );
+}
+
+#[gpui::test]
+async fn test_neighboring_activatable_entry_stays_within_project(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    let header = |path: &str| ListEntry::ProjectHeader {
+        key: ProjectGroupKey::new(None, PathList::new(&[std::path::PathBuf::from(path)])),
+        label: path.into(),
+        highlight_positions: Vec::new(),
+        has_running_threads: false,
+        waiting_thread_count: 0,
+        has_notifications: false,
+        is_active: false,
+        has_threads: true,
+    };
+    let thread = |name: &str| {
+        ListEntry::Thread(Arc::new(ThreadEntry {
+            metadata: ThreadMetadata {
+                thread_id: ThreadId::new(),
+                session_id: Some(acp::SessionId::new(Arc::from(name))),
+                agent_id: AgentId::new("zed-agent"),
+                worktree_paths: WorktreePaths::default(),
+                title: Some(name.to_string().into()),
+                title_override: None,
+                updated_at: Utc::now(),
+                created_at: Some(Utc::now()),
+                interacted_at: None,
+                archived: false,
+                remote_connection: None,
+            },
+            icon: IconName::ZedAgent,
+            icon_from_external_svg: None,
+            status: AgentThreadStatus::Completed,
+            workspace: ThreadEntryWorkspace::Open(workspace.clone()),
+            is_live: false,
+            is_background: false,
+            is_title_generating: false,
+            draft: None,
+            highlight_positions: Vec::new(),
+            worktrees: Vec::new(),
+            diff_stats: DiffStats::default(),
+        }))
+    };
+
+    sidebar.update_in(cx, |s, _window, _cx| {
+        s.contents.entries = vec![
+            header("/project-a"),
+            thread("a-newest"),
+            thread("a-oldest"),
+            header("/project-b"),
+            thread("b-newest"),
+        ];
+
+        let neighbor_session = |position: usize| match s.neighboring_activatable_entry(position) {
+            Some(ActivatableEntry::Thread { metadata, .. }) => metadata.session_id,
+            _ => None,
+        };
+
+        assert_eq!(
+            neighbor_session(2),
+            Some(acp::SessionId::new(Arc::from("a-newest"))),
+            "the neighbor should be the sibling in the same project, not the next project's thread"
+        );
+        assert_eq!(
+            neighbor_session(4),
+            Some(acp::SessionId::new(Arc::from("a-oldest"))),
+            "an empty project should fall back to another project"
+        );
+    });
 }
 
 #[gpui::test]
@@ -1367,35 +1759,58 @@ async fn test_keyboard_select_first_and_last(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_keyboard_focus_in_does_not_set_selection(cx: &mut TestAppContext) {
+async fn test_refocus_sidebar_with_no_selection_focuses_search(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
     let sidebar = setup_sidebar(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
 
-    // Initially no selection
-    assert_eq!(sidebar.read_with(cx, |s, _| s.selection), None);
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.focus_handle(cx).focus(window, cx);
+    });
+    cx.run_until_parked();
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        assert!(!sidebar.focus_handle.is_focused(window));
+        assert!(!sidebar.filter_editor.read(cx).is_focused(window));
+        assert_eq!(sidebar.selection, None);
+    });
 
-    // Open the sidebar so it's rendered, then focus it to trigger focus_in.
-    // focus_in no longer sets a default selection.
+    // Refocusing with no selection sends focus to search without selecting a row.
     focus_sidebar(&sidebar, cx);
-    assert_eq!(sidebar.read_with(cx, |s, _| s.selection), None);
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        assert!(sidebar.filter_editor.read(cx).is_focused(window));
+        assert_eq!(sidebar.selection, None);
+    });
+}
 
-    // Manually set a selection, blur, then refocus — selection should be preserved
-    sidebar.update_in(cx, |sidebar, _window, _cx| {
+#[gpui::test]
+async fn test_refocus_sidebar_with_selection_preserves_it(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+
+    sidebar.update(cx, |sidebar, cx| {
         sidebar.selection = Some(0);
+        cx.notify();
     });
-
-    cx.update(|window, _cx| {
-        window.blur();
-    });
-    cx.run_until_parked();
-
-    sidebar.update_in(cx, |_, window, cx| {
-        cx.focus_self(window);
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.focus_handle(cx).focus(window, cx);
     });
     cx.run_until_parked();
-    assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
+
+    // Refocusing with a selection returns focus to the list and keeps that row selected.
+    focus_sidebar(&sidebar, cx);
+    sidebar.update_in(cx, |sidebar, window, _cx| {
+        assert!(sidebar.focus_handle.is_focused(window));
+        assert_eq!(sidebar.selection, Some(0));
+    });
 }
 
 #[gpui::test]
@@ -1652,6 +2067,7 @@ async fn init_test_project_with_agent_panel(
     worktree_path: &str,
     cx: &mut TestAppContext,
 ) -> Entity<project::Project> {
+    use_unique_metadata_databases(cx);
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
         cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
@@ -2928,6 +3344,46 @@ async fn test_terminal_close_event_closes_sidebar_terminal(cx: &mut TestAppConte
             "terminal metadata should be deleted when the terminal requests close"
         );
     });
+}
+
+#[gpui::test]
+async fn test_terminal_close_event_activates_neighbor(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    let build_terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Build", true, window, cx)
+        })
+        .expect("build test terminal should be inserted");
+    let server_terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Server", true, window, cx)
+        })
+        .expect("server test terminal should be inserted");
+    cx.run_until_parked();
+
+    panel.update(cx, |panel, cx| {
+        panel.emit_test_terminal_close(server_terminal_id, cx);
+    });
+    cx.run_until_parked();
+
+    panel.read_with(cx, |panel, _cx| {
+        assert!(!panel.has_terminal(server_terminal_id));
+        assert_eq!(panel.active_terminal_id(), Some(build_terminal_id));
+    });
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Terminal { terminal_id, .. }) if *terminal_id == build_terminal_id),
+            "expected remaining terminal to become active, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [my-project]", "  Build"]
+    );
 }
 
 #[gpui::test]
@@ -4810,74 +5266,301 @@ async fn test_confirm_on_historical_thread_in_new_project_group_opens_real_threa
     );
 }
 
+struct SidebarClickFixture {
+    sidebar: Entity<Sidebar>,
+    panel: Entity<AgentPanel>,
+}
+
+impl SidebarClickFixture {
+    fn new(multi_workspace: &Entity<MultiWorkspace>, cx: &mut gpui::VisualTestContext) -> Self {
+        let (sidebar, panel) = setup_sidebar_with_agent_panel(multi_workspace, cx);
+        Self { sidebar, panel }
+    }
+
+    fn insert_terminal(&self, title: &str, cx: &mut gpui::VisualTestContext) -> TerminalId {
+        let terminal_id = self
+            .panel
+            .update_in(cx, |panel, window, cx| {
+                panel.insert_test_terminal(title, true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+        terminal_id
+    }
+
+    fn terminal_index(&self, terminal_id: TerminalId, cx: &mut gpui::VisualTestContext) -> usize {
+        self.sidebar.read_with(cx, |sidebar, _cx| {
+            sidebar
+                .contents
+                .entries
+                .iter()
+                .position(|entry| {
+                    matches!(
+                        entry,
+                        ListEntry::Terminal(terminal)
+                            if terminal.metadata.terminal_id == terminal_id
+                    )
+                })
+                .expect("terminal should be visible in sidebar")
+        })
+    }
+
+    fn thread_index(&self, session_id: &acp::SessionId, cx: &mut gpui::VisualTestContext) -> usize {
+        self.sidebar.read_with(cx, |sidebar, _cx| {
+            sidebar
+                .contents
+                .entries
+                .iter()
+                .position(|entry| {
+                    matches!(
+                        entry,
+                        ListEntry::Thread(thread)
+                            if thread.metadata.session_id.as_ref() == Some(session_id)
+                    )
+                })
+                .expect("thread should be visible in sidebar")
+        })
+    }
+
+    fn select_and_focus(&self, entry_index: usize, cx: &mut gpui::VisualTestContext) {
+        self.sidebar.update_in(cx, |sidebar, window, cx| {
+            sidebar.selection = Some(entry_index);
+            sidebar.focus_handle.focus(window, cx);
+            cx.notify();
+        });
+        cx.run_until_parked();
+    }
+
+    fn click(&self, entry_index: usize, cx: &mut gpui::VisualTestContext) {
+        cx.draw(
+            gpui::point(px(0.), px(0.)),
+            gpui::size(px(400.), px(400.)),
+            |_, _| self.sidebar.clone().into_any_element(),
+        );
+        let entry_bounds = self.sidebar.read_with(cx, |sidebar, _cx| {
+            sidebar
+                .list_state
+                .bounds_for_item(entry_index)
+                .expect("sidebar entry should be measured")
+        });
+        cx.simulate_click(entry_bounds.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+    }
+}
+
 #[gpui::test]
-async fn test_click_clears_selection_and_focus_in_restores_it(cx: &mut TestAppContext) {
-    let project = init_test_project("/my-project", cx).await;
+async fn test_keyboard_confirm_on_terminal_preserves_selection(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let fixture = SidebarClickFixture::new(&multi_workspace, cx);
+    let terminal_id = fixture.insert_terminal("Terminal A", cx);
+    let other_terminal_id = fixture.insert_terminal("Terminal B", cx);
+    let terminal_index = fixture.terminal_index(terminal_id, cx);
+    fixture.select_and_focus(terminal_index, cx);
+
+    fixture.sidebar.update_in(cx, |sidebar, window, _cx| {
+        assert!(sidebar.focus_handle.is_focused(window));
+        assert_eq!(sidebar.selection, Some(terminal_index));
+        assert!(
+            matches!(
+                &sidebar.active_entry,
+                Some(ActiveEntry::Terminal { terminal_id: active_terminal_id, .. })
+                    if *active_terminal_id == other_terminal_id
+            ),
+            "Terminal B should be active before confirming Terminal A, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+
+    // Confirm switches from Terminal B to Terminal A without clearing selection.
+    cx.dispatch_action(Confirm);
+    cx.run_until_parked();
+    fixture.sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(sidebar.selection, Some(terminal_index));
+        assert!(
+            matches!(
+                &sidebar.active_entry,
+                Some(ActiveEntry::Terminal { terminal_id: active_terminal_id, .. })
+                    if *active_terminal_id == terminal_id
+            ),
+            "confirmed terminal should be active, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_keyboard_confirm_on_thread_preserves_selection(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let sidebar = setup_sidebar(&multi_workspace, cx);
-
+    let fixture = SidebarClickFixture::new(&multi_workspace, cx);
+    let session_id = acp::SessionId::new(Arc::from("thread-a"));
     save_thread_metadata(
-        acp::SessionId::new(Arc::from("t-1")),
+        session_id.clone(),
         Some("Thread A".into()),
-        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+        Utc::now(),
         None,
         None,
         &project,
         cx,
     );
+    let thread_index = fixture.thread_index(&session_id, cx);
+    fixture.select_and_focus(thread_index, cx);
 
+    // Confirm must preserve selection without the test setting it again.
+    cx.dispatch_action(Confirm);
+    cx.run_until_parked();
+    fixture.sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(sidebar.selection, Some(thread_index));
+        assert_active_thread(sidebar, &session_id, "confirmed thread should be active");
+    });
+}
+
+#[gpui::test]
+async fn test_clicking_different_terminal_clears_sidebar_selection(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let fixture = SidebarClickFixture::new(&multi_workspace, cx);
+    let terminal_a_id = fixture.insert_terminal("Terminal A", cx);
+    let terminal_b_id = fixture.insert_terminal("Terminal B", cx);
+    let terminal_a_index = fixture.terminal_index(terminal_a_id, cx);
+    let terminal_b_index = fixture.terminal_index(terminal_b_id, cx);
+
+    fixture.panel.update_in(cx, |panel, window, cx| {
+        panel.activate_terminal(terminal_a_id, true, window, cx);
+    });
+    cx.run_until_parked();
+    fixture.select_and_focus(terminal_a_index, cx);
+
+    fixture.sidebar.update_in(cx, |sidebar, window, _cx| {
+        assert!(sidebar.focus_handle.is_focused(window));
+        assert_eq!(sidebar.selection, Some(terminal_a_index));
+        assert!(
+            matches!(
+                &sidebar.active_entry,
+                Some(ActiveEntry::Terminal { terminal_id, .. })
+                    if *terminal_id == terminal_a_id
+            ),
+            "Terminal A should be active before clicking Terminal B, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+
+    // Clicking a different terminal clears keyboard selection and activates that terminal.
+    fixture.click(terminal_b_index, cx);
+
+    fixture.sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(sidebar.selection, None);
+        assert!(
+            matches!(
+                &sidebar.active_entry,
+                Some(ActiveEntry::Terminal { terminal_id, .. })
+                    if *terminal_id == terminal_b_id
+            ),
+            "Terminal B should be active after the click, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_clicking_active_terminal_clears_sidebar_selection(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let fixture = SidebarClickFixture::new(&multi_workspace, cx);
+    let terminal_id = fixture.insert_terminal("Terminal A", cx);
+    let terminal_index = fixture.terminal_index(terminal_id, cx);
+    fixture.select_and_focus(terminal_index, cx);
+
+    fixture.sidebar.update_in(cx, |sidebar, window, _cx| {
+        assert!(sidebar.focus_handle.is_focused(window));
+        assert_eq!(sidebar.selection, Some(terminal_index));
+        assert!(
+            matches!(
+                &sidebar.active_entry,
+                Some(ActiveEntry::Terminal { terminal_id: active_terminal_id, .. })
+                    if *active_terminal_id == terminal_id
+            ),
+            "Terminal A should be active before clicking it, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+
+    // Clicking the active terminal clears keyboard selection without changing the active terminal.
+    fixture.click(terminal_index, cx);
+
+    fixture.sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(sidebar.selection, None);
+        assert!(
+            matches!(
+                &sidebar.active_entry,
+                Some(ActiveEntry::Terminal { terminal_id: active_terminal_id, .. })
+                    if *active_terminal_id == terminal_id
+            ),
+            "Terminal A should remain active after the click, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_clicking_different_thread_clears_sidebar_selection(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let fixture = SidebarClickFixture::new(&multi_workspace, cx);
+    let thread_a_session_id = acp::SessionId::new(Arc::from("thread-a"));
+    let thread_b_session_id = acp::SessionId::new(Arc::from("thread-b"));
     save_thread_metadata(
-        acp::SessionId::new(Arc::from("t-2")),
-        Some("Thread B".into()),
-        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        thread_a_session_id.clone(),
+        Some("Thread A".into()),
+        Utc::now() + chrono::Duration::days(2),
         None,
         None,
         &project,
         cx,
     );
-
-    cx.run_until_parked();
-    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
-    cx.run_until_parked();
-
-    assert_eq!(
-        visible_entries_as_strings(&sidebar, cx),
-        vec![
-            //
-            "v [my-project]",
-            "  Thread A",
-            "  Thread B",
-        ]
+    save_thread_metadata(
+        thread_b_session_id.clone(),
+        Some("Thread B".into()),
+        Utc::now() + chrono::Duration::days(1),
+        None,
+        None,
+        &project,
+        cx,
     );
+    let thread_a_index = fixture.thread_index(&thread_a_session_id, cx);
+    let thread_b_index = fixture.thread_index(&thread_b_session_id, cx);
+    fixture.select_and_focus(thread_a_index, cx);
+    cx.dispatch_action(Confirm);
+    cx.run_until_parked();
+    fixture.select_and_focus(thread_a_index, cx);
 
-    // Keyboard confirm preserves selection.
-    sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.selection = Some(1);
-        sidebar.confirm(&Confirm, window, cx);
+    fixture.sidebar.update_in(cx, |sidebar, window, _cx| {
+        assert!(sidebar.focus_handle.is_focused(window));
+        assert_eq!(sidebar.selection, Some(thread_a_index));
+        assert_active_thread(
+            sidebar,
+            &thread_a_session_id,
+            "Thread A should be active before clicking Thread B",
+        );
     });
-    assert_eq!(
-        sidebar.read_with(cx, |sidebar, _| sidebar.selection),
-        Some(1)
-    );
 
-    // Click handlers clear selection to None so no highlight lingers
-    // after a click regardless of focus state. The hover style provides
-    // visual feedback during mouse interaction instead.
-    sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.selection = None;
-        let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let project_group_key = ProjectGroupKey::new(None, path_list);
-        sidebar.toggle_collapse(&project_group_key, window, cx);
-    });
-    assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.selection), None);
+    // Clicking a different thread clears keyboard selection and activates that thread.
+    fixture.click(thread_b_index, cx);
 
-    // When the user tabs back into the sidebar, focus_in no longer
-    // restores selection — it stays None.
-    sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.focus_in(window, cx);
+    fixture.sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(sidebar.selection, None);
+        assert_active_thread(
+            sidebar,
+            &thread_b_session_id,
+            "Thread B should be active after the click",
+        );
     });
-    assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.selection), None);
 }
 
 #[gpui::test]
@@ -4971,17 +5654,17 @@ async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestApp
 
     let renamed_title = "abcdefghijklmnopqrstuvwxyé renamed";
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.start_renaming_thread(entry_ix, thread_id, title, window, cx);
+        sidebar.start_renaming_entry(entry_ix, RenameTarget::Thread(thread_id), title, window, cx);
     });
     cx.run_until_parked();
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.thread_rename_editor.update(cx, |editor, cx| {
+        sidebar.rename_editor.update(cx, |editor, cx| {
             editor.set_text(renamed_title, window, cx);
         });
     });
     cx.run_until_parked();
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.finish_thread_rename(window, cx);
+        sidebar.finish_entry_rename(window, cx);
     });
     cx.run_until_parked();
 
@@ -5101,25 +5784,8 @@ async fn test_rename_selected_thread_action_renames_selected_thread(cx: &mut Tes
     cx.dispatch_action(RenameSelectedThread);
     cx.run_until_parked();
 
-    sidebar.read_with(cx, |sidebar, _cx| {
-        assert_eq!(
-            sidebar.renaming_thread_id,
-            Some(thread_id),
-            "dispatching RenameSelectedThread should start renaming the selected thread"
-        );
-    });
-
     let renamed_title = "Renamed via action";
-    sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.thread_rename_editor.update(cx, |editor, cx| {
-            editor.set_text(renamed_title, window, cx);
-        });
-    });
-    cx.run_until_parked();
-    sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.finish_thread_rename(window, cx);
-    });
-    cx.run_until_parked();
+    enter_renamed_title(&sidebar, RenameTarget::Thread(thread_id), renamed_title, cx);
 
     let metadata = cx.update(|_, cx| {
         ThreadMetadataStore::global(cx)
@@ -5129,6 +5795,72 @@ async fn test_rename_selected_thread_action_renames_selected_thread(cx: &mut Tes
             .expect("thread metadata should exist")
     });
     assert_eq!(metadata.title_override.as_deref(), Some(renamed_title));
+}
+
+#[gpui::test]
+async fn test_rename_selected_thread_action_renames_terminal(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Dev Server", true, window, cx)
+        })
+        .expect("test terminal should be inserted");
+    cx.run_until_parked();
+
+    let entry_ix = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .position(|entry| {
+                matches!(
+                    entry,
+                    ListEntry::Terminal(terminal)
+                        if terminal.metadata.terminal_id == terminal_id
+                )
+            })
+            .expect("sidebar should have a terminal entry")
+    });
+
+    focus_sidebar(&sidebar, cx);
+    sidebar.update_in(cx, |sidebar, _window, _cx| {
+        sidebar.selection = Some(entry_ix);
+    });
+    cx.dispatch_action(RenameSelectedThread);
+    cx.run_until_parked();
+
+    let renamed_title = "Renamed Terminal";
+    enter_renamed_title(
+        &sidebar,
+        RenameTarget::Terminal(terminal_id),
+        renamed_title,
+        cx,
+    );
+
+    panel.read_with(cx, |panel, cx| {
+        let terminal = panel
+            .terminals(cx)
+            .into_iter()
+            .find(|terminal| terminal.id == terminal_id)
+            .expect("terminal should remain open after renaming");
+        assert_eq!(terminal.custom_title.as_deref(), Some(renamed_title));
+    });
+    sidebar.read_with(cx, |_sidebar, cx| {
+        let metadata = TerminalThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry(terminal_id)
+            .cloned()
+            .expect("renamed terminal metadata should exist");
+        assert_eq!(metadata.custom_title.as_deref(), Some(renamed_title));
+    });
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [my-project]", "  Renamed Terminal  <== selected"]
+    );
 }
 
 #[gpui::test]
@@ -8196,6 +8928,7 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
     let sidebar = setup_sidebar(&multi_workspace, cx);
+    let main_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     let _worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
         mw.test_add_workspace(worktree_project.clone(), window, cx)
@@ -8223,6 +8956,38 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
         &worktree_project,
         cx,
     );
+    cx.run_until_parked();
+
+    let remote_host =
+        remote::RemoteConnectionOptions::Mock(remote::MockConnectionOptions { id: 99 });
+    multi_workspace.update(cx, |mw, _cx| {
+        mw.test_add_project_group(workspace::ProjectGroup {
+            key: ProjectGroupKey::new(
+                Some(remote_host.clone()),
+                PathList::new(&[PathBuf::from("/remote/project")]),
+            ),
+            workspaces: Vec::new(),
+            expanded: true,
+        });
+    });
+    cx.update(|_window, cx| {
+        let metadata = ThreadMetadata {
+            thread_id: ThreadId::new(),
+            session_id: Some(acp::SessionId::new(Arc::from("remote-thread"))),
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: Some("Remote Thread".into()),
+            title_override: None,
+            updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 3, 0, 0, 0).unwrap(),
+            created_at: None,
+            interacted_at: None,
+            worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
+                "/remote/project",
+            )])),
+            archived: false,
+            remote_connection: Some(remote_host),
+        };
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
+    });
     cx.run_until_parked();
 
     multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
@@ -8253,6 +9018,14 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
         1,
         "linked worktree workspace should be removed after archiving its last thread"
     );
+
+    multi_workspace.read_with(cx, |mw, _| {
+        assert_eq!(
+            mw.workspace(),
+            &main_workspace,
+            "archiving the worktree's last thread should activate its own project, not the remote one"
+        );
+    });
 
     // The linked worktree checkout directory should also be removed from disk.
     assert!(
@@ -8706,12 +9479,10 @@ async fn test_restore_worktree_thread_uses_main_repo_project_group_key(cx: &mut 
     cx.run_until_parked();
 
     // Remove the worktree workspace and delete the worktree from disk.
-    let main_workspace =
-        multi_workspace.read_with(cx, |mw, _| mw.workspaces().next().unwrap().clone());
     let remove_task = multi_workspace.update_in(cx, |mw, window, cx| {
         mw.remove(
             vec![worktree_workspace],
-            move |_this, _window, _cx| Task::ready(Ok(main_workspace)),
+            RemovalIntent::KeepProject,
             window,
             cx,
         )
@@ -12419,7 +13190,8 @@ mod property_test {
                     let key = &keys[project_group_index];
                     let ws = mw
                         .workspaces_for_project_group(key, cx)
-                        .and_then(|ws| ws.first().cloned())
+                        .first()
+                        .cloned()
                         .unwrap_or_else(|| mw.workspace().clone());
                     let project = ws.read(cx).project().clone();
                     (ws, project)
@@ -12572,7 +13344,8 @@ mod property_test {
                     let keys = mw.project_group_keys();
                     let key = &keys[index];
                     mw.workspaces_for_project_group(key, cx)
-                        .and_then(|ws| ws.first().cloned())
+                        .first()
+                        .cloned()
                         .unwrap_or_else(|| mw.workspace().clone())
                 });
                 multi_workspace.update_in(cx, |mw, window, cx| {
@@ -12641,7 +13414,8 @@ mod property_test {
                     let keys = mw.project_group_keys();
                     let key = &keys[project_group_index];
                     mw.workspaces_for_project_group(key, cx)
-                        .and_then(|ws| ws.first().cloned())
+                        .first()
+                        .cloned()
                         .unwrap()
                 });
                 let main_project = main_workspace.read_with(cx, |ws, _| ws.project().clone());
@@ -12660,8 +13434,7 @@ mod property_test {
                 let workspace = multi_workspace.read_with(cx, |mw, cx| {
                     let keys = mw.project_group_keys();
                     let key = &keys[project_group_index];
-                    mw.workspaces_for_project_group(key, cx)
-                        .and_then(|ws| ws.first().cloned())
+                    mw.workspaces_for_project_group(key, cx).first().cloned()
                 });
                 let Some(workspace) = workspace else { return };
                 let project = workspace.read_with(cx, |ws, _| ws.project().clone());
@@ -12688,8 +13461,7 @@ mod property_test {
                 let workspace = multi_workspace.read_with(cx, |mw, cx| {
                     let keys = mw.project_group_keys();
                     let key = &keys[project_group_index];
-                    mw.workspaces_for_project_group(key, cx)
-                        .and_then(|ws| ws.first().cloned())
+                    mw.workspaces_for_project_group(key, cx).first().cloned()
                 });
                 let Some(workspace) = workspace else { return };
                 let project = workspace.read_with(cx, |ws, _| ws.project().clone());
@@ -14871,4 +15643,92 @@ fn test_split_leading_icon_char() {
     assert_eq!(icon.as_ref(), "#");
     assert_eq!(trimmed.as_ref(), "abc");
     assert_eq!(positions, vec![0, 1]);
+}
+
+#[gpui::test]
+async fn test_find_or_create_workspace_returns_the_created_remote_workspace(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let local_project = init_test_project("/local", cx).await;
+    cx.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+    server_cx.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(local_project, window, cx));
+    let local_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    let server_fs = FakeFs::new(server_cx.executor());
+    server_fs
+        .insert_tree("/remote-project", serde_json::json!({ "src": {} }))
+        .await;
+    let (opts, server_session, _) = remote::RemoteClient::fake_server(cx, server_cx);
+    server_cx.update(remote_server::HeadlessProject::init);
+    let server_executor = server_cx.executor();
+    let _headless = server_cx.new(|cx| {
+        remote_server::HeadlessProject::new(
+            remote_server::HeadlessAppState {
+                session: server_session,
+                fs: server_fs.clone(),
+                http_client: Arc::new(http_client::BlockedHttpClient),
+                node_runtime: node_runtime::NodeRuntime::unavailable(),
+                languages: Arc::new(language::LanguageRegistry::new(server_executor)),
+                extension_host_proxy: Arc::new(extension::ExtensionHostProxy::new()),
+                startup_time: std::time::Instant::now(),
+            },
+            false,
+            cx,
+        )
+    });
+    let remote_client = remote::RemoteClient::connect_mock(opts.clone(), cx).await;
+
+    // Stand in for the save prompt from a concurrent workspace removal: as
+    // soon as the remote workspace is activated mid-open, activate the local
+    // workspace again. The open must still return the workspace it created,
+    // not whichever workspace is active once it finishes.
+    multi_workspace.update_in(cx, |_, window, cx| {
+        let local_workspace = local_workspace.clone();
+        cx.subscribe_in(&cx.entity(), window, move |this, _, event, window, cx| {
+            if matches!(event, MultiWorkspaceEvent::WorkspaceAdded(_)) {
+                this.activate(local_workspace.clone(), None, window, cx);
+            }
+        })
+        .detach();
+    });
+
+    let created = multi_workspace
+        .update_in(cx, |mw, window, cx| {
+            let key = ProjectGroupKey::new(
+                Some(opts.clone()),
+                PathList::new(&[PathBuf::from("/remote-project")]),
+            );
+            mw.find_or_create_workspace(
+                PathList::new(&[PathBuf::from("/remote-project")]),
+                Some(opts),
+                Some(key),
+                move |_, _, _| Task::ready(Ok(Some(remote_client))),
+                None,
+                workspace::OpenMode::Activate,
+                None,
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("opening the remote project should succeed");
+    cx.run_until_parked();
+
+    assert_eq!(
+        created.read_with(cx, |workspace, cx| PathList::new(&workspace.root_paths(cx))),
+        PathList::new(&[PathBuf::from("/remote-project")]),
+        "the returned workspace should be the remote workspace that was created"
+    );
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspace().clone()),
+        local_workspace,
+        "the local workspace should have re-activated during the open"
+    );
 }

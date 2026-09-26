@@ -259,7 +259,7 @@ impl<M: ManagedView> PopoverMenu<M> {
     fn resolved_offset(&self, window: &mut Window) -> Point<Pixels> {
         self.offset.unwrap_or_else(|| {
             // Default offset = 4px padding + 1px border
-            let offset = rems_from_px(5.) * window.rem_size();
+            let offset = rems_from_px(5_f32) * window.rem_size();
             match self.anchor {
                 Anchor::TopRight | Anchor::BottomRight | Anchor::RightCenter => {
                     point(offset, px(0.))

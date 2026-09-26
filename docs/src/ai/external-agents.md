@@ -34,7 +34,7 @@ Common External Agents include:
 
 This list is curated, not exhaustive. Open the ACP Registry in Zed for the current list of available agents.
 
-For company-specific setup paths, including Claude, Codex, Gemini, OpenCode, Copilot, Cursor, and Pi, see [AI by Company](./by-company.md).
+For company-specific setup paths, including Claude, Codex, Gemini, OpenCode, Copilot, Cursor, Pi, and Poolside, see [AI by Company](./by-company.md).
 
 ## Claude Agent {#claude-agent}
 
@@ -84,6 +84,36 @@ Use Pi Coding Agent when you want Pi running as an ACP-integrated External Agent
 
 Pi is an agent harness, not a Zed LLM subscription. Configure any provider auth, subscriptions, tools, or model choices in Pi.
 
+## Poolside {#poolside}
+
+Use Poolside when you want Poolside running as an ACP-integrated External Agent in Zed.
+
+Install Poolside from the [ACP Registry](#registry), then start a Poolside thread from the Agent Panel or Threads Sidebar. If you haven't authenticated yet, the thread offers `Log in to Poolside`, which runs `pool login` in a terminal. Authentication and model selection are configured through Poolside, not Zed.
+
+To configure Poolside from the terminal instead, install the [Poolside Agent CLI](https://github.com/poolsideai/pool), then run:
+
+```sh
+pool acp setup --editor zed
+```
+
+This command always writes to `~/.config/zed/settings.json`, which is Zed's settings file on macOS and on Linux without a custom `XDG_CONFIG_HOME`. On Windows, or with a custom config directory, install from the registry or use the manual configuration below instead. You do not need to restart Zed. It detects the settings change automatically. Select `Poolside` from the new-thread menu.
+
+To configure it manually, install the [Poolside Agent CLI](https://github.com/poolsideai/pool), make sure `pool` is on your `PATH`, then add it as a [Custom Agent](#custom-agents):
+
+```json [settings]
+{
+  "agent_servers": {
+    "Poolside": {
+      "command": "pool",
+      "args": ["acp"],
+      "type": "custom"
+    }
+  }
+}
+```
+
+See [Poolside's Zed documentation](https://docs.poolside.ai/tools/zed) for more setup details.
+
 ## Start an External Agent Thread {#start-thread}
 
 Open the [Agent Panel](./agent-panel.md), then use the agent selector or the new-thread menu to start a thread with an installed External Agent.
@@ -94,16 +124,16 @@ You can also create keybindings for specific agents with {#action agent::NewExte
 
 External Agents run as separate processes that communicate with Zed over ACP. This creates a boundary between Zed configuration and agent-native configuration.
 
-| Capability                       | Behavior in External Agent threads                                                         |
-| -------------------------------- | ------------------------------------------------------------------------------------------ |
-| Model/provider config            | Usually owned by the External Agent                                                        |
-| Auth/API keys/subscriptions      | Usually owned by the External Agent                                                        |
-| Zed Agent profiles               | Do not apply unless the integration says otherwise                                         |
-| Zed Skills                       | Do not apply as Zed Skills                                                                 |
-| Native agent skills/instructions | Depends on the agent                                                                       |
-| Zed MCP servers                  | May be forwarded over ACP                                                                  |
-| Native MCP config                | May also be read by the agent                                                              |
-| Tool permissions                 | Zed ACP/tool forwarding permissions may apply; native tool permissions depend on the agent |
+| Capability                                | Behavior in External Agent threads                                                         |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Model/provider config                     | Usually owned by the External Agent                                                        |
+| Auth/API keys/subscriptions               | Usually owned by the External Agent                                                        |
+| [Zed Agent profiles](./agent-profiles.md) | Do not apply unless the integration says otherwise                                         |
+| Zed Skills                                | Do not apply as Zed Skills                                                                 |
+| Native agent skills/instructions          | Depends on the agent                                                                       |
+| Zed MCP servers                           | May be forwarded over ACP                                                                  |
+| Native MCP config                         | May also be read by the agent                                                              |
+| Tool permissions                          | Zed ACP/tool forwarding permissions may apply; native tool permissions depend on the agent |
 
 For Zed's native agent configuration, see [Zed Agent](./zed-agent.md).
 

@@ -3,6 +3,8 @@ mod end_trial_upsell;
 mod mention_crease;
 mod model_selector_components;
 mod sandbox_status_tooltip;
+mod session_notice;
+mod terminal_tool_header;
 mod undo_reject_toast;
 
 pub use agent_notification::*;
@@ -10,6 +12,8 @@ pub use end_trial_upsell::*;
 pub use mention_crease::*;
 pub use model_selector_components::*;
 pub use sandbox_status_tooltip::*;
+pub use session_notice::*;
+pub use terminal_tool_header::*;
 pub use undo_reject_toast::*;
 
 /// Returns the appropriate [`DocumentationSide`] for documentation asides

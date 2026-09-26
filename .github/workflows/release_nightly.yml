@@ -6,7 +6,7 @@ env:
   RUST_BACKTRACE: '1'
 on:
   schedule:
-  - cron: 0 */4 * * *
+  - cron: 0 2,14 * * *
   workflow_dispatch: {}
 permissions:
   contents: read
@@ -57,17 +57,20 @@ jobs:
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::download_wasi_sdk
-      run: ./script/download-wasi-sdk
     - name: steps::setup_node
       uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
       with:
         node-version: '24'
         check-latest: true
+        package-manager-cache: false
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
+      uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9
+      with:
+        tool: nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 350 200
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
     - name: steps::setup_sccache
       run: ./script/setup-sccache
       env:
@@ -290,12 +293,24 @@ jobs:
       with:
         node-version: '24'
         check-latest: true
+        package-manager-cache: false
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 350 200
+    - name: run_bundling::bundle_mac::print_macos_toolchain
+      run: |
+        sw_vers
+        xcode-select -p
+        xcodebuild -version
+        xcrun --sdk macosx --show-sdk-version
+        xcrun --sdk macosx --show-sdk-path
+        xcrun clang --version
+        printf 'DEVELOPER_DIR=%s\n' "${DEVELOPER_DIR-<unset>}"
+        printf 'SDKROOT=%s\n' "${SDKROOT-<unset>}"
+        printf 'MACOSX_DEPLOYMENT_TARGET=%s\n' "${MACOSX_DEPLOYMENT_TARGET-<unset>}"
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac aarch64-apple-darwin
     - name: run_bundling::upload_artifact
@@ -345,12 +360,24 @@ jobs:
       with:
         node-version: '24'
         check-latest: true
+        package-manager-cache: false
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 350 200
+    - name: run_bundling::bundle_mac::print_macos_toolchain
+      run: |
+        sw_vers
+        xcode-select -p
+        xcodebuild -version
+        xcrun --sdk macosx --show-sdk-version
+        xcrun --sdk macosx --show-sdk-path
+        xcrun clang --version
+        printf 'DEVELOPER_DIR=%s\n' "${DEVELOPER_DIR-<unset>}"
+        printf 'SDKROOT=%s\n' "${SDKROOT-<unset>}"
+        printf 'MACOSX_DEPLOYMENT_TARGET=%s\n' "${MACOSX_DEPLOYMENT_TARGET-<unset>}"
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac x86_64-apple-darwin
     - name: run_bundling::upload_artifact
@@ -574,6 +601,8 @@ jobs:
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        owner: ${{ github.repository_owner }}
+        repositories: ${{ github.event.repository.name }}
         permission-contents: write
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd

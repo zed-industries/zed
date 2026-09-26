@@ -183,6 +183,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+#[expect(clippy::result_large_err)]
 async fn setup_app_database(config: &Config) -> Result<()> {
     let db_options = db::ConnectOptions::new(config.database_url.clone());
     let mut db = Database::new(db_options).await?;
@@ -196,6 +197,7 @@ async fn handle_root(Extension(mode): Extension<ServiceMode>) -> String {
     format!("zed:{mode} v{VERSION} ({})", REVISION.unwrap_or("unknown"))
 }
 
+#[expect(clippy::result_large_err)]
 async fn handle_liveness_probe(app_state: Option<Extension<Arc<AppState>>>) -> Result<String> {
     if let Some(state) = app_state {
         state.db.project_count_excluding_admins().await?;

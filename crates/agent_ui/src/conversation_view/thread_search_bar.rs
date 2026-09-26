@@ -3,8 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use acp_thread::{
-    AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessageChunk, ContentBlock,
-    ToolCallContent,
+    AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessageChunk, ToolCallContent,
 };
 use collections::HashMap;
 use editor::{
@@ -892,18 +891,14 @@ fn collect_markdowns(
             for (chunk_ix, chunk) in message.chunks.iter().enumerate() {
                 match chunk {
                     AssistantMessageChunk::Message { block, .. } => {
-                        if let Some(md) = block.markdown() {
-                            out.push(md.clone());
-                        }
+                        out.extend(block.markdowns().cloned());
                     }
                     AssistantMessageChunk::Thought { block, .. }
                         if entry_view_state
                             .thinking_block_state((entry_ix, chunk_ix), cx)
                             .0 =>
                     {
-                        if let Some(md) = block.markdown() {
-                            out.push(md.clone());
-                        }
+                        out.extend(block.markdowns().cloned());
                     }
                     AssistantMessageChunk::Thought { .. } => {}
                 }
@@ -914,40 +909,72 @@ fn collect_markdowns(
             if entry_view_state.is_tool_call_expanded(&tool_call.id) {
                 out.extend(
                     tool_call
-                        .content
+                        .content()
                         .iter()
                         .filter_map(|content| match content {
-                            ToolCallContent::ContentBlock(ContentBlock::Markdown { markdown }) => {
-                                Some(markdown.clone())
-                            }
-                            ToolCallContent::ContentBlock(ContentBlock::EmbeddedResource {
-                                markdown: Some(markdown),
-                                ..
-                            }) => Some(markdown.clone()),
-                            ToolCallContent::ContentBlock(
-                                ContentBlock::Empty
-                                | ContentBlock::EmbeddedResource { markdown: None, .. }
-                                | ContentBlock::ResourceLink { .. }
-                                | ContentBlock::Image { .. },
-                            )
-                            | ToolCallContent::Diff(_)
-                            | ToolCallContent::Terminal(_) => None,
+                            ToolCallContent::ContentBlock(content) => content.markdown().cloned(),
+                            ToolCallContent::Diff(_) | ToolCallContent::Terminal(_) => None,
                         }),
                 );
             }
         }
-        AgentThreadEntry::CompletedPlan(entries) => {
-            out.extend(entries.iter().map(|e| e.content.clone()))
-        }
-        AgentThreadEntry::ContextCompaction(compaction)
-            if entry_view_state.is_compaction_expanded(entry_ix) =>
-        {
-            if let Some(summary) = &compaction.summary {
-                out.push(summary.clone());
-            }
-        }
+        AgentThreadEntry::ContextCompaction(compaction) => out.extend(compaction_markdowns(
+            compaction,
+            entry_view_state.is_compaction_expanded(entry_ix),
+        )),
         AgentThreadEntry::Elicitation(_) => {}
-        AgentThreadEntry::ContextCompaction(_) => {}
     }
     out
+}
+
+fn compaction_markdowns(
+    compaction: &acp_thread::ContextCompaction,
+    is_expanded: bool,
+) -> impl Iterator<Item = Entity<Markdown>> + '_ {
+    compaction
+        .summary
+        .iter()
+        .filter_map(|content| content.markdown().cloned())
+        .chain(compaction.error.iter().cloned())
+        .filter(move |_| is_expanded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use acp_thread::{
+        ContentBlock, ContextCompaction, ContextCompactionId, ContextCompactionStatus,
+    };
+    use agent_client_protocol::schema::v1 as acp;
+    use language::LanguageRegistry;
+
+    #[gpui::test]
+    fn test_compaction_markdowns_include_summary_and_error(cx: &mut App) {
+        let summary = cx.new(|cx| Markdown::new("summary match".into(), None, None, cx));
+        let error = cx.new(|cx| Markdown::new("error match".into(), None, None, cx));
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        let unsupported_block = ContentBlock::new_output(
+            acp::ContentBlock::Audio(acp::AudioContent::new("YXVkaW8=", "audio/wav")),
+            &language_registry,
+            cx,
+        );
+        let unsupported = unsupported_block
+            .markdown()
+            .expect("audio fallback")
+            .clone();
+        let compaction = ContextCompaction {
+            id: ContextCompactionId("compaction".into()),
+            status: ContextCompactionStatus::Failed,
+            summary: vec![
+                ContentBlock::from_markdown(summary.clone()),
+                unsupported_block,
+            ],
+            error: Some(error.clone()),
+        };
+
+        assert!(compaction_markdowns(&compaction, false).next().is_none());
+
+        let markdowns = compaction_markdowns(&compaction, true).collect::<Vec<_>>();
+        assert_eq!(markdowns, vec![summary, unsupported, error]);
+    }
 }

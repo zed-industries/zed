@@ -1,3 +1,4 @@
+use std::num::NonZeroUsize;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::{borrow::Cow, cell::RefCell};
@@ -25,8 +26,31 @@ enum ContentType {
 
 const DEFAULT_MAX_LENGTH: usize = 5000;
 
-fn default_max_length() -> usize {
-    DEFAULT_MAX_LENGTH
+fn default_max_length() -> NonZeroUsize {
+    NonZeroUsize::new(DEFAULT_MAX_LENGTH).unwrap()
+}
+
+/// The maximum number of HTTP redirects the fetch tool will follow. Each hop is
+/// re-authorized against the shared network grants before being followed.
+const MAX_REDIRECTS: usize = 20;
+
+/// The outcome of a single (non-redirect-following) HTTP request.
+enum FetchStep {
+    /// The server responded with a redirect to this absolute URL. Its host must
+    /// be authorized before the redirect is followed.
+    Redirect(String),
+    /// A terminal response was received and converted to Markdown.
+    Complete(String),
+}
+
+/// Prepends `https://` when the URL has no explicit HTTP(S) scheme, matching the
+/// behavior the fetch tool has always had for user/model-supplied URLs.
+fn normalize_url(url: &str) -> Cow<'_, str> {
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        Cow::Owned(format!("https://{url}"))
+    } else {
+        Cow::Borrowed(url)
+    }
 }
 
 /// Fetches a URL and returns the content as Markdown.
@@ -35,6 +59,9 @@ fn default_max_length() -> usize {
 /// reach any host that hasn't been granted network access. It shares the same
 /// per-host grants as the `terminal` tool: approving a host for one authorizes
 /// it for the other, whether the grant is for this thread or saved permanently.
+/// HTTP redirects are followed one hop at a time, and each hop's host must be
+/// granted the same way, so a granted host can't redirect the request to a host
+/// that hasn't been approved.
 /// When unsandboxed access has been granted, these restrictions are lifted
 /// entirely, matching the terminal, which is also how loopback and IP-literal
 /// hosts (which can't be granted individually) become reachable.
@@ -42,11 +69,11 @@ fn default_max_length() -> usize {
 pub struct FetchToolInput {
     /// The URL to fetch.
     url: String,
-    /// Maximum number of characters to return. Defaults to 5000. Increase this
-    /// to read more of a large page in one call, keeping in mind that the
-    /// content counts against the context window.
+    /// Maximum number of characters to return. Must be greater than zero.
+    /// Defaults to 5000. Increase this to read more of a large page in one call,
+    /// keeping in mind that the content counts against the context window.
     #[serde(default = "default_max_length")]
-    max_length: usize,
+    max_length: NonZeroUsize,
     /// Character index to start returning content from. Defaults to 0. Use this
     /// together with `max_length` to page through content that was truncated by
     /// a previous call.
@@ -82,19 +109,40 @@ impl FetchTool {
         Self { http_client }
     }
 
-    async fn build_message(
+    /// Performs a single HTTP GET *without* following redirects, so the tool can
+    /// re-authorize each hop against the shared network grants before following
+    /// it. Returns the redirect target when the server responds with a 3xx, or
+    /// the final content converted to Markdown otherwise.
+    async fn fetch_step(
         http_client: Arc<HttpClientWithUrl>,
         url: &str,
         start_index: usize,
         max_length: usize,
-    ) -> Result<String> {
-        let url = if !url.starts_with("https://") && !url.starts_with("http://") {
-            Cow::Owned(format!("https://{url}"))
-        } else {
-            Cow::Borrowed(url)
-        };
+    ) -> Result<FetchStep> {
+        let normalized = normalize_url(url);
 
-        let mut response = http_client.get(&url, AsyncBody::default(), true).await?;
+        let mut response = http_client
+            .get(&normalized, AsyncBody::default(), false)
+            .await?;
+
+        let status = response.status();
+        if status.is_redirection() {
+            let location = response
+                .headers()
+                .get("location")
+                .context("redirect response is missing a Location header")?
+                .to_str()
+                .context("redirect response has an invalid Location header")?;
+            let target = url::Url::parse(&normalized)
+                .with_context(|| format!("could not parse URL {normalized:?}"))?
+                .join(location)
+                .with_context(|| format!("invalid redirect target {location:?}"))?;
+            anyhow::ensure!(
+                matches!(target.scheme(), "http" | "https"),
+                "refusing to follow redirect to non-HTTP(S) URL {target}"
+            );
+            return Ok(FetchStep::Redirect(target.to_string()));
+        }
 
         let mut body = Vec::new();
         response
@@ -103,12 +151,10 @@ impl FetchTool {
             .await
             .context("error reading response body")?;
 
-        if response.status().is_client_error() {
+        if status.is_client_error() {
             let text = String::from_utf8_lossy(body.as_slice());
-            bail!(
-                "status error {}, response: {text:?}",
-                response.status().as_u16()
-            );
+            let text = window_content(&text, start_index, max_length);
+            bail!("status error {}, response: {text:?}", status.as_u16());
         }
 
         let Some(content_type) = response.headers().get("content-type") else {
@@ -126,7 +172,7 @@ impl FetchTool {
             ContentType::Html
         };
 
-        let content = match content_type {
+        let text = match content_type {
             ContentType::Html => {
                 let mut handlers: Vec<TagHandler> = vec![
                     Rc::new(RefCell::new(markdown::WebpageChromeRemover)),
@@ -136,7 +182,7 @@ impl FetchTool {
                     Rc::new(RefCell::new(markdown::TableHandler::new())),
                     Rc::new(RefCell::new(markdown::StyledTextHandler)),
                 ];
-                if url.contains("wikipedia.org") {
+                if normalized.contains("wikipedia.org") {
                     use html_to_markdown::structure::wikipedia;
 
                     handlers.push(Rc::new(RefCell::new(wikipedia::WikipediaChromeRemover)));
@@ -148,32 +194,54 @@ impl FetchTool {
                     handlers.push(Rc::new(RefCell::new(markdown::CodeHandler)));
                 }
 
-                convert_html_to_markdown(&body[..], &mut handlers)
+                convert_html_to_markdown(&body[..], &mut handlers)?
             }
-            ContentType::Plaintext => Ok(std::str::from_utf8(&body)?.to_owned()),
+            ContentType::Plaintext => std::str::from_utf8(&body)?.to_owned(),
             ContentType::Json => {
                 let json: serde_json::Value = serde_json::from_slice(&body)?;
 
-                Ok(format!(
-                    "```json\n{}\n```",
-                    serde_json::to_string_pretty(&json)?
-                ))
+                format!("```json\n{}\n```", serde_json::to_string_pretty(&json)?)
             }
-        }?;
+        };
 
-        Ok(window_content(&content, start_index, max_length))
+        Ok(FetchStep::Complete(window_content(
+            &text,
+            start_index,
+            max_length,
+        )))
     }
+}
+
+/// Resolve the host of `url` and confirm it doesn't point into loopback /
+/// private / link-local space, applying the same forbidden-IP policy the
+/// terminal sandbox's proxy uses. Returns an error (including "resolves only to
+/// forbidden addresses") that aborts the fetch.
+///
+/// DNS resolution blocks, so callers should run this off the foreground thread.
+/// See the caller for why this is a gate rather than a full resolve-to-connect
+/// pin.
+fn verify_host_not_forbidden(url: &str) -> Result<()> {
+    let normalized = normalize_url(url);
+    let parsed =
+        url::Url::parse(&normalized).with_context(|| format!("could not parse URL {url:?}"))?;
+    let host = parsed
+        .host_str()
+        .with_context(|| format!("URL {url:?} has no host to reach"))?;
+    // Default to the scheme's port when the URL omits one; resolution needs a
+    // port but the value doesn't affect which IPs a host resolves to.
+    let port = parsed
+        .port_or_known_default()
+        .unwrap_or(if parsed.scheme() == "http" { 80 } else { 443 });
+
+    http_proxy::PinnedHost::resolve(host, port).map(|_pinned| ())?;
+    Ok(())
 }
 
 /// Extracts the host from a fetch URL as a [`http_proxy::HostPattern`] so it can
 /// be matched against the shared network grants. Mirrors the scheme handling in
-/// [`FetchTool::build_message`] (defaulting to `https://` when none is given).
+/// [`normalize_url`] (defaulting to `https://` when none is given).
 fn host_pattern_for_url(url: &str) -> Result<http_proxy::HostPattern> {
-    let normalized = if !url.starts_with("https://") && !url.starts_with("http://") {
-        Cow::Owned(format!("https://{url}"))
-    } else {
-        Cow::Borrowed(url)
-    };
+    let normalized = normalize_url(url);
     let parsed =
         url::Url::parse(&normalized).with_context(|| format!("could not parse URL {url:?}"))?;
     let host = parsed
@@ -253,38 +321,96 @@ impl AgentTool for FetchTool {
             // already runs without isolation, so we drop fetch's restrictions
             // too — including reaching hosts that can't be granted individually
             // (loopback and IP literals).
-            let unsandboxed = cx.update(|cx| event_stream.unsandboxed_access_granted(cx));
-            if !unsandboxed {
-                let host = host_pattern_for_url(&input.url).map_err(|e| e.to_string())?;
-                let authorize_host = cx.update(|cx| {
-                    let request = SandboxRequest {
-                        network: NetworkRequest::Hosts(vec![host]),
-                        ..Default::default()
+            //
+            // Crucially, this authorization is applied to every redirect hop as
+            // well as the initial URL, so a granted host can't 30x-redirect the
+            // fetch to a host the user never approved. We disable the HTTP
+            // client's own redirect following and re-run the grant for each hop
+            // before requesting it.
+            //
+            // When the sandboxing feature flag is off the terminal isn't
+            // sandboxed either, so gating fetch by host would provide no
+            // isolation; skip it entirely (the pre-sandboxing behavior).
+            let unsandboxed = cx.update(|cx| {
+                !crate::sandboxing::sandboxing_enabled(cx)
+                    || event_stream.unsandboxed_access_granted(cx)
+            });
+
+            let mut current_url = input.url.clone();
+            let mut redirects = 0;
+            let text = loop {
+                if !unsandboxed {
+                    let host = host_pattern_for_url(&current_url).map_err(|e| e.to_string())?;
+                    let authorize_host = cx.update(|cx| {
+                        let request = SandboxRequest {
+                            network: NetworkRequest::Hosts(vec![host]),
+                            ..Default::default()
+                        };
+                        event_stream.authorize_sandbox(request, String::new(), cx)
+                    });
+                    futures::select! {
+                        result = authorize_host.fuse() => result.map_err(|e| e.to_string())?,
+                        _ = event_stream.cancelled_by_user().fuse() => {
+                            return Err("Fetch cancelled by user".to_string());
+                        }
                     };
-                    event_stream.authorize_sandbox(request, String::new(), cx)
+
+                    // Authorizing the *hostname* is not enough: a granted host
+                    // (or a redirect to one) whose DNS points into loopback /
+                    // private / link-local space would otherwise let the model
+                    // reach the local machine or LAN (SSRF / DNS rebinding).
+                    // Resolve and vet the host now, applying the same
+                    // forbidden-IP policy the terminal sandbox's proxy enforces.
+                    //
+                    // NOTE: this is a gate, not a full pin. `HttpClientWithUrl`
+                    // resolves the hostname again when it connects, so a DNS
+                    // answer that flips between this check and that connect could
+                    // still slip through. Closing that residual window would
+                    // require the HTTP client to connect to a pre-vetted IP
+                    // (`PinnedHost::socket_addrs`) rather than re-resolving;
+                    // until then this blocks the realistic case of a stably
+                    // resolving host that points at forbidden space.
+                    let verify_task = cx.background_spawn({
+                        let url = current_url.clone();
+                        async move { verify_host_not_forbidden(&url) }
+                    });
+                    futures::select! {
+                        result = verify_task.fuse() => result.map_err(|e| e.to_string())?,
+                        _ = event_stream.cancelled_by_user().fuse() => {
+                            return Err("Fetch cancelled by user".to_string());
+                        }
+                    };
+                }
+
+                let fetch_task = cx.background_spawn({
+                    let http_client = http_client.clone();
+                    let url = current_url.clone();
+                    let start_index = input.start_index;
+                    let max_length = input.max_length.get();
+                    async move { Self::fetch_step(http_client, &url, start_index, max_length).await }
                 });
-                futures::select! {
-                    result = authorize_host.fuse() => result.map_err(|e| e.to_string())?,
+
+                let step = futures::select! {
+                    result = fetch_task.fuse() => result.map_err(|e| e.to_string())?,
                     _ = event_stream.cancelled_by_user().fuse() => {
                         return Err("Fetch cancelled by user".to_string());
                     }
                 };
-            }
 
-            let fetch_task = cx.background_spawn({
-                let http_client = http_client.clone();
-                let url = input.url.clone();
-                let start_index = input.start_index;
-                let max_length = input.max_length;
-                async move { Self::build_message(http_client, &url, start_index, max_length).await }
-            });
-
-            let text = futures::select! {
-                result = fetch_task.fuse() => result.map_err(|e| e.to_string())?,
-                _ = event_stream.cancelled_by_user().fuse() => {
-                    return Err("Fetch cancelled by user".to_string());
+                match step {
+                    FetchStep::Complete(text) => break text,
+                    FetchStep::Redirect(target) => {
+                        redirects += 1;
+                        if redirects > MAX_REDIRECTS {
+                            return Err(format!(
+                                "exceeded the maximum of {MAX_REDIRECTS} redirects"
+                            ));
+                        }
+                        current_url = target;
+                    }
                 }
             };
+
             if text.trim().is_empty() {
                 return Err("no textual content found".to_string());
             }
@@ -338,5 +464,153 @@ mod tests {
             "😀😁\n\n[Showing characters 0-2 of 3. \
              Call fetch again with start_index=2 to read more.]"
         );
+        assert_eq!(window_content(content, 1, 2), "😁😂");
+    }
+
+    #[test]
+    fn empty_content_and_large_indices_are_safe() {
+        assert_eq!(window_content("", 0, 5000), "");
+        assert_eq!(window_content("abc", usize::MAX, usize::MAX), "");
+        assert_eq!(window_content("abc", 1, usize::MAX), "bc");
+        assert_eq!(window_content("abc", 0, 3), "abc");
+    }
+
+    #[test]
+    fn fetch_input_defaults_preserve_existing_calls() {
+        let input: FetchToolInput =
+            serde_json::from_value(serde_json::json!({"url": "https://example.com"})).unwrap();
+        assert_eq!(input.max_length.get(), 5000);
+        assert_eq!(input.start_index, 0);
+    }
+
+    #[test]
+    fn fetch_input_rejects_invalid_windows() {
+        assert!(
+            serde_json::from_value::<FetchToolInput>(serde_json::json!({
+                "url": "https://example.com", "start_index": -1
+            }))
+            .is_err()
+        );
+        for max_length in [0, -1] {
+            assert!(
+                serde_json::from_value::<FetchToolInput>(serde_json::json!({
+                    "url": "https://example.com", "max_length": max_length
+                }))
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn fetch_step_windows_each_content_type() {
+        for (content_type, body, expected) in [
+            ("text/plain", "abcdefghij", "bcd"),
+            ("text/html", "<p>abcdefghij</p>", "bcd"),
+            ("application/json", "{\"value\": 1}", "``j"),
+        ] {
+            let client = http_client::FakeHttpClient::create(move |_| async move {
+                Ok(http_client::Response::builder()
+                    .header("content-type", content_type)
+                    .body(body.into())
+                    .unwrap())
+            });
+            let result =
+                async_io::block_on(FetchTool::fetch_step(client, "https://example.com", 1, 3))
+                    .unwrap();
+            let FetchStep::Complete(text) = result else {
+                panic!("expected content, not a redirect");
+            };
+            assert!(
+                text.starts_with(&format!("{expected}\n\n[Showing characters 1-4")),
+                "{text}"
+            );
+            assert!(text.ends_with("start_index=4 to read more.]"));
+        }
+    }
+
+    #[test]
+    fn fetch_step_bounds_large_error_responses() {
+        let client = http_client::FakeHttpClient::create(|_| async move {
+            Ok(http_client::Response::builder()
+                .status(404)
+                .body("x".repeat(700_000).into())
+                .unwrap())
+        });
+        let result = async_io::block_on(FetchTool::fetch_step(
+            client,
+            "https://example.com/missing",
+            0,
+            5000,
+        ));
+        let error = match result {
+            Err(error) => error.to_string(),
+            Ok(_) => panic!("expected an HTTP status error"),
+        };
+        assert!(error.starts_with("status error 404, response:"));
+        assert!(error.len() < 5200, "error has {} bytes", error.len());
+        assert!(error.contains("start_index=5000 to read more."));
+    }
+
+    #[test]
+    fn fetch_step_leaves_redirects_for_authorization() {
+        let client = http_client::FakeHttpClient::create(|request| async move {
+            assert!(matches!(
+                request.extensions().get::<http_client::RedirectPolicy>(),
+                Some(http_client::RedirectPolicy::NoFollow)
+            ));
+            Ok(http_client::Response::builder()
+                .status(302)
+                .header("location", "/next")
+                .body(AsyncBody::default())
+                .unwrap())
+        });
+        let result = async_io::block_on(FetchTool::fetch_step(
+            client,
+            "https://example.com/start",
+            50,
+            100,
+        ))
+        .unwrap();
+        let FetchStep::Redirect(target) = result else {
+            panic!("expected a redirect");
+        };
+        assert_eq!(target, "https://example.com/next");
+    }
+
+    // These use IP-literal URLs, which "resolve" to themselves, so the SSRF gate
+    // is exercised without depending on real DNS. IP literals can't be *granted*
+    // network access (that's a separate, earlier check), but they can be the
+    // target a granted hostname redirects to or resolves into — which is exactly
+    // the case this gate defends.
+
+    #[test]
+    fn verify_host_rejects_loopback_literal() {
+        let error = verify_host_not_forbidden("http://127.0.0.1/internal")
+            .expect_err("loopback must be refused");
+        assert!(
+            error.to_string().contains("loopback"),
+            "error should explain the forbidden range, got: {error}"
+        );
+    }
+
+    #[test]
+    fn verify_host_rejects_private_and_metadata_literals() {
+        for url in [
+            "http://10.0.0.5/",
+            "https://192.168.1.1/",
+            "http://169.254.169.254/latest/meta-data/", // cloud metadata
+            "http://[::1]/",
+        ] {
+            assert!(
+                verify_host_not_forbidden(url).is_err(),
+                "expected {url} to be refused as a forbidden destination"
+            );
+        }
+    }
+
+    #[test]
+    fn verify_host_allows_public_literal() {
+        verify_host_not_forbidden("https://93.184.215.14/")
+            .expect("a public address must be allowed through the gate");
     }
 }

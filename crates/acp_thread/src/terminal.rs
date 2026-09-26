@@ -1,5 +1,5 @@
 use agent_client_protocol::schema::v1 as acp;
-use anyhow::Result;
+use anyhow::{Result, bail};
 use collections::HashMap;
 use futures::{FutureExt as _, future::Shared};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Task};
@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap as StdHashMap,
     path::PathBuf,
-    process::ExitStatus,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -43,7 +42,12 @@ pub struct SandboxWrap {
     /// to make the trust boundary explicit: these originate from
     /// model-requested paths that passed a user-approval prompt. They are
     /// merged with `writable_paths` when generating the sandbox policy.
-    pub extra_write_paths: Vec<PathBuf>,
+    ///
+    /// Each grant carries the canonical target it resolved to at approval
+    /// time; enforcement rebuilds the location via a verifying reopen (see
+    /// [`granted_write_path_to_location`]) rather than re-resolving the bare
+    /// requested path, which closes a symlink TOCTOU.
+    pub extra_write_paths: Vec<settings::GrantedWritePath>,
     /// Outbound network access explicitly approved for this command.
     pub network: SandboxNetworkAccess,
     /// Additional paths that should remain readable but not writable, even when
@@ -129,6 +133,76 @@ impl LinuxWslSandboxError {
             LinuxWslSandboxError::Other(message) => message.clone(),
         }
     }
+
+    /// The slug of the sandboxing docs section that best explains how to resolve
+    /// this failure, for deep-linking from the UI. Pair with
+    /// `client::zed_urls::sandboxing_docs`.
+    pub fn docs_section(&self) -> &'static str {
+        match self {
+            // Both "no bwrap" and "only a setuid-root bwrap" are resolved by
+            // installing a non-setuid Bubblewrap.
+            LinuxWslSandboxError::BwrapNotFound | LinuxWslSandboxError::SetuidRejected => {
+                "installing-bubblewrap"
+            }
+            // A failed probe on Linux is almost always disabled unprivileged
+            // user namespaces, which the Ubuntu-specific section covers.
+            LinuxWslSandboxError::SandboxProbeFailed => "installing-bubblewrap-ubuntu",
+            // Catch-all (includes WSL/Windows messages): point at the platform
+            // overview for the current OS.
+            LinuxWslSandboxError::Other(_) => {
+                if cfg!(target_os = "windows") {
+                    "windows"
+                } else {
+                    "linux"
+                }
+            }
+        }
+    }
+}
+
+/// Rebuild a user-approved write grant into an enforceable
+/// [`sandbox::HostFilesystemLocation`].
+///
+/// When the grant carries a resolved canonical (the normal case, established at
+/// approval time), the location is rebuilt via a verifying
+/// [`sandbox::HostFilesystemLocation::reopen`] — the load-bearing step of the
+/// TOCTOU fix. A legacy bare-string grant (no resolved canonical) falls back to
+/// a fresh [`sandbox::HostFilesystemLocation::capture`].
+pub fn granted_write_path_to_location(
+    granted: &settings::GrantedWritePath,
+) -> std::io::Result<sandbox::HostFilesystemLocation> {
+    match &granted.resolved {
+        Some(resolved) => sandbox::HostFilesystemLocation::reopen(&granted.requested, resolved),
+        None => sandbox::HostFilesystemLocation::capture(&granted.requested),
+    }
+}
+
+/// Rebuild a grant for enforcement, or log and drop it (fail-closed) if it
+/// can't be verified.
+///
+/// A failure here is frequently the symlink-TOCTOU defense firing: the grant's
+/// canonical was redirected or replaced by a symlink since approval, so
+/// [`sandbox::HostFilesystemLocation::reopen`] refuses it. That is a
+/// security-relevant event, so it must be logged rather than silently
+/// swallowed. The grant is dropped (the command runs without it) rather than
+/// bound unverified.
+///
+/// Only for **display** policies (the sandbox-status UI), where a stale grant
+/// should simply not be shown. Enforcement must not drop grants silently — a
+/// command would run with less access than the user approved with no signal —
+/// so [`SandboxWrap::to_policy`] uses the erroring
+/// [`granted_write_path_to_location`] instead.
+pub fn granted_write_path_to_location_or_log(
+    granted: &settings::GrantedWritePath,
+) -> Option<sandbox::HostFilesystemLocation> {
+    granted_write_path_to_location(granted)
+        .inspect_err(|error| {
+            log::warn!(
+                "dropping sandbox write grant {}: {error}",
+                granted.requested.display()
+            );
+        })
+        .ok()
 }
 
 impl SandboxWrap {
@@ -142,35 +216,88 @@ impl SandboxWrap {
     /// Linux, so call it off the main thread. On platforms whose sandbox can't
     /// fail to set up this way it always returns `Ok`.
     pub fn can_create_sandbox(&self) -> Result<(), LinuxWslSandboxError> {
-        sandbox::Sandbox::can_create(&self.to_policy()).map_err(LinuxWslSandboxError::from)
+        let policy = self
+            .to_policy()
+            .map_err(|error| LinuxWslSandboxError::Other(format!("{error:#}")))?;
+        sandbox::Sandbox::can_create(&policy).map_err(LinuxWslSandboxError::from)
     }
 
     /// Translate this request into the cross-platform [`sandbox::SandboxPolicy`].
     ///
     /// This is the enforcement-policy construction point, so it **captures** each
     /// grant as a [`sandbox::HostFilesystemLocation`] (pinning the inode / canonical
-    /// path) rather than passing a re-resolvable path. A location that can't be
-    /// captured (e.g. it doesn't exist) is dropped from the grant — fail-closed.
-    fn to_policy(&self) -> sandbox::SandboxPolicy {
+    /// path) rather than passing a re-resolvable path.
+    ///
+    /// This function has **no filesystem side effects**: it never creates paths,
+    /// and it **fails** (rather than silently narrowing the policy) when a
+    /// writable path or approved grant can't be captured — running anyway would
+    /// give the command silently less access than the model and user were told
+    /// it has. On Linux a writable grant that doesn't exist can't be captured
+    /// (bwrap can't bind a missing path); the sanctioned way to get a grant to a
+    /// new directory is the `create_directory` tool, which creates it (pinning
+    /// the inode) before the grant is recorded. On macOS a missing leaf still
+    /// canonicalizes, so such grants are captured directly.
+    ///
+    /// It is used both by the side-effect-free [`Self::can_create_sandbox`] probe
+    /// and by real sandbox construction, and must behave identically.
+    ///
+    /// A grant failure here can also be the symlink-TOCTOU defense firing: the
+    /// grant's canonical was redirected or replaced by a symlink since approval,
+    /// so the verifying reopen refuses it. Failing the command surfaces that
+    /// security-relevant event instead of running with the grant quietly
+    /// missing.
+    ///
+    /// Protected paths, by contrast, are **best-effort**: we protect only the
+    /// ones that exist at creation time (`capture` succeeding *is* the existence
+    /// check), and silently drop the rest. Unlike a writable grant, a protection
+    /// can't be materialized — you can't pin the inode of a path that isn't
+    /// there — and there is an inherent, *accepted* loophole regardless: a
+    /// command in a non-git directory can `git init` and write hooks into a
+    /// `.git` that didn't exist when the sandbox was built. Since the protection
+    /// is defeatable that way no matter what, failing sandbox creation over a
+    /// currently-absent (or otherwise uncapturable) `.git` would only break
+    /// legitimate cases — non-git projects, single-file worktrees whose
+    /// synthesized `settings.json/.git` routes through a file — without closing
+    /// the hole. So we drop and move on.
+    fn to_policy(&self) -> Result<sandbox::SandboxPolicy> {
         let protected_paths = self
             .protected_paths
             .iter()
-            .filter_map(|path| sandbox::HostFilesystemLocation::new(path).ok())
-            .collect();
+            .filter_map(|path| sandbox::HostFilesystemLocation::capture(path).ok())
+            .collect::<Vec<_>>();
         let fs = if self.allow_fs_write {
             sandbox::SandboxFsPolicy::Unrestricted { protected_paths }
         } else {
-            let writable_paths = self
-                .writable_paths
-                .iter()
-                .chain(self.extra_write_paths.iter())
-                .filter_map(|path| {
-                    // Create not-yet-existing writable grants (e.g. an approved
-                    // scratch dir) so they can be captured and bound; best-effort.
-                    let _ = std::fs::create_dir_all(path);
-                    sandbox::HostFilesystemLocation::new(path).ok()
-                })
-                .collect();
+            // Project worktree paths are captured fresh; user-approved grants are
+            // rebuilt via the verifying reopen (or captured when legacy bare
+            // strings) through `granted_write_path_to_location`. A path that
+            // can't be captured fails the whole construction (never created).
+            let mut locations = Vec::new();
+            for path in &self.writable_paths {
+                let location = sandbox::HostFilesystemLocation::capture(path).map_err(|error| {
+                    anyhow::anyhow!(error).context(format!(
+                        "cannot capture writable sandbox path `{}`",
+                        path.display()
+                    ))
+                })?;
+                locations.push(location);
+            }
+            for granted in &self.extra_write_paths {
+                let location = granted_write_path_to_location(granted).map_err(|error| {
+                    anyhow::anyhow!(error).context(format!(
+                        "cannot re-verify approved sandbox write grant `{}` (if the \
+                         directory was removed, remove the grant or recreate the \
+                         directory)",
+                        granted.requested.display()
+                    ))
+                })?;
+                locations.push(location);
+            }
+            // Dedupe to a minimal cover on the captured canonical paths, so a
+            // grant nested under a worktree root (or another grant) is dropped
+            // rather than bound redundantly.
+            let writable_paths =
+                sandbox::normalize_host_filesystem_locations(locations.into_iter());
             sandbox::SandboxFsPolicy::Restricted {
                 writable_paths,
                 protected_paths,
@@ -187,7 +314,7 @@ impl SandboxWrap {
                     .collect(),
             },
         };
-        sandbox::SandboxPolicy { fs, network }
+        Ok(sandbox::SandboxPolicy { fs, network })
     }
 }
 
@@ -249,7 +376,7 @@ pub(crate) async fn prepare_sandbox_wrap(
     };
 
     let mut sandbox =
-        sandbox::Sandbox::new(sandbox_wrap.to_policy()).map_err(anyhow::Error::new)?;
+        sandbox::Sandbox::new(sandbox_wrap.to_policy()?).map_err(anyhow::Error::new)?;
     // Windows/WSL only: tell the sandbox which Linux `zed` to provision inside
     // WSL as its `--wsl-sandbox-helper`. A no-op (and a no-op setter) elsewhere.
     #[cfg(target_os = "windows")]
@@ -279,7 +406,7 @@ pub struct Terminal {
     started_at: Instant,
     output: Option<TerminalOutput>,
     output_byte_limit: Option<usize>,
-    _output_task: Shared<Task<acp::TerminalExitStatus>>,
+    execution: TerminalExecution,
     /// Flag indicating whether this terminal was stopped by explicit user action
     /// (e.g., clicking the Stop button). This is set before kill() is called
     /// so that code awaiting wait_for_exit() can check it deterministically.
@@ -291,9 +418,14 @@ pub struct Terminal {
     _sandbox: Option<SandboxConfigHandle>,
 }
 
+enum TerminalExecution {
+    Process(Shared<Task<acp::TerminalExitStatus>>),
+    Display,
+}
+
 pub struct TerminalOutput {
     pub ended_at: Instant,
-    pub exit_status: Option<ExitStatus>,
+    pub exit_status: acp::TerminalExitStatus,
     pub content: String,
     pub original_content_len: usize,
     pub content_line_count: usize,
@@ -341,20 +473,19 @@ impl Terminal {
             output: None,
             output_byte_limit,
             user_stopped: Arc::new(AtomicBool::new(false)),
-            _output_task: cx
-                .spawn(async move |this, cx| {
-                    let exit_status = command_task.await;
+            execution: TerminalExecution::Process(
+                cx.spawn(async move |this, cx| {
+                    let exit_status = command_task.await.map(portable_pty::ExitStatus::from);
+                    let exit_status = acp::TerminalExitStatus::new()
+                        .exit_code(exit_status.as_ref().map(|status| status.exit_code()))
+                        .signal(
+                            exit_status.and_then(|status| status.signal().map(ToOwned::to_owned)),
+                        );
 
                     this.update(cx, |this, cx| {
-                        let (content, original_content_len) = this.truncated_output(cx);
-                        let content_line_count = this.terminal.read(cx).total_lines();
-
-                        this.output = Some(TerminalOutput {
-                            ended_at: Instant::now(),
-                            exit_status,
-                            content,
-                            original_content_len,
-                            content_line_count,
+                        this.cache_output(exit_status.clone(), Instant::now(), cx);
+                        this.terminal.update(cx, |terminal, _cx| {
+                            terminal.release_pty_resources();
                         });
                         // Free the sandbox (and its network proxy) as soon as
                         // the command finishes, rather than holding it until
@@ -366,17 +497,43 @@ impl Terminal {
                                 .spawn(async move { sandbox.drop_on_current_thread() })
                                 .detach();
                         }
-                        cx.notify();
                     })
                     .ok();
 
-                    let exit_status = exit_status.map(portable_pty::ExitStatus::from);
-
-                    acp::TerminalExitStatus::new()
-                        .exit_code(exit_status.as_ref().map(|e| e.exit_code()))
-                        .signal(exit_status.and_then(|e| e.signal().map(ToOwned::to_owned)))
+                    exit_status
                 })
                 .shared(),
+            ),
+        }
+    }
+
+    pub fn new_display(
+        id: acp::TerminalId,
+        command_label: &str,
+        working_dir: Option<PathBuf>,
+        output_byte_limit: Option<usize>,
+        terminal: Entity<terminal::Terminal>,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            id,
+            command: cx.new(|cx| {
+                Markdown::new(
+                    format!("```\n{}\n```", command_label).into(),
+                    Some(language_registry),
+                    None,
+                    cx,
+                )
+            }),
+            working_dir,
+            terminal,
+            started_at: Instant::now(),
+            output: None,
+            output_byte_limit,
+            execution: TerminalExecution::Display,
+            user_stopped: Arc::new(AtomicBool::new(false)),
+            _sandbox: None,
         }
     }
 
@@ -384,11 +541,24 @@ impl Terminal {
         &self.id
     }
 
-    pub fn wait_for_exit(&self) -> Shared<Task<acp::TerminalExitStatus>> {
-        self._output_task.clone()
+    /// Ownership is independent of the renderer's PTY: headless tasks still own a process.
+    pub fn is_process_backed(&self) -> bool {
+        matches!(self.execution, TerminalExecution::Process(_))
+    }
+
+    pub fn wait_for_exit(&self) -> Result<Shared<Task<acp::TerminalExitStatus>>> {
+        match &self.execution {
+            TerminalExecution::Process(task) => Ok(task.clone()),
+            TerminalExecution::Display => {
+                bail!("Agent-provided terminals have no client-owned process to wait for")
+            }
+        }
     }
 
     pub fn kill(&mut self, cx: &mut App) {
+        if !self.is_process_backed() {
+            return;
+        }
         self.terminal.update(cx, |terminal, _cx| {
             terminal.kill_active_task();
         });
@@ -397,6 +567,9 @@ impl Terminal {
     /// Marks this terminal as stopped by user action and then kills it.
     /// This should be called when the user explicitly clicks a Stop button.
     pub fn stop_by_user(&mut self, cx: &mut App) {
+        if !self.is_process_backed() {
+            return;
+        }
         self.user_stopped.store(true, Ordering::SeqCst);
         self.kill(cx);
     }
@@ -408,22 +581,60 @@ impl Terminal {
 
     pub fn current_output(&self, cx: &App) -> acp::TerminalOutputResponse {
         if let Some(output) = self.output.as_ref() {
-            let exit_status = output.exit_status.map(portable_pty::ExitStatus::from);
-
             acp::TerminalOutputResponse::new(
                 output.content.clone(),
                 output.original_content_len > output.content.len(),
             )
-            .exit_status(
-                acp::TerminalExitStatus::new()
-                    .exit_code(exit_status.as_ref().map(|e| e.exit_code()))
-                    .signal(exit_status.and_then(|e| e.signal().map(ToOwned::to_owned))),
-            )
+            .exit_status(output.exit_status.clone())
         } else {
             let (current_content, original_len) = self.truncated_output(cx);
             let truncated = current_content.len() < original_len;
             acp::TerminalOutputResponse::new(current_content, truncated)
         }
+    }
+
+    pub(crate) fn write_display_output(&mut self, data: &[u8], cx: &mut Context<Self>) {
+        if self.is_process_backed() {
+            return;
+        }
+        self.terminal
+            .update(cx, |terminal, cx| terminal.write_output(data, cx));
+        if let Some(output) = &self.output {
+            // A process may exit before its final output arrives. Refresh the
+            // cached content without changing its completion time or status.
+            self.cache_output(output.exit_status.clone(), output.ended_at, cx);
+        }
+    }
+
+    pub(crate) fn finish_display(
+        &mut self,
+        exit_status: acp::TerminalExitStatus,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_process_backed() || self.output.is_some() {
+            return;
+        }
+        self.terminal
+            .update(cx, |terminal, _| terminal.shrink_to_used());
+        self.cache_output(exit_status, Instant::now(), cx);
+    }
+
+    fn cache_output(
+        &mut self,
+        exit_status: acp::TerminalExitStatus,
+        ended_at: Instant,
+        cx: &mut Context<Self>,
+    ) {
+        let (content, original_content_len) = self.truncated_output(cx);
+        let content_line_count = self.terminal.read(cx).total_lines();
+        self.output = Some(TerminalOutput {
+            ended_at,
+            exit_status,
+            content,
+            original_content_len,
+            content_line_count,
+        });
+        cx.notify();
     }
 
     fn truncated_output(&self, cx: &App) -> (String, usize) {
@@ -502,10 +713,7 @@ pub async fn create_terminal_entity(
         Default::default()
     };
 
-    // Disable pagers so agent/terminal commands don't hang behind interactive UIs
-    env.insert("PAGER".into(), "".into());
-    // Override user core.pager (e.g. delta) which Git prefers over PAGER
-    env.insert("GIT_PAGER".into(), "cat".into());
+    disable_pagers_through_env(&mut env);
     env.extend(env_vars);
 
     // Use remote shell or default system shell, as appropriate
@@ -536,4 +744,98 @@ pub async fn create_terminal_entity(
             )
         })
         .await
+}
+
+// Disable pagers so agent/terminal commands don't hang behind interactive UIs
+pub(crate) fn disable_pagers_through_env(env: &mut collections::HashMap<String, String>) {
+    env.insert("PAGER".into(), "".into());
+    // Override user core.pager (e.g. delta) which Git prefers over PAGER
+    env.insert("GIT_PAGER".into(), "cat".into());
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_tests {
+    use super::*;
+
+    /// Regression test for the bug where enforcement-policy construction
+    /// *created* missing write grants — famously turning a granted
+    /// `~/.config/zed/AGENTS.md` file path into a directory. A grant whose
+    /// target no longer exists must fail policy construction with an error
+    /// naming it, and nothing may be created — a required safety grant that
+    /// can't be honored must stop the command, not silently shrink its access.
+    #[test]
+    fn to_policy_fails_on_missing_grant_and_never_creates_it() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let missing = temp_dir.path().join("AGENTS.md");
+
+        let wrap = SandboxWrap {
+            extra_write_paths: vec![settings::GrantedWritePath::resolved(
+                missing.clone(),
+                missing.clone(),
+            )],
+            ..Default::default()
+        };
+
+        let error = wrap
+            .to_policy()
+            .expect_err("a grant to a missing path must fail policy construction");
+        assert!(
+            format!("{error:#}").contains("AGENTS.md"),
+            "error should name the failing grant: {error:#}"
+        );
+        assert!(
+            !missing.exists(),
+            "policy construction must never create the granted path"
+        );
+    }
+
+    /// A baseline writable path (worktree root / scratch dir) that doesn't
+    /// exist must also fail: silently narrowing the sandbox would hand the
+    /// command less access than the model was told it has.
+    #[test]
+    fn to_policy_fails_on_missing_writable_path() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let missing = temp_dir.path().join("gone");
+
+        let wrap = SandboxWrap {
+            writable_paths: vec![missing.clone()],
+            ..Default::default()
+        };
+
+        wrap.to_policy()
+            .expect_err("a missing writable path must fail policy construction");
+        assert!(
+            !missing.exists(),
+            "policy construction must never create a writable path"
+        );
+    }
+
+    /// Protected paths are best-effort: an uncapturable one is dropped, never
+    /// fatal. That covers a missing path (`NotFound`) and one routed through a
+    /// regular file (`NotADirectory`) — the latter is the synthesized `.git` of
+    /// a single-file worktree (e.g. `settings.json/.git`). Unlike a writable
+    /// grant, a protection can't be materialized, and `.git` protection has an
+    /// inherent accepted loophole (`git init`), so failing here would only break
+    /// legitimate cases. Unit-level companion to the `settings.json/.git` NixOS
+    /// check.
+    #[test]
+    fn to_policy_skips_uncapturable_protected_paths() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let writable = temp_dir.path().join("writable");
+        std::fs::create_dir(&writable).expect("create writable dir");
+        let single_file_root = temp_dir.path().join("settings.json");
+        std::fs::write(&single_file_root, b"{}").expect("create single-file worktree root");
+
+        let wrap = SandboxWrap {
+            writable_paths: vec![writable],
+            protected_paths: vec![
+                temp_dir.path().join("no-such-.git"),
+                single_file_root.join(".git"),
+            ],
+            ..Default::default()
+        };
+
+        wrap.to_policy()
+            .expect("uncapturable protected paths must be dropped, not fail the policy");
+    }
 }
