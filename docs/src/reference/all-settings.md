@@ -6115,7 +6115,7 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 
 ## Git Worktree Directory
 
-- Description: Directory where git worktrees are created, relative to the repository working directory.
+- Description: Base directory for new Git worktrees. Supports absolute paths, paths relative to the repository working directory, and `~` for the home directory.
 - Setting: `git.worktree_directory`
 - Default: `"../worktrees"`
 
@@ -6126,6 +6126,7 @@ When the resolved directory is inside the project root, no extra component is ad
 **Examples**:
 
 - `"../worktrees"` — `~/code/worktrees/<project>/` (default)
+- `"/tmp/worktrees"` — `/tmp/worktrees/<project>/`
 - `".git/zed-worktrees"` — `<project>/.git/zed-worktrees/`
 - `"my-worktrees"` — `<project>/my-worktrees/`
 
