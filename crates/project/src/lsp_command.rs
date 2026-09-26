@@ -3904,12 +3904,14 @@ impl InlayHints {
             Some(InlayHintKind::Type) => Bias::Right,
             Some(InlayHintKind::Parameter) => Bias::Left,
             // `None`-kinded hints can go either way: rust-analyzer's `Lifetime` before `str`
-            // in `&str` is a prefix while `ClosingBrace` after `}` is a suffix. Asymmetric
-            // padding is a reliable signal: space before the hint (padding_left) means it is
-            // a suffix attached to the left → Right; space after (padding_right) means it is
+            // in `&str` is a prefix, while `ClosingBrace` after `}` is a suffix. Asymmetric
+            // padding is a reliable signal: space before the hint (`padding_left`) means it is
+            // a suffix attached to the left → Right; space after (`padding_right`) means it is
             // a prefix attached to the right → Left. When padding is ambiguous, fall back to
-            // `surrounding_word`: if the word starts before the offset the hint sits at the
-            // end of a token (suffix → Right), otherwise it precedes a token (prefix → Left).
+            // `surrounding_word`, which uses the greater of `prev` and `next` as the word-kind
+            // level: if the previous character's kind is greater than or equal to the next
+            // character's kind, the hint is a suffix → Right; otherwise, it is a prefix → Left.
+            // `None` covers both directions.
             None => match (lsp_hint.padding_left, lsp_hint.padding_right) {
                 (Some(true), Some(false)) => Bias::Right,
                 (Some(false), Some(true)) => Bias::Left,
