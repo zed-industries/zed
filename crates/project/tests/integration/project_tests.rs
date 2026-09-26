@@ -85,6 +85,8 @@ use std::{
     task::Poll,
     time::Duration,
 };
+#[cfg(target_os = "linux")]
+use std::{ffi::OsStr, os::unix::ffi::OsStrExt as _};
 use sum_tree::SumTree;
 use task::{ResolvedTask, ShellKind, TaskContext};
 use text::{Anchor, PointUtf16, ReplicaId, ToOffset, Unclipped};
@@ -236,6 +238,153 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
                 .unwrap()
                 .inode
         );
+    });
+}
+
+#[cfg(not(windows))]
+#[gpui::test]
+async fn test_resolve_abs_file_link_project_aliases(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(vec!["**/hidden".to_string()]));
+            });
+        });
+    });
+
+    let directory = TempTree::new(json!({
+        "project": {
+            "sub": {},
+            "hidden": {"unopened.rs": "unindexed"},
+        },
+        "outside": {
+            "child": {},
+            "target.rs": "saved",
+            "link.rs": "actual outside target",
+        },
+    }));
+    let root = directory.path().join("project");
+    let target = directory.path().join("outside/target.rs");
+    os::unix::fs::symlink(&target, root.join("link.rs")).unwrap();
+    os::unix::fs::symlink(root.join("sub"), root.join("hop")).unwrap();
+    os::unix::fs::symlink(directory.path().join("outside/child"), root.join("escape")).unwrap();
+    let outside_alias = directory.path().join("outside/alias.rs");
+    os::unix::fs::symlink(&target, &outside_alias).unwrap();
+
+    let project = Project::test(RealFs::new(None, cx.executor()), [root.as_path()], cx).await;
+    let alias = project.read_with(cx, |project, cx| {
+        project
+            .project_path_for_absolute_path(&root.join("link.rs"), cx)
+            .unwrap()
+    });
+    let buffer = project
+        .update(cx, |project, cx| project.open_buffer(alias.clone(), cx))
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "unsaved ")], None, cx);
+    });
+
+    for relative_path in ["hop/../link.rs", "hidden/../link.rs"] {
+        let path = root.join(relative_path);
+        let resolved = project
+            .update(cx, |project, cx| {
+                project.resolve_abs_file_link(path.to_str().unwrap(), cx)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved.project_path(), Some(&alias), "{relative_path}");
+        let reopened = project
+            .update(cx, |project, cx| {
+                project.open_buffer(resolved.project_path().unwrap().clone(), cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(reopened, buffer);
+        buffer.read_with(cx, |buffer, _| {
+            assert_eq!(buffer.text(), "unsaved saved");
+            assert!(buffer.is_dirty());
+        });
+    }
+
+    let unindexed_path = root.join("hidden/unopened.rs");
+    let unindexed_alias = project.read_with(cx, |project, cx| {
+        let path = project
+            .project_path_for_absolute_path(&unindexed_path, cx)
+            .unwrap();
+        assert!(project.entry_for_path(&path, cx).is_none());
+        assert!(project.get_open_buffer(&path, cx).is_none());
+        assert!(
+            project
+                .entry_for_path(&(alias.worktree_id, rel_path("hidden")).into(), cx)
+                .is_none()
+        );
+        path
+    });
+    let resolved = project
+        .update(cx, |project, cx| {
+            project.resolve_abs_file_link(unindexed_path.to_str().unwrap(), cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(resolved.project_path(), Some(&unindexed_alias));
+
+    for (input, expected) in [
+        (
+            root.join("escape/../link.rs"),
+            directory.path().join("outside/link.rs"),
+        ),
+        (outside_alias, target),
+    ] {
+        let resolved = project
+            .update(cx, |project, cx| {
+                project.resolve_abs_file_link(input.to_str().unwrap(), cx)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved.abs_path(), expected.to_str());
+    }
+    let missing = root.join("missing/../link.rs");
+    let resolved = project
+        .update(cx, |project, cx| {
+            project.resolve_abs_file_link(missing.to_str().unwrap(), cx)
+        })
+        .await
+        .unwrap();
+    assert!(resolved.is_none());
+    project.read_with(cx, |project, cx| {
+        assert_eq!(project.worktrees(cx).count(), 1);
+        assert_eq!(project.get_open_buffer(&alias, cx), Some(buffer));
+    });
+}
+
+#[cfg(target_os = "linux")]
+#[gpui::test]
+async fn test_resolve_abs_file_link_rejects_non_utf8_target(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let directory = TempTree::new(json!({}));
+    let target = directory.path().join(OsStr::from_bytes(b"\xff.rs"));
+    std::fs::write(&target, "actual target").unwrap();
+    std::fs::write(directory.path().join("�.rs"), "replacement-character decoy").unwrap();
+    let alias = directory.path().join("alias.rs");
+    os::unix::fs::symlink(&target, &alias).unwrap();
+    let project = Project::test(RealFs::new(None, cx.executor()), [], cx).await;
+    let error = project
+        .update(cx, |project, cx| {
+            project.resolve_abs_file_link(alias.to_str().unwrap(), cx)
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "canonical file path is not valid UTF-8");
+    project.read_with(cx, |project, cx| {
+        assert_eq!(project.worktrees(cx).count(), 0);
     });
 }
 

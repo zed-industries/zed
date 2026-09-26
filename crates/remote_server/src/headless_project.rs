@@ -1263,11 +1263,20 @@ impl HeadlessProject {
 
         let metadata = fs.metadata(&expanded).await?;
         let is_dir = metadata.map(|metadata| metadata.is_dir).unwrap_or(false);
+        let path = if envelope.payload.canonicalize && metadata.is_some() {
+            fs.canonicalize(&expanded)
+                .await?
+                .to_str()
+                .context("canonical file path is not valid UTF-8")?
+                .to_owned()
+        } else {
+            expanded.to_string_lossy().into_owned()
+        };
 
         Ok(proto::GetPathMetadataResponse {
             exists: metadata.is_some(),
             is_dir,
-            path: expanded.to_string_lossy().into_owned(),
+            path,
         })
     }
 

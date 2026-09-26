@@ -2841,7 +2841,15 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
                     "lib.rs": "fn one() -> usize { 1 }"
                 }
             },
+            "project2": {
+                "README.md": "# project 2",
+            },
         }),
+    )
+    .await;
+    fs.insert_symlink(
+        path!("/code/project1/linked"),
+        PathBuf::from(path!("/code/project2")),
     )
     .await;
 
@@ -2873,6 +2881,152 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
         })
         .await;
     assert!(path.is_none());
+
+    for path in [
+        path!("/code/project1/../project2/README.md"),
+        path!("/code/project1/linked/README.md"),
+    ] {
+        let resolved_path = project
+            .update(cx, |project, cx| project.resolve_abs_path(path, cx))
+            .await
+            .expect("existing path should resolve without canonicalization");
+        assert_eq!(resolved_path.abs_path(), Some(path));
+        let resolved_file_path = project
+            .update(cx, |project, cx| project.resolve_abs_file_path(path, cx))
+            .await
+            .expect("existing file path should resolve without canonicalization");
+        assert_eq!(resolved_file_path.abs_path(), Some(path));
+    }
+}
+
+#[gpui::test]
+async fn test_resolve_abs_file_path_canonical(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {},
+            "project2": {"README.md": "# project 2"},
+        }),
+    )
+    .await;
+    fs.insert_symlink(
+        path!("/code/project1/linked"),
+        PathBuf::from(path!("/code/project2")),
+    )
+    .await;
+
+    let (remote_project, _headless) = init_test(&fs, cx, server_cx).await;
+    let local_project = Project::test(fs, [], cx).await;
+    for project in [remote_project, local_project] {
+        let path = path!("/code/project1/linked/README.md");
+        let resolved_path = project
+            .update(cx, |project, cx| project.resolve_abs_path(path, cx))
+            .await
+            .expect("existing path should resolve without canonicalization");
+        assert_eq!(resolved_path.abs_path(), Some(path));
+
+        for path in [
+            path!("/code/project1/linked"),
+            path!("/code/project1/linked/missing.md"),
+        ] {
+            let resolved_path = project
+                .update(cx, |project, cx| {
+                    project.resolve_abs_file_path_canonical(path, cx)
+                })
+                .await
+                .expect("missing files and directories should not cause resolution errors");
+            assert!(resolved_path.is_none(), "{path}");
+        }
+
+        let (worktree, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/code/project2/README.md"), false, cx)
+            })
+            .await
+            .expect("canonical file worktree should open");
+        worktree.read_with(cx, |worktree, _| {
+            assert!(!worktree.is_visible());
+            assert!(worktree.is_single_file());
+        });
+
+        for path in [
+            path!("/code/project1/../project2/README.md"),
+            path!("/code/project1/linked/README.md"),
+        ] {
+            let resolved_path = project
+                .update(cx, |project, cx| {
+                    project.resolve_abs_file_path_canonical(path, cx)
+                })
+                .await
+                .expect("existing file path should canonicalize without errors")
+                .expect("existing path should resolve");
+            assert!(resolved_path.is_file());
+            assert_eq!(
+                resolved_path.abs_path(),
+                Some(path!("/code/project2/README.md")),
+                "{path}"
+            );
+            let (opened_worktree, relative_path) = project
+                .update(cx, |project, cx| {
+                    project.find_or_create_worktree(
+                        resolved_path.abs_path().expect("path should be absolute"),
+                        false,
+                        cx,
+                    )
+                })
+                .await
+                .expect("resolved file worktree should open");
+            assert!(relative_path.is_empty());
+            opened_worktree.read_with(cx, |opened_worktree, cx| {
+                assert_eq!(opened_worktree.id(), worktree.read(cx).id(), "{path}");
+                assert_eq!(project.read(cx).worktrees(cx).count(), 1);
+            });
+        }
+
+        let (project_worktree, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/code/project1"), true, cx)
+            })
+            .await
+            .unwrap();
+        let alias = project_worktree.read_with(cx, |worktree, _| {
+            ProjectPath::from((worktree.id(), rel_path("linked/README.md")))
+        });
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(alias.clone(), cx))
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "unsaved ")], None, cx);
+        });
+
+        let resolved = project
+            .update(cx, |project, cx| {
+                project.resolve_abs_file_link(path!("/code/project1//linked/README.md"), cx)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved.project_path(), Some(&alias));
+        let reopened = project
+            .update(cx, |project, cx| {
+                project.open_buffer(resolved.project_path().unwrap().clone(), cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(reopened, buffer);
+        buffer.read_with(cx, |buffer, _| {
+            assert_eq!(buffer.text(), "unsaved # project 2");
+            assert!(buffer.is_dirty());
+        });
+        project.read_with(cx, |project, cx| {
+            assert_eq!(project.worktrees(cx).count(), 2);
+        });
+    }
 }
 
 #[gpui::test(iterations = 10)]
