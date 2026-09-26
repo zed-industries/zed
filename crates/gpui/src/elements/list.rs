@@ -1429,7 +1429,7 @@ impl std::fmt::Debug for ListItem {
 
 /// An offset into the list's items, in terms of the item index and the number
 /// of pixels off the top left of the item.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct ListOffset {
     /// The index of an item in the list
     pub item_ix: usize,
@@ -1599,9 +1599,13 @@ impl Element for List {
         let hitbox_id = prepaint.hitbox.id;
         let mut accumulated_scroll_delta = ScrollDelta::default();
         window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-            if phase == DispatchPhase::Bubble && hitbox_id.should_handle_scroll(window) {
+            if phase == DispatchPhase::Bubble
+                && hitbox_id.should_handle_scroll(window)
+                && !window.scroll_wheel_taken()
+            {
                 accumulated_scroll_delta = accumulated_scroll_delta.coalesce(event.delta);
                 let pixel_delta = accumulated_scroll_delta.pixel_delta(px(20.));
+                let before = list_state.logical_scroll_top();
                 list_state.0.borrow_mut().scroll(
                     &scroll_top,
                     height,
@@ -1609,7 +1613,10 @@ impl Element for List {
                     current_view,
                     window,
                     cx,
-                )
+                );
+                if list_state.logical_scroll_top() != before {
+                    window.take_scroll_wheel();
+                }
             }
         });
 
