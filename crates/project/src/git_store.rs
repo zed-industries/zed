@@ -10845,7 +10845,7 @@ async fn remove_empty_managed_worktree_ancestors(fs: &dyn Fs, child_path: &Path,
 pub fn repo_identity_path(common_dir: &Path, path_style: PathStyle) -> &Path {
     let is_dot_entry = path_style
         .file_name(common_dir)
-        .is_some_and(|n| n.starts_with('.'));
+        .is_some_and(|n| n.to_string_lossy().starts_with('.'));
     if is_dot_entry {
         path_style.parent(common_dir).unwrap_or(common_dir)
     } else {
