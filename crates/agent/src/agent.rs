@@ -2854,10 +2854,15 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         log::info!("Cancelling on session: {}", session_id);
         self.0.update(cx, |agent, cx| {
             if let Some(session) = agent.sessions.get(session_id) {
-                session
-                    .thread
-                    .update(cx, |thread, cx| thread.cancel(cx))
-                    .detach();
+                let acp_thread = session.acp_thread.upgrade();
+                let cancellation = session.thread.update(cx, |thread, cx| thread.cancel(cx));
+                // Closing the view must not release the session before cancellation
+                // records tool results, including the links to canceled subagents
+                cx.spawn(async move |_, _| {
+                    cancellation.await;
+                    drop(acp_thread);
+                })
+                .detach();
             }
         });
     }

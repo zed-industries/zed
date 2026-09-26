@@ -6341,10 +6341,11 @@ impl ThreadView {
                 }
             }
             AgentThreadEntry::ToolCall(tool_call) => {
-                // A canceled tool call that produced visible output is still worth
-                // showing, but one that was canceled before producing anything just
-                // renders as a useless "Canceled" card — hide those entirely.
-                if matches!(tool_call.status, ToolCallStatus::Canceled) {
+                // An empty canceled call has nothing to show, unless it links to
+                // a subagent whose conversation history lives in a separate thread
+                if matches!(tool_call.status, ToolCallStatus::Canceled)
+                    && tool_call.subagent_session_info.is_none()
+                {
                     let has_visible_content =
                         tool_call.content().iter().any(|content| match content {
                             ToolCallContent::ContentBlock(block) => block.visible_content(cx),
@@ -8087,6 +8088,8 @@ impl ThreadView {
         )));
 
         div().w_full().id(container_id).map(|this| {
+            let this =
+                this.debug_selector(|| format!("tool-call-{}-{}", tool_call.id.0, layout.id_str()));
             if tool_call.is_subagent() {
                 this.child(
                     self.render_subagent_tool_call(
@@ -10709,6 +10712,7 @@ impl ThreadView {
                     .child(
                         h_flex()
                             .id(format!("subagent-title-{}", entry_ix))
+                            .debug_selector(|| format!("subagent-title-{}", tool_call.id.0))
                             .px_1()
                             .min_w_0()
                             .size_full()
@@ -10855,6 +10859,7 @@ impl ThreadView {
 
                 let fullscreen_toggle = h_flex()
                     .id(entry_ix)
+                    .debug_selector(|| format!("subagent-fullscreen-{}", tool_call.id.0))
                     .py_1()
                     .w_full()
                     .justify_center()

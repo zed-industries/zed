@@ -6163,135 +6163,266 @@ async fn test_subagent_tool_output_does_not_include_thinking(cx: &mut TestAppCon
 
 #[gpui::test]
 async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAppContext) {
+    assert_cancelled_subagent_sessions_remain_reusable(true, cx).await;
+}
+
+#[gpui::test]
+async fn test_subagent_tool_manual_cancellation_preserves_session(cx: &mut TestAppContext) {
+    assert_cancelled_subagent_sessions_remain_reusable(false, cx).await;
+}
+
+async fn assert_cancelled_subagent_sessions_remain_reusable(
+    cancel_parent: bool,
+    cx: &mut TestAppContext,
+) {
     let fake = init_test(cx);
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["subagents".to_string()]);
-    });
-
+    cx.update(|cx| cx.update_flags(true, vec!["subagents".to_string()]));
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/",
-        json!({
-            "a": {
-                "b.md": "Lorem"
-            }
-        }),
-    )
-    .await;
-    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent =
-        cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+    let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
-
-    let acp_thread = cx
+    let parent = cx
         .update(|cx| {
             connection
                 .clone()
-                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+                .new_session(project, PathList::default(), cx)
         })
         .await
-        .unwrap();
-    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
-    let thread = agent.read_with(cx, |agent, _| {
-        agent.sessions.get(&session_id).unwrap().thread.clone()
+        .expect("parent session");
+    let parent_session_id = parent.read_with(cx, |thread, _| thread.session_id().clone());
+    let native_parent = cx.read(|cx| {
+        connection
+            .thread(&parent_session_id, cx)
+            .expect("parent thread")
     });
-    let model = fake.model("fake");
+    let model = fake.model("thread");
+    native_parent.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
 
-    // Ensure empty threads are not saved, even if they get mutated.
-    thread.update(cx, |thread, cx| {
-        thread.set_model(model.clone(), cx);
-    });
+    let send = parent.update(cx, |thread, cx| thread.send_raw("Start two subagents", cx));
     cx.run_until_parked();
-
-    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Prompt", cx));
-    cx.run_until_parked();
-    let request = fake.pending_completions_for(&model).pop().unwrap();
-    fake.send_text(&model, &request, "spawning subagent");
-    let subagent_tool_input = SpawnAgentToolInput {
-        label: "label".to_string(),
-        message: "subagent task prompt".to_string(),
-        session_id: None,
-        model: None,
-    };
-    let subagent_tool_use = LanguageModelToolUse {
-        id: "subagent_1".into(),
-        name: SpawnAgentTool::NAME.into(),
-        raw_input: serde_json::to_string(&subagent_tool_input).unwrap(),
-        input: language_model::LanguageModelToolUseInput::Json(
-            serde_json::to_value(&subagent_tool_input).unwrap(),
-        ),
-        is_input_complete: true,
-        thought_signature: None,
-    };
-    fake.send_event(
-        &model,
-        &request,
-        LanguageModelCompletionEvent::ToolUse(subagent_tool_use),
-    );
+    let request = fake
+        .pending_completions_for(&model)
+        .pop()
+        .expect("parent request");
+    for name in ["first", "second"] {
+        let input = json!({"label": name, "message": format!("{name} task")});
+        fake.send_event(
+            &model,
+            &request,
+            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                id: name.into(),
+                name: SpawnAgentTool::NAME.into(),
+                raw_input: input.to_string(),
+                input: language_model::LanguageModelToolUseInput::Json(input),
+                is_input_complete: true,
+                thought_signature: None,
+            }),
+        );
+    }
     fake.end_stream(&model, &request);
-
     cx.run_until_parked();
 
-    let subagent_session_id = thread.read_with(cx, |thread, cx| {
-        thread
-            .running_subagent_ids(cx)
-            .get(0)
-            .expect("subagent thread should be running")
-            .clone()
-    });
-    let subagent_acp_thread = agent.read_with(cx, |agent, _cx| {
-        agent
-            .sessions
-            .get(&subagent_session_id)
-            .expect("subagent session should exist")
-            .acp_thread
-            .upgrade()
-            .expect("subagent thread should be alive")
-    });
+    let requests = fake.pending_completions_for(&model);
+    assert_eq!(requests.len(), 2);
+    let mut children = Vec::new();
+    for name in ["first", "second"] {
+        let session_id = parent.read_with(cx, |thread, _| {
+            let (_, call) = thread
+                .tool_call(&scoped_tool_call_id(1, &name.into()))
+                .expect("spawn call");
+            let info = call
+                .subagent_session_info
+                .as_ref()
+                .expect("child session metadata");
+            assert_eq!(info.message_start_index, 0);
+            assert_eq!(info.message_end_index, None);
+            info.session_id.clone()
+        });
+        let child = agent.read_with(cx, |agent, _| {
+            agent
+                .sessions
+                .get(&session_id)
+                .expect("child session")
+                .acp_thread
+                .upgrade()
+                .expect("live child")
+        });
+        let request = requests
+            .iter()
+            .find(|request| {
+                request
+                    .messages
+                    .iter()
+                    .any(|message| message.string_contents() == format!("{name} task"))
+            })
+            .expect("child request")
+            .clone();
+        fake.send_text(&model, &request, format!("{name} partial output"));
+        children.push((name, session_id, child, request));
+    }
+    cx.run_until_parked();
+    assert_eq!(
+        native_parent.read_with(cx, |thread, cx| thread.running_subagent_ids(cx).len()),
+        2
+    );
 
-    // fake.send_last_text(&model, "subagent task response");
-    // fake.end_last(&model);
-
-    // cx.run_until_parked();
-
-    acp_thread.update(cx, |thread, cx| thread.cancel(cx)).await;
-
+    if cancel_parent {
+        parent.update(cx, |thread, cx| thread.cancel(cx)).await;
+    } else {
+        let (_, _, child, _) = children.first().expect("first child");
+        child.update(cx, |thread, cx| thread.cancel(cx)).await;
+    }
     cx.run_until_parked();
 
-    send.await.unwrap();
+    for (name, session_id, child, request) in &children {
+        let cancelled = cancel_parent || *name == "first";
+        assert_eq!(fake.is_stream_closed(&model, request), cancelled);
+        child.read_with(cx, |thread, cx| {
+            assert_eq!(thread.status() == ThreadStatus::Idle, cancelled);
+            assert_eq!(
+                thread.to_markdown(cx),
+                format!("## User\n\n{name} task\n\n## Assistant\n\n{name} partial output\n\n")
+            );
+        });
+        parent.read_with(cx, |thread, cx| {
+            let call = thread
+                .tool_call_for_subagent(session_id)
+                .expect("retained spawn call");
+            if cancel_parent {
+                assert!(matches!(call.status, acp_thread::ToolCallStatus::Canceled));
+                assert!(call.content().is_empty());
+            } else if cancelled {
+                assert!(matches!(call.status, acp_thread::ToolCallStatus::Failed));
+                assert!(thread.to_markdown(cx).contains("User canceled"));
+            }
+        });
+    }
 
-    acp_thread.read_with(cx, |thread, cx| {
-        assert_eq!(thread.status(), ThreadStatus::Idle);
+    if !cancel_parent {
+        parent.read_with(cx, |thread, _| {
+            assert_ne!(thread.status(), ThreadStatus::Idle)
+        });
         assert_eq!(
-            thread.to_markdown(cx),
-            indoc! {"
-                ## User
-
-                Prompt
-
-                ## Assistant
-
-                spawning subagent
-
-                **Tool Call: label**
-                Status: Canceled
-
-            "}
+            native_parent.read_with(cx, |thread, cx| thread.running_subagent_ids(cx).len()),
+            1
         );
+    }
+    // Remove closed senders only after proving cancellation dropped their receivers
+    for (_, _, _, request) in &children {
+        fake.end_stream(&model, request);
+    }
+    cx.run_until_parked();
+    if !cancel_parent {
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("parent tool results");
+        assert_eq!(request.intent, Some(CompletionIntent::ToolResults));
+        fake.send_text(&model, &request, "One child was cancelled");
+        fake.end_stream(&model, &request);
+    }
+    send.await.expect("parent turn finishes");
+    cx.run_until_parked();
+    assert!(native_parent.read_with(cx, |thread, cx| thread.running_subagent_ids(cx).is_empty()));
+
+    let send = parent.update(cx, |thread, cx| {
+        thread.send_raw("Continue the existing sessions", cx)
     });
-    subagent_acp_thread.read_with(cx, |thread, cx| {
-        assert_eq!(thread.status(), ThreadStatus::Idle);
-        assert_eq!(
-            thread.to_markdown(cx),
-            indoc! {"
-                ## User
-
-                subagent task prompt
-
-            "}
+    cx.run_until_parked();
+    let request = fake
+        .pending_completions_for(&model)
+        .pop()
+        .expect("follow-up parent request");
+    let results = request
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .filter_map(|content| match content {
+            MessageContent::ToolResult(result) => Some(result),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), 2);
+    for (name, session_id, _, _) in &children {
+        let result = results
+            .iter()
+            .find(|result| result.tool_use_id.to_string() == *name)
+            .expect("model-visible subagent result");
+        let output: serde_json::Value =
+            serde_json::from_str(&result.text_contents()).expect("structured result");
+        assert_eq!(output["session_id"], json!(session_id));
+        assert_eq!(result.is_error, cancel_parent || *name == "first");
+        if result.is_error {
+            assert_eq!(output["error"], "User canceled");
+        }
+        let input = json!({
+            "label": format!("resume {name}"),
+            "message": format!("continue {name}"),
+            "session_id": session_id,
+        });
+        fake.send_event(
+            &model,
+            &request,
+            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                id: format!("resume-{name}").into(),
+                name: SpawnAgentTool::NAME.into(),
+                raw_input: input.to_string(),
+                input: language_model::LanguageModelToolUseInput::Json(input),
+                is_input_complete: true,
+                thought_signature: None,
+            }),
         );
-    });
+    }
+    fake.end_stream(&model, &request);
+    cx.run_until_parked();
+    // The fake provider retains canceled requests until their senders are removed
+    let requests = fake
+        .pending_completions_for(&model)
+        .into_iter()
+        .filter(|request| !fake.is_stream_closed(&model, request))
+        .collect::<Vec<_>>();
+    assert_eq!(requests.len(), 2);
+    for (name, session_id, child, _) in &children {
+        let request = requests
+            .iter()
+            .find(|request| {
+                request
+                    .messages
+                    .iter()
+                    .any(|message| message.string_contents() == format!("continue {name}"))
+            })
+            .expect("resumed child request");
+        let history = request
+            .messages
+            .iter()
+            .map(|message| message.string_contents())
+            .collect::<Vec<_>>();
+        assert!(history.contains(&format!("{name} task")));
+        assert!(history.contains(&format!("{name} partial output")));
+        assert!(native_parent.read_with(cx, |thread, cx| {
+            thread.running_subagent_ids(cx).contains(session_id)
+        }));
+        child.read_with(cx, |thread, _| assert_eq!(thread.session_id(), session_id));
+        fake.send_text(&model, request, format!("{name} resumed output"));
+        fake.end_stream(&model, request);
+    }
+    cx.run_until_parked();
+    let request = fake
+        .pending_completions_for(&model)
+        .pop()
+        .expect("parent final response");
+    fake.send_text(&model, &request, "Both sessions reused");
+    fake.end_stream(&model, &request);
+    send.await.expect("follow-up turn finishes");
+    for (name, _, child, _) in &children {
+        child.read_with(cx, |thread, cx| {
+            assert_eq!(thread.status(), ThreadStatus::Idle);
+            assert_eq!(thread.to_markdown(cx), format!(
+                "## User\n\n{name} task\n\n## Assistant\n\n{name} partial output\n\n## User\n\ncontinue {name}\n\n## Assistant\n\n{name} resumed output\n\n"
+            ));
+        });
+    }
 }
 
 #[gpui::test]
