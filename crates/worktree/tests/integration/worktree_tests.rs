@@ -90,6 +90,94 @@ async fn test_traversal(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_entry_id_is_reused_when_rename_overwrites_existing_path(cx: &mut TestAppContext) {
+    init_test(cx);
+    let result: Result<()> = async {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "destination.rs": "old destination",
+                "source.rs": "source",
+            }),
+        )
+        .await;
+        let tree = Worktree::local(
+            Path::new(path!("/root")),
+            true,
+            fs.clone(),
+            Default::default(),
+            true,
+            WorktreeId::from_proto(0),
+            &mut cx.to_async(),
+        )
+        .await?;
+        cx.run_until_parked();
+        let (source_id, destination_id) = tree.read_with(cx, |tree, _| -> Result<_> {
+            let source = tree
+                .entry_for_path(rel_path("source.rs"))
+                .ok_or_else(|| anyhow::anyhow!("expected the source entry"))?;
+            let destination = tree
+                .entry_for_path(rel_path("destination.rs"))
+                .ok_or_else(|| anyhow::anyhow!("expected the destination entry"))?;
+            assert_ne!(source.inode, destination.inode);
+            Ok((source.id, destination.id))
+        })?;
+
+        // An explicit refresh leaves the overwritten entry in the snapshot until ID selection
+        fs.pause_events();
+        fs.rename(
+            Path::new(path!("/root/source.rs")),
+            Path::new(path!("/root/destination.rs")),
+            fs::RenameOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+        )
+        .await?;
+        tree.read_with(cx, |tree, _| -> Result<_> {
+            Ok(tree
+                .as_local()
+                .ok_or_else(|| anyhow::anyhow!("expected a local worktree"))?
+                .refresh_entries_for_paths(vec![
+                    rel_path("destination.rs").into(),
+                    rel_path("source.rs").into(),
+                ]))
+        })?
+        .recv()
+        .await;
+
+        tree.read_with(cx, |tree, _| -> Result<()> {
+            assert!(tree.entry_for_path(rel_path("source.rs")).is_none());
+            assert!(tree.entry_for_id(destination_id).is_none());
+            assert_eq!(
+                tree.entry_for_path(rel_path("destination.rs"))
+                    .map(|entry| entry.id),
+                Some(source_id),
+            );
+            tree.as_local()
+                .ok_or_else(|| anyhow::anyhow!("expected a local worktree"))?
+                .snapshot()
+                .check_invariants(false);
+            Ok(())
+        })?;
+
+        fs.flush_events(fs.buffered_event_count());
+        cx.run_until_parked();
+        assert_eq!(
+            tree.read_with(cx, |tree, _| {
+                tree.entry_for_path(rel_path("destination.rs"))
+                    .map(|entry| entry.id)
+            }),
+            Some(source_id),
+        );
+        Ok(())
+    }
+    .await;
+    assert!(result.is_ok(), "{result:?}");
+}
+
+#[gpui::test]
 async fn test_entry_id_is_reused_when_rename_events_are_split(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
@@ -2432,6 +2520,143 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
                 .is_some_and(|f| !f.is_always_included)
         );
     });
+}
+
+#[gpui::test]
+async fn test_symlink_scanner_restart_excluding_external_directory(cx: &mut TestAppContext) {
+    let result = check_symlink_scanner_restart(cx, "../config/target", true).await;
+    assert!(result.is_ok(), "{result:?}");
+}
+
+#[gpui::test]
+async fn test_symlink_scanner_restart_excluding_external_file(cx: &mut TestAppContext) {
+    let result = check_symlink_scanner_restart(cx, "../config/target", false).await;
+    assert!(result.is_ok(), "{result:?}");
+}
+
+#[gpui::test]
+async fn test_symlink_scanner_restart_excluding_internal_directory(cx: &mut TestAppContext) {
+    let result = check_symlink_scanner_restart(cx, "config/target", true).await;
+    assert!(result.is_ok(), "{result:?}");
+}
+
+#[gpui::test]
+async fn test_symlink_scanner_restart_excluding_internal_file(cx: &mut TestAppContext) {
+    let result = check_symlink_scanner_restart(cx, "config/target", false).await;
+    assert!(result.is_ok(), "{result:?}");
+}
+
+async fn check_symlink_scanner_restart(
+    cx: &mut TestAppContext,
+    target: &str,
+    is_directory: bool,
+) -> Result<()> {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    let contents = if is_directory {
+        json!({ "child.rs": "" })
+    } else {
+        json!("")
+    };
+    fs.insert_tree(
+        "/parent",
+        json!({
+            "config": { "target": contents },
+            "worktree": {
+                "config": { "target": contents },
+                "file.rs": "",
+            },
+        }),
+    )
+    .await;
+    fs.create_symlink(Path::new("/parent/worktree/link"), target.into())
+        .await?;
+
+    let tree = Worktree::local(
+        Path::new("/parent/worktree"),
+        true,
+        fs,
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await?;
+    cx.run_until_parked();
+
+    let original_entries = tree.read_with(cx, |tree, _| -> Result<_> {
+        let target = tree
+            .entry_for_path(rel_path("config/target"))
+            .ok_or_else(|| anyhow::anyhow!("expected the target entry"))?;
+        let link = tree
+            .entry_for_path(rel_path("link"))
+            .ok_or_else(|| anyhow::anyhow!("expected the symlink entry"))?;
+        if !link.is_external {
+            assert_eq!(link.inode, target.inode);
+            assert_eq!(link.mtime, target.mtime);
+        }
+        assert_ne!(link.id, target.id);
+        assert!(tree.entry_for_path(rel_path("file.rs")).is_some());
+        Ok(tree
+            .entries(true, 0)
+            .map(|entry| (entry.path.clone(), entry.id))
+            .collect::<Vec<_>>())
+    })?;
+
+    tree.update(cx, |tree, cx| -> Result<()> {
+        tree.as_local_mut()
+            .ok_or_else(|| anyhow::anyhow!("expected a local worktree"))?
+            .share_private_files(cx);
+        Ok(())
+    })?;
+    cx.run_until_parked();
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.clone(), entry.id))
+                .collect::<Vec<_>>(),
+            original_entries,
+        );
+    });
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(vec!["**/link".to_string()]));
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    tree.read_with(cx, |tree, _| -> Result<()> {
+        tree.as_local()
+            .ok_or_else(|| anyhow::anyhow!("expected a local worktree"))?
+            .snapshot()
+            .check_invariants(false);
+        let expected_entries = original_entries
+            .iter()
+            .filter(|(path, _)| !path.starts_with(rel_path("link")))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.clone(), entry.id))
+                .collect::<Vec<_>>(),
+            expected_entries,
+        );
+        for (path, id) in &original_entries {
+            if path.starts_with(rel_path("link")) {
+                assert!(tree.entry_for_id(*id).is_none());
+            } else {
+                assert_eq!(
+                    tree.entry_for_id(*id).map(|entry| (&entry.path, entry.id)),
+                    Some((path, *id)),
+                );
+            }
+        }
+        Ok(())
+    })
 }
 
 #[gpui::test]
