@@ -464,6 +464,8 @@ async fn test_open_breadcrumb_navigation_opens_the_file_outline(cx: &mut TestApp
         })
         .await
         .unwrap();
+    buffer.update(cx, |buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+    let main_buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
     let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let cx = &mut VisualTestContext::from_window(*workspace_window, cx);
     let editor = cx.update(|window, cx| {
@@ -487,8 +489,7 @@ async fn test_open_breadcrumb_navigation_opens_the_file_outline(cx: &mut TestApp
     cx.run_until_parked();
 
     // Dispatched rather than called, so the action's registration on the element is on the path
-    // too. Deliberately not parked: the menu is created with its listing synchronously, and the
-    // outline load that follows is what would dismiss an empty one.
+    // too. Deliberately not parked: the menu is created with its listing synchronously.
     cx.update(|window, cx| {
         window.dispatch_action(OpenBreadcrumbNavigation.boxed_clone(), cx);
     });
@@ -497,11 +498,14 @@ async fn test_open_breadcrumb_navigation_opens_the_file_outline(cx: &mut TestApp
             .breadcrumb_navigation_menu()
             .expect("OpenBreadcrumbNavigation must open a menu entity");
         // The current file's symbols, not its parent directory: the cursor is in code, and the
-        // directory segments open their own listings on click. No language is configured here,
-        // so there is no symbol around the caret and the file segment is the last one.
+        // directory segments open their own listings on click. The caret sits in `main`, so
+        // the listing is `main`'s level.
         match menu.read(cx).listing() {
-            BreadcrumbListing::Symbols { parent: None, .. } => {}
-            other => panic!("the chord opens the file outline, got {other:?}"),
+            BreadcrumbListing::Symbols {
+                buffer_id,
+                parent: Some(parent),
+            } if *buffer_id == main_buffer_id && parent.text.as_ref() == "fn main" => {}
+            other => panic!("the chord opens the file outline at the caret, got {other:?}"),
         }
     });
 }
@@ -609,6 +613,31 @@ async fn test_open_breadcrumb_navigation_opens_the_level_the_caret_is_in(cx: &mu
     });
 }
 
+thread_local! {
+    static OUTLINE_TOGGLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `TOGGLE_OUTLINE` is a process-global the whole test binary shares, so every test installs this
+/// one probe and the call is recorded in a thread local; keying by entity id would not separate
+/// concurrent tests, as ids restart low in every `App`. Like `outline::toggle`, it reads the
+/// editor it is handed, so a caller that still holds the editor's lease panics here as it would in
+/// the app.
+fn outline_toggle_probe(view: gpui::AnyView, _: &mut gpui::Window, cx: &mut gpui::App) {
+    if let Ok(editor) = view.downcast::<Editor>() {
+        let _workspace = editor.read(cx).workspace();
+    }
+    OUTLINE_TOGGLED.with(|toggled| toggled.set(true));
+}
+
+pub(crate) fn install_outline_toggle_probe() {
+    zed_actions::outline::TOGGLE_OUTLINE.get_or_init(|| outline_toggle_probe);
+    OUTLINE_TOGGLED.with(|toggled| toggled.set(false));
+}
+
+pub(crate) fn outline_toggled() -> bool {
+    OUTLINE_TOGGLED.with(std::cell::Cell::get)
+}
+
 #[gpui::test]
 async fn test_open_breadcrumb_navigation_single_file_worktree(cx: &mut TestAppContext) {
     use project::{FakeFs, Project};
@@ -616,23 +645,7 @@ async fn test_open_breadcrumb_navigation_single_file_worktree(cx: &mut TestAppCo
     use util::path;
     use workspace::Workspace;
 
-    // `TOGGLE_OUTLINE` is a process-global the whole test binary shares, so record the call in a
-    // thread local. Keying by entity id does not separate concurrent tests: ids restart low in
-    // every `App`.
-    thread_local! {
-        static OUTLINE_TOGGLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    }
-    fn outline_toggle_probe(_: gpui::AnyView, _: &mut gpui::Window, _: &mut gpui::App) {
-        OUTLINE_TOGGLED.with(|toggled| toggled.set(true));
-    }
-    fn outline_toggled() -> bool {
-        OUTLINE_TOGGLED.with(std::cell::Cell::get)
-    }
-    fn reset_outline_toggled() {
-        OUTLINE_TOGGLED.with(|toggled| toggled.set(false));
-    }
-    zed_actions::outline::TOGGLE_OUTLINE.get_or_init(|| outline_toggle_probe);
-    reset_outline_toggled();
+    install_outline_toggle_probe();
 
     init_test(cx, |_| {});
 
@@ -678,6 +691,32 @@ async fn test_open_breadcrumb_navigation_single_file_worktree(cx: &mut TestAppCo
     });
     cx.run_until_parked();
 
+    // No directory to list and no symbols: the menu says so rather than handing over to the
+    // outline picker, which opens nothing for an empty outline.
+    let assert_no_symbols = |cx: &mut VisualTestContext, gesture: &str| {
+        editor.read_with(cx, |editor, cx| {
+            let menu = editor
+                .breadcrumb_navigation_menu()
+                .unwrap_or_else(|| panic!("{gesture} must open the menu in a single-file worktree"))
+                .read(cx);
+            assert_eq!(
+                (menu.listing().clone(), menu.published_empty_message(cx)),
+                (
+                    BreadcrumbListing::Symbols {
+                        buffer_id,
+                        parent: None,
+                    },
+                    SharedString::from("No symbols"),
+                ),
+                "{gesture} on a file with no symbols and no directory to list"
+            );
+        });
+        assert!(
+            !outline_toggled(),
+            "{gesture} must not hand over to the outline picker"
+        );
+    };
+
     editor.update_in(cx, |editor, window, cx| {
         editor.open_or_toggle_breadcrumb_listing(
             crate::element::BreadcrumbSegmentTarget::Symbol {
@@ -689,39 +728,94 @@ async fn test_open_breadcrumb_navigation_single_file_worktree(cx: &mut TestAppCo
         );
     });
     cx.run_until_parked();
-    editor.read_with(cx, |editor, _| {
-        assert!(
-            editor.breadcrumb_navigation_menu().is_none(),
-            "empty outline must dismiss the symbols menu (fall through)"
-        );
-    });
-    assert!(
-        outline_toggled(),
-        "empty outline must invoke the outline picker fallthrough"
-    );
+    assert_no_symbols(cx, "a click on the file segment");
 
-    reset_outline_toggled();
     editor.update_in(cx, |editor, window, cx| {
+        editor.dismiss_breadcrumb_navigation(window, cx);
         editor.open_breadcrumb_navigation_action(&OpenBreadcrumbNavigation, window, cx);
     });
-    editor.read_with(cx, |editor, cx| {
-        let menu = editor
-            .breadcrumb_navigation_menu()
-            .expect("single-file OpenBreadcrumbNavigation opens symbols listing");
-        let listing = menu.read(cx).listing().clone();
-        match listing {
-            BreadcrumbListing::Symbols { parent: None, .. } => {}
-            other => panic!("single-file action opens top-level symbols listing, got {other:?}"),
-        }
-    });
     cx.run_until_parked();
-    editor.read_with(cx, |editor, _| {
-        assert!(
-            editor.breadcrumb_navigation_menu().is_none(),
-            "still falls through once empty outline resolves"
-        );
+    assert_no_symbols(cx, "the chord");
+}
+
+// The chord's fallback ran the outline picker inside the action's lease on the editor, and the
+// picker reads the editor it is handed: a panic in every multibuffer and with breadcrumbs off.
+#[gpui::test]
+async fn test_open_breadcrumb_navigation_hands_over_outside_the_editor_lease(
+    cx: &mut TestAppContext,
+) {
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use util::path;
+    use workspace::Workspace;
+
+    install_outline_toggle_probe();
+    init_test(cx, |_| {});
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let workspace_window =
+        cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = workspace_window.root(cx).unwrap();
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(*workspace_window, cx);
+
+    // Through the window, so the action runs where the element registered it: inside the
+    // editor's update.
+    let press_chord = |editor: &Entity<Editor>, cx: &mut VisualTestContext| {
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.dispatch_action(OpenBreadcrumbNavigation.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+    };
+
+    let multi_buffer = cx.update(|_, cx| {
+        MultiBuffer::build_multi(
+            [
+                ("fn a() {}\n", vec![Point::new(0, 0)..Point::new(1, 0)]),
+                ("fn b() {}\n", vec![Point::new(0, 0)..Point::new(1, 0)]),
+            ],
+            cx,
+        )
     });
-    assert!(outline_toggled());
+    let multibuffer_editor = cx.update(|window, cx| {
+        cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx))
+    });
+    press_chord(&multibuffer_editor, cx);
+    assert!(
+        outline_toggled(),
+        "the chord in a multibuffer opens the outline picker"
+    );
+
+    install_outline_toggle_probe();
+    let singleton = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let editor = cx.update(|window, cx| {
+        cx.new(|cx| build_editor_with_project(project.clone(), singleton, window, cx))
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breadcrumb(&ToggleBreadcrumb, window, cx);
+    });
+    press_chord(&editor, cx);
+    assert!(
+        outline_toggled(),
+        "with breadcrumbs hidden the chord opens the outline picker"
+    );
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.breadcrumb_navigation_menu().is_none());
+    });
 }
 
 #[gpui::test]

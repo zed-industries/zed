@@ -11,7 +11,7 @@ use layout::{
     BreadcrumbStrip, PreparedBreadcrumbSegment, align_symbol_segments,
     breadcrumb_path_is_navigable, classify_breadcrumb_segment_kinds, hard_cap_segment_runs,
 };
-pub(crate) use menu::{BreadcrumbListing, BreadcrumbNavigationMenu, WithoutSymbols};
+pub(crate) use menu::{BreadcrumbListing, BreadcrumbNavigationMenu, file_parent_directory};
 use path::{breadcrumb_file_icon, breadcrumb_path_segments};
 use project::WorktreeId;
 use util::rel_path::RelPath;
@@ -26,6 +26,20 @@ pub(crate) enum BreadcrumbSegmentTarget {
         worktree_id: WorktreeId,
         path: Arc<RelPath>,
     },
+}
+
+impl From<BreadcrumbSegmentTarget> for BreadcrumbListing {
+    fn from(target: BreadcrumbSegmentTarget) -> Self {
+        match target {
+            BreadcrumbSegmentTarget::Directory { worktree_id, path } => {
+                BreadcrumbListing::Directory { worktree_id, path }
+            }
+            BreadcrumbSegmentTarget::Symbol { buffer_id, item } => BreadcrumbListing::Symbols {
+                buffer_id,
+                parent: item,
+            },
+        }
+    }
 }
 
 impl BreadcrumbSegmentTarget {
@@ -106,7 +120,6 @@ pub fn render_breadcrumb_text(
     if is_editor {
         element
             .id("breadcrumb_container")
-            .min_w_0()
             .h(rems_from_px(22_f32))
             .px(DynamicSpacing::Base04.rems(cx))
             .when(!multibuffer_header, |this| this.overflow_hidden())
@@ -142,6 +155,7 @@ fn prepare_breadcrumb_strip(
     // the bar a name and symbols with no file among them, and classifying their first segment as
     // the file would colour it like one.
     let mut has_file_segment = false;
+    let mut browsed_off_file_path = false;
     let mut has_root_segment = false;
     let mut file_icon: Option<SharedString> = None;
     let mut file_git_status_color: Option<Color> = None;
@@ -168,12 +182,13 @@ fn prepare_breadcrumb_strip(
             }
             file_git_status_color = breadcrumb_file_git_status_color(
                 || {
-                    editor_ref
-                        .project()
-                        .zip(real_project_path.as_ref())
-                        .and_then(|(project, project_path)| {
-                            project.read(cx).project_path_git_status(project_path, cx)
-                        })
+                    let project = editor_ref.project()?.read(cx);
+                    let entry = project.entry_for_path(real_project_path.as_ref()?, cx)?;
+                    let status = project
+                        .git_store()
+                        .read(cx)
+                        .display_status_for_buffer_id(buffer_id, cx)?;
+                    Some((status, entry.is_ignored))
                 },
                 cx,
             );
@@ -240,6 +255,7 @@ fn prepare_breadcrumb_strip(
                 };
 
                 if let Some((path_labels, path_targets)) = split {
+                    browsed_off_file_path = navigated_off_path;
                     file_segment_index = path_labels.len() - 1;
                     let replace_range = if navigated_off_path {
                         0..segments.len()
@@ -290,9 +306,11 @@ fn prepare_breadcrumb_strip(
     let symbol_segments = align_symbol_segments(&segments, symbol_segments);
     // A multibuffer header lists symbols only; without this the first symbol would be
     // classified - and coloured - as the file segment.
+    // Off the file's own trail the last segment is the directory browsed to, not the file.
     let kinds = classify_breadcrumb_segment_kinds(
         segments.len(),
-        (!multibuffer_header && has_file_segment).then_some(file_segment_index),
+        (!multibuffer_header && has_file_segment && !browsed_off_file_path)
+            .then_some(file_segment_index),
         has_root_segment,
     );
     let protected_index = menu_listing.as_ref().and_then(|listing| {
@@ -354,17 +372,23 @@ fn prepare_breadcrumb_strip(
     }
 }
 
-/// Gated on the tab family, like the file the bar describes; the menu rows are a directory
-/// listing and follow the panel family instead.
+/// Gated and coloured the way the file's tab is, since the bar describes the open file as its tab
+/// does - against the same diff base; the menu rows are a directory listing and follow the panel
+/// family instead.
 ///
 /// Takes the status lazily: resolving one walks every repository, so it must not run when the
 /// setting is off.
 pub(super) fn breadcrumb_file_git_status_color(
-    status: impl FnOnce() -> Option<git::status::FileStatus>,
+    status: impl FnOnce() -> Option<(git::status::FileStatus, bool)>,
     cx: &App,
 ) -> Option<Color> {
     if !workspace::ItemSettings::get_global(cx).git_status {
         return None;
     }
-    status().map(|status| file_status_label_color(Some(status)))
+    let (status, is_ignored) = status()?;
+    Some(crate::items::entry_git_aware_label_color(
+        status.summary(),
+        is_ignored,
+        true,
+    ))
 }

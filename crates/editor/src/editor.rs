@@ -106,7 +106,7 @@ pub use editor_settings::{
     ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
     ui_scrollbar_settings_from_raw,
 };
-use element::{BreadcrumbListing, BreadcrumbNavigationMenu, WithoutSymbols};
+use element::{BreadcrumbListing, BreadcrumbNavigationMenu};
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
     file_status_label_color, render_breadcrumb_text,
@@ -11540,46 +11540,45 @@ impl Editor {
         };
 
         if let Some(menu) = self.breadcrumb_navigation_menu.clone() {
-            // set_listing runs under this editor.update; it must not re-enter the editor.
-            menu.update(cx, |menu, cx| match listing {
-                // A segment click switches the way Left does: target resolved first, then the
-                // anchor and the rows move together.
-                BreadcrumbListing::Directory { worktree_id, path } => menu
-                    .switch_to_directory_when_loaded(
-                        worktree_id,
-                        path,
-                        active_file_path,
-                        false,
-                        window,
-                        cx,
-                    ),
-                BreadcrumbListing::Symbols {
-                    buffer_id,
-                    parent: None,
-                } => menu.switch_to_symbols_when_loaded(
-                    buffer_id,
-                    active_file_path,
-                    WithoutSymbols::ListSiblings,
-                    window,
-                    cx,
-                ),
-                listing => menu.set_listing(listing, active_file_path, false, window, cx),
+            // Runs under this editor's update, so the menu must not re-enter the editor.
+            menu.update(cx, |menu, cx| {
+                menu.set_listing(listing, active_file_path, false, window, cx)
             });
             cx.emit(EditorEvent::BreadcrumbsChanged);
             cx.notify();
             return;
         }
 
+        // A file with no outline at all has no level of its own, so its segment lists its
+        // siblings. Known before any fetch, it opens there directly instead of flashing an empty
+        // symbols menu under the file segment first.
+        let listing = match listing {
+            BreadcrumbListing::Symbols {
+                buffer_id,
+                parent: None,
+            } if self
+                .buffer()
+                .read(cx)
+                .buffer(buffer_id)
+                .is_some_and(|buffer| {
+                    !document_symbols::buffer_has_outline(buffer.read(cx), cx)
+                }) =>
+            {
+                match element::file_parent_directory(self, cx) {
+                    Some((worktree_id, path, _)) => {
+                        BreadcrumbListing::Directory { worktree_id, path }
+                    }
+                    None => BreadcrumbListing::Symbols {
+                        buffer_id,
+                        parent: None,
+                    },
+                }
+            }
+            listing => listing,
+        };
         let editor = cx.entity().downgrade();
-        let menu = BreadcrumbNavigationMenu::new(
-            editor,
-            workspace,
-            listing,
-            active_file_path,
-            false,
-            window,
-            cx,
-        );
+        let menu =
+            BreadcrumbNavigationMenu::new(editor, workspace, listing, active_file_path, window, cx);
         let subscription = cx.subscribe_in(
             &menu,
             window,
@@ -11606,20 +11605,17 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let listing = match target {
-            element::BreadcrumbSegmentTarget::Directory {
-                worktree_id, path, ..
-            } => BreadcrumbListing::Directory { worktree_id, path },
-            element::BreadcrumbSegmentTarget::Symbol { buffer_id, item } => {
-                BreadcrumbListing::Symbols {
-                    buffer_id,
-                    parent: item,
-                }
-            }
-        };
+        self.toggle_breadcrumb_listing(BreadcrumbListing::from(target), window, cx);
+    }
 
+    fn toggle_breadcrumb_listing(
+        &mut self,
+        listing: BreadcrumbListing,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(menu) = self.breadcrumb_navigation_menu.clone()
-            && (menu.read(cx).listing() == &listing || menu.read(cx).lists_same_rows_as(&listing))
+            && menu.read(cx).lists_same_rows_as(&listing)
         {
             self.dismiss_breadcrumb_navigation(window, cx);
             return;
@@ -11660,18 +11656,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let target = match listing {
-            BreadcrumbListing::Directory { worktree_id, path } => {
-                element::BreadcrumbSegmentTarget::Directory { worktree_id, path }
-            }
-            BreadcrumbListing::Symbols { buffer_id, parent } => {
-                element::BreadcrumbSegmentTarget::Symbol {
-                    buffer_id,
-                    item: parent,
-                }
-            }
-        };
-        self.open_or_toggle_breadcrumb_listing(target, window, cx);
+        self.toggle_breadcrumb_listing(listing, window, cx);
     }
 
     pub fn open_breadcrumb_navigation_action(
@@ -11680,13 +11665,27 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Deferred: this handler runs inside the editor's update, and the outline picker reads the
+        // editor it is handed.
         let toggle_outline = |window: &mut Window, cx: &mut Context<Self>| {
-            if let Some(callback) = zed_actions::outline::TOGGLE_OUTLINE.get() {
-                callback(cx.entity().to_any_view(), window, cx);
-            }
+            let editor = cx.entity();
+            window.defer(cx, move |window, cx| {
+                if let Some(callback) = zed_actions::outline::TOGGLE_OUTLINE.get() {
+                    callback(editor.to_any_view(), window, cx);
+                }
+            });
         };
 
-        if !self.breadcrumbs_visible() || self.workspace().is_none() {
+        // The menu hangs under the breadcrumb bar, and only a pane's active item has one. An
+        // editor wrapped by another item - a diff view, say - would get a menu nothing paints.
+        let hosted_by_bar = self.workspace().is_some_and(|workspace| {
+            workspace.read(cx).panes().iter().any(|pane| {
+                pane.read(cx)
+                    .active_item()
+                    .is_some_and(|item| item.item_id() == cx.entity_id())
+            })
+        });
+        if !self.breadcrumbs_visible() || !hosted_by_bar {
             toggle_outline(window, cx);
             return;
         }

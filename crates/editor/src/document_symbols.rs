@@ -113,12 +113,16 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let target = item.selection_range.start;
+        // A caret inside a fold would sit in hidden text, with the fold drawn as selected. Only the
+        // folds around the target open; the user's folds inside the symbol stay.
+        self.unfold_ranges(&[target..target], false, false, cx);
         self.change_selections(
             SelectionEffects::scroll(Autoscroll::center()),
             window,
             cx,
             |s| {
-                s.select_ranges([item.selection_range.start..item.selection_range.start]);
+                s.select_ranges([target..target]);
             },
         );
         window.focus(&self.focus_handle, cx);
@@ -237,6 +241,15 @@ fn lsp_symbols_enabled(buffer: &Buffer, cx: &App) -> bool {
     LanguageSettings::for_buffer(buffer, cx)
         .document_symbols
         .lsp_enabled()
+}
+
+/// False only when an outline can be ruled out without computing one: no language server
+/// supplies the symbols and the buffer has no grammar to query, as with plain text.
+pub(crate) fn buffer_has_outline(buffer: &Buffer, cx: &App) -> bool {
+    lsp_symbols_enabled(buffer, cx)
+        || buffer
+            .language()
+            .is_some_and(|language| language.grammar().is_some())
 }
 
 pub(crate) fn text_outline_items_to_multibuffer(

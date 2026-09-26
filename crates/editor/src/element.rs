@@ -4,7 +4,7 @@ mod mouse;
 
 pub use breadcrumbs::render_breadcrumb_text;
 pub(crate) use breadcrumbs::{
-    BreadcrumbListing, BreadcrumbNavigationMenu, BreadcrumbSegmentTarget, WithoutSymbols,
+    BreadcrumbListing, BreadcrumbNavigationMenu, BreadcrumbSegmentTarget, file_parent_directory,
 };
 #[cfg(test)]
 pub(crate) use header::StickyHeader;

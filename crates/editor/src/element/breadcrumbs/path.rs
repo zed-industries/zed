@@ -61,14 +61,6 @@ pub(super) fn breadcrumb_path_segments(
 
 pub(super) const MAX_BREADCRUMB_MENU_ROWS: usize = 200;
 
-pub(super) fn breadcrumb_menu_truncated_label(filter_active: bool) -> String {
-    if filter_active {
-        format!("Showing first {MAX_BREADCRUMB_MENU_ROWS} matches")
-    } else {
-        format!("Showing first {MAX_BREADCRUMB_MENU_ROWS} entries")
-    }
-}
-
 pub(super) const MAX_UNARY_DIRECTORY_SKIP_DEPTH: usize = 64;
 
 pub(super) fn single_child_directory(children: &[(Arc<RelPath>, bool)]) -> Option<Arc<RelPath>> {
@@ -89,20 +81,19 @@ pub(super) fn breadcrumb_file_icon(path: Option<&RelPath>, cx: &App) -> Option<S
 }
 
 /// Callers only ever ask whether there is exactly one child, and the auto-fold walk asks that
-/// once per level, so the traversal stops early instead of listing the whole directory.
+/// once per level, so the traversal stops early instead of listing the whole directory. Every
+/// child counts, hidden or ignored, as in the project panel's own fold check: a directory it
+/// shows unfolded must not be folded here.
 pub(super) fn directory_child_paths(
     worktree: &Entity<project::Worktree>,
     path: &RelPath,
     limit: usize,
     cx: &App,
 ) -> Vec<(Arc<RelPath>, bool)> {
-    let settings = BreadcrumbListingSettings::get_global(cx);
     worktree
         .read(cx)
         .snapshot()
         .child_entries(path)
-        .filter(|entry| !settings.hide_gitignore || !entry.is_ignored)
-        .filter(|entry| !settings.hide_hidden || !entry.is_hidden)
         .take(limit)
         .map(|entry| (entry.path.clone(), entry.is_dir()))
         .collect()
@@ -193,57 +184,9 @@ pub(super) struct WorktreeChildListingOptions {
     git_status_enabled: bool,
 }
 
-#[derive(Clone, Debug)]
-struct WorktreeChildListingEntry {
-    path: Arc<RelPath>,
-    id: ProjectEntryId,
-    is_dir: bool,
-    is_ignored: bool,
-    git_summary: GitSummary,
-}
-
-fn worktree_child_listing(
-    worktree_snapshot: &project::WorktreeSnapshot,
-    repo_snapshots: &collections::HashMap<
-        project::git_store::RepositoryId,
-        project::git_store::RepositorySnapshot,
-    >,
-    parent_path: &RelPath,
-    options: WorktreeChildListingOptions,
-) -> Vec<WorktreeChildListingEntry> {
-    let mut entries =
-        project::ChildEntriesGitIter::new(repo_snapshots, worktree_snapshot, parent_path)
-            .filter(|entry| !options.hide_gitignore || !entry.is_ignored)
-            .filter(|entry| !options.hide_hidden || !entry.is_hidden)
-            .map(|entry| entry.to_owned())
-            .collect::<Vec<_>>();
-    entries.sort_by(|a, b| {
-        util::paths::compare_rel_paths_by(
-            (&*a.path, a.is_file()),
-            (&*b.path, b.is_file()),
-            options.sort_mode,
-            options.sort_order,
-        )
-    });
-
-    entries
-        .into_iter()
-        .map(|entry| WorktreeChildListingEntry {
-            path: entry.path.clone(),
-            id: entry.id,
-            is_dir: entry.is_dir(),
-            is_ignored: entry.is_ignored,
-            git_summary: if options.git_status_enabled {
-                entry.git_summary
-            } else {
-                GitSummary::UNCHANGED
-            },
-        })
-        .collect()
-}
-
 pub(super) struct BreadcrumbDirectoryListingInputs {
     worktree_snapshot: project::WorktreeSnapshot,
+    /// Empty when git status is off, so the listing skips the per-child repository walk.
     repo_snapshots: collections::HashMap<
         project::git_store::RepositoryId,
         project::git_store::RepositorySnapshot,
@@ -261,11 +204,15 @@ pub(super) fn breadcrumb_directory_listing_inputs(
     let settings = BreadcrumbListingSettings::get_global(cx);
     BreadcrumbDirectoryListingInputs {
         worktree_snapshot: worktree.read(cx).snapshot(),
-        repo_snapshots: project
-            .read(cx)
-            .git_store()
-            .read(cx)
-            .display_repo_snapshots(cx),
+        repo_snapshots: if settings.git_status {
+            project
+                .read(cx)
+                .git_store()
+                .read(cx)
+                .display_repo_snapshots(cx)
+        } else {
+            collections::HashMap::default()
+        },
         options: WorktreeChildListingOptions {
             sort_mode: settings.sort_mode.into(),
             sort_order: settings.sort_order.into(),
@@ -276,29 +223,58 @@ pub(super) fn breadcrumb_directory_listing_inputs(
     }
 }
 
+fn directory_entry(
+    entry: &project::Entry,
+    git_summary: GitSummary,
+) -> Option<BreadcrumbDirectoryEntry> {
+    Some(BreadcrumbDirectoryEntry {
+        name: SharedString::new(entry.path.file_name()?),
+        path: entry.path.clone(),
+        entry_id: entry.id,
+        is_dir: entry.is_dir(),
+        is_ignored: entry.is_ignored,
+        git_summary,
+    })
+}
+
 pub(super) fn breadcrumb_directory_entries(
     inputs: &BreadcrumbDirectoryListingInputs,
     path: &RelPath,
 ) -> Vec<BreadcrumbDirectoryEntry> {
-    worktree_child_listing(
-        &inputs.worktree_snapshot,
-        &inputs.repo_snapshots,
-        path,
-        inputs.options,
-    )
-    .into_iter()
-    .filter_map(|entry| {
-        let name = entry.path.file_name()?.to_string();
-        Some(BreadcrumbDirectoryEntry {
-            name: name.into(),
-            path: entry.path,
-            entry_id: entry.id,
-            is_dir: entry.is_dir,
-            is_ignored: entry.is_ignored,
-            git_summary: entry.git_summary,
-        })
-    })
-    .collect()
+    let options = inputs.options;
+    let snapshot = &inputs.worktree_snapshot;
+    // Inside an ignored or hidden directory every child is ignored or hidden too. The panel
+    // cannot show such a directory at all with the matching setting on, so there is no parity to
+    // keep, and hiding its children would list a directory the user is standing in as empty.
+    let listed = snapshot.entry_for_path(path);
+    let hide_ignored = options.hide_gitignore && !listed.is_some_and(|entry| entry.is_ignored);
+    let hide_hidden = options.hide_hidden && !listed.is_some_and(|entry| entry.is_hidden);
+    let shown = |entry: &project::Entry| {
+        !(hide_ignored && entry.is_ignored) && !(hide_hidden && entry.is_hidden)
+    };
+    let mut entries: Vec<BreadcrumbDirectoryEntry> = if options.git_status_enabled {
+        project::ChildEntriesGitIter::new(&inputs.repo_snapshots, snapshot, path)
+            .filter(|entry| shown(entry))
+            .filter_map(|entry| directory_entry(&entry, entry.git_summary))
+            .collect()
+    } else {
+        snapshot
+            .child_entries(path)
+            .filter(|entry| shown(entry))
+            .filter_map(|entry| directory_entry(entry, GitSummary::UNCHANGED))
+            .collect()
+    };
+    // Siblings share every component but the last, so comparing names orders them exactly as
+    // comparing their full paths does, without walking the shared prefix on every comparison.
+    entries.sort_by(|a, b| {
+        util::paths::compare_rel_paths_by(
+            (a.path.last_n_components(1).unwrap_or(&a.path), !a.is_dir),
+            (b.path.last_n_components(1).unwrap_or(&b.path), !b.is_dir),
+            options.sort_mode,
+            options.sort_order,
+        )
+    });
+    entries
 }
 
 pub(super) fn reveal_directory_in_project_panel(

@@ -22,7 +22,11 @@ pub(super) fn classify_breadcrumb_segment_kinds(
     (0..segment_count)
         .map(|index| {
             let Some(file_segment_index) = file_segment_index else {
-                return BreadcrumbSegmentKind::Middle;
+                return if has_root_segment && index == 0 {
+                    BreadcrumbSegmentKind::Root
+                } else {
+                    BreadcrumbSegmentKind::Middle
+                };
             };
             match index.cmp(&file_segment_index) {
                 Ordering::Greater => BreadcrumbSegmentKind::Symbol,
@@ -45,9 +49,16 @@ pub(super) fn align_symbol_segments(
     }
 }
 
-pub(super) const MAX_BREADCRUMB_SEGMENTS_HARD_CAP: usize = 64;
+pub(super) const MAX_BREADCRUMB_SEGMENTS_PER_RUN: usize = 64;
 
 pub(super) const ELLIPSIS_GLYPH: &str = "⋯";
+
+/// A collapsed run browses the deepest target it hides, so collapsing never puts one out of reach.
+fn deepest_target<'a>(
+    targets: impl DoubleEndedIterator<Item = Option<&'a BreadcrumbSegmentTarget>>,
+) -> Option<BreadcrumbSegmentTarget> {
+    targets.rev().flatten().next().cloned()
+}
 pub(super) const SEPARATOR_GLYPH: &str = "›";
 
 fn hard_cap_ellipsis() -> HighlightedText {
@@ -80,10 +91,7 @@ fn splice_segment_run(
     let removed = range.end - range.start;
     // The glyph inherits the deepest target it hides, so a capped run is still a way into the
     // range rather than a dead control.
-    let hidden_target = symbol_segments[range.clone()]
-        .iter()
-        .rev()
-        .find_map(|target| target.clone());
+    let hidden_target = deepest_target(symbol_segments[range.clone()].iter().map(Option::as_ref));
     segments.splice(range.clone(), Some(hard_cap_ellipsis()));
     symbol_segments.splice(range.clone(), Some(hidden_target));
     kinds.splice(range.clone(), Some(kind));
@@ -113,14 +121,14 @@ fn hard_cap_kind_run(
     let Some(run) = segment_run_bounds(kinds, kind) else {
         return;
     };
-    if run.len() <= MAX_BREADCRUMB_SEGMENTS_HARD_CAP {
+    if run.len() <= MAX_BREADCRUMB_SEGMENTS_PER_RUN {
         return;
     }
 
     if let Some(protected) = protected_index.filter(|index| run.contains(index)) {
         // Either end of the window can splice, and each glyph a splice inserts occupies one of
         // the capped slots.
-        let keep = MAX_BREADCRUMB_SEGMENTS_HARD_CAP - 2;
+        let keep = MAX_BREADCRUMB_SEGMENTS_PER_RUN - 2;
         let mut window_start = protected.saturating_sub(keep / 2).max(run.start);
         let mut window_end = window_start + keep;
         if window_end > run.end {
@@ -151,7 +159,7 @@ fn hard_cap_kind_run(
 
     // The splice puts a glyph back into the run it collapses, so one capped slot is already
     // spoken for; keeping half the cap on each side would leave the cap plus one behind.
-    let keep = MAX_BREADCRUMB_SEGMENTS_HARD_CAP - 1;
+    let keep = MAX_BREADCRUMB_SEGMENTS_PER_RUN - 1;
     let head = keep - keep / 2;
     let tail = keep / 2;
     splice_segment_run(
@@ -351,8 +359,7 @@ pub(super) struct BreadcrumbStrip {
 }
 
 /// What a segment's chrome needs from the editor rather than from the segment, read once a
-/// frame instead of once per segment: `active_buffer` clones a multibuffer snapshot, and the
-/// strip paints up to `MAX_BREADCRUMB_SEGMENTS_HARD_CAP` segments.
+/// frame instead of once per segment.
 #[derive(Clone, Copy)]
 struct SegmentEditorState {
     /// A buffer with no file has no path to copy, so neither the tooltip line nor the
@@ -372,7 +379,9 @@ impl SegmentEditorState {
         let editor = editor.read(cx);
         Self {
             has_file_path: editor
-                .active_buffer(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
                 .is_some_and(|buffer| buffer.read(cx).file().is_some()),
             menu_open: editor.breadcrumb_navigation_menu().is_some(),
         }
@@ -602,7 +611,7 @@ impl BreadcrumbStrip {
         let trigger = ButtonLike::new(element_id.clone())
             .style(ButtonStyle::Subtle)
             .size(ButtonSize::None)
-            .height(px(SEGMENT_TRIGGER_HEIGHT).into())
+            .height(rems_from_px(SEGMENT_TRIGGER_HEIGHT).into())
             .child(div().px(px(SEGMENT_TRIGGER_PADDING_X)).child(label))
             .when(!menu_open, |this| {
                 this.tooltip(move |_, cx| {
@@ -633,10 +642,24 @@ impl BreadcrumbStrip {
                     // names it.
                     let chord: Option<&dyn Action> =
                         advertises_chord.then_some(&OpenBreadcrumbNavigation);
+                    // Resolved against the editor's focus, not whatever holds focus while the
+                    // pointer rests here: the chord's binding only exists in the editor.
+                    let Some(focus_handle) = tooltip_editor
+                        .upgrade()
+                        .map(|editor| editor.read(cx).focus_handle.clone())
+                    else {
+                        return Tooltip::simple(title, cx);
+                    };
                     if copyable_path {
-                        Tooltip::with_meta(title, chord, "Right-click to copy this path", cx)
+                        Tooltip::with_meta_in(
+                            title,
+                            chord,
+                            "Right-click to copy this path",
+                            &focus_handle,
+                            cx,
+                        )
                     } else if let Some(chord) = chord {
-                        Tooltip::for_action(title, chord, cx)
+                        Tooltip::for_action_in(title, chord, &focus_handle, cx)
                     } else {
                         Tooltip::simple(title, cx)
                     }
@@ -735,10 +758,11 @@ impl BreadcrumbStrip {
             .into_any_element();
         // Standing in for a run of hidden segments, the ellipsis browses the deepest of
         // them, so collapsing the bar never puts an ancestor out of reach.
-        let deepest_hidden = hidden
-            .clone()
-            .rev()
-            .find_map(|index| self.segments.get(index)?.target.clone());
+        let deepest_hidden = deepest_target(
+            self.segments[hidden.clone()]
+                .iter()
+                .map(|segment| segment.target.as_ref()),
+        );
         let content = match (deepest_hidden, self.editor.clone()) {
             (Some(target), Some(editor)) => self.render_clickable_segment(
                 ("breadcrumb-collapsed-run", hidden.start).into(),
@@ -746,7 +770,7 @@ impl BreadcrumbStrip {
                 0,
                 Rc::new(target),
                 content,
-                false,
+                hidden.end == self.segments.len(),
                 editor,
                 editor_state,
                 cx,
@@ -979,8 +1003,10 @@ impl gpui::Element for BreadcrumbStrip {
 
         let menu_element = match (menu, menu_anchor_bounds) {
             (Some(menu), Some(anchor_bounds)) => {
+                // Flush with the trigger's hover edge, which the wrapper's fixed margin puts left
+                // of the label the anchor is measured from - at every UI font size.
                 let offset = point(
-                    -(rems_from_px(5_f32 - SEGMENT_TRIGGER_PADDING_X) * window.rem_size()),
+                    -px(SEGMENT_TRIGGER_PADDING_X + BUTTON_LIKE_EDGE_PX),
                     rems_from_px(2_f32) * window.rem_size(),
                 );
                 let position = point(
@@ -1132,10 +1158,7 @@ fn measure_dirty_filename_width(
             .width();
     }
 
-    let mut runs = Vec::new();
-    if bold_range.start > 0 {
-        runs.push(text_style.to_run(bold_range.start));
-    }
+    let mut runs = vec![text_style.to_run(bold_range.start)];
     let mut bold_style = text_style.clone();
     bold_style.font_weight = FontWeight::BOLD;
     runs.push(bold_style.to_run(bold_range.end - bold_range.start));

@@ -5705,7 +5705,7 @@ mod tests {
         }
     }
 
-    /// The menu overrides only the four keys it has to take from the query editor beneath it;
+    /// The menu overrides only the two keys it has to take from the query editor beneath it;
     /// the rest it inherits like any picker. Asserted against the shipped keymaps, because the
     /// menu's own tests install their bindings by hand and would not notice either half moving.
     #[gpui::test]
@@ -5784,11 +5784,9 @@ mod tests {
 
             for base in std::iter::once(None).chain(base_assets.iter().copied().map(Some)) {
                 for (keystroke, action) in [
-                    // The four the override exists for.
+                    // The two the override exists for.
                     ("left", "menu::SelectParent"),
                     ("right", "menu::SelectChild"),
-                    ("home", "menu::SelectFirst"),
-                    ("end", "menu::SelectLast"),
                     // ...and the ones it deliberately does not carry, which have to arrive
                     // anyway - through `Picker > Editor` and the context-less `enter`.
                     ("up", "menu::SelectPrevious"),

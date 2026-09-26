@@ -784,7 +784,6 @@ async fn test_breadcrumb_menu_dismisses_on_click_outside(cx: &mut TestAppContext
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -883,7 +882,6 @@ async fn test_breadcrumb_menu_survives_release_on_an_occluded_part_of_itself(
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -985,7 +983,6 @@ async fn test_breadcrumb_menu_survives_drag_release_outside(cx: &mut TestAppCont
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -1092,7 +1089,6 @@ async fn test_breadcrumb_menu_navigation_button_press_does_not_prime_dismissal(
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -1194,7 +1190,6 @@ async fn test_breadcrumb_menu_right_click_outside_dismisses(cx: &mut TestAppCont
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -1492,11 +1487,20 @@ fn test_breadcrumb_file_git_status_color_respects_tabs_git_status(cx: &mut TestA
         cx.update(|cx| workspace::ItemSettings::get_global(cx).git_status),
         "tabs.git_status=true should enable ItemSettings.git_status"
     );
-    let color_on = cx.update(|cx| breadcrumb_file_git_status_color(|| Some(status), cx));
+    let color_on = cx.update(|cx| breadcrumb_file_git_status_color(|| Some((status, false)), cx));
+    assert_eq!(color_on, Some(Color::Modified));
+    // A deleted file is where the multibuffer header's colour and the tab's part ways.
+    let deleted = FileStatus::worktree(StatusCode::Deleted);
     assert_eq!(
-        color_on,
-        Some(file_status_label_color(Some(status))),
-        "enabled path mirrors file_status_label_color"
+        cx.update(|cx| breadcrumb_file_git_status_color(|| Some((deleted, false)), cx)),
+        Some(Color::Deleted),
+        "the bar colours a deleted file as its tab does"
+    );
+    let unchanged = FileStatus::worktree(StatusCode::Unmodified);
+    assert_eq!(
+        cx.update(|cx| breadcrumb_file_git_status_color(|| Some((unchanged, true)), cx)),
+        Some(Color::Ignored),
+        "an ignored file is dimmed as its tab is"
     );
 
     cx.update(|cx| {
@@ -1506,7 +1510,7 @@ fn test_breadcrumb_file_git_status_color_respects_tabs_git_status(cx: &mut TestA
             });
         });
     });
-    let color_off = cx.update(|cx| breadcrumb_file_git_status_color(|| Some(status), cx));
+    let color_off = cx.update(|cx| breadcrumb_file_git_status_color(|| Some((status, false)), cx));
     assert_eq!(
         color_off, None,
         "tabs.git_status=false must suppress file segment git color"
@@ -1555,7 +1559,6 @@ async fn test_directory_drill_caps_unary_chain_depth(cx: &mut TestAppContext) {
                     path: RelPath::empty().into_arc(),
                 },
                 None,
-                false,
                 window,
                 cx,
             )
@@ -1630,6 +1633,17 @@ fn test_classify_breadcrumb_segment_kinds() {
 
     let kinds = classify_breadcrumb_segment_kinds(1, Some(0), false);
     assert_eq!(kinds, vec![BreadcrumbSegmentKind::File]);
+
+    // A trail the menu browsed to off the file's path has no file segment, but still its root.
+    let kinds = classify_breadcrumb_segment_kinds(3, None, true);
+    assert_eq!(
+        kinds,
+        vec![
+            BreadcrumbSegmentKind::Root,
+            BreadcrumbSegmentKind::Middle,
+            BreadcrumbSegmentKind::Middle,
+        ]
+    );
 }
 
 #[test]
@@ -1696,10 +1710,10 @@ fn capped_symbol_run(
 
 #[test]
 fn test_hard_cap_counts_the_glyph_it_splices_in() {
-    use super::layout::{ELLIPSIS_GLYPH, MAX_BREADCRUMB_SEGMENTS_HARD_CAP};
+    use super::layout::{ELLIPSIS_GLYPH, MAX_BREADCRUMB_SEGMENTS_PER_RUN};
 
-    let (at_cap, kinds) = capped_symbol_run(MAX_BREADCRUMB_SEGMENTS_HARD_CAP, None);
-    assert_eq!(at_cap.len(), 1 + MAX_BREADCRUMB_SEGMENTS_HARD_CAP);
+    let (at_cap, kinds) = capped_symbol_run(MAX_BREADCRUMB_SEGMENTS_PER_RUN, None);
+    assert_eq!(at_cap.len(), 1 + MAX_BREADCRUMB_SEGMENTS_PER_RUN);
     assert!(
         !at_cap
             .iter()
@@ -1711,19 +1725,19 @@ fn test_hard_cap_counts_the_glyph_it_splices_in() {
             .iter()
             .filter(|kind| **kind == BreadcrumbSegmentKind::Symbol)
             .count(),
-        MAX_BREADCRUMB_SEGMENTS_HARD_CAP
+        MAX_BREADCRUMB_SEGMENTS_PER_RUN
     );
 
-    let (over_cap, kinds) = capped_symbol_run(MAX_BREADCRUMB_SEGMENTS_HARD_CAP + 1, None);
+    let (over_cap, kinds) = capped_symbol_run(MAX_BREADCRUMB_SEGMENTS_PER_RUN + 1, None);
     assert_eq!(
         kinds
             .iter()
             .filter(|kind| **kind == BreadcrumbSegmentKind::Symbol)
             .count(),
-        MAX_BREADCRUMB_SEGMENTS_HARD_CAP,
+        MAX_BREADCRUMB_SEGMENTS_PER_RUN,
         "the spliced glyph is part of the run, so it has to fit inside the cap"
     );
-    assert_eq!(over_cap.len(), 1 + MAX_BREADCRUMB_SEGMENTS_HARD_CAP);
+    assert_eq!(over_cap.len(), 1 + MAX_BREADCRUMB_SEGMENTS_PER_RUN);
     assert_eq!(
         over_cap
             .iter()
@@ -1734,11 +1748,11 @@ fn test_hard_cap_counts_the_glyph_it_splices_in() {
 
     // Both ends of a protected window splice, so each glyph has to be paid for too.
     for (symbol_count, protected) in [
-        (MAX_BREADCRUMB_SEGMENTS_HARD_CAP + 1, 1),
-        (MAX_BREADCRUMB_SEGMENTS_HARD_CAP + 1, 33),
+        (MAX_BREADCRUMB_SEGMENTS_PER_RUN + 1, 1),
+        (MAX_BREADCRUMB_SEGMENTS_PER_RUN + 1, 33),
         (
-            MAX_BREADCRUMB_SEGMENTS_HARD_CAP + 1,
-            MAX_BREADCRUMB_SEGMENTS_HARD_CAP + 1,
+            MAX_BREADCRUMB_SEGMENTS_PER_RUN + 1,
+            MAX_BREADCRUMB_SEGMENTS_PER_RUN + 1,
         ),
         (200, 100),
         (5000, 2500),
@@ -1749,7 +1763,7 @@ fn test_hard_cap_counts_the_glyph_it_splices_in() {
             .filter(|kind| **kind == BreadcrumbSegmentKind::Symbol)
             .count();
         assert!(
-            run <= MAX_BREADCRUMB_SEGMENTS_HARD_CAP,
+            run <= MAX_BREADCRUMB_SEGMENTS_PER_RUN,
             "run of {run} from {symbol_count} symbols protecting {protected} exceeds the cap"
         );
         assert_eq!(capped.len(), 1 + run);
@@ -1765,7 +1779,7 @@ fn test_hard_cap_counts_the_glyph_it_splices_in() {
 
 #[test]
 fn test_hard_cap_applies_to_a_symbol_trail_with_no_middle_run() {
-    use super::layout::MAX_BREADCRUMB_SEGMENTS_HARD_CAP;
+    use super::layout::MAX_BREADCRUMB_SEGMENTS_PER_RUN;
 
     // A file at the worktree root is File + N symbols: no directory run at all. Capping
     // only the directory run left this shape uncapped, so `measure` shaped every symbol
@@ -1786,7 +1800,7 @@ fn test_hard_cap_applies_to_a_symbol_trail_with_no_middle_run() {
     let (capped, _, kinds, file_segment_index) =
         hard_cap_segment_runs(segments, symbol_segments, kinds, 0, None);
 
-    assert_eq!(capped.len(), 1 + MAX_BREADCRUMB_SEGMENTS_HARD_CAP);
+    assert_eq!(capped.len(), 1 + MAX_BREADCRUMB_SEGMENTS_PER_RUN);
     assert_eq!(file_segment_index, 0);
     assert_eq!(kinds[file_segment_index], BreadcrumbSegmentKind::File);
     assert!(
@@ -2862,7 +2876,7 @@ async fn test_breadcrumb_segment_right_click_copies_directory_path(cx: &mut Test
 
 #[test]
 fn test_hard_cap_protected_at_middle_of_long_path() {
-    use super::layout::MAX_BREADCRUMB_SEGMENTS_HARD_CAP;
+    use super::layout::MAX_BREADCRUMB_SEGMENTS_PER_RUN;
 
     // Root + 5000 middle dirs + file.
     let segment_count = 5002;
@@ -2886,7 +2900,7 @@ fn test_hard_cap_protected_at_middle_of_long_path() {
     );
 
     // Root + dual ellipses + at most CAP middle + file.
-    let max_len = 1 + MAX_BREADCRUMB_SEGMENTS_HARD_CAP + 1;
+    let max_len = 1 + MAX_BREADCRUMB_SEGMENTS_PER_RUN + 1;
     assert!(
         capped.len() <= max_len,
         "capped length {} exceeds max {}",
@@ -3060,7 +3074,6 @@ async fn test_choosing_breadcrumb_directory_updates_listing_in_place(cx: &mut Te
                     path: RelPath::empty().into_arc(),
                 },
                 None,
-                false,
                 window,
                 cx,
             )
@@ -3135,7 +3148,6 @@ async fn test_breadcrumb_directory_browser_choose_descends_single_child_dirs(
                     path: RelPath::empty().into_arc(),
                 },
                 None,
-                false,
                 window,
                 cx,
             )
@@ -3206,7 +3218,6 @@ async fn test_breadcrumb_directory_browser_choose_respects_auto_fold_dirs_off(
                     path: RelPath::empty().into_arc(),
                 },
                 None,
-                false,
                 window,
                 cx,
             )
@@ -3286,7 +3297,6 @@ async fn test_breadcrumb_menu_preselects_active_path(cx: &mut TestAppContext) {
                     path: RelPath::empty().into_arc(),
                 },
                 Some(rel_path("b.txt").into_arc()),
-                false,
                 window,
                 cx,
             )
@@ -3312,7 +3322,6 @@ async fn test_breadcrumb_menu_preselects_active_path(cx: &mut TestAppContext) {
                     path: RelPath::empty().into_arc(),
                 },
                 Some(rel_path("subdir/nested.txt").into_arc()),
-                false,
                 window,
                 cx,
             )
@@ -3405,7 +3414,6 @@ async fn test_breadcrumb_directory_entries_expand_nested_gitignored(cx: &mut Tes
                     path: RelPath::empty().into_arc(),
                 },
                 None,
-                false,
                 window,
                 cx,
             )
@@ -3658,7 +3666,6 @@ async fn test_breadcrumb_menu_empty_state_does_not_strobe_while_typing(cx: &mut 
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -3799,7 +3806,6 @@ async fn test_erasing_an_untouched_query_reselects_the_row_it_started_from(
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -3909,7 +3915,6 @@ async fn test_breadcrumb_menu_zero_match_filter_settles(cx: &mut TestAppContext)
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -4003,7 +4008,6 @@ async fn test_breadcrumb_menu_reloads_when_sort_settings_change(cx: &mut TestApp
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -4105,7 +4109,6 @@ async fn test_breadcrumb_menu_ignores_unrelated_settings_changes(cx: &mut TestAp
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -4192,7 +4195,6 @@ async fn test_breadcrumb_menu_filter_finds_entry_past_display_cap(cx: &mut TestA
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -4210,20 +4212,17 @@ async fn test_breadcrumb_menu_filter_finds_entry_past_display_cap(cx: &mut TestA
                 "fixture must exceed the display cap; got {}",
                 unfiltered.len()
             );
+            // Only ranked matches are capped: an unfiltered listing is every entry, so the
+            // file a listing opens on is on screen wherever it sorts.
             assert_eq!(
-                menu.filtered_entry_names().len(),
-                MAX_BREADCRUMB_MENU_ROWS,
-                "unfiltered view is display-capped"
+                menu.filtered_entry_names(),
+                unfiltered,
+                "an unfiltered listing shows every entry"
             );
-            let filtered = menu.filtered_entry_names();
-            let filtered_names: Vec<&str> = filtered.iter().map(|name| name.as_ref()).collect();
             assert_eq!(
-                filtered_names
-                    .iter()
-                    .find(|&&name| name == "zzz_target.txt")
-                    .copied(),
-                None,
-                "target must sort past the display cap without a filter"
+                unfiltered.last().map(|name| name.as_ref()),
+                Some("zzz_target.txt"),
+                "the target sorts past what a filtered view keeps"
             );
         })
         .unwrap();
@@ -4310,7 +4309,6 @@ async fn test_breadcrumb_menu_truncation_keeps_the_first_matches(cx: &mut TestAp
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -4515,7 +4513,6 @@ async fn test_a_drill_keeps_the_filtered_rows_until_the_target_loads(cx: &mut Te
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -4645,7 +4642,6 @@ async fn test_one_escape_emits_one_dismiss(cx: &mut TestAppContext) {
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -4743,7 +4739,6 @@ async fn test_breadcrumb_menu_keyboard_filter(cx: &mut TestAppContext) {
                 path: RelPath::empty().into_arc(),
             },
             Some(util::rel_path::rel_path("beta.txt").into_arc()),
-            false,
             window,
             cx,
         );
@@ -4859,7 +4854,6 @@ async fn test_breadcrumb_filter_editor_receives_typed_input(cx: &mut TestAppCont
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -5401,7 +5395,6 @@ async fn test_stepping_left_keeps_rows_until_the_parent_loads(cx: &mut TestAppCo
                 path: RelPath::new_test("outer/inner").into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -5529,7 +5522,6 @@ async fn test_stepping_left_out_of_a_zero_match_filter_shows_no_stale_listing(
                 path: RelPath::new_test("outer/inner").into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -5635,7 +5627,6 @@ async fn test_a_new_query_selects_its_best_match(cx: &mut TestAppContext) {
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -5731,7 +5722,6 @@ async fn test_typing_a_filter_does_not_blank_the_rows(cx: &mut TestAppContext) {
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -5845,7 +5835,6 @@ async fn test_a_reload_under_a_filter_does_not_flash_the_rows(cx: &mut TestAppCo
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -5970,7 +5959,6 @@ async fn test_select_parent_walks_out_of_a_directory_listing(cx: &mut TestAppCon
                 path: RelPath::new_test("outer/inner").into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -6192,7 +6180,6 @@ async fn test_breadcrumb_menu_keyboard_survives_click_on_popup_chrome(cx: &mut T
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -6313,7 +6300,6 @@ async fn test_breadcrumb_menu_filter_keeps_listing_order_for_equal_scores(cx: &m
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -6585,6 +6571,31 @@ async fn test_bar_follows_the_menu_off_the_open_files_path(cx: &mut TestAppConte
         cx.debug_bounds("breadcrumb-segment-3").is_none(),
         "a listing off the open file's path replaces the trail rather than extending it"
     );
+
+    // The browsed directory is not the file, and the root stays the root: as a middle segment
+    // it would be the first to collapse on a narrow bar.
+    let editor = host_window
+        .read_with(cx, |host, _| host.editor.clone())
+        .unwrap();
+    let kinds = cx.update(|_, cx| {
+        let file_name = vec![HighlightedText {
+            text: "file.rs".into(),
+            highlights: vec![],
+        }];
+        super::prepare_breadcrumb_strip(file_name, None, false, &editor, false, cx)
+            .segments
+            .iter()
+            .map(|segment| segment.kind)
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        kinds,
+        vec![
+            super::layout::BreadcrumbSegmentKind::Root,
+            super::layout::BreadcrumbSegmentKind::Middle,
+            super::layout::BreadcrumbSegmentKind::Middle,
+        ]
+    );
 }
 
 #[gpui::test]
@@ -6792,7 +6803,6 @@ async fn test_breadcrumb_menu_click_opens_the_clicked_row(cx: &mut TestAppContex
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -7094,7 +7104,6 @@ async fn breadcrumb_menu_gives_up_dead_listing(removed: &str, cx: &mut TestAppCo
                 path: RelPath::new_test("a/b/c").into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -7203,7 +7212,6 @@ async fn test_breadcrumb_menu_gives_up_a_listing_replaced_by_a_file(cx: &mut Tes
                 path: RelPath::new_test("a/b/c").into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -7307,7 +7315,6 @@ async fn test_a_drill_gives_up_a_directory_deleted_mid_flight(cx: &mut TestAppCo
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -7418,7 +7425,6 @@ async fn test_breadcrumb_directory_rows_reload_on_a_git_change_below_their_child
                 path: RelPath::new_test("sub").into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -7524,7 +7530,6 @@ async fn test_breadcrumb_menu_filtered_selection_survives_a_reload(cx: &mut Test
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -7735,7 +7740,6 @@ async fn test_breadcrumb_menu_filters_multibyte_names(cx: &mut TestAppContext) {
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -7850,7 +7854,6 @@ async fn test_breadcrumb_menu_enter_waits_for_the_query_it_typed(cx: &mut TestAp
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -7957,7 +7960,6 @@ async fn test_breadcrumb_menu_click_opens_the_row_the_picker_rendered(cx: &mut T
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -8071,7 +8073,6 @@ async fn test_symbol_menu_recovers_when_an_edit_deletes_the_selected_symbol(
                 parent: None,
             },
             None,
-            false,
             window,
             cx,
         );
@@ -8489,6 +8490,12 @@ async fn test_clicking_a_segment_that_lists_the_same_rows_closes_the_menu(cx: &m
     let editor = host_window
         .read_with(cx, |host, _| host.editor.clone())
         .unwrap();
+    // The chord opens the menu only for a pane's active item, the one editor a bar hosts.
+    workspace_window
+        .update(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, window, cx);
+        })
+        .unwrap();
     let cx = &mut VisualTestContext::from_window(*host_window, cx);
     cx.run_until_parked();
 
@@ -8697,6 +8704,12 @@ async fn test_a_file_without_symbols_lists_its_directory_instead_of_closing(
     let editor = host_window
         .read_with(cx, |host, _| host.editor.clone())
         .unwrap();
+    // The chord opens the menu only for a pane's active item, the one editor a bar hosts.
+    workspace_window
+        .update(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, window, cx);
+        })
+        .unwrap();
     let cx = &mut VisualTestContext::from_window(*host_window, cx);
     cx.run_until_parked();
 
@@ -8858,7 +8871,6 @@ async fn test_a_filtered_reload_does_not_strand_the_symbol_latch(cx: &mut TestAp
                 parent: None,
             },
             None,
-            false,
             window,
             cx,
         );
@@ -8940,7 +8952,6 @@ async fn test_a_symbol_reload_blanks_the_filter_with_the_outline(cx: &mut TestAp
                 parent: None,
             },
             None,
-            false,
             window,
             cx,
         );
@@ -9041,7 +9052,6 @@ async fn test_symbol_menu_selection_survives_an_edit_above_it(cx: &mut TestAppCo
                 parent: None,
             },
             None,
-            false,
             window,
             cx,
         );
@@ -9162,7 +9172,6 @@ fn gamma() {}
                 parent: None,
             },
             None,
-            false,
             window,
             cx,
         );
@@ -9289,7 +9298,6 @@ async fn test_breadcrumb_menu_right_ignores_rows_a_pending_rank_will_replace(
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -9562,7 +9570,6 @@ async fn test_breadcrumb_menu_rows_follow_the_panel_icon_settings(cx: &mut TestA
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -9669,7 +9676,6 @@ async fn test_breadcrumb_menu_drills_twice_in_a_row(cx: &mut TestAppContext) {
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -9762,7 +9768,6 @@ async fn test_breadcrumb_menu_keeps_query_when_drill_goes_nowhere(cx: &mut TestA
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -9863,7 +9868,6 @@ async fn test_breadcrumb_menu_clearing_filter_keeps_the_selected_entry(cx: &mut 
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -9978,7 +9982,6 @@ async fn test_breadcrumb_menu_drill_from_filtered_row_selects_first_child(cx: &m
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -10122,7 +10125,6 @@ async fn test_breadcrumb_filter_arrows_drive_menu_not_text_cursor(cx: &mut TestA
                 path: RelPath::empty().into_arc(),
             },
             Some(rel_path("main.rs").into_arc()),
-            false,
             window,
             cx,
         );
@@ -10276,7 +10278,6 @@ async fn test_breadcrumb_filter_does_not_shadow_alt_bindings(cx: &mut TestAppCon
                 path: RelPath::empty().into_arc(),
             },
             None,
-            false,
             window,
             cx,
         );
@@ -10376,7 +10377,6 @@ async fn test_breadcrumb_menu_enter_opens_file_and_dismisses(cx: &mut TestAppCon
                 path: RelPath::empty().into_arc(),
             },
             Some(rel_path("start.rs").into_arc()),
-            false,
             window,
             cx,
         );
@@ -11237,7 +11237,6 @@ async fn test_select_child_on_another_file_row_opens_it(cx: &mut TestAppContext)
                 path: RelPath::empty().into_arc(),
             },
             Some(rel_path("main.rs").into_arc()),
-            false,
             window,
             cx,
         );
@@ -11383,7 +11382,6 @@ async fn test_select_child_on_open_file_row_opens_symbols(cx: &mut TestAppContex
                 path: RelPath::empty().into_arc(),
             },
             Some(rel_path("main.rs").into_arc()),
-            false,
             window,
             cx,
         );
@@ -11496,4 +11494,1312 @@ async fn test_select_child_on_open_file_row_opens_symbols(cx: &mut TestAppContex
         Some("lib.rs"),
         "Right on a row for another file opens it"
     );
+}
+
+/// Renders the real bar for an editor that is also its workspace pane's active item - the one
+/// editor a bar hosts - so clicks go through the bar's own handlers and the chord opens the menu.
+struct HostedBar {
+    editor: Entity<Editor>,
+    worktree_id: WorktreeId,
+    buffer_id: BufferId,
+}
+
+struct HostedBarView {
+    editor: Entity<Editor>,
+}
+
+impl gpui::Render for HostedBarView {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        let placeholder = vec![HighlightedText {
+            text: "placeholder".into(),
+            highlights: vec![],
+        }];
+        h_flex().size_full().child(render_breadcrumb_text(
+            placeholder,
+            None,
+            None,
+            &self.editor,
+            false,
+            cx,
+        ))
+    }
+}
+
+async fn hosted_bar(
+    cx: &mut TestAppContext,
+    tree: serde_json::Value,
+    file: &str,
+    language: Option<Arc<language::Language>>,
+) -> (HostedBar, VisualTestContext) {
+    use crate::test::build_editor_with_project;
+    use project::{FakeFs, Project};
+    use workspace::Workspace;
+
+    crate::editor_tests::init_test(cx, |_| {});
+    cx.update(|cx| {
+        cx.bind_keys([
+            // What a key the menu passes on reaches in the shipped keymaps, which load the
+            // menu's overrides after these so that the overrides win.
+            KeyBinding::new("left", crate::actions::MoveLeft, Some("Editor")),
+            KeyBinding::new("right", crate::actions::MoveRight, Some("Editor")),
+            KeyBinding::new(
+                "left",
+                SelectParent,
+                Some("BreadcrumbNavigationMenu > Editor"),
+            ),
+            KeyBinding::new(
+                "right",
+                SelectChild,
+                Some("BreadcrumbNavigationMenu > Editor"),
+            ),
+            KeyBinding::new("enter", Confirm, Some("BreadcrumbNavigationMenu > Editor")),
+            KeyBinding::new(
+                "down",
+                SelectNext,
+                Some("BreadcrumbNavigationMenu > Editor"),
+            ),
+            KeyBinding::new(
+                "up",
+                ::menu::SelectPrevious,
+                Some("BreadcrumbNavigationMenu > Editor"),
+            ),
+            KeyBinding::new("backspace", crate::actions::Backspace, Some("Editor")),
+        ]);
+    });
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(util::path!("/root"), tree).await;
+    let project = Project::test(fs, [util::path!("/root").as_ref()], cx).await;
+    let worktree_id = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+    let workspace_window =
+        cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = workspace_window.root(cx).unwrap();
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer(file, cx))
+        .await
+        .unwrap();
+    if let Some(language) = language {
+        buffer.update(cx, |buffer, cx| buffer.set_language(Some(language), cx));
+    }
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+    let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let host_window = cx.add_window(|window, cx| {
+        let editor =
+            cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
+        editor.update(cx, |editor, _cx| {
+            editor.set_workspace_for_test(workspace.downgrade());
+        });
+        HostedBarView { editor }
+    });
+    let editor = host_window
+        .read_with(cx, |host, _| host.editor.clone())
+        .unwrap();
+    workspace_window
+        .update(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, window, cx);
+        })
+        .unwrap();
+    let mut cx = VisualTestContext::from_window(*host_window, cx);
+    cx.run_until_parked();
+    // Wide enough that nothing collapses, so segment indices follow the path.
+    cx.simulate_resize(gpui::size(gpui::px(1400.), gpui::px(600.)));
+    settle(&mut cx);
+    (
+        HostedBar {
+            editor,
+            worktree_id,
+            buffer_id,
+        },
+        cx,
+    )
+}
+
+fn settle(cx: &mut VisualTestContext) {
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+    cx.run_until_parked();
+}
+
+impl HostedBar {
+    fn menu(&self, cx: &mut VisualTestContext) -> Option<Entity<BreadcrumbNavigationMenu>> {
+        self.editor
+            .read_with(cx, |editor, _| editor.breadcrumb_navigation_menu().cloned())
+    }
+
+    fn listing(&self, cx: &mut VisualTestContext) -> Option<BreadcrumbListing> {
+        let menu = self.menu(cx)?;
+        Some(menu.read_with(cx, |menu, _| menu.listing().clone()))
+    }
+
+    fn rows(&self, cx: &mut VisualTestContext) -> Vec<String> {
+        let Some(menu) = self.menu(cx) else {
+            return Vec::new();
+        };
+        menu.read_with(cx, |menu, cx| {
+            menu.published_row_labels(cx)
+                .into_iter()
+                .map(|label| label.to_string())
+                .collect()
+        })
+    }
+
+    fn selected(&self, cx: &mut VisualTestContext) -> Option<String> {
+        let menu = self.menu(cx)?;
+        let index = menu.read_with(cx, |menu, _| menu.selected_index())?;
+        self.rows(cx).get(index).cloned()
+    }
+
+    fn directory(&self, path: &str) -> BreadcrumbListing {
+        BreadcrumbListing::Directory {
+            worktree_id: self.worktree_id,
+            path: util::rel_path::rel_path(path).into_arc(),
+        }
+    }
+
+    fn file_symbols(&self) -> BreadcrumbListing {
+        BreadcrumbListing::Symbols {
+            buffer_id: self.buffer_id,
+            parent: None,
+        }
+    }
+
+    fn symbol(&self, cx: &mut VisualTestContext, text: &str) -> OutlineItem<Anchor> {
+        let menu = self.menu(cx).expect("a symbols listing is open");
+        menu.read_with(cx, |menu, cx| {
+            menu.published_symbol_items(cx)
+                .into_iter()
+                .find(|item| item.text.as_ref() == text)
+                .unwrap_or_else(|| panic!("{text} is listed"))
+        })
+    }
+
+    /// Through the bar's click handler logic, for listings a test has no segment for.
+    fn open(&self, cx: &mut VisualTestContext, listing: BreadcrumbListing) {
+        self.editor.update_in(cx, |editor, window, cx| {
+            editor.open_or_toggle_breadcrumb_listing_for_test(listing, window, cx);
+        });
+        settle(cx);
+    }
+
+    fn chord(&self, cx: &mut VisualTestContext) {
+        self.editor.update_in(cx, |editor, window, cx| {
+            editor.open_breadcrumb_navigation_action(
+                &crate::actions::OpenBreadcrumbNavigation,
+                window,
+                cx,
+            );
+        });
+        settle(cx);
+    }
+
+    fn click_segment(&self, cx: &mut VisualTestContext, index: usize) {
+        let position = segment_center(cx, index);
+        cx.simulate_click(position, gpui::Modifiers::none());
+        settle(cx);
+    }
+
+    /// A click whose consequences are left in flight, for a test that acts before they land.
+    fn click_segment_unsettled(&self, cx: &mut VisualTestContext, index: usize) {
+        let position = segment_center(cx, index);
+        cx.update(|window, cx| {
+            window.dispatch_event(
+                gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                    position,
+                    modifiers: gpui::Modifiers::none(),
+                    button: gpui::MouseButton::Left,
+                    click_count: 1,
+                    first_mouse: false,
+                }),
+                cx,
+            );
+            window.dispatch_event(
+                gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+                    position,
+                    modifiers: gpui::Modifiers::none(),
+                    button: gpui::MouseButton::Left,
+                    click_count: 1,
+                }),
+                cx,
+            );
+        });
+    }
+
+    /// Keystrokes whose consequences are left in flight.
+    fn keys_unsettled(&self, cx: &mut VisualTestContext, keystrokes: &str) {
+        for keystroke in keystrokes.split(' ') {
+            let keystroke = gpui::Keystroke::parse(keystroke).unwrap();
+            cx.update(|window, cx| {
+                window.dispatch_keystroke(keystroke, cx);
+            });
+        }
+    }
+
+    fn move_caret_to(&self, cx: &mut VisualTestContext, offset: usize) {
+        self.editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([multi_buffer::MultiBufferOffset(offset)
+                    ..multi_buffer::MultiBufferOffset(offset)]);
+            });
+        });
+        settle(cx);
+    }
+
+    fn published(&self, cx: &mut VisualTestContext) -> Vec<(BreadcrumbListing, Vec<String>)> {
+        let menu = self.menu(cx).expect("the menu is open");
+        menu.update(cx, |menu, _| {
+            menu.take_published_listing_history()
+                .into_iter()
+                .zip(menu.take_published_row_history())
+                .map(|(listing, rows)| {
+                    (
+                        listing,
+                        rows.into_iter().map(|label| label.to_string()).collect(),
+                    )
+                })
+                .collect()
+        })
+    }
+
+    fn forget_published(&self, cx: &mut VisualTestContext) {
+        self.published(cx);
+    }
+}
+
+fn rows(labels: &[&str]) -> Vec<String> {
+    labels.iter().map(|label| label.to_string()).collect()
+}
+
+fn segment_center(cx: &mut VisualTestContext, index: usize) -> gpui::Point<gpui::Pixels> {
+    const SEGMENTS: [&str; 4] = [
+        "breadcrumb-segment-0",
+        "breadcrumb-segment-1",
+        "breadcrumb-segment-2",
+        "breadcrumb-segment-3",
+    ];
+    cx.debug_bounds(SEGMENTS[index])
+        .unwrap_or_else(|| panic!("segment {index} paints"))
+        .center()
+}
+
+// Crashed: clicking the file segment while a nested symbol level was open switched listings
+// under the click's lease on the editor and then updated the editor again.
+#[gpui::test]
+async fn test_clicking_the_file_segment_from_a_nested_level_lists_the_top_level(
+    cx: &mut TestAppContext,
+) {
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "src": { "lib.rs": "impl Foo {\n    fn bar() {}\n    fn baz() {}\n}\n" } }),
+        util::path!("/root/src/lib.rs"),
+        Some(languages::rust_lang()),
+    )
+    .await;
+    let cx = &mut cx;
+    bar.open(cx, bar.file_symbols());
+    let impl_foo = bar.symbol(cx, "impl Foo");
+    bar.open(
+        cx,
+        BreadcrumbListing::Symbols {
+            buffer_id: bar.buffer_id,
+            parent: Some(impl_foo),
+        },
+    );
+    assert_eq!(bar.rows(cx), rows(&["fn bar", "fn baz"]));
+
+    // Root, `src`, then the file.
+    bar.click_segment(cx, 2);
+    assert_eq!(bar.listing(cx), Some(bar.file_symbols()));
+    assert_eq!(bar.rows(cx), rows(&["impl Foo"]));
+}
+
+// Closed the menu: the release outside the popup was judged before the click on the other
+// segment had changed anything, because that switch only installs once it has resolved.
+#[gpui::test]
+async fn test_clicking_another_segment_while_the_menu_is_open_switches_to_it(
+    cx: &mut TestAppContext,
+) {
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "outer": { "inner": { "file.rs": "" } } }),
+        util::path!("/root/outer/inner/file.rs"),
+        None,
+    )
+    .await;
+    let cx = &mut cx;
+    bar.click_segment(cx, 2);
+    assert_eq!(bar.listing(cx), Some(bar.directory("outer/inner")));
+
+    bar.click_segment(cx, 1);
+    assert_eq!(
+        bar.listing(cx),
+        Some(bar.directory("outer")),
+        "a click on another segment retargets the open menu"
+    );
+    assert_eq!(bar.rows(cx), rows(&["inner"]));
+    assert_eq!(bar.selected(cx).as_deref(), Some("inner"));
+}
+
+// Left out of the file's symbols blanked the rows to "Loading…" under the new anchor, and a
+// symbol segment clicked over a directory listing did the same the other way round.
+#[gpui::test]
+async fn test_switching_listings_never_shows_rows_that_are_not_the_listings_own(
+    cx: &mut TestAppContext,
+) {
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "src": { "lib.rs": "fn alpha() {}\nfn beta() {}\n", "main.rs": "" } }),
+        util::path!("/root/src/lib.rs"),
+        Some(languages::rust_lang()),
+    )
+    .await;
+    let cx = &mut cx;
+    // In `beta`, so the bar's last segment is `beta`'s.
+    bar.move_caret_to(cx, "fn alpha() {}\nfn be".len());
+    bar.open(cx, bar.file_symbols());
+    let beta = bar.symbol(cx, "fn beta");
+    bar.forget_published(cx);
+
+    cx.simulate_keystrokes("left");
+    settle(cx);
+    assert_eq!(
+        bar.published(cx),
+        vec![(bar.directory("src"), rows(&["lib.rs", "main.rs"]))],
+        "Left publishes the parent's rows and nothing in between"
+    );
+    assert_eq!(bar.selected(cx).as_deref(), Some("lib.rs"));
+
+    // root › src › lib.rs › fn beta
+    bar.click_segment(cx, 3);
+    assert_eq!(
+        bar.published(cx),
+        vec![(
+            BreadcrumbListing::Symbols {
+                buffer_id: bar.buffer_id,
+                parent: Some(beta),
+            },
+            rows(&["fn alpha", "fn beta"]),
+        )],
+        "a symbol segment over a directory listing resolves before it switches"
+    );
+}
+
+// Only the first 200 rows were searched for the open file, and only those were listed.
+#[gpui::test]
+async fn test_the_open_file_is_listed_and_selected_wherever_it_sorts(cx: &mut TestAppContext) {
+    let files: serde_json::Map<String, serde_json::Value> = (0..250)
+        .map(|index| {
+            (
+                format!("f{index:03}.txt"),
+                serde_json::Value::String(String::new()),
+            )
+        })
+        .collect();
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "many": files }),
+        util::path!("/root/many/f240.txt"),
+        None,
+    )
+    .await;
+    let cx = &mut cx;
+    bar.open(cx, bar.directory("many"));
+    assert_eq!(bar.rows(cx).len(), 250);
+    assert_eq!(bar.selected(cx).as_deref(), Some("f240.txt"));
+}
+
+#[gpui::test]
+async fn test_the_caret_symbol_is_listed_and_selected_wherever_it_sorts(cx: &mut TestAppContext) {
+    let source: String = (0..250)
+        .map(|index| format!("fn f{index:03}() {{}}\n"))
+        .collect();
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "src": { "lib.rs": source.clone() } }),
+        util::path!("/root/src/lib.rs"),
+        Some(languages::rust_lang()),
+    )
+    .await;
+    let cx = &mut cx;
+    bar.move_caret_to(cx, source.find("fn f240").unwrap() + 3);
+    bar.chord(cx);
+    assert_eq!(bar.rows(cx).len(), 250);
+    assert_eq!(bar.selected(cx).as_deref(), Some("fn f240"));
+}
+
+// The jump left a manually folded range closed around the symbol it landed in.
+#[gpui::test]
+async fn test_jumping_to_a_symbol_opens_the_fold_around_it(cx: &mut TestAppContext) {
+    let text = "impl Foo {\n    fn bar() {}\n}\n";
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "src": { "lib.rs": text } }),
+        util::path!("/root/src/lib.rs"),
+        Some(languages::rust_lang()),
+    )
+    .await;
+    let cx = &mut cx;
+    bar.editor.update_in(cx, |editor, window, cx| {
+        editor.fold_at(multi_buffer::MultiBufferRow(0), window, cx);
+    });
+    settle(cx);
+    let folded = bar.editor.update(cx, |editor, cx| editor.display_text(cx));
+    assert_ne!(folded, text, "the impl body is folded");
+
+    bar.open(cx, bar.file_symbols());
+    let impl_foo = bar.symbol(cx, "impl Foo");
+    bar.open(
+        cx,
+        BreadcrumbListing::Symbols {
+            buffer_id: bar.buffer_id,
+            parent: Some(impl_foo),
+        },
+    );
+    assert_eq!(bar.selected(cx).as_deref(), Some("fn bar"));
+    cx.simulate_keystrokes("enter");
+    settle(cx);
+
+    bar.editor.update(cx, |editor, cx| {
+        assert_eq!(
+            editor.display_text(cx),
+            text,
+            "the fold around the target opened"
+        );
+        let caret = editor
+            .selections
+            .newest::<multi_buffer::MultiBufferOffset>(&editor.display_snapshot(cx))
+            .head();
+        assert_eq!(
+            caret.0,
+            text.find("bar").unwrap(),
+            "the caret is on the name"
+        );
+    });
+}
+
+// The second Left was computed from the listing still on screen, so two quick presses climbed
+// one level.
+#[gpui::test]
+async fn test_left_twice_climbs_two_levels_before_the_first_lands(cx: &mut TestAppContext) {
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "a": { "b": { "c": { "file.rs": "" } }, "other.rs": "" } }),
+        util::path!("/root/a/b/c/file.rs"),
+        None,
+    )
+    .await;
+    let cx = &mut cx;
+    bar.open(cx, bar.directory("a/b/c"));
+    // Both keys are dispatched before any background work runs.
+    cx.simulate_keystrokes("left left");
+    settle(cx);
+    assert_eq!(bar.listing(cx), Some(bar.directory("a")));
+    assert_eq!(bar.selected(cx).as_deref(), Some("b"));
+}
+
+// A query typed while a switch was still resolving was thrown away when the switch landed.
+#[gpui::test]
+async fn test_a_query_typed_during_a_switch_filters_the_listing_it_lands_on(
+    cx: &mut TestAppContext,
+) {
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "a": { "b": { "file.rs": "" }, "manual.txt": "", "other.rs": "" } }),
+        util::path!("/root/a/b/file.rs"),
+        None,
+    )
+    .await;
+    let cx = &mut cx;
+    bar.open(cx, bar.directory("a/b"));
+    cx.simulate_keystrokes("left m a n");
+    settle(cx);
+    let menu = bar.menu(cx).expect("the menu stays open");
+    assert_eq!(bar.listing(cx), Some(bar.directory("a")));
+    assert_eq!(menu.read_with(cx, |menu, _| menu.filter()), "man");
+    assert_eq!(bar.rows(cx), rows(&["manual.txt"]));
+}
+
+// A query erased while a drill was resolving took the reranking path with nothing to rank, so the
+// directory landed with no row selected - not even the open file.
+#[gpui::test]
+async fn test_a_query_erased_during_a_switch_lands_on_the_open_file(cx: &mut TestAppContext) {
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "a": { "b": { "aaa.rs": "", "file.rs": "" }, "other.rs": "" } }),
+        util::path!("/root/a/b/file.rs"),
+        None,
+    )
+    .await;
+    let cx = &mut cx;
+    bar.open(cx, bar.directory("a"));
+    cx.simulate_input("b");
+    settle(cx);
+    assert_eq!(bar.rows(cx), rows(&["b"]));
+
+    cx.simulate_keystrokes("right backspace");
+    settle(cx);
+    let menu = bar.menu(cx).expect("the menu stays open");
+    assert_eq!(menu.read_with(cx, |menu, _| menu.filter()), "");
+    assert_eq!(bar.listing(cx), Some(bar.directory("a/b")));
+    assert_eq!(bar.rows(cx), rows(&["aaa.rs", "file.rs"]));
+    assert_eq!(bar.selected(cx).as_deref(), Some("file.rs"));
+}
+
+// Right on a file with no symbols bumped the load epoch, so the picker cleared the query while
+// the rows stayed filtered by it.
+#[gpui::test]
+async fn test_right_on_a_file_without_symbols_leaves_the_query_and_rows_alone(
+    cx: &mut TestAppContext,
+) {
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "docs": { "notes.txt": "plain", "other.txt": "" } }),
+        util::path!("/root/docs/notes.txt"),
+        None,
+    )
+    .await;
+    let cx = &mut cx;
+    bar.open(cx, bar.directory("docs"));
+    cx.simulate_input("not");
+    settle(cx);
+    assert_eq!(bar.rows(cx), rows(&["notes.txt"]));
+    bar.forget_published(cx);
+
+    cx.simulate_keystrokes("right");
+    settle(cx);
+    let menu = bar.menu(cx).expect("the menu stays open");
+    assert_eq!(menu.read_with(cx, |menu, _| menu.filter()), "not");
+    assert_eq!(bar.listing(cx), Some(bar.directory("docs")));
+    assert_eq!(bar.rows(cx), rows(&["notes.txt"]));
+    assert_eq!(bar.published(cx), Vec::new(), "nothing is republished");
+}
+
+// The chord on a plain-text file opened an empty symbols menu under the file segment first, and
+// only moved to the file's directory once the empty outline came back.
+#[gpui::test]
+async fn test_the_chord_on_plain_text_opens_straight_on_its_directory(cx: &mut TestAppContext) {
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "docs": { "a.txt": "", "notes.txt": "plain" } }),
+        util::path!("/root/docs/notes.txt"),
+        None,
+    )
+    .await;
+    let cx = &mut cx;
+    bar.editor.update_in(cx, |editor, window, cx| {
+        editor.open_breadcrumb_navigation_action(
+            &crate::actions::OpenBreadcrumbNavigation,
+            window,
+            cx,
+        );
+    });
+    assert_eq!(
+        bar.listing(cx),
+        Some(bar.directory("docs")),
+        "the menu is anchored under the directory from its first frame"
+    );
+    settle(cx);
+    assert_eq!(
+        bar.published(cx),
+        vec![(bar.directory("docs"), rows(&["a.txt", "notes.txt"]))]
+    );
+    assert_eq!(bar.selected(cx).as_deref(), Some("notes.txt"));
+}
+
+// A childless top-level symbol lists the top level, so Left from it listed the same rows again.
+#[gpui::test]
+async fn test_left_from_a_childless_top_level_symbol_steps_out_to_the_directory(
+    cx: &mut TestAppContext,
+) {
+    let source = "fn alpha() {}\nfn beta() {}\n";
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "src": { "lib.rs": source, "main.rs": "" } }),
+        util::path!("/root/src/lib.rs"),
+        Some(languages::rust_lang()),
+    )
+    .await;
+    let cx = &mut cx;
+    bar.move_caret_to(cx, source.find("beta").unwrap());
+    bar.chord(cx);
+    assert_eq!(bar.rows(cx), rows(&["fn alpha", "fn beta"]));
+
+    cx.simulate_keystrokes("left");
+    settle(cx);
+    assert_eq!(bar.listing(cx), Some(bar.directory("src")));
+    assert_eq!(bar.selected(cx).as_deref(), Some("lib.rs"));
+}
+
+// Left landed on the open file's ancestor or the caret's symbol, not on where it came from.
+#[gpui::test]
+async fn test_left_selects_the_level_it_came_from(cx: &mut TestAppContext) {
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({
+            "crates": {
+                "editor": { "lib.rs": "impl Bar {\n    fn one() {}\n}\nfn two() {}\n" },
+                "gpui": { "gpui.rs": "" },
+            }
+        }),
+        util::path!("/root/crates/editor/lib.rs"),
+        Some(languages::rust_lang()),
+    )
+    .await;
+    let cx = &mut cx;
+    bar.open(cx, bar.directory("crates"));
+    assert_eq!(bar.selected(cx).as_deref(), Some("editor"));
+    cx.simulate_keystrokes("down right");
+    settle(cx);
+    assert_eq!(bar.listing(cx), Some(bar.directory("crates/gpui")));
+    cx.simulate_keystrokes("left");
+    settle(cx);
+    assert_eq!(bar.listing(cx), Some(bar.directory("crates")));
+    assert_eq!(bar.selected(cx).as_deref(), Some("gpui"));
+
+    let source = "impl Bar {\n    fn one() {}\n}\nfn two() {}\n";
+    bar.move_caret_to(cx, source.find("two").unwrap());
+    bar.editor.update_in(cx, |editor, window, cx| {
+        editor.dismiss_breadcrumb_navigation(window, cx);
+    });
+    bar.open(cx, bar.file_symbols());
+    assert_eq!(bar.selected(cx).as_deref(), Some("fn two"));
+    cx.simulate_keystrokes("up right");
+    settle(cx);
+    assert_eq!(bar.rows(cx), rows(&["fn one"]));
+    cx.simulate_keystrokes("left");
+    settle(cx);
+    assert_eq!(bar.selected(cx).as_deref(), Some("impl Bar"));
+}
+
+// With `hide_gitignore` on, every child of an ignored directory was hidden, listing the directory
+// the open file sits in as empty.
+#[gpui::test]
+async fn test_an_ignored_directory_lists_its_children_with_hide_gitignore_on(
+    cx: &mut TestAppContext,
+) {
+    use gpui::UpdateGlobal as _;
+
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({
+            ".git": {},
+            ".gitignore": "node_modules\n",
+            "node_modules": { "pkg": { "index.js": "", "readme.md": "" } },
+        }),
+        util::path!("/root/node_modules/pkg/index.js"),
+        None,
+    )
+    .await;
+    let cx = &mut cx;
+    cx.update(|_, cx| {
+        settings::SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .hide_gitignore = Some(true);
+            });
+        });
+    });
+    bar.open(cx, bar.directory("node_modules/pkg"));
+    assert_eq!(bar.rows(cx), rows(&["index.js", "readme.md"]));
+    assert_eq!(bar.selected(cx).as_deref(), Some("index.js"));
+}
+
+// Every refresh event re-listed the whole directory, and a refresh restored the row captured
+// before it waited, undoing an arrow pressed meanwhile.
+#[gpui::test]
+async fn test_refresh_bursts_coalesce_and_keep_the_row_the_user_moved_to(cx: &mut TestAppContext) {
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "src": { "a.rs": "", "b.rs": "", "c.rs": "" } }),
+        util::path!("/root/src/a.rs"),
+        None,
+    )
+    .await;
+    let cx = &mut cx;
+    bar.open(cx, bar.directory("src"));
+    let menu = bar.menu(cx).expect("the menu is open");
+    let reloads_before = menu.read_with(cx, |menu, _| menu.directory_reload_count_for_test());
+    menu.update(cx, |menu, cx| {
+        menu.reload_directory_rows_for_test(cx);
+        menu.reload_directory_rows_for_test(cx);
+        menu.reload_directory_rows_for_test(cx);
+    });
+    // Arrowed to `c.rs` while the refresh is still building rows.
+    bar.keys_unsettled(cx, "down down");
+    settle(cx);
+    assert_eq!(
+        menu.read_with(cx, |menu, _| menu.directory_reload_count_for_test()) - reloads_before,
+        2,
+        "one refresh runs and the burst behind it queues a single more"
+    );
+    assert_eq!(bar.selected(cx).as_deref(), Some("c.rs"));
+}
+
+// The chord in an editor no bar hosts - here, one that is not its pane's active item - opened a
+// menu nothing would ever paint.
+#[gpui::test]
+async fn test_the_chord_falls_back_to_the_outline_picker_when_no_bar_hosts_the_editor(
+    cx: &mut TestAppContext,
+) {
+    crate::editor_tests::install_outline_toggle_probe();
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "src": { "lib.rs": "fn alpha() {}\n" } }),
+        util::path!("/root/src/lib.rs"),
+        Some(languages::rust_lang()),
+    )
+    .await;
+    let cx = &mut cx;
+    let workspace = bar
+        .editor
+        .read_with(cx, |editor, _| editor.workspace())
+        .expect("the editor has a workspace");
+    let other = cx.new_window_entity(|window, cx| {
+        crate::test::build_editor(MultiBuffer::build_simple("other", cx), window, cx)
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(other), None, true, window, cx);
+    });
+    settle(cx);
+
+    bar.chord(cx);
+    assert_eq!(
+        bar.menu(cx).map(|_| ()),
+        None,
+        "no menu without a bar to hang it on"
+    );
+    assert!(crate::editor_tests::outline_toggled());
+}
+
+// Typing and erasing before the listing landed spent the one-shot initial selection, so the
+// open file was never selected.
+#[gpui::test]
+async fn test_a_query_typed_and_erased_during_the_first_load_keeps_the_open_file_selected(
+    cx: &mut TestAppContext,
+) {
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "src": { "a.rs": "", "b.rs": "" } }),
+        util::path!("/root/src/b.rs"),
+        None,
+    )
+    .await;
+    let cx = &mut cx;
+    bar.editor.update_in(cx, |editor, window, cx| {
+        editor.open_or_toggle_breadcrumb_listing_for_test(bar.directory("src"), window, cx);
+    });
+    bar.keys_unsettled(cx, "x backspace");
+    settle(cx);
+    assert_eq!(bar.selected(cx).as_deref(), Some("b.rs"));
+}
+
+// Folding counted only the visible children, so a directory the panel shows unfolded folded
+// here.
+#[gpui::test]
+async fn test_drilling_folds_only_what_the_project_panel_folds(cx: &mut TestAppContext) {
+    use gpui::UpdateGlobal as _;
+
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "a": { "b": { "file.rs": "" }, ".env": "" }, "top.rs": "" }),
+        util::path!("/root/top.rs"),
+        None,
+    )
+    .await;
+    let cx = &mut cx;
+    cx.update(|_, cx| {
+        settings::SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                let panel = settings.project_panel.get_or_insert_default();
+                panel.hide_hidden = Some(true);
+                panel.auto_fold_dirs = Some(true);
+            });
+        });
+    });
+    bar.open(cx, bar.directory(""));
+    assert_eq!(bar.selected(cx).as_deref(), Some("top.rs"));
+    cx.simulate_keystrokes("up right");
+    settle(cx);
+    assert_eq!(
+        bar.listing(cx),
+        Some(bar.directory("a")),
+        "`a` also holds `.env`, so it does not fold into `a/b`"
+    );
+}
+
+#[gpui::test]
+fn test_sorting_siblings_by_name_matches_sorting_their_full_paths(_cx: &mut TestAppContext) {
+    use util::paths::{SortMode, SortOrder, compare_rel_paths_by};
+    use util::rel_path::rel_path;
+
+    let names = [
+        ("a.rs", false),
+        ("B.rs", false),
+        ("b.rs", false),
+        ("10.txt", false),
+        ("9.txt", false),
+        ("_x", false),
+        ("Dir", true),
+        ("dir", true),
+        ("file", false),
+        ("File.RS", false),
+        (".hidden", false),
+        ("02", true),
+        ("2", false),
+        ("é.rs", false),
+        ("a", true),
+        ("a.rs.bak", false),
+    ];
+    for mode in [
+        SortMode::DirectoriesFirst,
+        SortMode::Mixed,
+        SortMode::FilesFirst,
+    ] {
+        for order in [
+            SortOrder::Default,
+            SortOrder::Upper,
+            SortOrder::Lower,
+            SortOrder::Unicode,
+        ] {
+            let full: Vec<_> = names
+                .iter()
+                .map(|(name, is_dir)| (rel_path("x/y").join(rel_path(name)), *is_dir))
+                .collect();
+            let mut by_path: Vec<usize> = (0..full.len()).collect();
+            by_path.sort_by(|&a, &b| {
+                compare_rel_paths_by(
+                    (&full[a].0, !full[a].1),
+                    (&full[b].0, !full[b].1),
+                    mode,
+                    order,
+                )
+            });
+            let mut by_name: Vec<usize> = (0..names.len()).collect();
+            by_name.sort_by(|&a, &b| {
+                compare_rel_paths_by(
+                    (rel_path(names[a].0), !names[a].1),
+                    (rel_path(names[b].0), !names[b].1),
+                    mode,
+                    order,
+                )
+            });
+            assert_eq!(by_name, by_path, "{mode:?} / {order:?}");
+        }
+    }
+}
+
+// Children of a hidden directory are hidden too, so with `hide_hidden` on the directory the user
+// was standing in listed nothing.
+#[gpui::test]
+async fn test_a_hidden_directory_lists_its_children_with_hide_hidden_on(cx: &mut TestAppContext) {
+    use gpui::UpdateGlobal as _;
+
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({
+            ".github": { "workflows": { "ci.yml": "", "release.yml": "" } },
+            "src": { "lib.rs": "" },
+        }),
+        util::path!("/root/.github/workflows/ci.yml"),
+        None,
+    )
+    .await;
+    let cx = &mut cx;
+    cx.update(|_, cx| {
+        settings::SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_hidden = Some(true);
+            });
+        });
+    });
+    bar.open(cx, bar.directory(".github/workflows"));
+    assert_eq!(bar.rows(cx), rows(&["ci.yml", "release.yml"]));
+    assert_eq!(bar.selected(cx).as_deref(), Some("ci.yml"));
+
+    bar.open(cx, bar.directory(""));
+    assert_eq!(
+        bar.rows(cx),
+        rows(&["src"]),
+        "outside a hidden directory the setting still hides it"
+    );
+}
+
+// The bar read the file's status against HEAD while its tab reads it against the diff base the
+// user picked, so with the default branch as the base the two disagreed.
+#[gpui::test]
+async fn test_the_bar_colours_the_file_against_the_diff_base_its_tab_uses(cx: &mut TestAppContext) {
+    use gpui::UpdateGlobal as _;
+    use project::{FakeFs, Project};
+
+    crate::editor_tests::init_test(cx, |_| {});
+    cx.update(|cx| {
+        settings::SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.tabs.get_or_insert_default().git_status = Some(true);
+            });
+        });
+    });
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        util::path!("/root"),
+        serde_json::json!({ ".git": {}, "committed.txt": "base\n" }),
+    )
+    .await;
+    let dot_git = std::path::Path::new(util::path!("/root/.git"));
+    fs.set_head_and_index_for_repo(dot_git, &[("committed.txt", "head\n".into())]);
+    fs.set_merge_base_content_for_repo(dot_git, &[("committed.txt", "base\n".into())]);
+    let project = Project::test(fs, [util::path!("/root").as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(util::path!("/root/committed.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+    let window = cx.add_window(|window, cx| {
+        crate::test::build_editor_with_project(project.clone(), multi_buffer, window, cx)
+    });
+    let editor = window.root(cx).unwrap();
+    let file_colour = |cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let file_name = vec![HighlightedText {
+                text: "committed.txt".into(),
+                highlights: vec![],
+            }];
+            super::prepare_breadcrumb_strip(file_name, None, false, &editor, false, cx)
+                .segments
+                .iter()
+                .find_map(|segment| segment.git_status_color)
+        })
+    };
+    assert_eq!(
+        file_colour(cx),
+        Some(Color::Modified),
+        "against HEAD the file is modified"
+    );
+
+    cx.update(|cx| {
+        settings::SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.git.get_or_insert_default().diff_base =
+                    Some(settings::GitDiffBaseSetting::DefaultBranch);
+            });
+        });
+    });
+    cx.run_until_parked();
+    let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+    let _display_diff = git_store
+        .update(cx, |git_store, cx| git_store.open_display_diff(buffer, cx))
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        file_colour(cx),
+        None,
+        "against the default branch nothing changed, which is what the tab shows"
+    );
+}
+
+// A switch that cancelled a symbols reload left the reload's filter epoch unranked, so every
+// later Right read a rank still pending and did nothing.
+#[gpui::test]
+async fn test_right_still_drills_after_a_switch_cancels_a_symbols_reload(cx: &mut TestAppContext) {
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "src": { "lib.rs": "fn alpha() {}\n", "sub": { "x.rs": "" } } }),
+        util::path!("/root/src/lib.rs"),
+        Some(languages::rust_lang()),
+    )
+    .await;
+    let cx = &mut cx;
+    bar.open(cx, bar.file_symbols());
+    // An edit reloads the outline, and Left leaves for the directory before it lands.
+    bar.editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([
+                multi_buffer::MultiBufferOffset(0)..multi_buffer::MultiBufferOffset(0)
+            ]);
+        });
+        editor.insert("// edited\n", window, cx);
+    });
+    bar.keys_unsettled(cx, "left");
+    settle(cx);
+    assert_eq!(bar.listing(cx), Some(bar.directory("src")));
+    assert_eq!(bar.rows(cx), rows(&["sub", "lib.rs"]));
+
+    cx.simulate_keystrokes("up right");
+    settle(cx);
+    assert_eq!(bar.listing(cx), Some(bar.directory("src/sub")));
+}
+
+// A query typed while a switch resolved reranked against the new rows, and until that rank landed
+// the rows kept on screen were the old listing's, hanging under the new segment.
+#[gpui::test]
+async fn test_a_query_typed_during_a_switch_never_shows_the_old_rows_under_the_new_segment(
+    cx: &mut TestAppContext,
+) {
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({
+            "a": { "b": { "file.rs": "", "main.rs": "" }, "manual.txt": "", "other.rs": "" }
+        }),
+        util::path!("/root/a/b/file.rs"),
+        None,
+    )
+    .await;
+    let cx = &mut cx;
+    bar.open(cx, bar.directory("a/b"));
+    assert_eq!(bar.rows(cx), rows(&["file.rs", "main.rs"]));
+
+    bar.keys_unsettled(cx, "left m a");
+    let rows_of_a = rows(&["b", "manual.txt", "other.rs"]);
+    while bar.listing(cx) != Some(bar.directory("a")) {
+        assert!(cx.executor().tick(), "the switch to `a` lands");
+    }
+    let rows_on_screen = bar.rows(cx);
+    assert!(
+        rows_on_screen.iter().all(|row| rows_of_a.contains(row)),
+        "under `a` the rows are a's own, got {rows_on_screen:?}"
+    );
+    settle(cx);
+    assert_eq!(bar.rows(cx), rows(&["manual.txt"]));
+}
+
+// Text typed while a file segment's switch found no symbols and moved on to the file's directory
+// was erased when that directory landed: the second leg took it for text from before the switch.
+#[gpui::test]
+async fn test_text_typed_while_a_file_segment_falls_through_to_its_directory_is_kept(
+    cx: &mut TestAppContext,
+) {
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "a": { "b": { "empty.rs": "", "extra.rs": "" }, "other.rs": "" } }),
+        util::path!("/root/a/b/empty.rs"),
+        Some(languages::rust_lang()),
+    )
+    .await;
+    let cx = &mut cx;
+    bar.open(cx, bar.directory("a"));
+
+    // root › a › b › empty.rs
+    bar.click_segment_unsettled(cx, 3);
+    bar.keys_unsettled(cx, "x");
+    settle(cx);
+    let menu = bar.menu(cx).expect("the menu stays open");
+    assert_eq!(bar.listing(cx), Some(bar.directory("a/b")));
+    assert_eq!(menu.read_with(cx, |menu, _| menu.filter()), "x");
+    assert_eq!(bar.rows(cx), rows(&["extra.rs"]));
+}
+
+// Left on a symbol level whose outline was still being fetched was dropped, and then moved the
+// caret in the query box.
+#[gpui::test]
+async fn test_left_on_a_symbol_level_still_loading_climbs_once_it_lands(cx: &mut TestAppContext) {
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "src": { "lib.rs": "impl Foo {\n    fn bar() {}\n}\n" } }),
+        util::path!("/root/src/lib.rs"),
+        Some(languages::rust_lang()),
+    )
+    .await;
+    let cx = &mut cx;
+    bar.open(cx, bar.file_symbols());
+    let impl_foo = bar.symbol(cx, "impl Foo");
+    bar.open(cx, bar.directory("src"));
+
+    bar.editor.update_in(cx, |editor, window, cx| {
+        editor.open_or_toggle_breadcrumb_listing_for_test(
+            BreadcrumbListing::Symbols {
+                buffer_id: bar.buffer_id,
+                parent: Some(impl_foo),
+            },
+            window,
+            cx,
+        );
+    });
+    bar.keys_unsettled(cx, "left");
+    settle(cx);
+    assert_eq!(bar.listing(cx), Some(bar.file_symbols()));
+    assert_eq!(bar.selected(cx).as_deref(), Some("impl Foo"));
+}
+
+// Left and Right handed the key on while their switch resolved, so it also moved the caret in the
+// query box and the next letter landed in the middle of the query.
+#[gpui::test]
+async fn test_left_during_a_switch_leaves_the_caret_at_the_end_of_the_query(
+    cx: &mut TestAppContext,
+) {
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "a": { "b": { "abc.rs": "", "file.rs": "" }, "abcd.rs": "" } }),
+        util::path!("/root/a/b/file.rs"),
+        None,
+    )
+    .await;
+    let cx = &mut cx;
+    bar.open(cx, bar.directory("a/b"));
+    cx.simulate_input("abc");
+    settle(cx);
+    assert_eq!(bar.rows(cx), rows(&["abc.rs"]));
+
+    bar.keys_unsettled(cx, "left d");
+    settle(cx);
+    let menu = bar.menu(cx).expect("the menu stays open");
+    assert_eq!(bar.listing(cx), Some(bar.directory("a")));
+    assert_eq!(menu.read_with(cx, |menu, _| menu.filter()), "abcd");
+    assert_eq!(bar.rows(cx), rows(&["abcd.rs"]));
+}
+
+// The first symbols load subscribed to the buffer only once it landed, so an edit made while it
+// was being fetched never showed up.
+#[gpui::test]
+async fn test_an_edit_during_the_first_symbols_load_shows_up(cx: &mut TestAppContext) {
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "src": { "lib.rs": "fn alpha() {}\n" } }),
+        util::path!("/root/src/lib.rs"),
+        Some(languages::rust_lang()),
+    )
+    .await;
+    let cx = &mut cx;
+    bar.open(cx, bar.directory("src"));
+
+    bar.editor.update_in(cx, |editor, window, cx| {
+        editor.open_or_toggle_breadcrumb_listing_for_test(bar.file_symbols(), window, cx);
+    });
+    // One step starts the fetch; the edit lands after it has read the buffer.
+    assert!(cx.executor().tick());
+    bar.editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([
+                multi_buffer::MultiBufferOffset(0)..multi_buffer::MultiBufferOffset(0)
+            ]);
+        });
+        editor.insert("fn added() {}\n", window, cx);
+    });
+    settle(cx);
+    assert_eq!(bar.listing(cx), Some(bar.file_symbols()));
+    assert_eq!(bar.rows(cx), rows(&["fn added", "fn alpha"]));
+}
+
+// The jump opened every fold touching its target, including one that only ends at the name,
+// where the caret is visible anyway.
+#[gpui::test]
+async fn test_jumping_to_a_symbol_leaves_a_fold_that_only_touches_it(cx: &mut TestAppContext) {
+    let text = "fn alpha() {}\nfn beta() {}\n";
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "src": { "lib.rs": text } }),
+        util::path!("/root/src/lib.rs"),
+        Some(languages::rust_lang()),
+    )
+    .await;
+    let cx = &mut cx;
+    bar.editor.update_in(cx, |editor, window, cx| {
+        editor.fold_ranges(
+            vec![text::Point::new(0, 0)..text::Point::new(1, 3)],
+            false,
+            window,
+            cx,
+        );
+    });
+    settle(cx);
+    let folded = bar.editor.update(cx, |editor, cx| editor.display_text(cx));
+    assert_ne!(folded, text, "everything before `beta` is folded");
+
+    bar.open(cx, bar.file_symbols());
+    cx.simulate_input("beta");
+    settle(cx);
+    cx.simulate_keystrokes("enter");
+    settle(cx);
+    bar.editor.update(cx, |editor, cx| {
+        assert_eq!(editor.display_text(cx), folded, "the fold stays");
+        let caret = editor
+            .selections
+            .newest::<multi_buffer::MultiBufferOffset>(&editor.display_snapshot(cx))
+            .head();
+        assert_eq!(
+            caret.0,
+            text.find("beta").unwrap(),
+            "the caret is on the name"
+        );
+    });
+}
+
+// The popover's left edge came from a rem-scaled offset, while the trigger edge it lines up with
+// sits a fixed distance from the label, so at any UI scale but the default it was off.
+#[gpui::test]
+async fn test_the_menu_lines_up_with_its_segment_at_any_ui_scale(cx: &mut TestAppContext) {
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "src": { "lib.rs": "" } }),
+        util::path!("/root/src/lib.rs"),
+        None,
+    )
+    .await;
+    let cx = &mut cx;
+    for rem_size in [16., 20., 12.] {
+        cx.update(|window, _| window.set_rem_size(gpui::px(rem_size)));
+        bar.open(cx, bar.directory("src"));
+        let segment = cx
+            .debug_bounds("breadcrumb-segment-1")
+            .expect("the `src` segment paints");
+        let menu = cx
+            .debug_bounds("breadcrumb-navigation-menu")
+            .expect("the menu paints");
+        assert_eq!(
+            menu.origin.x, segment.origin.x,
+            "flush with the segment at a {rem_size}px rem"
+        );
+        // Toggled shut, for the next size.
+        bar.open(cx, bar.directory("src"));
+        assert!(bar.menu(cx).is_none());
+    }
+}
+
+// A query typed while the first listing loaded filtered the rows it landed on, and erasing it then
+// selected nothing: the listing's own row was never worked out for the query to fall back to.
+#[gpui::test]
+async fn test_erasing_a_query_typed_during_the_first_load_comes_back_to_the_open_file(
+    cx: &mut TestAppContext,
+) {
+    let (bar, mut cx) = hosted_bar(
+        cx,
+        serde_json::json!({ "src": { "a.rs": "", "b.rs": "" } }),
+        util::path!("/root/src/b.rs"),
+        None,
+    )
+    .await;
+    let cx = &mut cx;
+    bar.editor.update_in(cx, |editor, window, cx| {
+        editor.open_or_toggle_breadcrumb_listing_for_test(bar.directory("src"), window, cx);
+    });
+    let menu = bar.menu(cx).expect("the menu is open");
+    bar.keys_unsettled(cx, "x");
+    while menu.read_with(cx, |menu, _| menu.filter()) != "x" {
+        assert!(cx.executor().tick());
+    }
+    assert_eq!(
+        menu.read_with(cx, |menu, cx| menu.published_empty_message(cx)),
+        "Loading…",
+        "the letter reaches the menu before the listing lands"
+    );
+    settle(cx);
+    assert_eq!(bar.rows(cx), Vec::<String>::new(), "`x` matches nothing");
+
+    cx.simulate_keystrokes("backspace");
+    settle(cx);
+    assert_eq!(bar.rows(cx), rows(&["a.rs", "b.rs"]));
+    assert_eq!(bar.selected(cx).as_deref(), Some("b.rs"));
 }

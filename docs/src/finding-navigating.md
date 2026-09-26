@@ -65,7 +65,7 @@ Quickly switch between open tabs with {#kb tab_switcher::Toggle}. Tabs are sorte
 
 ## Breadcrumb Navigation
 
-The breadcrumb bar above the editor is clickable. Selecting a directory segment lists that directory's contents; selecting the file segment lists the file's top-level symbols; selecting a symbol segment lists that symbol's children, or its siblings when it has none. Type to filter, use `left` and `right` to move between levels, and `enter` to open. You can also open it with {#kb editor::OpenBreadcrumbNavigation}. The menu's own bindings live in the `BreadcrumbNavigationMenu > Editor` context in `keymaps/specific-overrides.json`.
+The breadcrumb bar above the editor is clickable. Selecting a directory segment lists that directory's contents; selecting the file segment lists the file's top-level symbols, or the files beside it when it has none; selecting a symbol segment lists that symbol's children, or its siblings when it has none. Type to filter, use `left` and `right` to move between levels, and `enter` to open. {#kb editor::OpenBreadcrumbNavigation} opens it on the symbols around the cursor, or on the file's directory when the file has none; where no breadcrumb bar is shown, it opens the outline instead. The menu's own bindings live in the `BreadcrumbNavigationMenu > Editor` context in `keymaps/specific-overrides.json`.
 
 When the bar is too narrow for the whole trail, the leading segments fold into a `⋯` that browses the deepest segment it stands in for.
 
