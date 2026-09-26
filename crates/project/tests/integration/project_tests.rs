@@ -690,9 +690,11 @@ async fn test_external_editorconfig_modification_triggers_refresh(cx: &mut gpui:
         .unwrap();
 
     cx.update(|cx| {
-        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx);
+        let buffer = buffer.read(cx);
+        let settings = LanguageSettings::for_buffer(buffer, cx);
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(4));
 
-        // Test initial settings: tab_size = 4 from parent's external .editorconfig
+        let settings = LanguageSettings::for_buffer_snapshot(&buffer.snapshot(), None, cx);
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(4));
     });
 
@@ -705,19 +707,1281 @@ async fn test_external_editorconfig_modification_triggers_refresh(cx: &mut gpui:
 
     cx.executor().run_until_parked();
 
+    cx.update(|cx| {
+        let buffer = buffer.read(cx);
+        let settings = LanguageSettings::for_buffer(buffer, cx);
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(8));
+
+        let settings = LanguageSettings::for_buffer_snapshot(&buffer.snapshot(), None, cx);
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(8));
+    });
+}
+
+#[gpui::test]
+async fn test_external_editorconfig_empty_and_deleted_config_refreshes_open_buffer(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/grandparent"),
+        json!({
+            ".editorconfig": "root = true\n[*]\nindent_size = 6\nindent_style = tab\n",
+            "parent": {
+                ".editorconfig": "root = true\n[*]\nindent_size = 2\n",
+                "worktree": {
+                    ".editorconfig": "[*]\n",
+                    "file.rs": "fn main() {}",
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(
+        fs.clone(),
+        [path!("/grandparent/parent/worktree").as_ref()],
+        cx,
+    )
+    .await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let worktree = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().expect("worktree exists")
+    });
+    cx.executor().run_until_parked();
+
     let buffer = project
         .update(cx, |project, cx| {
             project.open_buffer((worktree.read(cx).id(), rel_path("file.rs")), cx)
         })
         .await
-        .unwrap();
+        .expect("buffer opens");
+    cx.executor().run_until_parked();
 
-    cx.update(|cx| {
-        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx);
+    let assert_settings = |tab_size, hard_tabs, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let buffer = buffer.read(cx);
+            for settings in [
+                LanguageSettings::for_buffer(buffer, cx),
+                LanguageSettings::for_buffer_snapshot(&buffer.snapshot(), None, cx),
+            ] {
+                assert_eq!(settings.tab_size.get(), tab_size);
+                assert_eq!(settings.hard_tabs, hard_tabs);
+            }
+        });
+    };
+    assert_settings(2, false, cx);
 
-        // Test settings updated: tab_size = 8
-        assert_eq!(Some(settings.tab_size), NonZeroU32::new(8));
+    let config_path = Path::new(path!("/grandparent/parent/.editorconfig"));
+    fs.write(config_path, b"root = true\n[*]\nindent_size = 10\n")
+        .await
+        .expect("parent config updates");
+    cx.executor().run_until_parked();
+    assert_settings(10, false, cx);
+
+    fs.write(config_path, b"")
+        .await
+        .expect("parent config empties");
+    cx.executor().run_until_parked();
+    assert_settings(6, true, cx);
+
+    fs.write(config_path, b"root = true\n[*]\nindent_size = 8\n")
+        .await
+        .expect("parent config refills");
+    cx.executor().run_until_parked();
+    assert_settings(8, false, cx);
+
+    fs.remove_file(config_path, Default::default())
+        .await
+        .expect("parent config is deleted");
+    cx.executor().run_until_parked();
+    assert_settings(6, true, cx);
+
+    fs.atomic_write(
+        config_path.to_path_buf(),
+        "root = true\n[*]\nindent_size = 2\n".to_owned(),
+    )
+    .await
+    .expect("parent config is recreated");
+    cx.executor().run_until_parked();
+    assert_settings(2, false, cx);
+}
+
+#[gpui::test]
+async fn test_editorconfig_symlink_target_changes_refresh_open_buffer(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/worktree"),
+        json!({
+            ".git": {},
+            ".gitignore": "node_modules/\n",
+            "file.rs": "fn main() {}",
+            "node_modules": {
+                "format-config": {
+                    "editorconfig": "root = true\n[*]\nindent_size = 2\nindent_style = space\n",
+                }
+            }
+        }),
+    )
+    .await;
+    let config_path = Path::new(path!("/worktree/.editorconfig"));
+    let target_path = Path::new(path!("/worktree/node_modules/format-config/editorconfig"));
+    fs.insert_symlink(
+        config_path,
+        PathBuf::from(path!("node_modules/format-config/editorconfig")),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/worktree").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let worktree = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().expect("worktree exists")
     });
+    cx.executor().run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("file.rs")), cx)
+        })
+        .await
+        .expect("buffer opens");
+    cx.executor().run_until_parked();
+
+    let assert_settings = |tab_size, hard_tabs, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let buffer = buffer.read(cx);
+            for settings in [
+                LanguageSettings::for_buffer(buffer, cx),
+                LanguageSettings::for_buffer_snapshot(&buffer.snapshot(), None, cx),
+            ] {
+                assert_eq!(settings.tab_size.get(), tab_size);
+                assert_eq!(settings.hard_tabs, hard_tabs);
+            }
+        });
+    };
+    assert_settings(2, false, cx);
+
+    fs.write(
+        target_path,
+        b"root = true\n[*]\nindent_size = 10\nindent_style = tab\n",
+    )
+    .await
+    .expect("symlink target updates");
+    cx.executor().run_until_parked();
+    assert_settings(10, true, cx);
+
+    fs.write(target_path, &[0xff])
+        .await
+        .expect("symlink target becomes invalid UTF-8");
+    cx.executor().run_until_parked();
+    assert_settings(10, true, cx);
+
+    let replacement_path = Path::new(path!("/worktree/node_modules/format-config/replacement"));
+    fs.write(
+        replacement_path,
+        b"root = true\n[*]\nindent_size = 12\nindent_style = space\n",
+    )
+    .await
+    .expect("replacement target is created");
+    fs.rename(
+        replacement_path,
+        target_path,
+        fs::RenameOptions {
+            overwrite: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("symlink target is atomically replaced");
+    cx.executor().run_until_parked();
+    assert_settings(12, false, cx);
+
+    fs.remove_file(target_path, Default::default())
+        .await
+        .expect("symlink target is removed");
+    cx.executor().run_until_parked();
+    assert_settings(4, false, cx);
+
+    fs.write(
+        target_path,
+        b"root = true\n[*]\nindent_size = 6\nindent_style = tab\n",
+    )
+    .await
+    .expect("symlink target is recreated");
+    cx.executor().run_until_parked();
+    assert_settings(6, true, cx);
+
+    fs.remove_file(config_path, Default::default())
+        .await
+        .expect("config symlink is removed");
+    cx.executor().run_until_parked();
+    assert_settings(4, false, cx);
+
+    fs.write(
+        target_path,
+        b"root = true\n[*]\nindent_size = 8\nindent_style = tab\n",
+    )
+    .await
+    .expect("former symlink target updates");
+    cx.executor().run_until_parked();
+    assert_settings(4, false, cx);
+
+    fs.write(
+        config_path,
+        b"root = true\n[*]\nindent_size = 14\nindent_style = space\n",
+    )
+    .await
+    .expect("regular config replaces the symlink");
+    cx.executor().run_until_parked();
+    assert_settings(14, false, cx);
+
+    fs.write(
+        target_path,
+        b"root = true\n[*]\nindent_size = 16\nindent_style = tab\n",
+    )
+    .await
+    .expect("former symlink target updates again");
+    cx.executor().run_until_parked();
+    assert_settings(14, false, cx);
+}
+
+#[gpui::test]
+async fn test_editorconfig_package_symlink_retargeting_refreshes_open_buffer(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/worktree"),
+        json!({
+            ".git": {},
+            ".gitignore": "node_modules/\n",
+            "file.rs": "fn main() {}",
+            "node_modules": {
+                ".store": {
+                    "format-config-v1": {
+                        "editorconfig": "root = true\n[*]\nindent_size = 2\nindent_style = space\n",
+                    },
+                    "format-config-v2": {
+                        "editorconfig": "root = true\n[*]\nindent_size = 6\nindent_style = space\n",
+                    }
+                }
+            }
+        }),
+    )
+    .await;
+    let package_path = Path::new(path!("/worktree/node_modules/format-config"));
+    fs.insert_symlink(
+        package_path,
+        PathBuf::from(path!(".store/format-config-v1")),
+    )
+    .await;
+    fs.insert_symlink(
+        path!("/worktree/.editorconfig"),
+        PathBuf::from(path!("node_modules/format-config/editorconfig")),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/worktree").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let worktree = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().expect("worktree exists")
+    });
+    cx.executor().run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("file.rs")), cx)
+        })
+        .await
+        .expect("buffer opens");
+    cx.executor().run_until_parked();
+
+    let assert_settings = |tab_size, hard_tabs, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let buffer = buffer.read(cx);
+            for settings in [
+                LanguageSettings::for_buffer(buffer, cx),
+                LanguageSettings::for_buffer_snapshot(&buffer.snapshot(), None, cx),
+            ] {
+                assert_eq!(settings.tab_size.get(), tab_size);
+                assert_eq!(settings.hard_tabs, hard_tabs);
+            }
+        });
+    };
+    assert_settings(2, false, cx);
+
+    fs.insert_symlink(
+        package_path,
+        PathBuf::from(path!(".store/format-config-v2")),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_settings(6, false, cx);
+
+    fs.write(
+        Path::new(path!(
+            "/worktree/node_modules/.store/format-config-v1/editorconfig"
+        )),
+        b"root = true\n[*]\nindent_size = 10\nindent_style = tab\n",
+    )
+    .await
+    .expect("old package target updates");
+    cx.executor().run_until_parked();
+    assert_settings(6, false, cx);
+
+    fs.write(
+        Path::new(path!(
+            "/worktree/node_modules/.store/format-config-v2/editorconfig"
+        )),
+        b"root = true\n[*]\nindent_size = 12\nindent_style = tab\n",
+    )
+    .await
+    .expect("new package target updates");
+    cx.executor().run_until_parked();
+    assert_settings(12, true, cx);
+
+    fs.remove_dir(
+        Path::new(path!("/worktree/node_modules/.store/format-config-v2")),
+        fs::RemoveOptions {
+            recursive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("package directory is removed");
+    cx.executor().run_until_parked();
+    assert_settings(4, false, cx);
+
+    fs.insert_tree(
+        path!("/worktree/node_modules/.store/format-config-v2"),
+        json!({
+            "editorconfig": "root = true\n[*]\nindent_size = 8\nindent_style = space\n",
+        }),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_settings(8, false, cx);
+
+    fs.remove_dir(
+        Path::new(path!("/worktree/node_modules")),
+        fs::RemoveOptions {
+            recursive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("installed packages are removed");
+    cx.executor().run_until_parked();
+    assert_settings(4, false, cx);
+
+    fs.insert_tree(
+        path!("/worktree/node_modules/.store/format-config-v3"),
+        json!({
+            "editorconfig": "root = true\n[*]\nindent_size = 14\nindent_style = tab\n",
+        }),
+    )
+    .await;
+    fs.insert_symlink(
+        package_path,
+        PathBuf::from(path!(".store/format-config-v3")),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_settings(14, true, cx);
+}
+
+#[gpui::test]
+async fn test_editorconfig_dangling_root_symlink_refreshes_open_buffer(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/worktree"),
+        json!({
+            ".git": {},
+            ".gitignore": "node_modules/\n",
+            "file.rs": "fn main() {}",
+        }),
+    )
+    .await;
+    fs.insert_symlink(
+        path!("/worktree/.editorconfig"),
+        PathBuf::from(path!("node_modules/format-config/editorconfig")),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/worktree").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let worktree = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().expect("worktree exists")
+    });
+    cx.executor().run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("file.rs")), cx)
+        })
+        .await
+        .expect("buffer opens");
+    cx.executor().run_until_parked();
+
+    let assert_settings = |tab_size, hard_tabs, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let buffer = buffer.read(cx);
+            for settings in [
+                LanguageSettings::for_buffer(buffer, cx),
+                LanguageSettings::for_buffer_snapshot(&buffer.snapshot(), None, cx),
+            ] {
+                assert_eq!(settings.tab_size.get(), tab_size);
+                assert_eq!(settings.hard_tabs, hard_tabs);
+            }
+        });
+    };
+    assert_settings(4, false, cx);
+
+    fs.insert_tree(
+        path!("/worktree/node_modules"),
+        json!({
+            "format-config": {
+                "editorconfig": "root = true\n[*]\nindent_size = 2\nindent_style = tab\n",
+            }
+        }),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_settings(2, true, cx);
+
+    fs.write(
+        Path::new(path!("/worktree/node_modules/format-config/editorconfig")),
+        b"root = true\n[*]\nindent_size = 6\nindent_style = space\n",
+    )
+    .await
+    .expect("newly readable target updates");
+    cx.executor().run_until_parked();
+    assert_settings(6, false, cx);
+}
+
+#[gpui::test]
+async fn test_external_editorconfig_dangling_symlink_refreshes_open_buffer(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/parent"),
+        json!({
+            "node_modules": {
+                "format-config": {},
+            },
+            "worktree": {
+                "config": {
+                    "editorconfig": "[*]\ninsert_final_newline = false\n",
+                },
+                "file.rs": "fn main() {}",
+            }
+        }),
+    )
+    .await;
+    let config_path = Path::new(path!("/parent/.editorconfig"));
+    let target_path = Path::new(path!("/parent/node_modules/format-config/editorconfig"));
+    fs.insert_symlink(
+        config_path,
+        PathBuf::from(path!("node_modules/format-config/editorconfig")),
+    )
+    .await;
+    fs.insert_symlink(
+        path!("/parent/worktree/.editorconfig"),
+        PathBuf::from(path!("config/editorconfig")),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/parent/worktree").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let worktree = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().expect("worktree exists")
+    });
+    cx.executor().run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("file.rs")), cx)
+        })
+        .await
+        .expect("buffer opens");
+    cx.executor().run_until_parked();
+
+    let assert_settings = |tab_size, hard_tabs, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let buffer = buffer.read(cx);
+            for settings in [
+                LanguageSettings::for_buffer(buffer, cx),
+                LanguageSettings::for_buffer_snapshot(&buffer.snapshot(), None, cx),
+            ] {
+                assert_eq!(settings.tab_size.get(), tab_size);
+                assert_eq!(settings.hard_tabs, hard_tabs);
+                assert!(!settings.ensure_final_newline_on_save);
+            }
+        });
+    };
+    assert_settings(4, false, cx);
+
+    fs.write(
+        target_path,
+        b"root = true\n[*]\nindent_size = 2\nindent_style = tab\ninsert_final_newline = true\n",
+    )
+    .await
+    .expect("parent config target is created");
+    cx.executor().run_until_parked();
+    assert_settings(2, true, cx);
+
+    fs.remove_file(target_path, Default::default())
+        .await
+        .expect("parent config target is removed");
+    cx.executor().run_until_parked();
+    assert_settings(4, false, cx);
+
+    fs.write(
+        target_path,
+        b"root = true\n[*]\nindent_size = 10\nindent_style = tab\ninsert_final_newline = true\n",
+    )
+    .await
+    .expect("parent config target is recreated");
+    cx.executor().run_until_parked();
+    assert_settings(10, true, cx);
+
+    fs.remove_file(config_path, Default::default())
+        .await
+        .expect("parent config symlink is removed");
+    cx.executor().run_until_parked();
+    assert_settings(4, false, cx);
+
+    fs.write(
+        target_path,
+        b"root = true\n[*]\nindent_size = 12\nindent_style = tab\n",
+    )
+    .await
+    .expect("former parent config target updates after symlink removal");
+    cx.executor().run_until_parked();
+    assert_settings(4, false, cx);
+
+    fs.write(
+        config_path,
+        b"root = true\n[*]\nindent_size = 14\nindent_style = space\n",
+    )
+    .await
+    .expect("regular parent config replaces the symlink");
+    cx.executor().run_until_parked();
+    assert_settings(14, false, cx);
+
+    fs.write(
+        target_path,
+        b"root = true\n[*]\nindent_size = 16\nindent_style = tab\n",
+    )
+    .await
+    .expect("former parent config target updates");
+    cx.executor().run_until_parked();
+    assert_settings(14, false, cx);
+}
+
+#[gpui::test]
+async fn test_editorconfig_file_to_external_symlink_refreshes_open_buffer(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/parent"),
+        json!({
+            "config": {
+                "editorconfig": "root = true\n[src/*.rs]\nindent_size = 10\nindent_style = tab\n",
+            },
+            "worktree": {
+                ".editorconfig": "root = true\n[src/*.rs]\nindent_size = 2\nindent_style = space\n",
+                "src": {
+                    "file.rs": "fn main() {}",
+                }
+            }
+        }),
+    )
+    .await;
+    let config_path = Path::new(path!("/parent/worktree/.editorconfig"));
+    let target_path = Path::new(path!("/parent/config/editorconfig"));
+
+    let project = Project::test(fs.clone(), [path!("/parent/worktree").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let worktree = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().expect("worktree exists")
+    });
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+    cx.executor().run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("src/file.rs")), cx)
+        })
+        .await
+        .expect("buffer opens");
+    cx.executor().run_until_parked();
+
+    let assert_settings = |tab_size, hard_tabs, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let buffer = buffer.read(cx);
+            for settings in [
+                LanguageSettings::for_buffer(buffer, cx),
+                LanguageSettings::for_buffer_snapshot(&buffer.snapshot(), None, cx),
+            ] {
+                assert_eq!(settings.tab_size.get(), tab_size);
+                assert_eq!(settings.hard_tabs, hard_tabs);
+            }
+        });
+    };
+    assert_settings(2, false, cx);
+
+    fs.remove_file(config_path, Default::default())
+        .await
+        .expect("regular config is removed");
+    fs.insert_symlink(config_path, PathBuf::from(path!("../config/editorconfig")))
+        .await;
+    cx.executor().run_until_parked();
+    assert_settings(10, true, cx);
+
+    fs.write(
+        target_path,
+        b"root = true\n[src/*.rs]\nindent_size = 12\nindent_style = space\n",
+    )
+    .await
+    .expect("target outside the worktree updates");
+    cx.executor().run_until_parked();
+    assert_settings(12, false, cx);
+
+    fs.remove_file(target_path, Default::default())
+        .await
+        .expect("target outside the worktree is removed");
+    cx.executor().run_until_parked();
+    assert_settings(4, false, cx);
+
+    fs.write(
+        target_path,
+        b"root = true\n[src/*.rs]\nindent_size = 6\nindent_style = tab\n",
+    )
+    .await
+    .expect("target outside the worktree is recreated");
+    cx.executor().run_until_parked();
+    assert_settings(6, true, cx);
+
+    let assert_worktree_removed = |cx: &mut TestAppContext| {
+        assert_settings(4, false, cx);
+        cx.update(|cx| {
+            assert!(project.read(cx).worktrees(cx).next().is_none());
+            let store = cx.global::<SettingsStore>().editorconfig_store.read(cx);
+            let (worktree_ids, _, _) = store.test_state();
+            assert!(!worktree_ids.contains(&worktree_id));
+            assert!(
+                store
+                    .local_editorconfig_settings(worktree_id)
+                    .next()
+                    .is_none()
+            );
+        });
+    };
+    project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
+    cx.executor().run_until_parked();
+    assert_worktree_removed(cx);
+
+    fs.write(
+        target_path,
+        b"root = true\n[src/*.rs]\nindent_size = 8\nindent_style = tab\n",
+    )
+    .await
+    .expect("target updates after worktree removal");
+    cx.executor().run_until_parked();
+    assert_worktree_removed(cx);
+
+    let watched_paths = fs.watched_paths();
+    fs.remove_file(config_path, Default::default())
+        .await
+        .expect("config symlink is removed after worktree removal");
+    fs.write(
+        config_path,
+        b"root = true\n[src/*.rs]\nindent_size = 14\nindent_style = tab\n",
+    )
+    .await
+    .expect("regular config replaces the symlink after worktree removal");
+    cx.executor().run_until_parked();
+    assert_worktree_removed(cx);
+    assert_eq!(fs.watched_paths(), watched_paths);
+}
+
+#[gpui::test]
+async fn test_editorconfig_scan_exclusion_skips_readable_and_dangling_symlinks(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(vec!["**/.editorconfig".to_owned()]));
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/parent"),
+        json!({
+            ".editorconfig": "root = true\n[*]\nindent_size = 10\nindent_style = tab\n",
+            "config": {
+                "readable": "root = true\n[*]\nindent_size = 2\nindent_style = tab\n",
+            },
+            "dangling": {
+                "file.rs": "fn dangling() {}",
+            },
+            "readable": {
+                "file.rs": "fn readable() {}",
+            }
+        }),
+    )
+    .await;
+    fs.insert_symlink(
+        path!("/parent/dangling/.editorconfig"),
+        PathBuf::from(path!("../config/dangling")),
+    )
+    .await;
+    fs.insert_symlink(
+        path!("/parent/readable/.editorconfig"),
+        PathBuf::from(path!("../config/readable")),
+    )
+    .await;
+
+    let project = Project::test(
+        fs.clone(),
+        [
+            path!("/parent/dangling").as_ref(),
+            path!("/parent/readable").as_ref(),
+        ],
+        cx,
+    )
+    .await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    cx.executor().run_until_parked();
+
+    let worktrees = project.read_with(cx, |project, cx| project.worktrees(cx).collect::<Vec<_>>());
+    assert_eq!(worktrees.len(), 2);
+    let mut buffers = Vec::new();
+    for worktree in &worktrees {
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree.read(cx).id(), rel_path("file.rs")), cx)
+            })
+            .await
+            .expect("buffer opens");
+        buffers.push(buffer);
+    }
+    cx.executor().run_until_parked();
+
+    let assert_excluded = |cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            for worktree in &worktrees {
+                let worktree = worktree.read(cx);
+                assert!(worktree.entry_for_path(rel_path(".editorconfig")).is_none());
+                assert!(
+                    cx.global::<SettingsStore>()
+                        .editorconfig_store
+                        .read(cx)
+                        .local_editorconfig_settings(worktree.id())
+                        .next()
+                        .is_none()
+                );
+            }
+            for buffer in &buffers {
+                let buffer = buffer.read(cx);
+                for settings in [
+                    LanguageSettings::for_buffer(buffer, cx),
+                    LanguageSettings::for_buffer_snapshot(&buffer.snapshot(), None, cx),
+                ] {
+                    assert_eq!(settings.tab_size.get(), 4);
+                    assert!(!settings.hard_tabs);
+                }
+            }
+        });
+    };
+    assert_excluded(cx);
+
+    fs.write(
+        Path::new(path!("/parent/config/dangling")),
+        b"root = true\n[*]\nindent_size = 6\nindent_style = tab\n",
+    )
+    .await
+    .expect("excluded dangling symlink target is created");
+    cx.executor().run_until_parked();
+    assert_excluded(cx);
+
+    fs.write(
+        Path::new(path!("/parent/config/readable")),
+        b"root = true\n[*]\nindent_size = 8\nindent_style = tab\n",
+    )
+    .await
+    .expect("excluded readable symlink target updates");
+    cx.executor().run_until_parked();
+    assert_excluded(cx);
+}
+
+#[gpui::test]
+async fn test_editorconfig_scan_exclusion_changes_refresh_open_buffer(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/parent"),
+        json!({
+            "config": {
+                "editorconfig": "root = true\n[*]\nindent_size = 2\nindent_style = tab\n",
+            },
+            "worktree": {
+                "file.rs": "fn main() {}",
+            },
+        }),
+    )
+    .await;
+    let target_path = Path::new(path!("/parent/config/editorconfig"));
+    fs.insert_symlink(
+        path!("/parent/worktree/.editorconfig"),
+        PathBuf::from(path!("../config/editorconfig")),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/parent/worktree").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let worktree = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().expect("worktree exists")
+    });
+    cx.executor().run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("file.rs")), cx)
+        })
+        .await
+        .expect("buffer opens");
+    cx.executor().run_until_parked();
+
+    let assert_settings = |tab_size, hard_tabs, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let buffer = buffer.read(cx);
+            for settings in [
+                LanguageSettings::for_buffer(buffer, cx),
+                LanguageSettings::for_buffer_snapshot(&buffer.snapshot(), None, cx),
+            ] {
+                assert_eq!(settings.tab_size.get(), tab_size);
+                assert_eq!(settings.hard_tabs, hard_tabs);
+            }
+        });
+    };
+    let set_scan_exclusions = |exclusions: Option<SplicingVec>, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_exclusions = exclusions;
+                });
+            });
+        });
+    };
+    assert_settings(2, true, cx);
+
+    set_scan_exclusions(
+        Some(SplicingVec::from(vec!["**/.editorconfig".to_owned()])),
+        cx,
+    );
+    cx.executor().run_until_parked();
+    assert_settings(4, false, cx);
+
+    fs.write(
+        target_path,
+        b"root = true\n[*]\nindent_size = 6\nindent_style = space\n",
+    )
+    .await
+    .expect("excluded config target updates");
+    cx.executor().run_until_parked();
+    assert_settings(4, false, cx);
+
+    set_scan_exclusions(None, cx);
+    cx.executor().run_until_parked();
+    assert_settings(6, false, cx);
+
+    set_scan_exclusions(
+        Some(SplicingVec::from(vec!["**/.editorconfig".to_owned()])),
+        cx,
+    );
+    cx.executor().run_until_parked();
+    assert_settings(4, false, cx);
+
+    fs.remove_file(target_path, Default::default())
+        .await
+        .expect("excluded config target is removed");
+    set_scan_exclusions(None, cx);
+    cx.executor().run_until_parked();
+    assert_settings(4, false, cx);
+
+    fs.write(
+        target_path,
+        b"root = true\n[*]\nindent_size = 8\nindent_style = tab\n",
+    )
+    .await
+    .expect("dangling config target is recreated");
+    cx.executor().run_until_parked();
+    assert_settings(8, true, cx);
+}
+
+#[gpui::test]
+async fn test_nested_editorconfig_changes_refresh_open_buffer(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/worktree"),
+        json!({
+            ".editorconfig": "root = true\n[*]\nindent_size = 2\nindent_style = space\n",
+            "config": {
+                "editorconfig": "[*]\nindent_size = 6\nindent_style = tab\n",
+            },
+            "nested": {
+                ".editorconfig": "[*]\nindent_size = 10\n",
+                "file.rs": "fn main() {}",
+            },
+        }),
+    )
+    .await;
+    let config_path = Path::new(path!("/worktree/nested/.editorconfig"));
+    let target_path = Path::new(path!("/worktree/config/editorconfig"));
+
+    let project = Project::test(fs.clone(), [path!("/worktree").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let worktree = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().expect("worktree exists")
+    });
+    cx.executor().run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("nested/file.rs")), cx)
+        })
+        .await
+        .expect("buffer opens");
+    cx.executor().run_until_parked();
+
+    let assert_settings = |tab_size, hard_tabs, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let buffer = buffer.read(cx);
+            for settings in [
+                LanguageSettings::for_buffer(buffer, cx),
+                LanguageSettings::for_buffer_snapshot(&buffer.snapshot(), None, cx),
+            ] {
+                assert_eq!(settings.tab_size.get(), tab_size);
+                assert_eq!(settings.hard_tabs, hard_tabs);
+            }
+        });
+    };
+    assert_settings(10, false, cx);
+
+    fs.write(config_path, b"[*]\nindent_size = 12\nindent_style = tab\n")
+        .await
+        .expect("nested config updates");
+    cx.executor().run_until_parked();
+    assert_settings(12, true, cx);
+
+    fs.remove_file(config_path, Default::default())
+        .await
+        .expect("nested config is removed");
+    cx.executor().run_until_parked();
+    assert_settings(2, false, cx);
+
+    fs.insert_symlink(config_path, PathBuf::from(path!("../config/editorconfig")))
+        .await;
+    cx.executor().run_until_parked();
+    assert_settings(6, true, cx);
+
+    fs.write(target_path, b"[*]\nindent_size = 8\nindent_style = space\n")
+        .await
+        .expect("nested config target updates");
+    cx.executor().run_until_parked();
+    assert_settings(8, false, cx);
+}
+
+#[gpui::test]
+async fn test_editorconfig_root_rename_refreshes_open_buffer(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/parent/worktree"),
+        json!({
+            ".editorconfig": "root = true\n[*]\nindent_size = 2\nindent_style = tab\n",
+            "file.rs": "fn main() {}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/parent/worktree").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let worktree = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().expect("worktree exists")
+    });
+    let (worktree_id, root_entry_id) = worktree.read_with(cx, |worktree, _| {
+        let root_entry = worktree.root_entry().expect("root entry exists");
+        (worktree.id(), root_entry.id)
+    });
+    cx.executor().run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("file.rs")), cx)
+        })
+        .await
+        .expect("buffer opens");
+    cx.executor().run_until_parked();
+
+    let assert_settings = |tab_size, hard_tabs, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let buffer = buffer.read(cx);
+            for settings in [
+                LanguageSettings::for_buffer(buffer, cx),
+                LanguageSettings::for_buffer_snapshot(&buffer.snapshot(), None, cx),
+            ] {
+                assert_eq!(settings.tab_size.get(), tab_size);
+                assert_eq!(settings.hard_tabs, hard_tabs);
+            }
+        });
+    };
+    assert_settings(2, true, cx);
+
+    project
+        .update(cx, |project, cx| {
+            project.rename_entry(root_entry_id, (worktree_id, rel_path("renamed")).into(), cx)
+        })
+        .await
+        .expect("worktree root is renamed");
+    cx.executor().run_until_parked();
+    worktree.read_with(cx, |worktree, _| {
+        assert_eq!(
+            worktree.abs_path().as_ref(),
+            Path::new(path!("/parent/renamed"))
+        );
+    });
+    assert_settings(2, true, cx);
+
+    fs.write(
+        Path::new(path!("/parent/renamed/.editorconfig")),
+        b"root = true\n[*]\nindent_size = 8\nindent_style = space\n",
+    )
+    .await
+    .expect("renamed config updates");
+    cx.executor().run_until_parked();
+    assert_settings(8, false, cx);
+
+    fs.write(
+        Path::new(path!("/parent/worktree/.editorconfig")),
+        b"root = true\n[*]\nindent_size = 6\nindent_style = tab\n",
+    )
+    .await
+    .expect("config is created at the former root");
+    cx.executor().run_until_parked();
+    assert_settings(8, false, cx);
+}
+
+#[gpui::test]
+async fn test_editorconfig_root_rename_rebinds_dangling_root_config(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/parent"),
+        json!({
+            "configs": {},
+            "worktree": {
+                "file.rs": "fn main() {}",
+            },
+        }),
+    )
+    .await;
+    fs.insert_symlink(
+        path!("/parent/worktree/.editorconfig"),
+        PathBuf::from(path!("../configs/editorconfig")),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/parent/worktree").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let (worktree_id, root_entry_id) = project.read_with(cx, |project, cx| {
+        let worktree = project.worktrees(cx).next().expect("worktree exists");
+        let worktree = worktree.read(cx);
+        let root_entry = worktree.root_entry().expect("root entry exists");
+        (worktree.id(), root_entry.id)
+    });
+    cx.executor().run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("file.rs")), cx)
+        })
+        .await
+        .expect("buffer opens");
+    cx.executor().run_until_parked();
+
+    let assert_settings = |tab_size, hard_tabs, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let buffer = buffer.read(cx);
+            for settings in [
+                LanguageSettings::for_buffer(buffer, cx),
+                LanguageSettings::for_buffer_snapshot(&buffer.snapshot(), None, cx),
+            ] {
+                assert_eq!(settings.tab_size.get(), tab_size);
+                assert_eq!(settings.hard_tabs, hard_tabs);
+            }
+        });
+    };
+    assert_settings(4, false, cx);
+
+    project
+        .update(cx, |project, cx| {
+            project.rename_entry(root_entry_id, (worktree_id, rel_path("renamed")).into(), cx)
+        })
+        .await
+        .expect("worktree root is renamed");
+    cx.executor().run_until_parked();
+    assert_settings(4, false, cx);
+
+    fs.write(
+        Path::new(path!("/parent/configs/editorconfig")),
+        b"root = true\n[*]\nindent_size = 2\nindent_style = tab\n",
+    )
+    .await
+    .expect("dangling config target is created");
+    cx.executor().run_until_parked();
+    assert_settings(2, true, cx);
+}
+
+#[gpui::test]
+async fn test_editorconfig_watchers_are_released_with_their_projects(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/parent"),
+        json!({
+            ".editorconfig": "root = true\n[*]\nindent_size = 2\n",
+            "first": {
+                ".editorconfig": "[*]\n",
+                "file.rs": "fn first() {}",
+            },
+            "second": {
+                ".editorconfig": "[*]\n",
+                "file.rs": "fn second() {}",
+            },
+        }),
+    )
+    .await;
+    let parent_watches = |fs: &FakeFs| {
+        fs.watched_paths()
+            .into_iter()
+            .filter(|path| path.starts_with(path!("/parent")))
+            .collect::<Vec<_>>()
+    };
+    let release = |cx: &mut TestAppContext| {
+        cx.update(|_| {});
+        cx.executor().run_until_parked();
+        cx.update(|_| {});
+    };
+
+    let first_project = Project::test(fs.clone(), [path!("/parent/first").as_ref()], cx).await;
+    let second_project = Project::test(fs.clone(), [path!("/parent/second").as_ref()], cx).await;
+    let language_registry = second_project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    cx.executor().run_until_parked();
+
+    let first_worktree = first_project.read_with(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .next()
+            .expect("first worktree exists")
+            .downgrade()
+    });
+    let second_worktree_id = second_project.read_with(cx, |project, cx| {
+        let worktree = project
+            .worktrees(cx)
+            .next()
+            .expect("second worktree exists");
+        worktree.read(cx).id()
+    });
+    let buffer = second_project
+        .update(cx, |project, cx| {
+            project.open_buffer((second_worktree_id, rel_path("file.rs")), cx)
+        })
+        .await
+        .expect("buffer opens");
+    cx.executor().run_until_parked();
+
+    let assert_tab_size = |tab_size, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let buffer = buffer.read(cx);
+            for settings in [
+                LanguageSettings::for_buffer(buffer, cx),
+                LanguageSettings::for_buffer_snapshot(&buffer.snapshot(), None, cx),
+            ] {
+                assert_eq!(settings.tab_size.get(), tab_size);
+            }
+        });
+    };
+    assert_tab_size(2, cx);
+    assert!(
+        parent_watches(&fs)
+            .iter()
+            .any(|path| path.starts_with(path!("/parent/first")))
+    );
+
+    let first_project_handle = first_project.downgrade();
+    drop(first_project);
+    release(cx);
+    assert!(first_project_handle.upgrade().is_none());
+    assert!(first_worktree.upgrade().is_none());
+    assert!(
+        parent_watches(&fs)
+            .iter()
+            .all(|path| !path.starts_with(path!("/parent/first")))
+    );
+
+    fs.write(
+        Path::new(path!("/parent/.editorconfig")),
+        b"root = true\n[*]\nindent_size = 6\n",
+    )
+    .await
+    .expect("shared parent config updates");
+    cx.executor().run_until_parked();
+    assert_tab_size(6, cx);
+
+    let second_project_handle = second_project.downgrade();
+    drop(buffer);
+    drop(second_project);
+    release(cx);
+    assert!(second_project_handle.upgrade().is_none());
+    assert!(parent_watches(&fs).is_empty());
 }
 
 #[gpui::test]

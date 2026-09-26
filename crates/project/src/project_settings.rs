@@ -29,7 +29,7 @@ use settings::{
 use std::{cell::OnceCell, collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
 use util::{ResultExt, rel_path::RelPath, serde::default_true};
-use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
+use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId, WorktreeSettings};
 
 use crate::{
     task_store::{TaskSettingsLocation, TaskStore},
@@ -911,7 +911,7 @@ impl SettingsObserver {
         let _editorconfig_watcher = cx.subscribe(
             &editorconfig_store,
             |this, _, event: &EditorconfigEvent, cx| {
-                let EditorconfigEvent::ExternalConfigChanged {
+                let EditorconfigEvent::ConfigChanged {
                     path,
                     content,
                     affected_worktree_ids,
@@ -922,13 +922,26 @@ impl SettingsObserver {
                         .read(cx)
                         .worktree_for_id(*worktree_id, cx)
                     {
+                        let content = if let LocalSettingsPath::InWorktree(directory) = path {
+                            let settings = WorktreeSettings::get(
+                                Some(SettingsLocation {
+                                    worktree_id: *worktree_id,
+                                    path: RelPath::empty(),
+                                }),
+                                cx,
+                            );
+                            let config_path = directory.join(
+                                RelPath::from_unix_str(EDITORCONFIG_NAME).expect("valid filename"),
+                            );
+                            content
+                                .clone()
+                                .filter(|_| !settings.is_path_excluded(&config_path))
+                        } else {
+                            content.clone()
+                        };
                         this.update_settings(
                             worktree,
-                            [(
-                                path.clone(),
-                                LocalSettingsKind::Editorconfig,
-                                content.clone(),
-                            )],
+                            [(path.clone(), LocalSettingsKind::Editorconfig, content)],
                             false,
                             cx,
                         );
@@ -936,6 +949,15 @@ impl SettingsObserver {
                 }
             },
         );
+
+        cx.observe_global::<SettingsStore>(|this, cx| {
+            let worktrees = this.worktree_store.read(cx).worktrees().collect::<Vec<_>>();
+            for worktree in worktrees {
+                this.remove_excluded_editorconfig_watchers(&worktree, cx);
+                this.watch_root_editorconfig(&worktree, cx);
+            }
+        })
+        .detach();
 
         Self {
             worktree_store,
@@ -1142,13 +1164,31 @@ impl SettingsObserver {
         cx: &mut Context<Self>,
     ) {
         match event {
-            WorktreeStoreEvent::WorktreeAdded(worktree) => cx
-                .subscribe(worktree, |this, worktree, event, cx| {
+            WorktreeStoreEvent::WorktreeAdded(worktree) => {
+                cx.subscribe(worktree, |this, worktree, event, cx| {
                     if let worktree::Event::UpdatedEntries(changes) = event {
                         this.update_local_worktree_settings(&worktree, changes, cx)
                     }
                 })
-                .detach(),
+                .detach();
+                if matches!(self.mode, SettingsObserverMode::Local(_))
+                    && worktree.read(cx).as_local().is_some()
+                {
+                    let worktree_id = worktree.read(cx).id();
+                    // Dropping a project releases its worktrees without removing them
+                    worktree.update(cx, |_, cx| {
+                        cx.on_release(move |_, cx| {
+                            if let Some(settings_store) = cx.try_global::<SettingsStore>() {
+                                let editorconfig_store = settings_store.editorconfig_store.clone();
+                                editorconfig_store
+                                    .update(cx, |store, _| store.remove_for_worktree(worktree_id));
+                            }
+                        })
+                        .detach()
+                    });
+                }
+                self.watch_root_editorconfig(worktree, cx);
+            }
             WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
                 cx.update_global::<SettingsStore, _>(|store, cx| {
                     store.clear_local_settings(*worktree_id, cx).log_err();
@@ -1156,6 +1196,96 @@ impl SettingsObserver {
             }
             _ => {}
         }
+    }
+
+    fn watch_root_editorconfig(&self, worktree: &Entity<Worktree>, cx: &mut Context<Self>) {
+        let worktree_id = worktree.read(cx).id();
+        let editorconfig_store = cx.global::<SettingsStore>().editorconfig_store.clone();
+        // Dangling symlinks have no worktree entry, so check the root's
+        // conventional config path without depending on scanner discovery
+        if worktree
+            .read(cx)
+            .root_entry()
+            .is_some_and(|entry| entry.is_dir())
+            && !editorconfig_store
+                .read(cx)
+                .watches_local_config(worktree_id, RelPath::empty_arc())
+        {
+            self.watch_local_editorconfig(worktree, RelPath::empty_arc(), cx);
+        }
+    }
+
+    fn watch_local_editorconfig(
+        &self,
+        worktree: &Entity<Worktree>,
+        directory: Arc<RelPath>,
+        cx: &mut Context<Self>,
+    ) {
+        let SettingsObserverMode::Local(fs) = &self.mode else {
+            return;
+        };
+        let worktree = worktree.read(cx);
+        if worktree.as_local().is_none() {
+            return;
+        }
+        let worktree_id = worktree.id();
+        // Open buffers can keep a removed worktree scanning, so avoid recreating the
+        // watchers its removal dropped
+        if self
+            .worktree_store
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            .is_none()
+        {
+            return;
+        }
+        let settings = WorktreeSettings::get(
+            Some(SettingsLocation {
+                worktree_id,
+                path: RelPath::empty(),
+            }),
+            cx,
+        );
+        let config_path =
+            directory.join(RelPath::from_unix_str(EDITORCONFIG_NAME).expect("valid filename"));
+        if settings.is_path_excluded(&config_path) {
+            return;
+        }
+        let worktree_path = worktree.abs_path();
+        let editorconfig_store = cx.global::<SettingsStore>().editorconfig_store.clone();
+        editorconfig_store.update(cx, |store, cx| {
+            store.watch_local_config(worktree_id, worktree_path, directory, fs.clone(), cx);
+        });
+    }
+
+    fn remove_excluded_editorconfig_watchers(
+        &self,
+        worktree: &Entity<Worktree>,
+        cx: &mut Context<Self>,
+    ) {
+        let worktree_id = worktree.read(cx).id();
+        let settings = WorktreeSettings::get(
+            Some(SettingsLocation {
+                worktree_id,
+                path: RelPath::empty(),
+            }),
+            cx,
+        )
+        .clone();
+        let editorconfig_store = cx.global::<SettingsStore>().editorconfig_store.clone();
+        editorconfig_store.update(cx, |store, cx| {
+            store.retain_local_config_watchers(
+                worktree_id,
+                |directory| {
+                    !settings.is_path_excluded(
+                        &directory.join(
+                            RelPath::from_unix_str(EDITORCONFIG_NAME).expect("valid filename"),
+                        ),
+                    )
+                },
+                cx,
+            );
+        });
     }
 
     fn update_local_worktree_settings(
@@ -1167,6 +1297,15 @@ impl SettingsObserver {
         let SettingsObserverMode::Local(fs) = &self.mode else {
             return;
         };
+
+        // Moving the root rescans the worktree, so rebind config watchers that
+        // still read its former location
+        let worktree_id = worktree.read(cx).id();
+        let worktree_path = worktree.read(cx).abs_path();
+        let editorconfig_store = cx.global::<SettingsStore>().editorconfig_store.clone();
+        editorconfig_store.update(cx, |store, cx| {
+            store.update_worktree_path(worktree_id, worktree_path, fs.clone(), cx);
+        });
 
         let mut settings_contents = Vec::new();
         for (path, _, change) in changes.iter() {
@@ -1229,24 +1368,8 @@ impl SettingsObserver {
                 let Some(settings_dir) = path.parent().map(Arc::from) else {
                     continue;
                 };
-                if matches!(change, PathChange::Loaded) || matches!(change, PathChange::Added) {
-                    let worktree_id = worktree.read(cx).id();
-                    let worktree_path = worktree.read(cx).abs_path();
-                    let fs = fs.clone();
-                    cx.update_global::<SettingsStore, _>(|store, cx| {
-                        store
-                            .editorconfig_store
-                            .update(cx, |editorconfig_store, cx| {
-                                editorconfig_store.discover_local_external_configs_chain(
-                                    worktree_id,
-                                    worktree_path,
-                                    fs,
-                                    cx,
-                                );
-                            });
-                    });
-                }
-                (settings_dir, LocalSettingsKind::Editorconfig)
+                self.watch_local_editorconfig(worktree, settings_dir, cx);
+                continue;
             } else {
                 continue;
             };
