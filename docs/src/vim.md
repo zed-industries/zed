@@ -32,7 +32,8 @@ When you first open Zed, you'll see a checkbox on the welcome screen that allows
 
 If you missed this, you can toggle vim mode on or off anytime by opening the command palette and using the workspace command {#action workspace::ToggleVimMode}.
 
-> **Note**: This command toggles the following property in your user settings:
+> **Note**: This command toggles the following
+> [`vim_mode` setting](./reference/all-settings.md#vim) in your user settings:
 >
 > ```json [settings]
 > {
@@ -388,7 +389,7 @@ With this configuration, you can use commands like:
 
 ### Selecting the correct context
 
-Zed's key bindings are evaluated only when the `"context"` property matches your location in the editor. For example, if you add key bindings to the `"Editor"` context, they will only work when you're editing a file. If you add key bindings to the `"Workspace"` context, they will work everywhere in Zed. Here's an example of a key binding that saves when you're editing a file:
+Zed's [key bindings](./key-bindings.md) are evaluated only when the `"context"` property matches your location in the editor. For example, if you add key bindings to the `"Editor"` context, they will only work when you're editing a file. If you add key bindings to the `"Workspace"` context, they will work everywhere in Zed. Here's an example of a key binding that saves when you're editing a file:
 
 ```json [keymap]
 {

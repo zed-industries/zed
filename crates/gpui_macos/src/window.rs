@@ -1375,6 +1375,15 @@ impl MacWindow {
 impl Drop for MacWindow {
     fn drop(&mut self) {
         let mut this = self.0.lock();
+        // `accesskit_macos::SubclassingAdapter::for_window` strong-retains the
+        // window's content view, and that content view keeps the `GPUIView` it
+        // hosts alive. Together with the `Arc<Mutex<MacWindowState>>` parked in
+        // both views' `windowState` ivar, that forms
+        // `MacWindowState -> adapter -> content view -> GPUIView -> MacWindowState`,
+        // a cycle the delegate/`frame_source` teardown below cannot break. Drop
+        // the adapter here so the native view, its `CAMetalLayer` and the
+        // renderer's command queue are actually released with the window.
+        drop(this.accesskit_adapter.take());
         this.renderer.destroy();
         let window = this.native_window;
         let sheet_parent = this.sheet_parent.take();
@@ -3638,6 +3647,18 @@ extern "C" fn dragging_session_ended(
     send_file_drop_event(window_state, FileDropEvent::Ended);
 }
 
+fn synthetic_drag_button_is_pressed(button: Option<MouseButton>, pressed: NSUInteger) -> bool {
+    let bit = match button {
+        Some(MouseButton::Left) => 0,
+        Some(MouseButton::Right) => 1,
+        Some(MouseButton::Middle) => 2,
+        Some(MouseButton::Navigate(gpui::NavigationDirection::Back)) => 3,
+        Some(MouseButton::Navigate(gpui::NavigationDirection::Forward)) => 4,
+        None => return false,
+    };
+    pressed & (1 << bit) != 0
+}
+
 async fn synthetic_drag(
     window_state: Weak<Mutex<MacWindowState>>,
     drag_id: usize,
@@ -3646,17 +3667,24 @@ async fn synthetic_drag(
 ) {
     loop {
         executor.timer(Duration::from_millis(16)).await;
-        if let Some(window_state) = window_state.upgrade() {
-            let mut lock = window_state.lock();
-            if lock.synthetic_drag_counter == drag_id {
-                if let Some(mut callback) = lock.event_callback.take() {
-                    drop(lock);
-                    callback(PlatformInput::MouseMove(event.clone()));
-                    window_state.lock().event_callback = Some(callback);
-                }
-            } else {
-                break;
-            }
+        let Some(window_state) = window_state.upgrade() else {
+            break;
+        };
+        let mut lock = window_state.lock();
+        if lock.synthetic_drag_counter != drag_id {
+            break;
+        }
+        // Native menu tracking can consume mouse-up, leaving stale drag events replaying.
+        // Check whether the original mouse button is still physically pressed before replaying.
+        let pressed: NSUInteger = unsafe { msg_send![class!(NSEvent), pressedMouseButtons] };
+        if !synthetic_drag_button_is_pressed(event.pressed_button, pressed) {
+            lock.synthetic_drag_counter += 1;
+            break;
+        }
+        if let Some(mut callback) = lock.event_callback.take() {
+            drop(lock);
+            callback(PlatformInput::MouseMove(event.clone()));
+            window_state.lock().event_callback = Some(callback);
         }
     }
 }

@@ -49,7 +49,7 @@ pub struct HeadlessAppContext {
 impl HeadlessAppContext {
     /// Creates a new headless app context with the given text system.
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
-        Self::with_platform(platform_text_system, Arc::new(()), || None)
+        Self::with_platform(platform_text_system, Arc::new(()), || Ok(None))
     }
 
     /// Creates a new headless app context with a custom text system and asset source.
@@ -57,7 +57,7 @@ impl HeadlessAppContext {
         platform_text_system: Arc<dyn PlatformTextSystem>,
         asset_source: Arc<dyn AssetSource>,
     ) -> Self {
-        Self::with_platform(platform_text_system, asset_source, || None)
+        Self::with_platform(platform_text_system, asset_source, || Ok(None))
     }
 
     /// Creates a new headless app context with the given text system, asset source,
@@ -65,7 +65,7 @@ impl HeadlessAppContext {
     pub fn with_platform(
         platform_text_system: Arc<dyn PlatformTextSystem>,
         asset_source: Arc<dyn AssetSource>,
-        renderer_factory: impl Fn() -> Option<Box<dyn PlatformHeadlessRenderer>> + 'static,
+        renderer_factory: impl Fn() -> Result<Option<Box<dyn PlatformHeadlessRenderer>>> + 'static,
     ) -> Self {
         let seed = std::env::var("SEED")
             .ok()
@@ -77,7 +77,7 @@ impl HeadlessAppContext {
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
 
-        let renderer_factory: Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>> =
+        let renderer_factory: Box<dyn Fn() -> Result<Option<Box<dyn PlatformHeadlessRenderer>>>> =
             Box::new(renderer_factory);
         let platform = TestPlatform::with_platform(
             background_executor.clone(),

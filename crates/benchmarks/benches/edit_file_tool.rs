@@ -26,7 +26,7 @@ use gpui::{
     UpdateGlobal as _,
 };
 use language::{FakeLspAdapter, rust_lang};
-use language_model::fake_provider::FakeLanguageModel;
+use language_model::LanguageModelRegistry;
 use project::{FakeFs, Project};
 use prompt_store::ProjectContext;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
@@ -206,7 +206,7 @@ async fn setup_editor_and_tool(cx: &mut TestAppContext, file_text: String) -> Ha
 
     let context_server_registry =
         cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-    let model = Arc::new(FakeLanguageModel::default());
+    let model = cx.update(|cx| LanguageModelRegistry::test(cx).model("fake"));
     let thread = cx.new(|cx| {
         Thread::new(
             project.clone(),
