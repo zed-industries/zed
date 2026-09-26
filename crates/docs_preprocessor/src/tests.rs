@@ -2,6 +2,24 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn test_replace_docs_channel_badge_only_renders_prerelease_channels() {
+    let template = "<header>#docs-channel-badge#</header>";
+
+    assert_eq!(
+        replace_docs_channel_badge(template, "nightly"),
+        "<header><span class=\"docs-channel-badge\" title=\"You’re viewing the Nightly docs for Zed\">Nightly</span></header>"
+    );
+    assert_eq!(
+        replace_docs_channel_badge(template, "preview"),
+        "<header><span class=\"docs-channel-badge\" title=\"You’re viewing the Preview docs for Zed\">Preview</span></header>"
+    );
+    assert_eq!(
+        replace_docs_channel_badge(template, "stable"),
+        "<header></header>"
+    );
+}
+
+#[test]
 fn test_find_binding_prefers_exact_match_over_parameterized() {
     let keymap: KeymapFile = serde_json::from_value(json!([
         {
