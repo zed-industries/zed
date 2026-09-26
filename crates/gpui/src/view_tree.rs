@@ -1144,34 +1144,56 @@ impl ViewTree {
         self.pop_traversal(node_id);
     }
 
+    /// Records what a rendering node has read in the phases it has run so far this frame.
+    /// Every phase that renders records, not only paint: an element may lay out or prepaint
+    /// a child view without painting it (`visibility: hidden`, `display: none`, a measured
+    /// sample), and a notify of anything that view read must still reach it and its
+    /// ancestors. Otherwise the notified entity is unknown to the tree and every node is
+    /// rebuilt to be safe.
+    ///
+    /// The node rendered from current state, so it is no longer dirty. That matters beyond
+    /// bookkeeping: invalidation stops climbing at the first dirty node, taking its
+    /// ancestors to be dirty already. A node that never paints keeps no record from a
+    /// painted frame, so clearing the flag does not make it reusable.
+    pub(crate) fn record_dependencies(&mut self, node_id: ViewNodeId, accessed: &DependencySet) {
+        let mut current = self.take_dependency_set();
+        current.extend(accessed.iter().copied());
+        self.commit_dependencies(node_id, current);
+    }
+
+    fn commit_dependencies(&mut self, node_id: ViewNodeId, mut current: DependencySet) {
+        let Some(node) = self.nodes.get_mut(node_id) else {
+            self.recycle_dependency_set(current);
+            return;
+        };
+        current.extend(node.view_id);
+        current.sort_unstable();
+        current.dedup();
+        let previous = std::mem::replace(&mut node.accessed_entities, current);
+        Self::replace_dependencies(
+            &mut self.consumers,
+            node_id,
+            &previous,
+            &node.accessed_entities,
+        );
+        Self::clear_dirty(node, &mut self.dirty_count);
+        self.recycle_dependency_set(previous);
+    }
+
     pub(crate) fn store_render(
         &mut self,
         node_id: ViewNodeId,
         cache_key: ViewNodeCacheKey,
-        mut accessed_entities: DependencySet,
+        accessed_entities: DependencySet,
     ) {
         let Some(node) = self.nodes.get_mut(node_id) else {
             return;
         };
         let old_bounds = node.cache_key.bounds;
         let new_bounds = cache_key.bounds;
-        accessed_entities.extend(node.view_id);
-        accessed_entities.sort_unstable();
-        accessed_entities.dedup();
         node.cache_key = cache_key;
         node.output.retain_accessed_element_states();
-        let previous_accesses = std::mem::replace(&mut node.accessed_entities, accessed_entities);
-        Self::replace_dependencies(
-            &mut self.consumers,
-            node_id,
-            &previous_accesses,
-            &node.accessed_entities,
-        );
-        self.recycle_dependency_set(previous_accesses);
-
-        if let Some(node) = self.nodes.get_mut(node_id) {
-            Self::clear_dirty(node, &mut self.dirty_count);
-        }
+        self.commit_dependencies(node_id, accessed_entities);
         self.frame_stats.rebuilt_scopes += 1;
         self.include_changed_bounds(old_bounds);
         self.include_changed_bounds(new_bounds);

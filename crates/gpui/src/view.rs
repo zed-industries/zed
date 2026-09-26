@@ -455,6 +455,9 @@ impl<V: View> Element for ViewElement<V> {
                     });
                     let previous = window.view_tree.store_layout(node_id, layout);
                     window.retire_layout(previous);
+                    window
+                        .view_tree
+                        .record_dependencies(node_id, &accessed_entities);
                     window.finish_node_phase(node_id, true);
                     self.node_layout = Some(NodeViewLayout {
                         layout,
@@ -543,6 +546,9 @@ impl<V: View> Element for ViewElement<V> {
                         element
                     }
                 });
+                window
+                    .view_tree
+                    .record_dependencies(node_id, &accessed_entities);
                 window.finish_node_phase(node_id, true);
                 ViewElementPrepaintState {
                     element: Some(element),
@@ -894,6 +900,80 @@ mod tests {
             1,
             "a clean view under a clipping parent is reused"
         );
+    }
+
+    /// A view under `visibility: hidden` is laid out and prepainted but never painted. Its
+    /// reads are still recorded, so notifying it dirties it and its ancestors only; a
+    /// visible sibling is reused rather than the whole window rebuilt.
+    #[gpui::test]
+    fn notifying_an_unpainted_view_rebuilds_only_its_ancestors(cx: &mut TestAppContext) {
+        struct Leaf {
+            width: f32,
+            renders: Rc<Cell<usize>>,
+        }
+        impl Render for Leaf {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders.set(self.renders.get() + 1);
+                div().w(px(self.width)).h(px(10.)).bg(rgb(0x336699))
+            }
+        }
+        struct Host {
+            visible: Entity<Leaf>,
+            hidden: Entity<Leaf>,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .child(self.visible.clone())
+                    .child(div().invisible().child(self.hidden.clone()))
+            }
+        }
+        let visible_renders = Rc::new(Cell::new(0));
+        let hidden_renders = Rc::new(Cell::new(0));
+        let (window, hidden) = {
+            let hidden_slot = Rc::new(std::cell::RefCell::new(None));
+            let window = cx.open_window(size(px(100.), px(100.)), {
+                let visible_renders = visible_renders.clone();
+                let hidden_renders = hidden_renders.clone();
+                let hidden_slot = hidden_slot.clone();
+                move |_, cx| {
+                    let hidden = cx.new(|_| Leaf {
+                        width: 20.,
+                        renders: hidden_renders,
+                    });
+                    *hidden_slot.borrow_mut() = Some(hidden.clone());
+                    Host {
+                        visible: cx.new(|_| Leaf {
+                            width: 20.,
+                            renders: visible_renders,
+                        }),
+                        hidden,
+                    }
+                }
+            });
+            let hidden = hidden_slot.borrow_mut().take().expect("host built");
+            (window, hidden)
+        };
+        cx.run_until_parked();
+        assert_eq!((visible_renders.get(), hidden_renders.get()), (1, 1));
+        for step in 1..=3 {
+            hidden.update(cx, |leaf, cx| {
+                leaf.width += 10.;
+                cx.notify();
+            });
+            cx.run_until_parked();
+            assert_eq!(
+                (visible_renders.get(), hidden_renders.get()),
+                (1, 1 + step),
+                "only the notified hidden view renders again, not its visible sibling"
+            );
+            let stats = window
+                .update(cx, |_, window, _| window.view_tree_stats())
+                .expect("window open");
+            assert_eq!(stats.full_refresh_reason, None);
+            assert!(stats.reused_subtrees > 0, "the visible sibling is reused");
+        }
     }
 
     /// Group styles resolve through per-frame bookkeeping that every prepaint of a grouped
