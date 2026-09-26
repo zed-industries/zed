@@ -1775,11 +1775,7 @@ impl LinuxClient for X11Client {
         let mut state = self.0.borrow_mut();
         state
             .clipboard
-            .set_text(
-                std::borrow::Cow::Owned(item.text().unwrap_or_default()),
-                clipboard::ClipboardKind::Clipboard,
-                clipboard::WaitConfig::None,
-            )
+            .set_item(&item)
             .context("X11: Failed to write to clipboard (clipboard)")
             .log_with_level(log::Level::Debug);
         state.clipboard_item.replace(item);

@@ -180,9 +180,18 @@ impl Clipboard {
         self.self_mime.clone()
     }
 
-    pub fn send(&self, _mime_type: String, fd: OwnedFd) {
-        if let Some(text) = self.contents.as_ref().and_then(|contents| contents.text()) {
-            self.send_bytes(fd, text.as_bytes().to_owned());
+    pub fn send(&self, mime_type: String, fd: OwnedFd) {
+        if let Some(contents) = self.contents.as_ref() {
+            let text = if mime_type == "text/html" {
+                contents.html().map(str::to_owned)
+            } else if TEXT_MIME_TYPES.contains(&mime_type.as_str()) {
+                contents.text()
+            } else {
+                None
+            };
+            if let Some(text) = text {
+                self.send_bytes(fd, text.into_bytes());
+            }
         }
     }
 

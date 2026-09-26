@@ -24,6 +24,23 @@ def fib(n):
 ```
 ````
 
+## Preview and Copying {#preview-and-copying}
+
+Open the rendered preview with {#action markdown::OpenPreview}
+({#kb markdown::OpenPreview}). To open it beside the source, use
+{#action markdown::OpenPreviewToTheSide}.
+
+With the preview focused, use {#action markdown::SelectAll}
+({#kb markdown::SelectAll}) to select the entire document, or drag to select part
+of the rendered text.
+
+Right-click the selection and choose **Copy as HTML** to paste formatted content
+into a rich-text destination, such as a document or email editor. You can also
+run {#action markdown::CopyAsHtml} from the command palette. The clipboard includes
+a plain-text fallback for applications that do not accept HTML.
+
+Use **Copy** for plain text or **Copy as Markdown** for Markdown source.
+
 ## Configuration
 
 ### Format
