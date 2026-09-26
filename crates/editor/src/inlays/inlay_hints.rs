@@ -5367,43 +5367,6 @@ let c = 3;"#
         cx.assert_display_state("ˇfooclipped_column\nbarbuffer_end");
     }
 
-    async fn check_none_hint_bias(
-        cx: &mut TestAppContext,
-        position: usize,
-        label: &'static str,
-        expected: &str,
-    ) {
-        let (_, editor, _fake_server) =
-            prepare_test_objects_with_text(cx, "fn foo(s: &str) {}", move |fake_server, _| {
-                fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
-                    move |_, _| async move {
-                        Ok(Some(vec![lsp::InlayHint {
-                            position: lsp::Position::new(0, position as u32),
-                            label: lsp::InlayHintLabel::String(label.to_string()),
-                            kind: None,
-                            text_edits: None,
-                            tooltip: None,
-                            padding_left: None,
-                            padding_right: None,
-                            data: None,
-                        }]))
-                    },
-                );
-            })
-            .await;
-
-        editor
-            .update(cx, |editor, window, cx| {
-                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges([MultiBufferOffset(position)..MultiBufferOffset(position)])
-                });
-                editor.handle_input("X", window, cx);
-                let text = editor.display_text(cx);
-                assert!(text.contains(expected), "expected {expected:?} in {text:?}");
-            })
-            .unwrap();
-    }
-
     #[gpui::test]
     async fn test_none_kind_hint_bias(cx: &mut TestAppContext) {
         init_test(cx, &|settings| {
@@ -5415,9 +5378,64 @@ let c = 3;"#
             })
         });
 
-        check_none_hint_bias(cx, 6, "<'_>", "fooX<'_>(").await;
-        check_none_hint_bias(cx, 11, "'_", "&'_Xstr").await;
-        check_none_hint_bias(cx, 18, "// fn foo", "{}X// fn foo").await;
+        check_none_hint_bias(cx, 6, "<'_>", "fn fooX<'_>(s: &str) {}").await;
+        check_none_hint_bias(cx, 11, "'_", "fn foo(s: &'_Xstr) {}").await;
+        check_none_hint_bias(cx, 18, "// fn foo", "fn foo(s: &str) {}X// fn foo").await;
+    }
+
+    #[gpui::test]
+    async fn test_colocated_mixed_kind_hints_share_bias(cx: &mut TestAppContext) {
+        init_test(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                edit_debounce_ms: Some(10_000),
+                scroll_debounce_ms: Some(0),
+                ..InlayHintSettingsContent::default()
+            })
+        });
+
+        let text = "fn f() {} fn main() { let c: fn() -> fn() = ||f; }";
+        let position = 46;
+
+        let (_, editor, _fake_server) =
+            prepare_test_objects_with_text(cx, text, move |fake_server, _| {
+                fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                    move |_, _| async move {
+                        let hint = |kind, label: &str| lsp::InlayHint {
+                            position: lsp::Position::new(0, position),
+                            label: lsp::InlayHintLabel::String(label.to_string()),
+                            kind,
+                            text_edits: None,
+                            tooltip: None,
+                            padding_left: None,
+                            padding_right: None,
+                            data: None,
+                        };
+                        Ok(Some(vec![
+                            hint(Some(lsp::InlayHintKind::TYPE), " -> fn()"),
+                            hint(None, "<fn-item-to-fn-pointer>"),
+                        ]))
+                    },
+                );
+            })
+            .await;
+
+        editor
+        .update(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([
+                    MultiBufferOffset(position as usize)..MultiBufferOffset(position as usize),
+                ])
+            });
+            assert_eq!(
+                editor.display_text(cx),
+                "fn f() {} fn main() { let c: fn() -> fn() = || -> fn()<fn-item-to-fn-pointer>f; }"
+            );
+            let snapshot = editor.display_snapshot(cx);
+            let head = editor.selections.newest_display(&snapshot).head();
+            assert_eq!(head.column(), position);
+        })
+        .unwrap();
     }
 
     pub(crate) fn init_test(cx: &mut TestAppContext, f: &dyn Fn(&mut AllLanguageSettingsContent)) {
@@ -5506,6 +5524,42 @@ let c = 3;"#
             .unwrap();
         cx.executor().run_until_parked();
         (file_path, editor, fake_server)
+    }
+
+    async fn check_none_hint_bias(
+        cx: &mut TestAppContext,
+        position: usize,
+        label: &'static str,
+        expected: &str,
+    ) {
+        let (_, editor, _fake_server) =
+            prepare_test_objects_with_text(cx, "fn foo(s: &str) {}", move |fake_server, _| {
+                fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                    move |_, _| async move {
+                        Ok(Some(vec![lsp::InlayHint {
+                            position: lsp::Position::new(0, position as u32),
+                            label: lsp::InlayHintLabel::String(label.to_string()),
+                            kind: None,
+                            text_edits: None,
+                            tooltip: None,
+                            padding_left: None,
+                            padding_right: None,
+                            data: None,
+                        }]))
+                    },
+                );
+            })
+            .await;
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges([MultiBufferOffset(position)..MultiBufferOffset(position)])
+                });
+                editor.handle_input("X", window, cx);
+                assert_eq!(editor.display_text(cx), expected);
+            })
+            .unwrap();
     }
 
     // Inlay hints in the cache are stored per excerpt as a key, and those keys are guaranteed to be ordered same as in the multi buffer.
