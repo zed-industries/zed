@@ -5,6 +5,34 @@ use project::project_settings::GoToDiagnosticSeverityFilter;
 use schemars::JsonSchema;
 use util::serde::default_true;
 
+/// Runs an LSP code action by kind (e.g. `source.organizeImports`).
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct CodeAction {
+    pub kind: String,
+
+    #[serde(default)]
+    pub apply: ApplyMode,
+}
+
+/// Resolution strategy for [`CodeAction`] when the LSP returns 0, 1, or N
+/// matching actions.
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplyMode {
+    /// Apply the first matching action without prompting.
+    First,
+    /// Apply if exactly one matches; otherwise show the code-actions picker
+    /// filtered by `kind`. Default.
+    #[default]
+    IfSingle,
+    /// Always open the code-actions picker filtered by `kind`.
+    Never,
+    /// Apply all matching actions in one transaction.
+    All,
+}
+
 /// Selects the next occurrence of the current selection.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
