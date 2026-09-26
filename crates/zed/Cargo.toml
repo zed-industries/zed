@@ -236,6 +236,9 @@ zlog.workspace = true
 zlog_settings.workspace = true
 ztracing.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+nix = { workspace = true, features = ["user"] }
+
 [target.'cfg(target_os = "windows")'.dependencies]
 etw_tracing.workspace = true
 windows.workspace = true
