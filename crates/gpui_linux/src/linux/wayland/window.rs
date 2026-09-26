@@ -1043,9 +1043,10 @@ impl WaylandWindowStatePtr {
         let client = state.client.clone();
         let ime_enabled = if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
-            let accepts_text_input = input_handler.query_accepts_text_input();
+            let prefers_ime_for_printable_keys =
+                input_handler.query_prefers_ime_for_printable_keys();
             self.state.borrow_mut().input_handler = Some(input_handler);
-            accepts_text_input
+            prefers_ime_for_printable_keys
         } else {
             drop(state);
             false

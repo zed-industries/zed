@@ -698,7 +698,9 @@ impl WindowsWindowInner {
 
     fn update_ime_enabled(&self, handle: HWND) {
         let ime_enabled = self
-            .with_input_handler(|input_handler| input_handler.query_accepts_text_input())
+            .with_input_handler(|input_handler| {
+                input_handler.query_prefers_ime_for_printable_keys()
+            })
             .unwrap_or(false);
         if ime_enabled == self.state.ime_enabled.get() {
             return;
