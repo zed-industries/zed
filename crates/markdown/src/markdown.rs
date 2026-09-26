@@ -38,7 +38,7 @@ use gpui::{
     MouseEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, Stateful,
     StrikethroughStyle, StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign,
     TextLayout, TextRun, TextStyle, TextStyleRefinement, UTF16Selection, WrappedLineLayout,
-    actions, canvas, fill, img, point, quad, relative, size,
+    actions, canvas, img, point, quad, relative, size,
 };
 use language::{
     Bias, CharClassifier, Language, LanguageRegistry, OffsetUtf16, ResolvedHighlights, Rope,
@@ -4179,7 +4179,6 @@ impl MarkdownElementBuilder {
             text_align: TextAlign::Left,
             highlights: SmallVec::new(),
             code_chips: SmallVec::new(),
-            run_backgrounds: SmallVec::new(),
         }));
         div()
             .absolute()
@@ -4205,25 +4204,7 @@ impl MarkdownElementBuilder {
                     .highlights_for_line(first_mapping.source_index..self.current_source_index)
             })
             .unwrap_or_default();
-        let mut runs = line.runs;
-        let mut run_backgrounds = SmallVec::<[(Range<usize>, Hsla); 1]>::new();
-        let mut run_start = 0;
-        for run in &mut runs {
-            let run_range = run_start..run_start + run.len;
-            run_start = run_range.end;
-            let Some(color) = run.background_color.take() else {
-                continue;
-            };
-            match run_backgrounds.last_mut() {
-                Some((previous_range, previous_color))
-                    if previous_range.end == run_range.start && *previous_color == color =>
-                {
-                    previous_range.end = run_range.end;
-                }
-                _ => run_backgrounds.push((run_range, color)),
-            }
-        }
-        let text = StyledText::new(line.text).with_runs(runs);
+        let text = StyledText::new(line.text).with_runs(line.runs);
         let rendered_line = Rc::new(RenderedLine {
             layout: text.layout().clone(),
             visible_bounds: Cell::new(None),
@@ -4237,12 +4218,11 @@ impl MarkdownElementBuilder {
             text_align,
             highlights,
             code_chips: line.code_chips.into_iter().collect(),
-            run_backgrounds,
         });
         self.rendered_lines.push(rendered_line.clone());
         self.append_child(
             RenderedLineElement {
-                text: text.into_any(),
+                text,
                 line: rendered_line,
             }
             .into_any_element(),
@@ -4267,7 +4247,7 @@ impl MarkdownElementBuilder {
 /// Wraps a rendered line so its code chips and highlights share the glyphs'
 /// ancestor content masks, and records the clipped bounds for platform text hit testing.
 struct RenderedLineElement {
-    text: AnyElement,
+    text: StyledText,
     line: Rc<RenderedLine>,
 }
 
@@ -4286,26 +4266,27 @@ impl Element for RenderedLineElement {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
+        inspector_id: Option<&gpui::InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        (self.text.request_layout(window, cx), ())
+        self.text.request_layout(None, inspector_id, window, cx)
     }
 
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
+        inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
+        request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
         self.line
             .visible_bounds
             .set(Some(bounds.intersect(&window.content_mask().bounds)));
-        self.text.prepaint(window, cx);
+        self.text
+            .prepaint(None, inspector_id, bounds, request_layout, window, cx);
     }
 
     fn paint(
@@ -4318,10 +4299,11 @@ impl Element for RenderedLineElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let layout = self.text.layout();
         self.line.paint_code_chips(window);
-        self.line.paint_run_backgrounds(window);
+        layout.paint_background(window, cx).log_err();
         self.line.paint_highlights(window);
-        self.text.paint(window, cx);
+        layout.paint_foreground(window, cx).log_err();
     }
 }
 
@@ -4344,10 +4326,6 @@ struct RenderedLine {
     highlights: SmallVec<[(Range<usize>, Hsla); 1]>,
     /// Inline code chip ranges intersecting this line, in rendered indices
     code_chips: SmallVec<[(Range<usize>, Hsla); 1]>,
-    /// Text run backgrounds, in rendered indices. They are taken out of the
-    /// runs so they can be painted below the highlights, which themselves
-    /// must stay below the glyphs.
-    run_backgrounds: SmallVec<[(Range<usize>, Hsla); 1]>,
 }
 
 impl RenderedLine {
@@ -4397,25 +4375,8 @@ impl RenderedLine {
         }
     }
 
-    fn paint_run_backgrounds(&self, window: &mut Window) {
-        if self.run_backgrounds.is_empty() {
-            return;
-        }
-        let wrapped_line_segments = self.wrapped_line_segments();
-        if wrapped_line_segments.is_empty() {
-            return;
-        }
-
-        for (rendered_range, color) in &self.run_backgrounds {
-            self.for_each_bounds_in_rendered_range(
-                &wrapped_line_segments,
-                rendered_range.clone(),
-                |bounds| window.paint_quad(fill(bounds, *color)),
-            );
-        }
-    }
-
-    /// Painted before the glyphs so themes with opaque highlight colors don't hide the text
+    /// Painted between the text run backgrounds and the glyphs, so opaque highlight
+    /// colors neither hide the text nor get hidden by run backgrounds
     fn paint_highlights(&self, window: &mut Window) {
         if self.highlights.is_empty() {
             return;
@@ -5156,13 +5117,16 @@ impl InputHandler for MarkdownInputHandler {
 mod tests {
     use super::*;
     use gpui::{
-        Modifiers, RenderImage, ScrollDelta, ScrollWheelEvent, TestAppContext, TouchPhase,
+        DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId, LineLayout, Modifiers,
+        NoopTextSystem, PlatformTextSystem, RenderGlyphParams, RenderImage, ScrollDelta,
+        ScrollWheelEvent, Size, TestAppContext, TestDispatcher, TextRenderingMode, TouchPhase,
         UpdateGlobal, VisualTestContext, size,
     };
     use language::{Language, LanguageConfig, LanguageMatcher};
+    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     };
 
@@ -7840,6 +7804,121 @@ mod tests {
                 "search highlight must be drawn below the text, otherwise opaque theme colors hide it"
             );
         });
+    }
+
+    /// Records the font runs of every line it shapes, delegating everything else.
+    struct FontRunRecordingTextSystem {
+        text_system: NoopTextSystem,
+        shaped_lines: Mutex<Vec<(String, Vec<usize>)>>,
+    }
+
+    impl PlatformTextSystem for FontRunRecordingTextSystem {
+        fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> anyhow::Result<()> {
+            self.text_system.add_fonts(fonts)
+        }
+
+        fn all_font_names(&self) -> Vec<String> {
+            self.text_system.all_font_names()
+        }
+
+        fn font_id(&self, descriptor: &Font) -> anyhow::Result<FontId> {
+            self.text_system.font_id(descriptor)
+        }
+
+        fn font_metrics(&self, font_id: FontId) -> FontMetrics {
+            self.text_system.font_metrics(font_id)
+        }
+
+        fn typographic_bounds(
+            &self,
+            font_id: FontId,
+            glyph_id: GlyphId,
+        ) -> anyhow::Result<Bounds<f32>> {
+            self.text_system.typographic_bounds(font_id, glyph_id)
+        }
+
+        fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<Size<f32>> {
+            self.text_system.advance(font_id, glyph_id)
+        }
+
+        fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
+            self.text_system.glyph_for_char(font_id, ch)
+        }
+
+        fn glyph_raster_bounds(
+            &self,
+            params: &RenderGlyphParams,
+        ) -> anyhow::Result<Bounds<DevicePixels>> {
+            self.text_system.glyph_raster_bounds(params)
+        }
+
+        fn rasterize_glyph(
+            &self,
+            params: &RenderGlyphParams,
+            raster_bounds: Bounds<DevicePixels>,
+        ) -> anyhow::Result<(Size<DevicePixels>, Vec<u8>)> {
+            self.text_system.rasterize_glyph(params, raster_bounds)
+        }
+
+        fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+            self.shaped_lines
+                .lock()
+                .expect("shaped lines lock should not be poisoned")
+                .push((text.to_string(), runs.iter().map(|run| run.len).collect()));
+            self.text_system.layout_line(text, font_size, runs)
+        }
+
+        fn recommended_rendering_mode(
+            &self,
+            font_id: FontId,
+            font_size: Pixels,
+        ) -> TextRenderingMode {
+            self.text_system
+                .recommended_rendering_mode(font_id, font_size)
+        }
+    }
+
+    #[test]
+    fn test_runs_differing_only_in_background_are_shaped_separately() {
+        let text_system = Arc::new(FontRunRecordingTextSystem {
+            text_system: NoopTextSystem,
+            shaped_lines: Mutex::default(),
+        });
+        let mut cx = TestAppContext::build_with_text_system(
+            TestDispatcher::new(0),
+            None,
+            text_system.clone(),
+        );
+        ensure_theme_initialized(&mut cx);
+        // Only the link background distinguishes `f` from its neighbors, so the
+        // run boundaries around it must survive shaping to keep `f` and `i` from
+        // forming a ligature across them
+        let source = "a[f](https://zed.dev)i b";
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        let (_, cx) = cx.add_window_view(move |_, _| MarkdownTestView {
+            markdown,
+            style: MarkdownStyle {
+                link: TextStyleRefinement {
+                    background_color: Some(gpui::red()),
+                    ..Default::default()
+                },
+                ..MarkdownStyle::default()
+            },
+            code_span_link: None,
+            rendered_text: Rc::new(RefCell::new(None)),
+        });
+        cx.run_until_parked();
+
+        let shaped_lines = text_system
+            .shaped_lines
+            .lock()
+            .expect("shaped lines lock should not be poisoned");
+        let (_, font_run_lengths) = shaped_lines
+            .iter()
+            .rev()
+            .find(|(text, _)| text == "afi b")
+            .expect("paragraph should be shaped");
+        assert_eq!(font_run_lengths, &[1, 1, 3]);
     }
 
     /// Renders a paragraph followed by a fenced code block at the given
