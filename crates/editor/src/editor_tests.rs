@@ -1200,6 +1200,113 @@ fn test_toggle_breadcrumb_does_not_change_settings(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_breadcrumb_navigation_offsets(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.toolbar.get_or_insert_default().breadcrumbs = Some(true);
+    });
+
+    use workspace::item::Item as _;
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("fn first() {}\nfn second() {}\n", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    editor.update(cx, |editor, _window, cx| {
+        let (segments, _) = editor.breadcrumbs(cx).expect("breadcrumbs should exist");
+        assert_eq!(segments.len(), 1);
+        assert_eq!(editor.breadcrumb_symbol_anchors(cx), vec![None]);
+
+        let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+        let buffer_id = editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .read(cx)
+            .remote_id();
+        let first_anchor = buffer_snapshot.anchor_after(Point::new(0, 3));
+        let second_anchor = buffer_snapshot.anchor_after(Point::new(1, 3));
+        let first_text_anchor = first_anchor.expect_text_anchor();
+        let second_text_anchor = second_anchor.expect_text_anchor();
+
+        editor.outline_symbols_at_cursor = Some((
+            buffer_id,
+            vec![
+                OutlineItem {
+                    depth: 0,
+                    range: first_anchor..first_anchor,
+                    selection_range: first_anchor..first_anchor,
+                    source_range_for_text: first_anchor..first_anchor,
+                    text: "fn first".into(),
+                    highlight_ranges: vec![],
+                    name_ranges: vec![],
+                    body_range: None,
+                    annotation_range: None,
+                },
+                OutlineItem {
+                    depth: 1,
+                    range: second_anchor..second_anchor,
+                    selection_range: second_anchor..second_anchor,
+                    source_range_for_text: second_anchor..second_anchor,
+                    text: "fn second".into(),
+                    highlight_ranges: vec![],
+                    name_ranges: vec![],
+                    body_range: None,
+                    annotation_range: None,
+                },
+            ],
+        ));
+
+        let (segments, _) = editor.breadcrumbs(cx).expect("breadcrumbs should exist");
+        assert_eq!(segments.len(), 3);
+        assert_eq!(
+            editor.breadcrumb_symbol_anchors(cx),
+            vec![None, Some(first_text_anchor), Some(second_text_anchor)]
+        );
+    });
+}
+
+#[gpui::test]
+fn test_breadcrumb_jump_to_symbol(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.toolbar.get_or_insert_default().breadcrumbs = Some(true);
+    });
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("fn first() {}\nfn second() {}\n", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    editor.update(cx, |editor, window, cx| {
+        let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+        let first_anchor = buffer_snapshot.anchor_after(Point::new(0, 3)).expect_text_anchor();
+        let second_anchor = buffer_snapshot.anchor_after(Point::new(1, 3)).expect_text_anchor();
+
+        editor.go_to_breadcrumb_symbol(second_anchor, window, cx);
+        let display_snapshot = editor.display_snapshot(cx);
+        assert_eq!(
+            editor.selections.all::<Point>(&display_snapshot)[0].start,
+            Point::new(1, 3)
+        );
+
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([MultiBufferOffset(0)..MultiBufferOffset(0)]);
+        });
+        editor.handle_input("/* comment */\n", window, cx);
+
+        editor.go_to_breadcrumb_symbol(first_anchor, window, cx);
+        let display_snapshot = editor.display_snapshot(cx);
+        assert_eq!(
+            editor.selections.all::<Point>(&display_snapshot)[0].start,
+            Point::new(1, 3)
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_navigation_history(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

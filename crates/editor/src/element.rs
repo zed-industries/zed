@@ -7148,6 +7148,20 @@ impl Gutter<'_> {
     }
 }
 
+fn copy_file_path(editor: &WeakEntity<Editor>, cx: &mut App) {
+    if let Some(abs_path) = editor.upgrade().and_then(|editor| {
+        editor.update(cx, |editor, cx| {
+            editor.target_file_abs_path(cx)
+        })
+    }) {
+        if let Some(path_str) = abs_path.to_str() {
+            cx.write_to_clipboard(ClipboardItem::new_string(
+                path_str.to_string(),
+            ));
+        }
+    }
+}
+
 pub fn render_breadcrumb_text(
     mut segments: Vec<HighlightedText>,
     breadcrumb_font: Option<Font>,
@@ -7160,6 +7174,21 @@ pub fn render_breadcrumb_text(
     const MAX_SEGMENTS: usize = 12;
 
     let element = h_flex().flex_grow_1().text_ui(cx);
+
+    let editor_entity = active_item.act_as::<Editor>(cx);
+
+    let is_singleton = editor_entity
+        .as_ref()
+        .map_or(false, |editor| editor.read(cx).buffer().read(cx).is_singleton());
+
+    let mut anchors = editor_entity
+        .as_ref()
+        .map(|editor| editor.read(cx).breadcrumb_symbol_anchors(cx))
+        .unwrap_or_default();
+
+    if anchors.len() != segments.len() {
+        anchors.clear();
+    }
 
     let prefix_end_ix = cmp::min(segments.len(), MAX_SEGMENTS / 2);
     let suffix_start_ix = cmp::max(
@@ -7175,7 +7204,13 @@ pub fn render_breadcrumb_text(
                 highlights: vec![],
             }),
         );
+        if anchors.len() >= suffix_start_ix {
+            anchors.splice(prefix_end_ix..suffix_start_ix, [None]);
+        }
     }
+
+    let editor = editor_entity.map(|editor| editor.downgrade());
+    let has_project_path = active_item.project_path(cx).is_some();
 
     let highlighted_segments = segments.into_iter().enumerate().map(|(index, segment)| {
         let mut text_style = window.text_style();
@@ -7187,57 +7222,44 @@ pub fn render_breadcrumb_text(
         }
         text_style.color = Color::Muted.color(cx);
 
-        if index == 0
+        let styled_element = if index == 0
             && !workspace::TabBarSettings::get_global(cx).show
             && active_item.is_dirty(cx)
             && let Some(styled_element) = apply_dirty_filename_style(&segment, &text_style, cx)
         {
+            styled_element
+        } else {
+            StyledText::new(segment.text.replace('\n', " "))
+                .with_default_highlights(&text_style, segment.highlights)
+                .into_any()
+        };
+
+        if multibuffer_header {
             return styled_element;
         }
 
-        StyledText::new(segment.text.replace('\n', " "))
-            .with_default_highlights(&text_style, segment.highlights)
-            .into_any()
-    });
-
-    let breadcrumbs = Itertools::intersperse_with(highlighted_segments, || {
-        Label::new("›").color(Color::Placeholder).into_any_element()
-    });
-
-    let breadcrumbs_stack = h_flex()
-        .gap_1()
-        .when(multibuffer_header, |this| {
-            this.pl_2()
-                .border_l_1()
-                .border_color(cx.theme().colors().border.opacity(0.6))
-        })
-        .children(breadcrumbs);
-
-    let breadcrumbs = if let Some(prefix) = prefix {
-        h_flex().gap_1p5().child(prefix).child(breadcrumbs_stack)
-    } else {
-        breadcrumbs_stack
-    };
-
-    let editor = active_item
-        .downcast::<Editor>()
-        .map(|editor| editor.downgrade());
-
-    let has_project_path = active_item.project_path(cx).is_some();
-
-    match editor {
-        Some(editor) => element
-            .id("breadcrumb_container")
-            .when(!multibuffer_header, |this| this.overflow_x_scroll())
-            .child(
-                ButtonLike::new("toggle outline view")
-                    .child(breadcrumbs)
-                    .when(multibuffer_header, |this| {
-                        this.style(ButtonStyle::Transparent)
+        if let Some(editor) = editor.as_ref() {
+            if let Some(anchor) = anchors.get(index).copied().flatten() {
+                let editor = editor.clone();
+                return ButtonLike::new(("breadcrumb-segment", index))
+                    .style(ButtonStyle::Subtle)
+                    .child(styled_element)
+                    .tooltip(Tooltip::text("Jump to Symbol"))
+                    .on_click(move |_event, window, cx| {
+                        if let Some(editor) = editor.upgrade() {
+                            editor.update(cx, |editor, cx| {
+                                editor.go_to_breadcrumb_symbol(anchor, window, cx);
+                            });
+                        }
                     })
-                    .when(!multibuffer_header, |this| {
-                        let focus_handle = editor.upgrade().unwrap().focus_handle(&cx);
-
+                    .into_any_element();
+            } else if index == 0 && is_singleton {
+                let editor = editor.clone();
+                let focus_handle = editor.upgrade().map(|editor| editor.focus_handle(cx));
+                return ButtonLike::new(("breadcrumb-segment", index))
+                    .style(ButtonStyle::Subtle)
+                    .child(styled_element)
+                    .when_some(focus_handle, |this, focus_handle| {
                         this.tooltip(Tooltip::element(move |_window, cx| {
                             v_flex()
                                 .gap_1()
@@ -7265,37 +7287,78 @@ pub fn render_breadcrumb_text(
                                 })
                                 .into_any_element()
                         }))
-                        .on_click({
-                            let editor = editor.clone();
-                            move |_, window, cx| {
-                                if let Some((editor, callback)) = editor
-                                    .upgrade()
-                                    .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
-                                {
-                                    callback(editor.to_any_view(), window, cx);
-                                }
+                    })
+                    .on_click({
+                        let editor = editor.clone();
+                        move |_, window, cx| {
+                            if let Some((editor, callback)) = editor
+                                .upgrade()
+                                .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
+                            {
+                                callback(editor.to_any_view(), window, cx);
                             }
+                        }
+                    })
+                    .when(has_project_path, |this| {
+                        let editor = editor.clone();
+                        this.on_right_click(move |_, _, cx| {
+                            copy_file_path(&editor, cx);
                         })
-                        .when(has_project_path, |this| {
-                            this.on_right_click({
-                                let editor = editor.clone();
-                                move |_, _, cx| {
-                                    if let Some(abs_path) = editor.upgrade().and_then(|editor| {
-                                        editor.update(cx, |editor, cx| {
-                                            editor.target_file_abs_path(cx)
-                                        })
-                                    }) {
-                                        if let Some(path_str) = abs_path.to_str() {
-                                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                                path_str.to_string(),
-                                            ));
-                                        }
-                                    }
-                                }
-                            })
-                        })
-                    }),
-            )
+                    })
+                    .into_any_element();
+            }
+        }
+
+        styled_element
+    });
+
+    let breadcrumbs = Itertools::intersperse_with(highlighted_segments, || {
+        Label::new("›").color(Color::Placeholder).into_any_element()
+    });
+
+    let breadcrumbs_stack = h_flex()
+        .gap_0p5()
+        .when(multibuffer_header, |this| {
+            this.pl_2()
+                .border_l_1()
+                .border_color(cx.theme().colors().border.opacity(0.6))
+        })
+        .children(breadcrumbs);
+
+    let breadcrumbs = if let Some(prefix) = prefix {
+        h_flex().gap_1p5().child(prefix).child(breadcrumbs_stack)
+    } else {
+        breadcrumbs_stack
+    };
+
+    if multibuffer_header {
+        return match editor {
+            Some(_) => element
+                .id("breadcrumb_container")
+                .child(
+                    ButtonLike::new("toggle outline view")
+                        .child(breadcrumbs)
+                        .style(ButtonStyle::Transparent),
+                )
+                .into_any_element(),
+            None => element
+                .h(rems_from_px(22_f32))
+                .pl_1()
+                .child(breadcrumbs)
+                .into_any_element(),
+        };
+    }
+
+    match editor {
+        Some(editor) => element
+            .id("breadcrumb_container")
+            .overflow_x_scroll()
+            .child(breadcrumbs)
+            .when(has_project_path, |this| {
+                this.on_mouse_down(MouseButton::Right, move |_event, _window, cx| {
+                    copy_file_path(&editor, cx);
+                })
+            })
             .into_any_element(),
         None => element
             .h(rems_from_px(22_f32)) // Match the height and padding of the `ButtonLike` in the other arm.
