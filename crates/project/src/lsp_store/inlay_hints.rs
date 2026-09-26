@@ -11,7 +11,7 @@ use language::{
 use lsp::LanguageServerId;
 use rpc::{TypedEnvelope, proto};
 use settings::Settings as _;
-use text::{BufferId, Point};
+use text::{Anchor, BufferId, BufferSnapshot, Point, ToOffset as _};
 use util::ResultExt as _;
 
 use crate::{
@@ -21,6 +21,32 @@ use crate::{
 
 pub type CacheInlayHints = HashMap<LanguageServerId, Vec<(InlayId, InlayHint)>>;
 pub type CacheInlayHintsTask = Shared<Task<Result<CacheInlayHints, Arc<anyhow::Error>>>>;
+
+pub(super) fn hints_in_range(
+    mut hints: Vec<InlayHint>,
+    range: &Range<Anchor>,
+    snapshot: &BufferSnapshot,
+) -> Vec<InlayHint> {
+    if !range.start.is_valid(snapshot) || !range.end.is_valid(snapshot) {
+        return Vec::new();
+    }
+    let start = range.start.to_offset(snapshot);
+    let end = range.end.to_offset(snapshot);
+    let inclusive_end = end == snapshot.len();
+    hints.retain(|hint| {
+        if !hint.position.is_valid(snapshot) {
+            return false;
+        }
+        let offset = hint.position.to_offset(snapshot);
+        let before_end = if inclusive_end {
+            offset <= end
+        } else {
+            offset < end
+        };
+        offset >= start && before_end
+    });
+    hints
+}
 
 /// A logic to apply when querying for new inlay hints and deciding what to do with the old entries in the cache in case of conflicts.
 #[derive(Debug, Clone, Copy)]
@@ -258,12 +284,18 @@ impl LspStore {
         server_id: LanguageServerId,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<InlayHint>> {
+        if !self.text_document_capability_matches_for_server(
+            &buffer,
+            server_id,
+            "textDocument/inlayHint",
+            |capabilities| InlayHints::can_resolve_inlays(capabilities.server_capabilities),
+            cx,
+        ) {
+            hint.resolve_state = ResolveState::Resolved;
+            return Task::ready(Ok(hint));
+        }
+
         if let Some((upstream_client, project_id)) = self.upstream_client() {
-            if !self.check_if_capable_for_proto_request(&buffer, InlayHints::can_resolve_inlays, cx)
-            {
-                hint.resolve_state = ResolveState::Resolved;
-                return Task::ready(Ok(hint));
-            }
             let request = proto::ResolveInlayHint {
                 project_id,
                 buffer_id: buffer.read(cx).remote_id().into(),
@@ -288,14 +320,11 @@ impl LspStore {
             }) else {
                 return Task::ready(Ok(hint));
             };
-            if !InlayHints::can_resolve_inlays(&lang_server.capabilities()) {
-                return Task::ready(Ok(hint));
-            }
             let buffer_snapshot = buffer.read(cx).snapshot();
             let request_timeout = ProjectSettings::get_global(cx)
                 .global_lsp_settings
                 .get_request_timeout();
-            cx.spawn(async move |_, cx| {
+            cx.background_spawn(async move {
                 let resolve_task = lang_server.request::<lsp::request::InlayHintResolveRequest>(
                     InlayHints::project_to_lsp_hint(hint, &buffer_snapshot),
                     request_timeout,
@@ -304,16 +333,13 @@ impl LspStore {
                     .await
                     .into_response()
                     .context("inlay hint resolve LSP request")?;
-                let resolved_hint = InlayHints::lsp_to_project_hint(
+                Ok(InlayHints::lsp_to_project_hint(
                     resolved_hint,
-                    &buffer,
+                    &buffer_snapshot,
                     server_id,
                     ResolveState::Resolved,
                     false,
-                    cx,
-                )
-                .await?;
-                Ok(resolved_hint)
+                ))
             })
         }
     }

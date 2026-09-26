@@ -34,6 +34,30 @@ pub(crate) struct TableDataEngine {
 }
 
 impl TableDataEngine {
+    pub(crate) fn set_contents(&mut self, contents: TableLikeContent) {
+        if self
+            .contents
+            .headers
+            .as_slice()
+            .iter()
+            .map(TableCell::display_value)
+            .ne(contents
+                .headers
+                .as_slice()
+                .iter()
+                .map(TableCell::display_value))
+        {
+            // Filters and sorting use column indexes, which may now name different fields.
+            self.filter_stack = FilterStack::default();
+            self.applied_sorting = None;
+        }
+        self.contents = Arc::new(contents);
+        // The previous mapping can reference rows removed by an edit. Keep it empty
+        // until the background filter/sort task builds a mapping for the new contents.
+        self.d2d_mapping = DisplayToDataMapping::default();
+        self.calculate_available_filters();
+    }
+
     pub(crate) fn d2d_mapping(&self) -> &DisplayToDataMapping {
         &self.d2d_mapping
     }

@@ -4,6 +4,11 @@ use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
 };
 pub use language_model_core::ReasoningEffort;
+use language_model_core::chat_completion::ResponseStreamResult;
+pub use language_model_core::chat_completion::{
+    ChoiceDelta, FunctionChunk, PromptTokensDetails, ResponseMessageDelta, ResponseStreamEvent,
+    ToolCallChunk, Usage,
+};
 use open_ai::ChatCompletionStreamEvent;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -32,10 +37,6 @@ fn extract_retry_after(headers: &http::HeaderMap) -> Option<std::time::Duration>
         }
     }
     None
-}
-
-fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
-    opt.as_ref().is_none_or(|v| v.as_ref().is_empty())
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -397,73 +398,6 @@ pub struct FunctionContent {
     pub thought_signature: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ResponseMessageDelta {
-    pub role: Option<Role>,
-    pub content: Option<String>,
-    pub reasoning: Option<String>,
-    #[serde(default, skip_serializing_if = "is_none_or_empty")]
-    pub tool_calls: Option<Vec<ToolCallChunk>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_details: Option<serde_json::Value>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ToolCallChunk {
-    pub index: usize,
-    pub id: Option<String>,
-    pub function: Option<FunctionChunk>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct FunctionChunk {
-    pub name: Option<String>,
-    pub arguments: Option<String>,
-    #[serde(default)]
-    pub thought_signature: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct PromptTokensDetails {
-    #[serde(default)]
-    pub cached_tokens: u64,
-    #[serde(default)]
-    pub cache_write_tokens: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Usage {
-    pub prompt_tokens: u64,
-    pub completion_tokens: u64,
-    pub total_tokens: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prompt_tokens_details: Option<PromptTokensDetails>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ChoiceDelta {
-    pub index: u32,
-    pub delta: ResponseMessageDelta,
-    pub finish_reason: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ResponseStreamEvent {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    pub created: u32,
-    pub model: String,
-    pub choices: Vec<ChoiceDelta>,
-    pub usage: Option<Usage>,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum ResponseStreamResult {
-    Response(ResponseStreamEvent),
-    Error(OpenRouterErrorResponse),
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Response {
     pub id: String,
@@ -543,9 +477,9 @@ pub async fn stream_completion(
                     return Some(Err(OpenRouterError::ChatCompletion(error)));
                 }
             };
-            match serde_json::from_value(value) {
-                Ok(ResponseStreamResult::Response(response)) => Some(Ok(response)),
-                Ok(ResponseStreamResult::Error(OpenRouterErrorResponse { error })) => {
+            match serde_json::from_str::<ResponseStreamResult<OpenRouterErrorBody>>(value.get()) {
+                Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
+                Ok(ResponseStreamResult::Err { error }) => {
                     Some(Err(OpenRouterError::ApiError(ApiError {
                         status: None,
                         code: error.code,
@@ -895,7 +829,7 @@ mod tests {
         });
 
         assert_eq!(responses.len(), 1);
-        assert_eq!(responses[0].model, "vendor/model");
+        assert!(responses[0].choices.is_empty());
         let headers = captured_headers.lock().expect("captured headers lock");
         let headers = headers.as_ref().expect("captured headers");
         assert_eq!(headers["http-referer"], "https://zed.dev");

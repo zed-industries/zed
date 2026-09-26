@@ -28,6 +28,7 @@ use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
+use platform_title_bar::apply_title_bar_insets;
 use project::{AgentId, AgentServerStore};
 use settings::Settings as _;
 use theme::ActiveTheme;
@@ -869,7 +870,12 @@ impl ThreadsArchiveView {
         h_flex()
             .h(header_height)
             .map(|header| match window.window_decorations() {
-                Decorations::Client { .. } => header.mt(px(-1.)),
+                Decorations::Client { .. } => apply_title_bar_insets(
+                    header,
+                    left_window_controls,
+                    right_window_controls,
+                    false,
+                ),
                 Decorations::Server => header.mt_px().pb_px(),
             })
             .when(left_window_controls, |this| {
