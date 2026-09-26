@@ -66,6 +66,19 @@ pub struct MockRemoteConnection {
     options: MockConnectionOptions,
     server_channel: Arc<ChannelClient>,
     server_cx: SendableCx,
+    killed: std::sync::atomic::AtomicBool,
+}
+
+impl MockRemoteConnection {
+    /// Whether [`RemoteConnection::kill`] was called on this connection.
+    ///
+    /// Deliberately separate from `has_been_killed`, which reports whether the
+    /// connection is unusable: a mock stays usable so that reconnection tests
+    /// can drive the same connection again after killing it.
+    #[cfg(test)]
+    pub(crate) fn was_killed(&self) -> bool {
+        self.killed.load(Ordering::Acquire)
+    }
 }
 
 /// Wrapper to pass `AsyncApp` across thread boundaries in tests.
@@ -169,6 +182,7 @@ impl MockConnection {
             options: opts.clone(),
             server_channel: server_client.clone(),
             server_cx: SendableCx::new(server_cx),
+            killed: std::sync::atomic::AtomicBool::new(false),
         });
 
         let (tx, rx) = oneshot::channel();
@@ -186,6 +200,7 @@ impl MockConnection {
 #[async_trait(?Send)]
 impl RemoteConnection for MockRemoteConnection {
     async fn kill(&self) -> Result<()> {
+        self.killed.store(true, Ordering::Release);
         Ok(())
     }
 
@@ -200,10 +215,19 @@ impl RemoteConnection for MockRemoteConnection {
         env: &HashMap<String, String>,
         _working_dir: Option<String>,
         _port_forward: Option<(u16, String, u16)>,
-        _interactive: Interactive,
+        interactive: Interactive,
     ) -> Result<CommandTemplate> {
         let shell_program = program.unwrap_or_else(|| "sh".to_string());
         let mut shell_args = Vec::new();
+        // Mirrors the SSH transport's `-t`/`-T`, so a caller that has to agree
+        // with the far end about a TTY can be tested against this mock.
+        shell_args.push(
+            match interactive {
+                Interactive::Yes => "-t",
+                Interactive::No => "-T",
+            }
+            .to_string(),
+        );
         shell_args.push(shell_program);
         shell_args.extend(args.iter().cloned());
         Ok(CommandTemplate {
