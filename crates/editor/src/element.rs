@@ -291,7 +291,7 @@ impl SelectionLayout {
                 // Keep the cursor attached to the highlight boundary; the
                 // anchor-bias display position may sit on the far side of a
                 // boundary inlay the highlight excludes.
-                head = if selection.reversed {
+                head = if point_selection.reversed {
                     range.start
                 } else {
                     range.end
@@ -308,7 +308,7 @@ impl SelectionLayout {
         }
 
         // any vim visual mode (including line mode)
-        if cursor_offset && !range.is_empty() && !selection.reversed {
+        if cursor_offset && !range.is_empty() && !point_selection.reversed {
             if head.column() > 0 {
                 head = map.clip_point(DisplayPoint::new(head.row(), head.column() - 1), Bias::Left);
             } else if head.row().0 > 0 {
@@ -328,6 +328,17 @@ impl SelectionLayout {
             }
         }
 
+        if matches!(cursor_shape, CursorShape::Block | CursorShape::Hollow) {
+            let offset = head.to_offset(map, Bias::Left);
+            let next_offset = buffer_snapshot.clip_offset(offset + 1usize, Bias::Right);
+            if let Some(character_range) =
+                map.contiguous_display_point_range_for_buffer_range(offset..next_offset)
+            {
+                // Cover the editable character, skipping inlays at its insertion point.
+                head = head.max(character_range.start);
+            }
+        }
+
         Self {
             id,
             head,
@@ -339,6 +350,24 @@ impl SelectionLayout {
             user_name,
         }
     }
+}
+
+pub(crate) fn rendered_selection_head(
+    editor: &Editor,
+    selection: Selection<Point>,
+    map: &DisplaySnapshot,
+) -> DisplayPoint {
+    SelectionLayout::new(
+        selection,
+        editor.selections.line_mode(),
+        editor.cursor_offset_on_selection,
+        editor.cursor_shape,
+        map,
+        false,
+        editor.leader_id.is_none(),
+        None,
+    )
+    .head
 }
 
 #[derive(Default)]
@@ -11645,6 +11674,250 @@ mod tests {
             display_point(10)..display_point(11)
         );
         assert_eq!(vim_reversed_at_right_anchored_inlay.head, display_point(10));
+    }
+
+    #[gpui::test]
+    fn test_block_cursor_layout_around_inlays(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let snapshot = cx.update(|cx| {
+            let buffer = MultiBuffer::build_simple("aβc", cx);
+            let buffer_snapshot = buffer.read(cx).snapshot(cx);
+            let display_map = cx.new(|cx| {
+                DisplayMap::new(
+                    buffer,
+                    font("Helvetica"),
+                    px(14.0),
+                    None,
+                    1,
+                    1,
+                    FoldPlaceholder::test(),
+                    project::project_settings::DiagnosticSeverity::Warning,
+                    cx,
+                )
+            });
+            display_map.update(cx, |display_map, cx| {
+                display_map.splice_inlays(
+                    &[],
+                    vec![
+                        Inlay::mock_hint(
+                            0,
+                            buffer_snapshot.anchor_before(MultiBufferOffset(1)),
+                            "type: ",
+                        ),
+                        Inlay::mock_hint(
+                            1,
+                            buffer_snapshot.anchor_after(MultiBufferOffset(1)),
+                            "arg: ",
+                        ),
+                    ],
+                    cx,
+                );
+                display_map.snapshot(cx)
+            })
+        });
+        assert_eq!(snapshot.text(), "atype: arg: βc");
+
+        for (cursor_shape, expected_column, expected_grapheme) in [
+            (CursorShape::Bar, 7, "a"),
+            (CursorShape::Block, 12, "β"),
+            (CursorShape::Hollow, 12, "β"),
+        ] {
+            let layout = SelectionLayout::new(
+                Selection {
+                    id: 0,
+                    start: MultiBufferOffset(1),
+                    end: MultiBufferOffset(1),
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                },
+                false,
+                false,
+                cursor_shape,
+                &snapshot,
+                true,
+                true,
+                None,
+            );
+
+            assert_eq!(
+                layout.head,
+                DisplayPoint::new(DisplayRow(0), expected_column),
+                "{cursor_shape:?}"
+            );
+            assert_eq!(
+                layout.head.to_offset(&snapshot, Bias::Left),
+                MultiBufferOffset(1)
+            );
+            assert_eq!(
+                snapshot.grapheme_at(layout.head).as_deref(),
+                Some(expected_grapheme),
+                "{cursor_shape:?}"
+            );
+            assert!(layout.range.is_empty());
+        }
+    }
+
+    #[gpui::test]
+    async fn test_block_cursor_draw_for_collapsed_grapheme_matches(cx: &mut TestAppContext) {
+        use project::search::SearchQuery;
+        use workspace::searchable::SearchableItem;
+
+        init_test(cx, |_| {});
+        for (text, query_text, expected) in [
+            ("e\u{301}x", "\u{301}", "e\u{301}"),
+            ("👩‍💻x", "💻", "👩‍💻"),
+            ("🇺🇸x", "🇸", "🇺🇸"),
+        ] {
+            for with_hint in [false, true] {
+                let window = cx.add_window(|window, cx| {
+                    let buffer = MultiBuffer::build_simple(text, cx);
+                    let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+                    editor.set_cursor_shape(CursorShape::Block, cx);
+                    editor.set_collapse_matches(true);
+                    if with_hint {
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
+                        editor.display_map.update(cx, |map, cx| {
+                            map.splice_inlays(
+                                &[],
+                                vec![Inlay::mock_hint(
+                                    0,
+                                    snapshot.anchor_after(MultiBufferOffset(0)),
+                                    "hint: ",
+                                )],
+                                cx,
+                            );
+                        });
+                    }
+                    editor
+                });
+                let cx = &mut VisualTestContext::from_window(*window, cx);
+                let editor = window.root(cx).expect("editor window");
+                let query = SearchQuery::text(
+                    query_text,
+                    false,
+                    true,
+                    false,
+                    Default::default(),
+                    Default::default(),
+                    false,
+                    None,
+                )
+                .expect("valid search query");
+                let matches = editor
+                    .update_in(cx, |editor, window, cx| {
+                        editor.find_matches(Arc::new(query), window, cx)
+                    })
+                    .await;
+                assert_eq!(matches.len(), 1);
+                let expected_offset = text.find(query_text).expect("matching substring");
+                editor.update_in(cx, |editor, window, cx| {
+                    window.focus(&editor.focus_handle(cx), cx);
+                    editor.activate_match(0, &matches, Default::default(), window, cx);
+                });
+                let style = editor.update(cx, |editor, cx| editor.style(cx).clone());
+                let (_, state) = cx.draw(Default::default(), size(px(400.), px(200.)), |_, _| {
+                    EditorElement::new(&editor, style.clone())
+                });
+                let cursor = state.visible_cursors.first().expect("visible block cursor");
+                assert_eq!(
+                    cursor.block_text.as_ref().map(|line| line.text.as_ref()),
+                    Some(expected),
+                    "{query_text:?}, with_hint={with_hint}"
+                );
+                editor.update(cx, |editor, cx| {
+                    let snapshot = editor.display_snapshot(cx);
+                    let selection = editor.selections.newest::<MultiBufferOffset>(&snapshot);
+                    assert!(selection.is_empty());
+                    assert_eq!(selection.head(), MultiBufferOffset(expected_offset));
+                });
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_block_cursor_autoscroll_past_inlay(cx: &mut TestAppContext) {
+        use crate::Autoscroll;
+
+        init_test(cx, |_| {});
+        for soft_wrap in [
+            language_settings::SoftWrap::None,
+            language_settings::SoftWrap::EditorWidth,
+        ] {
+            for cursor_shape in [CursorShape::Bar, CursorShape::Block, CursorShape::Hollow] {
+                for autoscroll in [Autoscroll::fit(), Autoscroll::newest()] {
+                    let window = cx.add_window(|window, cx| {
+                        let buffer = MultiBuffer::build_simple("aβc", cx);
+                        let snapshot = buffer.read(cx).snapshot(cx);
+                        let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+                        editor.set_soft_wrap_mode(soft_wrap, cx);
+                        editor.set_cursor_shape(cursor_shape, cx);
+                        editor.display_map.update(cx, |map, cx| {
+                            map.splice_inlays(
+                                &[],
+                                vec![Inlay::mock_hint(
+                                    0,
+                                    snapshot.anchor_after(MultiBufferOffset(1)),
+                                    &"hint ".repeat(100),
+                                )],
+                                cx,
+                            );
+                        });
+                        editor
+                    });
+                    let cx = &mut VisualTestContext::from_window(*window, cx);
+                    let editor = window.root(cx).expect("editor window");
+                    let style = editor.update(cx, |editor, cx| editor.style(cx).clone());
+                    let viewport_size = size(px(200.), px(100.));
+                    cx.simulate_window_resize(*window, viewport_size);
+                    cx.draw(Default::default(), viewport_size, |_, _| {
+                        EditorElement::new(&editor, style.clone())
+                    });
+                    cx.executor().run_until_parked();
+                    editor.update_in(cx, |editor, window, cx| {
+                        window.focus(&editor.focus_handle(cx), cx);
+                        editor.change_selections(
+                            SelectionEffects::scroll(autoscroll),
+                            window,
+                            cx,
+                            |selections| {
+                                selections
+                                    .select_ranges([MultiBufferOffset(1)..MultiBufferOffset(1)]);
+                            },
+                        );
+                    });
+                    let (_, state) = cx.draw(Default::default(), viewport_size, |_, _| {
+                        EditorElement::new(&editor, style.clone())
+                    });
+                    let cursor = state
+                        .visible_cursors
+                        .first()
+                        .expect("cursor should be visible after autoscroll");
+                    let bounds = cursor.bounding_rect(state.content_origin);
+                    let viewport = state.position_map.text_hitbox.bounds;
+                    assert!(
+                        bounds.left() >= viewport.left() && bounds.right() <= viewport.right(),
+                        "cursor {bounds:?} outside horizontal viewport {viewport:?}, {soft_wrap:?}, {cursor_shape:?}"
+                    );
+                    assert!(
+                        bounds.top() >= viewport.top() && bounds.bottom() <= viewport.bottom(),
+                        "cursor {bounds:?} outside vertical viewport {viewport:?}, {soft_wrap:?}, {cursor_shape:?}"
+                    );
+                    if cursor_shape == CursorShape::Block {
+                        assert_eq!(
+                            cursor.block_text.as_ref().map(|line| line.text.as_ref()),
+                            Some("β")
+                        );
+                    }
+                    editor.update(cx, |editor, cx| {
+                        let snapshot = editor.display_snapshot(cx);
+                        let selection = editor.selections.newest::<MultiBufferOffset>(&snapshot);
+                        assert!(selection.is_empty());
+                        assert_eq!(selection.head(), MultiBufferOffset(1));
+                    });
+                }
+            }
+        }
     }
 
     #[gpui::test]
