@@ -153,7 +153,7 @@ impl Editor {
         let Some(worktree_entry) = buffer_worktree.read(cx).entry_for_id(entry_id) else {
             return false;
         };
-        !worktree_entry.is_ignored
+        !worktree_entry.is_ignored || worktree_entry.is_always_included
     }
 
     pub(super) fn visible_buffers(&self, cx: &mut Context<Editor>) -> Vec<Entity<Buffer>> {
