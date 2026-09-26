@@ -482,19 +482,29 @@ pub struct TextStyle {
     pub line_clamp: Option<usize>,
 }
 
-/// Hashes the style bitwise, so `-0.0` and `0.0` hash differently although they compare
-/// equal; fine for the view tree's cache key, where that only forces a redraw.
+/// Consistent with the derived `PartialEq`: floats are hashed with `-0.0` canonicalized to
+/// `0.0`, since the two compare equal. (`NaN` compares unequal to itself, so it needs no
+/// such care.)
 impl std::hash::Hash for TextStyle {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        fn float<H: std::hash::Hasher>(value: f32, state: &mut H) {
+            (value + 0.0).to_bits().hash(state);
+        }
         fn hsla<H: std::hash::Hasher>(color: &Hsla, state: &mut H) {
             for component in [color.h, color.s, color.l, color.a] {
-                component.to_bits().hash(state);
+                float(component, state);
             }
         }
         fn absolute<H: std::hash::Hasher>(length: &AbsoluteLength, state: &mut H) {
             match length {
-                AbsoluteLength::Pixels(pixels) => (0u8, pixels).hash(state),
-                AbsoluteLength::Rems(rems) => (1u8, rems.0.to_bits()).hash(state),
+                AbsoluteLength::Pixels(pixels) => {
+                    0u8.hash(state);
+                    float(pixels.0, state);
+                }
+                AbsoluteLength::Rems(rems) => {
+                    1u8.hash(state);
+                    float(rems.0, state);
+                }
             }
         }
         hsla(&self.color, state);
@@ -504,9 +514,12 @@ impl std::hash::Hash for TextStyle {
         absolute(&self.font_size, state);
         match &self.line_height {
             DefiniteLength::Absolute(length) => absolute(length, state),
-            DefiniteLength::Fraction(fraction) => (2u8, fraction.to_bits()).hash(state),
+            DefiniteLength::Fraction(fraction) => {
+                2u8.hash(state);
+                float(*fraction, state);
+            }
         }
-        self.font_weight.0.to_bits().hash(state);
+        float(self.font_weight.0, state);
         self.font_style.hash(state);
         self.background_color.is_some().hash(state);
         if let Some(color) = &self.background_color {
@@ -514,7 +527,7 @@ impl std::hash::Hash for TextStyle {
         }
         self.underline.is_some().hash(state);
         if let Some(underline) = &self.underline {
-            underline.thickness.hash(state);
+            float(underline.thickness.0, state);
             underline.wavy.hash(state);
             underline.color.is_some().hash(state);
             if let Some(color) = &underline.color {
@@ -523,7 +536,7 @@ impl std::hash::Hash for TextStyle {
         }
         self.strikethrough.is_some().hash(state);
         if let Some(strikethrough) = &self.strikethrough {
-            strikethrough.thickness.hash(state);
+            float(strikethrough.thickness.0, state);
             strikethrough.color.is_some().hash(state);
             if let Some(color) = &strikethrough.color {
                 hsla(color, state);
@@ -1579,5 +1592,41 @@ mod tests {
             Some(FontWeight::SEMIBOLD),
             style.text_style().unwrap().font_weight
         );
+    }
+
+    #[test]
+    fn text_style_hash_canonicalizes_signed_zero() {
+        use std::hash::{Hash as _, Hasher as _};
+        let mut positive = TextStyle::default();
+        positive.font_size = AbsoluteLength::Pixels(px(0.0));
+        positive.line_height = DefiniteLength::Fraction(0.0);
+        positive.font_weight = FontWeight(0.0);
+        positive.underline = Some(UnderlineStyle {
+            thickness: px(0.0),
+            ..Default::default()
+        });
+        positive.strikethrough = Some(StrikethroughStyle {
+            thickness: px(0.0),
+            ..Default::default()
+        });
+
+        let mut negative = positive.clone();
+        negative.font_size = AbsoluteLength::Pixels(px(-0.0));
+        negative.line_height = DefiniteLength::Fraction(-0.0);
+        negative.font_weight = FontWeight(-0.0);
+        if let Some(underline) = &mut negative.underline {
+            underline.thickness = px(-0.0);
+        }
+        if let Some(strikethrough) = &mut negative.strikethrough {
+            strikethrough.thickness = px(-0.0);
+        }
+
+        assert_eq!(positive, negative);
+        let hash = |style: &TextStyle| {
+            let mut hasher = std::hash::DefaultHasher::new();
+            style.hash(&mut hasher);
+            hasher.finish()
+        };
+        assert_eq!(hash(&positive), hash(&negative));
     }
 }
