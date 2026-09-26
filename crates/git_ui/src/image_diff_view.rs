@@ -11,7 +11,8 @@ use project::WorktreeId;
 use project::{
     Project, ProjectPath,
     git_store::{
-        GitFileRevision, Repository, RepositoryEvent, RepositoryId, diff_buffer_list::DiffBase,
+        GitFileRevision, Repository, RepositoryEvent, RepositoryId, StatusEntry,
+        diff_buffer_list::DiffBase,
     },
     image_store::{ImageItem, ImageMetadata, create_gpui_image},
 };
@@ -86,8 +87,6 @@ impl ImageDiffInput {
     }
 }
 
-/// Picks which versions of an image to compare, matching the text diff shown for the same
-/// `diff_base`.
 pub(crate) fn image_diff_inputs(
     diff_base: &DiffBase,
     branch_diff: Option<&TreeDiffStatus>,
@@ -126,7 +125,10 @@ pub(crate) struct ImageDiff {
     new_input: ImageDiffInput,
     old_side: ImageDiffSide,
     new_side: ImageDiffSide,
+    last_status_entry: Option<StatusEntry>,
     load_task: Task<()>,
+    #[cfg(test)]
+    reload_count: usize,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -140,15 +142,25 @@ impl ImageDiff {
         new_input: ImageDiffInput,
         cx: &mut Context<Self>,
     ) -> Self {
+        let last_status_entry = repository.read(cx).status_for_path(&repo_path);
         let subscriptions = vec![
-            cx.subscribe(&repository, |this, _, event: &RepositoryEvent, cx| {
-                if matches!(
-                    event,
-                    RepositoryEvent::StatusesChanged | RepositoryEvent::HeadChanged
-                ) {
-                    this.reload(cx);
-                }
-            }),
+            cx.subscribe(
+                &repository,
+                |this, repository, event: &RepositoryEvent, cx| {
+                    let is_head_change = match event {
+                        RepositoryEvent::HeadChanged => true,
+                        RepositoryEvent::StatusesChanged => false,
+                        _ => return,
+                    };
+                    let status_entry = repository.read(cx).status_for_path(&this.repo_path);
+                    // Statuses change whenever any path in the repository changes, so only reload
+                    // when this image's own entry does.
+                    if is_head_change || status_entry != this.last_status_entry {
+                        this.last_status_entry = status_entry;
+                        this.reload(cx);
+                    }
+                },
+            ),
             // Rewriting an already modified image does not change its git status, so watch the
             // worktree entry as well to pick up new working tree contents.
             cx.subscribe(&project, |this, _, event: &project::Event, cx| {
@@ -172,7 +184,10 @@ impl ImageDiff {
             new_input,
             old_side: ImageDiffSide::Loading,
             new_side: ImageDiffSide::Loading,
+            last_status_entry,
             load_task: Task::ready(()),
+            #[cfg(test)]
+            reload_count: 0,
             _subscriptions: subscriptions,
         };
         this.reload(cx);
@@ -193,6 +208,10 @@ impl ImageDiff {
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
+        #[cfg(test)]
+        {
+            self.reload_count += 1;
+        }
         let old_side = self.load_side(self.old_input.source, cx);
         let new_side = self.load_side(self.new_input.source, cx);
         self.load_task = cx.spawn(async move |this, cx| {
@@ -256,6 +275,10 @@ impl ImageDiff {
             format!("{:?}", self.new_side),
         )
     }
+
+    pub(crate) fn reload_count(&self) -> usize {
+        self.reload_count
+    }
 }
 
 impl ImageDiff {
@@ -304,7 +327,6 @@ pub(crate) enum ImageDiffPane {
     New,
 }
 
-/// Shows one side of an [`ImageDiff`], so a split diff can put each version on its own side.
 pub(crate) struct ImageDiffPaneView {
     image_diff: Entity<ImageDiff>,
     pane: ImageDiffPane,
@@ -336,6 +358,7 @@ pub struct ImageDiffView {
     repo_path: RepoPath,
     image_diff: Entity<ImageDiff>,
     focus_handle: FocusHandle,
+    _image_diff_observation: Subscription,
 }
 
 impl ImageDiffView {
@@ -386,10 +409,10 @@ impl ImageDiffView {
                         cx,
                     )
                 });
-                cx.observe(&image_diff, |_, _, cx| cx.notify()).detach();
                 Self {
                     repository_id,
                     repo_path,
+                    _image_diff_observation: cx.observe(&image_diff, |_, _, cx| cx.notify()),
                     image_diff,
                     focus_handle: cx.focus_handle(),
                 }
@@ -524,7 +547,8 @@ fn render_side(
         )
 }
 
-/// Stands in for an image in diff multibuffers, since images cannot be loaded as text buffers.
+/// Images cannot be loaded as text buffers, so their diff sections use an empty placeholder
+/// buffer backed by this file.
 pub(crate) struct ImageDiffFile {
     pub path: Arc<RelPath>,
     pub worktree_id: WorktreeId,

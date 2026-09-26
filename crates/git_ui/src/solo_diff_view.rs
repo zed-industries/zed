@@ -53,8 +53,6 @@ pub struct SoloDiffView {
     _settings_subscription: Subscription,
 }
 
-/// Opens the single-file diff for `entry`, using an image diff for image files since they cannot
-/// be loaded as text buffers.
 pub fn open_file_diff_for_entry(
     entry: GitStatusEntry,
     repository: Entity<Repository>,

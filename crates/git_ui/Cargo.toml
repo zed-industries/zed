@@ -81,6 +81,7 @@ editor = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 git = { workspace = true, features = ["test-support"] }
 image.workspace = true
+image_viewer.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
