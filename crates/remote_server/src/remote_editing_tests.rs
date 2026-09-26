@@ -40,10 +40,12 @@ use lsp::{
 };
 use node_runtime::NodeRuntime;
 use project::{
-    LanguageServerLogType, ProgressToken, Project, ProjectPath,
+    CompletionSource, LanguageServerLogType, ProgressToken, Project, ProjectPath,
     agent_server_store::AgentServerCommand,
     image_store,
-    lsp_store::log_store::{LanguageServerKind, LanguageServerLogKey, LogStore},
+    lsp_store::log_store::{
+        GlobalLogStore, LanguageServerKind, LanguageServerLogKey, LogKind, LogStore,
+    },
     search::{SearchQuery, SearchResult},
 };
 use remote::{ConnectionState, RemoteClient, RemoteClientEvent};
@@ -54,6 +56,7 @@ use settings::{
 };
 use smol::stream::StreamExt;
 use std::{
+    cell::RefCell,
     path::{Path, PathBuf},
     rc::Rc,
     str::FromStr,
@@ -1212,6 +1215,185 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     buffer.update(cx, |buffer, _| {
         assert_eq!(buffer.text(), "fn two() -> usize { 1 }")
     })
+}
+
+#[gpui::test]
+async fn test_remote_completion_resolve_edit_ranges(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code/project"),
+        json!({ "lib.rs": "test(value1, value2)" }),
+    )
+    .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let capabilities = lsp::ServerCapabilities {
+        completion_provider: Some(lsp::CompletionOptions {
+            resolve_provider: Some(true),
+            ..lsp::CompletionOptions::default()
+        }),
+        ..lsp::ServerCapabilities::default()
+    };
+    project.update(cx, |project, _| {
+        project.languages().add(rust_lang());
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: capabilities.clone(),
+                ..FakeLspAdapter::default()
+            },
+        );
+    });
+    let mut fake_servers = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_server(
+            LanguageServerName(SharedString::from("rust-analyzer")),
+            capabilities,
+            Some(Box::new(|fake_server| {
+                fake_server.set_request_handler::<lsp::request::Completion, _, _>(
+                    |params, _| async move {
+                        assert_eq!(
+                            params.text_document_position.position,
+                            lsp::Position::new(0, 13)
+                        );
+                        Ok(Some(CompletionResponse::Array(vec![lsp::CompletionItem {
+                            label: "value2=".to_string(),
+                            ..lsp::CompletionItem::default()
+                        }])))
+                    },
+                );
+            })),
+        )
+    });
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project"), true, cx)
+        })
+        .await
+        .expect("worktree should open")
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("lib.rs")), cx)
+        })
+        .await
+        .expect("buffer should open with LSP");
+    let fake_server = fake_servers.next().await.expect("LSP should start");
+    cx.run_until_parked();
+
+    let explicit_replace_range =
+        lsp::Range::new(lsp::Position::new(0, 12), lsp::Position::new(0, 19));
+    let explicit_insert_range =
+        lsp::Range::new(lsp::Position::new(0, 12), lsp::Position::new(0, 13));
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    for (resolved_edit, expected_insert_range, expected_replace_range, expected_text) in [
+        (None, Some(13..13), 13..19, "value2="),
+        (
+            Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                range: explicit_replace_range,
+                new_text: " value2=".to_string(),
+            })),
+            None,
+            12..19,
+            " value2=",
+        ),
+        (
+            Some(lsp::CompletionTextEdit::InsertAndReplace(
+                lsp::InsertReplaceEdit {
+                    insert: explicit_insert_range,
+                    replace: explicit_replace_range,
+                    new_text: " value2=".to_string(),
+                },
+            )),
+            Some(12..13),
+            12..19,
+            " value2=",
+        ),
+    ] {
+        fake_server.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(
+            move |mut item, _| {
+                let resolved_edit = resolved_edit.clone();
+                async move {
+                    assert_eq!(item.label, "value2=");
+                    item.documentation = Some(lsp::Documentation::String("resolved".to_string()));
+                    item.text_edit = resolved_edit;
+                    Ok(item)
+                }
+            },
+        );
+        let completions = project
+            .update(cx, |project, cx| {
+                project.completions(
+                    &buffer,
+                    13,
+                    CompletionContext {
+                        trigger_kind: CompletionTriggerKind::INVOKED,
+                        trigger_character: None,
+                    },
+                    cx,
+                )
+            })
+            .await
+            .expect("completions should load")
+            .into_iter()
+            .flat_map(|response| response.completions)
+            .collect::<Vec<_>>();
+        assert_eq!(completions.len(), 1);
+        buffer.read_with(cx, |buffer, _| {
+            let completion = completions.first().expect("completion should exist");
+            let CompletionSource::Lsp { insert_range, .. } = &completion.source else {
+                panic!("expected LSP completion");
+            };
+            assert_eq!(
+                *insert_range,
+                Some(buffer.anchor_before(13)..buffer.anchor_after(13))
+            );
+            assert_eq!(
+                completion.replace_range,
+                buffer.anchor_before(13)..buffer.anchor_after(19)
+            );
+        });
+        let completions = Rc::new(RefCell::new(completions.into_boxed_slice()));
+        let did_resolve = lsp_store
+            .update(cx, |lsp_store, cx| {
+                lsp_store.resolve_completions(buffer.clone(), vec![0], completions.clone(), cx)
+            })
+            .await
+            .expect("completion should resolve");
+        assert!(did_resolve);
+        buffer.read_with(cx, |buffer, _| {
+            let completions = completions.borrow();
+            let completion = completions.first().expect("completion should exist");
+            let CompletionSource::Lsp {
+                insert_range,
+                resolved,
+                lsp_completion,
+                ..
+            } = &completion.source
+            else {
+                panic!("expected LSP completion");
+            };
+            assert!(*resolved);
+            assert_eq!(
+                lsp_completion.documentation,
+                Some(lsp::Documentation::String("resolved".to_string()))
+            );
+            assert_eq!(
+                *insert_range,
+                expected_insert_range
+                    .map(|range| buffer.anchor_before(range.start)..buffer.anchor_after(range.end))
+            );
+            assert_eq!(
+                completion.replace_range,
+                buffer.anchor_before(expected_replace_range.start)
+                    ..buffer.anchor_after(expected_replace_range.end)
+            );
+            assert_eq!(completion.new_text, expected_text);
+        });
+    }
 }
 
 #[gpui::test]
@@ -3523,6 +3705,92 @@ async fn test_add_path_to_git_info_exclude_in_remote_repository(
 }
 
 #[gpui::test]
+async fn test_add_path_to_git_info_exclude_in_remote_linked_worktree(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/project",
+        json!({
+            ".git": {
+                "HEAD": "ref: refs/heads/main",
+                "config": "[core]\n\tbare = false\n",
+                "info": {
+                    "exclude": "existing\n",
+                },
+                "worktrees": {
+                    "linked": {
+                        "HEAD": "ref: refs/heads/linked",
+                        "commondir": "../..",
+                        "gitdir": "/worktree/.git",
+                    },
+                },
+            },
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/worktree",
+        json!({
+            ".git": "gitdir: ../project/.git/worktrees/linked\n",
+            "logs": {
+                "app.log": "",
+            },
+            "tmp.txt": "",
+        }),
+    )
+    .await;
+    let repository_dir = Path::new("/project/.git/worktrees/linked");
+    fs.set_branch_name(repository_dir, Some("linked"));
+    fs.set_head_for_repo(repository_dir, &[], "head-sha");
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(Path::new("/worktree"), true, cx)
+        })
+        .await
+        .expect("should open remote linked worktree");
+    cx.run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project
+            .active_repository(cx)
+            .expect("remote linked worktree should have an active repository")
+    });
+
+    for (path, is_dir) in [("tmp.txt", false), ("logs", true), ("tmp.txt", false)] {
+        let repo_path = RepoPath::new(path).expect("path should be a valid repo path");
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.add_path_to_git_info_exclude(&repo_path, is_dir)
+            })
+        })
+        .await
+        .expect("add to info/exclude request should complete")
+        .expect("add to info/exclude should succeed for remote linked worktree");
+    }
+
+    server_cx.run_until_parked();
+    cx.run_until_parked();
+
+    assert_eq!(
+        fs.load(Path::new("/project/.git/info/exclude"))
+            .await
+            .expect("shared info/exclude should be readable"),
+        "existing\ntmp.txt\nlogs/\n"
+    );
+    assert!(
+        fs.metadata(&repository_dir.join("info/exclude"))
+            .await
+            .expect("worktree-specific info/exclude metadata should be readable")
+            .is_none(),
+        "the action should not create a worktree-specific info/exclude"
+    );
+}
+
+#[gpui::test]
 async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let text_2 = "
         fn one() -> usize {
@@ -5019,6 +5287,284 @@ async fn test_remote_project_creation_notifies_new_entity_observers(
         "creating a remote project should notify new-entity observers with a connected remote client exactly once"
     );
     assert!(project.read_with(cx, |project, _| project.is_remote()));
+}
+
+#[gpui::test]
+async fn test_remote_log_streams_follow_aggregate_demand(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let server_fs = Arc::new(FakeFs::new(server_cx.executor()));
+    server_fs
+        .insert_tree(path!("/code"), json!({ "project1": { "README.md": "" } }))
+        .await;
+    let (project, headless) = init_test(&server_fs, cx, server_cx).await;
+
+    let server_id = LanguageServerId(42);
+    let remote_server_key = LanguageServerLogKey::new(
+        LanguageServerKind::Remote {
+            project: project.downgrade(),
+        },
+        server_id,
+    );
+    let local_log_store = cx.new(|cx| LogStore::new(false, cx));
+    local_log_store.update(cx, |log_store, cx| {
+        log_store.add_project(&project, cx);
+        log_store.add_language_server(
+            remote_server_key.kind.clone(),
+            server_id,
+            Some(LanguageServerName::new_static("test-server")),
+            None,
+            None,
+            cx,
+        );
+    });
+
+    let headless_lsp_store =
+        headless.read_with(server_cx, |headless, _| headless.lsp_store.downgrade());
+    let headless_server_key = LanguageServerLogKey::new(
+        LanguageServerKind::LocalSsh {
+            lsp_store: headless_lsp_store,
+        },
+        server_id,
+    );
+    let headless_log_store = server_cx.update(|cx| cx.global::<GlobalLogStore>().0.clone());
+    headless_log_store.update(server_cx, |log_store, cx| {
+        log_store.add_language_server(
+            headless_server_key.kind.clone(),
+            server_id,
+            Some(LanguageServerName::new_static("test-server")),
+            None,
+            None,
+            cx,
+        );
+    });
+
+    let peer_id = proto::PeerId { owner_id: 1, id: 1 };
+    local_log_store.update(cx, |log_store, cx| {
+        log_store.retain_view_log_stream(&remote_server_key, LogKind::Rpc, cx);
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(headless_log_store.read_with(server_cx, |log_store, _| {
+        log_store
+            .language_servers
+            .get(&headless_server_key)
+            .is_some_and(|state| state.rpc_state.is_some())
+    }));
+
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::ToggleLspLogs {
+            peer_id,
+            server_id,
+            enabled: true,
+            toggled_log_kind: LogKind::Rpc,
+        });
+    });
+    local_log_store.update(cx, |log_store, cx| {
+        log_store.release_view_log_stream(&remote_server_key, LogKind::Rpc, cx);
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(
+        headless_log_store.read_with(server_cx, |log_store, _| {
+            log_store
+                .language_servers
+                .get(&headless_server_key)
+                .is_some_and(|state| state.rpc_state.is_some())
+        }),
+        "releasing a local view must preserve downstream demand on the remote host"
+    );
+
+    let other_project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+    local_log_store.update(cx, |log_store, cx| {
+        log_store.add_project(&other_project, cx);
+    });
+    for event in [project::Event::Rejoined, project::Event::HostReshared] {
+        // Forget upstream ownership without changing the remaining downstream demand.
+        headless_log_store.update(server_cx, |log_store, cx| {
+            assert!(
+                log_store
+                    .language_servers
+                    .remove(&headless_server_key)
+                    .is_some()
+            );
+            log_store.add_language_server(
+                headless_server_key.kind.clone(),
+                server_id,
+                None,
+                None,
+                None,
+                cx,
+            );
+        });
+        other_project.update(cx, |_, cx| cx.emit(event.clone()));
+        cx.run_until_parked();
+        server_cx.run_until_parked();
+        assert!(
+            headless_log_store.read_with(server_cx, |log_store, _| {
+                log_store
+                    .language_servers
+                    .get(&headless_server_key)
+                    .is_some_and(|state| state.rpc_state.is_none())
+            }),
+            "reconnecting another project must not replay this project's streams"
+        );
+
+        for _ in 0..2 {
+            project.update(cx, |_, cx| cx.emit(event.clone()));
+            cx.run_until_parked();
+            server_cx.run_until_parked();
+            assert!(
+                headless_log_store.read_with(server_cx, |log_store, _| {
+                    log_store
+                        .language_servers
+                        .get(&headless_server_key)
+                        .is_some_and(|state| state.rpc_state.is_some())
+                }),
+                "{event:?} must replay downstream-only demand without a local view"
+            );
+        }
+    }
+
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::CollaboratorLeft(peer_id));
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(headless_log_store.read_with(server_cx, |log_store, _| {
+        log_store
+            .language_servers
+            .get(&headless_server_key)
+            .is_some_and(|state| state.rpc_state.is_none())
+    }));
+
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::ToggleLspLogs {
+            peer_id,
+            server_id,
+            enabled: true,
+            toggled_log_kind: LogKind::Rpc,
+        });
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(
+        headless_log_store.read_with(server_cx, |log_store, _| {
+            log_store
+                .language_servers
+                .get(&headless_server_key)
+                .is_some_and(|state| state.rpc_state.is_some())
+        }),
+        "downstream demand must enable the stream on the remote host"
+    );
+
+    local_log_store.update(cx, |log_store, cx| {
+        log_store.retain_view_log_stream(&remote_server_key, LogKind::Rpc, cx);
+    });
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::ToggleLspLogs {
+            peer_id,
+            server_id,
+            enabled: false,
+            toggled_log_kind: LogKind::Rpc,
+        });
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(
+        headless_log_store.read_with(server_cx, |log_store, _| {
+            log_store
+                .language_servers
+                .get(&headless_server_key)
+                .is_some_and(|state| state.rpc_state.is_some())
+        }),
+        "releasing downstream demand must preserve a local view on the remote host"
+    );
+
+    local_log_store.update(cx, |log_store, cx| {
+        log_store.release_view_log_stream(&remote_server_key, LogKind::Rpc, cx);
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(headless_log_store.read_with(server_cx, |log_store, _| {
+        log_store
+            .language_servers
+            .get(&headless_server_key)
+            .is_some_and(|state| state.rpc_state.is_none())
+    }));
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::Rejoined);
+        cx.emit(project::Event::HostReshared);
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(
+        headless_log_store.read_with(server_cx, |log_store, _| {
+            log_store
+                .language_servers
+                .get(&headless_server_key)
+                .is_some_and(|state| state.rpc_state.is_none())
+        }),
+        "reconnecting must not replay streams without any remaining demand"
+    );
+
+    for has_local_view in [false, true] {
+        project
+            .update(cx, |project, cx| project.shared(1, cx))
+            .expect("project should be shareable");
+        if has_local_view {
+            local_log_store.update(cx, |log_store, cx| {
+                log_store.retain_view_log_stream(&remote_server_key, LogKind::Rpc, cx);
+            });
+        }
+        project.update(cx, |_, cx| {
+            cx.emit(project::Event::ToggleLspLogs {
+                peer_id,
+                server_id,
+                enabled: true,
+                toggled_log_kind: LogKind::Rpc,
+            });
+        });
+        cx.run_until_parked();
+        server_cx.run_until_parked();
+        assert!(headless_log_store.read_with(server_cx, |log_store, _| {
+            log_store
+                .language_servers
+                .get(&headless_server_key)
+                .is_some_and(|state| state.rpc_state.is_some())
+        }));
+
+        project
+            .update(cx, |project, cx| project.unshare(cx))
+            .expect("shared project should unshare");
+        cx.run_until_parked();
+        server_cx.run_until_parked();
+        assert_eq!(
+            headless_log_store.read_with(server_cx, |log_store, _| {
+                log_store
+                    .language_servers
+                    .get(&headless_server_key)
+                    .map(|state| state.rpc_state.is_some())
+            }),
+            Some(has_local_view),
+            "unsharing must release downstream demand while preserving local views"
+        );
+
+        if has_local_view {
+            local_log_store.update(cx, |log_store, cx| {
+                log_store.release_view_log_stream(&remote_server_key, LogKind::Rpc, cx);
+            });
+            cx.run_until_parked();
+            server_cx.run_until_parked();
+            assert!(headless_log_store.read_with(server_cx, |log_store, _| {
+                log_store
+                    .language_servers
+                    .get(&headless_server_key)
+                    .is_some_and(|state| state.rpc_state.is_none())
+            }));
+        }
+    }
 }
 
 #[gpui::test]

@@ -73,6 +73,7 @@ members = [
     "crates/extension_api",
     "crates/extension_cli",
     "crates/extension_host",
+    "crates/extension_suggest",
     "crates/extensions_ui",
     "crates/feature_flags",
     "crates/feature_flags_macros",
@@ -136,7 +137,6 @@ members = [
     "crates/lsp_locations",
     "crates/markdown",
     "crates/markdown_preview",
-    "crates/media",
     "crates/menu",
     "crates/mermaid_render",
     "crates/migrator",
@@ -237,6 +237,7 @@ members = [
     "crates/worktree",
     "crates/worktree_benchmarks",
     "crates/x_ai",
+    "crates/x_ai_subscribed",
     "crates/zed",
     "crates/zed_actions",
     "crates/zed_credentials_provider",
@@ -342,6 +343,7 @@ etw_tracing = { path = "crates/etw_tracing" }
 eval_utils = { path = "crates/eval_utils" }
 extension = { path = "crates/extension" }
 extension_host = { path = "crates/extension_host" }
+extension_suggest = { path = "crates/extension_suggest" }
 extensions_ui = { path = "crates/extensions_ui" }
 feature_flags = { path = "crates/feature_flags" }
 feature_flags_macros = { path = "crates/feature_flags_macros" }
@@ -404,7 +406,6 @@ lsp_command_selector = { path = "crates/lsp_command_selector" }
 lsp_locations = { path = "crates/lsp_locations" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
-media = { path = "crates/media" }
 menu = { path = "crates/menu" }
 mermaid_render = { path = "crates/mermaid_render" }
 migrator = { path = "crates/migrator" }
@@ -445,7 +446,7 @@ remote_connection = { path = "crates/remote_connection" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
-rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a", features = ["wav", "playback", "wav_output", "recording"] }
+rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a", default-features = false, features = ["wav", "playback", "wav_output", "recording", "dither"] }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 sandbox = { path = "crates/sandbox" }
@@ -501,6 +502,7 @@ which_key = { path = "crates/which_key" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 x_ai = { path = "crates/x_ai" }
+x_ai_subscribed = { path = "crates/x_ai_subscribed" }
 zed_actions = { path = "crates/zed_actions" }
 zed_credentials_provider = { path = "crates/zed_credentials_provider" }
 zed_env_vars = { path = "crates/zed_env_vars" }
@@ -518,7 +520,7 @@ accesskit = { version = "0.24.0", features = ["enumn"] }
 accesskit_macos = "0.26.0"
 accesskit_unix = "0.22"
 accesskit_windows = "0.34"
-agent-client-protocol = { version = "=2.0.0", features = ["unstable"] }
+agent-client-protocol = { version = "=2.2.0", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
 any_vec = "0.14"
@@ -566,7 +568,6 @@ backtrace = "0.3"
 base64 = "0.22"
 betlang = "0.1.1"
 bitflags = "2.6.0"
-block = "0.1"
 block2 = "0.6"
 brush-parser = "0.3"
 bytes = "1.0"
@@ -624,7 +625,7 @@ fancy-regex = "0.19"
 flume = "0.12"
 foreign-types = "0.5"
 fork = "0.4.0"
-futures = "0.3.32"
+futures = "0.3.34"
 futures-concurrency = "7.7.1"
 futures-lite = "2"
 gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "37f3c0575d379c218a9c455ee67585184e40d43f" }
@@ -708,12 +709,17 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSResponder",
     "NSSavePanel",
     "NSScreen",
+    "NSTrackingArea",
     "NSView",
     "NSWindow",
     "NSWorkspace",
     "block2",
     "objc2-core-foundation",
 ] }
+objc2-core-foundation = { version = "=0.3.2", default-features = false }
+objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["CGDirectDisplay"] }
+objc2-core-media = { version = "=0.3.2", default-features = false, features = ["CMSampleBuffer", "objc2-core-video"] }
+objc2-core-video = { version = "=0.3.2", default-features = false, features = ["CVBuffer", "CVImageBuffer"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "NSArray",
     "NSAttributedString",
@@ -742,8 +748,11 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
 ] }
 objc2-screen-capture-kit = { version = "=0.3.2", default-features = false, features = [
     "block2",
+    "dispatch2",
     "objc2-core-graphics",
+    "objc2-core-media",
     "SCShareableContent",
+    "SCStream",
     "std"
 ] }
 objc2-user-notifications = "0.3"
@@ -805,7 +814,7 @@ rsa = "0.9.6"
 runtimelib = { version = "1.4.0", default-features = false, features = [
     "async-dispatcher-runtime", "aws-lc-rs"
 ] }
-rust-embed = { version = "8.11", features = ["include-exclude"] }
+rust-embed = { version = "8.11", features = ["include-exclude", "compression"] }
 rustc-hash = "2.1.0"
 rustix = { version = "1.1", features = ["fs"] }
 rustls = { version = "0.23.26" }
@@ -923,7 +932,7 @@ which = "8"
 windows-core = "0.62"
 windows-registry = "0.6.0"
 yaml-rust2 = "0.8"
-yawc = { git = "https://github.com/zed-industries/yawc", rev = "71a452f551cac178367eaac5d7418a09afa1f3a2", version = "0.3.3" }
+yawc = "0.4.2"
 zeroize = "1.8"
 zstd = "0.11"
 
@@ -1015,7 +1024,7 @@ webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev 
 # needs symlink support that Windows CI lacks). webrtc-sys is self-contained, so
 # per-crate scratch dirs are sufficient. Upstream issue:
 # https://github.com/dtolnay/cxx/issues/1752
-scratch = { path = "corgi-patches/scratch" }
+scratch = { path = "tooling/corgi/patches/scratch" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

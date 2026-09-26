@@ -8,6 +8,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use acp_thread::AgentModelId;
+
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
 /// Spawn a sub-agent for a well-scoped task.
@@ -30,6 +32,12 @@ use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 /// - When a plan has multiple independent steps, prefer delegating those steps in parallel rather than serializing them unnecessarily.
 /// - Reuse the returned session_id when you want to follow up on the same delegated subproblem instead of creating a duplicate session.
 ///
+/// ### Model selection
+/// - When the user requests a particular model or asks you to choose based on cost or capability, call `list_agents_and_models` first, then pass the exact `models[].id` from the native Zed agent entry (`is_native: true`) in `model`.
+/// - Omit `model` to use the user's configured subagent model, or the parent model when no subagent model is configured.
+/// - Do not silently choose a different model when an explicit model is unavailable unless the user allowed fallback.
+/// - A resumed session keeps its existing model, so `model` cannot be combined with `session_id`.
+///
 /// ### Output
 /// - You will receive only the agent's final message as output.
 /// - Successful calls return a session_id that you can use for follow-up messages.
@@ -44,6 +52,11 @@ pub struct SpawnAgentToolInput {
     /// Session ID of an existing agent session to continue instead of creating a new one. Omit to create a new agent.
     #[serde(default, deserialize_with = "deserialize_session_id")]
     pub session_id: Option<acp::SessionId>,
+    /// Optional model override. Pass the exact `models[].id` returned for the
+    /// native Zed agent (`is_native: true`) by `list_agents_and_models`.
+    /// Omit to preserve default behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 fn deserialize_session_id<'de, D>(deserializer: D) -> Result<Option<acp::SessionId>, D::Error>
@@ -161,11 +174,22 @@ impl AgentTool for SpawnAgentTool {
                     session_info: None,
                 })?;
 
+            let SpawnAgentToolInput {
+                label,
+                message,
+                session_id,
+                model,
+            } = input;
             let (subagent, mut session_info) = cx.update(|cx| {
-                let subagent = if let Some(session_id) = input.session_id {
-                    self.environment.resume_subagent(session_id, cx)
-                } else {
-                    self.environment.create_subagent(input.label, cx)
+                let subagent = match (session_id, model) {
+                    (Some(_), Some(_)) => Err(anyhow::anyhow!(
+                        "model cannot be changed when resuming a subagent session"
+                    )),
+                    (Some(session_id), None) => self.environment.resume_subagent(session_id, cx),
+                    (None, model) => {
+                        self.environment
+                            .create_subagent(label, model.map(AgentModelId::from), cx)
+                    }
                 };
                 let subagent = subagent.map_err(|err| SpawnAgentToolOutput::Error {
                     session_id: None,
@@ -190,7 +214,7 @@ impl AgentTool for SpawnAgentTool {
                 Ok((subagent, session_info))
             })?;
 
-            let send_result = subagent.send(input.message, cx).await;
+            let send_result = subagent.send(message, cx).await;
 
             let status = if send_result.is_ok() {
                 "completed"

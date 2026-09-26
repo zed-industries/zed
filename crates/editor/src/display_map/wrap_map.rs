@@ -1137,7 +1137,7 @@ impl WrapPointCursor<'_> {
     #[ztracing::instrument(skip_all)]
     pub fn map(&mut self, point: TabPoint) -> WrapPoint {
         let cursor = &mut self.cursor;
-        if cursor.did_seek() {
+        if cursor.did_seek() && point >= cursor.start().0 {
             cursor.seek_forward(&point, Bias::Right);
         } else {
             cursor.seek(&point, Bias::Right);

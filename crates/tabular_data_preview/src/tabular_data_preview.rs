@@ -33,6 +33,7 @@ pub struct TabularDataPreviewPane {
     pub(crate) column_widths: ColumnWidths,
     pub(crate) parsing_task: Option<Task<anyhow::Result<()>>>,
     pub(crate) is_parsing: bool,
+    pub(crate) parse_error: Option<SharedString>,
     /// Background task computing the display-to-data mapping after a filter/sort change.
     /// Stored here so that a new change cancels the previous in-flight computation.
     pub(crate) filter_sort_task: Option<Task<()>>,
@@ -187,6 +188,7 @@ impl TabularDataPreviewPane {
                 column_widths: ColumnWidths::new(cx, 1),
                 parsing_task: None,
                 is_parsing: false,
+                parse_error: None,
                 filter_sort_task: None,
                 performance_metrics: PerformanceMetrics::default(),
                 list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.))
@@ -379,12 +381,12 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             path!("/project"),
-            json!({ "inside.csv": "a,b\n1,2\n", "inside.txt": "plain" }),
+            json!({ "inside.csv": "a,b\n1,2\n", "inside.jsonl": "{}\n", "inside.txt": "plain" }),
         )
         .await;
         fs.insert_tree(
             path!("/elsewhere"),
-            json!({ "outside.csv": "a,b\n1,2\n", "outside.txt": "plain" }),
+            json!({ "outside.csv": "a,b\n1,2\n", "outside.NDJSON": "{}\n", "outside.txt": "plain" }),
         )
         .await;
 
@@ -392,8 +394,10 @@ mod tests {
 
         for (abs_path, expected) in [
             (path!("/project/inside.csv"), true),
+            (path!("/project/inside.jsonl"), true),
             (path!("/project/inside.txt"), false),
             (path!("/elsewhere/outside.csv"), true),
+            (path!("/elsewhere/outside.NDJSON"), true),
             (path!("/elsewhere/outside.txt"), false),
         ] {
             let buffer = project
@@ -407,6 +411,211 @@ mod tests {
                 cx.update(|cx| TabularDataPreviewPane::is_tabular_data_file(&editor, cx));
             assert_eq!(is_tabular, expected, "{abs_path}");
         }
+    }
+
+    #[gpui::test(iterations = 20)]
+    async fn test_csv_preview_mapping_stays_valid_after_deleting_multiline_rows(
+        cx: &mut TestAppContext,
+    ) {
+        use types::DisplayRow;
+
+        init_test(cx);
+        let result: anyhow::Result<()> = async {
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_tree(
+                path!("/project"),
+                json!({ "records.csv": "id,note\n1,first\n2,\"two\nlines\"\n" }),
+            )
+            .await;
+            let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+            let buffer = project
+                .update(cx, |project, cx| {
+                    project.open_local_buffer(path!("/project/records.csv"), cx)
+                })
+                .await?;
+            let (workspace, cx) =
+                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let editor = cx.update(|window, cx| {
+                cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx))
+            });
+            let preview = workspace.update_in(cx, |workspace, window, cx| {
+                let pane = workspace.active_pane().clone();
+                TabularDataPreviewPane::open_preview_in_pane(
+                    editor.clone(),
+                    pane.clone(),
+                    window,
+                    cx,
+                );
+                pane.read(cx)
+                    .items_of_type::<TabularDataPreviewPane>()
+                    .next()
+            });
+            let Some(preview) = preview else {
+                anyhow::bail!("preview did not open");
+            };
+            cx.condition(&preview, |preview, _| {
+                !preview.is_parsing && preview.engine.d2d_mapping().visible_row_count() == 2
+            })
+            .await;
+
+            let _subscription = cx.update(|_, cx| {
+                cx.observe(&preview, |preview, cx| {
+                    let preview = preview.read(cx);
+                    if !preview.is_parsing && preview.parse_error.is_none() {
+                        let mapping = preview.engine.d2d_mapping();
+                        assert_eq!(preview.list_state.item_count(), mapping.visible_row_count());
+                        for display_row in 0..mapping.visible_row_count() {
+                            assert!(
+                                mapping
+                                    .get_data_row(DisplayRow(display_row))
+                                    .and_then(|data_row| preview.engine.contents.get_row(data_row))
+                                    .is_some(),
+                                "display mapping points to a deleted row"
+                            );
+                        }
+                    }
+                })
+            });
+
+            for (text, expected_rows) in [
+                (
+                    "id,note\n1,first\n2,\"two\nlines\"\n3,\"pasted\ntext\"\n",
+                    3,
+                ),
+                ("id,note\n1,first\n", 1),
+                ("id,note\n", 0),
+                ("id,note\n1,\"restored\ntext\"\n", 1),
+            ] {
+                editor.update_in(cx, |editor, window, cx| {
+                    editor.set_text(text, window, cx);
+                });
+                cx.condition(&preview, |preview, _| {
+                    !preview.is_parsing
+                        && preview.engine.contents.rows.len() == expected_rows
+                        && preview.engine.d2d_mapping().visible_row_count() == expected_rows
+                })
+                .await;
+            }
+            Ok(())
+        }
+        .await;
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[gpui::test]
+    async fn test_json_lines_preview_recovers_after_edits(cx: &mut TestAppContext) {
+        use table_data_engine::sorting_by_column::{AppliedSorting, SortDirection};
+        use types::{AnyColumn, DataRow, DisplayRow};
+
+        init_test(cx);
+        let result: anyhow::Result<()> = async {
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_tree(
+                path!("/project"),
+                json!({ "records.jsonl": "{\"name\":\"Grace\"}\n{\"name\":\"Ada\"}\n" }),
+            )
+            .await;
+            let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+            let buffer = project
+                .update(cx, |project, cx| {
+                    project.open_local_buffer(path!("/project/records.jsonl"), cx)
+                })
+                .await?;
+            let (workspace, cx) =
+                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let editor = cx.update(|window, cx| {
+                cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx))
+            });
+            let preview = workspace.update_in(cx, |workspace, window, cx| {
+                let pane = workspace.active_pane().clone();
+                TabularDataPreviewPane::open_preview_in_pane(
+                    editor.clone(),
+                    pane.clone(),
+                    window,
+                    cx,
+                );
+                pane.read(cx)
+                    .items_of_type::<TabularDataPreviewPane>()
+                    .next()
+            });
+            let Some(preview) = preview else {
+                anyhow::bail!("preview did not open");
+            };
+            cx.condition(&preview, |preview, _| {
+                !preview.is_parsing && preview.engine.d2d_mapping().visible_row_count() == 2
+            })
+            .await;
+
+            preview.update(cx, |preview, cx| {
+                preview.engine.applied_sorting = Some(AppliedSorting {
+                    col_idx: AnyColumn(0),
+                    direction: SortDirection::Asc,
+                });
+                preview.toggle_filter(AnyColumn(0), Some(r#""Ada""#.into()), cx);
+            });
+            cx.condition(&preview, |preview, _| {
+                preview.engine.d2d_mapping().visible_row_count() == 1
+            })
+            .await;
+            preview.read_with(cx, |preview, _| {
+                assert_eq!(
+                    preview.engine.d2d_mapping().get_data_row(DisplayRow(0)),
+                    Some(DataRow(1))
+                );
+            });
+
+            editor.update_in(cx, |editor, window, cx| {
+                editor.set_text("{\"name\":\"Ada\"}\n{", window, cx);
+            });
+            cx.condition(&preview, |preview, _| {
+                !preview.is_parsing && preview.parse_error.is_some()
+            })
+            .await;
+            preview.read_with(cx, |preview, _| {
+                assert!(
+                    preview
+                        .parse_error
+                        .as_ref()
+                        .is_some_and(|error| error.contains("line 2"))
+                );
+            });
+
+            editor.update_in(cx, |editor, window, cx| {
+                editor.set_text("{\"name\":\"Ada\"}\n{\"name\":\"Grace\"}", window, cx);
+            });
+            cx.condition(&preview, |preview, _| {
+                !preview.is_parsing
+                    && preview.parse_error.is_none()
+                    && preview.engine.d2d_mapping().get_data_row(DisplayRow(0)) == Some(DataRow(0))
+            })
+            .await;
+            preview.read_with(cx, |preview, _| {
+                assert!(preview.engine.has_active_filters(AnyColumn(0)));
+                assert!(preview.engine.applied_sorting.is_some());
+            });
+
+            editor.update_in(cx, |editor, window, cx| {
+                editor.set_text(
+                    "{\"age\":36,\"name\":\"Ada\"}\n{\"name\":\"Grace\"}",
+                    window,
+                    cx,
+                );
+            });
+            cx.condition(&preview, |preview, _| {
+                !preview.is_parsing
+                    && preview.engine.contents.number_of_cols == 2
+                    && preview.engine.d2d_mapping().visible_row_count() == 2
+            })
+            .await;
+            preview.read_with(cx, |preview, _| {
+                assert!(!preview.engine.has_active_filters(AnyColumn(0)));
+                assert!(preview.engine.applied_sorting.is_none());
+                assert!(preview.parse_error.is_none());
+            });
+            Ok(())
+        }
+        .await;
+        assert!(result.is_ok(), "{result:?}");
     }
 
     fn init_test(cx: &mut TestAppContext) {

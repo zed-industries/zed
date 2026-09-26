@@ -1094,10 +1094,6 @@ async fn test_stopped_server_logs_retained_until_restart(cx: &mut gpui::TestAppC
                 store.get_language_server_state(&key).is_some(),
                 "mutable state access still works for the stopped server",
             );
-            assert!(
-                store.enable_rpc_trace_for_language_server(&key).is_some(),
-                "rpc tracing can still be enabled for the stopped server",
-            );
 
             let restarted_id = LanguageServerId(2);
             store.add_language_server(

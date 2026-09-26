@@ -237,9 +237,7 @@ pub fn tool_feature_flag_enabled(tool_name: &str, cx: &App) -> bool {
         | GetCodeActionsTool::NAME
         | ApplyCodeActionTool::NAME
         | GoToDefinitionTool::NAME => cx.has_flag::<LspToolFeatureFlag>(),
-        CreateThreadTool::NAME | ListAgentsAndModelsTool::NAME => {
-            cx.has_flag::<CreateThreadToolFeatureFlag>()
-        }
+        CreateThreadTool::NAME => cx.has_flag::<CreateThreadToolFeatureFlag>(),
         _ => true,
     }
 }
