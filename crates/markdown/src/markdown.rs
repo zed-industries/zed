@@ -2623,6 +2623,7 @@ impl Element for MarkdownElement {
             0
         };
         let mut code_block_ids = HashSet::default();
+        let mut current_code_block_text = None;
 
         let mut current_img_block_range: Option<Range<usize>> = None;
         let mut handled_html_block = false;
@@ -2779,6 +2780,16 @@ impl Element for MarkdownElement {
                                 rendered_mermaid_block = true;
                                 continue;
                             }
+
+                            current_code_block_text = match &self.code_block_renderer {
+                                CodeBlockRenderer::Default {
+                                    copy_button_visibility,
+                                    ..
+                                } if *copy_button_visibility != CopyButtonVisibility::Hidden => {
+                                    Some(String::new())
+                                }
+                                _ => None,
+                            };
 
                             let language = parsed_markdown.code_block_language(kind);
 
@@ -3094,6 +3105,8 @@ impl Element for MarkdownElement {
                         builder.pop_code_block();
                         builder.pop_text_style();
 
+                        let code = current_code_block_text.take().unwrap_or_default();
+
                         if let CodeBlockRenderer::Default {
                             copy_button_visibility,
                             wrap_button_visibility,
@@ -3105,14 +3118,6 @@ impl Element for MarkdownElement {
                             let copy_button_visibility = *copy_button_visibility;
                             let wrap_button_visibility = *wrap_button_visibility;
                             builder.modify_current_div(|el| {
-                                let content_range = parser::extract_code_block_content_range(
-                                    &parsed_markdown.source()[range.clone()],
-                                );
-                                let content_range = content_range.start + range.start
-                                    ..content_range.end + range.start;
-
-                                let code = parsed_markdown.source()[content_range].to_string();
-
                                 let any_hover = copy_button_visibility
                                     == CopyButtonVisibility::VisibleOnHover
                                     || wrap_button_visibility
@@ -3211,9 +3216,16 @@ impl Element for MarkdownElement {
                     _ => log::debug!("unsupported markdown tag end: {:?}", tag),
                 },
                 MarkdownEvent::Text => {
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
+                    let text = &parsed_markdown.source[range.clone()];
+                    if let Some(current_code_block_text) = &mut current_code_block_text {
+                        current_code_block_text.push_str(text);
+                    }
+                    builder.push_text(text, range.clone());
                 }
                 MarkdownEvent::SubstitutedText(text) => {
+                    if let Some(current_code_block_text) = &mut current_code_block_text {
+                        current_code_block_text.push_str(text);
+                    }
                     builder.push_text(text, range.clone());
                 }
                 MarkdownEvent::Code => {
@@ -5313,6 +5325,80 @@ mod tests {
             })
             .into_any_element()
         });
+    }
+
+    fn assert_code_block_copy(source: &str, expected: &str, cx: &mut TestAppContext) {
+        struct CodeBlockCopyTestView {
+            markdown: Entity<Markdown>,
+        }
+
+        impl Render for CodeBlockCopyTestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().child(
+                    MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                        .code_block_renderer(CodeBlockRenderer::Default {
+                            copy_button_visibility: CopyButtonVisibility::AlwaysVisible,
+                            wrap_button_visibility: WrapButtonVisibility::Hidden,
+                            border: false,
+                        }),
+                )
+            }
+        }
+
+        ensure_theme_initialized(cx);
+
+        let source = source.to_string();
+        let (_, cx) = cx.add_window_view(|_, cx| CodeBlockCopyTestView {
+            markdown: cx.new(|cx| Markdown::new(source.into(), None, None, cx)),
+        });
+        cx.run_until_parked();
+
+        let copy_button_bounds = cx
+            .debug_bounds("ICON-Copy")
+            .expect("copy code button should be rendered");
+        cx.simulate_click(copy_button_bounds.center(), Modifiers::default());
+
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(expected.to_string())
+        );
+
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn test_copy_code_block_uses_parsed_text(cx: &mut TestAppContext) {
+        for (source, expected) in [
+            (
+                "> ```bash\n> echo \"Zed is awesome!\"\n> ```",
+                "echo \"Zed is awesome!\"\n",
+            ),
+            (
+                "> Level 1\n> > Level 2\n> > ```bash\n> > echo \"Zed is awesome!\"\n> > ```",
+                "echo \"Zed is awesome!\"\n",
+            ),
+            (
+                "> [!NOTE]\n> This is a note containing code:\n> ```bash\n> echo \"Zed is awesome!\"\n> ```",
+                "echo \"Zed is awesome!\"\n",
+            ),
+            (
+                "> * Indentation plus quote:\n>   ```bash\n>   echo \"Zed is awesome!\"\n>   ```",
+                "echo \"Zed is awesome!\"\n",
+            ),
+            (
+                "* Here is a list item:\n  ```bash\n  echo \"Zed is awesome!\"\n  ```",
+                "echo \"Zed is awesome!\"\n",
+            ),
+            ("> ~~~text\n> > comparison\n> ~~~", "> comparison\n"),
+            (
+                "> ```bash\n> echo \"Zed is awesome!\"\n",
+                "echo \"Zed is awesome!\"\n",
+            ),
+            ("> ```text\n>\n> value\n>\n> ```", "\nvalue\n\n"),
+        ] {
+            assert_code_block_copy(source, expected, cx);
+        }
     }
 
     #[gpui::test]
