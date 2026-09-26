@@ -35,6 +35,7 @@ pub struct Callout {
     dismiss_action: Option<AnyElement>,
     line_height: Option<Pixels>,
     border_position: CalloutBorderPosition,
+    scrollable_description: bool,
 }
 
 impl Callout {
@@ -50,6 +51,7 @@ impl Callout {
             dismiss_action: None,
             line_height: None,
             border_position: CalloutBorderPosition::Top,
+            scrollable_description: true,
         }
     }
 
@@ -75,6 +77,12 @@ impl Callout {
     /// The description can be single or multi-line text.
     pub fn description(mut self, description: impl Into<SharedString>) -> Self {
         self.description = Some(description.into());
+        self
+    }
+
+    /// Disable internal scrolling when a surrounding container scrolls the entire callout.
+    pub fn scrollable_description(mut self, scrollable: bool) -> Self {
+        self.scrollable_description = scrollable;
         self
     }
 
@@ -198,9 +206,9 @@ impl RenderOnce for Callout {
                         let base_desc_container = div()
                             .id("callout-description-slot")
                             .w_full()
-                            .max_h_32()
-                            .flex_1()
-                            .overflow_y_scroll()
+                            .when(self.scrollable_description, |this| {
+                                this.max_h_32().flex_1().overflow_y_scroll()
+                            })
                             .text_ui_sm(cx);
 
                         if let Some(description_slot) = self.description_slot {
