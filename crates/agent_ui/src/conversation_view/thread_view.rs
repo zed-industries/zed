@@ -7692,10 +7692,11 @@ impl ThreadView {
                 }
             }
             AgentThreadEntry::ToolCall(tool_call) => {
-                // A canceled tool call that produced visible output is still worth
-                // showing, but one that was canceled before producing anything just
-                // renders as a useless "Canceled" card — hide those entirely.
-                if matches!(tool_call.status(), ToolCallStatus::Canceled) {
+                // An empty canceled call has nothing to show, unless it links to
+                // a subagent whose conversation history lives in a separate thread
+                if matches!(tool_call.status(), ToolCallStatus::Canceled)
+                    && tool_call.subagent_session_info.is_none()
+                {
                     let has_visible_content =
                         tool_call.content().iter().any(|content| match content {
                             ToolCallContent::ContentBlock { block, .. } => {
@@ -12415,6 +12416,7 @@ impl ThreadView {
                     .child(
                         h_flex()
                             .id(format!("subagent-title-{}", entry_ix))
+                            .debug_selector(move || format!("subagent-title-{entry_ix}"))
                             .px_1()
                             .min_w_0()
                             .size_full()
