@@ -48,6 +48,50 @@ Non-negative `float` values
 
 `float` values
 
+## UI Layout
+
+- Description: Control the visual treatment of the workspace shell: the docks and the editor area.
+- Setting: `ui_layout`
+- Default: `"classic"`
+
+**Options**
+
+1. Docks and the editor area fill the window edge to edge, separated by single-pixel borders.
+
+```json [settings]
+{
+  "ui_layout": "classic"
+}
+```
+
+2. Docks and the editor area are drawn as rounded, elevated cards, with the window background showing through the gaps between them.
+
+```json [settings]
+{
+  "ui_layout": "floating"
+}
+```
+
+### UI Card Gap
+
+- Description: Space, in pixels, left between the cards of the `"floating"` UI layout, and between a card and the edge of the window. Ignored when `ui_layout` is `"classic"`.
+- Setting: `ui_card_gap`
+- Default: `8.0`
+
+**Options**
+
+`float` values between `0.0` and `32.0`
+
+### UI Card Radius
+
+- Description: Corner radius, in pixels, of the cards of the `"floating"` UI layout. Ignored when `ui_layout` is `"classic"`.
+- Setting: `ui_card_radius`
+- Default: `10.0`
+
+**Options**
+
+`float` values between `0.0` and `32.0`
+
 ## Bottom Dock Layout
 
 - Description: Control the layout of the bottom dock, relative to the left and right docks.

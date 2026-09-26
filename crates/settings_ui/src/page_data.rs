@@ -4983,9 +4983,51 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
-    fn layout_section() -> [SettingsPageItem; 6] {
+    fn layout_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Layout"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "UI Layout",
+                description: "Whether the docks and the editor area fill the window edge to edge, or are drawn as rounded cards separated by gaps.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("ui_layout"),
+                    pick: |settings_content| settings_content.workspace.ui_layout.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.workspace.ui_layout = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "UI Card Gap",
+                description: "Space, in pixels, left between the cards of the \"floating\" UI layout.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("ui_card_gap"),
+                    pick: |settings_content| settings_content.workspace.ui_card_gap.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.workspace.ui_card_gap = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "UI Card Radius",
+                description: "Corner radius, in pixels, of the cards of the \"floating\" UI layout.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("ui_card_radius"),
+                    pick: |settings_content| settings_content.workspace.ui_card_radius.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.workspace.ui_card_radius = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Bottom Dock Layout",
                 description: "Layout mode for the bottom dock.",
