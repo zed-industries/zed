@@ -755,7 +755,7 @@ impl GitListEntry {
 /// The identity a row contributes to the multi-selection: files select by
 /// repo path, directories select as a unit covering their descendants.
 enum RowMark {
-    File(RepoPath),
+    File(GitPanelEntryId),
     Directory(TreeKey),
 }
 
@@ -773,8 +773,51 @@ enum SelectionTargetKind {
 /// reversing direction shrinks the range instead of growing it.
 struct MarkRangeGesture {
     anchor_ix: usize,
-    base_files: HashSet<RepoPath>,
+    base_files: HashSet<GitPanelEntryId>,
     base_directories: HashSet<TreeKey>,
+}
+
+/// Whether a selectable row is a file status entry or a directory row.
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+enum GitPanelEntryKind {
+    Status,
+    Directory,
+}
+
+/// Stable identity of a selectable row across entry-list rebuilds. The same
+/// path can appear under multiple projections (for example staged and
+/// unstaged), so identity carries the section and row kind in addition to the
+/// path.
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+struct GitPanelEntryId {
+    path: RepoPath,
+    section: Option<Section>,
+    kind: GitPanelEntryKind,
+}
+
+/// Reconciles the selection state after the entry list was rebuilt: drops
+/// marks whose identity is no longer visible, and re-anchors the range
+/// gesture at the selection. The selection itself is left to the caller's
+/// path-anchored restore, matching the pre-identity behavior.
+fn reconcile_selection(
+    selected: &mut Option<GitPanelEntryId>,
+    marked: &mut HashSet<GitPanelEntryId>,
+    anchor: &mut Option<GitPanelEntryId>,
+    visible: &[GitPanelEntryId],
+) {
+    let visible_set: HashSet<&GitPanelEntryId> = visible.iter().collect();
+    marked.retain(|entry| visible_set.contains(entry));
+
+    let selected_was_removed = selected
+        .as_ref()
+        .is_some_and(|entry| !visible_set.contains(entry));
+    if selected_was_removed
+        || anchor
+            .as_ref()
+            .is_some_and(|entry| !visible_set.contains(entry))
+    {
+        *anchor = selected.clone();
+    }
 }
 
 /// Tracks, while walking `entries` in display order, whether the current row
@@ -1145,8 +1188,10 @@ pub struct GitPanel {
     scroll_handle: UniformListScrollHandle,
     max_width_item_index: Option<usize>,
     selected_entry: Option<usize>,
-    marked_entries: HashSet<RepoPath>,
+    selected_entry_id: Option<GitPanelEntryId>,
+    marked_entries: HashSet<GitPanelEntryId>,
     marked_directories: HashSet<TreeKey>,
+    selection_anchor: Option<GitPanelEntryId>,
     mark_range_gesture: Option<MarkRangeGesture>,
     tracked_count: usize,
     tracked_staged_count: usize,
@@ -1460,8 +1505,10 @@ impl GitPanel {
                 scroll_handle,
                 max_width_item_index: None,
                 selected_entry: None,
+                selected_entry_id: None,
                 marked_entries: HashSet::default(),
                 marked_directories: HashSet::default(),
+                selection_anchor: None,
                 mark_range_gesture: None,
                 tracked_count: 0,
                 tracked_staged_count: 0,
@@ -1519,18 +1566,59 @@ impl GitPanel {
         self.marked_entries.clear();
         self.marked_directories.clear();
         self.mark_range_gesture = None;
+        self.selection_anchor = None;
     }
 
     fn clear_marks_and_select(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.clear_marks();
-        self.selected_entry = Some(ix);
+        self.set_selected_entry_index(ix);
         cx.notify();
+    }
+
+    fn entry_identity(&self, index: usize) -> Option<GitPanelEntryId> {
+        let entry = self.entries.get(index)?;
+        let kind = match entry {
+            GitListEntry::Status(_) | GitListEntry::TreeStatus(_) => GitPanelEntryKind::Status,
+            GitListEntry::Directory(_) => GitPanelEntryKind::Directory,
+            _ => return None,
+        };
+        Some(GitPanelEntryId {
+            path: entry.repo_path()?.clone(),
+            section: self.section_for_entry_index(index),
+            kind,
+        })
+    }
+
+    /// Identities of every selectable row in display order, restricted to
+    /// rows that are actually visible (collapsed sections excluded), matching
+    /// what pointer selection can reach.
+    fn visible_selectable_entry_ids(&self) -> Vec<GitPanelEntryId> {
+        let visible_indices: Vec<usize> = match &self.view_mode {
+            GitPanelViewMode::Flat => self.visible_flat_entry_indices(),
+            GitPanelViewMode::Tree(state) => state.logical_indices.clone(),
+        };
+        visible_indices
+            .into_iter()
+            .filter(|&index| {
+                self.entries
+                    .get(index)
+                    .is_some_and(GitListEntry::is_selectable)
+            })
+            .filter_map(|index| self.entry_identity(index))
+            .collect()
+    }
+
+    fn set_selected_entry_index(&mut self, index: usize) {
+        self.selected_entry = Some(index);
+        self.selected_entry_id = self.entry_identity(index);
+        self.selection_anchor = self.selected_entry_id.clone();
     }
 
     fn row_mark(&self, ix: usize) -> Option<RowMark> {
         match self.entries.get(ix)? {
-            GitListEntry::Status(entry) => Some(RowMark::File(entry.repo_path.clone())),
-            GitListEntry::TreeStatus(entry) => Some(RowMark::File(entry.entry.repo_path.clone())),
+            GitListEntry::Status(_) | GitListEntry::TreeStatus(_) => {
+                self.entry_identity(ix).map(RowMark::File)
+            }
             GitListEntry::Directory(directory) => Some(RowMark::Directory(directory.key.clone())),
             GitListEntry::Header(_) => None,
             GitListEntry::EmptySection(_) => None,
@@ -1539,8 +1627,8 @@ impl GitPanel {
 
     fn mark_row(&mut self, ix: usize) {
         match self.row_mark(ix) {
-            Some(RowMark::File(path)) => {
-                self.marked_entries.insert(path);
+            Some(RowMark::File(id)) => {
+                self.marked_entries.insert(id);
             }
             Some(RowMark::Directory(key)) => {
                 self.marked_directories.insert(key);
@@ -1558,9 +1646,9 @@ impl GitPanel {
                 self.mark_row(previous);
             }
             match mark {
-                RowMark::File(path) => {
-                    if !self.marked_entries.remove(&path) {
-                        self.marked_entries.insert(path);
+                RowMark::File(id) => {
+                    if !self.marked_entries.remove(&id) {
+                        self.marked_entries.insert(id);
                     }
                 }
                 RowMark::Directory(key) => {
@@ -1570,7 +1658,7 @@ impl GitPanel {
                 }
             }
         }
-        self.selected_entry = Some(ix);
+        self.set_selected_entry_index(ix);
         cx.notify();
     }
 
@@ -1610,12 +1698,21 @@ impl GitPanel {
     fn marked_file_entries(&self) -> Vec<GitStatusEntry> {
         let mut coverage = MarkedDirectoryCoverage::default();
         let mut marked = Vec::new();
+        let mut section = None;
         for entry in &self.entries {
+            if let GitListEntry::Header(header) = entry {
+                section = Some(header.header);
+            }
             let covered = coverage.observe(entry, &self.marked_directories);
-            if let Some(status_entry) = entry.status_entry()
-                && (covered || self.marked_entries.contains(&status_entry.repo_path))
-            {
-                marked.push(status_entry.clone());
+            if let Some(status_entry) = entry.status_entry() {
+                let id = GitPanelEntryId {
+                    path: status_entry.repo_path.clone(),
+                    section,
+                    kind: GitPanelEntryKind::Status,
+                };
+                if covered || self.marked_entries.contains(&id) {
+                    marked.push(status_entry.clone());
+                }
             }
         }
         marked
@@ -1713,12 +1810,11 @@ impl GitPanel {
 
     /// Checks whether the entry at `index` is explicitly marked.
     fn row_is_marked(&self, index: usize) -> bool {
-        self.entries.get(index).is_some_and(|entry| match entry {
-            GitListEntry::Status(entry) => self.marked_entries.contains(&entry.repo_path),
-            GitListEntry::TreeStatus(entry) => self.marked_entries.contains(&entry.entry.repo_path),
-            GitListEntry::Directory(entry) => self.marked_directories.contains(&entry.key),
-            GitListEntry::Header(_) | GitListEntry::EmptySection(_) => false,
-        })
+        match self.row_mark(index) {
+            Some(RowMark::File(id)) => self.marked_entries.contains(&id),
+            Some(RowMark::Directory(key)) => self.marked_directories.contains(&key),
+            None => false,
+        }
     }
 
     /// The entries a file operation should act on: the marked set when a
@@ -1860,7 +1956,7 @@ impl GitPanel {
             return;
         };
 
-        self.selected_entry = Some(ix);
+        self.set_selected_entry_index(ix);
         self.scroll_to_selected_entry(cx);
     }
 
@@ -2117,7 +2213,7 @@ impl GitPanel {
         self.toggle_directory(&directory_key, window, cx);
 
         if let Some(index) = self.directory_entry_index(&directory_key) {
-            self.selected_entry = Some(index);
+            self.set_selected_entry_index(index);
             self.scroll_to_selected_entry(cx);
         }
     }
@@ -2147,7 +2243,7 @@ impl GitPanel {
 
         if let Some(first_entry) = first_entry {
             self.mark_range_gesture = None;
-            self.selected_entry = Some(first_entry);
+            self.set_selected_entry_index(first_entry);
             self.scroll_to_selected_entry(cx);
         }
     }
@@ -2232,7 +2328,7 @@ impl GitPanel {
             return;
         };
 
-        self.selected_entry = Some(candidate);
+        self.set_selected_entry_index(candidate);
         self.scroll_to_selected_entry(cx);
     }
 
@@ -2316,14 +2412,14 @@ impl GitPanel {
             return;
         };
 
-        self.selected_entry = Some(candidate);
+        self.set_selected_entry_index(candidate);
         self.scroll_to_selected_entry(cx);
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
         if self.entries.last().is_some() {
             self.mark_range_gesture = None;
-            self.selected_entry = Some(self.entries.len() - 1);
+            self.set_selected_entry_index(self.entries.len() - 1);
         }
 
         let last_entry = match &self.view_mode {
@@ -2338,7 +2434,7 @@ impl GitPanel {
         };
 
         if let Some(last_entry) = last_entry {
-            self.selected_entry = Some(last_entry);
+            self.set_selected_entry_index(last_entry);
             self.scroll_to_selected_entry(cx);
         }
     }
@@ -5307,10 +5403,9 @@ impl GitPanel {
 
     fn update_visible_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let path_style = self.project.read(cx).path_style(cx);
-        let selected_change = self.selected_entry.and_then(|index| {
-            let entry = self.entries.get(index)?.status_entry()?;
-            Some((entry.repo_path.clone(), self.section_for_entry_index(index)))
-        });
+        let selected_change = self
+            .selected_entry
+            .and_then(|index| self.entry_identity(index));
         let bulk_staging = self.bulk_staging.take();
         let last_staged_path_prev_index = bulk_staging
             .as_ref()
@@ -5671,23 +5766,35 @@ impl GitPanel {
             }
             GitPanelViewMode::Flat => self.marked_directories.clear(),
         }
-        if !self.marked_entries.is_empty() {
-            let present_paths: HashSet<RepoPath> = self
-                .entries
-                .iter()
-                .filter_map(|entry| entry.status_entry())
-                .map(|entry| entry.repo_path.clone())
-                .collect();
-            self.marked_entries
-                .retain(|path| present_paths.contains(path));
-        }
+        let visible = self.visible_selectable_entry_ids();
+        reconcile_selection(
+            &mut self.selected_entry_id,
+            &mut self.marked_entries,
+            &mut self.selection_anchor,
+            &visible,
+        );
         // The rebuild may have reordered rows, invalidating the anchor index.
         self.mark_range_gesture = None;
 
-        if let Some((path, section)) = selected_change {
-            self.selected_entry = section
-                .and_then(|section| self.entry_by_path_in_section(&path, section))
-                .or_else(|| self.entry_by_path(&path));
+        if let Some(selected_id) = selected_change {
+            self.selected_entry = self
+                .entries
+                .iter()
+                .enumerate()
+                .position(|(index, _)| self.entry_identity(index).as_ref() == Some(&selected_id))
+                .or_else(|| {
+                    // The row may have moved between sections across the
+                    // rebuild; fall back to matching it by path alone, as the
+                    // pre-identity restore did.
+                    self.entries.iter().position(|entry| {
+                        entry
+                            .status_entry()
+                            .is_some_and(|status_entry| status_entry.repo_path == selected_id.path)
+                    })
+                });
+            self.selected_entry_id = self
+                .selected_entry
+                .and_then(|index| self.entry_identity(index));
         }
         self.select_first_entry_if_none(window, cx);
         self.select_last_entry_if_out_of_bounds(window, cx);
@@ -8135,7 +8242,6 @@ impl GitPanel {
             (SelectionTargetKind::Multiple, true) => &format!("Unstage {file_count} {file_label}"),
             (SelectionTargetKind::Multiple, false) => &format!("Stage {file_count} {file_label}"),
         };
-
         let restore_title = match (target_kind, all_created, all_deleted) {
             (SelectionTargetKind::Directory, true, _) => "Trash Folder",
             (SelectionTargetKind::Directory, false, _) => "Discard Changes",
@@ -8202,7 +8308,7 @@ impl GitPanel {
             self.clear_marks();
         }
 
-        self.selected_entry = Some(ix);
+        self.set_selected_entry_index(ix);
 
         let Some(target_kind) = self.selection_target_kind() else {
             return;
@@ -8327,7 +8433,9 @@ impl GitPanel {
         let display_name = entry.display_name(path_style);
 
         let selected = self.selected_entry == Some(ix);
-        let marked = self.marked_entries.contains(&entry.repo_path);
+        let marked = self
+            .entry_identity(ix)
+            .is_some_and(|id| self.marked_entries.contains(&id));
         let status_style = settings.status_style;
         let status = entry.status;
         let file_icon = if settings.file_icons {
@@ -8555,7 +8663,7 @@ impl GitPanel {
                     if event.modifiers().shift {
                         let anchor_ix = this.selected_entry.unwrap_or(ix);
                         this.apply_range_gesture(anchor_ix, ix);
-                        this.selected_entry = Some(ix);
+                        this.set_selected_entry_index(ix);
                         cx.notify();
                     } else if event.modifiers().secondary() {
                         this.toggle_mark(ix, cx);
@@ -8754,13 +8862,13 @@ impl GitPanel {
                     if event.modifiers().shift {
                         let anchor_ix = this.selected_entry.unwrap_or(ix);
                         this.apply_range_gesture(anchor_ix, ix);
-                        this.selected_entry = Some(ix);
+                        this.set_selected_entry_index(ix);
                         cx.notify();
                     } else if event.modifiers().secondary() {
                         this.toggle_mark(ix, cx);
                     } else {
                         this.clear_marks();
-                        this.selected_entry = Some(ix);
+                        this.set_selected_entry_index(ix);
                         this.toggle_directory(&key, window, cx);
                     }
                 })
@@ -9942,6 +10050,16 @@ mod tests {
                 .directory_entry()
                 .is_some_and(|entry| &entry.key.path == repo_path)
         })
+    }
+
+    /// Builds the selection identity of the file row at `path`, for tests that
+    /// seed or assert the marked set.
+    fn file_id(panel: &GitPanel, path: &str) -> GitPanelEntryId {
+        let ix = entry_index_for_repo_path(panel, &repo_path(path))
+            .unwrap_or_else(|| panic!("no file entry for {path}"));
+        panel
+            .entry_identity(ix)
+            .unwrap_or_else(|| panic!("entry at {path} has no identity"))
     }
 
     async fn await_git_panel_entries(panel: &Entity<GitPanel>, cx: &mut VisualTestContext) {
@@ -11539,9 +11657,13 @@ mod tests {
             // section, we expect the menu to offer the ability to unstage the
             // files.
             let partial_path = repo_path("src/partial.rs");
-            let staged_path = repo_path("src/staged.rs");
-            panel.marked_entries.insert(partial_path.clone());
-            panel.marked_entries.insert(staged_path);
+            // With identity-keyed marks, seed the "Staged" section
+            // projections of both files, matching the section the context
+            // menu is deployed from below.
+            panel
+                .marked_entries
+                .insert(file_id(panel, "src/partial.rs"));
+            panel.marked_entries.insert(file_id(panel, "src/staged.rs"));
             panel.selected_entry = panel.entry_by_path_in_section(&partial_path, Section::Staged);
 
             let entries = panel.effective_status_entries();
@@ -15004,10 +15126,10 @@ mod tests {
             assert_eq!(
                 panel.marked_entries,
                 HashSet::from_iter([
-                    repo_path("a.txt"),
-                    repo_path("b.txt"),
-                    repo_path("c.txt"),
-                    repo_path("new1.txt"),
+                    file_id(panel, "a.txt"),
+                    file_id(panel, "b.txt"),
+                    file_id(panel, "c.txt"),
+                    file_id(panel, "new1.txt"),
                 ]),
                 "range should mark all files between anchor and target, skipping the header",
             );
@@ -15017,10 +15139,10 @@ mod tests {
             assert_eq!(
                 panel.marked_entries,
                 HashSet::from_iter([
-                    repo_path("a.txt"),
-                    repo_path("b.txt"),
-                    repo_path("c.txt"),
-                    repo_path("new1.txt"),
+                    file_id(panel, "a.txt"),
+                    file_id(panel, "b.txt"),
+                    file_id(panel, "c.txt"),
+                    file_id(panel, "new1.txt"),
                 ]),
                 "a reversed range should mark the same entries",
             );
@@ -15068,9 +15190,9 @@ mod tests {
             assert_eq!(
                 panel.marked_entries,
                 HashSet::from_iter([
-                    repo_path("src/a.rs"),
-                    repo_path("src/b.rs"),
-                    repo_path("top.txt"),
+                    file_id(panel, "src/a.rs"),
+                    file_id(panel, "src/b.rs"),
+                    file_id(panel, "top.txt"),
                 ]),
                 "header rows should not be marked",
             );
@@ -15092,7 +15214,7 @@ mod tests {
             panel.mark_range(src_ix, top_ix);
             assert_eq!(
                 panel.marked_entries,
-                HashSet::from_iter([repo_path("top.txt")]),
+                HashSet::from_iter([file_id(panel, "top.txt")]),
                 "files hidden in the collapsed directory are not marked individually",
             );
             assert_eq!(
@@ -15120,7 +15242,7 @@ mod tests {
             panel.mark_range(hidden_ix, top_ix);
             assert_eq!(
                 panel.marked_entries,
-                HashSet::from_iter([repo_path("top.txt")]),
+                HashSet::from_iter([file_id(panel, "top.txt")]),
                 "an anchor hidden in a collapsed directory should mark the target only",
             );
             assert_eq!(panel.marked_directories, HashSet::default());
@@ -15134,7 +15256,7 @@ mod tests {
 
         panel.update_in(&mut cx, |panel, _window, _cx| {
             // A mark from before the gesture must survive the whole gesture.
-            panel.marked_entries.insert(repo_path("new1.txt"));
+            panel.marked_entries.insert(file_id(panel, "new1.txt"));
             let a_ix = entry_index_for_repo_path(panel, &repo_path("a.txt")).unwrap();
             panel.selected_entry = Some(a_ix);
         });
@@ -15149,10 +15271,10 @@ mod tests {
             assert_eq!(
                 panel.marked_entries,
                 HashSet::from_iter([
-                    repo_path("a.txt"),
-                    repo_path("b.txt"),
-                    repo_path("c.txt"),
-                    repo_path("new1.txt"),
+                    file_id(panel, "a.txt"),
+                    file_id(panel, "b.txt"),
+                    file_id(panel, "c.txt"),
+                    file_id(panel, "new1.txt"),
                 ]),
                 "shift+down twice should mark the anchor and two more rows",
             );
@@ -15161,9 +15283,9 @@ mod tests {
             assert_eq!(
                 panel.marked_entries,
                 HashSet::from_iter([
-                    repo_path("a.txt"),
-                    repo_path("b.txt"),
-                    repo_path("new1.txt"),
+                    file_id(panel, "a.txt"),
+                    file_id(panel, "b.txt"),
+                    file_id(panel, "new1.txt"),
                 ]),
                 "shift+up should shrink the range back toward the anchor",
             );
@@ -15171,7 +15293,7 @@ mod tests {
             panel.select_previous(&menu::SelectPrevious, window, cx);
             assert_eq!(
                 panel.marked_entries,
-                HashSet::from_iter([repo_path("a.txt"), repo_path("new1.txt")]),
+                HashSet::from_iter([file_id(panel, "a.txt"), file_id(panel, "new1.txt")]),
                 "shrinking to the anchor leaves only the anchor and prior marks",
             );
         });
@@ -15183,7 +15305,7 @@ mod tests {
             panel.select_next(&menu::SelectNext, window, cx);
             assert_eq!(
                 panel.marked_entries,
-                HashSet::from_iter([repo_path("a.txt"), repo_path("new1.txt")]),
+                HashSet::from_iter([file_id(panel, "a.txt"), file_id(panel, "new1.txt")]),
                 "plain navigation must not change the marks",
             );
         });
@@ -15196,10 +15318,10 @@ mod tests {
             assert_eq!(
                 panel.marked_entries,
                 HashSet::from_iter([
-                    repo_path("a.txt"),
-                    repo_path("b.txt"),
-                    repo_path("c.txt"),
-                    repo_path("new1.txt"),
+                    file_id(panel, "a.txt"),
+                    file_id(panel, "b.txt"),
+                    file_id(panel, "c.txt"),
+                    file_id(panel, "new1.txt"),
                 ]),
                 "a new gesture anchors at the row plain navigation moved to",
             );
@@ -15259,8 +15381,10 @@ mod tests {
                 })
                 .unwrap();
 
-            panel.marked_entries =
-                HashSet::from_iter([repo_path("src/a.rs"), repo_path("src/nested/c.rs")]);
+            panel.marked_entries = HashSet::from_iter([
+                file_id(panel, "src/a.rs"),
+                file_id(panel, "src/nested/c.rs"),
+            ]);
             assert_eq!(
                 panel.marked_directories,
                 HashSet::default(),
@@ -15285,7 +15409,7 @@ mod tests {
                 "operations expand a selected directory to its recursive descendants",
             );
 
-            panel.marked_entries.insert(repo_path("top.txt"));
+            panel.marked_entries.insert(file_id(panel, "top.txt"));
             panel.toggle_mark(src_ix, cx);
             assert_eq!(
                 panel.marked_directories,
@@ -15308,7 +15432,7 @@ mod tests {
             panel.toggle_mark(b_ix, cx);
             assert_eq!(
                 panel.marked_entries,
-                HashSet::from_iter([repo_path("a.txt"), repo_path("b.txt")]),
+                HashSet::from_iter([file_id(panel, "a.txt"), file_id(panel, "b.txt")]),
                 "the first toggle should also mark the previously selected entry",
             );
             assert_eq!(panel.selected_entry, Some(b_ix));
@@ -15316,7 +15440,7 @@ mod tests {
             panel.toggle_mark(b_ix, cx);
             assert_eq!(
                 panel.marked_entries,
-                HashSet::from_iter([repo_path("a.txt")]),
+                HashSet::from_iter([file_id(panel, "a.txt")]),
                 "toggling a marked entry should unmark it",
             );
         });
@@ -15345,14 +15469,14 @@ mod tests {
                 "no marks: the selection acts alone",
             );
 
-            panel.marked_entries.insert(repo_path("b.txt"));
+            panel.marked_entries.insert(file_id(panel, "b.txt"));
             assert_eq!(
                 paths(panel),
                 vec![repo_path("a.txt")],
                 "a single mark elsewhere should not override the selection",
             );
 
-            panel.marked_entries.insert(repo_path("c.txt"));
+            panel.marked_entries.insert(file_id(panel, "c.txt"));
             assert_eq!(
                 paths(panel),
                 vec![repo_path("b.txt"), repo_path("c.txt")],
@@ -15383,8 +15507,8 @@ mod tests {
 
         panel.update_in(&mut cx, |panel, window, cx| {
             assert_eq!(staging_for(panel, &repo_path("a.txt")), StageStatus::Staged);
-            panel.marked_entries.insert(repo_path("a.txt"));
-            panel.marked_entries.insert(repo_path("b.txt"));
+            panel.marked_entries.insert(file_id(panel, "a.txt"));
+            panel.marked_entries.insert(file_id(panel, "b.txt"));
             panel.selected_entry = entry_index_for_repo_path(panel, &repo_path("a.txt"));
             panel.toggle_staged_for_selected(&git::ToggleStaged, window, cx);
         });
@@ -15421,8 +15545,8 @@ mod tests {
         let (fs, project, panel, mut cx) = setup_flat_marks_fixture(cx).await;
 
         panel.update_in(&mut cx, |panel, _window, _cx| {
-            panel.marked_entries.insert(repo_path("a.txt"));
-            panel.marked_entries.insert(repo_path("b.txt"));
+            panel.marked_entries.insert(file_id(panel, "a.txt"));
+            panel.marked_entries.insert(file_id(panel, "b.txt"));
         });
 
         fs.set_status_for_repo(
@@ -15439,7 +15563,7 @@ mod tests {
         panel.read_with(&cx, |panel, _| {
             assert_eq!(
                 panel.marked_entries,
-                HashSet::from_iter([repo_path("b.txt")]),
+                HashSet::from_iter([file_id(panel, "b.txt")]),
                 "marks for entries that left the list should be pruned",
             );
         });
@@ -15451,8 +15575,8 @@ mod tests {
         let (_fs, _project, panel, mut cx) = setup_flat_marks_fixture(cx).await;
 
         panel.update_in(&mut cx, |panel, _window, cx| {
-            panel.marked_entries.insert(repo_path("a.txt"));
-            panel.marked_entries.insert(repo_path("b.txt"));
+            panel.marked_entries.insert(file_id(panel, "a.txt"));
+            panel.marked_entries.insert(file_id(panel, "b.txt"));
 
             let c_ix = entry_index_for_repo_path(panel, &repo_path("c.txt")).unwrap();
             panel.clear_marks_and_select(c_ix, cx);
@@ -15486,7 +15610,7 @@ mod tests {
         panel.read_with(&cx, |panel, _| {
             assert_eq!(
                 panel.marked_entries,
-                HashSet::from_iter([repo_path("a.txt"), repo_path("b.txt")]),
+                HashSet::from_iter([file_id(panel, "a.txt"), file_id(panel, "b.txt")]),
                 "shift+down should mark the origin and the destination",
             );
             assert_eq!(panel.selected_entry, Some(b_ix));
@@ -15500,8 +15624,8 @@ mod tests {
         let (fs, _project, panel, mut cx) = setup_flat_marks_fixture(cx).await;
 
         panel.update_in(&mut cx, |panel, window, cx| {
-            panel.marked_entries.insert(repo_path("a.txt"));
-            panel.marked_entries.insert(repo_path("new1.txt"));
+            panel.marked_entries.insert(file_id(panel, "a.txt"));
+            panel.marked_entries.insert(file_id(panel, "new1.txt"));
             panel.selected_entry = entry_index_for_repo_path(panel, &repo_path("a.txt"));
             panel.revert_selected(&git::RestoreFile::default(), window, cx);
         });
@@ -15568,8 +15692,8 @@ mod tests {
         await_git_panel_entries(&panel, &mut cx).await;
 
         panel.update_in(&mut cx, |panel, window, cx| {
-            panel.marked_entries.insert(repo_path("new1.txt"));
-            panel.marked_entries.insert(repo_path("new2.txt"));
+            panel.marked_entries.insert(file_id(panel, "new1.txt"));
+            panel.marked_entries.insert(file_id(panel, "new2.txt"));
             panel.selected_entry = entry_index_for_repo_path(panel, &repo_path("new1.txt"));
             panel.revert_selected(&git::RestoreFile::default(), window, cx);
         });
@@ -15591,8 +15715,8 @@ mod tests {
         let (_fs, project, panel, mut cx) = setup_flat_marks_fixture(cx).await;
 
         panel.update_in(&mut cx, |panel, window, cx| {
-            panel.marked_entries.insert(repo_path("a.txt"));
-            panel.marked_entries.insert(repo_path("b.txt"));
+            panel.marked_entries.insert(file_id(panel, "a.txt"));
+            panel.marked_entries.insert(file_id(panel, "b.txt"));
             panel.selected_entry = entry_index_for_repo_path(panel, &repo_path("a.txt"));
             panel.stage_selected(&git::StageFile, window, cx);
         });
@@ -15629,8 +15753,8 @@ mod tests {
         let (_fs, _project, panel, mut cx) = setup_flat_marks_fixture(cx).await;
 
         panel.update_in(&mut cx, |panel, window, cx| {
-            panel.marked_entries.insert(repo_path("a.txt"));
-            panel.marked_entries.insert(repo_path("b.txt"));
+            panel.marked_entries.insert(file_id(panel, "a.txt"));
+            panel.marked_entries.insert(file_id(panel, "b.txt"));
 
             panel.cancel(&menu::Cancel, window, cx);
             assert!(
@@ -15639,11 +15763,11 @@ mod tests {
             );
 
             panel.active_tab = GitPanelTab::History;
-            panel.marked_entries.insert(repo_path("a.txt"));
+            panel.marked_entries.insert(file_id(panel, "a.txt"));
             panel.cancel(&menu::Cancel, window, cx);
             assert_eq!(
                 panel.marked_entries,
-                HashSet::from_iter([repo_path("a.txt")]),
+                HashSet::from_iter([file_id(panel, "a.txt")]),
                 "cancel on the history tab should leave changes-tab marks alone",
             );
         });
@@ -15721,7 +15845,7 @@ mod tests {
                 entry_index_for_repo_path(panel, &repo_path("x.txt")).is_some(),
                 "repo A should list x.txt",
             );
-            panel.marked_entries.insert(repo_path("x.txt"));
+            panel.marked_entries.insert(file_id(panel, "x.txt"));
         });
 
         repository_b.update(&mut cx, |repository, cx| {
