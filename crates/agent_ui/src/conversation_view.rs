@@ -27,11 +27,11 @@ use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
-    Action, Animation, AnimationExt, App, ClickEvent, ClipboardItem, CursorStyle, ElementId, Empty,
-    Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState, ObjectFit,
-    PlatformDisplay, ScrollHandle, SharedString, StyledText, Subscription, Task, TextRun,
-    TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop,
-    linear_gradient, list, pulsating_between,
+    Action, Animation, AnimationExt, App, AsyncWindowContext, ClickEvent, ClipboardItem,
+    CursorStyle, ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset,
+    ListState, ObjectFit, PlatformDisplay, ScrollHandle, SharedString, StyledText, Subscription,
+    Task, TextRun, TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img,
+    linear_color_stop, linear_gradient, list, pulsating_between,
 };
 use language::{Buffer, Language, Rope};
 use language_model::{
@@ -841,6 +841,41 @@ impl ConnectedServerState {
     }
 }
 
+/// Drops saved work dirs that no longer exist on disk, such as a git worktree
+/// that was deleted after the thread was created. Without this, the agent
+/// refuses to start with a missing cwd and the panel gets stuck on that error
+/// every time the thread is restored.
+async fn existing_work_dirs(
+    work_dirs: PathList,
+    project: &Entity<Project>,
+    cx: &mut AsyncWindowContext,
+) -> PathList {
+    let Some((fs, fallback)) = cx
+        .update(|_, cx| {
+            let project = project.read(cx);
+            project
+                .is_local()
+                .then(|| (project.fs().clone(), project.default_path_list(cx)))
+        })
+        .ok()
+        .flatten()
+    else {
+        return work_dirs;
+    };
+
+    let mut existing = Vec::new();
+    for path in work_dirs.ordered_paths() {
+        if fs.is_dir(path).await {
+            existing.push(path.clone());
+        }
+    }
+    if existing.is_empty() {
+        fallback
+    } else {
+        PathList::new(&existing)
+    }
+}
+
 impl ConversationView {
     pub fn new(
         agent: Rc<dyn AgentServer>,
@@ -1159,6 +1194,8 @@ impl ConversationView {
                 side = side,
                 thread_location = thread_location
             );
+
+            let session_work_dirs = existing_work_dirs(session_work_dirs, &project, cx).await;
 
             let mut resumed_without_history = false;
             let result = if let Some(session_id) = resume_session_id.clone() {
@@ -4943,6 +4980,57 @@ pub(crate) mod tests {
             captured_cwd.lock().as_ref().unwrap(),
             &PathList::new(&[Path::new("/project/subdir")]),
             "Should use session cwd when it's inside the project"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_resume_thread_falls_back_to_project_when_saved_cwd_is_missing(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "file.txt": "hello" }))
+            .await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let connection = CwdCapturingConnection::new();
+        let captured_cwd = connection.captured_work_dirs.clone();
+
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+
+        let _conversation_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                ConversationView::new(
+                    Rc::new(StubAgentServer::new(connection)),
+                    connection_store,
+                    Agent::Custom { id: "Test".into() },
+                    Some(acp::SessionId::new("session-1")),
+                    None,
+                    Some(PathList::new(&[PathBuf::from("/deleted-worktree")])),
+                    None,
+                    None,
+                    workspace.downgrade(),
+                    project,
+                    Some(thread_store),
+                    AgentThreadSource::AgentPanel,
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            captured_cwd.lock().as_ref().unwrap(),
+            &PathList::new(&[Path::new("/project")]),
+            "Should fall back to the project's paths when the saved cwd no longer exists"
         );
     }
 
