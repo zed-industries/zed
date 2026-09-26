@@ -320,6 +320,10 @@ impl LspAdapter for VtslsLspAdapter {
             (LanguageName::new_static("TypeScript"), "typescript".into()),
             (LanguageName::new_static("JavaScript"), "javascript".into()),
             (LanguageName::new_static("TSX"), "typescriptreact".into()),
+            // Matches the `languages` entry the zed-extensions/vue extension
+            // declares for @vue/typescript-plugin in vtsls's globalPlugins
+            // config: vtsls builds its document selectors from that list.
+            (LanguageName::new_static("Vue.js"), "vue.js".into()),
         ])
     }
 
