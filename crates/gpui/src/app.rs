@@ -621,6 +621,27 @@ impl SystemWindowTabController {
         }
     }
 
+    /// Replace any groups that contain these windows with a single group.
+    ///
+    /// `add_tab` matches an existing group by "every tab except this window", so
+    /// calling it once per window with the full merged list creates duplicate
+    /// groups. `tabs()` then returns whichever group the map yields first, which
+    /// may still be a single window.
+    pub fn sync_tabs(cx: &mut App, tabs: Vec<SystemWindowTab>) {
+        if tabs.is_empty() {
+            return;
+        }
+
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let ids: FxHashSet<_> = tabs.iter().map(|tab| tab.id).collect();
+        controller.tab_groups.retain(|_, group| {
+            group.retain(|tab| !ids.contains(&tab.id));
+            !group.is_empty()
+        });
+        let new_group_id = controller.tab_groups.keys().max().map_or(0, |key| key + 1);
+        controller.tab_groups.insert(new_group_id, tabs);
+    }
+
     /// Remove a tab from a tab group.
     pub fn remove_tab(cx: &mut App, id: WindowId) -> Option<SystemWindowTab> {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
@@ -1507,6 +1528,15 @@ impl App {
     /// the system. On other platforms this is a no-op.
     pub fn set_window_appearance(&self, appearance: Option<WindowAppearance>) {
         self.platform.set_window_appearance(appearance);
+    }
+
+    /// Sets whether macOS may automatically place new windows into tabs.
+    ///
+    /// Process-global, and a no-op on other platforms. Window creation only
+    /// enables this, so call it at startup when system window tabs are disabled
+    /// to override the system "Prefer tabs" preference.
+    pub fn set_allows_automatic_window_tabbing(&self, allows: bool) {
+        self.platform.set_allows_automatic_window_tabbing(allows);
     }
 
     /// Returns the window button layout configuration when supported.

@@ -38,7 +38,7 @@ pub struct PlatformTitleBar {
 impl PlatformTitleBar {
     pub fn new(id: impl Into<ElementId>, cx: &mut Context<Self>) -> Self {
         let platform_style = PlatformStyle::platform();
-        let system_window_tabs = cx.new(|_cx| SystemWindowTabs::new());
+        let system_window_tabs = cx.new(|cx| SystemWindowTabs::new(cx));
 
         Self {
             id: id.into(),

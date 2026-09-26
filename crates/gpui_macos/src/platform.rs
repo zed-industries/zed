@@ -746,6 +746,13 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn set_allows_automatic_window_tabbing(&self, allows: bool) {
+        unsafe {
+            let allows: BOOL = if allows { YES } else { NO };
+            let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: allows];
+        }
+    }
+
     fn open_url(&self, url: &str) {
         unsafe {
             let ns_url = NSURL::alloc(nil).initWithString_(ns_string(url));

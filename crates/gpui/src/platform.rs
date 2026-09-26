@@ -238,6 +238,13 @@ pub trait Platform: 'static {
     /// other platforms.
     fn set_window_appearance(&self, _appearance: Option<WindowAppearance>) {}
 
+    /// Sets whether macOS may automatically place new windows into tabs.
+    ///
+    /// Process-global. A no-op on other platforms. Window creation only turns
+    /// this on, because a later window opened without a tabbing identifier must
+    /// not turn it off for the whole app.
+    fn set_allows_automatic_window_tabbing(&self, _allows: bool) {}
+
     /// Returns the window button layout configuration when supported.
     fn button_layout(&self) -> Option<WindowButtonLayout> {
         None
