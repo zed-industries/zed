@@ -3,7 +3,7 @@ use crate::{
     EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, Pixels, Render,
     RenderOnce, Style, StyleRefinement, ViewNodeCacheKey, ViewNodeId, WeakEntity,
 };
-use crate::{AppContext as _, Empty, Window, view_tree::DependencySet};
+use crate::{AppContext as _, Empty, Window, view_node::MetadataPhase, view_tree::DependencySet};
 use anyhow::Result;
 use refineable::Refineable;
 use std::{any::TypeId, fmt};
@@ -455,9 +455,11 @@ impl<V: View> Element for ViewElement<V> {
                     });
                     let previous = window.view_tree.store_layout(node_id, layout);
                     window.retire_layout(previous);
-                    window
-                        .view_tree
-                        .record_dependencies(node_id, &accessed_entities);
+                    window.view_tree.note_rendered_phase(
+                        node_id,
+                        MetadataPhase::Layout,
+                        &accessed_entities,
+                    );
                     window.finish_node_phase(node_id, true);
                     self.node_layout = Some(NodeViewLayout {
                         layout,
@@ -546,9 +548,11 @@ impl<V: View> Element for ViewElement<V> {
                         element
                     }
                 });
-                window
-                    .view_tree
-                    .record_dependencies(node_id, &accessed_entities);
+                window.view_tree.note_rendered_phase(
+                    node_id,
+                    MetadataPhase::Prepaint,
+                    &accessed_entities,
+                );
                 window.finish_node_phase(node_id, true);
                 ViewElementPrepaintState {
                     element: Some(element),

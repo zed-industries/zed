@@ -3208,6 +3208,7 @@ impl Window {
 
     fn finish_view_tree_frame(&mut self) {
         let view_tree = &mut self.view_tree;
+        view_tree.finish_unpainted_renders(&self.next_frame.dispatch_tree);
         let changed_bounds = view_tree.finish_frame();
         log::trace!("GPUI view tree changed view bounds: {changed_bounds:?}");
     }
@@ -3716,12 +3717,6 @@ impl Window {
         if self.view_tree.current_phase() == Some(MetadataPhase::Prepaint) {
             self.view_tree
                 .end_dispatch_range(node_id, self.next_frame.dispatch_tree.len());
-            // Recorded now as well as after paint, since paint may not follow: an element
-            // can prepaint a child view without painting it.
-            if rendered {
-                self.view_tree
-                    .snapshot_dispatch_nodes(node_id, &self.next_frame.dispatch_tree);
-            }
         }
         self.view_tree.finish_phase(node_id, rendered, text);
     }

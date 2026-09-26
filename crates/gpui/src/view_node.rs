@@ -229,9 +229,7 @@ pub(crate) enum DispatchParent {
 
 /// Where a child or root a scope attached hangs in the dispatch tree: the live node it
 /// was attached under while the scope drew, and that node resolved against the scope's
-/// recorded nodes, which is what replay uses. The live node is kept because the scope
-/// is copied out twice in a frame, after prepaint and after paint, and the nodes kept
-/// can differ between the two: paint may give an empty node a key context.
+/// recorded nodes when they were last copied out, which is what replay uses.
 #[derive(Clone, Copy)]
 pub(crate) struct DispatchLink {
     pub(crate) live: Option<crate::DispatchNodeId>,

@@ -121,6 +121,9 @@ pub(crate) struct ViewTree {
     grafted_dispatch: FxHashMap<ViewNodeId, usize>,
     /// Nodes whose paint was grafted by the replay in progress, awaiting that fill.
     painted_grafts: Vec<ViewNodeId>,
+    /// The layouts and prepaints rendered this frame, each with what the node had read by
+    /// its end, for `finish_unpainted_renders`.
+    rendered_phases: Vec<(ViewNodeId, MetadataPhase, DependencySet)>,
     /// A frame is its roots, in drawing order: the window's root view, then the roots
     /// attached by `defer_draw` in priority order, then the prompt, drag overlay or
     /// tooltip. Walking them in order reproduces the frame. `roots` is the frame drawn
@@ -160,6 +163,7 @@ impl ViewTree {
             dispatch_resolution: Vec::new(),
             grafted_dispatch: FxHashMap::default(),
             painted_grafts: Vec::new(),
+            rendered_phases: Vec::new(),
             spare_scenes: Vec::new(),
             invalidation_scratch: Vec::new(),
             roots: Vec::new(),
@@ -569,9 +573,9 @@ impl ViewTree {
     /// elements' — are left out, and whatever hung from one is resolved to its nearest kept
     /// ancestor or, above the range, to the scope's attachment point.
     ///
-    /// Called after the node prepaints and again after it paints, which adds key contexts
-    /// and listeners: an element can prepaint a child view without painting it, and the
-    /// record must then hold what a fresh frame would have held, with every link resolved.
+    /// Called after the node paints, which adds key contexts and listeners, or, for a node
+    /// that prepainted without painting, once the frame is drawn: the record must then hold
+    /// what a fresh frame would have held, with every link resolved.
     pub(crate) fn snapshot_dispatch_nodes(
         &mut self,
         node_id: ViewNodeId,
@@ -1189,21 +1193,49 @@ impl ViewTree {
         self.pop_traversal(node_id);
     }
 
-    /// Records what a rendering node has read in the phases it has run so far this frame.
-    /// Every phase that renders records, not only paint: an element may lay out or prepaint
-    /// a child view without painting it (`visibility: hidden`, `display: none`, a measured
-    /// sample), and a notify of anything that view read must still reach it and its
-    /// ancestors. Otherwise the notified entity is unknown to the tree and every node is
-    /// rebuilt to be safe.
+    /// Notes what a rendering node has read by the end of its layout or prepaint, in case
+    /// it does not paint this frame: an element may lay out or prepaint a child view without
+    /// painting it (`visibility: hidden`, `display: none`, a measured sample). Painting
+    /// commits the node's reads as usual; `finish_unpainted_renders` commits them for the
+    /// nodes that did not paint.
+    pub(crate) fn note_rendered_phase(
+        &mut self,
+        node_id: ViewNodeId,
+        phase: MetadataPhase,
+        accessed: &DependencySet,
+    ) {
+        self.rendered_phases
+            .push((node_id, phase, accessed.clone()));
+    }
+
+    /// Records, for the nodes that rendered this frame without painting, what they read and
+    /// the dispatch nodes they pushed, as painting does for the rest. Without it a notify of
+    /// something such a node read would be unknown to the tree, and every node would be
+    /// rebuilt to be safe. Called once drawing is done, while the frame's dispatch tree is
+    /// still the one the nodes pushed into.
     ///
-    /// The node rendered from current state, so it is no longer dirty. That matters beyond
-    /// bookkeeping: invalidation stops climbing at the first dirty node, taking its
+    /// A committed node rendered from current state, so it is no longer dirty. That matters
+    /// beyond bookkeeping: invalidation stops climbing at the first dirty node, taking its
     /// ancestors to be dirty already. A node that never paints keeps no record from a
     /// painted frame, so clearing the flag does not make it reusable.
-    pub(crate) fn record_dependencies(&mut self, node_id: ViewNodeId, accessed: &DependencySet) {
-        let mut current = self.take_dependency_set();
-        current.extend(accessed.iter().copied());
-        self.commit_dependencies(node_id, current);
+    pub(crate) fn finish_unpainted_renders(&mut self, tree: &crate::key_dispatch::DispatchTree) {
+        let mut rendered = std::mem::take(&mut self.rendered_phases);
+        // In drawing order, so a node's prepaint record supersedes its layout record.
+        for (node_id, phase, accessed) in rendered.drain(..) {
+            let painted = self
+                .nodes
+                .get(node_id)
+                .is_none_or(|node| node.painted_frame == self.frame);
+            if painted {
+                self.recycle_dependency_set(accessed);
+                continue;
+            }
+            self.commit_dependencies(node_id, accessed);
+            if phase == MetadataPhase::Prepaint {
+                self.snapshot_dispatch_nodes(node_id, tree);
+            }
+        }
+        self.rendered_phases = rendered;
     }
 
     fn commit_dependencies(&mut self, node_id: ViewNodeId, mut current: DependencySet) {
