@@ -125,7 +125,13 @@ impl Render for ImageView {
 
         let image = self.image.clone();
 
-        img(image).w(width).h(height)
+        // `img` turns an auto height into the image's natural height, so the
+        // aspect ratio lives on a wrapper that can shrink with the output area.
+        div()
+            .w_full()
+            .max_w(width)
+            .aspect_ratio(f32::from(width) / f32::from(height))
+            .child(img(image).size_full())
     }
 }
 
@@ -142,6 +148,8 @@ impl OutputContent for ImageView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::{AvailableSpace, TestAppContext, VisualTestContext, point, px, size};
+    use settings::SettingsStore;
 
     fn encode_test_image(width: u32, height: u32) -> String {
         let image_buffer =
@@ -188,5 +196,53 @@ mod tests {
 
         assert_eq!(f32::from(width), 200.0);
         assert_eq!(f32::from(height), 120.0);
+    }
+
+    fn laid_out_height(
+        image_width: u32,
+        image_height: u32,
+        container_width: f32,
+        cx: &mut TestAppContext,
+    ) -> f32 {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        let cx: &mut VisualTestContext = cx.add_empty_window();
+        let encoded = encode_test_image(image_width, image_height);
+        let image_view = cx.update(|_, cx| {
+            cx.new(|_| match ImageView::from(&encoded) {
+                Ok(view) => view,
+                Err(error) => panic!("failed to decode image view: {error}"),
+            })
+        });
+        cx.draw(
+            point(px(0.), px(0.)),
+            size(
+                AvailableSpace::Definite(px(container_width)),
+                AvailableSpace::MinContent,
+            ),
+            |_, _| {
+                div()
+                    .w(px(container_width))
+                    .debug_selector(|| "image-output".into())
+                    .child(image_view)
+            },
+        );
+        match cx.debug_bounds("image-output") {
+            Some(bounds) => f32::from(bounds.size.height),
+            None => panic!("image output was not laid out"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_image_view_shrinks_to_fit_narrow_output(cx: &mut TestAppContext) {
+        assert_eq!(laid_out_height(800, 400, 300.0, cx), 150.0);
+    }
+
+    #[gpui::test]
+    fn test_image_view_does_not_upscale_small_images(cx: &mut TestAppContext) {
+        assert_eq!(laid_out_height(100, 50, 300.0, cx), 50.0);
     }
 }
