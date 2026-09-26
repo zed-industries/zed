@@ -1126,6 +1126,22 @@ impl Editor {
     ) {
         self.hide_context_menu(window, cx);
 
+        // Moving the cursor with the pointer ends any pending IME composition. Unlike keyboard
+        // movement, which macOS routes through `doCommandBySelector:` after the input method has
+        // already ended the composition, a mouse click leaves the marked range behind. The next
+        // composition event is then anchored to that stale range instead of the new cursor
+        // position, because both `replace_text_in_range` and `replace_and_mark_text_in_range`
+        // resolve their edit target from the marked ranges whenever those exist, whether or not
+        // the platform reported a replacement range.
+        if matches!(
+            phase,
+            SelectPhase::Begin { .. }
+                | SelectPhase::BeginColumnar { .. }
+                | SelectPhase::Extend { .. }
+        ) {
+            self.unmark_text(window, cx);
+        }
+
         match phase {
             SelectPhase::Begin {
                 position,

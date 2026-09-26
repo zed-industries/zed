@@ -636,6 +636,51 @@ fn test_ime_composition(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_ime_composition_is_ended_by_mouse_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let buffer = cx.new(|cx| language::Buffer::local("hello", cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    cx.add_window(|window, cx| {
+        let mut editor = build_editor(buffer.clone(), window, cx);
+
+        // Type a dead key at the end of the line, leaving a pending composition.
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([
+                MultiBufferOffsetUtf16(OffsetUtf16(5))..MultiBufferOffsetUtf16(OffsetUtf16(5))
+            ])
+        });
+        editor.replace_and_mark_text_in_range(None, "`", None, window, cx);
+        assert_eq!(editor.text(cx), "hello`");
+        assert_eq!(
+            editor.marked_text_ranges(cx),
+            Some(vec![
+                MultiBufferOffsetUtf16(OffsetUtf16(5))..MultiBufferOffsetUtf16(OffsetUtf16(6))
+            ])
+        );
+
+        // Click elsewhere in the buffer.
+        editor.select(
+            SelectPhase::Begin {
+                position: DisplayPoint::new(DisplayRow(0), 1),
+                add: false,
+                click_count: 1,
+            },
+            window,
+            cx,
+        );
+        editor.select(SelectPhase::End, window, cx);
+        assert_eq!(editor.marked_text_ranges(cx), None);
+
+        // The next character lands at the clicked position, not at the old marked range.
+        editor.replace_text_in_range(None, "`", window, cx);
+        assert_eq!(editor.text(cx), "h`ello`");
+
+        editor
+    });
+}
+
+#[gpui::test]
 fn test_selection_with_mouse(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
