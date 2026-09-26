@@ -33,6 +33,7 @@ pub enum IconName {
     ArrowCircle,
     ArrowDown,
     ArrowDown10,
+    ArrowDownLeft,
     ArrowDownRight,
     ArrowLeft,
     ArrowRight,

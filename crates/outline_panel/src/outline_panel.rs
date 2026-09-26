@@ -1,4 +1,7 @@
+mod call_hierarchy_view;
 mod outline_panel_settings;
+
+use call_hierarchy_view::{CallHierarchyRow, CallHierarchyState};
 
 use anyhow::Context as _;
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet, IndexMap};
@@ -40,6 +43,7 @@ use std::{
     u32,
 };
 
+use call_hierarchy::CallHierarchyMode;
 use outline_panel_settings::{DockSide, FolderIndicator, OutlinePanelSettings, ShowIndentGuides};
 use project::{File, Fs, Project, ProjectPath};
 use search::{BufferSearchBar, ProjectSearchView};
@@ -96,6 +100,10 @@ actions!(
         ToggleActiveEditorPin,
         /// Toggles showing symbols, excerpts and search matches for multi-buffer views.
         ToggleSymbols,
+        /// Toggles the call hierarchy view between incoming and outgoing calls.
+        ToggleCallHierarchyDirection,
+        /// Exits the call hierarchy view and returns to the document outline.
+        ExitCallHierarchy,
         /// Unfolds the selected directory.
         UnfoldDirectory,
         /// Toggles the outline panel.
@@ -155,6 +163,7 @@ pub struct OutlinePanel {
 enum ItemsDisplayMode {
     Search(SearchState),
     Outline,
+    CallHierarchy(CallHierarchyState),
 }
 
 #[derive(Debug)]
@@ -673,6 +682,7 @@ enum PanelEntry {
     FoldedDirs(FoldedDirsEntry),
     Outline(OutlineEntry),
     Search(SearchEntry),
+    CallHierarchy(CallHierarchyRow),
 }
 
 #[derive(Clone, Debug)]
@@ -722,6 +732,7 @@ impl PartialEq for PanelEntry {
                     ..
                 }),
             ) => match_range_a == match_range_b && kind_a == kind_b,
+            (Self::CallHierarchy(a), Self::CallHierarchy(b)) => a == b,
             _ => false,
         }
     }
@@ -1022,6 +1033,7 @@ pub fn init(cx: &mut App) {
                 });
             }
         });
+        workspace.register_action(OutlinePanel::show_call_hierarchy);
     })
     .detach();
 }
@@ -1106,7 +1118,8 @@ impl OutlinePanel {
                                     cx,
                                 );
                             }
-                        } else {
+                        } else if !matches!(outline_panel.mode, ItemsDisplayMode::CallHierarchy(_))
+                        {
                             outline_panel.clear_previous(window, cx);
                             cx.notify();
                         }
@@ -1461,6 +1474,14 @@ impl OutlinePanel {
         window: &mut Window,
         cx: &mut Context<OutlinePanel>,
     ) {
+        // Call hierarchy navigation opens the target's own buffer and does not
+        // depend on the panel's active editor (which may have been closed while
+        // navigating between call sites), so handle it before that guard.
+        if let PanelEntry::CallHierarchy(row) = entry {
+            self.select_entry(entry.clone(), true, window, cx);
+            self.open_call_hierarchy_row(row, prefer_focus_change, window, cx);
+            return;
+        }
         let Some(active_editor) = self.active_editor() else {
             return;
         };
@@ -1517,6 +1538,8 @@ impl OutlinePanel {
                 multi_buffer_snapshot.anchor_in_excerpt(excerpt.context.start)
             }
             PanelEntry::Search(search_entry) => Some(search_entry.match_range.start),
+            // Handled above, before the active-editor guard.
+            PanelEntry::CallHierarchy(_) => None,
         };
 
         if let Some(anchor) = scroll_target {
@@ -1669,6 +1692,10 @@ impl OutlinePanel {
     }
 
     fn select_parent(&mut self, _: &SelectParent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(PanelEntry::CallHierarchy(row)) = self.selected_entry().cloned() {
+            self.select_call_hierarchy_parent(&row, window, cx);
+            return;
+        }
         if let Some(entry_to_select) = self.selected_entry().and_then(|selected_entry| {
             let mut previous_entries = self
                 .cached_entries
@@ -1733,6 +1760,7 @@ impl OutlinePanel {
                 PanelEntry::Search(_) => {
                     previous_entries.find(|entry| !matches!(entry, PanelEntry::Search(_)))
                 }
+                PanelEntry::CallHierarchy(_) => return None,
             }
         }) {
             self.select_entry(entry_to_select.clone(), true, window, cx);
@@ -1797,7 +1825,7 @@ impl OutlinePanel {
                 .first()
                 .is_some_and(|entry| entry.path.is_empty()),
             PanelEntry::Fs(FsEntry::ExternalFile(_)) => false,
-            PanelEntry::Outline(_) | PanelEntry::Search(_) => {
+            PanelEntry::Outline(_) | PanelEntry::Search(_) | PanelEntry::CallHierarchy(_) => {
                 cx.notify();
                 return;
             }
@@ -1876,6 +1904,14 @@ impl OutlinePanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(PanelEntry::CallHierarchy(row)) = self.selected_entry().cloned() {
+            if row.is_expanded() {
+                self.select_next(&SelectNext, window, cx);
+            } else {
+                self.toggle_call_hierarchy_row(&row, window, cx);
+            }
+            return;
+        }
         let Some(active_editor) = self.active_editor() else {
             return;
         };
@@ -1916,6 +1952,8 @@ impl OutlinePanel {
             PanelEntry::Outline(OutlineEntry::Outline(outline)) => {
                 Some(CollapsedEntry::Outline(outline.range.clone()))
             }
+            // Handled above, before the active-editor guard.
+            PanelEntry::CallHierarchy(_) => return,
             PanelEntry::Search(_) => return,
         };
         let Some(collapsed_entry) = entry_to_expand else {
@@ -1944,6 +1982,14 @@ impl OutlinePanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(PanelEntry::CallHierarchy(row)) = self.selected_entry().cloned() {
+            if row.is_expanded() {
+                self.toggle_call_hierarchy_row(&row, window, cx);
+            } else {
+                self.select_parent(&SelectParent, window, cx);
+            }
+            return;
+        }
         let Some(active_editor) = self.active_editor() else {
             return;
         };
@@ -2012,6 +2058,8 @@ impl OutlinePanel {
             PanelEntry::Outline(OutlineEntry::Outline(outline)) => self
                 .collapsed_entries
                 .insert(CollapsedEntry::Outline(outline.range.clone())),
+            // Handled above, before the active-editor guard.
+            PanelEntry::CallHierarchy(_) => return,
             PanelEntry::Search(_) => false,
         };
 
@@ -2160,7 +2208,7 @@ impl OutlinePanel {
                     PanelEntry::Outline(OutlineEntry::Outline(outline)) => {
                         Some(CollapsedEntry::Outline(outline.range.clone()))
                     }
-                    PanelEntry::Search(_) => None,
+                    PanelEntry::Search(_) | PanelEntry::CallHierarchy(_) => None,
                 },
             ));
 
@@ -2176,6 +2224,12 @@ impl OutlinePanel {
     }
 
     fn toggle_expanded(&mut self, entry: &PanelEntry, window: &mut Window, cx: &mut Context<Self>) {
+        // Call hierarchy expansion is independent of the panel's active editor,
+        // which may have been closed while navigating between call sites.
+        if let PanelEntry::CallHierarchy(row) = entry {
+            self.toggle_call_hierarchy_row(row, window, cx);
+            return;
+        }
         let Some(active_editor) = self.active_editor() else {
             return;
         };
@@ -2243,6 +2297,8 @@ impl OutlinePanel {
                     self.collapsed_entries.insert(collapsed_entry);
                 }
             }
+            // Handled above, before the active-editor guard.
+            PanelEntry::CallHierarchy(_) => return,
             PanelEntry::Search(_) => return,
         }
 
@@ -2327,7 +2383,9 @@ impl OutlinePanel {
                 PanelEntry::FoldedDirs(folded_dirs) => {
                     folded_dirs.entries.last().map(|entry| entry.path.clone())
                 }
-                PanelEntry::Search(_) | PanelEntry::Outline(..) => None,
+                PanelEntry::Search(_) | PanelEntry::Outline(..) | PanelEntry::CallHierarchy(_) => {
+                    None
+                }
             })
             .map(|p| p.display(path_style).to_string())
         {
@@ -2389,12 +2447,16 @@ impl OutlinePanel {
         if !self.active
             || !OutlinePanelSettings::get_global(cx).auto_reveal_entries
             || self.focus_handle.contains_focused(window, cx)
+            || matches!(self.mode, ItemsDisplayMode::CallHierarchy(_))
         {
             return;
         }
         self.reveal_selection_task = cx.spawn_in(window, async move |outline_panel, cx| {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             outline_panel.update_in(cx, |outline_panel, window, cx| {
+                if matches!(outline_panel.mode, ItemsDisplayMode::CallHierarchy(_)) {
+                    return;
+                }
                 let Some(entry) = outline_panel.location_for_editor_selection(&editor, window, cx)
                 else {
                     outline_panel.selected_entry = SelectedEntry::None;
@@ -2411,7 +2473,7 @@ impl OutlinePanel {
                         .snapshot(cx)
                         .anchor_to_buffer_anchor(search.match_range.start)
                         .map(|(anchor, _)| anchor.buffer_id),
-                    PanelEntry::FoldedDirs(_) => None,
+                    PanelEntry::FoldedDirs(_) | PanelEntry::CallHierarchy(_) => None,
                 };
                 let Some(buffer_id) = buffer_id else { return };
                 let collapsed_count = outline_panel.collapsed_entries.len();
@@ -3588,6 +3650,7 @@ impl OutlinePanel {
                 selection_display_point,
                 cx,
             ),
+            ItemsDisplayMode::CallHierarchy(_) => None,
         }
     }
 
@@ -3931,7 +3994,8 @@ impl OutlinePanel {
                         .map(|(anchor, _)| anchor.buffer_id)
                 })
             }
-            Some(PanelEntry::Fs(_) | PanelEntry::FoldedDirs(_)) | None => None,
+            Some(PanelEntry::Fs(_) | PanelEntry::FoldedDirs(_) | PanelEntry::CallHierarchy(_))
+            | None => None,
         };
         let Some(buffer_id) = buffer_id else {
             return;
@@ -4038,7 +4102,7 @@ impl OutlinePanel {
                     .worktree_for_id(*worktree_id, cx)
                     .map(|worktree| worktree.read(cx).absolutize(&entry.path))
             }),
-            PanelEntry::Search(_) | PanelEntry::Outline(..) => None,
+            PanelEntry::Search(_) | PanelEntry::Outline(..) | PanelEntry::CallHierarchy(_) => None,
         }
     }
 
@@ -4108,16 +4172,31 @@ impl OutlinePanel {
                     .update_in(cx, |outline_panel, window, cx| {
                         outline_panel.cached_entries = new_cached_entries;
                         outline_panel.max_width_item_index = max_width_item_index;
-                        if let SelectedEntry::Valid(selected, _) = &outline_panel.selected_entry
-                            && let Some((index, cached)) =
+                        let call_hierarchy =
+                            matches!(outline_panel.mode, ItemsDisplayMode::CallHierarchy(_));
+                        if let SelectedEntry::Valid(selected, _) = &outline_panel.selected_entry {
+                            if let Some((index, cached)) =
                                 outline_panel.cached_entry_for_selection(selected)
-                        {
-                            outline_panel.selected_entry =
-                                SelectedEntry::Valid(cached.entry.clone(), index);
+                            {
+                                outline_panel.selected_entry =
+                                    SelectedEntry::Valid(cached.entry.clone(), index);
+                            } else if call_hierarchy {
+                                outline_panel.selected_entry = SelectedEntry::None;
+                            }
                         }
-                        if (outline_panel.selected_entry.is_invalidated()
-                            || matches!(outline_panel.selected_entry, SelectedEntry::None))
-                            && let Some(new_selected_entry) =
+                        if outline_panel.selected_entry.is_invalidated()
+                            || matches!(outline_panel.selected_entry, SelectedEntry::None)
+                        {
+                            if call_hierarchy {
+                                if let Some(entry) = outline_panel.cached_entries.first() {
+                                    outline_panel.select_entry(
+                                        entry.entry.clone(),
+                                        false,
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            } else if let Some(new_selected_entry) =
                                 outline_panel.active_editor().and_then(|active_editor| {
                                     outline_panel.location_for_editor_selection(
                                         &active_editor,
@@ -4125,17 +4204,18 @@ impl OutlinePanel {
                                         cx,
                                     )
                                 })
-                        {
-                            let awaiting_outlines = match &new_selected_entry {
-                                PanelEntry::Outline(outline) => outline_panel
-                                    .buffers
-                                    .get(&outline.buffer_id())
-                                    .is_some_and(BufferOutlines::should_fetch_outlines),
-                                _ => false,
-                            };
-                            outline_panel.select_entry(new_selected_entry, false, window, cx);
-                            if awaiting_outlines {
-                                outline_panel.selected_entry.invalidate();
+                            {
+                                let awaiting_outlines = match &new_selected_entry {
+                                    PanelEntry::Outline(outline) => outline_panel
+                                        .buffers
+                                        .get(&outline.buffer_id())
+                                        .is_some_and(BufferOutlines::should_fetch_outlines),
+                                    _ => false,
+                                };
+                                outline_panel.select_entry(new_selected_entry, false, window, cx);
+                                if awaiting_outlines {
+                                    outline_panel.selected_entry.invalidate();
+                                }
                             }
                         }
 
@@ -4227,6 +4307,23 @@ impl OutlinePanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<(Vec<CachedEntry>, Option<usize>)> {
+        if let ItemsDisplayMode::CallHierarchy(state) = &self.mode {
+            let mut generation_state = GenerationState::default();
+            let track_matches = query.is_some();
+            for (depth, row) in state.rows() {
+                self.push_entry(
+                    &mut generation_state,
+                    track_matches,
+                    PanelEntry::CallHierarchy(row),
+                    depth,
+                    cx,
+                );
+            }
+            let executor = cx.background_executor().clone();
+            return cx.spawn_in(window, async move |_, _| {
+                filter_generation_state(generation_state, query, executor).await
+            });
+        }
         let Some(active_editor) = self.active_editor() else {
             return Task::ready((Vec::new(), None));
         };
@@ -4580,6 +4677,9 @@ impl OutlinePanel {
                                     );
                                 }
                             }
+                            // Call hierarchy mode builds its entries via the early return in
+                            // `generate_cached_entries`, so it should never reach here.
+                            ItemsDisplayMode::CallHierarchy(_) => {}
                         }
                     }
 
@@ -4624,48 +4724,7 @@ impl OutlinePanel {
                 return (Vec::new(), None);
             };
 
-            let Some(query) = query else {
-                return (
-                    generation_state.entries,
-                    generation_state
-                        .max_width_estimate_and_index
-                        .map(|(_, index)| index),
-                );
-            };
-
-            let mut matched_ids = match_strings(
-                &generation_state.match_candidates,
-                &query,
-                true,
-                true,
-                usize::MAX,
-                &AtomicBool::default(),
-                cx.background_executor().clone(),
-            )
-            .await
-            .into_iter()
-            .map(|string_match| (string_match.candidate_id, string_match))
-            .collect::<HashMap<_, _>>();
-
-            let mut id = 0;
-            generation_state.entries.retain_mut(|cached_entry| {
-                let retain = match matched_ids.remove(&id) {
-                    Some(string_match) => {
-                        cached_entry.string_match = Some(string_match);
-                        true
-                    }
-                    None => false,
-                };
-                id += 1;
-                retain
-            });
-
-            (
-                generation_state.entries,
-                generation_state
-                    .max_width_estimate_and_index
-                    .map(|(_, index)| index),
-            )
+            filter_generation_state(generation_state, query, cx.background_executor().clone()).await
         })
     }
 
@@ -4733,17 +4792,16 @@ impl OutlinePanel {
                             .push(StringMatchCandidate::new(id, &search_data.context_text));
                     }
                 }
+                PanelEntry::CallHierarchy(row) => {
+                    state
+                        .match_candidates
+                        .push(StringMatchCandidate::new(id, row.name()));
+                }
             }
         }
 
         let width_estimate = self.width_estimate(depth, &entry, cx);
-        if Some(width_estimate)
-            > state
-                .max_width_estimate_and_index
-                .map(|(estimate, _)| estimate)
-        {
-            state.max_width_estimate_and_index = Some((width_estimate, state.entries.len()));
-        }
+        state.entry_widths.push(width_estimate);
         state.entries.push(CachedEntry {
             depth,
             entry,
@@ -4883,6 +4941,7 @@ impl OutlinePanel {
                             .any(|((existing, _), incoming)| existing != incoming)
                 }
                 ItemsDisplayMode::Outline => true,
+                ItemsDisplayMode::CallHierarchy(_) => false,
             };
             if changed {
                 let previous_matches = match &mut self.mode {
@@ -5146,6 +5205,12 @@ impl OutlinePanel {
     }
 
     fn should_replace_active_item(&self, new_active_item: &dyn ItemHandle) -> bool {
+        // While showing a call hierarchy, navigating to a call site opens other
+        // files. Re-attaching to them would drop us back into the document
+        // outline, so keep the hierarchy pinned until the user exits the mode.
+        if matches!(self.mode, ItemsDisplayMode::CallHierarchy(_)) {
+            return false;
+        }
         self.active_item().is_none_or(|active_item| {
             !self.pinned && active_item.item_id() != new_active_item.item_id()
         })
@@ -5248,6 +5313,7 @@ impl OutlinePanel {
                 .get()
                 .map(|data| data.context_text.len())
                 .unwrap_or_default(),
+            PanelEntry::CallHierarchy(row) => row.width_estimate() as usize,
         };
 
         (item_text_chars + depth) as u64
@@ -5315,7 +5381,7 @@ impl OutlinePanel {
                     ItemsDisplayMode::Search(_) => self
                         .active_editor()
                         .map(|editor| editor.read(cx).buffer().read(cx).snapshot(cx)),
-                    ItemsDisplayMode::Outline => None,
+                    ItemsDisplayMode::Outline | ItemsDisplayMode::CallHierarchy(_) => None,
                 };
                 uniform_list(
                     "entries",
@@ -5376,6 +5442,15 @@ impl OutlinePanel {
                                     window,
                                     cx,
                                 ),
+                                PanelEntry::CallHierarchy(row) => {
+                                    Some(outline_panel.render_call_hierarchy_row(
+                                        &row,
+                                        cached_entry.depth,
+                                        cached_entry.string_match.as_ref(),
+                                        window,
+                                        cx,
+                                    ))
+                                }
                             })
                             .collect()
                     }),
@@ -5648,6 +5723,14 @@ impl Panel for OutlinePanel {
                     let old_active = outline_panel.active;
                     outline_panel.active = active;
                     if old_active != active {
+                        if matches!(outline_panel.mode, ItemsDisplayMode::CallHierarchy(_)) {
+                            if active {
+                                outline_panel.update_cached_entries(None, window, cx);
+                            }
+                            outline_panel.serialize(cx);
+                            cx.notify();
+                            return;
+                        }
                         outline_panel.lsp_outline_refresh_task = Task::ready(());
                         outline_panel.outline_fetch_tasks.clear();
                         if active
@@ -5719,6 +5802,11 @@ impl Render for OutlinePanel {
 
         let search_query_text = search_query.map(|sq| sq.query.to_string());
 
+        let call_hierarchy_direction = match &self.mode {
+            ItemsDisplayMode::CallHierarchy(state) => Some(state.direction()),
+            _ => None,
+        };
+
         v_flex()
             .id("outline-panel")
             .size_full()
@@ -5745,6 +5833,8 @@ impl Render for OutlinePanel {
             .on_action(cx.listener(Self::copy_relative_path))
             .on_action(cx.listener(Self::toggle_active_editor_pin))
             .on_action(cx.listener(Self::toggle_symbols))
+            .on_action(cx.listener(Self::toggle_call_hierarchy_direction))
+            .on_action(cx.listener(Self::exit_call_hierarchy))
             .on_action(cx.listener(Self::unfold_directory))
             .on_action(cx.listener(Self::fold_directory))
             .on_action(cx.listener(Self::open_excerpts))
@@ -5783,6 +5873,66 @@ impl Render for OutlinePanel {
                         .border_color(cx.theme().colors().border_variant)
                         .child(Label::new("Searching:").color(Color::Muted))
                         .child(Label::new(query_text)),
+                )
+            })
+            .when_some(call_hierarchy_direction, |outline_panel, direction| {
+                let (direction_label, direction_icon) = match direction {
+                    CallHierarchyMode::Incoming => ("Incoming Calls", IconName::ArrowDownLeft),
+                    CallHierarchyMode::Outgoing => ("Outgoing Calls", IconName::ArrowUpRight),
+                };
+                outline_panel.child(
+                    h_flex()
+                        .py_1p5()
+                        .px_2()
+                        .h(Tab::container_height(cx))
+                        .gap_1()
+                        .justify_between()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(direction_icon)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(Label::new("Call Hierarchy").color(Color::Muted))
+                                .child(Label::new(direction_label)),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_0p5()
+                                .child(
+                                    IconButton::new(
+                                        "toggle-call-hierarchy-direction",
+                                        IconName::ArrowRightLeft,
+                                    )
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("Toggle Incoming/Outgoing"))
+                                    .on_click(cx.listener(
+                                        |outline_panel, _, window, cx| {
+                                            outline_panel.toggle_call_hierarchy_direction(
+                                                &ToggleCallHierarchyDirection,
+                                                window,
+                                                cx,
+                                            );
+                                        },
+                                    )),
+                                )
+                                .child(
+                                    IconButton::new("exit-call-hierarchy", IconName::Close)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(Tooltip::text("Back to Outline"))
+                                        .on_click(cx.listener(|outline_panel, _, window, cx| {
+                                            outline_panel.exit_call_hierarchy(
+                                                &ExitCallHierarchy,
+                                                window,
+                                                cx,
+                                            );
+                                        })),
+                                ),
+                        ),
                 )
             })
             .child(self.render_main_contents(query, show_indent_guides, indent_size, window, cx))
@@ -5974,15 +6124,74 @@ fn empty_icon() -> AnyElement {
 struct GenerationState {
     entries: Vec<CachedEntry>,
     match_candidates: Vec<StringMatchCandidate>,
-    max_width_estimate_and_index: Option<(u64, usize)>,
+    entry_widths: Vec<u64>,
 }
 
 impl GenerationState {
     fn clear(&mut self) {
         self.entries.clear();
         self.match_candidates.clear();
-        self.max_width_estimate_and_index = None;
+        self.entry_widths.clear();
     }
+
+    fn max_width_item_index(&self) -> Option<usize> {
+        let mut maximum = None;
+        for (index, width) in self.entry_widths.iter().enumerate() {
+            if maximum.is_none_or(|(current, _)| *width > current) {
+                maximum = Some((*width, index));
+            }
+        }
+        maximum.map(|(_, index)| index)
+    }
+}
+
+async fn filter_generation_state(
+    generation_state: GenerationState,
+    query: Option<String>,
+    executor: gpui::BackgroundExecutor,
+) -> (Vec<CachedEntry>, Option<usize>) {
+    let Some(query) = query else {
+        let max_width_item_index = generation_state.max_width_item_index();
+        return (generation_state.entries, max_width_item_index);
+    };
+
+    let mut matched_ids = match_strings(
+        &generation_state.match_candidates,
+        &query,
+        true,
+        true,
+        usize::MAX,
+        &AtomicBool::default(),
+        executor,
+    )
+    .await
+    .into_iter()
+    .map(|string_match| (string_match.candidate_id, string_match))
+    .collect::<HashMap<_, _>>();
+
+    debug_assert_eq!(
+        generation_state.entries.len(),
+        generation_state.entry_widths.len()
+    );
+    let mut entries = Vec::with_capacity(generation_state.entries.len());
+    let mut max_width: Option<(u64, usize)> = None;
+    for (id, (mut cached_entry, width)) in generation_state
+        .entries
+        .into_iter()
+        .zip(generation_state.entry_widths)
+        .enumerate()
+    {
+        let Some(string_match) = matched_ids.remove(&id) else {
+            continue;
+        };
+        cached_entry.string_match = Some(string_match);
+        if max_width.is_none_or(|(max, _)| width > max) {
+            max_width = Some((width, entries.len()));
+        }
+        entries.push(cached_entry);
+    }
+
+    (entries, max_width.map(|(_, index)| index))
 }
 
 #[cfg(test)]
@@ -9742,7 +9951,7 @@ outline: struct OutlineEntryExcerpt
         });
     }
 
-    async fn add_outline_panel(
+    pub(super) async fn add_outline_panel(
         project: &Entity<Project>,
         cx: &mut TestAppContext,
     ) -> (WindowHandle<MultiWorkspace>, Entity<Workspace>) {
@@ -9773,7 +9982,7 @@ outline: struct OutlineEntryExcerpt
         (window, workspace)
     }
 
-    fn outline_panel(
+    pub(super) fn outline_panel(
         workspace: &Entity<Workspace>,
         cx: &mut VisualTestContext,
     ) -> Entity<OutlinePanel> {
@@ -9831,7 +10040,7 @@ outline: struct OutlineEntryExcerpt
             .await;
     }
 
-    fn add_multi_buffer_editor(
+    pub(super) fn add_multi_buffer_editor(
         workspace: &Entity<Workspace>,
         project: &Entity<Project>,
         excerpts: &[(&Entity<language::Buffer>, Vec<Range<language::Point>>)],
@@ -9892,7 +10101,11 @@ outline: struct OutlineEntryExcerpt
         flush_outline_tasks(cx);
     }
 
-    fn select_in_buffer(editor: &Entity<Editor>, buffer_id: BufferId, cx: &mut VisualTestContext) {
+    pub(super) fn select_in_buffer(
+        editor: &Entity<Editor>,
+        buffer_id: BufferId,
+        cx: &mut VisualTestContext,
+    ) {
         let anchor = editor.read_with(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             let excerpt = snapshot
@@ -9914,7 +10127,7 @@ outline: struct OutlineEntryExcerpt
         flush_outline_tasks(cx);
     }
 
-    async fn wait_for_outline_tasks(
+    pub(super) async fn wait_for_outline_tasks(
         outline_panel: &Entity<OutlinePanel>,
         cx: &mut VisualTestContext,
     ) {
@@ -10072,6 +10285,9 @@ outline: struct OutlineEntryExcerpt
 
                     format!("search: {search_result}")
                 }
+                PanelEntry::CallHierarchy(row) => {
+                    format!("call: {}", row.name())
+                }
             };
 
             if Some(&entry.entry) == selected_entry {
@@ -10081,7 +10297,7 @@ outline: struct OutlineEntryExcerpt
         display_string
     }
 
-    fn init_test(cx: &mut TestAppContext) {
+    pub(super) fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
@@ -10389,7 +10605,7 @@ outline: struct OutlineEntryExcerpt
         editor
     }
 
-    fn flush_outline_tasks(cx: &mut VisualTestContext) {
+    pub(super) fn flush_outline_tasks(cx: &mut VisualTestContext) {
         cx.run_until_parked();
         cx.executor().advance_clock(UPDATE_DEBOUNCE * 3);
         cx.run_until_parked();
