@@ -321,6 +321,8 @@ mod tests {
                 <aside>Related links</aside>
                 <p>The actual article content.</p>
                 <form><button>Subscribe</button></form>
+                <svg><text>Decorative icon</text></svg>
+                <iframe>Embedded content</iframe>
                 <footer>Copyright 2024</footer>
                 <noscript>Please enable JavaScript</noscript>
             </body>
