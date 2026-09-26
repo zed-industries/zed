@@ -406,9 +406,18 @@ impl WgpuContext {
         let color_atlas_texture_format = Self::select_color_texture_format(adapter)?;
         #[cfg(target_family = "wasm")]
         let required_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
-            wgpu::Limits::downlevel_webgl2_defaults()
+            // Some mobile WebGL adapters (e.g. Mali-T760 under Android
+            // Firefox) report `max_texture_dimension_2d` up to 65536. GPUI
+            // sizes its `Rgba32Uint` instance texture from this limit, and
+            // clearing such a texture requires a staging row larger than
+            // wgpu-core's internal 512 KiB zero buffer, tripping the assert
+            // in `command::clear` and killing the page. Clamp GL adapters
+            // well below that threshold; 8192 stays ample for UI content.
+            let mut limits = wgpu::Limits::downlevel_webgl2_defaults()
                 .using_resolution(adapter.limits())
-                .using_alignment(adapter.limits())
+                .using_alignment(adapter.limits());
+            limits.max_texture_dimension_2d = limits.max_texture_dimension_2d.min(8192);
+            limits
         } else {
             wgpu::Limits::downlevel_defaults()
                 .using_resolution(adapter.limits())
