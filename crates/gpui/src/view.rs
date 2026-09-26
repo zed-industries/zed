@@ -278,7 +278,18 @@ impl<T: Render> Entity<T> {
 #[doc(hidden)]
 pub struct ViewElement<V: View> {
     view: Option<V>,
+    node: ViewElementNode,
+    #[cfg(debug_assertions)]
+    source: &'static core::panic::Location<'static>,
+}
+
+/// The part of a [`ViewElement`] that does not depend on the view's type. The phases are
+/// implemented on it, reaching the view only through [`ErasedView`], so the node
+/// bookkeeping is compiled once rather than once per view type, which keeps it out of the
+/// instruction cache many times over when dozens of view types render in a frame.
+struct ViewElementNode {
     element_id: Option<ElementId>,
+    view_type_name: &'static str,
     /// The entity backing the node, resolved at layout.
     entity_id: Option<EntityId>,
     /// This view's order among inline views of its type in the enclosing node, assigned
@@ -286,8 +297,41 @@ pub struct ViewElement<V: View> {
     inline_occurrence: u64,
     cached_style: Option<StyleRefinement>,
     node_layout: Option<NodeViewLayout>,
-    #[cfg(debug_assertions)]
-    source: &'static core::panic::Location<'static>,
+}
+
+/// The two operations of a [`View`] the element phases need, behind a vtable.
+trait ErasedView {
+    fn is_unrendered(&self) -> bool;
+
+    fn entity(
+        &mut self,
+        owned: &mut Option<AnyEntity>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<EntityId>;
+
+    fn render(&mut self, window: &mut Window, cx: &mut App) -> AnyElement;
+}
+
+impl<V: View> ErasedView for Option<V> {
+    fn is_unrendered(&self) -> bool {
+        self.is_some()
+    }
+
+    fn entity(
+        &mut self,
+        owned: &mut Option<AnyEntity>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<EntityId> {
+        self.as_mut()
+            .and_then(|view| view.entity(owned, window, cx))
+    }
+
+    fn render(&mut self, window: &mut Window, cx: &mut App) -> AnyElement {
+        let view = self.take().expect("view is rendered once per frame");
+        view.render(window, cx).into_any_element()
+    }
 }
 
 impl<V: View> ViewElement<V> {
@@ -296,11 +340,14 @@ impl<V: View> ViewElement<V> {
     pub fn new(view: V) -> Self {
         let element_id = view.element_id();
         ViewElement {
-            element_id,
-            entity_id: None,
-            inline_occurrence: 0,
-            cached_style: None,
-            node_layout: None,
+            node: ViewElementNode {
+                element_id,
+                view_type_name: std::any::type_name::<V>(),
+                entity_id: None,
+                inline_occurrence: 0,
+                cached_style: None,
+                node_layout: None,
+            },
             view: Some(view),
             #[cfg(debug_assertions)]
             source: core::panic::Location::caller(),
@@ -317,7 +364,7 @@ impl<V: View> ViewElement<V> {
     /// Reach this through [`Entity::cached`] or [`AnyView::cached`], which are
     /// entity-backed by construction.
     pub(crate) fn cached(mut self, style: StyleRefinement) -> Self {
-        self.cached_style = Some(style);
+        self.node.cached_style = Some(style);
         self
     }
 }
@@ -327,34 +374,6 @@ impl<V: View> IntoElement for ViewElement<V> {
 
     fn into_element(self) -> Self::Element {
         self
-    }
-}
-
-impl<V: View> ViewElement<V> {
-    /// Renders the view as part of its parent, in an element-id scope of its type and its
-    /// order among inline views of that type, so its internal ids do not collide with its
-    /// siblings'.
-    fn render_inline(
-        &mut self,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> (LayoutId, Option<AnyElement>) {
-        let view = self.view.take().expect("view is rendered once per frame");
-        self.inline_occurrence = window
-            .view_tree
-            .next_inline_occurrence(std::any::type_name::<V>());
-        self.with_inline_scope(window, |window| {
-            let mut element = view.render(window, cx).into_any_element();
-            let layout_id = element.request_layout(window, cx);
-            (layout_id, Some(element))
-        })
-    }
-
-    fn with_inline_scope<R>(&self, window: &mut Window, f: impl FnOnce(&mut Window) -> R) -> R {
-        window.with_id(
-            ElementId::NamedInteger(std::any::type_name::<V>().into(), self.inline_occurrence),
-            f,
-        )
     }
 }
 
@@ -393,7 +412,7 @@ impl<V: View> Element for ViewElement<V> {
     type PrepaintState = ViewElementPrepaintState;
 
     fn id(&self) -> Option<ElementId> {
-        self.element_id.clone()
+        self.node.element_id.clone()
     }
 
     fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
@@ -404,6 +423,7 @@ impl<V: View> Element for ViewElement<V> {
         return None;
     }
 
+    #[inline]
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
@@ -411,8 +431,48 @@ impl<V: View> Element for ViewElement<V> {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        self.node.request_layout(id, &mut self.view, window, cx)
+    }
+
+    #[inline]
+    fn prepaint(
+        &mut self,
+        _global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        element: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> ViewElementPrepaintState {
+        self.node
+            .prepaint(bounds, element, &mut self.view, window, cx)
+    }
+
+    #[inline]
+    fn paint(
+        &mut self,
+        _global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        element: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.node.paint(element, window, cx)
+    }
+}
+
+impl ViewElementNode {
+    fn request_layout(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        view: &mut dyn ErasedView,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Option<AnyElement>) {
         if let Some(id) = id
-            && let Some(view) = self.view.as_mut()
+            && view.is_unrendered()
         {
             let cache_key = window.view_node_key(Bounds::default());
             let node_id = window.begin_node_occurrence(id.clone(), &cache_key);
@@ -424,7 +484,7 @@ impl<V: View> Element for ViewElement<V> {
                 // notify it; it renders inline like a stateless one.
                 window.finish_node_phase(node_id, false);
                 window.view_tree.abandon_occurrence(node_id);
-                return self.render_inline(window, cx);
+                return self.render_inline(view, window, cx);
             };
             self.entity_id = Some(entity_id);
             window.view_tree.set_view_id(node_id, entity_id);
@@ -445,10 +505,9 @@ impl<V: View> Element for ViewElement<V> {
                 } else {
                     window.restart_node_render(node_id);
                     let mut accessed_entities = window.view_tree.take_dependency_set();
-                    let view = self.view.take().expect("view is rendered once per frame");
                     let (layout, element) = cx.track_reads(&mut accessed_entities, |cx| {
                         window.with_rendered_view(entity_id, |window| {
-                            let mut element = view.render(window, cx).into_any_element();
+                            let mut element = view.render(window, cx);
                             let layout = element.request_layout(window, cx);
                             (layout, element)
                         })
@@ -482,15 +541,14 @@ impl<V: View> Element for ViewElement<V> {
             };
             return (layout, element);
         }
-        self.render_inline(window, cx)
+        self.render_inline(view, window, cx)
     }
 
     fn prepaint(
         &mut self,
-        _global_id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        element: &mut Self::RequestLayoutState,
+        element: &mut Option<AnyElement>,
+        view: &mut dyn ErasedView,
         window: &mut Window,
         cx: &mut App,
     ) -> ViewElementPrepaintState {
@@ -538,8 +596,7 @@ impl<V: View> Element for ViewElement<V> {
                         element
                     } else {
                         // Layout was grafted, so the view has not rendered this frame.
-                        let view = self.view.take().expect("view is rendered once per frame");
-                        let mut element = view.render(window, cx).into_any_element();
+                        let mut element = view.render(window, cx);
                         let new_layout = element.request_layout(window, cx);
                         window.replace_retained_layout(layout, new_layout, cx);
                         let previous = window.view_tree.store_layout(node_id, new_layout);
@@ -575,16 +632,7 @@ impl<V: View> Element for ViewElement<V> {
         }
     }
 
-    fn paint(
-        &mut self,
-        _global_id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
-        _bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
-        element: &mut Self::PrepaintState,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
+    fn paint(&mut self, element: &mut ViewElementPrepaintState, window: &mut Window, cx: &mut App) {
         if let Some(node) = element.node.take() {
             let node_id = match &node {
                 ViewNodePrepaintState::Graft { node_id, .. }
@@ -621,6 +669,30 @@ impl<V: View> Element for ViewElement<V> {
                 element.paint(window, cx);
             }
         });
+    }
+
+    /// Renders the view as part of its parent, in an element-id scope of its type and its
+    /// order among inline views of that type, so its internal ids do not collide with its
+    /// siblings'.
+    fn render_inline(
+        &mut self,
+        view: &mut dyn ErasedView,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Option<AnyElement>) {
+        self.inline_occurrence = window.view_tree.next_inline_occurrence(self.view_type_name);
+        self.with_inline_scope(window, |window| {
+            let mut element = view.render(window, cx);
+            let layout_id = element.request_layout(window, cx);
+            (layout_id, Some(element))
+        })
+    }
+
+    fn with_inline_scope<R>(&self, window: &mut Window, f: impl FnOnce(&mut Window) -> R) -> R {
+        window.with_id(
+            ElementId::NamedInteger(self.view_type_name.into(), self.inline_occurrence),
+            f,
+        )
     }
 }
 
