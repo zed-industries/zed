@@ -275,7 +275,11 @@ impl Editor {
             HoverLink::Text(link) => exclude_link_to_position(&buffer, &anchor, link, cx),
             _ => true,
         });
-        let definitions = (refresh && self.lsp_data_enabled() && point.as_valid().is_some())
+        let attempted_semantic_navigation = refresh
+            && self.lsp_data_enabled()
+            && point.as_valid().is_some()
+            && !Editor::is_historical_buffer(&buffer, cx);
+        let definitions = attempted_semantic_navigation
             .then(|| {
                 self.semantics_provider
                     .as_ref()?
@@ -499,6 +503,7 @@ pub fn show_link_definition(
     let Some(buffer) = editor.buffer.read(cx).buffer(anchor.buffer_id) else {
         return;
     };
+    let is_historical_buffer = Editor::is_historical_buffer(&buffer, cx);
     let same_kind = hovered_link_state.preferred_kind == preferred_kind
         || hovered_link_state
             .links
@@ -596,7 +601,7 @@ pub fn show_link_definition(
                     // Always also collect LSP definitions so that cmd-click
                     // reveals every applicable target (e.g. a position that
                     // carries both a document link and a definition).
-                    if let Some(provider) = provider {
+                    if !is_historical_buffer && let Some(provider) = provider {
                         let task = cx.update(|_, cx| {
                             provider.definitions(&buffer, anchor, preferred_kind, cx)
                         })?;

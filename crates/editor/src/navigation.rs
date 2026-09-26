@@ -2389,15 +2389,18 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Navigated>> {
-        let Some(provider) = self.semantics_provider.clone() else {
-            return Task::ready(Ok(Navigated::No));
-        };
         let head = self
             .selections
             .newest::<MultiBufferOffset>(&self.display_snapshot(cx))
             .head();
         let buffer = self.buffer.read(cx);
         let Some((buffer, head)) = buffer.text_anchor_for_position(head, cx) else {
+            return Task::ready(Ok(Navigated::No));
+        };
+        if Self::is_historical_buffer(&buffer, cx) {
+            return Task::ready(Ok(Navigated::No));
+        }
+        let Some(provider) = self.semantics_provider.clone() else {
             return Task::ready(Ok(Navigated::No));
         };
         let Some(definitions) = provider.definitions(&buffer, head, kind, cx) else {
@@ -2430,6 +2433,24 @@ impl Editor {
                 .await?;
             anyhow::Ok(navigated)
         })
+    }
+
+    pub(crate) fn is_historical_at_cursor(&self, cx: &mut Context<Self>) -> bool {
+        let head = self
+            .selections
+            .newest::<MultiBufferOffset>(&self.display_snapshot(cx))
+            .head();
+        self.buffer
+            .read(cx)
+            .text_anchor_for_position(head, cx)
+            .is_some_and(|(buffer, _)| Self::is_historical_buffer(&buffer, cx))
+    }
+
+    pub(crate) fn is_historical_buffer(buffer: &Entity<Buffer>, cx: &App) -> bool {
+        buffer
+            .read(cx)
+            .file()
+            .is_some_and(|file| matches!(file.disk_state(), language::DiskState::Historic { .. }))
     }
 
     fn compute_target_location(

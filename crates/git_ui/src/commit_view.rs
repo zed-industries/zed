@@ -1534,10 +1534,523 @@ fn stash_matches_index(sha: &str, stash_index: usize, repo: &Repository) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{EmptyView, TestAppContext};
+    use editor::actions::{
+        FindAllReferences, GoToDeclaration, GoToDeclarationSplit, GoToDefinition,
+        GoToDefinitionSplit, GoToImplementation, GoToImplementationSplit, GoToTypeDefinition,
+        GoToTypeDefinitionSplit,
+    };
+    use editor::{RowExt, display_map::ToDisplayPoint};
+    use gpui::{EmptyView, Modifiers, MouseButton, TestAppContext, VisualTestContext};
     use indoc::indoc;
     use language::{Language, LanguageConfig, markdown_lang};
+    use multi_buffer::ToOffset;
+    use project::FakeFs;
+    use serde_json::json;
     use settings::SettingsStore;
+    use std::{cell::Cell, rc::Rc};
+    use util::{path, rel_path::rel_path};
+    use workspace::{MultiWorkspace, item::Item};
+
+    struct CountingSemanticsProvider(Rc<Cell<usize>>);
+
+    impl editor::SemanticsProvider for CountingSemanticsProvider {
+        fn hover(
+            &self,
+            _: &Entity<Buffer>,
+            _: language::Anchor,
+            _: &mut App,
+        ) -> Option<Task<Option<Vec<project::Hover>>>> {
+            None
+        }
+
+        fn inline_values(
+            &self,
+            _: Entity<Buffer>,
+            _: std::ops::Range<language::Anchor>,
+            _: &mut App,
+        ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
+            None
+        }
+
+        fn applicable_inlay_chunks(
+            &self,
+            _: &Entity<Buffer>,
+            _: &[std::ops::Range<language::Anchor>],
+            _: &mut App,
+        ) -> Vec<std::ops::Range<language::BufferRow>> {
+            Vec::new()
+        }
+
+        fn invalidate_inlay_hints(
+            &self,
+            _: &collections::HashSet<language::BufferId>,
+            _: &mut App,
+        ) {
+        }
+
+        fn inlay_hints(
+            &self,
+            _: project::InvalidationStrategy,
+            _: Entity<Buffer>,
+            _: Vec<std::ops::Range<language::Anchor>>,
+            _: Option<(
+                clock::Global,
+                collections::HashSet<std::ops::Range<language::BufferRow>>,
+            )>,
+            _: &mut App,
+        ) -> Option<
+            HashMap<
+                std::ops::Range<language::BufferRow>,
+                Task<anyhow::Result<project::lsp_store::CacheInlayHints>>,
+            >,
+        > {
+            None
+        }
+
+        fn semantic_tokens(
+            &self,
+            _: Entity<Buffer>,
+            _: &mut App,
+        ) -> Option<
+            futures::future::Shared<
+                Task<
+                    std::result::Result<
+                        project::lsp_store::BufferSemanticTokens,
+                        Arc<anyhow::Error>,
+                    >,
+                >,
+            >,
+        > {
+            None
+        }
+
+        fn supports_inlay_hints(&self, _: &Entity<Buffer>, _: &mut App) -> bool {
+            false
+        }
+
+        fn supports_semantic_tokens(&self, _: &Entity<Buffer>, _: &mut App) -> bool {
+            false
+        }
+
+        fn document_highlights(
+            &self,
+            _: &Entity<Buffer>,
+            _: language::Anchor,
+            _: &mut App,
+        ) -> Option<Task<anyhow::Result<Vec<project::DocumentHighlight>>>> {
+            None
+        }
+
+        fn definitions(
+            &self,
+            _: &Entity<Buffer>,
+            _: language::Anchor,
+            _: editor::GotoDefinitionKind,
+            _: &mut App,
+        ) -> Option<Task<anyhow::Result<Option<Vec<project::LocationLink>>>>> {
+            self.0.set(self.0.get() + 1);
+            None
+        }
+
+        fn range_for_rename(
+            &self,
+            _: &Entity<Buffer>,
+            _: language::Anchor,
+            _: &mut App,
+        ) -> Task<anyhow::Result<Option<editor::RenameTarget>>> {
+            Task::ready(Ok(None))
+        }
+
+        fn perform_rename(
+            &self,
+            _: &Entity<Buffer>,
+            _: language::Anchor,
+            _: String,
+            _: Option<lsp::LanguageServerId>,
+            _: &mut App,
+        ) -> Option<Task<anyhow::Result<project::ProjectTransaction>>> {
+            None
+        }
+    }
+
+    #[gpui::test]
+    async fn test_semantic_navigation_actions_unavailable_in_git_blob_singleton(
+        cx: &mut TestAppContext,
+    ) {
+        assert_historical_navigation_actions_unavailable(true, false, false, false, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_semantic_navigation_actions_unavailable_in_git_blob_multibuffer(
+        cx: &mut TestAppContext,
+    ) {
+        assert_historical_navigation_actions_unavailable(false, false, false, false, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_semantic_navigation_actions_update_between_working_tree_and_git_blob_excerpts(
+        cx: &mut TestAppContext,
+    ) {
+        assert_historical_navigation_actions_unavailable(false, false, false, true, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_cmd_click_in_git_blob_does_not_lookup_definitions_or_navigate(
+        cx: &mut TestAppContext,
+    ) {
+        assert_historical_navigation_actions_unavailable(true, true, false, false, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_cmd_click_url_in_git_blob_still_opens_url(cx: &mut TestAppContext) {
+        assert_historical_navigation_actions_unavailable(true, true, true, false, cx).await;
+    }
+
+    async fn assert_historical_navigation_actions_unavailable(
+        singleton: bool,
+        cmd_click: bool,
+        url_link: bool,
+        mixed_buffers: bool,
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({".git": {}, "working.txt": "working_symbol();\n"}),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (worktree_id, language_registry) = project.read_with(cx, |project, cx| {
+            (
+                project
+                    .worktrees(cx)
+                    .next()
+                    .expect("project should have a worktree")
+                    .read(cx)
+                    .id(),
+                project.languages().clone(),
+            )
+        });
+        let mut window_handle = None;
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            window_handle = Some(window.window_handle());
+            MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = multi_workspace.read_with(cx, |multi, _| multi.workspace().clone());
+        let mut async_cx = cx.update(|window, cx| window.to_async(cx));
+        let buffer = build_buffer(
+            if url_link {
+                "https://zed.dev\n".into()
+            } else {
+                "historical_symbol();\n".into()
+            },
+            Arc::new(GitBlob {
+                path: RepoPath::from_rel_path(rel_path("historical.txt")),
+                worktree_id,
+                is_deleted: false,
+                is_binary: false,
+                display_name: "abc1234 - historical.txt".into(),
+            }),
+            &language_registry,
+            &mut async_cx,
+        )
+        .await
+        .expect("historical buffer should build");
+
+        let working_buffer = if mixed_buffers {
+            Some(
+                project
+                    .update(cx, |project, cx| {
+                        project.open_buffer((worktree_id, rel_path("working.txt")), cx)
+                    })
+                    .await
+                    .expect("working-tree buffer should open"),
+            )
+        } else {
+            None
+        };
+
+        let editor = cx.new_window_entity(|window, cx| {
+            let multibuffer = cx.new(|cx| {
+                if singleton {
+                    MultiBuffer::singleton(buffer.clone(), cx)
+                } else if let Some(working_buffer) = &working_buffer {
+                    let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);
+                    multibuffer.set_excerpts_for_path(
+                        PathKey::sorted(0),
+                        working_buffer.clone(),
+                        [Default::default()..working_buffer.read(cx).max_point()],
+                        0,
+                        cx,
+                    );
+                    multibuffer.set_excerpts_for_path(
+                        PathKey::sorted(1),
+                        buffer.clone(),
+                        [Default::default()..buffer.read(cx).max_point()],
+                        0,
+                        cx,
+                    );
+                    multibuffer
+                } else {
+                    let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);
+                    multibuffer.set_excerpts_for_buffer(
+                        buffer.clone(),
+                        [Default::default()..buffer.read(cx).max_point()],
+                        0,
+                        cx,
+                    );
+                    multibuffer
+                }
+            });
+            assert_eq!(multibuffer.read(cx).is_singleton(), singleton);
+            Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx)
+        });
+        editor.update(cx, |editor, _| {
+            editor
+                .register_action(|_: &GoToDefinition, _, _| {})
+                .detach();
+            editor
+                .register_action(|_: &GoToDeclaration, _, _| {})
+                .detach();
+            editor
+                .register_action(|_: &GoToImplementation, _, _| {})
+                .detach();
+            editor
+                .register_action(|_: &GoToTypeDefinition, _, _| {})
+                .detach();
+            editor
+                .register_action(|_: &FindAllReferences, _, _| {})
+                .detach();
+            editor
+                .register_action(|_: &zed_actions::ShowIncomingCalls, _, _| {})
+                .detach();
+            editor
+                .register_action(|_: &zed_actions::ShowOutgoingCalls, _, _| {})
+                .detach();
+        });
+        let definition_lookup_count = if cmd_click && !url_link {
+            let lookup_count = Rc::new(Cell::new(0));
+            editor.update(cx, |editor, _| {
+                editor.set_semantics_provider(Some(Rc::new(CountingSemanticsProvider(
+                    lookup_count.clone(),
+                ))));
+            });
+            Some(lookup_count)
+        } else {
+            None
+        };
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            window.focus(&editor.focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+
+        let window_handle = window_handle.expect("test window should have a handle");
+        if mixed_buffers {
+            assert_semantic_navigation_actions(window_handle, cx, true);
+            let historical_anchor = editor.read_with(cx, |editor, cx| {
+                editor
+                    .buffer()
+                    .read(cx)
+                    .location_for_path(&PathKey::sorted(1), cx)
+                    .expect("historical excerpt should have a location")
+            });
+            let historical_offset = editor.read_with(cx, |editor, cx| {
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                historical_anchor.to_offset(&snapshot)
+            });
+            editor.update_in(cx, |editor, window, cx| {
+                editor.change_selections(
+                    editor::SelectionEffects::no_scroll(),
+                    window,
+                    cx,
+                    |selections| selections.select_ranges([historical_offset..historical_offset]),
+                );
+            });
+            refresh_test_window(window_handle, cx);
+            assert_semantic_navigation_actions(window_handle, cx, false);
+
+            let working_anchor = editor.read_with(cx, |editor, cx| {
+                editor
+                    .buffer()
+                    .read(cx)
+                    .location_for_path(&PathKey::sorted(0), cx)
+                    .expect("working-tree excerpt should have a location")
+            });
+            let working_offset = editor.read_with(cx, |editor, cx| {
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                working_anchor.to_offset(&snapshot)
+            });
+            editor.update_in(cx, |editor, window, cx| {
+                editor.change_selections(
+                    editor::SelectionEffects::no_scroll(),
+                    window,
+                    cx,
+                    |selections| selections.select_ranges([working_offset..working_offset]),
+                );
+            });
+            refresh_test_window(window_handle, cx);
+            assert_semantic_navigation_actions(window_handle, cx, true);
+
+            assert_context_menu_navigation_visibility(
+                window_handle,
+                editor.clone(),
+                historical_anchor,
+                false,
+                cx,
+            );
+            let mut visual_cx = VisualTestContext::from_window(window_handle, cx);
+            visual_cx.dispatch_action(menu::Cancel);
+            visual_cx.run_until_parked();
+            visual_cx.update(|window, cx| {
+                let _ = window.draw(cx);
+            });
+            assert_context_menu_navigation_visibility(
+                window_handle,
+                editor.clone(),
+                working_anchor,
+                true,
+                cx,
+            );
+        } else {
+            assert_semantic_navigation_actions(window_handle, cx, false);
+        }
+        if cmd_click {
+            let click_position = editor
+                .read_with(cx, |editor, cx| editor.pixel_position_of_cursor(cx))
+                .expect("historical editor should have a cursor position");
+            cx.simulate_mouse_move(click_position, None, gpui::Modifiers::secondary_key());
+            cx.run_until_parked();
+            cx.simulate_click(click_position, gpui::Modifiers::secondary_key());
+            cx.run_until_parked();
+        }
+        if let Some(definition_lookup_count) = definition_lookup_count {
+            assert!(
+                definition_lookup_count.get() == 0,
+                "Cmd+Click in a historical buffer must not invoke semantic definition lookup"
+            );
+        }
+        if url_link {
+            assert_eq!(cx.opened_url(), Some("https://zed.dev".into()));
+        }
+    }
+
+    fn refresh_test_window(window_handle: gpui::AnyWindowHandle, cx: &mut TestAppContext) {
+        cx.run_until_parked();
+        cx.update_window(window_handle, |_, window, cx| {
+            let _ = window.draw(cx);
+        })
+        .expect("test window should be open");
+    }
+
+    fn assert_context_menu_navigation_visibility(
+        window_handle: gpui::AnyWindowHandle,
+        editor: Entity<Editor>,
+        target_anchor: editor::Anchor,
+        visible: bool,
+        cx: &mut TestAppContext,
+    ) {
+        let click_position = cx
+            .update_window(window_handle, |_, window, cx| {
+                editor.update(cx, |editor, cx| {
+                    let display_map = editor.display_snapshot(cx);
+                    let current_point = editor.selections.newest_display(&display_map).head();
+                    let target_point = target_anchor.to_display_point(&display_map);
+                    let cursor_position = editor
+                        .pixel_position_of_cursor(cx)
+                        .expect("editor cursor should have a pixel position");
+                    let line_height = editor
+                        .style(cx)
+                        .text
+                        .line_height_in_pixels(window.rem_size());
+                    gpui::point(
+                        cursor_position.x,
+                        cursor_position.y
+                            + f32::from(line_height)
+                                * gpui::Pixels::from(
+                                    target_point.row().as_f64() - current_point.row().as_f64(),
+                                ),
+                    )
+                })
+            })
+            .expect("test window should be open");
+        let mut visual_cx = VisualTestContext::from_window(window_handle, cx);
+        visual_cx.simulate_mouse_down(click_position, MouseButton::Right, Modifiers::none());
+        visual_cx.run_until_parked();
+        visual_cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        assert_eq!(
+            visual_cx
+                .debug_bounds("MENU_ITEM-Go to Definition")
+                .is_some(),
+            visible
+        );
+    }
+
+    fn assert_semantic_navigation_actions(
+        window_handle: gpui::AnyWindowHandle,
+        cx: &mut TestAppContext,
+        available: bool,
+    ) {
+        cx.update_window(window_handle, |_, window, cx| {
+            assert_eq!(
+                window.is_action_available(&GoToDefinition::default(), cx),
+                available
+            );
+            assert_eq!(
+                window.is_action_available(&GoToDefinitionSplit, cx),
+                available
+            );
+            assert_eq!(
+                window.is_action_available(&GoToDeclaration::default(), cx),
+                available
+            );
+            assert_eq!(
+                window.is_action_available(&GoToDeclarationSplit, cx),
+                available
+            );
+            assert_eq!(
+                window.is_action_available(&GoToTypeDefinition::default(), cx),
+                available
+            );
+            assert_eq!(
+                window.is_action_available(&GoToTypeDefinitionSplit, cx),
+                available
+            );
+            assert_eq!(
+                window.is_action_available(&GoToImplementation::default(), cx),
+                available
+            );
+            assert_eq!(
+                window.is_action_available(&GoToImplementationSplit, cx),
+                available
+            );
+            assert_eq!(
+                window.is_action_available(&FindAllReferences::default(), cx),
+                available
+            );
+            assert_eq!(
+                window.is_action_available(&zed_actions::ShowIncomingCalls, cx),
+                available
+            );
+            assert_eq!(
+                window.is_action_available(&zed_actions::ShowOutgoingCalls, cx),
+                available
+            );
+        })
+        .expect("test window should be open");
+    }
 
     #[gpui::test]
     async fn test_build_buffer_resolves_injected_languages(cx: &mut TestAppContext) {

@@ -636,6 +636,11 @@ impl EditorActionId {
     }
 }
 
+pub(crate) struct RegisteredEditorAction {
+    pub action_type: Option<TypeId>,
+    pub render: Box<dyn Fn(&Editor, &mut Window, &mut Context<Editor>)>,
+}
+
 type BackgroundHighlight = (
     Arc<dyn Fn(&usize, &Theme) -> Hsla + Send + Sync>,
     Arc<[Range<Anchor>]>,
@@ -1110,9 +1115,7 @@ pub struct Editor {
     style: Option<EditorStyle>,
     text_style_refinement: Option<TextStyleRefinement>,
     next_editor_action_id: EditorActionId,
-    editor_actions: Rc<
-        RefCell<BTreeMap<EditorActionId, Box<dyn Fn(&Editor, &mut Window, &mut Context<Self>)>>>,
-    >,
+    editor_actions: Rc<RefCell<BTreeMap<EditorActionId, RegisteredEditorAction>>>,
     use_autoclose: bool,
     use_auto_surround: bool,
     use_selection_highlight: bool,
@@ -11022,14 +11025,25 @@ impl Editor {
         listener: impl Fn(&Editor, &mut Window, &mut Context<Editor>) + 'static,
     ) -> Subscription {
         let id = self.next_editor_action_id.post_inc();
-        self.editor_actions
-            .borrow_mut()
-            .insert(id, Box::new(listener));
+        self.editor_actions.borrow_mut().insert(
+            id,
+            RegisteredEditorAction {
+                action_type: None,
+                render: Box::new(listener),
+            },
+        );
 
         let editor_actions = self.editor_actions.clone();
         Subscription::new(move || {
             editor_actions.borrow_mut().remove(&id);
         })
+    }
+
+    pub(crate) fn has_registered_action(&self, action_type: TypeId) -> bool {
+        self.editor_actions
+            .borrow()
+            .values()
+            .any(|action| action.action_type == Some(action_type))
     }
 
     pub fn register_action<A: Action>(
@@ -11052,14 +11066,17 @@ impl Editor {
         let id = self.next_editor_action_id.post_inc();
         self.editor_actions.borrow_mut().insert(
             id,
-            Box::new(move |_, window, _| {
-                let listener = listener.clone();
-                window.on_action(action_type, move |action, phase, window, cx| {
-                    if phase == DispatchPhase::Bubble {
-                        listener(action, window, cx)
-                    }
-                })
-            }),
+            RegisteredEditorAction {
+                action_type: Some(action_type),
+                render: Box::new(move |_, window, _| {
+                    let listener = listener.clone();
+                    window.on_action(action_type, move |action, phase, window, cx| {
+                        if phase == DispatchPhase::Bubble {
+                            listener(action, window, cx)
+                        }
+                    })
+                }),
+            },
         );
 
         let editor_actions = self.editor_actions.clone();

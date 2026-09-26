@@ -9,7 +9,7 @@ use crate::{
 use gpui::prelude::FluentBuilder;
 use gpui::{Context, DismissEvent, Entity, Focusable as _, Pixels, Point, Subscription, Window};
 use project::DisableAiSettings;
-use std::ops::Range;
+use std::{any::TypeId, ops::Range};
 use text::PointUtf16;
 use workspace::OpenInTerminal;
 use zed_actions::agent::AddSelectionToThread;
@@ -216,10 +216,26 @@ pub fn deploy_context_menu(
                         .repository_and_path_for_buffer_id(buffer_anchor.buffer_id, cx)
                         .is_some()
                 });
+        let historical_at_target = editor
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(point.to_point(&display_map), cx)
+            .is_some_and(|(buffer, _)| Editor::is_historical_buffer(&buffer, cx));
 
         let evaluate_selection = window.is_action_available(&EvaluateSelectedText, cx);
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
         let format_selections = window.is_action_available(&FormatSelections, cx);
+        let go_to_definition = !historical_at_target;
+        let go_to_declaration = !historical_at_target;
+        let go_to_type_definition = !historical_at_target;
+        let go_to_implementation = !historical_at_target;
+        let find_all_references = !historical_at_target;
+        let show_incoming_calls = !historical_at_target
+            && (window.is_action_available(&zed_actions::ShowIncomingCalls, cx)
+                || editor.has_registered_action(TypeId::of::<zed_actions::ShowIncomingCalls>()));
+        let show_outgoing_calls = !historical_at_target
+            && (window.is_action_available(&zed_actions::ShowOutgoingCalls, cx)
+                || editor.has_registered_action(TypeId::of::<zed_actions::ShowOutgoingCalls>()));
         let disable_ai = DisableAiSettings::is_ai_disabled_for_buffer(
             editor.buffer.read(cx).as_singleton().as_ref(),
             cx,
@@ -256,28 +272,42 @@ pub fn deploy_context_menu(
                     run_to_cursor || (evaluate_selection && has_selections),
                     |builder| builder.separator(),
                 )
-                .action("Go to Definition", Box::new(GoToDefinition::default()))
-                .action("Go to Declaration", Box::new(GoToDeclaration::default()))
-                .action(
-                    "Go to Type Definition",
-                    Box::new(GoToTypeDefinition::default()),
-                )
-                .action(
-                    "Go to Implementation",
-                    Box::new(GoToImplementation::default()),
-                )
-                .action(
-                    "Find All References",
-                    Box::new(FindAllReferences::default()),
-                )
-                .action(
-                    "Show Incoming Calls",
-                    Box::new(zed_actions::ShowIncomingCalls),
-                )
-                .action(
-                    "Show Outgoing Calls",
-                    Box::new(zed_actions::ShowOutgoingCalls),
-                )
+                .when(go_to_definition, |builder| {
+                    builder.action("Go to Definition", Box::new(GoToDefinition::default()))
+                })
+                .when(go_to_declaration, |builder| {
+                    builder.action("Go to Declaration", Box::new(GoToDeclaration::default()))
+                })
+                .when(go_to_type_definition, |builder| {
+                    builder.action(
+                        "Go to Type Definition",
+                        Box::new(GoToTypeDefinition::default()),
+                    )
+                })
+                .when(go_to_implementation, |builder| {
+                    builder.action(
+                        "Go to Implementation",
+                        Box::new(GoToImplementation::default()),
+                    )
+                })
+                .when(find_all_references, |builder| {
+                    builder.action(
+                        "Find All References",
+                        Box::new(FindAllReferences::default()),
+                    )
+                })
+                .when(show_incoming_calls, |builder| {
+                    builder.action(
+                        "Show Incoming Calls",
+                        Box::new(zed_actions::ShowIncomingCalls),
+                    )
+                })
+                .when(show_outgoing_calls, |builder| {
+                    builder.action(
+                        "Show Outgoing Calls",
+                        Box::new(zed_actions::ShowOutgoingCalls),
+                    )
+                })
                 .separator()
                 .action("Rename Symbol", Box::new(Rename))
                 .action("Format Buffer", Box::new(Format))
