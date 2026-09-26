@@ -3651,8 +3651,15 @@ impl Window {
     }
 
     pub(crate) fn view_node_key(&mut self, bounds: Bounds<Pixels>) -> ViewNodeCacheKey {
-        let text_style_hash = self.text_style_hash();
-        self.view_node_key_with_text_style(bounds, text_style_hash)
+        ViewNodeCacheKey {
+            bounds,
+            content_mask: self.content_mask(),
+            text_style_hash: self.text_style_hash(),
+            rem_size: self.rem_size(),
+            scale_factor: self.scale_factor(),
+            opacity: self.element_opacity(),
+            image_cache: self.image_cache_stack.last().map(AnyImageCache::entity_id),
+        }
     }
 
     /// A hash of the composed text style, for [`ViewNodeCacheKey::text_style_hash`].
@@ -3678,22 +3685,23 @@ impl Window {
         hash
     }
 
-    /// The cache key with a text style hash computed earlier in the frame: the elements
-    /// around a view push the same styles in every phase, so the hash from layout holds
-    /// for prepaint.
-    pub(crate) fn view_node_key_with_text_style(
+    /// The cache key a view's prepaint records, from the key its layout computed. The
+    /// text style and image cache come from layout: the text style hash is costly and the
+    /// elements around a view push the same styles in every phase, and `ImageCacheElement`
+    /// does not push its cache during prepaint at all.
+    pub(crate) fn view_node_prepaint_key(
         &self,
         bounds: Bounds<Pixels>,
-        text_style_hash: u64,
+        layout_key: &ViewNodeCacheKey,
     ) -> ViewNodeCacheKey {
         ViewNodeCacheKey {
             bounds,
             content_mask: self.content_mask(),
-            text_style_hash,
+            text_style_hash: layout_key.text_style_hash,
             rem_size: self.rem_size(),
             scale_factor: self.scale_factor(),
             opacity: self.element_opacity(),
-            image_cache: self.image_cache_stack.last().map(AnyImageCache::entity_id),
+            image_cache: layout_key.image_cache,
         }
     }
 

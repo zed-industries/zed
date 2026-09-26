@@ -386,8 +386,8 @@ struct NodeViewLayout {
     /// Entities read while rendering at layout time. Empty when layout was grafted, since
     /// the node's stored dependencies already cover it.
     accessed_entities: DependencySet,
-    /// The layout-time cache key's text style hash, reused by prepaint's key.
-    text_style_hash: u64,
+    /// The cache key computed at layout, from which prepaint's is built.
+    layout_key: ViewNodeCacheKey,
 }
 
 #[doc(hidden)]
@@ -499,7 +499,7 @@ impl ViewElementNode {
                         node_id,
                         grafted: true,
                         accessed_entities: window.view_tree.take_dependency_set(),
-                        text_style_hash: cache_key.text_style_hash,
+                        layout_key: cache_key,
                     });
                     (layout, None)
                 } else {
@@ -525,7 +525,7 @@ impl ViewElementNode {
                         node_id,
                         grafted: false,
                         accessed_entities,
-                        text_style_hash: cache_key.text_style_hash,
+                        layout_key: cache_key,
                     });
                     (layout, Some(element))
                 };
@@ -558,11 +558,9 @@ impl ViewElementNode {
                 node_id,
                 grafted,
                 accessed_entities,
-                text_style_hash,
+                layout_key,
             } = node_layout;
-            // Content masks are pushed during prepaint, so the key is built here rather
-            // than carried over from layout; only its text style hash, the costly part, is.
-            let cache_key = window.view_node_key_with_text_style(bounds, text_style_hash);
+            let cache_key = window.view_node_prepaint_key(bounds, &layout_key);
             let entity_id = self.entity_id.expect("node views have an entity");
             window.set_view_id(entity_id);
             window.enter_node_prepaint(node_id);
@@ -974,6 +972,61 @@ mod tests {
             renders.get(),
             1,
             "a clean view under a clipping parent is reused"
+        );
+    }
+
+    /// `ImageCacheElement` pushes its cache at layout and paint but not at prepaint, so the
+    /// key a node records carries the image cache it was laid out under. A clean view under
+    /// an image cache must be reused, not restarted every frame.
+    #[gpui::test]
+    fn views_under_an_image_cache_are_reused(cx: &mut TestAppContext) {
+        struct Leaf {
+            renders: Rc<Cell<usize>>,
+        }
+        impl Render for Leaf {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders.set(self.renders.get() + 1);
+                div().size(px(20.)).bg(rgb(0x336699))
+            }
+        }
+        struct Host {
+            leaf: Entity<Leaf>,
+            revision: usize,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .child(div().size(px(10.)).bg(rgb(self.revision as u32)))
+                    .child(
+                        crate::image_cache(crate::retain_all("images"))
+                            .size(px(50.))
+                            .child(self.leaf.clone()),
+                    )
+            }
+        }
+        let renders = Rc::new(Cell::new(0));
+        let window = cx.open_window(size(px(100.), px(100.)), |_, cx| Host {
+            leaf: cx.new(|_| Leaf {
+                renders: renders.clone(),
+            }),
+            revision: 0,
+        });
+        cx.run_until_parked();
+        assert_eq!(renders.get(), 1);
+        for _ in 0..3 {
+            window
+                .update(cx, |host, _, cx| {
+                    host.revision += 1;
+                    cx.notify();
+                })
+                .expect("window open");
+            cx.run_until_parked();
+        }
+        assert_eq!(
+            renders.get(),
+            1,
+            "a clean view under an image cache is reused"
         );
     }
 

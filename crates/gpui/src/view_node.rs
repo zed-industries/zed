@@ -26,7 +26,8 @@ impl ViewNodeCacheKey {
     /// `other`. Each input is compared only in the phase whose ancestors have pushed it:
     /// bounds and the content mask come from prepaint, so layout leaves them out and
     /// prepaint restarts the render if they differ; the image cache is pushed by
-    /// `ImageCacheElement` at layout and paint but not prepaint, so only layout compares it.
+    /// `ImageCacheElement` at layout and paint but not prepaint, so only layout compares it
+    /// (and prepaint's key carries the one layout saw).
     pub(crate) fn matches(&self, other: &Self, at_layout: bool) -> bool {
         let phase_inputs = if at_layout {
             self.image_cache == other.image_cache

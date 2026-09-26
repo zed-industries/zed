@@ -1,8 +1,8 @@
 use crate::{
     AnyElement, AnyEntity, App, AppContext, Asset, AssetLogger, Bounds, Element, ElementId, Entity,
-    GlobalElementId, ImageAssetLoader, ImageCacheError, InspectorElementId, IntoElement, LayoutId,
-    ParentElement, Pixels, RenderImage, Resource, Style, StyleRefinement, Styled, Task, Window,
-    hash,
+    EntityId, GlobalElementId, ImageAssetLoader, ImageCacheError, InspectorElementId, IntoElement,
+    LayoutId, ParentElement, Pixels, RenderImage, Resource, Style, StyleRefinement, Styled, Task,
+    Window, hash,
 };
 
 use futures::{FutureExt, future::Shared};
@@ -229,12 +229,17 @@ impl<T: ImageCache> ImageCacheProvider for Entity<T> {
 }
 
 /// An implementation of ImageCache, that uses an LRU caching strategy to unload images when the cache is full
-pub struct RetainAllImageCache(HashMap<u64, ImageCacheItem>);
+pub struct RetainAllImageCache {
+    images: HashMap<u64, ImageCacheItem>,
+    /// The cache's own entity, notified when a load completes. Every view that loads from
+    /// the cache reads this entity, so all of them redraw, not only the first to ask.
+    entity_id: EntityId,
+}
 
 impl fmt::Debug for RetainAllImageCache {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HashMapImageCache")
-            .field("num_images", &self.0.len())
+            .field("num_images", &self.images.len())
             .finish()
     }
 }
@@ -243,9 +248,12 @@ impl RetainAllImageCache {
     /// Create a new image cache.
     #[inline]
     pub fn new(cx: &mut App) -> Entity<Self> {
-        let e = cx.new(|_cx| RetainAllImageCache(HashMap::new()));
+        let e = cx.new(|cx| RetainAllImageCache {
+            images: HashMap::new(),
+            entity_id: cx.entity_id(),
+        });
         cx.observe_release(&e, |image_cache, cx| {
-            for (_, mut item) in std::mem::replace(&mut image_cache.0, HashMap::new()) {
+            for (_, mut item) in std::mem::replace(&mut image_cache.images, HashMap::new()) {
                 if let Some(Ok(image)) = item.get() {
                     cx.drop_image(image, None);
                 }
@@ -266,15 +274,16 @@ impl RetainAllImageCache {
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
         let hash = hash(source);
 
-        if let Some(item) = self.0.get_mut(&hash) {
+        if let Some(item) = self.images.get_mut(&hash) {
             return item.get();
         }
 
         let fut = AssetLogger::<ImageAssetLoader>::load(source.clone(), cx);
         let task = cx.background_executor().spawn(fut).shared();
-        self.0.insert(hash, ImageCacheItem::Loading(task.clone()));
+        self.images
+            .insert(hash, ImageCacheItem::Loading(task.clone()));
 
-        let entity = window.current_view();
+        let entity = self.entity_id;
         window
             .spawn(cx, {
                 async move |cx| {
@@ -291,7 +300,7 @@ impl RetainAllImageCache {
 
     /// Clear the image cache.
     pub fn clear(&mut self, window: &mut Window, cx: &mut App) {
-        for (_, mut item) in std::mem::replace(&mut self.0, HashMap::new()) {
+        for (_, mut item) in std::mem::replace(&mut self.images, HashMap::new()) {
             if let Some(Ok(image)) = item.get() {
                 cx.drop_image(image, Some(window));
             }
@@ -301,7 +310,7 @@ impl RetainAllImageCache {
     /// Remove the image from the cache by the given source.
     pub fn remove(&mut self, source: &Resource, window: &mut Window, cx: &mut App) {
         let hash = hash(source);
-        if let Some(mut item) = self.0.remove(&hash)
+        if let Some(mut item) = self.images.remove(&hash)
             && let Some(Ok(image)) = item.get()
         {
             cx.drop_image(image, Some(window));
@@ -310,12 +319,12 @@ impl RetainAllImageCache {
 
     /// Returns the number of images in the cache.
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.images.len()
     }
 
     /// Returns true if the cache is empty.
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.images.is_empty()
     }
 }
 
