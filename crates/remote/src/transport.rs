@@ -299,7 +299,16 @@ async fn build_remote_server_from_source(
             .context("rustup not found on $PATH, install rustup (see https://rustup.rs/)")?;
         delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
         log::info!("adding rustup target");
-        run_cmd(new_command(rustup).args(["target", "add"]).arg(&triple)).await?;
+        run_cmd(
+            new_command(rustup)
+                .current_dir(
+                    util::dev_repo_root()
+                        .context("locating the zed checkout to add the rustup target")?,
+                )
+                .args(["target", "add"])
+                .arg(&triple),
+        )
+        .await?;
         Ok(())
     }
 
@@ -409,7 +418,15 @@ async fn build_remote_server_from_source(
 
             delegate.set_status(Some("Adding llvm-tools for cross-compilation"), cx);
             log::info!("adding llvm-tools component");
-            run_cmd(new_command("rustup").args(["component", "add", "llvm-tools"])).await?;
+            run_cmd(
+                new_command("rustup")
+                    .current_dir(
+                        util::dev_repo_root()
+                            .context("locating the zed checkout to add the llvm-tools component")?,
+                    )
+                    .args(["component", "add", "llvm-tools"]),
+            )
+            .await?;
 
             delegate.set_status(
                 Some(&format!(
