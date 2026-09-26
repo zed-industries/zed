@@ -259,9 +259,9 @@ Git stash allows you to temporarily save your uncommitted changes and revert you
 
 To stash all your current changes, use the {#action git::StashAll} action. This will save both staged and unstaged changes, including untracked files, to a new stash entry and clean your working directory.
 
-To stash only tracked changes and leave untracked files in place, use the {#action git::StashTracked} action. To stash only staged changes and leave unstaged changes in place, use the {#action git::StashStaged} action; this requires git 2.35 or newer.
+To stash only tracked changes and leave untracked files in place, use the {#action git::StashTracked} action. To stash only staged changes and leave unstaged changes in place, use the {#action git::StashStaged} action; this requires git 2.35 or newer. To stash specific changes, select the files in the Git Panel and use the {#action git::StashFile} action.
 
-The Git Panel's overflow menu offers whichever of these matches the current **Group By** mode: **Stash Tracked** when grouping by Tracked & Untracked, and **Stash Staged** when grouping by Staged & Unstaged. **Stash All** is always available.
+The Git Panel's overflow menu offers whichever of these matches the current **Group By** mode: **Stash Tracked** when grouping by Tracked & Untracked, and **Stash Staged** when grouping by Staged & Unstaged. **Stash Selected Files** is available whenever files are selected, and **Stash All** is always available.
 
 Each of these actions first prompts for an optional stash name. Confirming with an empty prompt lets git generate its usual `WIP on ...` description.
 
@@ -419,6 +419,7 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action git::StashAll}                   | {#kb git::StashAll}                   |
 | {#action git::StashTracked}               | {#kb git::StashTracked}               |
 | {#action git::StashStaged}                | {#kb git::StashStaged}                |
+| {#action git::StashFile}                  | {#kb git::StashFile}                  |
 | {#action git::StashPop}                   | {#kb git::StashPop}                   |
 | {#action git::StashApply}                 | {#kb git::StashApply}                 |
 | {#action git::ViewStash}                  | {#kb git::ViewStash}                  |
