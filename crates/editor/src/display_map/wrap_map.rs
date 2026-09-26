@@ -83,6 +83,12 @@ impl TransformSummary {
     }
 }
 
+impl WrapSnapshot {
+    pub(crate) fn has_wraps(&self) -> bool {
+        self.transforms.summary().has_wraps()
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct WrapPoint(pub Point);
 
