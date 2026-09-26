@@ -560,9 +560,8 @@ impl ViewElementNode {
                 accessed_entities,
                 text_style_hash,
             } = node_layout;
-            // Ambient inputs such as content masks and image caches are pushed during
-            // prepaint, so the key is built here rather than carried over from layout;
-            // only its text style hash, the costly part, is.
+            // Content masks are pushed during prepaint, so the key is built here rather
+            // than carried over from layout; only its text style hash, the costly part, is.
             let cache_key = window.view_node_key_with_text_style(bounds, text_style_hash);
             let entity_id = self.entity_id.expect("node views have an entity");
             window.set_view_id(entity_id);
