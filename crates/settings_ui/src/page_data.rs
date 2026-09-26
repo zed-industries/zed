@@ -9016,6 +9016,29 @@ fn ai_page(cx: &App) -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Image Read Mode",
+                description: "How images read by the agent or attached to messages are resized before being sent to the model. 'Small' limits the longest side to 768px, 'Standard' to 1568px, and 'Large' to 2576px. 'Original' keeps the original dimensions. Larger images use more of the request size limit.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.image_read_mode"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .image_read_mode
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .image_read_mode = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Cancel Generation On Terminal Stop",
                 description: "Whether clicking the stop button on a running terminal tool should also cancel the agent's generation. Note that this only applies to the stop button, not to ctrl+c inside the terminal.",
                 field: Box::new(SettingField {

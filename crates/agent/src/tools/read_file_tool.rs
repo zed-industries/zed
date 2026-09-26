@@ -1,4 +1,5 @@
 use action_log::ActionLog;
+use agent_settings::AgentSettings;
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::{Context as _, Result, anyhow};
 use futures::FutureExt as _;
@@ -379,7 +380,10 @@ impl AgentTool for ReadFileTool {
                     image_entity.read_with(cx, |image_item, _| Arc::clone(&image_item.image));
 
                 let language_model_image = cx
-                    .update(|cx| LanguageModelImage::from_image(image, cx))
+                    .update(|cx| {
+                        let max_dimension = AgentSettings::get_global(cx).image_max_dimension();
+                        LanguageModelImage::from_image(image, max_dimension, cx)
+                    })
                     .await
                     .context("processing image")
                     .map_err(tool_content_err)?;

@@ -1373,6 +1373,17 @@
     //
     // Default: auto
     "thinking_display": "auto",
+    // How images read by the agent (via the `read_file` tool, MCP tools, or
+    // images attached to messages) are resized before being sent to the model.
+    //
+    // - "small": Downscale so neither side exceeds 768 pixels.
+    // - "standard": Downscale so neither side exceeds 1568 pixels.
+    // - "large": Downscale so neither side exceeds 2576 pixels.
+    // - "original": Keep the original dimensions. Images are still downscaled
+    //   if they exceed the per-image size limit accepted by model providers.
+    //
+    // Default: standard
+    "image_read_mode": "standard",
     // Whether clicking the stop button on a running terminal tool should also cancel the agent's generation.
     // Note that this only applies to the stop button, not to ctrl+c inside the terminal.
     //

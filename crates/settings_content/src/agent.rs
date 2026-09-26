@@ -97,6 +97,37 @@ pub enum ThinkingBlockDisplay {
     AlwaysCollapsed,
 }
 
+/// How images are resized before the agent sends them to the model.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageReadMode {
+    /// Downscale images so neither side exceeds 768 pixels.
+    Small,
+    /// Downscale images so neither side exceeds 1568 pixels, the largest size
+    /// most vision models process without downscaling them themselves.
+    #[default]
+    Standard,
+    /// Downscale images so neither side exceeds 2576 pixels, matching
+    /// high-resolution vision models.
+    Large,
+    /// Keep the original image dimensions. Images are still downscaled if
+    /// they exceed the per-image size limit accepted by model providers.
+    Original,
+}
+
 /// Threshold at which agent auto-compaction runs. See
 /// [`AutoCompactSettingsContent::threshold`] for the accepted formats.
 ///
@@ -364,6 +395,11 @@ pub struct AgentSettingsContent {
     ///
     /// Default: automatic
     pub thinking_display: Option<ThinkingBlockDisplay>,
+    /// How images read by the agent (via the `read_file` tool, MCP tools, or
+    /// images attached to messages) are resized before being sent to the model.
+    ///
+    /// Default: standard
+    pub image_read_mode: Option<ImageReadMode>,
     /// Whether clicking the stop button on a running terminal tool should also cancel the agent's generation.
     /// Note that this only applies to the stop button, not to ctrl+c inside the terminal.
     ///
