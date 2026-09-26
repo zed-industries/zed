@@ -567,18 +567,24 @@ fn paint_line(
         );
         let mut prev_glyph_position = Point::default();
         let mut max_glyph_size = size(px(0.), px(0.));
-        let mut first_glyph_x = origin.x;
         for (run_ix, run) in layout.runs.iter().enumerate() {
             max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
 
             for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
                 glyph_origin.x += glyph.position.x - prev_glyph_position.x;
-                if glyph_ix == 0 && run_ix == 0 {
-                    first_glyph_x = glyph_origin.x;
-                }
-
                 if wraps.peek() == Some(&&WrapBoundary { run_ix, glyph_ix }) {
                     wraps.next();
+                    // Where the next line starts under the current alignment; a
+                    // decoration that continues onto it must resume there, not
+                    // at the line box's left edge.
+                    let next_line_x = aligned_origin_x(
+                        origin,
+                        align_width.unwrap_or(layout.width),
+                        glyph.position.x,
+                        &align,
+                        layout,
+                        wraps.peek(),
+                    );
                     if let Some((underline_origin, underline_style, underline_range)) =
                         current_underline.as_mut()
                     {
@@ -593,7 +599,7 @@ fn paint_line(
                             window,
                         );
                         if glyph.index < run_end {
-                            underline_origin.x = origin.x;
+                            underline_origin.x = next_line_x;
                             underline_origin.y += line_height;
                         } else {
                             current_underline = None;
@@ -611,21 +617,14 @@ fn paint_line(
                             strikethrough_style,
                         );
                         if glyph.index < run_end {
-                            strikethrough_origin.x = origin.x;
+                            strikethrough_origin.x = next_line_x;
                             strikethrough_origin.y += line_height;
                         } else {
                             current_strikethrough = None;
                         }
                     }
 
-                    glyph_origin.x = aligned_origin_x(
-                        origin,
-                        align_width.unwrap_or(layout.width),
-                        glyph.position.x,
-                        &align,
-                        layout,
-                        wraps.peek(),
-                    );
+                    glyph_origin.x = next_line_x;
                     glyph_origin.y += line_height;
                 }
                 prev_glyph_position = glyph.position;
@@ -750,12 +749,24 @@ fn paint_line(
             }
         }
 
-        let mut last_line_end_x = first_glyph_x + layout.width;
-        if let Some(boundary) = wrap_boundaries.last() {
-            let run = &layout.runs[boundary.run_ix];
-            let glyph = &run.glyphs[boundary.glyph_ix];
-            last_line_end_x -= glyph.position.x;
-        }
+        // The last line starts where its alignment puts it, which is the
+        // first line's start only for left-aligned text.
+        let last_line_start = wrap_boundaries
+            .last()
+            .map(|boundary| {
+                layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix]
+                    .position
+                    .x
+            })
+            .unwrap_or_default();
+        let last_line_end_x = aligned_origin_x(
+            origin,
+            align_width.unwrap_or(layout.width),
+            last_line_start,
+            &align,
+            layout,
+            None,
+        ) + (layout.width - last_line_start);
 
         if let Some((mut underline_start, underline_style, underline_range)) =
             current_underline.take()
@@ -1309,6 +1320,159 @@ mod tests {
                     ]
                 );
                 assert_underline_primitives_eq(&window.next_frame.scene.underlines, &original);
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn test_wrapped_decorations_follow_text_align(cx: &mut TestAppContext) {
+        test_underline_handler_at_scales(cx, |window, cx| {
+            let underline_style = UnderlineStyle {
+                thickness: px(1.),
+                color: Some(black()),
+                wavy: false,
+            };
+            let strikethrough_style = StrikethroughStyle {
+                thickness: px(1.),
+                color: Some(black()),
+            };
+            let plain = DecorationRun {
+                len: 4,
+                color: black(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            // Integral coordinates land on device pixels at every tested scale, so
+            // underline and strikethrough primitives snap identically and their
+            // x-geometry can be compared directly.
+            let origin = point(px(40.), px(10.));
+            let line_height = px(20.);
+            let align_width = px(48.);
+            // "abcdef" at an 8px advance wraps after "abcd" into a 32px line above a
+            // 16px line. Aligned within 48px, the two lines start at different x for
+            // everything but `TextAlign::Left`.
+            let wrap = |line: ShapedLine| WrappedLine {
+                layout: Arc::new(WrappedLineLayout {
+                    unwrapped_layout: line.layout,
+                    wrap_boundaries: SmallVec::from_buf([WrapBoundary {
+                        run_ix: 0,
+                        glyph_ix: 4,
+                    }]),
+                    wrap_width: Some(align_width),
+                }),
+                text: line.text,
+                decoration_runs: line.decoration_runs.into_vec(),
+            };
+            // Either the decoration spans the wrap, or it sits entirely on the last line.
+            let decorations =
+                |spans_wrap: bool,
+                 underline: Option<UnderlineStyle>,
+                 strikethrough: Option<StrikethroughStyle>| {
+                    let decorated = DecorationRun {
+                        len: if spans_wrap { 6 } else { 2 },
+                        underline,
+                        strikethrough,
+                        ..plain.clone()
+                    };
+                    if spans_wrap {
+                        vec![decorated]
+                    } else {
+                        vec![plain.clone(), decorated]
+                    }
+                };
+
+            for (align, first_line_start, last_line_start) in [
+                (TextAlign::Left, 0., 0.),
+                (TextAlign::Center, 8., 16.),
+                (TextAlign::Right, 16., 32.),
+            ] {
+                let first_line_start = origin.x + px(first_line_start);
+                let last_line_start = origin.x + px(last_line_start);
+                for spans_wrap in [true, false] {
+                    let line = underline_test_line(
+                        "abcdef",
+                        &decorations(spans_wrap, Some(underline_style), None),
+                        false,
+                        window,
+                    );
+                    let y = origin.y + underline_y_offset(line_height, line.ascent, line.descent);
+                    let wrapped = wrap(line);
+                    let expected = if spans_wrap {
+                        vec![
+                            (0..6, point(first_line_start, y), px(32.), underline_style),
+                            (
+                                0..6,
+                                point(last_line_start, y + line_height),
+                                px(16.),
+                                underline_style,
+                            ),
+                        ]
+                    } else {
+                        vec![(
+                            4..6,
+                            point(last_line_start, y + line_height),
+                            px(16.),
+                            underline_style,
+                        )]
+                    };
+
+                    window.next_frame.scene.clear();
+                    wrapped
+                        .paint(origin, line_height, align, None, window, cx)
+                        .unwrap();
+                    let underlines = window.next_frame.scene.underlines.clone();
+
+                    window.next_frame.scene.clear();
+                    let mut strokes = Vec::new();
+                    paint_line(
+                        origin,
+                        &wrapped.unwrapped_layout,
+                        line_height,
+                        align,
+                        Some(align_width),
+                        &wrapped.decoration_runs,
+                        &wrapped.wrap_boundaries,
+                        window,
+                        cx,
+                        &mut |range, origin, width, style, window| {
+                            strokes.push((range, origin, width, *style));
+                            window.paint_underline(origin, width, style);
+                        },
+                    )
+                    .unwrap();
+                    assert_eq!(strokes, expected, "{align:?} spans_wrap={spans_wrap}");
+                    assert_underline_primitives_eq(
+                        &window.next_frame.scene.underlines,
+                        &underlines,
+                    );
+
+                    // Strikethroughs are painted as `Underline` primitives from the same
+                    // x-geometry, so they must land on the same columns.
+                    let line = underline_test_line(
+                        "abcdef",
+                        &decorations(spans_wrap, None, Some(strikethrough_style)),
+                        false,
+                        window,
+                    );
+                    let wrapped = wrap(line);
+                    window.next_frame.scene.clear();
+                    wrapped
+                        .paint(origin, line_height, align, None, window, cx)
+                        .unwrap();
+                    let strikethroughs = &window.next_frame.scene.underlines;
+                    assert_eq!(strikethroughs.len(), underlines.len());
+                    for (strikethrough, underline) in strikethroughs.iter().zip(&underlines) {
+                        assert_eq!(
+                            (
+                                strikethrough.bounds.origin.x,
+                                strikethrough.bounds.size.width
+                            ),
+                            (underline.bounds.origin.x, underline.bounds.size.width),
+                            "{align:?} spans_wrap={spans_wrap}"
+                        );
+                    }
+                }
             }
         });
     }
