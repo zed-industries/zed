@@ -3903,15 +3903,19 @@ impl InlayHints {
         let position = match kind {
             Some(InlayHintKind::Type) => snapshot.anchor_after(position),
             Some(InlayHintKind::Parameter) => snapshot.anchor_before(position),
-            None => {
-                let offset = position.to_offset(snapshot);
-                let (range, _) = snapshot.surrounding_word(offset, None);
-                if range.start < offset {
-                    snapshot.anchor_after(position)
-                } else {
-                    snapshot.anchor_before(position)
+            None => match (lsp_hint.padding_left, lsp_hint.padding_right) {
+                (Some(true), Some(false)) => snapshot.anchor_after(position),
+                (Some(false), Some(true)) => snapshot.anchor_before(position),
+                _ => {
+                    let offset = position.to_offset(snapshot);
+                    let (range, _) = snapshot.surrounding_word(offset, None);
+                    if range.start < offset {
+                        snapshot.anchor_after(position)
+                    } else {
+                        snapshot.anchor_before(position)
+                    }
                 }
-            }
+            },
         };
 
         let label = Self::lsp_inlay_label_to_project(lsp_hint.label, server_id);
