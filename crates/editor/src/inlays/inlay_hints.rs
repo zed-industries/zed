@@ -5378,9 +5378,33 @@ let c = 3;"#
             })
         });
 
-        check_none_hint_bias(cx, 6, "<'_>", "fn fooX<'_>(s: &str) {}").await;
-        check_none_hint_bias(cx, 11, "'_", "fn foo(s: &'_Xstr) {}").await;
-        check_none_hint_bias(cx, 18, "// fn foo", "fn foo(s: &str) {}X// fn foo").await;
+        check_none_hint_bias(
+            cx,
+            6,
+            "<'_>",
+            Some(false),
+            Some(false),
+            "fn fooX<'_>(s: &str) {}",
+        )
+        .await;
+        check_none_hint_bias(
+            cx,
+            11,
+            "'_",
+            Some(false),
+            Some(true),
+            "fn foo(s: &'_ Xstr) {}",
+        )
+        .await;
+        check_none_hint_bias(
+            cx,
+            18,
+            "// fn foo",
+            Some(true),
+            Some(false),
+            "fn foo(s: &str) {}X // fn foo",
+        )
+        .await;
     }
 
     #[gpui::test]
@@ -5434,6 +5458,11 @@ let c = 3;"#
             let snapshot = editor.display_snapshot(cx);
             let head = editor.selections.newest_display(&snapshot).head();
             assert_eq!(head.column(), position);
+            editor.handle_input("X", window, cx);
+            assert_eq!(
+                editor.display_text(cx),
+                "fn f() {} fn main() { let c: fn() -> fn() = ||X -> fn()<fn-item-to-fn-pointer>f; }"
+            );
         })
         .unwrap();
     }
@@ -5530,6 +5559,8 @@ let c = 3;"#
         cx: &mut TestAppContext,
         position: usize,
         label: &'static str,
+        padding_left: Option<bool>,
+        padding_right: Option<bool>,
         expected: &str,
     ) {
         let (_, editor, _fake_server) =
@@ -5542,8 +5573,8 @@ let c = 3;"#
                             kind: None,
                             text_edits: None,
                             tooltip: None,
-                            padding_left: None,
-                            padding_right: None,
+                            padding_left,
+                            padding_right,
                             data: None,
                         }]))
                     },
