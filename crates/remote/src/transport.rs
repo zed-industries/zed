@@ -289,6 +289,45 @@ async fn build_remote_server_from_source(
         Ok(())
     }
 
+    async fn ensure_rustup_target(
+        triple: &str,
+        delegate: &dyn crate::RemoteClientDelegate,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        let rustup = which("rustup", cx)
+            .await?
+            .context("rustup not found on $PATH, install rustup (see https://rustup.rs/)")?;
+        delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
+        log::info!("adding rustup target");
+        run_cmd(
+            new_command(rustup)
+                .current_dir(
+                    util::dev_repo_root()
+                        .context("locating the zed checkout to add the rustup target")?,
+                )
+                .args(["target", "add"])
+                .arg(&triple),
+        )
+        .await?;
+        Ok(())
+    }
+
+    enum RemoteServerBuildMode {
+        Native,
+        Xwin,
+        Zig,
+    }
+
+    impl RemoteServerBuildMode {
+        fn build_command(&self) -> &[&'static str] {
+            match self {
+                RemoteServerBuildMode::Native => &["build"],
+                RemoteServerBuildMode::Xwin => &["xwin", "build"],
+                RemoteServerBuildMode::Zig => &["zigbuild"],
+            }
+        }
+    }
+
     let use_musl = !build_remote_server.contains("nomusl");
     let triple = format!(
         "{}-{}",
@@ -301,8 +340,7 @@ async fn build_remote_server_from_source(
                     "unknown-linux-gnu"
                 },
             RemoteOs::MacOs => "apple-darwin",
-            RemoteOs::Windows if cfg!(windows) => "pc-windows-msvc",
-            RemoteOs::Windows => "pc-windows-gnu",
+            RemoteOs::Windows => "pc-windows-msvc",
         }
     );
     let mut rust_flags = match std::env::var("RUSTFLAGS") {
@@ -320,81 +358,106 @@ async fn build_remote_server_from_source(
             rust_flags.push_str(&format!(" -C link-arg=-L{path}"));
         }
     }
-    if platform.arch.as_str() == std::env::consts::ARCH
+    let remote_build_mode = if platform.arch.as_str() == std::env::consts::ARCH
         && platform.os.as_str() == std::env::consts::OS
     {
-        delegate.set_status(Some("Building remote server binary from source"), cx);
-        log::info!("building remote server binary from source");
-        run_cmd(
-            new_command("cargo")
-                .current_dir(
-                    util::dev_repo_root()
-                        .context("locating the zed checkout to build remote_server from source")?,
-                )
-                .args([
-                    "build",
-                    "--package",
-                    "remote_server",
-                    "--features",
-                    "debug-embed",
-                    "--target-dir",
-                    "target/remote_server",
-                    "--target",
-                    &triple,
-                ])
-                .env("RUSTFLAGS", &rust_flags),
-        )
-        .await?;
+        RemoteServerBuildMode::Native
+    } else if platform.os.as_str() == "windows" {
+        RemoteServerBuildMode::Xwin
     } else {
-        if which("zig", cx).await?.is_none() {
-            anyhow::bail!(if cfg!(not(windows)) {
-                "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup)"
-            } else {
-                "zig not found on $PATH, install zig (use `winget install -e --id zig.zig` or see https://ziglang.org/learn/getting-started or use zigup)"
-            });
-        }
-
-        let rustup = which("rustup", cx)
-            .await?
-            .context("rustup not found on $PATH, install rustup (see https://rustup.rs/)")?;
-        delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
-        log::info!("adding rustup target");
-        run_cmd(new_command(rustup).args(["target", "add"]).arg(&triple)).await?;
-
-        if which("cargo-zigbuild", cx).await?.is_none() {
-            delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
-            log::info!("installing cargo-zigbuild");
-            run_cmd(new_command("cargo").args(["install", "--locked", "cargo-zigbuild"])).await?;
-        }
-
-        delegate.set_status(
-            Some(&format!(
-                "Building remote binary from source for {triple} with Zig"
-            )),
-            cx,
-        );
-        log::info!("building remote binary from source for {triple} with Zig");
-        run_cmd(
-            new_command("cargo")
-                .current_dir(
-                    util::dev_repo_root()
-                        .context("locating the zed checkout to build remote_server from source")?,
-                )
-                .args([
-                    "zigbuild",
-                    "--package",
-                    "remote_server",
-                    "--features",
-                    "debug-embed",
-                    "--target-dir",
-                    "target/remote_server",
-                    "--target",
-                    &triple,
-                ])
-                .env("RUSTFLAGS", &rust_flags),
-        )
-        .await?;
+        RemoteServerBuildMode::Zig
     };
+
+    match remote_build_mode {
+        RemoteServerBuildMode::Native => {
+            delegate.set_status(Some("Building remote server binary from source"), cx);
+            log::info!("building remote server binary from source");
+        }
+        RemoteServerBuildMode::Zig => {
+            if which("zig", cx).await?.is_none() {
+                anyhow::bail!(if cfg!(not(windows)) {
+                    "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup)"
+                } else {
+                    "zig not found on $PATH, install zig (use `winget install -e --id zig.zig` or see https://ziglang.org/learn/getting-started or use zigup)"
+                });
+            }
+
+            ensure_rustup_target(&triple, delegate, cx).await?;
+
+            if which("cargo-zigbuild", cx).await?.is_none() {
+                delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
+                log::info!("installing cargo-zigbuild");
+                run_cmd(new_command("cargo").args(["install", "--locked", "cargo-zigbuild"]))
+                    .await?;
+            }
+
+            delegate.set_status(
+                Some(&format!(
+                    "Building remote binary from source for {triple} with Zig"
+                )),
+                cx,
+            );
+            log::info!("building remote binary from source for {triple} with Zig");
+        }
+        RemoteServerBuildMode::Xwin => {
+            if which("clang", cx).await?.is_none() {
+                anyhow::bail!(
+                    "clang not found on $PATH, install clang to cross-compile the Windows remote server (see https://clang.llvm.org/)"
+                );
+            }
+
+            if which("cargo-xwin", cx).await?.is_none() {
+                anyhow::bail!(
+                    "cargo-xwin not found on $PATH. Install it with `cargo install --locked cargo-xwin`.\n\n\
+                     Note that cargo-xwin downloads Microsoft's CRT and Windows SDK; by using it you \
+                     accept Microsoft's license (see https://go.microsoft.com/fwlink/?LinkId=2086102)"
+                );
+            }
+
+            ensure_rustup_target(&triple, delegate, cx).await?;
+
+            delegate.set_status(Some("Adding llvm-tools for cross-compilation"), cx);
+            log::info!("adding llvm-tools component");
+            run_cmd(
+                new_command("rustup")
+                    .current_dir(
+                        util::dev_repo_root()
+                            .context("locating the zed checkout to add the llvm-tools component")?,
+                    )
+                    .args(["component", "add", "llvm-tools"]),
+            )
+            .await?;
+
+            delegate.set_status(
+                Some(&format!(
+                    "Building remote binary from source for {triple} with xwin"
+                )),
+                cx,
+            );
+            log::info!("building remote binary from source for {triple} with xwin");
+        }
+    };
+    run_cmd(
+        new_command("cargo")
+            .current_dir(
+                util::dev_repo_root()
+                    .context("locating the zed checkout to build remote_server from source")?,
+            )
+            .args(remote_build_mode.build_command())
+            .args([
+                "--package",
+                "remote_server",
+                "--features",
+                "debug-embed",
+                "--target-dir",
+                "target/remote_server",
+                "--target",
+                &triple,
+            ])
+            .env("RUSTFLAGS", &rust_flags),
+    )
+    .await?;
+
     let bin_path = util::dev_repo_root()
         .context("locating the zed checkout that built remote_server from source")?
         .join("target")

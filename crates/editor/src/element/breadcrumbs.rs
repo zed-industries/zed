@@ -6,12 +6,15 @@ mod outline;
 mod path;
 
 use super::*;
+use language::OutlineItem;
 use layout::{
     BreadcrumbStrip, PreparedBreadcrumbSegment, align_symbol_segments,
     breadcrumb_path_is_navigable, classify_breadcrumb_segment_kinds, hard_cap_segment_runs,
 };
 pub(crate) use menu::{BreadcrumbListing, BreadcrumbNavigationMenu, WithoutSymbols};
 use path::{breadcrumb_file_icon, breadcrumb_path_segments};
+use project::WorktreeId;
+use util::rel_path::RelPath;
 
 #[derive(Clone, Debug)]
 pub(crate) enum BreadcrumbSegmentTarget {

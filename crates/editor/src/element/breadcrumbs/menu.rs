@@ -13,12 +13,17 @@ use super::path::{
 use crate::EditorEvent;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::Task;
+use gpui::{DismissEvent, EventEmitter, FocusHandle, Subscription};
+use language::OutlineItem;
 use postage::stream::Stream as _;
 use project::git_store::{GitStoreEvent, RepositoryEvent};
+use project::{ProjectPath, WorktreeId};
 use settings::SettingsStore;
 use std::cell::RefCell;
 use std::sync::atomic::AtomicBool;
+use ui::ListItem;
 use ui::utils::WithRemSize;
+use util::rel_path::RelPath;
 
 /// Ordered so a batch of updates folds with `max`: one update that may have taken the listing
 /// with it outranks any number of ordinary changes.

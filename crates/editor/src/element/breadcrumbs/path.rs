@@ -1,5 +1,8 @@
 use super::super::*;
 use super::BreadcrumbSegmentTarget;
+use git::status::GitSummary;
+use project::{ProjectEntryId, ProjectPath, WorktreeId};
+use util::rel_path::RelPath;
 
 pub(super) fn breadcrumb_path_prefixes(path: &RelPath) -> Vec<&RelPath> {
     let mut prefixes: Vec<&RelPath> = path

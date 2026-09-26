@@ -670,6 +670,7 @@ impl SelectableButton for ButtonLike {
 }
 
 impl Clickable for ButtonLike {
+    #[inline(always)]
     fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(Box::new(handler));
         self
@@ -708,6 +709,7 @@ impl ButtonCommon for ButtonLike {
         self
     }
 
+    #[inline(always)]
     fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
@@ -776,7 +778,11 @@ impl RenderOnce for ButtonLike {
                     Toggled::False
                 })
             })
-            .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index))
+            .when_some(self.tab_index, |this, tab_index| {
+                // Keep an already-focused button registered so disabling it does not
+                // move focus outside the view.
+                this.tab_index(tab_index).tab_stop(!self.disabled)
+            })
             .when_some(self.focus_handle, |this, focus_handle| {
                 this.track_focus(&focus_handle)
             })

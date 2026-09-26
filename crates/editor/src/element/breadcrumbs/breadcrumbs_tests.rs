@@ -15,6 +15,7 @@ use super::path::{
 use super::*;
 use crate::MultiBuffer;
 use ::menu::{Confirm, SelectChild, SelectNext, SelectParent};
+use gpui::DismissEvent;
 use gpui::{KeyBinding, TestAppContext, VisualTestContext, actions};
 use std::rc::Rc;
 

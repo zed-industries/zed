@@ -1,4 +1,5 @@
 use super::super::*;
+use language::OutlineItem;
 
 pub(super) fn outline_parents(depths: &[usize]) -> Vec<Option<usize>> {
     let mut parents = Vec::with_capacity(depths.len());

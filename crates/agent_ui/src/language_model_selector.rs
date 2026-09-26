@@ -8,8 +8,8 @@ use gpui::{
     Subscription, Task,
 };
 use language_model::{
-    ConfiguredModel, IconOrSvg, LanguageModel, LanguageModelId, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelRegistry,
+    IconOrSvg, LanguageModel, LanguageModelId, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelRegistry,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -19,16 +19,16 @@ use zed_actions::agent::OpenSettings;
 
 use crate::ui::{ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem};
 
-type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &mut App) + 'static>;
-type GetActiveModel = Arc<dyn Fn(&App) -> Option<ConfiguredModel> + 'static>;
-type OnToggleFavorite = Arc<dyn Fn(Arc<dyn LanguageModel>, bool, &mut App) + 'static>;
+type OnModelChanged = Arc<dyn Fn(LanguageModel, &mut App) + 'static>;
+type GetActiveModel = Arc<dyn Fn(&App) -> Option<LanguageModel> + 'static>;
+type OnToggleFavorite = Arc<dyn Fn(LanguageModel, bool, &mut App) + 'static>;
 
 pub type LanguageModelSelector = Picker<LanguageModelPickerDelegate>;
 
 pub fn language_model_selector(
-    get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
-    on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
-    on_toggle_favorite: impl Fn(Arc<dyn LanguageModel>, bool, &mut App) + 'static,
+    get_active_model: impl Fn(&App) -> Option<LanguageModel> + 'static,
+    on_model_changed: impl Fn(LanguageModel, &mut App) + 'static,
+    on_toggle_favorite: impl Fn(LanguageModel, bool, &mut App) + 'static,
     popover_styles: bool,
     focus_handle: FocusHandle,
     window: &mut Window,
@@ -96,7 +96,7 @@ type FavoritesIndex = HashMap<LanguageModelProviderId, HashSet<LanguageModelId>>
 
 #[derive(Clone)]
 struct ModelInfo {
-    model: Arc<dyn LanguageModel>,
+    model: LanguageModel,
     icon: IconOrSvg,
     is_favorite: bool,
 }
@@ -104,7 +104,7 @@ struct ModelInfo {
 impl ModelInfo {
     fn new(
         provider: &dyn LanguageModelProvider,
-        model: Arc<dyn LanguageModel>,
+        model: LanguageModel,
         favorites_index: &FavoritesIndex,
     ) -> Self {
         let is_favorite = favorites_index
@@ -133,9 +133,9 @@ pub struct LanguageModelPickerDelegate {
 
 impl LanguageModelPickerDelegate {
     fn new(
-        get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
-        on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
-        on_toggle_favorite: impl Fn(Arc<dyn LanguageModel>, bool, &mut App) + 'static,
+        get_active_model: impl Fn(&App) -> Option<LanguageModel> + 'static,
+        on_model_changed: impl Fn(LanguageModel, &mut App) + 'static,
+        on_toggle_favorite: impl Fn(LanguageModel, bool, &mut App) + 'static,
         popover_styles: bool,
         focus_handle: FocusHandle,
         window: &mut Window,
@@ -177,7 +177,7 @@ impl LanguageModelPickerDelegate {
 
     fn get_active_model_index(
         entries: &[LanguageModelPickerEntry],
-        active_model: Option<ConfiguredModel>,
+        active_model: Option<LanguageModel>,
     ) -> usize {
         entries
             .iter()
@@ -185,10 +185,7 @@ impl LanguageModelPickerDelegate {
                 if let LanguageModelPickerEntry::Model(model) = entry {
                     active_model
                         .as_ref()
-                        .map(|active_model| {
-                            active_model.model.id() == model.model.id()
-                                && active_model.provider.id() == model.model.provider_id()
-                        })
+                        .map(|active_model| active_model.is_same_as(&model.model))
                         .unwrap_or_default()
                 } else {
                     false
@@ -197,7 +194,7 @@ impl LanguageModelPickerDelegate {
             .unwrap_or(0)
     }
 
-    pub fn active_model(&self, cx: &App) -> Option<ConfiguredModel> {
+    pub fn active_model(&self, cx: &App) -> Option<LanguageModel> {
         (self.get_active_model)(cx)
     }
 
@@ -211,8 +208,8 @@ impl LanguageModelPickerDelegate {
         }
 
         let active_model = (self.get_active_model)(cx);
-        let active_provider_id = active_model.as_ref().map(|m| m.provider.id());
-        let active_model_id = active_model.as_ref().map(|m| m.model.id());
+        let active_provider_id = active_model.as_ref().map(|m| m.provider_id());
+        let active_model_id = active_model.as_ref().map(|m| m.id());
 
         let current_index = self
             .all_models
@@ -484,7 +481,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             self.filtered_entries.get(self.selected_index)
         {
             let model = model_info.model.clone();
-            (self.on_model_changed)(model.clone(), cx);
+            (self.on_model_changed)(model, cx);
 
             let current_index = self.selected_index;
             self.set_selected_index(current_index, window, cx);
@@ -510,15 +507,16 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             }
             LanguageModelPickerEntry::Model(model_info) => {
                 let active_model = (self.get_active_model)(cx);
-                let active_provider_id = active_model.as_ref().map(|m| m.provider.id());
-                let active_model_id = active_model.map(|m| m.model.id());
+                let active_provider_id = active_model.as_ref().map(|m| m.provider_id());
+                let active_model_id = active_model.map(|m| m.id());
 
                 let is_selected = Some(model_info.model.provider_id()) == active_provider_id
                     && Some(model_info.model.id()) == active_model_id;
 
                 let model_cost = model_info
                     .model
-                    .model_cost_info()
+                    .cost_info
+                    .as_ref()
                     .map(|cost| cost.to_shared_string());
 
                 let is_favorite = model_info.is_favorite;
@@ -567,87 +565,21 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::{future::BoxFuture, stream::BoxStream};
-    use gpui::{AsyncApp, TestAppContext};
+    use gpui::TestAppContext;
     use language_model::{
-        LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
-        LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-        LanguageModelRequest, LanguageModelToolChoice,
+        LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
     };
     use ui::IconName;
 
-    #[derive(Clone)]
-    struct TestLanguageModel {
-        name: LanguageModelName,
-        id: LanguageModelId,
-        provider_id: LanguageModelProviderId,
-        provider_name: LanguageModelProviderName,
-    }
-
-    impl TestLanguageModel {
-        fn new(name: &str, provider: &str) -> Self {
-            Self {
-                name: LanguageModelName::from(name.to_string()),
-                id: LanguageModelId::from(name.to_string()),
-                provider_id: LanguageModelProviderId::from(provider.to_string()),
-                provider_name: LanguageModelProviderName::from(provider.to_string()),
-            }
-        }
-    }
-
-    impl LanguageModel for TestLanguageModel {
-        fn id(&self) -> LanguageModelId {
-            self.id.clone()
-        }
-
-        fn name(&self) -> LanguageModelName {
-            self.name.clone()
-        }
-
-        fn provider_id(&self) -> LanguageModelProviderId {
-            self.provider_id.clone()
-        }
-
-        fn provider_name(&self) -> LanguageModelProviderName {
-            self.provider_name.clone()
-        }
-
-        fn supports_tools(&self) -> bool {
-            false
-        }
-
-        fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
-            false
-        }
-
-        fn supports_images(&self) -> bool {
-            false
-        }
-
-        fn telemetry_id(&self) -> String {
-            format!("{}/{}", self.provider_id.0, self.name.0)
-        }
-
-        fn max_token_count(&self) -> u64 {
-            1000
-        }
-
-        fn stream_completion(
-            &self,
-            _: LanguageModelRequest,
-            _: &AsyncApp,
-        ) -> BoxFuture<
-            'static,
-            Result<
-                BoxStream<
-                    'static,
-                    Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
-                >,
-                LanguageModelCompletionError,
-            >,
-        > {
-            unimplemented!()
-        }
+    fn test_language_model(name: &str, provider: &str) -> LanguageModel {
+        LanguageModel::new(
+            LanguageModelId::from(name.to_string()),
+            LanguageModelName::from(name.to_string()),
+            LanguageModelProviderId::from(provider.to_string()),
+            LanguageModelProviderName::from(provider.to_string()),
+            format!("{provider}/{name}"),
+            1000,
+        )
     }
 
     fn create_models(model_specs: Vec<(&str, &str)>) -> Vec<ModelInfo> {
@@ -665,7 +597,7 @@ mod tests {
                     .iter()
                     .any(|(fav_provider, fav_name)| *fav_provider == provider && *fav_name == name);
                 ModelInfo {
-                    model: Arc::new(TestLanguageModel::new(name, provider)),
+                    model: test_language_model(name, provider),
                     icon: IconOrSvg::Icon(IconName::ZedAgent),
                     is_favorite,
                 }

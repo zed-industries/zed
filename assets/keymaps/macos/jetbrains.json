@@ -35,7 +35,7 @@
       "ctrl-g": ["editor::SelectNext", { "replace_newest": false }],
       "ctrl-shift-g": "editor::UndoSelection",
       "ctrl-cmd-g": ["editor::SelectPrevious", { "replace_newest": false }],
-      "cmd-/": ["editor::ToggleComments", { "advance_downwards": true }],
+      "cmd-/": ["editor::ToggleComments", { "advance_downwards": true, "comment_empty_lines": true }],
       "alt-up": "editor::SelectLargerSyntaxNode",
       "alt-down": "editor::SelectSmallerSyntaxNode",
       "shift-alt-up": "editor::MoveLineUp",
