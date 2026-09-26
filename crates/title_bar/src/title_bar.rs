@@ -41,7 +41,7 @@ use remote::RemoteConnectionOptions;
 use settings::{Settings as _, SettingsStore};
 
 use std::any::TypeId;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ActiveTheme;
@@ -303,6 +303,31 @@ impl Render for TitleBar {
                     };
                     project_name = Some(SharedString::from(name));
                 }
+            }
+
+            let paths: Vec<PathBuf> = self
+                .multi_workspace
+                .as_ref()
+                .and_then(|multi_workspace| multi_workspace.upgrade())
+                .map(|multi_workspace| {
+                    multi_workspace
+                        .read(cx)
+                        .project_groups(cx)
+                        .into_iter()
+                        .flat_map(|group| group.key.path_list().paths().to_vec())
+                        .collect()
+                })
+                .unwrap_or_else(|| vec![worktree_abs_path.to_path_buf()]);
+            let details = project::path_disambiguation_details(&paths);
+            let detail = details
+                .get(worktree_abs_path.as_ref())
+                .copied()
+                .unwrap_or_default();
+            if detail > 0 {
+                project_name = Some(SharedString::from(project::path_suffix(
+                    &worktree_abs_path,
+                    detail,
+                )));
             }
         }
 

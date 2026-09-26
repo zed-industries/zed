@@ -6923,7 +6923,40 @@ impl ProjectPanel {
         let (depth, difference) =
             ProjectPanel::calculate_depth_and_difference(entry, entries_paths);
 
-        let filename = if difference > 1 {
+        let filename = if entry.path.is_empty() {
+            let paths: Vec<PathBuf> = self
+                .workspace
+                .upgrade()
+                .and_then(|workspace| workspace.read(cx).multi_workspace().cloned())
+                .and_then(|multi_workspace| multi_workspace.upgrade())
+                .map(|multi_workspace| {
+                    multi_workspace
+                        .read(cx)
+                        .project_groups(cx)
+                        .into_iter()
+                        .flat_map(|group| group.key.path_list().paths().to_vec())
+                        .collect()
+                })
+                .unwrap_or_else(|| {
+                    self.project
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                        .collect()
+                });
+            let path_details = project::path_disambiguation_details(&paths);
+            let project = self.project.read(cx);
+            project
+                .worktree_for_id(worktree_id, cx)
+                .map(|worktree| {
+                    let path = worktree.read(cx).abs_path();
+                    project::path_suffix(
+                        &path,
+                        path_details.get(path.as_ref()).copied().unwrap_or_default(),
+                    )
+                })
+                .unwrap_or_else(|| root_name.as_unix_str().to_string())
+        } else if difference > 1 {
             entry
                 .path
                 .last_n_components(difference)
@@ -8192,4 +8225,5 @@ fn git_status_indicator(git_status: GitSummary) -> Option<(&'static str, Color)>
 
 #[cfg(test)]
 mod project_panel_tests;
+#[cfg(test)]
 mod tests;
