@@ -1558,6 +1558,7 @@ impl Window {
                 is_minimizable,
                 focus,
                 show,
+                window_background,
                 display_id,
                 window_min_size,
                 app_id: app_id.clone(),
@@ -1595,7 +1596,14 @@ impl Window {
 
         platform_window
             .request_decorations(window_decorations.unwrap_or(WindowDecorations::Server));
-        platform_window.set_background_appearance(window_background);
+        // On Windows the appearance was already applied when the platform window
+        // was created from `WindowParams`, and re-applying the accent policy to an
+        // already visible window makes DWM briefly drop and re-enable the backdrop,
+        // causing a visible flash. Every other platform only applies the appearance
+        // here, so it must keep calling this unconditionally.
+        if !cfg!(windows) || platform_window.background_appearance() != window_background {
+            platform_window.set_background_appearance(window_background);
+        }
 
         match window_bounds {
             WindowBounds::Fullscreen(_) => platform_window.toggle_fullscreen(),
