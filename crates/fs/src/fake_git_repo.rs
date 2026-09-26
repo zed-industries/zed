@@ -206,6 +206,16 @@ impl Drop for WaiterGuard {
 }
 
 impl FakeGitRepository {
+    fn branch_ref_name(branch_name: &str) -> SharedString {
+        if branch_name.starts_with("refs/") {
+            branch_name.into()
+        } else if branch_name.contains('/') {
+            format!("refs/remotes/{branch_name}").into()
+        } else {
+            format!("refs/heads/{branch_name}").into()
+        }
+    }
+
     fn with_state_async<F, T>(&self, write: bool, f: F) -> BoxFuture<'static, Result<T>>
     where
         F: 'static + Send + FnOnce(&mut FakeGitRepositoryState) -> Result<T>,
@@ -630,20 +640,11 @@ impl GitRepository for FakeGitRepository {
             let mut branches = state
                 .branches
                 .iter()
-                .map(|branch_name| {
-                    let ref_name = if branch_name.starts_with("refs/") {
-                        branch_name.into()
-                    } else if branch_name.contains('/') {
-                        format!("refs/remotes/{branch_name}").into()
-                    } else {
-                        format!("refs/heads/{branch_name}").into()
-                    };
-                    Branch {
-                        is_head: Some(branch_name) == current_branch.as_ref(),
-                        ref_name,
-                        most_recent_commit: None,
-                        upstream: None,
-                    }
+                .map(|branch_name| Branch {
+                    is_head: Some(branch_name) == current_branch.as_ref(),
+                    ref_name: Self::branch_ref_name(branch_name),
+                    most_recent_commit: None,
+                    upstream: None,
                 })
                 .collect::<Vec<_>>();
             // compute snapshot expects these to be sorted by ref_name
@@ -1033,10 +1034,11 @@ impl GitRepository for FakeGitRepository {
         async { Ok(()) }.boxed()
     }
 
-    fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
-        self.with_state_async(true, |state| {
+    fn change_branch(&self, name: String) -> BoxFuture<'_, Result<SharedString>> {
+        self.with_state_async(true, move |state| {
+            let branch_ref = Self::branch_ref_name(&name);
             state.current_branch_name = Some(name);
-            Ok(())
+            Ok(branch_ref)
         })
     }
 
