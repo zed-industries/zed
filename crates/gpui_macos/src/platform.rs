@@ -800,6 +800,13 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn set_allows_automatic_window_tabbing(&self, allows: bool) {
+        unsafe {
+            let allows = Bool::new(allows);
+            let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: allows];
+        }
+    }
+
     fn open_url(&self, url: &str) {
         let Some(url) = NSURL::URLWithString(&NSString::from_str(url)) else {
             log::error!("Failed to create NSURL from string: {url}");
