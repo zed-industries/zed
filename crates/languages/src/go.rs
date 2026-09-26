@@ -2101,6 +2101,38 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    async fn test_go_method_type_parameters_highlighted_as_type() {
+        let language = go_language();
+
+        let theme = SyntaxTheme::new_test([
+            ("type", Hsla::default()),
+            ("variable", Hsla::default()),
+        ]);
+        language.set_theme(&theme);
+
+        let grammar = language.grammar().unwrap();
+        let highlight_type = grammar.highlight_id_for_name("type").unwrap();
+
+        // The `T` inside `[T any]` is a method type parameter declaration. It is
+        // only parsed as such by the regenerated tree-sitter-go fork; upstream
+        // 0.25 has no `type_parameters` field on `method_declaration`.
+        let source = "package main\n\ntype Recv struct{}\n\nfunc (r Recv) Do[T any](value T) {}\n";
+        let type_parameter_offset = source.find("[T any]").expect("type parameter present") + 1;
+
+        let runs = language.highlight_text(&Rope::from(source), 0..source.len());
+        let type_parameter_highlight = runs
+            .iter()
+            .find(|(range, _)| range.contains(&type_parameter_offset))
+            .map(|(_, highlight_id)| *highlight_id);
+
+        assert_eq!(
+            type_parameter_highlight,
+            Some(highlight_type),
+            "method type parameter should be highlighted as a type, not a variable"
+        );
+    }
+
     #[test]
     fn test_extract_subtest_name() {
         // Interpreted string literal
