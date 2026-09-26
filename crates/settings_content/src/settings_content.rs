@@ -811,6 +811,28 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: project_diff
     pub entry_primary_click_action: Option<GitPanelClickBehavior>,
+
+    /// Whether to show the "Add Commit Message Prefix" button in the git commit box.
+    ///
+    /// Default: false
+    pub commit_message_prefix_enabled: Option<bool>,
+
+    /// Regex applied to the current branch name to generate a commit message prefix.
+    ///
+    /// Default: "(.*)" - current branch name
+    pub commit_message_prefix_regex: Option<String>,
+
+    /// Replacement string used with commit_message_prefix_regex to generate the
+    /// commit message prefix. Uses the Rust `regex` crate syntax, e.g. `$1` for the
+    /// first capture group.
+    ///
+    /// Default: "$1" - current branch name
+    pub commit_message_prefix_replacement: Option<String>,
+
+    /// Whether to append the generated commit message instead of prepending it.
+    ///
+    /// Default: false
+    pub commit_message_prefix_is_postfix: Option<bool>,
 }
 
 #[derive(

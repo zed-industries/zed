@@ -73,6 +73,7 @@ use project::{
 };
 use prompt_store::RULES_FILE_NAMES;
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use settings::{
     GitPanelClickBehavior, GitPanelGroupBy, GitPanelSortBy, Settings, SettingsStore, StatusStyle,
@@ -3932,6 +3933,15 @@ impl GitPanel {
         self.generate_commit_message(cx);
     }
 
+    fn add_commit_message_prefix_action(
+        &mut self,
+        _: &git::AddCommitMessagePrefix,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.add_commit_message_prefix(cx);
+    }
+
     fn split_patch(patch: &str) -> Vec<String> {
         let mut result = Vec::new();
         let mut current_patch = String::new();
@@ -4295,6 +4305,64 @@ impl GitPanel {
             .log_err()
             .await
         }));
+    }
+
+    /// Adds a commit message prefix/postfix based on the current branch name and related regex.
+    pub fn add_commit_message_prefix(&mut self, cx: &mut Context<Self>) {
+        let Some(pattern) = GitPanelSettings::get_global(cx)
+            .commit_message_prefix_regex
+            .clone()
+        else {
+            return;
+        };
+
+        if pattern.is_empty() {
+            return;
+        }
+
+        let replacement = GitPanelSettings::get_global(cx)
+            .commit_message_prefix_replacement
+            .as_deref()
+            .unwrap_or("");
+
+        if replacement.is_empty() {
+            return;
+        }
+
+        let regex = match Regex::new(&pattern) {
+            Ok(regex) => regex,
+            Err(err) => {
+                self.show_error_toast(
+                    "add commit message prefix",
+                    anyhow::anyhow!("Invalid commit message prefix regex: {err}"),
+                    cx,
+                );
+                return;
+            }
+        };
+
+        let Some(repo) = self.active_repository.as_ref() else {
+            return;
+        };
+
+        let Some(branch_name) = repo.read(cx).branch.as_ref().map(|branch| branch.name()) else {
+            return;
+        };
+
+        let prefix = regex.replace(branch_name, replacement).to_string();
+        if prefix.is_empty() {
+            return;
+        }
+
+        let is_postfix = GitPanelSettings::get_global(cx).commit_message_prefix_is_postfix;
+        self.commit_message_buffer(cx).update(cx, |buffer, cx| {
+            let insert_position = if is_postfix {
+                buffer.anchor_after(buffer.len())
+            } else {
+                buffer.anchor_before(0)
+            };
+            buffer.edit([(insert_position..insert_position, prefix)], None, cx);
+        });
     }
 
     fn get_fetch_options(
@@ -6130,6 +6198,62 @@ impl GitPanel {
             .anchor(Anchor::TopRight)
     }
 
+    pub(crate) fn render_add_commit_message_prefix_button(
+        &self,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let settings = GitPanelSettings::get_global(cx);
+        if !settings.commit_message_prefix_enabled {
+            return None;
+        }
+
+        let has_regex = settings.commit_message_prefix_regex.is_some();
+        let has_branch = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.read(cx).branch.as_ref())
+            .is_some();
+        let can_prefix = self.can_commit() && has_regex && has_branch;
+
+        let editor_focus_handle = self.commit_editor.focus_handle(cx);
+
+        let button = IconButton::new("add-commit-message-prefix", IconName::Regex)
+            .shape(ui::IconButtonShape::Square)
+            .icon_color(if can_prefix {
+                Color::Muted
+            } else {
+                Color::Disabled
+            })
+            .disabled(!can_prefix)
+            .on_click(cx.listener(|this, _event, _window, cx| {
+                this.add_commit_message_prefix(cx);
+            }));
+
+        let button = if can_prefix {
+            button.tooltip(move |_window, cx| {
+                Tooltip::for_action_in(
+                    "Add Commit Message Prefix",
+                    &git::AddCommitMessagePrefix,
+                    &editor_focus_handle,
+                    cx,
+                )
+            })
+        } else {
+            button.tooltip(move |_window, cx| {
+                let label = if !has_branch {
+                    "No Branch to Base Prefix On"
+                } else if !has_regex {
+                    "No Commit Message Prefix Regex Configured"
+                } else {
+                    "No Changes to Commit"
+                };
+                Tooltip::simple(label, cx)
+            })
+        };
+
+        Some(button.into_any_element())
+    }
+
     pub(crate) fn render_generate_commit_message_button(
         &self,
         cx: &Context<Self>,
@@ -6739,8 +6863,16 @@ impl GitPanel {
                             })
                             .justify_between()
                             .child(
-                                self.render_generate_commit_message_button(cx)
-                                    .unwrap_or_else(|| div().into_any_element()),
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        self.render_add_commit_message_prefix_button(cx)
+                                            .unwrap_or_else(|| div().into_any_element()),
+                                    )
+                                    .child(
+                                        self.render_generate_commit_message_button(cx)
+                                            .unwrap_or_else(|| div().into_any_element()),
+                                    ),
                             )
                             .child(
                                 h_flex()
@@ -9101,6 +9233,7 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::add_to_git_info_exclude))
                     .on_action(cx.listener(Self::clean_all))
                     .on_action(cx.listener(Self::generate_commit_message_action))
+                    .on_action(cx.listener(Self::add_commit_message_prefix_action))
                     .on_action(cx.listener(Self::stash_all))
                     .on_action(cx.listener(Self::stash_tracked))
                     .on_action(cx.listener(Self::stash_staged))
@@ -10086,6 +10219,148 @@ mod tests {
             })
             .expect("fake repository should exist");
         assert_eq!(commit_count, 1);
+    }
+
+    #[gpui::test]
+    async fn test_add_commit_message_prefix(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root/project"),
+            json!({ ".git": {}, "file": "modified\n" }),
+        )
+        .await;
+        let dot_git = Path::new(path!("/root/project/.git"));
+        fs.set_branch_name(dot_git, Some("main"));
+        fs.set_status_for_repo(
+            path!("/root/project/.git").as_ref(),
+            &[("file", StatusCode::Modified.worktree())],
+        );
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let git_panel = settings.git_panel.get_or_insert_default();
+                    git_panel.commit_message_prefix_enabled = Some(true);
+                    git_panel.commit_message_prefix_regex = Some("(.*)".into());
+                    git_panel.commit_message_prefix_replacement = Some("[$1]".into());
+                });
+            });
+        });
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(&mut cx, GitPanel::new);
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        panel.update(&mut cx, |panel, cx| {
+            panel.add_commit_message_prefix(cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            assert!(
+                panel
+                    .commit_message_buffer(cx)
+                    .read(cx)
+                    .text()
+                    .starts_with("[main]")
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_add_commit_message_prefix_invalid_regex(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root/project"),
+            json!({ ".git": {}, "file": "modified\n" }),
+        )
+        .await;
+        let dot_git = Path::new(path!("/root/project/.git"));
+        fs.set_branch_name(dot_git, Some("main"));
+        fs.set_status_for_repo(
+            path!("/root/project/.git").as_ref(),
+            &[("file", StatusCode::Modified.worktree())],
+        );
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let git_panel = settings.git_panel.get_or_insert_default();
+                    git_panel.commit_message_prefix_enabled = Some(true);
+                    git_panel.commit_message_prefix_regex = Some("([unclosed".into());
+                    git_panel.commit_message_prefix_replacement = Some("$1".into());
+                });
+            });
+        });
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(&mut cx, GitPanel::new);
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        // Pre-fill the commit message so we can assert it is left untouched.
+        panel.update(&mut cx, |panel, cx| {
+            panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                buffer.set_text("Existing message", cx);
+            });
+        });
+
+        panel.update(&mut cx, |panel, cx| {
+            panel.add_commit_message_prefix(cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            assert_eq!(
+                panel.commit_message_buffer(cx).read(cx).text(),
+                "Existing message"
+            );
+        });
     }
 
     #[gpui::test]
