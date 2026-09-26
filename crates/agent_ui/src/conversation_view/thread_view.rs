@@ -2447,9 +2447,7 @@ impl ThreadView {
             });
         }
         self.thread.update(cx, |thread, cx| {
-            if thread.can_set_title(cx) {
-                thread.set_title(title, cx).detach_and_log_err(cx);
-            }
+            thread.set_title(title, cx).detach_and_log_err(cx);
         });
     }
 
