@@ -842,11 +842,14 @@ impl SplittableEditor {
                     split,
                 } => {
                     if this.lhs.is_some() {
-                        let translated =
+                        let mut translated =
                             translate_lhs_selections_to_rhs(selections_by_buffer, this, cx);
+                        let split = *split;
+                        this.rhs_editor.update(cx, |rhs_editor, cx| {
+                            rhs_editor.open_buffers_with_addons(&mut translated, split, window, cx);
+                        });
                         if !translated.is_empty() {
                             let workspace = this.workspace.clone();
-                            let split = *split;
                             Editor::open_buffers_in_workspace(
                                 workspace, translated, split, window, cx,
                             );
