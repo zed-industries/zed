@@ -395,7 +395,7 @@ fn chat_completion_max_tokens_parameter(
 }
 
 fn supports_none_reasoning_effort(model: &AvailableModel) -> bool {
-    model.reasoning_effort.is_some()
+    model.capabilities.supports_none_reasoning_effort
 }
 
 fn chat_completion_reasoning_effort(
@@ -504,7 +504,7 @@ mod tests {
 
     #[test]
     fn chat_completion_reasoning_effort_honors_request_and_configured_effort() {
-        let model = available_model(Some(open_ai::ReasoningEffort::Medium));
+        let mut model = available_model(Some(open_ai::ReasoningEffort::Medium));
         let mut request = LanguageModelRequest {
             thinking_allowed: true,
             ..Default::default()
@@ -528,6 +528,9 @@ mod tests {
         );
 
         request.thinking_allowed = false;
+        assert_eq!(chat_completion_reasoning_effort(&request, &model), None);
+
+        model.capabilities.supports_none_reasoning_effort = true;
         assert_eq!(
             chat_completion_reasoning_effort(&request, &model),
             Some(open_ai::ReasoningEffort::None)
@@ -665,14 +668,49 @@ mod tests {
     }
 
     #[test]
-    fn configured_reasoning_effort_supports_none_reasoning_effort() {
-        assert!(supports_none_reasoning_effort(&available_model(Some(
-            open_ai::ReasoningEffort::Medium
-        ))));
-        assert!(supports_none_reasoning_effort(&available_model(Some(
-            open_ai::ReasoningEffort::None
-        ))));
-        assert!(!supports_none_reasoning_effort(&available_model(None)));
+    fn model_capabilities_determines_supports_none_reasoning_effort() {
+        let mut model = available_model(Some(open_ai::ReasoningEffort::Medium));
+        assert!(!supports_none_reasoning_effort(&model));
+
+        model.capabilities.supports_none_reasoning_effort = true;
+        assert!(supports_none_reasoning_effort(&model));
+    }
+
+    #[test]
+    fn chat_completion_omits_reasoning_effort_when_thinking_is_disabled_by_default() {
+        let mut model = available_model(Some(open_ai::ReasoningEffort::Medium));
+        model.capabilities.chat_completions = true;
+        let request = LanguageModelRequest {
+            thinking_allowed: false,
+            ..Default::default()
+        };
+        let reasoning_effort = chat_completion_reasoning_effort(&request, &model);
+        assert_eq!(reasoning_effort, None);
+    }
+
+    #[test]
+    fn chat_completion_sends_none_reasoning_effort_when_capability_is_enabled() {
+        let mut model = available_model(Some(open_ai::ReasoningEffort::Medium));
+        model.capabilities.chat_completions = true;
+        model.capabilities.supports_none_reasoning_effort = true;
+        let request = LanguageModelRequest {
+            thinking_allowed: false,
+            ..Default::default()
+        };
+        let reasoning_effort = chat_completion_reasoning_effort(&request, &model);
+        assert_eq!(reasoning_effort, Some(open_ai::ReasoningEffort::None));
+    }
+
+    #[test]
+    fn chat_completion_preserves_explicit_none_configured_effort() {
+        let mut model = available_model(Some(open_ai::ReasoningEffort::None));
+        model.capabilities.chat_completions = true;
+        let request = LanguageModelRequest {
+            thinking_allowed: false,
+            ..Default::default()
+        };
+        let reasoning_effort = chat_completion_reasoning_effort(&request, &model);
+        assert_eq!(reasoning_effort, Some(open_ai::ReasoningEffort::None));
     }
 
     #[test]
