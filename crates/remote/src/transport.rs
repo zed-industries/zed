@@ -400,7 +400,7 @@ async fn build_remote_server_from_source(
             if which("cargo-xwin", cx).await?.is_none() {
                 anyhow::bail!(
                     "cargo-xwin not found on $PATH.Install it with `cargo install --locked cargo-xwin`.\n\n\
-                     Note that cargo-xwin downloads Microsoft's CRT and Windows SDK; by using it you\
+                     Note that cargo-xwin downloads Microsoft's CRT and Windows SDK; by using it you \
                      accept Microsoft's license (see https://go.microsoft.com/fwlink/?LinkId=2086102)"
                 );
             }
