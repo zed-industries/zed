@@ -115,9 +115,13 @@ pub(crate) struct ViewTree {
     /// Scratch for `snapshot_dispatch_nodes`: where each live dispatch node in the scope's
     /// range resolves to, so parents of later nodes resolve in one step.
     dispatch_resolution: Vec<DispatchParent>,
+    /// Scratch for `snapshot_dispatch_nodes`: the live dispatch ranges of the scope's
+    /// children, which it skips.
+    child_dispatch_ranges: Vec<Range<usize>>,
     /// For each node whose prepaint was grafted this frame, the frame's dispatch node its
     /// first recorded node was reproduced as; the rest follow it consecutively. Grafting
-    /// the node's paint fills those nodes with what paint gave them.
+    /// the node's paint fills those nodes with what paint gave them; once the frame is
+    /// drawn, `retarget_grafted_dispatch` moves the node's records onto them.
     grafted_dispatch: FxHashMap<ViewNodeId, usize>,
     /// Nodes whose paint was grafted by the replay in progress, awaiting that fill.
     painted_grafts: Vec<ViewNodeId>,
@@ -161,6 +165,7 @@ impl ViewTree {
             retired_layouts: Vec::new(),
             traversal_stack: Vec::new(),
             dispatch_resolution: Vec::new(),
+            child_dispatch_ranges: Vec::new(),
             grafted_dispatch: FxHashMap::default(),
             painted_grafts: Vec::new(),
             rendered_phases: Vec::new(),
@@ -261,9 +266,13 @@ impl ViewTree {
     }
 
     /// Gives the dispatch nodes of the nodes whose paint was just grafted what their paint
-    /// gave them when recorded: key contexts and listeners. Their prepaint graft reproduced
-    /// the nodes themselves.
-    pub(crate) fn fill_painted_grafts(&mut self, tree: &mut crate::key_dispatch::DispatchTree) {
+    /// gave them in `source`, the frame they were recorded in: key contexts and listeners.
+    /// Their prepaint graft reproduced the nodes themselves.
+    pub(crate) fn fill_painted_grafts(
+        &mut self,
+        source: &crate::key_dispatch::DispatchTree,
+        tree: &mut crate::key_dispatch::DispatchTree,
+    ) {
         let mut painted = std::mem::take(&mut self.painted_grafts);
         for node_id in painted.drain(..) {
             let (Some(start), Some(node)) =
@@ -274,7 +283,8 @@ impl ViewTree {
             for (offset, recorded) in node.output.dispatch_nodes.iter().enumerate() {
                 tree.fill_recorded(
                     crate::DispatchNodeId::from_index(start + offset),
-                    &recorded.node,
+                    source,
+                    recorded.source,
                 );
             }
         }
@@ -480,7 +490,8 @@ impl ViewTree {
     }
 
     /// Rebuilds, in `tree`, the dispatch nodes a reused node and its descendants pushed
-    /// while prepainting, hanging the node's top-level ones from `attachment`. Roots the
+    /// while prepainting, copied from `source`, the frame they were recorded in, hanging
+    /// the node's top-level ones from `attachment`. Roots the
     /// subtree attached are reported to `attach_root` with the dispatch node they hang from.
     /// Returns whether one of the rebuilt nodes is `focus`.
     ///
@@ -490,13 +501,21 @@ impl ViewTree {
         &mut self,
         node_id: ViewNodeId,
         attachment: Option<crate::DispatchNodeId>,
+        source: &crate::key_dispatch::DispatchTree,
         tree: &mut crate::key_dispatch::DispatchTree,
         focus: Option<crate::FocusId>,
         attach_root: &mut impl FnMut(ViewNodeId, usize, crate::DispatchNodeId),
     ) -> bool {
         let mut grafted = std::mem::take(&mut self.grafted_dispatch);
-        let contains_focus =
-            self.replay_dispatch_into(node_id, attachment, tree, focus, attach_root, &mut grafted);
+        let contains_focus = self.replay_dispatch_into(
+            node_id,
+            attachment,
+            source,
+            tree,
+            focus,
+            attach_root,
+            &mut grafted,
+        );
         self.grafted_dispatch = grafted;
         contains_focus
     }
@@ -505,6 +524,7 @@ impl ViewTree {
         &self,
         node_id: ViewNodeId,
         attachment: Option<crate::DispatchNodeId>,
+        source: &crate::key_dispatch::DispatchTree,
         tree: &mut crate::key_dispatch::DispatchTree,
         focus: Option<crate::FocusId>,
         attach_root: &mut impl FnMut(ViewNodeId, usize, crate::DispatchNodeId),
@@ -522,8 +542,9 @@ impl ViewTree {
                 DispatchParent::Recorded(index) => rebuilt.get(index as usize).copied(),
                 DispatchParent::Attachment => attachment,
             };
-            rebuilt.push(tree.push_recorded_under(parent, &recorded.node));
-            contains_focus |= focus.is_some() && recorded.node.focus_id == focus;
+            let copy = tree.push_recorded_under(parent, source, recorded.source);
+            rebuilt.push(copy);
+            contains_focus |= focus.is_some() && tree.node(copy).focus_id == focus;
         }
         if let Some(first) = rebuilt.first() {
             grafted.insert(node_id, first.index());
@@ -539,8 +560,15 @@ impl ViewTree {
             };
             match (*op, child) {
                 (_, Some(child)) => {
-                    contains_focus |=
-                        self.replay_dispatch_into(child, under, tree, focus, attach_root, grafted);
+                    contains_focus |= self.replay_dispatch_into(
+                        child,
+                        under,
+                        source,
+                        tree,
+                        focus,
+                        attach_root,
+                        grafted,
+                    );
                 }
                 (DispatchOp::Root(root, priority, _), None) => {
                     if let Some(under) = under {
@@ -567,8 +595,8 @@ impl ViewTree {
         }
     }
 
-    /// Copies the dispatch nodes a node pushed while prepainting out of the frame's tree.
-    /// Its pushes are the range recorded by `begin_dispatch_range`/`end_dispatch_range`,
+    /// Records the dispatch nodes a node pushed while prepainting, by their index in the
+    /// frame's tree. Its pushes are the range recorded by `begin_dispatch_range`/`end_dispatch_range`,
     /// minus its children's ranges, which the children copy themselves. Empty nodes — most
     /// elements' — are left out, and whatever hung from one is resolved to its nearest kept
     /// ancestor or, above the range, to the scope's attachment point.
@@ -598,21 +626,18 @@ impl ViewTree {
             };
 
         // The scopes whose prepaint ran inside this one — the `Child` ops, in drawing order —
-        // pushed nested ranges that they copy out themselves. They are not always this
+        // pushed nested ranges that they record themselves. They are not always this
         // node's `children`: a deferred root draws views that belong to its owner.
-        let child_ranges: Vec<Range<usize>> = node
-            .output
-            .dispatch
-            .iter()
-            .filter_map(|op| match op {
-                DispatchOp::Child(child, _) => self.nodes.get(*child).map(|child| {
-                    let range = &child.output.dispatch_range;
-                    range.start as usize..range.end as usize
-                }),
-                DispatchOp::Root(..) => None,
-            })
-            .collect();
-        let mut child_ranges = child_ranges.into_iter().peekable();
+        let mut child_ranges = std::mem::take(&mut self.child_dispatch_ranges);
+        child_ranges.clear();
+        child_ranges.extend(node.output.dispatch.iter().filter_map(|op| match op {
+            DispatchOp::Child(child, _) => self.nodes.get(*child).map(|child| {
+                let range = &child.output.dispatch_range;
+                range.start as usize..range.end as usize
+            }),
+            DispatchOp::Root(..) => None,
+        }));
+        let mut next_child_ranges = child_ranges.iter().peekable();
         let mut kept = 0u32;
         let mut live = range.start;
         let mut skip_until = None;
@@ -620,11 +645,11 @@ impl ViewTree {
         output.dispatch_nodes.clear();
         while live < range.end {
             if skip_until.is_none()
-                && let Some(next) = child_ranges.peek()
+                && let Some(next) = next_child_ranges.peek()
                 && next.start <= live
             {
                 skip_until = Some(next.end);
-                child_ranges.next();
+                next_child_ranges.next();
             }
             if let Some(end) = skip_until {
                 if live < end {
@@ -634,17 +659,17 @@ impl ViewTree {
                 skip_until = None;
                 continue;
             }
-            let recorded = dispatch_tree.node(crate::DispatchNodeId::from_index(live));
+            let source = crate::DispatchNodeId::from_index(live);
+            let recorded = dispatch_tree.node(source);
             let parent = resolve(&resolution, recorded.parent());
             if recorded.is_empty() {
                 resolution[live - range.start] = parent;
             } else {
                 resolution[live - range.start] = DispatchParent::Recorded(kept);
                 kept += 1;
-                output.dispatch_nodes.push(RecordedDispatchNode {
-                    parent,
-                    node: recorded.clone(),
-                });
+                output
+                    .dispatch_nodes
+                    .push(RecordedDispatchNode { parent, source });
             }
             live += 1;
         }
@@ -656,6 +681,31 @@ impl ViewTree {
             }
         }
         self.dispatch_resolution = resolution;
+        self.child_dispatch_ranges = child_ranges;
+    }
+
+    /// Moves the records of the nodes grafted this frame onto the copies the graft made,
+    /// so the next frame, which copies from this one, can graft them again. A node whose
+    /// paint was not grafted (hidden) then records the structure-only nodes it has in
+    /// this frame, as a fresh frame would have given it. Called once the frame is drawn:
+    /// until then, grafting a node's paint still reads the frame its records address.
+    pub(crate) fn retarget_grafted_dispatch(&mut self) {
+        for (node_id, start) in self.grafted_dispatch.drain() {
+            let Some(node) = self.nodes.get_mut(node_id) else {
+                continue;
+            };
+            for (offset, recorded) in node.output.dispatch_nodes.iter_mut().enumerate() {
+                recorded.source = crate::DispatchNodeId::from_index(start + offset);
+            }
+        }
+    }
+
+    /// Forgets the grafts whose copies a rolled-back prepaint removed from the frame's
+    /// dispatch tree, which now ends at `dispatch_len`, so they are not retargeted onto
+    /// nodes pushed after it.
+    pub(crate) fn discard_grafts_from(&mut self, dispatch_len: usize) {
+        self.grafted_dispatch
+            .retain(|_, start| *start < dispatch_len);
     }
 
     /// Takes the callback at `slot` out of its output for a call, via `take` on the matching

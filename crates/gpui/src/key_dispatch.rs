@@ -274,35 +274,48 @@ impl DispatchTree {
         self.node_stack.pop();
     }
 
-    /// Adds a node reproduced from one recorded while a reused view drew, under `parent`,
-    /// with what prepaint gave it: its focus and view. What paint gave it is added by
-    /// [`fill_recorded`](Self::fill_recorded) when the view's paint is replayed too.
-    /// Nothing is being drawn, so the node, context and view stacks are left alone.
+    /// Adds a copy of node `recorded` of `source`, the frame a reused view last drew in,
+    /// under `parent`, with what prepaint gave it: its focus and view. What paint gave it
+    /// is added by [`fill_recorded`](Self::fill_recorded) when the view's paint is replayed
+    /// too. Nothing is being drawn, so the node, context and view stacks are left alone.
     pub(crate) fn push_recorded_under(
         &mut self,
         parent: Option<DispatchNodeId>,
-        recorded: &DispatchNode,
+        source: &DispatchTree,
+        recorded: DispatchNodeId,
     ) -> DispatchNodeId {
+        let (focus_id, view_id) = source
+            .nodes
+            .get(recorded.0)
+            .map(|recorded| (recorded.focus_id, recorded.view_id))
+            .unwrap_or_default();
         let node_id = DispatchNodeId(self.nodes.len());
         self.nodes.push(DispatchNode {
-            focus_id: recorded.focus_id,
-            view_id: recorded.view_id,
+            focus_id,
+            view_id,
             parent,
             ..Default::default()
         });
-        if let Some(focus_id) = recorded.focus_id {
+        if let Some(focus_id) = focus_id {
             self.focusable_node_ids.insert(focus_id, node_id);
         }
-        if let Some(view_id) = recorded.view_id {
+        if let Some(view_id) = view_id {
             self.view_node_ids.insert(view_id, node_id);
         }
         node_id
     }
 
     /// Adds to a node pushed by [`push_recorded_under`](Self::push_recorded_under) what
-    /// paint gave the recorded node: its key context and listeners.
-    pub(crate) fn fill_recorded(&mut self, node_id: DispatchNodeId, recorded: &DispatchNode) {
-        let Some(node) = self.nodes.get_mut(node_id.0) else {
+    /// paint gave node `recorded` of `source`: its key context and listeners.
+    pub(crate) fn fill_recorded(
+        &mut self,
+        node_id: DispatchNodeId,
+        source: &DispatchTree,
+        recorded: DispatchNodeId,
+    ) {
+        let (Some(node), Some(recorded)) =
+            (self.nodes.get_mut(node_id.0), source.nodes.get(recorded.0))
+        else {
             return;
         };
         node.key_listeners.clone_from(&recorded.key_listeners);

@@ -3221,6 +3221,7 @@ impl Window {
     fn finish_view_tree_frame(&mut self) {
         let view_tree = &mut self.view_tree;
         view_tree.finish_unpainted_renders(&self.next_frame.dispatch_tree);
+        view_tree.retarget_grafted_dispatch();
         let changed_bounds = view_tree.finish_frame();
         log::trace!("GPUI view tree changed view bounds: {changed_bounds:?}");
     }
@@ -3787,6 +3788,7 @@ impl Window {
         let contains_focus = self.view_tree.replay_dispatch(
             node_id,
             attachment,
+            &self.rendered_frame.dispatch_tree,
             dispatch_tree,
             self.focus,
             &mut |node, priority, parent_node| {
@@ -3819,8 +3821,10 @@ impl Window {
             &self.rendered_frame.scene,
             &mut self.next_frame.scene,
         );
-        self.view_tree
-            .fill_painted_grafts(&mut self.next_frame.dispatch_tree);
+        self.view_tree.fill_painted_grafts(
+            &self.rendered_frame.dispatch_tree,
+            &mut self.next_frame.dispatch_tree,
+        );
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
@@ -3981,6 +3985,7 @@ impl Window {
                 }
             }
             self.next_frame.dispatch_tree.truncate(dispatch_nodes);
+            self.view_tree.discard_grafts_from(dispatch_nodes);
         }
         result
     }

@@ -251,9 +251,15 @@ impl DispatchLink {
 /// adds the node with its focus and view, grafting its paint adds the key context and
 /// listeners. A scope that is prepainted but not painted (under `visibility: hidden`)
 /// therefore gets the same nodes a fresh frame would give it.
+///
+/// Like the scene, the node is not copied out of the frame it was drawn in: `source` is its
+/// index in that frame's dispatch tree, which replay copies from. Reuse only grafts nodes
+/// drawn in the previous frame, and a grafted scope's records are moved onto the copies
+/// once its frame is drawn, so `source` always addresses the previous frame's tree.
+#[derive(Clone, Copy)]
 pub(crate) struct RecordedDispatchNode {
     pub(crate) parent: DispatchParent,
-    pub(crate) node: crate::key_dispatch::DispatchNode,
+    pub(crate) source: crate::DispatchNodeId,
 }
 
 /// What a reused scope attaches into the frame's dispatch tree besides its own recorded
@@ -292,8 +298,8 @@ pub(crate) struct NodeOutput {
     /// The live dispatch nodes pushed while the scope prepainted, children's included:
     /// pushes are sequential, so they are a range of the frame's tree.
     pub(crate) dispatch_range: Range<u32>,
-    /// The scope's own non-empty dispatch nodes, in push order, copied out after prepaint
-    /// and again after paint.
+    /// The scope's own non-empty dispatch nodes, in push order, recorded after paint, or
+    /// at the end of a frame the scope prepainted in without painting.
     pub(crate) dispatch_nodes: Vec<RecordedDispatchNode>,
     /// The primitives painted, with the children spliced where they were painted.
     pub(crate) scene: ViewNodeScene,
