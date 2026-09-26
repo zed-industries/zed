@@ -7420,6 +7420,11 @@ impl Editor {
         let mut new_selections = Vec::new();
         let mut edits = Vec::new();
 
+        // Empty selections expand to the word they are in, so several cursors placed
+        // within one word all resolve to that same word's range. Coalescing overlapping
+        // ranges keeps that word from being edited once per cursor.
+        let mut ranges: Vec<(Range<_>, Selection<Point>)> = Vec::new();
+
         for selection in self.selections.all_adjusted(&self.display_snapshot(cx)) {
             let selection_is_empty = selection.is_empty();
 
@@ -7433,19 +7438,30 @@ impl Editor {
                 )
             };
 
-            let old_text = buffer.text_for_range(start..end).collect::<String>();
+            if let Some((last_range, _)) = ranges.last_mut()
+                && start < last_range.end
+            {
+                last_range.end = last_range.end.max(end);
+                continue;
+            }
+
+            ranges.push((start..end, selection));
+        }
+
+        for (range, selection) in ranges {
+            let old_text = buffer.text_for_range(range.clone()).collect::<String>();
             let new_text = callback(&old_text);
 
             new_selections.push(Selection {
-                start: buffer.anchor_before(start),
-                end: buffer.anchor_after(end),
+                start: buffer.anchor_before(range.start),
+                end: buffer.anchor_after(range.end),
                 goal: SelectionGoal::None,
                 id: selection.id,
                 reversed: selection.reversed,
             });
 
             if new_text != old_text {
-                edits.push((start..end, new_text));
+                edits.push((range, new_text));
             }
         }
 
