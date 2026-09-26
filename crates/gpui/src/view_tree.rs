@@ -28,7 +28,7 @@ struct OutputPosition {
     next_children: usize,
     /// Restored so a retry's inline components take the occurrences, and so the state,
     /// they had before the attempt.
-    inline_views: Option<Box<FxHashMap<&'static str, u64>>>,
+    inline_views: Option<Box<crate::view_node::InlineViewCounts>>,
 }
 
 /// Which frame's roots a query walks: the frame drawn last, which events are dispatched
@@ -1181,16 +1181,20 @@ impl ViewTree {
         }
     }
 
-    /// The position of the next view of type `type_name` to render inline in the scope being
-    /// drawn, counting from zero.
-    pub(crate) fn next_inline_occurrence(&mut self, type_name: &'static str) -> u64 {
+    /// The position of the next view of type `type_name` to render inline at the element
+    /// path hashed as `path_hash` in the scope being drawn, counting from zero.
+    pub(crate) fn next_inline_occurrence(
+        &mut self,
+        path_hash: u64,
+        type_name: &'static str,
+    ) -> u64 {
         let Some((_, _, output)) = self.current_output() else {
             return 0;
         };
         let occurrence = output
             .inline_views
             .get_or_insert_default()
-            .entry(type_name)
+            .entry((path_hash, type_name))
             .or_default();
         let index = *occurrence;
         *occurrence += 1;

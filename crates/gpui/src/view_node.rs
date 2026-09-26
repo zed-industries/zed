@@ -282,6 +282,9 @@ pub(crate) enum DispatchOp {
     Root(crate::view_tree::ViewNodeId, usize, DispatchLink),
 }
 
+/// Inline views counted by the hash of the element path they render at and their type.
+pub(crate) type InlineViewCounts = FxHashMap<(u64, &'static str), u64>;
+
 /// What one scope produced in one phase.
 #[derive(Default)]
 pub(crate) struct PhaseOutput {
@@ -317,9 +320,11 @@ pub(crate) struct NodeOutput {
     /// after a redraw needs no separate record of what the redraw accessed.
     pub(crate) element_states:
         FxHashMap<(GlobalElementId, TypeId), (u64, crate::window::ElementStateBox)>,
-    /// How many views of each type have rendered inline in this scope so far, so siblings
-    /// of one type get distinct element-id scopes. Boxed: few scopes render views inline.
-    pub(crate) inline_views: Option<Box<FxHashMap<&'static str, u64>>>,
+    /// How many views of each type have rendered inline in this scope so far at each
+    /// element path, so siblings of one type get distinct element-id scopes, and a keyed
+    /// element's components keep theirs when its siblings change. Boxed: few scopes render
+    /// views inline.
+    pub(crate) inline_views: Option<Box<InlineViewCounts>>,
 }
 
 impl NodeOutput {

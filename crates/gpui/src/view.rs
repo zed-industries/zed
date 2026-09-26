@@ -183,8 +183,8 @@ mod any_view {
 /// reused until the entity backing it is notified, and `cx.notify()` on that entity
 /// re-renders only this view's subtree. A view without one renders inline as part of
 /// its parent, in an element-id scope of its own (its type and its order among inline
-/// views of that type in the enclosing node) so its internal `use_state` / `.id(..)`
-/// never collide with its siblings'.
+/// views of that type at the same element path in the enclosing node) so its internal
+/// `use_state` / `.id(..)` never collide with its siblings'.
 #[doc(hidden)]
 pub trait View: 'static + Sized + sealed::View {
     /// Identifies where this view mounts as a node. Two node views with the same id must
@@ -669,15 +669,19 @@ impl ViewElementNode {
     }
 
     /// Renders the view as part of its parent, in an element-id scope of its type and its
-    /// order among inline views of that type, so its internal ids do not collide with its
-    /// siblings'.
+    /// order among inline views of that type at the same element path, so its internal ids
+    /// do not collide with its siblings', and depend only on the siblings inside the same
+    /// keyed element.
     fn render_inline(
         &mut self,
         view: &mut dyn ErasedView,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Option<AnyElement>) {
-        self.inline_occurrence = window.view_tree.next_inline_occurrence(self.view_type_name);
+        let path_hash = window.element_path_hash();
+        self.inline_occurrence = window
+            .view_tree
+            .next_inline_occurrence(path_hash, self.view_type_name);
         self.with_inline_scope(window, |window| {
             let mut element = view.render(window, cx);
             let layout_id = element.request_layout(window, cx);
@@ -1692,6 +1696,58 @@ mod tests {
             cx.run_until_parked();
             assert_eq!(*states.borrow(), first, "fail_first: {fail_first}");
         }
+    }
+
+    /// Inline components are numbered among those of their type at the same element path,
+    /// so a component inside a keyed element keeps its state when the keyed elements are
+    /// reordered, as it would with an explicit id.
+    #[gpui::test]
+    fn inline_components_keep_state_in_keyed_elements(cx: &mut TestAppContext) {
+        type States = Rc<std::cell::RefCell<Vec<(&'static str, crate::EntityId)>>>;
+        struct Probe(&'static str, States);
+        impl Component for Probe {
+            fn render(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+                let state = window.use_state(cx, |_, _| 0usize);
+                self.1.borrow_mut().push((self.0, state.entity_id()));
+                div().size(px(10.))
+            }
+        }
+        struct Host {
+            order: Vec<&'static str>,
+            states: States,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.states.borrow_mut().clear();
+                div().children(
+                    self.order
+                        .iter()
+                        .map(|key| div().id(*key).child(Probe(key, self.states.clone()))),
+                )
+            }
+        }
+        let states = States::default();
+        let window = cx.open_window(size(px(100.), px(100.)), |_, _| Host {
+            order: vec!["a", "b"],
+            states: states.clone(),
+        });
+        cx.run_until_parked();
+        let sorted = |states: &States| {
+            let mut states = states.borrow().clone();
+            states.sort();
+            states
+        };
+        let before = sorted(&states);
+        assert_eq!(before.len(), 2);
+        assert_ne!(before[0].1, before[1].1);
+        window
+            .update(cx, |host, _, cx| {
+                host.order.reverse();
+                cx.notify();
+            })
+            .expect("window open");
+        cx.run_until_parked();
+        assert_eq!(sorted(&states), before);
     }
 
     use crate::{
