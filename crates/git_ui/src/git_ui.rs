@@ -6,8 +6,10 @@ use workspace::{Toast, notifications::NotificationId};
 
 mod blame_ui;
 pub mod clone;
+mod clone_suggestions;
 
 use git::{
+    GitHostingProvider, GitHostingProviderRegistry,
     repository::{Branch, CommitDetails, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
@@ -15,16 +17,29 @@ use gpui::{
     App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     SharedString, Subscription, Task, TaskExt, WeakEntity, Window,
 };
+use http_client::HttpClient;
 use menu::{Cancel, Confirm};
-use project::git_store::Repository;
+use picker::{Picker, PickerDelegate};
+use project::{Fs, git_store::Repository, project_settings::ProjectSettings};
 use project_diff::ProjectDiff;
+use settings::{Settings as _, update_settings_file};
 use time::OffsetDateTime;
-use ui::{ButtonLike, ContextMenu, ElevationIndex, PopoverMenuHandle, TintColor, prelude::*};
+use ui::{
+    ButtonLike, CommonAnimationExt, ContextMenu, ElevationIndex, Indicator, ListItem,
+    ListItemSpacing, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+};
+use util::ResultExt;
 use workspace::{
     ModalView, OpenMode, Workspace,
     notifications::{DetachAndPromptErr, NotifyTaskExt},
 };
 use zed_actions;
+
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
 
 use crate::{
     commit_view::CommitView,
@@ -323,9 +338,11 @@ pub fn init(cx: &mut App) {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
             };
+            let http_client = workspace.client().http_client();
+            let fs = workspace.app_state().fs.clone();
 
             workspace.toggle_modal(window, cx, |window, cx| {
-                GitCloneModal::show(panel, window, cx)
+                GitCloneModal::show(panel, http_client, fs, window, cx)
             });
         });
         workspace.register_action(|workspace, _: &git::OpenModifiedFiles, window, cx| {
@@ -1267,89 +1284,486 @@ impl Component for GitStatusIcon {
     }
 }
 
+const REPOSITORY_SEARCH_DEBOUNCE: Duration = Duration::from_millis(500);
+
 struct GitCloneModal {
-    panel: Entity<GitPanel>,
-    repo_input: Entity<Editor>,
-    focus_handle: FocusHandle,
+    picker: Entity<Picker<GitCloneDelegate>>,
 }
 
 impl GitCloneModal {
-    pub fn show(panel: Entity<GitPanel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let repo_input = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Enter repository URL…", window, cx);
-            editor
-        });
-        let focus_handle = repo_input.focus_handle(cx);
-
-        window.focus(&focus_handle, cx);
-
-        Self {
+    fn show(
+        panel: Entity<GitPanel>,
+        http_client: Arc<dyn HttpClient>,
+        fs: Arc<dyn Fs>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let providers = GitHostingProviderRegistry::default_global(cx)
+            .list_hosting_providers()
+            .into_iter()
+            .filter(|provider| provider.supports_repository_search())
+            .collect();
+        let delegate = GitCloneDelegate {
+            modal: cx.entity().downgrade(),
             panel,
-            repo_input,
-            focus_handle,
-        }
+            http_client,
+            fs,
+            providers,
+            enabled_provider_urls: ProjectSettings::get_global(cx)
+                .git
+                .repository_search_providers
+                .iter()
+                .cloned()
+                .collect(),
+            provider_menu_handle: PopoverMenuHandle::default(),
+            suggestions: Vec::new(),
+            cached_searches: HashMap::default(),
+            search_errors: Vec::new(),
+            is_searching: false,
+            has_searched_providers: false,
+            search_generation: 0,
+            selected_index: 0,
+        };
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .max_height(rems(18.))
+                .show_scrollbar(true)
+        });
+        window.focus(&picker.focus_handle(cx), cx);
+        Self { picker }
     }
 }
 
 impl Focusable for GitCloneModal {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.focus_handle(cx)
     }
 }
 
 impl Render for GitCloneModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        v_flex()
             .elevation_3(cx)
             .w(rems(34.))
-            .flex_1()
             .overflow_hidden()
-            .child(
-                div()
-                    .w_full()
-                    .p_2()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .child(self.repo_input.clone()),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .p_2()
-                    .gap_0p5()
-                    .rounded_b_sm()
-                    .bg(cx.theme().colors().editor_background)
-                    .child(
-                        Label::new("Clone a repository from GitHub or other sources.")
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    )
-                    .child(
-                        Button::new("learn-more", "Learn More")
-                            .label_size(LabelSize::Small)
-                            .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall))
-                            .on_click(|_, _, cx| {
-                                cx.open_url("https://github.com/git-guides/git-clone");
-                            }),
-                    ),
-            )
-            .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
-                cx.emit(DismissEvent);
-            }))
-            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                let repo = this.repo_input.read(cx).text(cx);
-                this.panel.update(cx, |panel, cx| {
-                    panel.git_clone(repo, window, cx);
-                });
-                cx.emit(DismissEvent);
-            }))
+            .rounded_sm()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .child(self.picker.clone())
     }
 }
 
 impl EventEmitter<DismissEvent> for GitCloneModal {}
-
 impl ModalView for GitCloneModal {}
+
+struct GitCloneDelegate {
+    modal: WeakEntity<GitCloneModal>,
+    panel: Entity<GitPanel>,
+    http_client: Arc<dyn HttpClient>,
+    fs: Arc<dyn Fs>,
+    providers: Vec<Arc<dyn GitHostingProvider + Send + Sync + 'static>>,
+    enabled_provider_urls: HashSet<String>,
+    provider_menu_handle: PopoverMenuHandle<ContextMenu>,
+    suggestions: Vec<clone_suggestions::CloneSuggestion>,
+    cached_searches: HashMap<(String, String), Vec<clone_suggestions::CloneSuggestion>>,
+    search_errors: Vec<SharedString>,
+    is_searching: bool,
+    has_searched_providers: bool,
+    search_generation: usize,
+    selected_index: usize,
+}
+
+impl PickerDelegate for GitCloneDelegate {
+    type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "git clone"
+    }
+
+    fn match_count(&self) -> usize {
+        self.suggestions.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        index: usize,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        self.selected_index = index.min(self.suggestions.len().saturating_sub(1));
+        cx.notify();
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Enter a repository URL or local path...".into()
+    }
+
+    fn searchbar_trailer(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        if self.providers.is_empty() {
+            return None;
+        }
+
+        let picker = cx.entity().downgrade();
+        let providers = self.providers.clone();
+        let has_enabled_provider = providers.iter().any(|provider| {
+            self.enabled_provider_urls
+                .contains(provider.base_url().as_str())
+        });
+
+        Some(
+            PopoverMenu::new("repository-search-providers")
+                .with_handle(self.provider_menu_handle.clone())
+                .trigger_with_tooltip(
+                    IconButton::new("repository-search-providers-trigger", IconName::Settings)
+                        .icon_size(IconSize::Small)
+                        .toggle_state(has_enabled_provider)
+                        .when(has_enabled_provider, |button| {
+                            button.indicator(Indicator::dot().color(Color::Info))
+                        }),
+                    Tooltip::text("Configure Repository Search Providers"),
+                )
+                .anchor(gpui::Anchor::TopRight)
+                .menu(move |window, cx| {
+                    let picker = picker.clone();
+                    let providers = providers.clone();
+                    Some(ContextMenu::build_persistent(
+                        window,
+                        cx,
+                        move |mut menu, _window, cx| {
+                            menu = menu.header("Search Providers");
+                            let enabled_provider_urls = picker
+                                .upgrade()
+                                .map(|picker| {
+                                    picker.read(cx).delegate.enabled_provider_urls.clone()
+                                })
+                                .unwrap_or_default();
+
+                            for provider in &providers {
+                                let provider_name = provider.name();
+                                let provider_url = provider.base_url().to_string();
+                                let is_enabled = enabled_provider_urls.contains(&provider_url);
+                                let picker = picker.clone();
+                                menu = menu.toggleable_entry(
+                                    provider_name,
+                                    is_enabled,
+                                    IconPosition::End,
+                                    None,
+                                    move |window, cx| {
+                                        picker
+                                            .update(cx, |picker, cx| {
+                                                if is_enabled {
+                                                    picker
+                                                        .delegate
+                                                        .enabled_provider_urls
+                                                        .remove(&provider_url);
+                                                } else {
+                                                    picker
+                                                        .delegate
+                                                        .enabled_provider_urls
+                                                        .insert(provider_url.clone());
+                                                }
+                                                let mut enabled_provider_urls = picker
+                                                    .delegate
+                                                    .enabled_provider_urls
+                                                    .iter()
+                                                    .cloned()
+                                                    .collect::<Vec<_>>();
+                                                enabled_provider_urls.sort_unstable();
+                                                update_settings_file(
+                                                    picker.delegate.fs.clone(),
+                                                    cx,
+                                                    move |settings, _| {
+                                                        settings
+                                                            .git
+                                                            .get_or_insert_default()
+                                                            .repository_search_providers =
+                                                            Some(enabled_provider_urls);
+                                                    },
+                                                );
+                                                let query = picker.query(cx);
+                                                picker.update_matches(query, window, cx);
+                                            })
+                                            .log_err();
+                                    },
+                                );
+                            }
+
+                            menu
+                        },
+                    ))
+                })
+                .into_any_element(),
+        )
+    }
+
+    fn has_another_open_menu(&self, window: &Window, cx: &App) -> bool {
+        self.provider_menu_handle.is_deployed() || self.provider_menu_handle.is_focused(window, cx)
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        self.search_generation = self.search_generation.wrapping_add(1);
+        let search_generation = self.search_generation;
+        let query = query.trim().to_owned();
+        self.suggestions = clone_suggestions::for_input(&query);
+        self.selected_index = 0;
+        self.search_errors.clear();
+        self.is_searching = false;
+
+        if !clone_suggestions::should_search_providers(&query) {
+            return Task::ready(());
+        }
+
+        let enabled_providers = self
+            .providers
+            .iter()
+            .filter(|provider| {
+                self.enabled_provider_urls
+                    .contains(provider.base_url().as_str())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if enabled_providers.is_empty() {
+            return Task::ready(());
+        }
+
+        let mut providers_to_search = Vec::new();
+        for provider in enabled_providers {
+            let provider_url = provider.base_url().to_string();
+            let cache_key = (provider_url, query.clone());
+            if let Some(cached_suggestions) = self.cached_searches.get(&cache_key) {
+                clone_suggestions::append_unique(
+                    &mut self.suggestions,
+                    cached_suggestions.iter().cloned(),
+                );
+            } else {
+                providers_to_search.push(provider);
+            }
+        }
+        if providers_to_search.is_empty() {
+            return Task::ready(());
+        }
+
+        self.is_searching = true;
+        let should_debounce = self.has_searched_providers;
+        self.has_searched_providers = true;
+        cx.notify();
+        let http_client = self.http_client.clone();
+        cx.spawn_in(window, async move |picker, cx| {
+            if should_debounce {
+                cx.background_executor()
+                    .timer(REPOSITORY_SEARCH_DEBOUNCE)
+                    .await;
+            }
+            let search_query = query.clone();
+            let search_results = cx
+                .background_spawn(async move {
+                    futures::future::join_all(providers_to_search.into_iter().map(|provider| {
+                        let http_client = http_client.clone();
+                        let search_query = search_query.clone();
+                        async move {
+                            let provider_name = provider.name();
+                            let provider_url = provider.base_url().to_string();
+                            let result = provider
+                                .search_repositories(&search_query, http_client)
+                                .await;
+                            (provider_name, provider_url, result)
+                        }
+                    }))
+                    .await
+                })
+                .await;
+
+            picker
+                .update(cx, |picker, cx| {
+                    if picker.delegate.search_generation != search_generation {
+                        return;
+                    }
+                    for (provider_name, provider_url, search_result) in search_results {
+                        match search_result {
+                            Ok(results) => {
+                                let search_suggestions = results
+                                    .into_iter()
+                                    .map(|result| {
+                                        clone_suggestions::CloneSuggestion::from_search_result(
+                                            result,
+                                            &provider_name,
+                                        )
+                                    })
+                                    .collect::<Vec<_>>();
+                                picker.delegate.cached_searches.insert(
+                                    (provider_url, query.clone()),
+                                    search_suggestions.clone(),
+                                );
+                                clone_suggestions::append_unique(
+                                    &mut picker.delegate.suggestions,
+                                    search_suggestions,
+                                );
+                            }
+                            Err(error) => {
+                                log::debug!(
+                                    "failed to fetch {provider_name} clone suggestions: {error:#}"
+                                );
+                                picker.delegate.search_errors.push(
+                                    format!("{provider_name} search failed: {error:#}").into(),
+                                );
+                            }
+                        }
+                    }
+                    picker.delegate.is_searching = false;
+                    cx.notify();
+                })
+                .log_err();
+        })
+    }
+
+    fn render_footer(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        let status = if self.is_searching {
+            h_flex()
+                .gap_1()
+                .child(
+                    Icon::new(IconName::LoadCircle)
+                        .size(IconSize::XSmall)
+                        .color(Color::Muted)
+                        .with_rotate_animation(2),
+                )
+                .child(Label::new("Searching repositories").size(LabelSize::Small))
+                .into_any_element()
+        } else if !self.search_errors.is_empty() {
+            Label::new(
+                self.search_errors
+                    .iter()
+                    .map(SharedString::as_ref)
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            )
+            .color(Color::Error)
+            .size(LabelSize::Small)
+            .into_any_element()
+        } else {
+            let status = if self.enabled_provider_urls.is_empty() {
+                "Repository search is off."
+            } else {
+                "Clone a repository from a URL or an enabled provider."
+            };
+            Label::new(status)
+                .color(Color::Muted)
+                .size(LabelSize::Small)
+                .into_any_element()
+        };
+
+        Some(
+            h_flex()
+                .w_full()
+                .px_2()
+                .py_1p5()
+                .gap_2()
+                .justify_between()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(status)
+                .child(
+                    Button::new("learn-more", "Learn More")
+                        .label_size(LabelSize::Small)
+                        .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall))
+                        .on_click(|_, _, cx| {
+                            cx.open_url("https://github.com/git-guides/git-clone");
+                        }),
+                )
+                .into_any_element(),
+        )
+    }
+
+    fn finalize_update_matches(
+        &mut self,
+        _query: String,
+        _duration: Duration,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> bool {
+        true
+    }
+
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(suggestion) = self.suggestions.get(self.selected_index) else {
+            return;
+        };
+        self.panel.update(cx, |panel, cx| {
+            panel.git_clone(suggestion.repo_url.to_string(), window, cx);
+        });
+        self.dismissed(window, cx);
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.modal
+            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .log_err();
+    }
+
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        None
+    }
+
+    fn render_match(
+        &self,
+        index: usize,
+        selected: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let suggestion = self.suggestions.get(index)?;
+        Some(
+            ListItem::new(("clone-suggestion", index))
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(
+                    v_flex()
+                        .min_w_0()
+                        .flex_1()
+                        .gap_0p5()
+                        .child(Label::new(suggestion.title.clone()).truncate())
+                        .child(
+                            h_flex()
+                                .min_w_0()
+                                .gap_1p5()
+                                .when_some(suggestion.provider.clone(), |this, provider| {
+                                    this.child(
+                                        Label::new(provider)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new("·").size(LabelSize::Small).color(Color::Muted),
+                                    )
+                                })
+                                .child(
+                                    Label::new(suggestion.detail.clone())
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .truncate(),
+                                ),
+                        ),
+                ),
+        )
+    }
+}
 
 #[cfg(test)]
 mod view_commit_tests {
@@ -1359,7 +1773,7 @@ mod view_commit_tests {
     use project::project_settings::ProjectSettings;
     use project::{FakeFs, Project, WorktreeSettings};
     use serde_json::json;
-    use settings::{Settings as _, SettingsStore};
+    use settings::SettingsStore;
     use std::path::Path;
     use std::sync::Arc;
     use theme::LoadThemes;

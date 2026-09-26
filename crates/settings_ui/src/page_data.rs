@@ -1,3 +1,4 @@
+use git_hosting_providers::{GITHUB_PUBLIC_BASE_URL, GITLAB_PUBLIC_BASE_URL};
 use gpui::{Action as _, App};
 use itertools::Itertools as _;
 use settings::{
@@ -25,6 +26,8 @@ const DEFAULT_STRING: String = String::new();
 const DEFAULT_EMPTY_STRING: Option<&String> = Some(&DEFAULT_STRING);
 
 const DEFAULT_AUDIO_OUTPUT: AudioOutputDeviceName = AudioOutputDeviceName(None);
+const DEFAULT_FALSE: bool = false;
+const DEFAULT_TRUE: bool = true;
 const DEFAULT_EMPTY_AUDIO_OUTPUT: Option<&AudioOutputDeviceName> = Some(&DEFAULT_AUDIO_OUTPUT);
 const DEFAULT_AUDIO_INPUT: AudioInputDeviceName = AudioInputDeviceName(None);
 const DEFAULT_EMPTY_AUDIO_INPUT: Option<&AudioInputDeviceName> = Some(&DEFAULT_AUDIO_INPUT);
@@ -8084,6 +8087,94 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
+    fn repository_search_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Repository Search"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "GitHub",
+                description: "Allow repository search suggestions from GitHub in the Clone Repository picker.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.repository_search_providers"),
+                    pick: |settings_content| {
+                        let enabled = settings_content
+                            .git
+                            .as_ref()?
+                            .repository_search_providers
+                            .as_ref()?
+                            .iter()
+                            .any(|provider| {
+                                provider.trim_end_matches('/')
+                                    == GITHUB_PUBLIC_BASE_URL.trim_end_matches('/')
+                            });
+                        Some(if enabled {
+                            &DEFAULT_TRUE
+                        } else {
+                            &DEFAULT_FALSE
+                        })
+                    },
+                    write: |settings_content, value, _| {
+                        let providers = &mut settings_content
+                            .git
+                            .get_or_insert_default()
+                            .repository_search_providers;
+                        let providers = providers.get_or_insert_default();
+                        providers.retain(|provider| {
+                            provider.trim_end_matches('/')
+                                != GITHUB_PUBLIC_BASE_URL.trim_end_matches('/')
+                        });
+                        if value == Some(true) {
+                            providers.push(GITHUB_PUBLIC_BASE_URL.to_string());
+                        }
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "GitLab",
+                description: "Allow repository search suggestions from GitLab in the Clone Repository picker.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.repository_search_providers"),
+                    pick: |settings_content| {
+                        let enabled = settings_content
+                            .git
+                            .as_ref()?
+                            .repository_search_providers
+                            .as_ref()?
+                            .iter()
+                            .any(|provider| {
+                                provider.trim_end_matches('/')
+                                    == GITLAB_PUBLIC_BASE_URL.trim_end_matches('/')
+                            });
+                        Some(if enabled {
+                            &DEFAULT_TRUE
+                        } else {
+                            &DEFAULT_FALSE
+                        })
+                    },
+                    write: |settings_content, value, _| {
+                        let providers = &mut settings_content
+                            .git
+                            .get_or_insert_default()
+                            .repository_search_providers;
+                        let providers = providers.get_or_insert_default();
+                        providers.retain(|provider| {
+                            provider.trim_end_matches('/')
+                                != GITLAB_PUBLIC_BASE_URL.trim_end_matches('/')
+                        });
+                        if value == Some(true) {
+                            providers.push(GITLAB_PUBLIC_BASE_URL.to_string());
+                        }
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn git_gutter_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Git Gutter"),
@@ -8479,6 +8570,7 @@ fn version_control_page() -> SettingsPage {
         title: "Version Control",
         items: concat_sections![
             git_integration_section(),
+            repository_search_section(),
             git_gutter_section(),
             inline_git_blame_section(),
             git_blame_view_section(),
