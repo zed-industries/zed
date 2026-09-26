@@ -2,7 +2,8 @@ use settings::{Settings, SettingsStore};
 
 use gpui::{
     AnyWindowHandle, Context, Hsla, InteractiveElement, MouseButton, ParentElement, ScrollHandle,
-    Styled, SystemWindowTab, SystemWindowTabController, Window, WindowId, actions, canvas, div,
+    Styled, Subscription, SystemWindowTab, SystemWindowTabController, Window, WindowId, actions,
+    canvas, div,
 };
 
 use theme_settings::ThemeSettings;
@@ -41,20 +42,32 @@ pub struct SystemWindowTabs {
     tab_bar_scroll_handle: ScrollHandle,
     measured_tab_width: Pixels,
     last_dragged_tab: Option<DraggedWindowTab>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl SystemWindowTabs {
-    pub fn new() -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
             tab_bar_scroll_handle: ScrollHandle::new(),
             measured_tab_width: px(0.),
             last_dragged_tab: None,
+            // The controller is a global, and reading it during render does not subscribe,
+            // so tab changes (including Merge All Windows) would otherwise stay invisible.
+            _subscriptions: vec![cx.observe_global::<SystemWindowTabController>(|_, cx| {
+                cx.notify();
+            })],
         }
     }
 
     pub fn init(cx: &mut App) {
         let mut was_use_system_window_tabs =
             WorkspaceSettings::get_global(cx).use_system_window_tabs;
+        // Window creation only turns automatic tabbing on. Apply the off state
+        // once here, before any window opens, so a launch with the setting
+        // disabled still overrides the macOS "Prefer tabs: Always" preference.
+        if !was_use_system_window_tabs {
+            cx.set_allows_automatic_window_tabbing(false);
+        }
 
         cx.observe_global::<SettingsStore>(move |cx| {
             let use_system_window_tabs = WorkspaceSettings::get_global(cx).use_system_window_tabs;
@@ -390,16 +403,22 @@ impl Render for SystemWindowTabs {
         let inactive_background_color = cx.theme().colors().tab_bar_background;
         let entity = cx.entity();
 
-        let controller = cx.global::<SystemWindowTabController>();
-        let visible = controller.is_visible();
-        let current_window_tab = vec![SystemWindowTab::new(
+        let window_id = window.window_handle().window_id();
+        // Prefer the live AppKit tab group. The controller is often still a single
+        // window per group until a deferred merge update runs.
+        let native_tabs = window.tabbed_windows().filter(|tabs| tabs.len() > 1);
+        let fallback_tab = SystemWindowTab::new(
             SharedString::from(window.window_title()),
             window.window_handle(),
-        )];
-        let tabs = controller
-            .tabs(window.window_handle().window_id())
-            .unwrap_or(&current_window_tab)
-            .clone();
+        );
+        let controller = cx.global::<SystemWindowTabController>();
+        let visible = controller.is_visible();
+        let tabs = native_tabs.unwrap_or_else(|| {
+            controller
+                .tabs(window_id)
+                .cloned()
+                .unwrap_or_else(|| vec![fallback_tab])
+        });
 
         let tab_items = tabs
             .iter()
@@ -418,8 +437,12 @@ impl Render for SystemWindowTabs {
             .collect::<Vec<_>>();
 
         let number_of_tabs = tab_items.len().max(1);
-        if (!window.tab_bar_visible() && !visible)
-            || (!use_system_window_tabs && number_of_tabs == 1)
+        // The native tab bar view is hidden on purpose, and `isTabBarVisible` stays
+        // false after a merge, which used to hide this custom bar too.
+        let show_system_tabs = use_system_window_tabs && number_of_tabs > 1;
+        if !show_system_tabs
+            && ((!window.tab_bar_visible() && !visible)
+                || (!use_system_window_tabs && number_of_tabs == 1))
         {
             return h_flex().into_any_element();
         }
