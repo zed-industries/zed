@@ -2358,20 +2358,16 @@ impl Sidebar {
         };
 
         let color = cx.theme().colors();
-        let sidebar_base_bg = color
-            .title_bar_background
-            .blend(color.panel_background.opacity(0.25));
+        let sidebar_base_bg = color.surface_background;
 
         let base_bg = color.background.blend(sidebar_base_bg);
 
-        let hover_base = color
-            .element_active
-            .blend(color.element_background.opacity(0.2));
-        let hover_solid = base_bg.blend(hover_base);
+        let hover_solid = base_bg.blend(color.ghost_element_hover);
+        let active_solid = base_bg.blend(color.ghost_element_active);
 
         let group_name_for_gradient = group_name.clone();
         let gradient_overlay = move || {
-            GradientFade::new(base_bg, hover_solid, hover_solid)
+            GradientFade::new(base_bg, hover_solid, active_solid)
                 .width(px(92.0))
                 .right(px(-2.0))
                 .gradient_stop(0.7)
@@ -2399,7 +2395,10 @@ impl Sidebar {
                     this.border_color(gpui::transparent_black())
                 }
             })
-            .when(!has_filter, |this| this.hover(|s| s.bg(hover_solid)))
+            .when(!has_filter, |this| {
+                this.hover(|s| s.bg(hover_solid))
+                    .group_active(&group_name, |s| s.bg(active_solid))
+            })
             .child(
                 h_flex()
                     .relative()
@@ -3259,9 +3258,7 @@ impl Sidebar {
             .unwrap_or(px(0.));
 
         let color = cx.theme().colors();
-        let background = color
-            .title_bar_background
-            .blend(color.panel_background.opacity(0.2));
+        let background = color.surface_background;
 
         let element = v_flex()
             .absolute()
@@ -6250,9 +6247,7 @@ impl Sidebar {
         let id = SharedString::from(format!("thread-entry-{}", ix));
 
         let color = cx.theme().colors();
-        let sidebar_bg = color
-            .title_bar_background
-            .blend(color.panel_background.opacity(0.25));
+        let sidebar_bg = color.surface_background;
 
         let timestamp: SharedString = if is_empty_draft {
             SharedString::default()
@@ -6573,9 +6568,7 @@ impl Sidebar {
         let timestamp = format_history_entry_timestamp(terminal.metadata.created_at);
         let is_hovered = self.hovered_thread_index == Some(ix);
         let color = cx.theme().colors();
-        let sidebar_bg = color
-            .title_bar_background
-            .blend(color.panel_background.opacity(0.25));
+        let sidebar_bg = color.surface_background;
         let metadata = terminal.metadata.clone();
         let workspace = terminal.workspace.clone();
         let focus_handle = self.focus_handle.clone();
@@ -7913,9 +7906,7 @@ impl Render for Sidebar {
         let sticky_header = self.render_sticky_header(window, cx);
 
         let color = cx.theme().colors();
-        let bg = color
-            .title_bar_background
-            .blend(color.panel_background.opacity(0.25));
+        let bg = color.surface_background;
 
         let no_open_projects = !self.contents.has_open_projects;
         let no_search_results = self.contents.entries.is_empty();

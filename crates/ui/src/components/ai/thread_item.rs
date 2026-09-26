@@ -256,25 +256,21 @@ impl RenderOnce for ThreadItem {
         // fade into, so it renders as a visible patch; truncate the title instead.
         let opaque_window =
             cx.theme().window_background_appearance() == WindowBackgroundAppearance::Opaque;
-        let sidebar_base_bg = color
-            .title_bar_background
-            .blend(color.panel_background.opacity(0.25));
+        let sidebar_base_bg = color.surface_background;
 
         let raw_bg = self.base_bg.unwrap_or(sidebar_base_bg);
         let apparent_bg = color.background.blend(raw_bg);
 
         let base_bg = if self.selected {
-            apparent_bg.blend(color.element_active)
+            apparent_bg.blend(color.ghost_element_selected)
         } else {
             apparent_bg
         };
 
-        let hover_color = color
-            .element_active
-            .blend(color.element_background.opacity(0.2));
-        let hover_bg = apparent_bg.blend(hover_color);
+        let hover_bg = apparent_bg.blend(color.ghost_element_hover);
+        let active_bg = apparent_bg.blend(color.ghost_element_active);
 
-        let gradient_overlay = GradientFade::new(base_bg, hover_bg, hover_bg)
+        let gradient_overlay = GradientFade::new(base_bg, hover_bg, active_bg)
             .width(px(64.0))
             .right(px(-10.0))
             .gradient_stop(0.7)
@@ -434,13 +430,14 @@ impl RenderOnce for ThreadItem {
             .w_full()
             .py_1()
             .px_1p5()
-            .when(self.selected, |s| s.bg(color.element_active))
+            .when(self.selected, |s| s.bg(color.ghost_element_selected))
             .border_1()
             .border_r_2()
             .border_color(gpui::transparent_black())
             .when(self.focused, |s| s.border_color(color.panel_focused_border))
             .when(self.rounded, |s| s.rounded_sm())
-            .hover(|s| s.bg(hover_color))
+            .hover(|s| s.bg(color.ghost_element_hover))
+            .active(|s| s.bg(color.ghost_element_active))
             .on_hover(self.on_hover)
             .child(
                 h_flex()
@@ -469,7 +466,7 @@ impl RenderOnce for ThreadItem {
                                     .pr_1p5()
                                     .when(opaque_window, |this| {
                                         this.child(
-                                            GradientFade::new(base_bg, hover_bg, hover_bg)
+                                            GradientFade::new(base_bg, hover_bg, active_bg)
                                                 .width(px(120.0))
                                                 .right(px(8.))
                                                 .gradient_stop(0.90)
@@ -647,9 +644,7 @@ impl Component for ThreadItem {
 
     fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let color = cx.theme().colors();
-        let bg = color
-            .title_bar_background
-            .blend(color.panel_background.opacity(0.25));
+        let bg = color.surface_background;
 
         let container = || {
             v_flex()
