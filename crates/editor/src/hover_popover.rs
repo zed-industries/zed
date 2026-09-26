@@ -14,7 +14,7 @@ use gpui::{
     StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, TaskExt,
     TextStyleRefinement, Window, canvas, div, px,
 };
-use language::{DiagnosticEntry, Language, LanguageRegistry};
+use language::{CharKind, DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{CopyButtonVisibility, Markdown, MarkdownElement, MarkdownStyle};
 use multi_buffer::{MultiBufferOffset, ToOffset, ToPoint};
@@ -521,22 +521,33 @@ fn show_hover(
                 None => Vec::new(),
             };
 
+            let buffer_snapshot = snapshot.buffer_snapshot();
+            let is_non_empty = |range: &Range<Anchor>| {
+                range.start.to_offset(&buffer_snapshot) != range.end.to_offset(&buffer_snapshot)
+            };
             for hover_result in hovers_response {
                 // Create symbol range of anchors for highlighting and filtering of future requests.
                 let range = hover_result
                     .range
-                    .and_then(|range| {
-                        let range = snapshot
-                            .buffer_snapshot()
-                            .buffer_anchor_range_to_anchor_range(range)?;
-                        Some(range)
-                    })
+                    .and_then(|range| buffer_snapshot.buffer_anchor_range_to_anchor_range(range))
+                    .filter(&is_non_empty)
                     .or_else(|| {
-                        let snapshot = &snapshot.buffer_snapshot();
-                        let range = snapshot.syntax_ancestor(anchor..anchor)?.1;
-                        Some(snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end))
+                        let range = buffer_snapshot.syntax_ancestor(anchor..anchor)?.1;
+                        Some(
+                            buffer_snapshot.anchor_before(range.start)
+                                ..buffer_snapshot.anchor_after(range.end),
+                        )
                     })
-                    .unwrap_or_else(|| anchor..anchor);
+                    .filter(&is_non_empty)
+                    .unwrap_or_else(|| {
+                        let (word_range, kind) = buffer_snapshot.surrounding_word(anchor, None);
+                        if kind == Some(CharKind::Word) && word_range.start != word_range.end {
+                            buffer_snapshot.anchor_before(word_range.start)
+                                ..buffer_snapshot.anchor_after(word_range.end)
+                        } else {
+                            anchor..anchor
+                        }
+                    });
 
                 let blocks = hover_result.contents;
                 let language = hover_result.language;
@@ -3329,6 +3340,121 @@ mod tests {
                 editor.hover_state.info_task.is_none(),
                 "No hover info task should be scheduled when hover is disabled"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_zero_width_hover_range_without_syntax_tree_falls_back_to_word(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let plain_text_lang = language::Language::new(
+            language::LanguageConfig {
+                name: "Plain Text".into(),
+                matcher: language::LanguageMatcher {
+                    path_suffixes: vec!["txt".to_string()],
+                    ..Default::default()
+                }
+                .into(),
+                ..Default::default()
+            },
+            None,
+        );
+
+        let mut cx = EditorLspTestContext::new(
+            plain_text_lang,
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            hello foˇobar world
+        "});
+
+        let zero_width_range = cx.lsp_range(indoc! {"
+            hello fo«»obar world
+        "});
+
+        let expected_word_start = cx.display_point(indoc! {"
+            hello ˇfoobar world
+        "});
+        let expected_word_end = cx.display_point(indoc! {"
+            hello foobarˇ world
+        "});
+
+        let mut requests =
+            cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: "foobar docs".to_string(),
+                    }),
+                    range: Some(zero_width_range),
+                }))
+            });
+
+        let hover_point_start = cx.display_point(indoc! {"
+            hello fˇoobar world
+        "});
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let anchor = snapshot
+                .buffer_snapshot()
+                .anchor_before(hover_point_start.to_offset(&snapshot, Bias::Left));
+            hover_at(editor, Some(anchor), None, window, cx);
+        });
+
+        cx.background_executor
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
+        requests.next().await;
+
+        cx.editor(|editor, window, cx| {
+            assert!(editor.hover_state.visible());
+            let popover = editor.hover_state.info_popovers.first().unwrap();
+            let snapshot = editor.snapshot(window, cx);
+            let text_range = popover.symbol_range.as_text_range().unwrap();
+            let offset_range = text_range.to_offset(&snapshot.buffer_snapshot());
+
+            let start_offset = expected_word_start.to_offset(&snapshot, Bias::Left);
+            let end_offset = expected_word_end.to_offset(&snapshot, Bias::Left);
+            assert_eq!(offset_range, start_offset..end_offset);
+        });
+
+        // Move cursor to another point in the same word 'foobar'
+        let hover_point_middle = cx.display_point(indoc! {"
+            hello foobˇar world
+        "});
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let anchor = snapshot
+                .buffer_snapshot()
+                .anchor_before(hover_point_middle.to_offset(&snapshot, Bias::Left));
+            hover_at(editor, Some(anchor), None, window, cx);
+        });
+
+        cx.editor(|editor, _, _| {
+            assert!(editor.hover_state.visible());
+        });
+
+        // Move cursor outside the word 'foobar'
+        let hover_point_outside = cx.display_point(indoc! {"
+            hello foobar ˇworld
+        "});
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let anchor = snapshot
+                .buffer_snapshot()
+                .anchor_before(hover_point_outside.to_offset(&snapshot, Bias::Left));
+            hover_at(editor, Some(anchor), None, window, cx);
+        });
+
+        cx.editor(|editor, _, _| {
+            assert!(!editor.hover_state.visible());
         });
     }
 
