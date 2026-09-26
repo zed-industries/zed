@@ -472,9 +472,13 @@ struct FrameCache {
     lines_by_hash: FxHashMap<Arc<HashedCacheKey>, Arc<LineLayout>>,
     wrapped_lines_by_hash: FxHashMap<Arc<HashedCacheKey>, Arc<WrappedLineLayout>>,
 
-    /// The scopes being drawn, innermost last; every layout looked up is recorded in the
-    /// innermost. The outermost belongs to the frame itself.
-    uses: Vec<TextUse>,
+    /// How many scopes are being drawn; zero is the frame itself.
+    scope_depth: usize,
+    /// The uses of the scopes being drawn that have looked up a layout, innermost last,
+    /// each with the depth of its scope; every layout looked up is recorded in the use of
+    /// the innermost scope. A use is made at a scope's first lookup rather than when it
+    /// begins, since most scopes never look up a layout.
+    uses: Vec<(usize, TextUse)>,
     /// Emptied uses handed back by redrawing nodes, so a new scope starts with capacity.
     spare_uses: Vec<TextUse>,
 }
@@ -486,14 +490,25 @@ impl FrameCache {
         self.lines_by_hash.clear();
         self.wrapped_lines_by_hash.clear();
         self.uses.clear();
-        self.uses.push(TextUse::default());
+        self.scope_depth = 0;
     }
 
     fn current_use(&mut self) -> &mut TextUse {
-        if self.uses.is_empty() {
-            self.uses.push(TextUse::default());
+        let depth = self.scope_depth;
+        if self.uses.last().is_none_or(|(scope, _)| *scope != depth) {
+            let text_use = self.spare_uses.pop().unwrap_or_default();
+            self.uses.push((depth, text_use));
         }
-        self.uses.last_mut().expect("a use was just pushed")
+        &mut self.uses.last_mut().expect("a use was just pushed").1
+    }
+
+    /// The innermost scope's use, if it has made one.
+    fn current_use_if_made(&mut self) -> Option<&mut TextUse> {
+        let depth = self.scope_depth;
+        match self.uses.last_mut() {
+            Some((scope, text_use)) if *scope == depth => Some(text_use),
+            _ => None,
+        }
     }
 }
 
@@ -515,6 +530,11 @@ enum TextUseEntry {
 impl TextUse {
     fn clear(&mut self) {
         self.entries.clear();
+    }
+
+    /// Whether the use holds nothing, not even a buffer worth keeping.
+    fn is_unallocated(&self) -> bool {
+        self.entries.capacity() == 0
     }
 
     pub(crate) fn append(&mut self, mut other: TextUse) {
@@ -544,14 +564,15 @@ impl LineLayoutCache {
 
     /// Starts recording the layouts a scope looks up; ended by `end_use`.
     pub(crate) fn begin_use(&self) {
-        let mut frame = self.current_frame.borrow_mut();
-        let text_use = frame.spare_uses.pop().unwrap_or_default();
-        frame.uses.push(text_use);
+        self.current_frame.borrow_mut().scope_depth += 1;
     }
 
     /// Takes back a use a redrawing node no longer needs, keeping its buffers for the next
     /// scope. Bounded, since a burst of unmounts could otherwise hand back thousands.
     pub(crate) fn recycle(&self, mut text_use: TextUse) {
+        if text_use.is_unallocated() {
+            return;
+        }
         let mut frame = self.current_frame.borrow_mut();
         if frame.spare_uses.len() < 256 {
             text_use.clear();
@@ -559,19 +580,31 @@ impl LineLayoutCache {
         }
     }
 
+    /// Ends the innermost scope, returning the layouts it looked up. The frame's own use
+    /// stays as the outermost scope.
     pub(crate) fn end_use(&self) -> TextUse {
         let mut frame = self.current_frame.borrow_mut();
-        // The frame's own use stays as the outermost scope.
-        if frame.uses.len() > 1 {
-            frame.uses.pop().unwrap_or_default()
-        } else {
-            TextUse::default()
+        if frame.scope_depth == 0 {
+            return TextUse::default();
+        }
+        let depth = frame.scope_depth;
+        frame.scope_depth -= 1;
+        match frame.uses.last() {
+            Some((scope, _)) if *scope == depth => frame
+                .uses
+                .pop()
+                .map(|(_, text_use)| text_use)
+                .unwrap_or_default(),
+            _ => TextUse::default(),
         }
     }
 
     /// Makes the layouts a scope used the last time it drew available to this frame, so a
     /// redraw finds them without reshaping.
     pub(crate) fn seed(&self, text_use: &TextUse) {
+        if text_use.entries.is_empty() {
+            return;
+        }
         let mut frame = self.current_frame.borrow_mut();
         for entry in &text_use.entries {
             match entry {
@@ -589,14 +622,16 @@ impl LineLayoutCache {
     }
 
     pub(crate) fn use_checkpoint(&self) -> TextUseCheckpoint {
-        self.current_frame.borrow_mut().current_use().checkpoint()
+        self.current_frame
+            .borrow_mut()
+            .current_use_if_made()
+            .map_or(TextUseCheckpoint(0), |text_use| text_use.checkpoint())
     }
 
     pub(crate) fn rollback_use(&self, checkpoint: TextUseCheckpoint) {
-        self.current_frame
-            .borrow_mut()
-            .current_use()
-            .rollback(checkpoint)
+        if let Some(text_use) = self.current_frame.borrow_mut().current_use_if_made() {
+            text_use.rollback(checkpoint);
+        }
     }
 
     pub fn finish_frame(&self) {
