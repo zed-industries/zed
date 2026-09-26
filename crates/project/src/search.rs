@@ -9,7 +9,7 @@ use smol::future::yield_now;
 use std::{
     borrow::Cow,
     collections::BTreeSet,
-    io::{BufRead, BufReader, Read},
+    io::{self, Read},
     ops::Range,
     sync::{Arc, LazyLock},
 };
@@ -46,7 +46,7 @@ pub struct SearchInputs {
     buffers: Option<Vec<Entity<Buffer>>>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MatchPositionHint {
     Line(u32),
     ByteOffset(usize),
@@ -397,20 +397,19 @@ impl SearchQuery {
 
     pub async fn detect(
         &self,
-        mut reader: BufReader<Box<dyn Read + Send + Sync>>,
+        reader: &mut (dyn Read + Send),
     ) -> Result<Option<MatchPositionHint>> {
         let query_str = self.as_str();
         if query_str.is_empty() {
             return Ok(None);
         }
 
-        // Yield from this function every 20KB scanned.
-        const YIELD_THRESHOLD: usize = 20 * 1024;
+        const BLOCK_BYTES: usize = 64 * 1024;
 
         match self {
             Self::Text { search, .. } => {
-                let mut text = String::new();
                 if query_str.contains('\n') {
+                    let mut text = String::new();
                     reader.read_to_string(&mut text)?;
                     text::LineEnding::normalize(&mut text);
                     if search.is_match(&text) {
@@ -419,21 +418,40 @@ impl SearchQuery {
                         Ok(None)
                     }
                 } else {
-                    let mut bytes_read = 0;
-                    let mut line_number = u32::default();
-                    while reader.read_line(&mut text)? > 0 {
-                        if search.is_match(&text) {
-                            return Ok(Some(MatchPositionHint::Line(line_number)));
+                    let carry_len = search.max_pattern_len().saturating_sub(1).max(3);
+                    let mut block = vec![0u8; BLOCK_BYTES];
+                    let mut window = Vec::with_capacity(BLOCK_BYTES + carry_len);
+                    let mut validated_len = 0usize;
+                    let mut lines_before_window = 0usize;
+                    loop {
+                        let read = reader.read(&mut block)?;
+                        if read == 0 {
+                            if validated_len < window.len() {
+                                return Err(invalid_data());
+                            }
+                            return Ok(None);
                         }
-                        bytes_read += text.len();
-                        if bytes_read >= YIELD_THRESHOLD {
-                            bytes_read = 0;
-                            smol::future::yield_now().await;
+                        window.extend_from_slice(&block[..read]);
+                        validated_len += match std::str::from_utf8(&window[validated_len..]) {
+                            Err(error) if error.error_len().is_some() => {
+                                return Err(invalid_data());
+                            }
+                            Err(error) => error.valid_up_to(),
+                            _ => window.len() - validated_len,
+                        };
+                        if let Some(found) = search.find(&window) {
+                            let line =
+                                lines_before_window + count_newlines(&window[..found.start()]);
+                            return Ok(Some(MatchPositionHint::Line(
+                                u32::try_from(line).unwrap_or(u32::MAX),
+                            )));
                         }
-                        text.clear();
-                        line_number += 1;
+                        let consumed = window.len().saturating_sub(carry_len);
+                        lines_before_window += count_newlines(&window[..consumed]);
+                        window.drain(..consumed);
+                        validated_len -= consumed;
+                        yield_now().await;
                     }
-                    Ok(None)
                 }
             }
             Self::Regex { regex, .. } => {
@@ -712,4 +730,12 @@ impl SearchQuery {
         }
         matches
     }
+}
+
+fn count_newlines(bytes: &[u8]) -> usize {
+    bytes.iter().filter(|&&byte| byte == b'\n').count()
+}
+
+fn invalid_data() -> anyhow::Error {
+    anyhow::Error::from(io::Error::from(io::ErrorKind::InvalidData))
 }

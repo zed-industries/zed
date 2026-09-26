@@ -6414,6 +6414,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "file_content"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chardetng",
+ "encoding_rs",
+]
+
+[[package]]
 name = "file_finder"
 version = "0.1.0"
 dependencies = [
@@ -7138,6 +7147,7 @@ dependencies = [
  "async-trait",
  "collections",
  "derive_more",
+ "file_content",
  "futures 0.3.34",
  "gpui",
  "http_client",
@@ -9566,7 +9576,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "chardetng",
  "clock",
  "collections",
  "criterion",
@@ -9574,6 +9583,7 @@ dependencies = [
  "diffy",
  "ec4rs",
  "encoding_rs",
+ "file_content",
  "fs",
  "futures 0.3.34",
  "futures-lite 2.6.1",
@@ -14102,6 +14112,7 @@ dependencies = [
  "encoding_rs",
  "extension",
  "fancy-regex",
+ "file_content",
  "fs",
  "futures 0.3.34",
  "fuzzy",
@@ -22411,6 +22422,7 @@ dependencies = [
  "clock",
  "collections",
  "encoding_rs",
+ "file_content",
  "fs",
  "futures 0.3.34",
  "futures-lite 2.6.1",

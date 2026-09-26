@@ -6,6 +6,9 @@ use anyhow::{Context as _, Result, anyhow};
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use encoding_rs::Encoding;
+use file_content::{
+    ByteContent, DecodingReader, FILE_ANALYSIS_BYTES, decode_byte_header, encode_text,
+};
 use fs::{
     Fs, MTime, PathEvent, PathEventKind, RemoveOptions, TrashId, Watcher, copy_recursive,
     read_dir_items,
@@ -32,9 +35,7 @@ use gpui::{
     Task,
 };
 pub use ignore::{IgnoreKind, IgnoreStack};
-use language::{
-    ByteContent, DiskState, FILE_ANALYSIS_BYTES, analyze_byte_content, decode_text, encode_text,
-};
+use language::DiskState;
 
 use async_channel::{self, Sender};
 use parking_lot::Mutex;
@@ -7238,63 +7239,6 @@ fn read_file_header(file: &mut dyn Read, abs_path: &Path) -> Result<(Vec<u8>, bo
 
 const STREAM_BLOCK_BYTES: usize = 1024 * 1024;
 
-async fn read_file_to_end(
-    file: &mut (dyn Read + Send),
-    content: &mut Vec<u8>,
-    abs_path: &Path,
-) -> Result<()> {
-    let mut buf = vec![0u8; STREAM_BLOCK_BYTES];
-    loop {
-        let mut block_len = 0;
-        while block_len < buf.len() {
-            let n = file
-                .read(&mut buf[block_len..])
-                .with_context(|| format!("reading remaining bytes of the file {abs_path:?}"))?;
-            if n == 0 {
-                break;
-            }
-            block_len += n;
-        }
-
-        if block_len == 0 {
-            break;
-        }
-
-        content.extend_from_slice(&buf[..block_len]);
-        if block_len < buf.len() {
-            break;
-        }
-
-        yield_now().await;
-    }
-    Ok(())
-}
-
-pub async fn decode_file_text(
-    fs: &dyn Fs,
-    abs_path: &Path,
-) -> Result<(String, &'static Encoding, bool)> {
-    let mut file = fs
-        .open_sync(&abs_path)
-        .await
-        .with_context(|| format!("opening file {abs_path:?}"))?;
-
-    let (file_first_bytes, reached_eof) = read_file_header(&mut *file, abs_path)?;
-    let (_, byte_content) = decode_byte_header(&file_first_bytes);
-    anyhow::ensure!(
-        byte_content != ByteContent::Binary,
-        "Binary files are not supported"
-    );
-
-    // If the file is eligible for opening, read the rest of the file.
-    let mut content = file_first_bytes;
-    if !reached_eof {
-        read_file_to_end(&mut *file, &mut content, abs_path).await?;
-    }
-    let decoded = decode_text(content)?;
-    Ok((decoded.text, decoded.encoding, decoded.has_bom))
-}
-
 /// Reads and decodes a file straight into a [`Rope`].
 /// The returned rope has already had its line endings normalized, the
 /// [`LineEnding`] detected before normalizing is returned alongside it.
@@ -7314,21 +7258,26 @@ pub async fn decode_file_text_to_rope(
         "Binary files are not supported"
     );
 
-    // Only BOM-less, non-UTF-16 files are candidates for streaming: everything
-    // else needs the whole byte buffer in hand to decode or to detect encoding.
     if bom_encoding.is_none()
         && byte_content == ByteContent::Unknown
         && let Some((rope, line_ending)) =
-            stream_utf8_into_rope(&mut *file, prefix, reached_eof, abs_path).await?
+            stream_utf8_into_rope(&mut *file, prefix, reached_eof, abs_path, true).await?
     {
         return Ok((rope, line_ending, encoding_rs::UTF_8, false));
     }
 
-    // Not plain UTF-8 after all. Re-read the file and decode it all at once.
-    let (mut text, encoding, has_bom) = decode_file_text(fs, abs_path).await?;
-    let line_ending = LineEnding::detect(&text);
-    LineEnding::normalize(&mut text);
-    Ok((Rope::from(text), line_ending, encoding, has_bom))
+    let mut file = fs
+        .open_sync(abs_path)
+        .await
+        .with_context(|| format!("opening file {abs_path:?}"))?;
+    let encoding = bom_encoding.or(byte_content.encoding());
+    let mut reader = DecodingReader::new(&mut *file, encoding);
+    let (rope, line_ending) =
+        stream_utf8_into_rope(&mut reader, Vec::new(), false, abs_path, false)
+            .await?
+            .with_context(|| format!("decoding the file {abs_path:?}"))?;
+    let encoding = reader.encoding().unwrap_or(encoding_rs::UTF_8);
+    Ok((rope, line_ending, encoding, bom_encoding.is_some()))
 }
 
 /// Streams a presumed-UTF-8 file into a [`Rope`], normalizing line endings as it
@@ -7342,6 +7291,7 @@ async fn stream_utf8_into_rope(
     prefix: Vec<u8>,
     reached_eof: bool,
     abs_path: &Path,
+    reject_escape_sequences: bool,
 ) -> Result<Option<(Rope, LineEnding)>> {
     let mut rope = Rope::new();
     let mut line_ending = None;
@@ -7386,7 +7336,7 @@ async fn stream_utf8_into_rope(
 
         // ISO-2022-JP and friends are valid UTF-8 but carry escape sequences, so
         // they need the full-file encoding detector rather than this fast path.
-        if text.contains('\x1b') {
+        if reject_escape_sequences && text.contains('\x1b') {
             return Ok(None);
         }
 
@@ -7446,13 +7396,6 @@ fn push_normalized(rope: &mut Rope, text: &str, scratch: &mut String) {
     rope.push(scratch);
 }
 
-pub fn decode_byte_header(prefix: &[u8]) -> (Option<&'static Encoding>, ByteContent) {
-    if let Some((encoding, _bom_len)) = Encoding::for_bom(prefix) {
-        return (Some(encoding), ByteContent::Unknown);
-    }
-    (None, analyze_byte_content(prefix))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7461,7 +7404,7 @@ mod tests {
     /// decoded text and detected line ending, or `None` if the fast path bailed.
     async fn stream(bytes: &[u8]) -> Option<(String, LineEnding)> {
         let mut reader = std::io::Cursor::new(bytes.to_vec());
-        stream_utf8_into_rope(&mut reader, Vec::new(), false, Path::new("test"))
+        stream_utf8_into_rope(&mut reader, Vec::new(), false, Path::new("test"), true)
             .await
             .unwrap()
             .map(|(rope, line_ending)| (rope.to_string(), line_ending))
@@ -7472,25 +7415,11 @@ mod tests {
         let mut reader = std::io::Cursor::new(vec![b'a'; STREAM_BLOCK_BYTES * 2]);
 
         assert!(
-            stream_utf8_into_rope(&mut reader, Vec::new(), false, Path::new("test"))
+            stream_utf8_into_rope(&mut reader, Vec::new(), false, Path::new("test"), true)
                 .now_or_never()
                 .is_none()
         );
         assert_eq!(reader.position(), STREAM_BLOCK_BYTES as u64);
-    }
-
-    #[test]
-    fn test_file_reading_yields_between_blocks() {
-        let mut reader = std::io::Cursor::new(vec![b'a'; STREAM_BLOCK_BYTES * 2]);
-        let mut content = Vec::new();
-
-        assert!(
-            read_file_to_end(&mut reader, &mut content, Path::new("test"))
-                .now_or_never()
-                .is_none()
-        );
-        assert_eq!(reader.position(), STREAM_BLOCK_BYTES as u64);
-        assert_eq!(content.len(), STREAM_BLOCK_BYTES);
     }
 
     #[gpui::test]
@@ -7542,200 +7471,5 @@ mod tests {
         assert_eq!(stream(b"hello \xff\xfeA").await, None, "invalid utf-8");
         assert_eq!(stream(b"hello \xe2\x82").await, None, "truncated at eof");
         assert_eq!(stream(b"plain \x1b$B text").await, None, "iso-2022 escape");
-    }
-
-    /// reproduction of issue #50785
-    fn build_pcm16_wav_bytes() -> Vec<u8> {
-        let header: Vec<u8> = vec![
-            /*  RIFF header  */
-            0x52, 0x49, 0x46, 0x46, // "RIFF"
-            0xc6, 0xcf, 0x00, 0x00, // file size: 8
-            0x57, 0x41, 0x56, 0x45, // "WAVE"
-            /*  fmt chunk  */
-            0x66, 0x6d, 0x74, 0x20, // "fmt "
-            0x10, 0x00, 0x00, 0x00, // chunk size: 16
-            0x01, 0x00, // format: PCM (1)
-            0x01, 0x00, // channels: 1 (mono)
-            0x80, 0x3e, 0x00, 0x00, // sample rate: 16000
-            0x00, 0x7d, 0x00, 0x00, // byte rate: 32000
-            0x02, 0x00, // block align: 2
-            0x10, 0x00, // bits per sample: 16
-            /*  LIST chunk  */
-            0x4c, 0x49, 0x53, 0x54, // "LIST"
-            0x1a, 0x00, 0x00, 0x00, // chunk size: 26
-            0x49, 0x4e, 0x46, 0x4f, // "INFO"
-            0x49, 0x53, 0x46, 0x54, // "ISFT"
-            0x0d, 0x00, 0x00, 0x00, // sub-chunk size: 13
-            0x4c, 0x61, 0x76, 0x66, 0x36, 0x32, 0x2e, 0x33, // "Lavf62.3"
-            0x2e, 0x31, 0x30, 0x30, 0x00, // ".100\0"
-            /* padding byte for word alignment */
-            0x00, // data chunk header
-            0x64, 0x61, 0x74, 0x61, // "data"
-            0x80, 0xcf, 0x00, 0x00, // chunk size
-        ];
-
-        let mut bytes = header;
-
-        // fill remaining space up to `FILE_ANALYSIS_BYTES` with synthetic PCM
-        let audio_bytes_needed = FILE_ANALYSIS_BYTES - bytes.len();
-        for i in 0..(audio_bytes_needed / 2) {
-            let sample = (i & 0xFF) as u8;
-            bytes.push(sample); // low byte: varies
-            bytes.push(0x00); // high byte: zero for small values
-        }
-
-        bytes
-    }
-
-    #[test]
-    fn test_pcm16_wav_detected_as_binary() {
-        let wav_bytes = build_pcm16_wav_bytes();
-        assert_eq!(wav_bytes.len(), FILE_ANALYSIS_BYTES);
-
-        let result = analyze_byte_content(&wav_bytes);
-        assert_eq!(
-            result,
-            ByteContent::Binary,
-            "PCM 16-bit WAV should be detected as Binary via RIFF header"
-        );
-    }
-
-    #[test]
-    fn test_le16_binary_not_misdetected_as_utf16le() {
-        let mut bytes = b"FAKE".to_vec();
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            let sample = (bytes.len() & 0xFF) as u8;
-            bytes.push(sample);
-            bytes.push(0x00);
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-
-        let result = analyze_byte_content(&bytes);
-        assert_eq!(
-            result,
-            ByteContent::Binary,
-            "LE 16-bit binary with control characters should be detected as Binary"
-        );
-    }
-
-    #[test]
-    fn test_be16_binary_not_misdetected_as_utf16be() {
-        let mut bytes = b"FAKE".to_vec();
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            bytes.push(0x00);
-            let sample = (bytes.len() & 0xFF) as u8;
-            bytes.push(sample);
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-
-        let result = analyze_byte_content(&bytes);
-        assert_eq!(
-            result,
-            ByteContent::Binary,
-            "BE 16-bit binary with control characters should be detected as Binary"
-        );
-    }
-
-    // Mimics binary formats that interleave short ASCII fragments with small
-    // length/type fields (as seen in some game/asset binary formats, e.g.
-    // Tibia-style OTBM maps): most high bytes are zero, matching UTF-16LE's
-    // null-byte pattern for ASCII, but the low bytes are mostly non-word
-    // "tag" values rather than real letters/digits/spaces.
-    fn build_tag_interleaved_binary_bytes() -> Vec<u8> {
-        let mut bytes = Vec::new();
-        let tags: [u8; 6] = [0xFE, 0xFF, 0x25, 0x2B, 0xA3, 0xC5];
-        let mut i = 0;
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            bytes.push(tags[i % tags.len()]);
-            bytes.push(0x00);
-            i += 1;
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-        bytes
-    }
-
-    #[test]
-    fn test_tag_interleaved_binary_not_misdetected_as_utf16le() {
-        let bytes = build_tag_interleaved_binary_bytes();
-        assert_eq!(bytes.len(), FILE_ANALYSIS_BYTES);
-
-        let result = analyze_byte_content(&bytes);
-        assert_eq!(
-            result,
-            ByteContent::Binary,
-            "binary data with sparse non-word low bytes and null high bytes \
-             should not be misdetected as UTF-16LE text"
-        );
-    }
-
-    #[test]
-    fn test_utf16le_text_detected_as_utf16le() {
-        let text = "Hello, world! This is a UTF-16 test string. ";
-        let mut bytes = Vec::new();
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            bytes.extend(text.encode_utf16().flat_map(|u| u.to_le_bytes()));
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-
-        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Le);
-    }
-
-    #[test]
-    fn test_utf16be_text_detected_as_utf16be() {
-        let text = "Hello, world! This is a UTF-16 test string. ";
-        let mut bytes = Vec::new();
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            bytes.extend(text.encode_utf16().flat_map(|u| u.to_be_bytes()));
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-
-        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Be);
-    }
-
-    #[test]
-    fn test_utf16le_cyrillic_text_detected_as_utf16le() {
-        let text = "Привет, мир! Это тестовая строка в UTF-16. ";
-        let mut bytes = Vec::new();
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            bytes.extend(text.encode_utf16().flat_map(|u| u.to_le_bytes()));
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-
-        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Le);
-    }
-
-    #[test]
-    fn test_utf16be_greek_text_detected_as_utf16be() {
-        let text = "Γεια σου κόσμε! Αυτή είναι μια δοκιμαστική συμβολοσειρά. ";
-        let mut bytes = Vec::new();
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            bytes.extend(text.encode_utf16().flat_map(|u| u.to_be_bytes()));
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-
-        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Be);
-    }
-
-    #[test]
-    fn test_known_binary_headers() {
-        let cases: &[(&[u8], &str)] = &[
-            (b"RIFF\x00\x00\x00\x00WAVE", "WAV"),
-            (b"RIFF\x00\x00\x00\x00AVI ", "AVI"),
-            (b"OggS\x00\x02", "OGG"),
-            (b"fLaC\x00\x00", "FLAC"),
-            (b"ID3\x03\x00", "MP3 ID3v2"),
-            (b"\xFF\xFB\x90\x00", "MP3 MPEG1 Layer3"),
-            (b"\xFF\xF3\x90\x00", "MP3 MPEG2 Layer3"),
-        ];
-
-        for (header, label) in cases {
-            let mut bytes = header.to_vec();
-            bytes.resize(FILE_ANALYSIS_BYTES, 0x41); // pad with 'A'
-            assert_eq!(
-                analyze_byte_content(&bytes),
-                ByteContent::Binary,
-                "{label} should be detected as Binary"
-            );
-        }
     }
 }

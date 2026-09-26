@@ -1,7 +1,7 @@
-use std::io::BufReader;
+use std::io::{self, BufReader, Cursor};
 
 use language::Buffer;
-use project::search::SearchQuery;
+use project::search::{MatchPositionHint, SearchQuery};
 use text::Rope;
 use util::{
     paths::{PathMatcher, PathStyle},
@@ -197,7 +197,7 @@ async fn regex_with_eol_detects_lines() {
     .unwrap();
     let input = " Bool\nsomething else";
     let result = re
-        .detect(BufReader::new(Box::new(input.as_bytes())))
+        .detect(&mut BufReader::new(input.as_bytes()))
         .await
         .unwrap();
     assert!(result.is_some());
@@ -219,8 +219,131 @@ async fn multi_line_regex_detects_matches() {
     .unwrap();
     let input = " Bool\nbool";
     let result = re
-        .detect(BufReader::new(Box::new(input.as_bytes())))
+        .detect(&mut BufReader::new(input.as_bytes()))
         .await
         .unwrap();
     assert!(result.is_some());
+}
+
+#[test]
+fn detect_reports_line_across_block_boundaries() {
+    let line_len = 1000;
+    let filler = format!("{}\n", "x".repeat(line_len - 1));
+    let mut text = filler.repeat(70);
+    let needle_line = text.lines().count();
+    text.push_str("prefix needle suffix\n");
+    text.push_str(&filler.repeat(3));
+
+    for (query, case_sensitive) in [("needle", true), ("NEEDLE", false), ("x\nx", true)] {
+        let query = SearchQuery::text(
+            query,
+            false,
+            case_sensitive,
+            false,
+            PathMatcher::default(),
+            PathMatcher::default(),
+            false,
+            None,
+        )
+        .unwrap();
+        let hint = smol::block_on(query.detect(&mut reader(text.as_bytes()))).unwrap();
+        let expected = if query.as_str().contains('\n') {
+            MatchPositionHint::default()
+        } else {
+            MatchPositionHint::Line(needle_line as u32)
+        };
+        assert_eq!(hint, Some(expected), "{:?}", query.as_str());
+    }
+
+    let query = SearchQuery::text(
+        "absent",
+        false,
+        true,
+        false,
+        PathMatcher::default(),
+        PathMatcher::default(),
+        false,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        smol::block_on(query.detect(&mut reader(text.as_bytes()))).unwrap(),
+        None
+    );
+
+    let mut invalid = text.into_bytes();
+    invalid.extend_from_slice(b"\xff\xfe tail\n");
+    let error = smol::block_on(query.detect(&mut reader(&invalid))).unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<io::Error>().map(|error| error.kind()),
+        Some(io::ErrorKind::InvalidData)
+    );
+}
+
+#[test]
+fn detect_handles_block_boundary_splits() {
+    const BLOCK_BYTES: usize = 64 * 1024;
+    let needle = "néédle";
+    for split in 1..needle.len() {
+        let mut text = "a".repeat(BLOCK_BYTES - split);
+        text.push_str(needle);
+        text.push_str("\ntail\n");
+        for case_sensitive in [true, false] {
+            let query = SearchQuery::text(
+                needle,
+                false,
+                case_sensitive,
+                false,
+                PathMatcher::default(),
+                PathMatcher::default(),
+                false,
+                None,
+            )
+            .unwrap();
+            let expected = if query.is_regex() {
+                MatchPositionHint::ByteOffset(BLOCK_BYTES - split)
+            } else {
+                MatchPositionHint::Line(0)
+            };
+            assert_eq!(
+                smol::block_on(query.detect(&mut reader(text.as_bytes()))).unwrap(),
+                Some(expected),
+                "split = {split}, case_sensitive = {case_sensitive}"
+            );
+        }
+    }
+
+    let query = SearchQuery::text(
+        "absent",
+        false,
+        true,
+        false,
+        PathMatcher::default(),
+        PathMatcher::default(),
+        false,
+        None,
+    )
+    .unwrap();
+    let emoji = "\u{1f600}";
+    for split in 1..emoji.len() {
+        let mut text = "a".repeat(BLOCK_BYTES - split).into_bytes();
+        text.extend_from_slice(emoji.as_bytes());
+        text.extend_from_slice(b"\nline\n");
+        assert_eq!(
+            smol::block_on(query.detect(&mut reader(&text))).unwrap(),
+            None,
+            "split = {split}"
+        );
+        text.truncate(BLOCK_BYTES - split + 2);
+        let error = smol::block_on(query.detect(&mut reader(&text))).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<io::Error>().map(|error| error.kind()),
+            Some(io::ErrorKind::InvalidData),
+            "truncated split = {split}"
+        );
+    }
+}
+
+fn reader(bytes: &[u8]) -> Cursor<Vec<u8>> {
+    Cursor::new(bytes.to_vec())
 }

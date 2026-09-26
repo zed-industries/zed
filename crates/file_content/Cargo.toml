@@ -1,0 +1,18 @@
+[package]
+name = "file_content"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/file_content.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+chardetng.workspace = true
+encoding_rs.workspace = true

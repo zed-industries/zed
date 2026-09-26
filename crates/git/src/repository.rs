@@ -7,6 +7,7 @@ use crate::{Oid, RunHook, SHA256_HEX_LENGTH, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_channel::Sender;
 use collections::HashMap;
+use file_content::{ByteContent, analyze_byte_content};
 use futures::channel::oneshot;
 use futures::future::BoxFuture;
 use futures::io::BufWriter;
@@ -569,13 +570,6 @@ impl CommitDetails {
     }
 }
 
-/// Detects if content is binary by checking for NUL bytes in the first 8000 bytes.
-/// This matches git's binary detection heuristic.
-pub fn is_binary_content(content: &[u8]) -> bool {
-    let check_len = content.len().min(8000);
-    content[..check_len].contains(&0)
-}
-
 struct LoadedCommitObject {
     content: Vec<u8>,
     is_binary: bool,
@@ -598,7 +592,7 @@ async fn read_commit_blob<R: smol::io::AsyncBufRead + Unpin>(
     stdout.read_exact(&mut bytes).await?;
     stdout.read_exact(newline).await?;
 
-    let is_binary = is_binary_content(&bytes);
+    let is_binary = analyze_byte_content(&bytes) == ByteContent::Binary;
     Ok(LoadedCommitObject {
         content: bytes,
         is_binary,

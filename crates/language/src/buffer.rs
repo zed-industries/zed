@@ -3,9 +3,13 @@ pub mod row_chunk;
 
 pub use bracket_ranges::BracketMatch;
 
+pub use crate::{
+    CaptureId, Grammar, HighlightId, HighlightMap, Language, LanguageRegistry,
+    diagnostic_set::DiagnosticSet, proto,
+};
 use crate::{
-    ByteContent, DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig,
-    PLAIN_TEXT, RunnableTag, TextObject, TreeSitterOptions, analyze_byte_content,
+    DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig, PLAIN_TEXT,
+    RunnableTag, TextObject, TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{AutoIndentMode, LanguageSettings},
     outline::OutlineItem,
@@ -19,16 +23,13 @@ use crate::{
     text_diff::text_diff,
     unified_diff_with_offsets,
 };
-pub use crate::{
-    CaptureId, Grammar, HighlightId, HighlightMap, Language, LanguageRegistry,
-    diagnostic_set::DiagnosticSet, proto,
-};
 
 use anyhow::{Context as _, Result};
 use clock::Lamport;
 pub use clock::ReplicaId;
 use collections::HashMap;
 use encoding_rs::Encoding;
+use file_content::{ByteContent, analyze_byte_content};
 use fs::MTime;
 use futures::channel::oneshot;
 use futures_lite::future::yield_now;
