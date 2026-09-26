@@ -404,6 +404,8 @@ actions!(
         Open,
         /// Opens the selected file in a permanent tab.
         OpenPermanent,
+        /// Opens the selected file in a permanent tab without focusing.
+        OpenPermanentUnfocused,
         /// Opens the selected file in a vertical split.
         OpenSplitVertical,
         /// Opens the selected file in a horizontal split.
@@ -1937,6 +1939,15 @@ impl ProjectPanel {
 
     fn open_permanent(&mut self, _: &OpenPermanent, window: &mut Window, cx: &mut Context<Self>) {
         self.open_internal(false, true, None, window, cx);
+    }
+
+    fn open_permanent_unfocused(
+        &mut self,
+        _: &OpenPermanentUnfocused,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_internal(false, false, None, window, cx);
     }
 
     fn open_split_vertical(
@@ -7452,6 +7463,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::expand_selected_entry_and_children))
                 .on_action(cx.listener(Self::open))
                 .on_action(cx.listener(Self::open_permanent))
+                .on_action(cx.listener(Self::open_permanent_unfocused))
                 .on_action(cx.listener(Self::open_split_vertical))
                 .on_action(cx.listener(Self::open_split_horizontal))
                 .on_action(cx.listener(Self::open_markdown_preview))
