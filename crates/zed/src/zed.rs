@@ -5496,6 +5496,101 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    async fn test_reopening_closed_preview_item(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update_global::<SettingsStore, ()>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.preview_tabs.get_or_insert_default().enabled = Some(true);
+            });
+        });
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/root"),
+                json!({
+                    "file1": "",
+                    "file2": "",
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+        project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let files = cx.read(|cx| workspace.file_project_paths(cx));
+        let file1 = files[0].clone();
+        let file2 = files[1].clone();
+
+        let preview_item_id = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path_preview(file1.clone(), None, true, true, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .item_id();
+        assert_eq!(
+            pane.read_with(cx, |pane, _| pane.preview_item_id()),
+            Some(preview_item_id)
+        );
+
+        workspace
+            .update_in(cx, |_, window, cx| {
+                pane.update(cx, |pane, cx| {
+                    pane.close_item_by_id(preview_item_id, SaveIntent::Close, window, cx)
+                })
+            })
+            .await
+            .unwrap();
+        assert!(workspace.read_with(cx, |workspace, cx| workspace.active_item(cx).is_none()));
+
+        workspace
+            .update_in(cx, Workspace::reopen_closed_item)
+            .await
+            .unwrap();
+
+        let reopened_item = workspace
+            .read_with(cx, |workspace, cx| workspace.active_item(cx))
+            .expect("closed preview item should reopen");
+        assert_eq!(cx.read(|cx| reopened_item.project_path(cx)), Some(file1));
+        assert_eq!(
+            pane.read_with(cx, |pane, _| pane.preview_item_id()),
+            Some(reopened_item.item_id())
+        );
+
+        let replacement_item_id = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path_preview(file2.clone(), None, true, true, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .item_id();
+
+        workspace
+            .update_in(cx, Workspace::reopen_closed_item)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            workspace.read_with(cx, |workspace, cx| {
+                workspace
+                    .active_item(cx)
+                    .and_then(|item| item.project_path(cx))
+            }),
+            Some(file2)
+        );
+        assert_eq!(
+            pane.read_with(cx, |pane, _| pane.preview_item_id()),
+            Some(replacement_item_id)
+        );
+    }
+
     fn init_keymap_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
