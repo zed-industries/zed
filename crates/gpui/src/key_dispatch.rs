@@ -1732,4 +1732,19 @@ mod tests {
         cx.simulate_keystrokes("ctrl-b [");
         test.update(cx, |test, _| assert_eq!(test.text.borrow().as_str(), "["))
     }
+
+    /// A platform input handler made with an explicit handler drives that handler from
+    /// inside the window too, not the window's focused one (here there is none).
+    #[crate::test]
+    fn explicit_platform_input_handler_is_used_inside_the_window(cx: &mut TestAppContext) {
+        let (test, cx) = cx.add_window_view(|_, cx| PendingTextInputTestView::new(cx));
+        cx.update(|window, cx| {
+            let handler = test.read(cx).clone();
+            let mut platform_handler =
+                crate::PlatformInputHandler::new(window.to_async(cx), Box::new(handler));
+            assert!(platform_handler.accepts_text_input(window, cx));
+            platform_handler.dispatch_input("x", window, cx);
+        });
+        test.update(cx, |test, _| assert_eq!(test.text.borrow().as_str(), "x"));
+    }
 }

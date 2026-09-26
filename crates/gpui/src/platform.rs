@@ -1491,7 +1491,21 @@ impl PlatformInputHandler {
             .flatten()
     }
 
-    /// Like `update`, for callers already inside the window.
+    /// Like `update`, for callers already inside the window: runs `f` against the handler
+    /// given to [`new`](Self::new), or else the window's focused handler.
+    fn update_in<R>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut App,
+        f: impl FnOnce(&mut dyn InputHandler, &mut Window, &mut App) -> R,
+    ) -> Option<R> {
+        match self.handler.as_mut() {
+            Some(handler) => Some(f(handler.as_mut(), window, cx)),
+            None => Self::with_handler(window, cx, f),
+        }
+    }
+
+    /// Runs `f` against the window's focused handler, for callers inside the window.
     pub(crate) fn with_handler<R>(
         window: &mut Window,
         cx: &mut App,
@@ -1584,7 +1598,7 @@ impl PlatformInputHandler {
     }
 
     pub fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut App) {
-        Self::with_handler(window, cx, |handler, window, cx| {
+        self.update_in(window, cx, |handler, window, cx| {
             handler.replace_text_in_range(None, input, window, cx)
         });
     }
@@ -1625,7 +1639,7 @@ impl PlatformInputHandler {
     }
 
     pub fn selected_bounds(&mut self, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>> {
-        Self::with_handler(window, cx, |handler, window, cx| {
+        self.update_in(window, cx, |handler, window, cx| {
             let marked_range = handler.marked_text_range(window, cx);
             let selection = handler.selected_text_range(true, window, cx)?;
             Self::compute_ime_candidate_bounds(marked_range, &selection, |range| {
@@ -1668,7 +1682,7 @@ impl PlatformInputHandler {
 
     #[allow(dead_code)]
     pub fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool {
-        Self::with_handler(window, cx, |handler, window, cx| {
+        self.update_in(window, cx, |handler, window, cx| {
             handler.accepts_text_input(window, cx)
         })
         .unwrap_or(false)
@@ -1699,7 +1713,7 @@ impl PlatformInputHandler {
         window: &mut Window,
         cx: &mut App,
     ) -> TextInputConfiguration {
-        Self::with_handler(window, cx, |handler, window, cx| {
+        self.update_in(window, cx, |handler, window, cx| {
             handler.text_input_configuration(window, cx)
         })
         .unwrap_or_default()
