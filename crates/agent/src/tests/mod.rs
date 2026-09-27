@@ -1,7 +1,7 @@
 use super::*;
 use acp_thread::{
-    AgentConnection, AgentModelGroupName, AgentModelList, ClientUserMessageId, PermissionOptions,
-    ThreadStatus,
+    AgentConnection, AgentModelGroupName, AgentModelList, AgentThreadEntry, ClientUserMessageId,
+    PermissionOptions, ThreadStatus,
 };
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentProfileId;
@@ -5512,6 +5512,146 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             "error should mention the tool is disabled, got: {err_msg}"
         );
     }
+}
+
+#[gpui::test]
+async fn test_ask_user_elicitation_references_scoped_tool_call_id(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    &json!({
+                        "agent": {
+                            "profiles": {
+                                "ask-user": {
+                                    "name": "Ask User",
+                                    "tools": { AskUserTool::NAME: true }
+                                }
+                            }
+                        }
+                    })
+                    .to_string(),
+                    cx,
+                )
+                .result()
+                .expect("test settings should parse");
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/", json!({ "a": {} })).await;
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent =
+        cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+    let acp_thread = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+        })
+        .await
+        .unwrap();
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    let model = Arc::new(FakeLanguageModel::default());
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+        thread.set_profile(AgentProfileId("ask-user".into()), cx);
+    });
+    cx.run_until_parked();
+
+    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Prompt", cx));
+    cx.run_until_parked();
+    let ask_user_input = AskUserToolInput {
+        question: "Which directory should we explore?".to_string(),
+        options: Vec::new(),
+        allow_free_text: true,
+    };
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "call_1".into(),
+            name: AskUserTool::NAME.into(),
+            raw_input: serde_json::to_string(&ask_user_input).unwrap(),
+            input: language_model::LanguageModelToolUseInput::Json(
+                serde_json::to_value(&ask_user_input).unwrap(),
+            ),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let (tool_call_id, elicitation_id) = acp_thread.read_with(cx, |thread, _| {
+        let tool_call_id = thread
+            .entries()
+            .iter()
+            .find_map(|entry| match entry {
+                AgentThreadEntry::ToolCall(tool_call) => Some(tool_call.id.clone()),
+                _ => None,
+            })
+            .expect("ask_user tool call should be rendered");
+        let elicitation_id = thread
+            .entries()
+            .iter()
+            .find_map(|entry| match entry {
+                AgentThreadEntry::Elicitation(id) => Some(id.clone()),
+                _ => None,
+            })
+            .expect("ask_user elicitation should be rendered");
+        let (_, elicitation) = thread
+            .elicitation(&elicitation_id)
+            .expect("elicitation should be stored");
+        let acp::ElicitationScope::Session(scope) = elicitation.request.scope() else {
+            panic!("ask_user elicitation should be session-scoped");
+        };
+        assert_ne!(tool_call_id, acp::ToolCallId::new("call_1"));
+        assert_eq!(
+            scope.tool_call_id.as_ref(),
+            Some(&tool_call_id),
+            "the elicitation must reference the tool card's scoped id"
+        );
+        (tool_call_id, elicitation_id)
+    });
+
+    acp_thread.update(cx, |thread, cx| {
+        thread.respond_to_elicitation(
+            &elicitation_id,
+            acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                acp::ElicitationAcceptAction::new().content(std::collections::BTreeMap::from([(
+                    "other".to_string(),
+                    acp::ElicitationContentValue::from("delve into src"),
+                )])),
+            )),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    acp_thread.read_with(cx, |thread, _| {
+        let tool_call_entry = thread
+            .entries()
+            .iter()
+            .find(|entry| {
+                matches!(entry, AgentThreadEntry::ToolCall(tool_call) if tool_call.id == tool_call_id)
+            })
+            .expect("ask_user tool call should still be present");
+        assert!(
+            thread.is_user_authored_scroll_target(tool_call_entry),
+            "the answered ask_user tool call should be a scroll-to-user-message target"
+        );
+    });
+
+    model.send_last_completion_stream_text_chunk("Exploring src");
+    model.end_last_completion_stream();
+    send.await.unwrap();
 }
 
 #[gpui::test]

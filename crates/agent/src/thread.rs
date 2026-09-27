@@ -6364,14 +6364,14 @@ impl ToolCallEventStream {
         cx: &mut App,
     ) -> Task<Result<acp::CreateElicitationResponse>> {
         let stream = self.stream.clone();
-        let tool_use_id = self.tool_use_id.clone();
+        let tool_call_id = self.tool_call_id.clone();
         cx.spawn(async move |_cx| {
             let (response_tx, response_rx) = oneshot::channel();
             if let Err(error) =
                 stream
                     .0
                     .unbounded_send(Ok(ThreadEvent::Elicitation(ElicitationRequest {
-                        tool_call_id: acp::ToolCallId::new(tool_use_id.to_string()),
+                        tool_call_id,
                         message,
                         schema,
                         response: response_tx,
