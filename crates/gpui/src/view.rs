@@ -2909,6 +2909,51 @@ mod tests {
         }
     }
 
+    /// A reused view is not prepainted again, but an ancestor's layout can still measure its
+    /// text anew when the space offered to it changes. The text keeps the bounds its last
+    /// prepaint gave it, which its click listener reads.
+    #[gpui::test]
+    fn reused_text_measured_again_keeps_its_bounds(cx: &mut TestAppContext) {
+        struct Label(Rc<Cell<usize>>);
+        impl Render for Label {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let clicks = self.0.clone();
+                crate::InteractiveText::new("label", crate::StyledText::new("hi"))
+                    .on_click(vec![0..2], move |_, _, _| clicks.set(clicks.get() + 1))
+            }
+        }
+        struct Host {
+            label: Entity<Label>,
+            width: f32,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .w(px(self.width))
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .child(self.label.clone())
+            }
+        }
+        let clicks = Rc::new(Cell::new(0));
+        let window = cx.open_window(size(px(300.), px(100.)), |_, cx| Host {
+            label: cx.new(|_| Label(clicks.clone())),
+            width: 200.,
+        });
+        cx.run_until_parked();
+        window
+            .update(cx, |host, _, cx| {
+                host.width = 250.;
+                cx.notify();
+            })
+            .expect("window open");
+        cx.run_until_parked();
+        let mut visual = crate::VisualTestContext::from_window(window.into(), cx);
+        visual.simulate_click(crate::point(px(2.), px(5.)), crate::Modifiers::default());
+        assert_eq!(clicks.get(), 1);
+    }
+
     /// A view's group styles resolve to the hitbox of a `.group()` element drawn by an
     /// ancestor, whose id its listeners hold. When the ancestor renders again, the group
     /// has a new hitbox, and a clean child must not be reused with the old one.

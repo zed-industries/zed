@@ -693,6 +693,14 @@ impl TextLayout {
                     return size;
                 }
 
+                // A view reused as a whole keeps its text laid out but is not prepainted
+                // again, while an ancestor's layout can still measure the text anew. Its
+                // listeners then need the bounds its last prepaint gave it.
+                let previous_bounds = element_state
+                    .0
+                    .borrow()
+                    .as_ref()
+                    .and_then(|text_layout| text_layout.bounds);
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
                 let (text, runs) = if let Some(truncate_width) = truncate_width {
                     if let Some(max_lines) = text_style.line_clamp
@@ -753,7 +761,7 @@ impl TextLayout {
                         wrap_width,
                         truncate_width,
                         size: Some(Size::default()),
-                        bounds: None,
+                        bounds: previous_bounds,
                     });
                     return Size::default();
                 };
@@ -772,7 +780,7 @@ impl TextLayout {
                     wrap_width,
                     truncate_width,
                     size: Some(size),
-                    bounds: None,
+                    bounds: previous_bounds,
                 });
 
                 size

@@ -1422,12 +1422,18 @@ impl ViewTree {
     }
 
     /// Adds text looked up on the node's behalf outside its traversal, such as while
-    /// measuring its layout.
+    /// measuring its layout. A reused node's layout can be measured again every frame
+    /// without the node rendering, so the first such text in a frame replaces what the
+    /// node held rather than adding to it.
     pub(crate) fn append_text(&mut self, node_id: ViewNodeId, text: crate::text_system::TextUse) {
         if let Some(node) = self.nodes.get_mut(node_id) {
             let phase = node.output.phase_mut(MetadataPhase::Layout);
-            phase.text.append(text);
-            phase.text_frame = self.frame;
+            if phase.text_frame == self.frame {
+                phase.text.append(text);
+            } else {
+                phase.text = text;
+                phase.text_frame = self.frame;
+            }
         }
     }
 
