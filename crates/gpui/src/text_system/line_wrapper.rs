@@ -127,7 +127,10 @@ impl LineWrapper {
                             IndentAdjustment::SameIndent => base_indent,
                             IndentAdjustment::ExtraColumns(extra) => {
                                 let candidate = base_indent + extra;
-                                if (candidate as f32 + 1.0) * self.width_for_char(' ') > wrap_width
+                                // Reserve headroom for at least one full-width character (2 columns)
+                                // so a multi-column glyph on the continuation line does not
+                                // immediately exceed wrap width and degrade into 1-character rows.
+                                if (candidate as f32 + 2.0) * self.width_for_char(' ') > wrap_width
                                 {
                                     0
                                 } else {
@@ -1649,12 +1652,12 @@ mod tests {
         let text = "      ab cd ef gh";
         let wrap_width = space_width * 10.0;
 
-        // When base_indent + extra overflows wrap width (6 + 8 + 1 > 10),
+        // When base_indent + extra overflows wrap width (6 + 8 + 2 > 10),
         // indent must fall back to 0 instead of degrading to one character per row.
         //
         // Expected wrapped lines (10 columns):
-        //   |      ab |  (row 0: 6 spaces + "ab ", len 9)
-        //   |cd ef gh |  (row 1: 0 indent + "cd ef gh", len 8)
+        //   |      ab  |  (row 0: 6 spaces + "ab ", len 9)
+        //   |cd ef gh  |  (row 1: 0 indent + "cd ef gh", len 8)
         assert_eq!(
             wrapper
                 .wrap_line(
@@ -1666,11 +1669,11 @@ mod tests {
             &[Boundary::new(9, 0)]
         );
 
-        // When base_indent + extra fits within wrap width (6 + 2 + 1 <= 10),
+        // When base_indent + extra fits within wrap width (6 + 2 + 2 <= 10),
         // the extra indent is applied and not clamped.
         //
         // Expected wrapped lines (10 columns):
-        //   |      ab |  (row 0: 6 spaces + "ab ", len 9)
+        //   |      ab  |  (row 0: 6 spaces + "ab ", len 9)
         //   |        cd|  (row 1: 8 spaces + "cd", len 10)
         //   |        ef|  (row 2: 8 spaces + "ef", len 10)
         //   |        gh|  (row 3: 8 spaces + "gh", len 10)
@@ -1688,6 +1691,30 @@ mod tests {
                 Boundary::new(13, 8),
                 Boundary::new(15, 8),
             ]
+        );
+
+        // When text contains full-width (two-column) glyphs, reserving headroom for a
+        // two-column character (candidate + 2 > wrap_width) ensures that candidate
+        // indents leaving only 1 column cannot accept the indent and overflow.
+        //
+        // 1 space indent, wrap width 10 columns.
+        // " 🦀🦀🦀🦀🦀🦀🦀🦀" with extra=8 (extra_two with tab_size=4):
+        // candidate = 1 + 8 = 9.
+        // With +2 headroom (9 + 2 > 10), indent falls back to 0.
+        //
+        // Expected wrapped lines (10 columns):
+        //   | 🦀🦀🦀🦀 |  (row 0: 1 space + 4 two-column glyphs, 9 cols)
+        //   |🦀🦀🦀🦀  |  (row 1: 0 indent + 4 two-column glyphs, 8 cols)
+        let full_width_text = " 🦀🦀🦀🦀🦀🦀🦀🦀";
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text(full_width_text)],
+                    wrap_width,
+                    IndentAdjustment::ExtraColumns(8),
+                )
+                .collect::<Vec<_>>(),
+            &[Boundary::new(17, 0)]
         );
     }
 }

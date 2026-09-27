@@ -1520,13 +1520,13 @@ mod tests {
     fn init_wrap_test(
         text: &str,
         tab_size: NonZeroU32,
+        soft_wrapping: Option<Pixels>,
         cx: &mut gpui::TestAppContext,
     ) -> (Entity<WrapMap>, TabMap, FoldSnapshot) {
         let text_system = cx.read(|cx| cx.text_system().clone());
         let font = test_font();
         let _font_id = text_system.resolve_font(&font);
         let font_size = px(14.0);
-        let soft_wrapping = Some(font_size * 8.0);
 
         let buffer = cx.new(|cx| language::Buffer::local(text, cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
@@ -1544,8 +1544,9 @@ mod tests {
     async fn test_soft_wrap_indent(cx: &mut gpui::TestAppContext) {
         init_test(cx);
 
-        let text = "fn main() {\n    let x = 1;\n    let y = 2;\n}";
-        let (wrap_map, _, _) = init_wrap_test(text, 4.try_into().unwrap(), cx);
+        let text = "fn main() {\n    let some_variable = 1;\n    let some_variable = 2;\n}";
+        let (wrap_map, _, _) =
+            init_wrap_test(text, 4.try_into().unwrap(), Some(px(14.0) * 15.0), cx);
 
         // Test None
         wrap_map.update(cx, |map, cx| {
@@ -1554,7 +1555,7 @@ mod tests {
         let wrap_snapshot = wrap_map.update(cx, |map, _cx| map.snapshot.clone());
         assert_eq!(
             wrap_snapshot.text(),
-            "fn main() {\n    let x = \n1;\n    let y = \n2;\n}"
+            "fn main() {\n    let some_variable = \n1;\n    let some_variable = \n2;\n}"
         );
         assert_eq!(wrap_snapshot.soft_wrap_indent(WrapRow(1)), Some(0));
 
@@ -1565,7 +1566,7 @@ mod tests {
         let wrap_snapshot = wrap_map.update(cx, |map, _cx| map.snapshot.clone());
         assert_eq!(
             wrap_snapshot.text(),
-            "fn main() {\n    let x = \n    1;\n    let y = \n    2;\n}"
+            "fn main() {\n    let some_variable = \n    1;\n    let some_variable = \n    2;\n}"
         );
 
         // Test ExtraOne
@@ -1575,7 +1576,7 @@ mod tests {
         let wrap_snapshot = wrap_map.update(cx, |map, _cx| map.snapshot.clone());
         assert_eq!(
             wrap_snapshot.text(),
-            "fn main() {\n    let x = \n        1;\n    let y = \n        2;\n}"
+            "fn main() {\n    let some_variable = \n        1;\n    let some_variable = \n        2;\n}"
         );
 
         // Test ExtraTwo
@@ -1585,7 +1586,7 @@ mod tests {
         let wrap_snapshot = wrap_map.update(cx, |map, _cx| map.snapshot.clone());
         assert_eq!(
             wrap_snapshot.text(),
-            "fn main() {\n    let x = \n            1;\n    let y = \n            2;\n}"
+            "fn main() {\n    let some_variable = \n            1;\n    let some_variable = \n            2;\n}"
         );
     }
 
@@ -1595,7 +1596,7 @@ mod tests {
 
         let text = "    let x = 1;\n";
         let (wrap_map, mut tab_map, fold_snapshot) =
-            init_wrap_test(text, 4.try_into().unwrap(), cx);
+            init_wrap_test(text, 4.try_into().unwrap(), Some(px(14.0) * 8.0), cx);
 
         wrap_map.update(cx, |map, cx| {
             map.set_soft_wrap_indent(language::language_settings::SoftWrapIndent::ExtraOne, cx)
