@@ -251,14 +251,13 @@ impl ThreadItem {
 impl RenderOnce for ThreadItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let color = cx.theme().colors();
+        let raw_bg = self.base_bg.unwrap_or(color.surface_background);
         // The fade gradient paints a solid color over the title to blend it into
         // the row background, but a transparent window has no opaque surface to
         // fade into, so it renders as a visible patch; truncate the title instead.
-        let opaque_window =
-            cx.theme().window_background_appearance() == WindowBackgroundAppearance::Opaque;
-        let sidebar_base_bg = color.surface_background;
-
-        let raw_bg = self.base_bg.unwrap_or(sidebar_base_bg);
+        let opaque_window = cx.theme().window_background_appearance()
+            == WindowBackgroundAppearance::Opaque
+            && raw_bg.a >= 1.0;
         let apparent_bg = color.background.blend(raw_bg);
 
         let base_bg = if self.selected {
@@ -356,6 +355,7 @@ impl RenderOnce for ThreadItem {
         } else if self.title_generating {
             Label::new(title)
                 .color(Color::Muted)
+                .when(!opaque_window, |label| label.truncate())
                 .with_animation(
                     "generating-title",
                     Animation::new(Duration::from_secs(2))
@@ -463,7 +463,6 @@ impl RenderOnce for ThreadItem {
                             this.child(
                                 h_flex()
                                     .relative()
-                                    .pr_1p5()
                                     .when(opaque_window, |this| {
                                         this.child(
                                             GradientFade::new(base_bg, hover_bg, active_bg)
@@ -473,10 +472,14 @@ impl RenderOnce for ThreadItem {
                                                 .group_name("thread-item"),
                                         )
                                     })
-                                    .child(slot)
-                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                        cx.stop_propagation()
-                                    }),
+                                    .child(
+                                        h_flex()
+                                            .pr_1p5()
+                                            .child(slot)
+                                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                                cx.stop_propagation()
+                                            }),
+                                    ),
                             )
                         })
                     }),
@@ -980,5 +983,72 @@ impl Component for ThreadItem {
         example_group(thread_item_examples)
             .vertical()
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{Background, Modifiers, TestAppContext, VisualTestContext, point};
+
+    #[gpui::test]
+    fn test_thread_action_padding_preserves_row_background(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        let (view, cx) = cx.add_window_view(|_, _| ThreadItemTestView { clicks: 0 });
+        let action_bounds = cx.debug_bounds("ACTION_SLOT").expect("action bounds");
+        let position = point(action_bounds.left() + px(2.), action_bounds.center().y);
+        cx.simulate_mouse_move(position, None, Modifiers::default());
+        let before = painted_backgrounds(cx);
+        cx.simulate_mouse_down(position, MouseButton::Left, Modifiers::default());
+        assert_eq!(painted_backgrounds(cx), before);
+        cx.simulate_mouse_up(position, MouseButton::Left, Modifiers::default());
+        assert_eq!(view.read_with(cx, |view, _| view.clicks), 0);
+
+        let position = point(px(25.), action_bounds.center().y);
+        cx.simulate_mouse_move(position, None, Modifiers::default());
+        cx.simulate_mouse_down(position, MouseButton::Left, Modifiers::default());
+        let active = cx.update(|_, cx| Background::from(cx.theme().colors().ghost_element_active));
+        assert_eq!(painted_backgrounds(cx).first(), Some(&active));
+        cx.simulate_mouse_up(position, MouseButton::Left, Modifiers::default());
+        assert_eq!(view.read_with(cx, |view, _| view.clicks), 1);
+    }
+
+    struct ThreadItemTestView {
+        clicks: usize,
+    }
+
+    impl Render for ThreadItemTestView {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().p(px(20.)).child(
+                div().w(px(400.)).child(
+                    ThreadItem::new("thread", "Thread")
+                        .hovered(true)
+                        .action_slot(
+                            div()
+                                .debug_selector(|| "ACTION_SLOT".to_owned())
+                                .pl(px(16.))
+                                .child(
+                                    IconButton::new("action", IconName::Archive)
+                                        .on_click(|_, _, _| {}),
+                                ),
+                        )
+                        .on_click(cx.listener(|view, _, _, _| view.clicks += 1)),
+                ),
+            )
+        }
+    }
+
+    fn painted_backgrounds(cx: &mut VisualTestContext) -> Vec<Background> {
+        cx.update(|window, _| {
+            window
+                .painted_quads()
+                .into_iter()
+                .map(|quad| quad.background)
+                .collect()
+        })
     }
 }

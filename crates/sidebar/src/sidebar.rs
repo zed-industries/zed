@@ -2340,10 +2340,18 @@ impl Sidebar {
         let key_for_toggle = key.clone();
         let key_for_focus = key.clone();
 
+        let color = cx.theme().colors();
+        let sidebar_base_bg = if is_sticky {
+            color.surface_overlay_background()
+        } else {
+            color.surface_background
+        };
+
         // The fade gradient renders as a visible patch on transparent windows,
         // so truncate the label instead.
-        let opaque_window =
-            cx.theme().window_background_appearance() == WindowBackgroundAppearance::Opaque;
+        let opaque_window = cx.theme().window_background_appearance()
+            == WindowBackgroundAppearance::Opaque
+            && sidebar_base_bg.a >= 1.0;
 
         let label = if highlight_positions.is_empty() {
             Label::new(label.clone())
@@ -2356,9 +2364,6 @@ impl Sidebar {
                 .when(!opaque_window, |this| this.truncate())
                 .into_any_element()
         };
-
-        let color = cx.theme().colors();
-        let sidebar_base_bg = color.surface_background;
 
         let base_bg = color.background.blend(sidebar_base_bg);
 
@@ -2396,8 +2401,8 @@ impl Sidebar {
                 }
             })
             .when(!has_filter, |this| {
-                this.hover(|s| s.bg(hover_solid))
-                    .group_active(&group_name, |s| s.bg(active_solid))
+                this.hover(|s| s.bg(color.ghost_element_hover))
+                    .group_active(&group_name, |s| s.bg(color.ghost_element_active))
             })
             .child(
                 h_flex()
@@ -2464,22 +2469,31 @@ impl Sidebar {
             .children(opaque_window.then(|| gradient_overlay()))
             .child(
                 h_flex()
-                    .gap_px()
-                    .pr_1p5()
                     .children(opaque_window.then(|| gradient_overlay()))
-                    .child(self.render_new_thread_button(ix, id_prefix, key, &group_name, cx))
-                    .child(self.render_project_header_ellipsis_menu(
-                        ix,
-                        id_prefix,
-                        key,
-                        is_active,
-                        has_threads,
-                        &group_name,
-                        cx,
-                    ))
-                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
-                        cx.stop_propagation();
-                    }),
+                    .child(
+                        h_flex()
+                            .gap_px()
+                            .pr_1p5()
+                            .child(self.render_new_thread_button(
+                                ix,
+                                id_prefix,
+                                key,
+                                &group_name,
+                                cx,
+                            ))
+                            .child(self.render_project_header_ellipsis_menu(
+                                ix,
+                                id_prefix,
+                                key,
+                                is_active,
+                                has_threads,
+                                &group_name,
+                                cx,
+                            ))
+                            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            }),
+                    ),
             )
             .on_mouse_down(gpui::MouseButton::Right, {
                 let menu_handle = self
@@ -2549,10 +2563,11 @@ impl Sidebar {
             SharedString::from(format!("{id_prefix}project-header-new-thread-{ix}")),
             IconName::Plus,
         )
-        .when(!is_menu_open, |button| {
+        .when(!is_menu_open && !self.has_filter_query(cx), |button| {
+            let color = cx.theme().colors();
             button
-                .hover_background(cx.theme().colors().surface_background)
-                .active_background(cx.theme().colors().element_active)
+                .hover_background(color.element_background)
+                .active_background(color.element_active)
         })
         .selected_style(ButtonStyle::Tinted(TintColor::Accent))
         .icon_size(IconSize::Small)
@@ -2858,10 +2873,11 @@ impl Sidebar {
             .with_handle(menu_handle)
             .trigger(
                 IconButton::new(trigger_id, IconName::Ellipsis)
-                    .when(!is_menu_open, |button| {
+                    .when(!is_menu_open && !self.has_filter_query(cx), |button| {
+                        let color = cx.theme().colors();
                         button
-                            .hover_background(cx.theme().colors().surface_background)
-                            .active_background(cx.theme().colors().element_active)
+                            .hover_background(color.element_background)
+                            .active_background(color.element_active)
                     })
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .icon_size(IconSize::Small)
@@ -3268,7 +3284,7 @@ impl Sidebar {
             .unwrap_or(px(0.));
 
         let color = cx.theme().colors();
-        let background = color.surface_background;
+        let background = color.surface_overlay_background();
 
         let element = v_flex()
             .absolute()
@@ -6258,6 +6274,7 @@ impl Sidebar {
 
         let color = cx.theme().colors();
         let sidebar_bg = color.surface_background;
+        let button_hover_bg = color.element_background;
         let button_active_bg = color.element_active;
 
         let timestamp: SharedString = if is_empty_draft {
@@ -6322,7 +6339,7 @@ impl Sidebar {
             })
             .when(is_hovered && !is_renaming, |this| {
                 let rename_button = IconButton::new(("rename-thread", ix), IconName::Pencil)
-                    .hover_background(sidebar_bg)
+                    .hover_background(button_hover_bg)
                     .active_background(button_active_bg)
                     .icon_size(IconSize::Small)
                     .tooltip({
@@ -6366,7 +6383,7 @@ impl Sidebar {
                         Some(DraftKind::Empty) => None,
                         Some(DraftKind::WithContent) => Some(
                             IconButton::new("discard_thread", IconName::Close)
-                                .hover_background(sidebar_bg)
+                                .hover_background(button_hover_bg)
                                 .active_background(button_active_bg)
                                 .icon_size(IconSize::Small)
                                 .tooltip(Tooltip::text("Discard Draft"))
@@ -6385,7 +6402,7 @@ impl Sidebar {
                         ),
                         None => Some(
                             IconButton::new("archive-thread", IconName::Archive)
-                                .hover_background(sidebar_bg)
+                                .hover_background(button_hover_bg)
                                 .active_background(button_active_bg)
                                 .icon_size(IconSize::Small)
                                 .tooltip({
@@ -6586,6 +6603,7 @@ impl Sidebar {
         let is_hovered = self.hovered_thread_index == Some(ix);
         let color = cx.theme().colors();
         let sidebar_bg = color.surface_background;
+        let button_hover_bg = color.element_background;
         let button_active_bg = color.element_active;
         let metadata = terminal.metadata.clone();
         let workspace = terminal.workspace.clone();
@@ -6632,7 +6650,7 @@ impl Sidebar {
             .when(is_hovered && !is_renaming, |this| {
                 this.action_slot(
                     IconButton::new("close-terminal", IconName::Close)
-                        .hover_background(sidebar_bg)
+                        .hover_background(button_hover_bg)
                         .active_background(button_active_bg)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
