@@ -1504,7 +1504,11 @@ mod tests {
     use super::*;
     use crate::{
         MultiBuffer,
-        display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
+        display_map::{
+            fold_map::{FoldMap, FoldSnapshot},
+            inlay_map::InlayMap,
+            tab_map::TabMap,
+        },
         test::test_font,
     };
     use futures::stream::StreamExt;
@@ -1515,18 +1519,15 @@ mod tests {
     use text::Rope;
     use theme::LoadThemes;
 
-    #[gpui::test]
-    async fn test_soft_wrap_indent(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let text = "fn main() {\n    let x = 1;\n    let y = 2;\n}";
+    fn init_wrap_test(
+        text: &str,
+        tab_size: NonZeroU32,
+        cx: &mut gpui::TestAppContext,
+    ) -> (Entity<WrapMap>, TabMap, FoldSnapshot) {
         let text_system = cx.read(|cx| cx.text_system().clone());
-        let tab_size = 4.try_into().unwrap();
         let font = test_font();
         let _font_id = text_system.resolve_font(&font);
         let font_size = px(14.0);
-
-        // Wrap width small enough to wrap "    let x = 1;"
         let soft_wrapping = Some(font_size * 8.0);
 
         let buffer = cx.new(|cx| language::Buffer::local(text, cx));
@@ -1534,17 +1535,19 @@ mod tests {
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
         let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
+        let (mut tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
-        let (wrap_map, _) = cx.update(|cx| {
-            WrapMap::new(
-                tabs_snapshot.clone(),
-                font.clone(),
-                font_size,
-                soft_wrapping,
-                cx,
-            )
-        });
+        let (wrap_map, _) =
+            cx.update(|cx| WrapMap::new(tabs_snapshot, font, font_size, soft_wrapping, cx));
+        (wrap_map, tab_map, fold_snapshot)
+    }
+
+    #[gpui::test]
+    async fn test_soft_wrap_indent(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let text = "fn main() {\n    let x = 1;\n    let y = 2;\n}";
+        let (wrap_map, _, _) = init_wrap_test(text, 4.try_into().unwrap(), cx);
 
         // Test None
         wrap_map.update(cx, |map, cx| {
@@ -1555,6 +1558,7 @@ mod tests {
             wrap_snapshot.text(),
             "fn main() {\n    let x = \n1;\n    let y = \n2;\n}"
         );
+        assert_eq!(wrap_snapshot.soft_wrap_indent(WrapRow(1)), Some(0));
 
         // Test Same
         wrap_map.update(cx, |map, cx| {
@@ -1592,30 +1596,8 @@ mod tests {
         init_test(cx);
 
         let text = "    let x = 1;\n";
-        let text_system = cx.read(|cx| cx.text_system().clone());
-        let tab_size = 4.try_into().unwrap();
-        let font = test_font();
-        let _font_id = text_system.resolve_font(&font);
-        let font_size = px(14.0);
-
-        let soft_wrapping = Some(font_size * 8.0);
-
-        let buffer = cx.new(|cx| language::Buffer::local(text, cx));
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
-        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
-        let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (mut tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);
-        let tabs_snapshot = tab_map.set_max_expansion_column(32);
-        let (wrap_map, _) = cx.update(|cx| {
-            WrapMap::new(
-                tabs_snapshot.clone(),
-                font.clone(),
-                font_size,
-                soft_wrapping,
-                cx,
-            )
-        });
+        let (wrap_map, mut tab_map, fold_snapshot) =
+            init_wrap_test(text, 4.try_into().unwrap(), cx);
 
         wrap_map.update(cx, |map, cx| {
             map.set_soft_wrap_indent(language::language_settings::SoftWrapIndent::ExtraOne, cx)
@@ -1629,69 +1611,6 @@ mod tests {
         let (wrap_snapshot, _) =
             wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
         assert_eq!(wrap_snapshot.text(), "    let x = \n      1;\n");
-    }
-
-    #[gpui::test]
-    async fn test_soft_wrap_indent_returns_some_for_zero_indent(cx: &mut gpui::TestAppContext) {
-        // Regression test for a bug where soft_wrap_indent() returned None
-        // instead of Some(0) for continuation rows with zero indent.
-        //
-        // When indent=0, the wrap transform's output lands exactly on
-        // WrapPoint(row+1, 0). Bias::Right skipped past it onto the next text
-        // item (returning None), Bias::Left stops on it.
-        init_test(cx);
-
-        let text = "    hello world and more text here";
-        let text_system = cx.read(|cx| cx.text_system().clone());
-        let tab_size = 4.try_into().unwrap();
-        let font = test_font();
-        let _font_id = text_system.resolve_font(&font);
-        let font_size = px(14.0);
-
-        // Narrow enough to force a wrap within the line.
-        let soft_wrapping = Some(font_size * 8.0);
-
-        let buffer = cx.new(|cx| language::Buffer::local(text, cx));
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
-        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
-        let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
-        let tabs_snapshot = tab_map.set_max_expansion_column(32);
-        let (wrap_map, _) = cx.update(|cx| {
-            WrapMap::new(
-                tabs_snapshot.clone(),
-                font.clone(),
-                font_size,
-                soft_wrapping,
-                cx,
-            )
-        });
-
-        // Set indent to None - continuation lines start at column 0.
-        wrap_map.update(cx, |map, cx| {
-            map.set_soft_wrap_indent(language::language_settings::SoftWrapIndent::None, cx);
-        });
-
-        let wrap_snapshot = wrap_map.update(cx, |map, _cx| map.snapshot.clone());
-
-        // Verify wrapping occurred (more than 1 row in output).
-        let wrapped_text = wrap_snapshot.text();
-        let wrap_row_count = wrapped_text.lines().count();
-        assert!(
-            wrap_row_count > 1,
-            "Expected text to wrap, but got a single row: {:?}",
-            wrapped_text,
-        );
-
-        // The continuation row (WrapRow 1) should report Some(0), not None.
-        // This was the exact bug: Bias::Right caused this to return None.
-        let indent = wrap_snapshot.soft_wrap_indent(WrapRow(0));
-        assert_eq!(
-            indent,
-            Some(0),
-            "soft_wrap_indent should return Some(0) for a zero-indent continuation row, not None"
-        );
     }
 
     #[gpui::test]
