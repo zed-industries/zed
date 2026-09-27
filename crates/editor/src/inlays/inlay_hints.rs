@@ -20,7 +20,7 @@ use project::{
     InlayHintTooltip, InvalidationStrategy, LspAction, ResolveState,
     lsp_store::{CacheInlayHints, ResolvedHint},
 };
-use text::{Bias, BufferId};
+use text::{Bias, BufferId, ToOffset};
 use ui::{Context, Window};
 use util::debug_panic;
 
@@ -984,7 +984,7 @@ impl Editor {
                     for (server_id, new_hints) in new_hints {
                         for (new_id, new_hint) in new_hints {
                             let hints_text_for_position = inserted_hint_text
-                                .entry(new_hint.position)
+                                .entry(new_hint.position.to_offset(&buffer_snapshot))
                                 .or_insert_with(HashMap::default);
                             let insert =
                                 match hints_text_for_position.entry(new_hint.text().to_string()) {
@@ -5094,6 +5094,7 @@ let c = 3;"#
         }
 
         // Server A: only the `None` hint, so no conflict and it stays Left.
+        let a_requests = Arc::new(AtomicUsize::new(0));
         let mut fake_servers_a = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
@@ -5102,10 +5103,17 @@ let c = 3;"#
                     inlay_hint_provider: Some(lsp::OneOf::Left(true)),
                     ..lsp::ServerCapabilities::default()
                 },
-                initializer: Some(Box::new(|fake_server| {
-                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
-                        |_, _| async move { Ok(Some(vec![none_hint()])) },
-                    );
+                initializer: Some(Box::new({
+                    let a_requests = a_requests.clone();
+                    move |fake_server| {
+                        let a_requests = a_requests.clone();
+                        fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                            move |_, _| {
+                                a_requests.fetch_add(1, Ordering::SeqCst);
+                                async move { Ok(Some(vec![none_hint()])) }
+                            },
+                        );
+                    }
                 })),
                 ..FakeLspAdapter::default()
             },
@@ -5113,6 +5121,7 @@ let c = 3;"#
 
         // Server B: the same `None` hint plus a colocated `Type` hint. Per-response
         // normalization sees a Left/Right conflict and turns B's `None` hint into Right.
+        let b_requests = Arc::new(AtomicUsize::new(0));
         let mut fake_servers_b = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
@@ -5121,10 +5130,17 @@ let c = 3;"#
                     inlay_hint_provider: Some(lsp::OneOf::Left(true)),
                     ..lsp::ServerCapabilities::default()
                 },
-                initializer: Some(Box::new(|fake_server| {
-                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
-                        |_, _| async move { Ok(Some(vec![none_hint(), type_hint()])) },
-                    );
+                initializer: Some(Box::new({
+                    let b_requests = b_requests.clone();
+                    move |fake_server| {
+                        let b_requests = b_requests.clone();
+                        fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                            move |_, _| {
+                                b_requests.fetch_add(1, Ordering::SeqCst);
+                                async move { Ok(Some(vec![none_hint(), type_hint()])) }
+                            },
+                        );
+                    }
                 })),
                 ..FakeLspAdapter::default()
             },
@@ -5165,6 +5181,16 @@ let c = 3;"#
                 );
             })
             .unwrap();
+        assert_eq!(
+            a_requests.load(Ordering::SeqCst),
+            1,
+            "A should be queried once initially"
+        );
+        assert_eq!(
+            b_requests.load(Ordering::SeqCst),
+            1,
+            "B should be queried once initially"
+        );
 
         // 2. B-only refresh: still exactly one `hint:`.
         fake_server_b
@@ -5174,6 +5200,16 @@ let c = 3;"#
             .unwrap();
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
+        assert_eq!(
+            b_requests.load(Ordering::SeqCst),
+            2,
+            "refresh should re-query B"
+        );
+        assert_eq!(
+            a_requests.load(Ordering::SeqCst),
+            1,
+            "refresh of B must not re-query A"
+        );
 
         editor
             .update(cx, |editor, _window, cx| {
