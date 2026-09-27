@@ -57,7 +57,7 @@ impl LineWrapper {
     ) -> impl Iterator<Item = Boundary> + 'a {
         let mut width = px(0.);
         let mut first_non_whitespace_ix = None;
-        let mut indent = None;
+        let mut base_indent = None;
         let mut last_candidate_ix = 0;
         let mut last_candidate_width = px(0.);
         let mut last_wrap_ix = 0;
@@ -124,14 +124,25 @@ impl LineWrapper {
                         item_width
                     };
 
-                    if let (None, Some(first_non_whitespace_ix)) = (indent, first_non_whitespace_ix)
-                    {
-                        let base_indent =
-                            Self::MAX_INDENT.min((first_non_whitespace_ix - last_wrap_ix) as u32);
-                        indent = Some(match indent_adjustment {
-                            IndentAdjustment::NoIndent => 0,
-                            IndentAdjustment::SameIndent => base_indent,
-                            IndentAdjustment::ExtraColumns(extra) => {
+                    // Compute base indentation from the first non-whitespace character on the line
+                    // and retain it for all subsequent wrap rows. If the line begins with leading
+                    // whitespace that wraps before any non-whitespace character (or is all whitespace),
+                    // base_indent remains None so continuation rows within the leading whitespace
+                    // do not receive ExtraColumns indentation and degrade into cascading short rows.
+                    if base_indent.is_none() {
+                        if let Some(first_non_whitespace_ix) = first_non_whitespace_ix {
+                            base_indent =
+                                Some(Self::MAX_INDENT.min(
+                                    first_non_whitespace_ix.saturating_sub(last_wrap_ix) as u32,
+                                ));
+                        }
+                    }
+
+                    let next_indent = match indent_adjustment {
+                        IndentAdjustment::NoIndent => 0,
+                        IndentAdjustment::SameIndent => base_indent.unwrap_or(0),
+                        IndentAdjustment::ExtraColumns(extra) => {
+                            if let Some(base_indent) = base_indent {
                                 let candidate = base_indent + extra;
                                 let candidate_indent_width =
                                     self.width_for_char(' ') * candidate as f32;
@@ -145,9 +156,11 @@ impl LineWrapper {
                                 } else {
                                     Self::MAX_INDENT.min(candidate)
                                 }
+                            } else {
+                                0
                             }
-                        });
-                    }
+                        }
+                    };
 
                     if last_candidate_ix > 0 {
                         last_wrap_ix = last_candidate_ix;
@@ -158,11 +171,9 @@ impl LineWrapper {
                         width = item_width;
                     }
 
-                    if let Some(indent) = indent {
-                        width += self.width_for_char(' ') * indent as f32;
-                    }
+                    width += self.width_for_char(' ') * next_indent as f32;
 
-                    return Some(Boundary::new(last_wrap_ix, indent.unwrap_or(0)));
+                    return Some(Boundary::new(last_wrap_ix, next_indent));
                 }
 
                 prev_c = new_prev_c;
@@ -1781,6 +1792,81 @@ mod tests {
                 )
                 .collect::<Vec<_>>(),
             &[Boundary::new(2, 0)]
+        );
+
+        // When a wider inline element is encountered after the first wrap,
+        // the overflow guard must evaluate whether the element fits with the extra indent.
+        // If text continues after the element row and wraps again, subsequent continuation
+        // lines resume the extra indent if their carried content fits.
+        //
+        // "abcdefghijk " followed by an 8-column element and "z 12":
+        // Row 0: "abcdefghij" (len 10)
+        // Row 1: "k " (2 cols) with 8 indent (len 10)
+        // Row 2: element (8 cols) cannot fit with 8 indent (8 + 8 = 16 > 10),
+        //        so indent falls back to 0. Element (8 cols) + "z " (2 cols) = len 10.
+        // Row 3: "12" (2 cols) fits with 8 indent (8 + 2 = 10 <= 10).
+        //
+        // Expected wrapped lines (10 columns):
+        //   |abcdefghij|  (row 0: 10 cols)
+        //   |        k |  (row 1: 8 indent + "k ", len 10)
+        //   |[ELEMENT]z|  (row 2: 0 indent + [ELEMENT (8)] + "z ", len 10)
+        //   |        12|  (row 3: 8 indent + "12", len 10)
+        let element_fragments = [
+            LineFragment::text("abcdefghijk "),
+            LineFragment::element(space_width * 8.0, 1),
+            LineFragment::text("z 12"),
+        ];
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &element_fragments,
+                    wrap_width,
+                    IndentAdjustment::ExtraColumns(8),
+                )
+                .collect::<Vec<_>>(),
+            &[
+                Boundary::new(10, 8),
+                Boundary::new(12, 0),
+                Boundary::new(15, 8),
+            ]
+        );
+
+        // A line of only whitespace wrapping before any non-whitespace character
+        // must not have extra columns added to subsequent rows.
+        let spaces = "                    "; // 20 spaces
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text(spaces)],
+                    wrap_width,
+                    IndentAdjustment::ExtraColumns(8),
+                )
+                .collect::<Vec<_>>(),
+            &[Boundary::new(10, 0)]
+        );
+
+        // When leading whitespace wraps before the first non-whitespace character,
+        // base_indent should reflect the leading whitespace on the row where non-whitespace begins.
+        // 14 spaces followed by "ab cd ef gh", wrap width 10:
+        // Row 0: 10 spaces (len 10) -> wraps at ix 10 with indent 0
+        // Row 1: 4 spaces + "ab cd" (len 9) -> wraps at ix 20
+        //        base_indent is 14 - 10 = 4.
+        //        With ExtraColumns(2), candidate = 4 + 2 = 6. 6 + 2 (headroom) = 8 <= 10.
+        //        Row 2 and subsequent rows get indent 6.
+        let multiline_indent_text = "              ab cd ef gh";
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text(multiline_indent_text)],
+                    wrap_width,
+                    IndentAdjustment::ExtraColumns(2),
+                )
+                .collect::<Vec<_>>(),
+            &[
+                Boundary::new(10, 0),
+                Boundary::new(20, 6),
+                Boundary::new(23, 6),
+            ]
         );
     }
 }
