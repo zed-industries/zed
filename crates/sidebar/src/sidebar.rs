@@ -2467,21 +2467,15 @@ impl Sidebar {
                     .gap_px()
                     .pr_1p5()
                     .children(opaque_window.then(|| gradient_overlay()))
-                    .child(Self::button_hover_background(
-                        self.render_new_thread_button(ix, id_prefix, key, &group_name, cx),
-                        sidebar_base_bg,
-                    ))
-                    .child(Self::button_hover_background(
-                        self.render_project_header_ellipsis_menu(
-                            ix,
-                            id_prefix,
-                            key,
-                            is_active,
-                            has_threads,
-                            &group_name,
-                            cx,
-                        ),
-                        sidebar_base_bg,
+                    .child(self.render_new_thread_button(ix, id_prefix, key, &group_name, cx))
+                    .child(self.render_project_header_ellipsis_menu(
+                        ix,
+                        id_prefix,
+                        key,
+                        is_active,
+                        has_threads,
+                        &group_name,
+                        cx,
                     ))
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                         cx.stop_propagation();
@@ -2555,7 +2549,11 @@ impl Sidebar {
             SharedString::from(format!("{id_prefix}project-header-new-thread-{ix}")),
             IconName::Plus,
         )
-        .style(ButtonStyle::Transparent)
+        .when(!is_menu_open, |button| {
+            button
+                .hover_background(cx.theme().colors().surface_background)
+                .active_background(cx.theme().colors().element_active)
+        })
         .selected_style(ButtonStyle::Tinted(TintColor::Accent))
         .icon_size(IconSize::Small)
         .when(!is_menu_open, |this| this.visible_on_hover(group_name));
@@ -2761,16 +2759,6 @@ impl Sidebar {
         .into_any_element()
     }
 
-    fn button_hover_background(
-        button: impl IntoElement,
-        background: gpui::Hsla,
-    ) -> impl IntoElement {
-        div()
-            .rounded_sm()
-            .hover(move |s| s.bg(background))
-            .child(button)
-    }
-
     // Warms `worktree_default_branches` for every project group with at least one
     // open workspace. The git query runs off the menu path so the submenu can read
     // the result synchronously when it opens. Worktrees of a repository share the
@@ -2870,7 +2858,11 @@ impl Sidebar {
             .with_handle(menu_handle)
             .trigger(
                 IconButton::new(trigger_id, IconName::Ellipsis)
-                    .style(ButtonStyle::Transparent)
+                    .when(!is_menu_open, |button| {
+                        button
+                            .hover_background(cx.theme().colors().surface_background)
+                            .active_background(cx.theme().colors().element_active)
+                    })
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .icon_size(IconSize::Small)
                     .when(!is_menu_open, |el| el.visible_on_hover(group_name)),
@@ -6266,6 +6258,7 @@ impl Sidebar {
 
         let color = cx.theme().colors();
         let sidebar_bg = color.surface_background;
+        let button_active_bg = color.element_active;
 
         let timestamp: SharedString = if is_empty_draft {
             SharedString::default()
@@ -6329,7 +6322,8 @@ impl Sidebar {
             })
             .when(is_hovered && !is_renaming, |this| {
                 let rename_button = IconButton::new(("rename-thread", ix), IconName::Pencil)
-                    .style(ButtonStyle::Transparent)
+                    .hover_background(sidebar_bg)
+                    .active_background(button_active_bg)
                     .icon_size(IconSize::Small)
                     .tooltip({
                         let focus_handle = focus_handle.clone();
@@ -6372,7 +6366,8 @@ impl Sidebar {
                         Some(DraftKind::Empty) => None,
                         Some(DraftKind::WithContent) => Some(
                             IconButton::new("discard_thread", IconName::Close)
-                                .style(ButtonStyle::Transparent)
+                                .hover_background(sidebar_bg)
+                                .active_background(button_active_bg)
                                 .icon_size(IconSize::Small)
                                 .tooltip(Tooltip::text("Discard Draft"))
                                 .on_click({
@@ -6390,7 +6385,8 @@ impl Sidebar {
                         ),
                         None => Some(
                             IconButton::new("archive-thread", IconName::Archive)
-                                .style(ButtonStyle::Transparent)
+                                .hover_background(sidebar_bg)
+                                .active_background(button_active_bg)
                                 .icon_size(IconSize::Small)
                                 .tooltip({
                                     let focus_handle = focus_handle.clone();
@@ -6419,14 +6415,8 @@ impl Sidebar {
                 this.action_slot(
                     h_flex()
                         .gap_0p5()
-                        .child(Self::button_hover_background(rename_button, sidebar_bg))
-                        .when_some(contextual_action, |this, action| {
-                            this.child(if is_running {
-                                action
-                            } else {
-                                Self::button_hover_background(action, sidebar_bg).into_any_element()
-                            })
-                        }),
+                        .child(rename_button)
+                        .when_some(contextual_action, |this, action| this.child(action)),
                 )
             })
             .on_click({
@@ -6596,6 +6586,7 @@ impl Sidebar {
         let is_hovered = self.hovered_thread_index == Some(ix);
         let color = cx.theme().colors();
         let sidebar_bg = color.surface_background;
+        let button_active_bg = color.element_active;
         let metadata = terminal.metadata.clone();
         let workspace = terminal.workspace.clone();
         let focus_handle = self.focus_handle.clone();
@@ -6639,9 +6630,10 @@ impl Sidebar {
                 this.is_truncated(false).title_slot(title_editor)
             })
             .when(is_hovered && !is_renaming, |this| {
-                this.action_slot(Self::button_hover_background(
+                this.action_slot(
                     IconButton::new("close-terminal", IconName::Close)
-                        .style(ButtonStyle::Transparent)
+                        .hover_background(sidebar_bg)
+                        .active_background(button_active_bg)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
                         .tooltip({
@@ -6658,8 +6650,7 @@ impl Sidebar {
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.close_terminal(&metadata, &workspace, window, cx);
                         })),
-                    sidebar_bg,
-                ))
+                )
             })
             .on_click(cx.listener({
                 let metadata = terminal.metadata.clone();
