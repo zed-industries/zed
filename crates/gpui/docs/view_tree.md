@@ -525,6 +525,24 @@ Ordered by dependency. Items marked **critical path** unblock several others.
   modality flip dirties every hover reader. After a layout change moves elements under
   a still mouse, the post-prepaint hit test must run the same diff and schedule a frame.
 
+### Retained dispatch tree
+
+- [ ] Keep dispatch nodes on the view nodes instead of rebuilding a flat tree each frame
+  and copying reused nodes' records into it (separate PR, first after this one). Each
+  node already records its dispatch nodes relative to itself (`RecordedDispatchNode`,
+  parent within the node or at its attachment) and where each child hangs
+  (`DispatchLink`): make that the storage. A dispatch node is addressed by `(view node,
+  local index)`; walking up crosses to the node's attachment in its parent; the focus
+  and view maps are retained and updated when a node re-renders. Reused subtrees then
+  cost nothing, and `snapshot_dispatch_nodes`, `retarget_grafted_dispatch`,
+  `fill_painted_grafts`, `DispatchLink::preceding` and the `transact` index bookkeeping
+  go away. This replay has been the most frequent source of review findings.
+  Two things to prototype first: renders query focus against the rendered frame while
+  a node's dispatch nodes are being rebuilt, so each node needs committed and next
+  sets swapped at frame end (as `children`/`next_children` are); and pending
+  multi-keystroke bindings compare dispatch paths across frames. The dispatch
+  regression tests in `view.rs` and the oracle are its acceptance tests.
+
 ### Identity on the node tree
 
 - [ ] Element identity → `(node, Location::caller(), nth)`; `GlobalElementId` shrinks
