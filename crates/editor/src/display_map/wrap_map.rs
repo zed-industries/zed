@@ -9,7 +9,8 @@ use super::{
 use collections::HashMap;
 use futures_lite::future::yield_now;
 use gpui::{
-    App, AppContext as _, Context, Entity, Font, FontId, LineWrapper, Pixels, Task, TextSystem,
+    App, AppContext as _, Context, Entity, Font, FontId, IndentAdjustment, LineWrapper, Pixels,
+    Task, TextSystem,
 };
 use language::{LanguageAwareStyling, Point, language_settings::SoftWrapIndent};
 use multi_buffer::RowInfo;
@@ -17,6 +18,7 @@ use std::{
     cmp,
     collections::VecDeque,
     mem,
+    num::NonZeroU32,
     ops::Range,
     sync::{Arc, LazyLock},
     time::Duration,
@@ -276,8 +278,7 @@ impl WrapMap {
         true
     }
 
-    #[ztracing::instrument(skip_all)]
-    fn indent_adjustment(&self, tab_size: std::num::NonZeroU32) -> gpui::IndentAdjustment {
+    fn indent_adjustment(&self, tab_size: NonZeroU32) -> IndentAdjustment {
         indent_adjustment_for(self.soft_wrap_indent, tab_size)
     }
 
@@ -585,7 +586,7 @@ impl WrapSnapshot {
         new_tab_snapshot: TabSnapshot,
         tab_edits: &[TabEdit],
         wrap_width: Pixels,
-        indent_adjustment: gpui::IndentAdjustment,
+        indent_adjustment: IndentAdjustment,
         line_wrapper: &mut LineWrapper,
         fragment_builder: &mut LineFragmentBuilder,
     ) -> WrapPatch {
@@ -1311,15 +1312,12 @@ impl Iterator for WrapRows<'_> {
     }
 }
 
-fn indent_adjustment_for(
-    indent: SoftWrapIndent,
-    tab_size: std::num::NonZeroU32,
-) -> gpui::IndentAdjustment {
+fn indent_adjustment_for(indent: SoftWrapIndent, tab_size: NonZeroU32) -> IndentAdjustment {
     match indent {
-        SoftWrapIndent::None => gpui::IndentAdjustment::NoIndent,
-        SoftWrapIndent::Same => gpui::IndentAdjustment::SameIndent,
-        SoftWrapIndent::ExtraOne => gpui::IndentAdjustment::ExtraColumns(tab_size.get()),
-        SoftWrapIndent::ExtraTwo => gpui::IndentAdjustment::ExtraColumns(tab_size.get() * 2),
+        SoftWrapIndent::None => IndentAdjustment::NoIndent,
+        SoftWrapIndent::Same => IndentAdjustment::SameIndent,
+        SoftWrapIndent::ExtraOne => IndentAdjustment::ExtraColumns(tab_size.get()),
+        SoftWrapIndent::ExtraTwo => IndentAdjustment::ExtraColumns(tab_size.get() * 2),
     }
 }
 
@@ -1834,7 +1832,7 @@ mod tests {
         log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
         let mut line_wrapper = text_system.line_wrapper(font.clone(), font_size);
-        let mut indent_adjustment = gpui::IndentAdjustment::default();
+        let mut indent_adjustment = IndentAdjustment::default();
         let expected_text = wrap_text(
             &tabs_snapshot,
             wrap_width,
@@ -2059,7 +2057,7 @@ mod tests {
     fn wrap_text(
         tab_snapshot: &TabSnapshot,
         wrap_width: Option<Pixels>,
-        indent_adjustment: gpui::IndentAdjustment,
+        indent_adjustment: IndentAdjustment,
         line_wrapper: &mut LineWrapper,
     ) -> String {
         if let Some(wrap_width) = wrap_width {
