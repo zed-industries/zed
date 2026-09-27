@@ -160,8 +160,14 @@ macro_rules! bench_group {
 /// ```ignore
 /// gpui::bench_main!(allocator = mimalloc::MiMalloc; benches);
 /// ```
+///
+/// `allocator = none;` installs no global allocator, leaving Rust's default and
+/// dropping the allocation metrics from reports.
 #[macro_export]
 macro_rules! bench_main {
+    (allocator = none; $($groups:tt)*) => {
+        criterion::criterion_main!($($groups)*);
+    };
     (allocator = $allocator:path; $($groups:tt)*) => {
         #[global_allocator]
         static GPUI_BENCH_ALLOCATOR: $crate::CountingAllocator<$allocator> =

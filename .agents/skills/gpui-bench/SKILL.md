@@ -142,7 +142,7 @@ fn full_refresh(family: &TreeFamily, mut rng: StdRng, cx: &mut gpui::BenchAppCon
 }
 ```
 
-Register benchmark functions with `gpui::bench_group!` and `gpui::bench_main!` (drop-in for Criterion's `criterion_group!`/`criterion_main!`, including the `name = ...; config = ...; targets = ...` form). The generated functions take `&mut criterion::Criterion<gpui::BenchMeasurement>`; `bench_group!` supplies that measurement from the environment. `bench_main!` also installs `gpui::CountingAllocator` as the binary's global allocator, so a GPUI bench file must not declare its own `#[global_allocator]`; to measure with another allocator, write `gpui::bench_main!(allocator = mimalloc::MiMalloc; benches)`, which wraps it.
+Register benchmark functions with `gpui::bench_group!` and `gpui::bench_main!` (drop-in for Criterion's `criterion_group!`/`criterion_main!`, including the `name = ...; config = ...; targets = ...` form). The generated functions take `&mut criterion::Criterion<gpui::BenchMeasurement>`; `bench_group!` supplies that measurement from the environment. `bench_main!` also installs `gpui::CountingAllocator` as the binary's global allocator, so a GPUI bench file must not declare its own `#[global_allocator]`; to measure with another allocator, write `gpui::bench_main!(allocator = mimalloc::MiMalloc; benches)`, which wraps it. `allocator = none;` installs no allocator and drops the allocation metrics.
 
 ### Measurements: wall time, hardware counters, rusage, and allocations
 
