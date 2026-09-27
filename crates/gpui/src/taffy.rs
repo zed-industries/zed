@@ -909,6 +909,22 @@ impl From<Size<Pixels>> for Size<AvailableSpace> {
 mod tests {
     use super::*;
 
+    /// A re-rendered node's new layout adopts its reused children's retained roots, and
+    /// its previous layout is then removed. Removing it must neither remove those roots
+    /// nor detach them from the new layout.
+    #[test]
+    fn removing_a_previous_layout_keeps_retained_children_attached() {
+        let mut engine = TaffyLayoutEngine::new();
+        let child = engine.request_layout(Style::default(), crate::px(16.), 1., &[]);
+        engine.record_root_layout(child);
+        let previous = engine.request_layout(Style::default(), crate::px(16.), 1., &[child]);
+        let current = engine.request_layout(Style::default(), crate::px(16.), 1., &[child]);
+        engine.remove_subtree(previous);
+        assert!(!engine.contains(previous));
+        assert!(engine.contains(child));
+        assert_eq!(engine.parent(child), Some(current));
+    }
+
     #[test]
     fn border_widths_to_taffy_use_stroke_snapping() {
         let border_widths = Edges {
