@@ -132,6 +132,16 @@ The attribute supports options such as:
 
 Inspect the current macro before depending on an option because the API is evolving.
 
+For randomized workloads, take a `StdRng` parameter (by value) and draw the workload from it instead of hand-rolling seeds. The macro then runs one Criterion benchmark per seed, named `<input>/seed-<n>`, with `seed = N`, `seeds(...)`, `iterations = N`, `SEED`, and `ITERATIONS` meaning exactly what they do for `#[gpui::test]`, so `SEED=3` reproduces the same workload in a test and a benchmark. The RNG is rebuilt for every Criterion routine call, so warm-up and every sample see the same workload.
+
+```rust
+#[gpui::bench(inputs = tree_families(), input_name = "tree", iterations = 6)]
+fn full_refresh(family: &TreeFamily, mut rng: StdRng, cx: &mut gpui::BenchAppContext) {
+    let tree = family.sample(&mut rng);
+    // ...
+}
+```
+
 Register benchmark functions with `gpui::bench_group!` and `gpui::bench_main!` (drop-in for Criterion's `criterion_group!`/`criterion_main!`, including the `name = ...; config = ...; targets = ...` form). The generated functions take `&mut criterion::Criterion<gpui::BenchMeasurement>`; `bench_group!` supplies that measurement from the environment.
 
 ### Measurements: wall time, hardware counters, and rusage
