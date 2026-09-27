@@ -3685,18 +3685,18 @@ impl Window {
         hash
     }
 
-    /// The cache key a view's prepaint records, from the key its layout computed. The text
-    /// style hash comes from layout: it is costly, and the elements around a view push the
-    /// same styles in every phase.
+    /// The cache key a view's prepaint records, with the text style hash its layout
+    /// computed: the hash is costly, and the elements around a view push the same styles in
+    /// every phase.
     pub(crate) fn view_node_prepaint_key(
         &self,
         bounds: Bounds<Pixels>,
-        layout_key: &ViewNodeCacheKey,
+        text_style_hash: u64,
     ) -> ViewNodeCacheKey {
         ViewNodeCacheKey {
             bounds,
             content_mask: self.content_mask(),
-            text_style_hash: layout_key.text_style_hash,
+            text_style_hash,
             rem_size: self.rem_size(),
             scale_factor: self.scale_factor(),
             opacity: self.element_opacity(),

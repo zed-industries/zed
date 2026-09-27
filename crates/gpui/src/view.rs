@@ -295,9 +295,14 @@ struct ViewElementNode {
     /// This view's order among inline views of its type in the enclosing node, assigned
     /// when it renders inline.
     inline_occurrence: u64,
-    cached_style: Option<StyleRefinement>,
+    /// Boxed: only the legacy `.cached(style)` sets it, and the element is moved at its full
+    /// size every time an entity is used as a child.
+    cached_style: Option<Box<StyleRefinement>>,
     node_layout: Option<NodeViewLayout>,
 }
+
+// Moved at full size each time a view is used as a child, and again into the frame arena.
+const _: () = assert!(size_of::<ViewElementNode>() <= 128);
 
 /// The two operations of a [`View`] the element phases need, behind a vtable.
 trait ErasedView {
@@ -364,7 +369,7 @@ impl<V: View> ViewElement<V> {
     /// Reach this through [`Entity::cached`] or [`AnyView::cached`], which are
     /// entity-backed by construction.
     pub(crate) fn cached(mut self, style: StyleRefinement) -> Self {
-        self.node.cached_style = Some(style);
+        self.node.cached_style = Some(Box::new(style));
         self
     }
 }
@@ -384,8 +389,8 @@ struct NodeViewLayout {
     /// Where the entities read while rendering at layout time are kept. `None` when the
     /// layout was reused rather than rendered.
     reads: Option<RenderedReads>,
-    /// The cache key computed at layout, from which prepaint's is built.
-    layout_key: ViewNodeCacheKey,
+    /// The text style hash computed at layout, which prepaint's cache key reuses.
+    text_style_hash: u64,
 }
 
 #[doc(hidden)]
@@ -496,7 +501,7 @@ impl ViewElementNode {
                         layout,
                         node_id,
                         reads: None,
-                        layout_key: cache_key,
+                        text_style_hash: cache_key.text_style_hash,
                     });
                     (layout, None)
                 } else {
@@ -521,7 +526,7 @@ impl ViewElementNode {
                         layout,
                         node_id,
                         reads: Some(reads),
-                        layout_key: cache_key,
+                        text_style_hash: cache_key.text_style_hash,
                     });
                     (layout, Some(element))
                 };
@@ -553,9 +558,9 @@ impl ViewElementNode {
                 layout,
                 node_id,
                 reads,
-                layout_key,
+                text_style_hash,
             } = node_layout;
-            let cache_key = window.view_node_prepaint_key(bounds, &layout_key);
+            let cache_key = window.view_node_prepaint_key(bounds, text_style_hash);
             let entity_id = self.entity_id.expect("node views have an entity");
             window.set_view_id(entity_id);
             window.enter_node_prepaint(node_id);
