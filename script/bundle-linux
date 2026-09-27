@@ -77,9 +77,16 @@ if "$rustup_installed"; then
 fi
 
 export CC=${CC:-$(which clang)}
+lld=$("$CC" -print-prog-name=ld.lld)
+lld_version=$("$lld" --version)
+if [[ ! "$lld_version" =~ LLD\ ([0-9]+)\. ]] || (( BASH_REMATCH[1] < 12 )); then
+    echo "Bundling requires LLD 12 or newer for safe ICF; select a matching compiler with CC (e.g. CC=clang-18)." >&2
+    exit 1
+fi
 
 # Build binary in release mode
-cargo --config .cargo/bundle-config.toml build --release --target "${target_triple}" --package zed --package cli
+cargo --config .cargo/bundle-config.toml rustc --release --target "${target_triple}" --package zed --bin zed -- -C linker="$CC" -C llvm-args=-addrsig -C link-arg=-fuse-ld=lld -C link-arg=-Wl,--icf=safe
+cargo --config .cargo/bundle-config.toml build --release --target "${target_triple}" --package cli
 # Build remote_server in separate invocation to prevent feature unification from other crates
 # from influencing dynamic libraries required by it.
 if [[ "$remote_server_triple" == "$musl_triple" ]]; then
@@ -124,7 +131,7 @@ fi
 # doesn't understand CREL sections produced by newer LLVM.
 llvm-objcopy --only-keep-debug "${target_dir}/${target_triple}/release/zed" "${target_dir}/${target_triple}/release/zed.dbg"
 llvm-objcopy --only-keep-debug "${target_dir}/${remote_server_triple}/release/remote_server" "${target_dir}/${remote_server_triple}/release/remote_server.dbg"
-llvm-objcopy --strip-debug --discard-all "${target_dir}/${target_triple}/release/zed"
+llvm-objcopy --strip-unneeded "${target_dir}/${target_triple}/release/zed"
 llvm-objcopy --strip-debug --discard-all "${target_dir}/${target_triple}/release/cli"
 llvm-objcopy --strip-debug --discard-all "${target_dir}/${remote_server_triple}/release/remote_server"
 
