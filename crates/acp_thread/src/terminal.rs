@@ -1,5 +1,5 @@
 use agent_client_protocol::schema::v1 as acp;
-use anyhow::Result;
+use anyhow::{Result, bail};
 use collections::HashMap;
 use futures::{FutureExt as _, future::Shared};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Task};
@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap as StdHashMap,
     path::PathBuf,
-    process::ExitStatus,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -407,7 +406,7 @@ pub struct Terminal {
     started_at: Instant,
     output: Option<TerminalOutput>,
     output_byte_limit: Option<usize>,
-    _output_task: Shared<Task<acp::TerminalExitStatus>>,
+    execution: TerminalExecution,
     /// Flag indicating whether this terminal was stopped by explicit user action
     /// (e.g., clicking the Stop button). This is set before kill() is called
     /// so that code awaiting wait_for_exit() can check it deterministically.
@@ -419,9 +418,14 @@ pub struct Terminal {
     _sandbox: Option<SandboxConfigHandle>,
 }
 
+enum TerminalExecution {
+    Process(Shared<Task<acp::TerminalExitStatus>>),
+    Display,
+}
+
 pub struct TerminalOutput {
     pub ended_at: Instant,
-    pub exit_status: Option<ExitStatus>,
+    pub exit_status: acp::TerminalExitStatus,
     pub content: String,
     pub original_content_len: usize,
     pub content_line_count: usize,
@@ -469,21 +473,17 @@ impl Terminal {
             output: None,
             output_byte_limit,
             user_stopped: Arc::new(AtomicBool::new(false)),
-            _output_task: cx
-                .spawn(async move |this, cx| {
-                    let exit_status = command_task.await;
+            execution: TerminalExecution::Process(
+                cx.spawn(async move |this, cx| {
+                    let exit_status = command_task.await.map(portable_pty::ExitStatus::from);
+                    let exit_status = acp::TerminalExitStatus::new()
+                        .exit_code(exit_status.as_ref().map(|status| status.exit_code()))
+                        .signal(
+                            exit_status.and_then(|status| status.signal().map(ToOwned::to_owned)),
+                        );
 
                     this.update(cx, |this, cx| {
-                        let (content, original_content_len) = this.truncated_output(cx);
-                        let content_line_count = this.terminal.read(cx).total_lines();
-
-                        this.output = Some(TerminalOutput {
-                            ended_at: Instant::now(),
-                            exit_status,
-                            content,
-                            original_content_len,
-                            content_line_count,
-                        });
+                        this.cache_output(exit_status.clone(), Instant::now(), cx);
                         this.terminal.update(cx, |terminal, _cx| {
                             terminal.release_pty_resources();
                         });
@@ -497,17 +497,43 @@ impl Terminal {
                                 .spawn(async move { sandbox.drop_on_current_thread() })
                                 .detach();
                         }
-                        cx.notify();
                     })
                     .ok();
 
-                    let exit_status = exit_status.map(portable_pty::ExitStatus::from);
-
-                    acp::TerminalExitStatus::new()
-                        .exit_code(exit_status.as_ref().map(|e| e.exit_code()))
-                        .signal(exit_status.and_then(|e| e.signal().map(ToOwned::to_owned)))
+                    exit_status
                 })
                 .shared(),
+            ),
+        }
+    }
+
+    pub fn new_display(
+        id: acp::TerminalId,
+        command_label: &str,
+        working_dir: Option<PathBuf>,
+        output_byte_limit: Option<usize>,
+        terminal: Entity<terminal::Terminal>,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            id,
+            command: cx.new(|cx| {
+                Markdown::new(
+                    format!("```\n{}\n```", command_label).into(),
+                    Some(language_registry),
+                    None,
+                    cx,
+                )
+            }),
+            working_dir,
+            terminal,
+            started_at: Instant::now(),
+            output: None,
+            output_byte_limit,
+            execution: TerminalExecution::Display,
+            user_stopped: Arc::new(AtomicBool::new(false)),
+            _sandbox: None,
         }
     }
 
@@ -515,11 +541,24 @@ impl Terminal {
         &self.id
     }
 
-    pub fn wait_for_exit(&self) -> Shared<Task<acp::TerminalExitStatus>> {
-        self._output_task.clone()
+    /// Ownership is independent of the renderer's PTY: headless tasks still own a process.
+    pub fn is_process_backed(&self) -> bool {
+        matches!(self.execution, TerminalExecution::Process(_))
+    }
+
+    pub fn wait_for_exit(&self) -> Result<Shared<Task<acp::TerminalExitStatus>>> {
+        match &self.execution {
+            TerminalExecution::Process(task) => Ok(task.clone()),
+            TerminalExecution::Display => {
+                bail!("Agent-provided terminals have no client-owned process to wait for")
+            }
+        }
     }
 
     pub fn kill(&mut self, cx: &mut App) {
+        if !self.is_process_backed() {
+            return;
+        }
         self.terminal.update(cx, |terminal, _cx| {
             terminal.kill_active_task();
         });
@@ -528,6 +567,9 @@ impl Terminal {
     /// Marks this terminal as stopped by user action and then kills it.
     /// This should be called when the user explicitly clicks a Stop button.
     pub fn stop_by_user(&mut self, cx: &mut App) {
+        if !self.is_process_backed() {
+            return;
+        }
         self.user_stopped.store(true, Ordering::SeqCst);
         self.kill(cx);
     }
@@ -539,22 +581,60 @@ impl Terminal {
 
     pub fn current_output(&self, cx: &App) -> acp::TerminalOutputResponse {
         if let Some(output) = self.output.as_ref() {
-            let exit_status = output.exit_status.map(portable_pty::ExitStatus::from);
-
             acp::TerminalOutputResponse::new(
                 output.content.clone(),
                 output.original_content_len > output.content.len(),
             )
-            .exit_status(
-                acp::TerminalExitStatus::new()
-                    .exit_code(exit_status.as_ref().map(|e| e.exit_code()))
-                    .signal(exit_status.and_then(|e| e.signal().map(ToOwned::to_owned))),
-            )
+            .exit_status(output.exit_status.clone())
         } else {
             let (current_content, original_len) = self.truncated_output(cx);
             let truncated = current_content.len() < original_len;
             acp::TerminalOutputResponse::new(current_content, truncated)
         }
+    }
+
+    pub(crate) fn write_display_output(&mut self, data: &[u8], cx: &mut Context<Self>) {
+        if self.is_process_backed() {
+            return;
+        }
+        self.terminal
+            .update(cx, |terminal, cx| terminal.write_output(data, cx));
+        if let Some(output) = &self.output {
+            // A process may exit before its final output arrives. Refresh the
+            // cached content without changing its completion time or status.
+            self.cache_output(output.exit_status.clone(), output.ended_at, cx);
+        }
+    }
+
+    pub(crate) fn finish_display(
+        &mut self,
+        exit_status: acp::TerminalExitStatus,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_process_backed() || self.output.is_some() {
+            return;
+        }
+        self.terminal
+            .update(cx, |terminal, _| terminal.shrink_to_used());
+        self.cache_output(exit_status, Instant::now(), cx);
+    }
+
+    fn cache_output(
+        &mut self,
+        exit_status: acp::TerminalExitStatus,
+        ended_at: Instant,
+        cx: &mut Context<Self>,
+    ) {
+        let (content, original_content_len) = self.truncated_output(cx);
+        let content_line_count = self.terminal.read(cx).total_lines();
+        self.output = Some(TerminalOutput {
+            ended_at,
+            exit_status,
+            content,
+            original_content_len,
+            content_line_count,
+        });
+        cx.notify();
     }
 
     fn truncated_output(&self, cx: &App) -> (String, usize) {
