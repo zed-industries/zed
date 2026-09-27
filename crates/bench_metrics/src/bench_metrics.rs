@@ -31,7 +31,7 @@ use std::{
     rc::Rc,
 };
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use criterion::measurement::{Measurement, ValueFormatter};
 
 /// The environment variable [`BenchMeasurement::from_env`] reads.
@@ -536,6 +536,8 @@ fn process_thread_ids() -> Result<Vec<i32>> {
 /// `config:8-15`.
 #[cfg(target_os = "linux")]
 fn hybrid_pmu_events(event: HardwareEvent) -> Result<Vec<(u32, u64)>> {
+    use anyhow::Context as _;
+
     let mut events = Vec::new();
     for pmu in ["cpu_core", "cpu_atom"] {
         let pmu_path = std::path::Path::new("/sys/bus/event_source/devices").join(pmu);
@@ -614,6 +616,7 @@ impl ResourceMetric {
         }
     }
 
+    #[cfg(unix)]
     fn read(self, usage: &libc::rusage) -> u64 {
         let value = match self {
             Self::VoluntaryContextSwitches => usage.ru_nvcsw,
@@ -631,27 +634,16 @@ impl ResourceMetric {
 /// thread in the process.
 pub struct ResourceCounter {
     metric: ResourceMetric,
-    who: libc::c_int,
+    scope: MetricScope,
     formatter: CountFormatter,
 }
 
 impl ResourceCounter {
     /// Creates a counter for `metric` over `scope`.
     pub fn new(metric: ResourceMetric, scope: MetricScope) -> Result<Self> {
-        let who = match scope {
-            MetricScope::Process => libc::RUSAGE_SELF,
-            #[cfg(target_os = "linux")]
-            MetricScope::CallingThread => libc::RUSAGE_THREAD,
-            #[cfg(not(target_os = "linux"))]
-            MetricScope::CallingThread => {
-                return Err(anyhow!(
-                    "per-thread getrusage (RUSAGE_THREAD) is only available on Linux"
-                ));
-            }
-        };
         let this = Self {
             metric,
-            who,
+            scope,
             formatter: CountFormatter::new(metric.unit()),
         };
         this.read()?;
@@ -663,11 +655,29 @@ impl ResourceCounter {
         self.metric
     }
 
+    /// The covered threads.
+    pub fn scope(&self) -> MetricScope {
+        self.scope
+    }
+
+    #[cfg(unix)]
     fn read(&self) -> Result<u64> {
+        let who = match self.scope {
+            MetricScope::Process => libc::RUSAGE_SELF,
+            #[cfg(target_os = "linux")]
+            MetricScope::CallingThread => libc::RUSAGE_THREAD,
+            #[cfg(not(target_os = "linux"))]
+            MetricScope::CallingThread => {
+                return Err(anyhow!(
+                    "getrusage statistics for {} need RUSAGE_THREAD, which only Linux provides",
+                    self.scope.label()
+                ));
+            }
+        };
         // SAFETY: `rusage` is plain old data that `getrusage` fully initializes
         // on success, and `who` is one of the constants the call accepts.
         let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
-        let status = unsafe { libc::getrusage(self.who, &mut usage) };
+        let status = unsafe { libc::getrusage(who, &mut usage) };
         if status != 0 {
             return Err(anyhow!(
                 "getrusage failed: {}",
@@ -675,6 +685,14 @@ impl ResourceCounter {
             ));
         }
         Ok(self.metric.read(&usage))
+    }
+
+    #[cfg(not(unix))]
+    fn read(&self) -> Result<u64> {
+        Err(anyhow!(
+            "getrusage statistics for {} are unavailable on this platform",
+            self.scope.label()
+        ))
     }
 }
 
@@ -845,6 +863,7 @@ impl BenchMeasurement {
     /// Adds every counter this machine supports. `skip_process_instructions`
     /// leaves out the process-wide instruction count when it is already the
     /// primary.
+    #[cfg_attr(not(target_os = "linux"), expect(unused_variables))]
     fn with_default_secondaries(mut self, skip_process_instructions: bool) -> Self {
         #[cfg(target_os = "linux")]
         {
@@ -1358,6 +1377,7 @@ mod tests {
         assert_eq!(formatter.scale_for_machines(&mut values), "cycles");
     }
 
+    #[cfg(unix)]
     #[test]
     fn resource_counter_counts_page_faults_and_context_switches() {
         let faults = ResourceCounter::new(ResourceMetric::MinorPageFaults, MetricScope::Process)
