@@ -116,6 +116,11 @@ pub struct ViewTreeStats {
 /// linear scan is cheaper than a hash set; it is sorted and deduplicated when stored.
 pub(crate) type DependencySet = SmallVec<[EntityId; 4]>;
 
+/// Where the reads of a node rendering this frame are kept between its phases; see
+/// [`ViewTree::begin_rendered_reads`].
+#[derive(Clone, Copy)]
+pub(crate) struct RenderedReads(usize);
+
 /// Adds `entity_id` to a set being recorded. Reads of one entity tend to repeat back to
 /// back, so the last entry is checked before the rest.
 pub(crate) fn record_dependency(set: &mut DependencySet, entity_id: EntityId) {
@@ -162,8 +167,8 @@ pub(crate) struct ViewTree {
     grafted_dispatch: FxHashMap<ViewNodeId, usize>,
     /// Nodes whose paint was grafted by the replay in progress, awaiting that fill.
     painted_grafts: Vec<ViewNodeId>,
-    /// The layouts and prepaints rendered this frame, each with what the node had read by
-    /// its end, for `finish_unpainted_renders`.
+    /// The nodes rendering this frame, each with the last phase it rendered and what it has
+    /// read so far, taken when it paints; see `begin_rendered_reads`.
     rendered_phases: Vec<(ViewNodeId, MetadataPhase, DependencySet)>,
     /// The nodes mounted this frame, in order, each with whether it was created by the
     /// mount, so `rollback` can undo mounts.
@@ -1392,19 +1397,42 @@ impl ViewTree {
         self.pop_traversal(node_id);
     }
 
-    /// Notes what a rendering node has read by the end of its layout or prepaint, in case
-    /// it does not paint this frame: an element may lay out or prepaint a child view without
-    /// painting it (`visibility: hidden`, `display: none`, a measured sample). Painting
-    /// commits the node's reads as usual; `finish_unpainted_renders` commits them for the
-    /// nodes that did not paint.
-    pub(crate) fn note_rendered_phase(
+    /// Keeps what a rendering node read in its first rendered phase until the node paints,
+    /// returning the handle its later phases reach the set through. The set is kept here
+    /// rather than carried by the element, since an element may lay out or prepaint a child
+    /// view without painting it (`visibility: hidden`, `display: none`, a measured sample):
+    /// `finish_unpainted_renders` then commits it for the nodes that did not paint.
+    pub(crate) fn begin_rendered_reads(
         &mut self,
         node_id: ViewNodeId,
         phase: MetadataPhase,
-        accessed: &DependencySet,
-    ) {
+        reads: DependencySet,
+    ) -> RenderedReads {
+        let index = self.rendered_phases.len();
+        self.rendered_phases.push((node_id, phase, reads));
+        RenderedReads(index)
+    }
+
+    /// Takes the reads kept for a node, to extend them in its next phase and return them with
+    /// `continue_rendered_reads`, or to commit them when it paints.
+    pub(crate) fn take_rendered_reads(&mut self, reads: RenderedReads) -> DependencySet {
         self.rendered_phases
-            .push((node_id, phase, accessed.clone()));
+            .get_mut(reads.0)
+            .map(|(_, _, set)| std::mem::take(set))
+            .unwrap_or_default()
+    }
+
+    /// Returns the reads taken with `take_rendered_reads`, as of the end of `phase`.
+    pub(crate) fn continue_rendered_reads(
+        &mut self,
+        reads: RenderedReads,
+        phase: MetadataPhase,
+        set: DependencySet,
+    ) {
+        if let Some(entry) = self.rendered_phases.get_mut(reads.0) {
+            entry.1 = phase;
+            entry.2 = set;
+        }
     }
 
     /// Records, for the nodes that rendered this frame without painting, what they read and
@@ -1419,7 +1447,6 @@ impl ViewTree {
     /// painted frame, so clearing the flag does not make it reusable.
     pub(crate) fn finish_unpainted_renders(&mut self, tree: &crate::key_dispatch::DispatchTree) {
         let mut rendered = std::mem::take(&mut self.rendered_phases);
-        // In drawing order, so a node's prepaint record supersedes its layout record.
         for (node_id, phase, accessed) in rendered.drain(..) {
             let painted = self
                 .nodes

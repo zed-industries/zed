@@ -3,7 +3,7 @@ use crate::{
     EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, Pixels, Render,
     RenderOnce, Style, StyleRefinement, ViewNodeCacheKey, ViewNodeId, WeakEntity,
 };
-use crate::{AppContext as _, Empty, Window, view_node::MetadataPhase, view_tree::DependencySet};
+use crate::{AppContext as _, Empty, Window, view_node::MetadataPhase, view_tree::RenderedReads};
 use anyhow::Result;
 use refineable::Refineable;
 use std::{any::TypeId, fmt};
@@ -381,11 +381,9 @@ impl<V: View> IntoElement for ViewElement<V> {
 struct NodeViewLayout {
     layout: LayoutId,
     node_id: ViewNodeId,
-    /// Whether the layout was reused rather than rendered.
-    grafted: bool,
-    /// Entities read while rendering at layout time. Empty when layout was grafted, since
-    /// the node's stored dependencies already cover it.
-    accessed_entities: DependencySet,
+    /// Where the entities read while rendering at layout time are kept. `None` when the
+    /// layout was reused rather than rendered.
+    reads: Option<RenderedReads>,
     /// The cache key computed at layout, from which prepaint's is built.
     layout_key: ViewNodeCacheKey,
 }
@@ -403,7 +401,7 @@ enum ViewNodePrepaintState {
     Render {
         node_id: ViewNodeId,
         cache_key: ViewNodeCacheKey,
-        accessed_entities: DependencySet,
+        reads: RenderedReads,
     },
 }
 
@@ -497,8 +495,7 @@ impl ViewElementNode {
                     self.node_layout = Some(NodeViewLayout {
                         layout,
                         node_id,
-                        grafted: true,
-                        accessed_entities: window.view_tree.take_dependency_set(),
+                        reads: None,
                         layout_key: cache_key,
                     });
                     (layout, None)
@@ -514,17 +511,16 @@ impl ViewElementNode {
                     });
                     let previous = window.view_tree.store_layout(node_id, layout);
                     window.retire_layout(previous);
-                    window.view_tree.note_rendered_phase(
+                    let reads = window.view_tree.begin_rendered_reads(
                         node_id,
                         MetadataPhase::Layout,
-                        &accessed_entities,
+                        accessed_entities,
                     );
                     window.finish_node_phase(node_id, true);
                     self.node_layout = Some(NodeViewLayout {
                         layout,
                         node_id,
-                        grafted: false,
-                        accessed_entities,
+                        reads: Some(reads),
                         layout_key: cache_key,
                     });
                     (layout, Some(element))
@@ -556,8 +552,7 @@ impl ViewElementNode {
             let NodeViewLayout {
                 layout,
                 node_id,
-                grafted,
-                accessed_entities,
+                reads,
                 layout_key,
             } = node_layout;
             let cache_key = window.view_node_prepaint_key(bounds, &layout_key);
@@ -565,8 +560,9 @@ impl ViewElementNode {
             window.set_view_id(entity_id);
             window.enter_node_prepaint(node_id);
             return window.with_rendered_view(entity_id, |window| {
-                let mut accessed_entities = accessed_entities;
-                if grafted {
+                let (mut accessed_entities, reads) = if let Some(reads) = reads {
+                    (window.view_tree.take_rendered_reads(reads), Some(reads))
+                } else {
                     if window
                         .view_tree
                         .node(node_id)
@@ -575,7 +571,6 @@ impl ViewElementNode {
                         && window.retained_layout_unchanged(layout)
                     {
                         window.graft_view_node_prepaint(node_id);
-                        window.view_tree.recycle_dependency_set(accessed_entities);
                         window.finish_node_phase(node_id, false);
                         return ViewElementPrepaintState {
                             element: None,
@@ -585,8 +580,8 @@ impl ViewElementNode {
                     // The grafted layout is being replaced, so the reused recording and the
                     // dependencies it implied no longer describe this node.
                     window.restart_node_render(node_id);
-                    accessed_entities.clear();
-                }
+                    (window.view_tree.take_dependency_set(), None)
+                };
                 let element = cx.track_reads(&mut accessed_entities, |cx| {
                     if let Some(mut element) = element.take() {
                         element.prepaint(window, cx);
@@ -602,18 +597,28 @@ impl ViewElementNode {
                         element
                     }
                 });
-                window.view_tree.note_rendered_phase(
-                    node_id,
-                    MetadataPhase::Prepaint,
-                    &accessed_entities,
-                );
+                let reads = match reads {
+                    Some(reads) => {
+                        window.view_tree.continue_rendered_reads(
+                            reads,
+                            MetadataPhase::Prepaint,
+                            accessed_entities,
+                        );
+                        reads
+                    }
+                    None => window.view_tree.begin_rendered_reads(
+                        node_id,
+                        MetadataPhase::Prepaint,
+                        accessed_entities,
+                    ),
+                };
                 window.finish_node_phase(node_id, true);
                 ViewElementPrepaintState {
                     element: Some(element),
                     node: Some(ViewNodePrepaintState::Render {
                         node_id,
                         cache_key,
-                        accessed_entities,
+                        reads,
                     }),
                 }
             });
@@ -646,8 +651,9 @@ impl ViewElementNode {
                     ViewNodePrepaintState::Render {
                         node_id,
                         cache_key,
-                        mut accessed_entities,
+                        reads,
                     } => {
+                        let mut accessed_entities = window.view_tree.take_rendered_reads(reads);
                         window.begin_view_node_paint(node_id);
                         if let Some(element) = element.element.as_mut() {
                             cx.track_reads(&mut accessed_entities, |cx| element.paint(window, cx));
