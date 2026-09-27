@@ -142,7 +142,10 @@ Register benchmark functions with `gpui::bench_group!` and `gpui::bench_main!` (
 |---|---|---|
 | unset (default) | wall time | every counter the machine supports (below) |
 | `instructions` | process-wide retired instructions; fails fast if counters are unavailable | the rest, plus wall time |
+| `foreground-instructions` | the benchmark thread's retired instructions; fails fast if unavailable | the rest, plus wall time |
 | `wall-time` | wall time | nothing; no counters are opened |
+
+For a CI gate on frame cost prefer `foreground-instructions`: it excludes background parsing and GPU-driver submission threads, whose work varies run to run, and on Apple Silicon the process-wide count includes driver jitter that widens the interval (about ±0.6% versus ±0.01% for the foreground thread).
 
 Default secondaries, each skipped with a one-time note when unavailable:
 

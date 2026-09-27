@@ -1005,6 +1005,10 @@ pub struct BenchMeasurement {
     secondaries: Rc<SecondaryMeasurements>,
 }
 
+/// The name under which the primary's per-sample total is available to
+/// [`BenchMeasurement::with_ratio`] until [`BenchMeasurement::named`] renames it.
+pub const PRIMARY_METRIC_NAME: &str = "primary";
+
 impl BenchMeasurement {
     /// Wraps the Criterion measurement whose values Criterion analyzes.
     pub fn new<M>(primary: M) -> Self
@@ -1014,8 +1018,19 @@ impl BenchMeasurement {
     {
         Self {
             primary: Box::new(ErasedMeasurementCell::new(primary)),
-            secondaries: Rc::new(SecondaryMeasurements::default()),
+            secondaries: Rc::new(SecondaryMeasurements {
+                primary_name: PRIMARY_METRIC_NAME,
+                ..Default::default()
+            }),
         }
+    }
+
+    /// Names the primary so ratios can refer to it, e.g. `named("cycles")`
+    /// then `with_ratio("IPC", "instructions", "cycles")`. The primary is not
+    /// itself reported as a secondary; Criterion already reports it.
+    pub fn named(mut self, name: &'static str) -> Self {
+        self.secondaries_mut().primary_name = name;
+        self
     }
 
     /// Adds a measurement taken alongside the primary on every sample.
@@ -1070,26 +1085,28 @@ impl BenchMeasurement {
     ///   context switches and minor page faults from `getrusage`. Counters
     ///   that fail to open are skipped with a note printed once.
     /// * `wall-time`: wall time only, no counters.
-    /// * `instructions`: Criterion analyzes process-wide retired instructions
-    ///   and wall time becomes a secondary. Fails when counters are
-    ///   unavailable so CI does not silently measure something else.
+    /// * `instructions`: Criterion analyzes process-wide retired instructions.
+    /// * `foreground-instructions`: Criterion analyzes the benchmark thread's
+    ///   retired instructions, which excludes background and driver threads
+    ///   and is the tighter regression gate for frame cost.
+    ///
+    /// In the instruction modes wall time becomes a secondary, and construction
+    /// fails when counters are unavailable so CI does not silently measure
+    /// something else.
     pub fn from_env() -> Result<Self> {
         match std::env::var(BENCH_MEASUREMENT_ENV_VAR).as_deref() {
             Err(std::env::VarError::NotPresent) => {
                 let measurement = Self::new(criterion::measurement::WallTime);
-                Ok(measurement.with_default_secondaries(false))
+                Ok(measurement.with_default_secondaries(None))
             }
             Ok("wall-time") => Ok(Self::new(criterion::measurement::WallTime)),
-            Ok("instructions") => {
-                let instructions =
-                    HardwareCounter::new(HardwareEvent::Instructions, MetricScope::Process)?;
-                Ok(Self::new(instructions)
-                    .with_default_secondaries(true)
-                    .with_secondary("wall time", criterion::measurement::WallTime))
+            Ok("instructions") => Self::with_instructions_primary(MetricScope::Process),
+            Ok("foreground-instructions") => {
+                Self::with_instructions_primary(MetricScope::CallingThread)
             }
             Ok(value) => Err(anyhow!(
-                "unsupported {BENCH_MEASUREMENT_ENV_VAR} value {value:?}; expected \"wall-time\" \
-                 or \"instructions\""
+                "unsupported {BENCH_MEASUREMENT_ENV_VAR} value {value:?}; expected \"wall-time\", \
+                 \"instructions\", or \"foreground-instructions\""
             )),
             Err(error) => Err(anyhow!(
                 "{BENCH_MEASUREMENT_ENV_VAR} is not valid Unicode: {error}"
@@ -1108,14 +1125,26 @@ impl BenchMeasurement {
         })
     }
 
-    /// Adds every counter this machine supports. `skip_process_instructions`
-    /// leaves out the process-wide instruction count when it is already the
+    fn with_instructions_primary(scope: MetricScope) -> Result<Self> {
+        let instructions = HardwareCounter::new(HardwareEvent::Instructions, scope)?;
+        let name = match scope {
+            MetricScope::Process => "instructions",
+            MetricScope::CallingThread => "foreground instructions",
+        };
+        Ok(Self::new(instructions)
+            .named(name)
+            .with_default_secondaries(Some(scope))
+            .with_secondary("wall time", criterion::measurement::WallTime))
+    }
+
+    /// Adds every counter this machine supports, leaving out the instruction
+    /// count for `primary_instructions` when that scope is already the
     /// primary.
-    fn with_default_secondaries(mut self, skip_process_instructions: bool) -> Self {
+    fn with_default_secondaries(mut self, primary_instructions: Option<MetricScope>) -> Self {
         // Every hardware counter needs the same access, so a denial of the
         // first one is reported once for all of them rather than once per
         // event. Events a platform lacks are still noted individually.
-        let probe = if skip_process_instructions {
+        let probe = if primary_instructions.is_some() {
             Ok(None)
         } else {
             HardwareCounter::new(HardwareEvent::Instructions, MetricScope::Process).map(Some)
@@ -1134,12 +1163,13 @@ impl BenchMeasurement {
                             this
                         }
                     };
-                self = hardware(
-                    self,
-                    "foreground instructions",
-                    HardwareEvent::Instructions,
-                    MetricScope::CallingThread,
-                );
+                // Whichever instruction scope is not the primary is reported
+                // as a secondary, so both are always present for the ratio.
+                let (other_scope, other_name) = match primary_instructions {
+                    Some(MetricScope::CallingThread) => (MetricScope::Process, "instructions"),
+                    _ => (MetricScope::CallingThread, "foreground instructions"),
+                };
+                self = hardware(self, other_name, HardwareEvent::Instructions, other_scope);
                 self = hardware(self, "cycles", HardwareEvent::Cycles, MetricScope::Process);
                 self = hardware(
                     self,
@@ -1269,6 +1299,10 @@ struct RatioMetric {
 struct SecondaryMeasurements {
     metrics: Vec<Rc<SecondaryMetric>>,
     ratios: Vec<RatioMetric>,
+    primary_name: &'static str,
+    /// The primary's total since the report last drained it, so ratios can
+    /// combine it with secondaries.
+    primary_total: Cell<f64>,
 }
 
 impl SecondaryMeasurements {
@@ -1278,6 +1312,10 @@ impl SecondaryMeasurements {
             .iter()
             .map(|metric| (metric.clone(), metric.total.replace(0.0)))
             .collect()
+    }
+
+    fn take_primary_total(&self) -> (&'static str, f64) {
+        (self.primary_name, self.primary_total.replace(0.0))
     }
 }
 
@@ -1308,6 +1346,9 @@ impl Measurement for BenchMeasurement {
 
     fn end(&self, (): Self::Intermediate) -> Self::Value {
         let value = self.primary.end();
+        self.secondaries
+            .primary_total
+            .set(self.secondaries.primary_total.get() + value);
         for metric in self.secondaries.metrics.iter().rev() {
             metric
                 .total
@@ -1384,6 +1425,7 @@ impl MetricReport {
             return;
         };
         let totals = secondaries.take_totals();
+        let (primary_name, primary_total) = secondaries.take_primary_total();
         if iterations == 0 {
             return;
         }
@@ -1398,6 +1440,9 @@ impl MetricReport {
         }
         for ratio in &secondaries.ratios {
             let total_named = |name| {
+                if name == primary_name {
+                    return Some(primary_total);
+                }
                 totals
                     .iter()
                     .find(|(metric, _)| metric.name == name)
@@ -1433,6 +1478,7 @@ impl MetricReport {
     pub fn discard_pending(&self) {
         if let Some(secondaries) = active_secondaries() {
             secondaries.take_totals();
+            secondaries.take_primary_total();
         }
     }
 
@@ -1573,9 +1619,11 @@ mod tests {
         let report = MetricReport::new();
         let mut criterion = fast_criterion(
             BenchMeasurement::new(FakeCounter::new(primary.clone()))
+                .named("primary ticks")
                 .with_secondary("ticks", FakeCounter::new(secondary.clone()))
                 .with_secondary("double ticks", FakeCounter::new(secondary.clone()))
                 .with_ratio("tick ratio", "double ticks", "ticks")
+                .with_ratio("ticks per primary", "ticks", "primary ticks")
                 .with_ratio("unavailable ratio", "ticks", "missing"),
         );
 
@@ -1606,6 +1654,12 @@ mod tests {
         assert!(
             ratio.iter().all(|value| *value == 1.0),
             "ratio of identical counters should be 1: {ratio:?}"
+        );
+        let per_primary =
+            values("ticks per primary").expect("ratio against the primary was recorded");
+        assert!(
+            per_primary.iter().all(|value| *value == 11.0),
+            "secondary 11 per iteration over primary 1 per iteration: {per_primary:?}"
         );
         assert!(values("unavailable ratio").is_none());
     }

@@ -118,7 +118,8 @@ pub use spring::*;
 /// while retired instructions, cycles, IPC, context switches, and the other
 /// counters this machine supports are printed per iteration in the GPUI bench
 /// report. `BENCH_MEASUREMENT=instructions` makes Criterion analyze
-/// process-wide instructions instead; `wall-time` disables all counters. A
+/// process-wide instructions instead, `foreground-instructions` the benchmark
+/// thread's alone, and `wall-time` disables all counters. A
 /// `config = ...` expression may set any other Criterion option; its
 /// measurement is replaced. To measure with something else, call
 /// `criterion::criterion_group!` directly with
