@@ -392,6 +392,10 @@ fn x11_rectangle(bounds: Bounds<DevicePixels>) -> xproto::Rectangle {
 const MAX_OCCLUDER_RECTANGLES: usize = 256;
 
 /// Returns the device-pixel rectangles covered by a scene's primitives.
+///
+/// Shadows are left out: a cutout can only show the window's pixels, not blend
+/// a translucent shadow over the native content, so cutting out a shadow would
+/// replace native content with GPUI's background around every overlay.
 fn scene_occluders(scene: &Scene) -> Vec<Bounds<DevicePixels>> {
     fn clipped(
         bounds: Bounds<ScaledPixels>,
@@ -401,12 +405,6 @@ fn scene_occluders(scene: &Scene) -> Vec<Bounds<DevicePixels>> {
     }
 
     let mut rectangles = Vec::new();
-    rectangles.extend(scene.shadows.iter().map(|shadow| {
-        clipped(
-            shadow.bounds.dilate(shadow.blur_radius),
-            &shadow.content_mask,
-        )
-    }));
     rectangles.extend(
         scene
             .quads
@@ -2641,7 +2639,7 @@ impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{ContentMask, Quad, point, size};
+    use gpui::{ContentMask, Quad, Shadow, point, size};
 
     fn quad(bounds: Bounds<ScaledPixels>, mask: Bounds<ScaledPixels>) -> Quad {
         Quad {
@@ -2666,9 +2664,21 @@ mod tests {
     }
 
     #[test]
-    fn scene_occluders_drop_covered_rectangles_and_respect_content_masks() {
+    fn scene_occluders_skip_shadows_and_covered_rectangles() {
         let everything = scaled(0., 0., 1000., 1000.);
         let mut scene = Scene::default();
+        scene.insert_primitive(Shadow {
+            order: 0,
+            blur_radius: ScaledPixels(24.),
+            bounds: scaled(500., 500., 100., 100.),
+            corner_radii: Default::default(),
+            content_mask: ContentMask { bounds: everything },
+            color: Default::default(),
+            element_bounds: scaled(500., 500., 100., 100.),
+            element_corner_radii: Default::default(),
+            inset: 0,
+            pad: 0,
+        });
         scene.insert_primitive(quad(scaled(10., 10., 100., 50.), everything));
         scene.insert_primitive(quad(scaled(20.5, 20.5, 10., 10.), everything));
         scene.insert_primitive(quad(
