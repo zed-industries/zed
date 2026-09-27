@@ -2906,6 +2906,50 @@ mod tests {
         }
     }
 
+    /// A view that renders another view directly shares that child's layout root. When it
+    /// then wraps the reused child in an element of its own, retiring its previous root must
+    /// not remove the child's.
+    #[gpui::test]
+    fn wrapping_a_directly_rendered_child_keeps_its_layout(cx: &mut TestAppContext) {
+        struct Leaf;
+        impl Render for Leaf {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size(px(20.)).bg(rgb(0x336699))
+            }
+        }
+        struct Host {
+            leaf: Entity<Leaf>,
+            wrapped: bool,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                if self.wrapped {
+                    div().p(px(5.)).child(self.leaf.clone()).into_any_element()
+                } else {
+                    self.leaf.clone().into_any_element()
+                }
+            }
+        }
+        let window = cx.open_window(size(px(100.), px(100.)), |_, cx| Host {
+            leaf: cx.new(|_| Leaf),
+            wrapped: false,
+        });
+        cx.run_until_parked();
+        for wrapped in [true, false, true] {
+            window
+                .update(cx, |host, _, cx| {
+                    host.wrapped = wrapped;
+                    cx.notify();
+                })
+                .expect("window open");
+            cx.run_until_parked();
+            let quads = window
+                .update(cx, |_, window, _| window.rendered_frame.scene.quads.len())
+                .expect("window open");
+            assert_eq!(quads, 1, "wrapped: {wrapped}");
+        }
+    }
+
     /// A view laid out before a transaction and prepainted only inside it, which fails, is
     /// left as laid out: the frame does not record the dispatch nodes the rollback removed.
     #[gpui::test]

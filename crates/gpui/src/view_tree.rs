@@ -1328,17 +1328,37 @@ impl ViewTree {
         }
     }
 
-    /// Records the node's new layout root and returns the previous one, which the caller
-    /// drops from the layout tree: its live children have been re-attached under the new
-    /// root by the render that produced it.
+    /// Records the node's new layout root and returns the previous one for the caller to
+    /// drop from the layout tree, unless a child it mounted still owns it: its live
+    /// children have been re-attached under the new root by the render that produced it.
+    /// Ancestors that shared the previous root share the new one.
     pub(crate) fn store_layout(
         &mut self,
         node_id: ViewNodeId,
         layout: LayoutId,
     ) -> Option<LayoutId> {
-        let node = self.nodes.get_mut(node_id)?;
-        let previous = node.layout.replace(layout);
-        previous.filter(|previous| *previous != layout)
+        let previous = self.nodes.get_mut(node_id)?.layout.replace(layout)?;
+        if previous == layout {
+            return None;
+        }
+        // A view that renders another view directly shares that child's root, so ancestors
+        // sharing the old root take the new one with it...
+        let mut ancestor = self.nodes[node_id].parent;
+        while let Some(ancestor_id) = ancestor
+            && let Some(node) = self.nodes.get_mut(ancestor_id)
+            && node.layout == Some(previous)
+        {
+            node.layout = Some(layout);
+            ancestor = node.parent;
+        }
+        // ...and when a reused child is now wrapped in an element of this view's, the old
+        // root is still the child's.
+        let shared = self.nodes[node_id].next_children.iter().any(|child| {
+            self.nodes
+                .get(*child)
+                .is_some_and(|child| child.layout == Some(previous))
+        });
+        (!shared).then_some(previous)
     }
 
     /// Layout roots that stop being retained when this frame ends: those of removed nodes
