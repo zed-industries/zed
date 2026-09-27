@@ -1844,6 +1844,66 @@ mod tests {
         assert_eq!(*heard.borrow(), ["owner", "nested"]);
     }
 
+    /// Key binding queries describe the focused element, in a replayed frame as in a fresh
+    /// one, whatever element happened to paint last.
+    #[gpui::test]
+    fn bindings_for_action_follow_focus_in_replayed_frames(cx: &mut TestAppContext) {
+        crate::actions!(view_tests, [ChildAction]);
+        struct Child {
+            focus: FocusHandle,
+        }
+        impl Render for Child {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .key_context("Child")
+                    .track_focus(&self.focus)
+                    .size(px(10.))
+            }
+        }
+        struct Host {
+            child: Entity<Child>,
+            revision: usize,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().child(self.child.clone()).child(
+                    div()
+                        .key_context("Sibling")
+                        .size(px(10.))
+                        .bg(rgb(self.revision as u32)),
+                )
+            }
+        }
+        cx.update(|cx| cx.bind_keys([crate::KeyBinding::new("a", ChildAction, Some("Child"))]));
+        let focus = cx.update(|cx| cx.focus_handle());
+        let window = cx.open_window(size(px(100.), px(100.)), |_, cx| Host {
+            child: cx.new(|_| Child {
+                focus: focus.clone(),
+            }),
+            revision: 0,
+        });
+        window
+            .update(cx, |_, window, cx| window.focus(&focus, cx))
+            .expect("window open");
+        cx.run_until_parked();
+        let bindings = |cx: &mut TestAppContext| {
+            window
+                .update(cx, |_, window, _| {
+                    window.bindings_for_action(&ChildAction).len()
+                })
+                .expect("window open")
+        };
+        assert_eq!(bindings(cx), 1, "fresh frame");
+        window
+            .update(cx, |host, _, cx| {
+                host.revision += 1;
+                cx.notify();
+            })
+            .expect("window open");
+        cx.run_until_parked();
+        assert_eq!(bindings(cx), 1, "replayed frame");
+    }
+
     use crate::{
         App, Component, Context, Entity, FocusHandle, Render, StyleRefinement, TestAppContext,
         Window, canvas, deferred, div, prelude::*, px, rgb, size,

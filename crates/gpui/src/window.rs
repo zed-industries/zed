@@ -3101,6 +3101,15 @@ impl Window {
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
         self.next_frame.clear();
+        // Key binding queries read the tree's context stack, which drawing leaves at
+        // whatever node was active last, and which differs when that node's paint was
+        // replayed. They describe the focused element, so its path is made active.
+        if self.rendered_frame.dispatch_tree.len() > 0 {
+            let focus_node = self.focus_node_id_in_rendered_frame(self.focus);
+            self.rendered_frame
+                .dispatch_tree
+                .set_active_node(focus_node);
+        }
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
 
