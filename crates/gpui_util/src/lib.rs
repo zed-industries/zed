@@ -4,6 +4,7 @@
 use std::{
     env,
     ffi::OsStr,
+    fmt,
     ops::AddAssign,
     panic::Location,
     pin::Pin,
@@ -94,8 +95,12 @@ pub fn get_powershell() -> Option<String> {
     }
 
     fn find_pwsh_in_scoop() -> Option<PathBuf> {
-        let pwsh_exe =
-            PathBuf::from(std::env::var_os("USERPROFILE")?).join("scoop\\shims\\pwsh.exe");
+        // Scoop can be installed to a custom location; $SCOOP points at the
+        // scoop root in that case and defaults to %USERPROFILE%\scoop otherwise.
+        let scoop_dir = std::env::var_os("SCOOP").map(PathBuf::from).or_else(|| {
+            std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join("scoop"))
+        })?;
+        let pwsh_exe = scoop_dir.join("shims").join("pwsh.exe");
         pwsh_exe.is_file().then_some(pwsh_exe)
     }
 
@@ -251,7 +256,7 @@ where
             Err(error) => {
                 log_error_with_caller(
                     *Location::caller(),
-                    DebugAsDisplay(&error),
+                    format_args!("{:#}", DebugAsDisplay(&error)),
                     log::Level::Error,
                 );
                 None
@@ -277,7 +282,7 @@ where
         match self {
             Ok(value) => Some(value),
             Err(error) => {
-                log_error_with_caller(*Location::caller(), error, level);
+                log_error_with_caller(*Location::caller(), format_args!("{error:#}"), level);
                 None
             }
         }
@@ -291,10 +296,12 @@ where
     }
 }
 
-fn log_error_with_caller<E>(caller: core::panic::Location<'_>, error: E, level: log::Level)
-where
-    E: std::fmt::Display,
-{
+#[inline(never)]
+fn log_error_with_caller(
+    caller: core::panic::Location<'_>,
+    arguments: fmt::Arguments<'_>,
+    level: log::Level,
+) {
     #[cfg(not(windows))]
     let file = caller.file();
     #[cfg(windows)]
@@ -316,7 +323,7 @@ where
         &log::Record::builder()
             .target(module_path.as_deref().unwrap_or(""))
             .module_path(file.as_deref())
-            .args(format_args!("{:#}", error))
+            .args(arguments)
             .file(Some(caller.file()))
             .line(Some(caller.line()))
             .level(level)
@@ -326,7 +333,11 @@ where
 
 #[track_caller]
 pub fn log_err<E: std::fmt::Display>(error: &E) {
-    log_error_with_caller(*Location::caller(), error, log::Level::Error);
+    log_error_with_caller(
+        *Location::caller(),
+        format_args!("{error:#}"),
+        log::Level::Error,
+    );
 }
 
 // Forces `{:?}` formatting through a `Display`-bounded logging helper so `anyhow::Error` emits a
@@ -452,7 +463,7 @@ where
             Poll::Ready(output) => Poll::Ready(match output {
                 Ok(output) => Some(output),
                 Err(error) => {
-                    log_error_with_caller(location, error, level);
+                    log_error_with_caller(location, format_args!("{error:#}"), level);
                     None
                 }
             }),
@@ -479,7 +490,11 @@ where
             Poll::Ready(output) => Poll::Ready(match output {
                 Ok(output) => Some(output),
                 Err(error) => {
-                    log_error_with_caller(location, DebugAsDisplay(&error), level);
+                    log_error_with_caller(
+                        location,
+                        format_args!("{:#}", DebugAsDisplay(&error)),
+                        level,
+                    );
                     None
                 }
             }),
@@ -604,4 +619,69 @@ where
     items.select_nth_unstable_by(limit, compare);
     items.truncate(limit);
     items.sort_by(compare);
+}
+
+#[cfg(test)]
+mod logging_tests {
+    use super::{ResultExt, TryFutureExt, TryFutureExtBacktrace};
+    use log::{Level, Log, Metadata, Record};
+    use std::{
+        cell::RefCell,
+        future::ready,
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+
+    #[test]
+    fn logging_preserves_diagnostics_and_callers() {
+        log::set_logger(&TestLogger).expect("failed to install test logger");
+        let error = anyhow::anyhow!("root failure")
+            .context("inner context")
+            .context("outer context");
+        let display = "outer context: inner context: root failure";
+        let debug = format!("{error:?}");
+        let line = line!() + 1;
+        assert_eq!(Err::<(), _>(&error).log_err(), None);
+        assert_logged(line, display);
+        let line = line!() + 1;
+        assert_eq!(Err::<(), _>(&error).log_err_with_backtrace(), None);
+        assert_logged(line, &debug);
+        let mut context = Context::from_waker(Waker::noop());
+        let line = line!() + 1;
+        let mut future = pin!(ready(Err::<(), _>(&error)).log_err());
+        assert_eq!(future.as_mut().poll(&mut context), Poll::Ready(None));
+        assert_logged(line, display);
+        let line = line!() + 1;
+        let mut future = pin!(ready(Err::<(), _>(&error)).log_err_with_backtrace());
+        assert_eq!(future.as_mut().poll(&mut context), Poll::Ready(None));
+        assert_logged(line, &debug);
+    }
+
+    thread_local! {
+        static RECORDS: RefCell<Vec<(Option<u32>, String)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    struct TestLogger;
+
+    impl Log for TestLogger {
+        fn enabled(&self, _: &Metadata<'_>) -> bool {
+            true
+        }
+
+        fn log(&self, record: &Record<'_>) {
+            assert_eq!(record.target(), "gpui_util::lib");
+            assert_eq!(record.module_path(), Some("crates/gpui_util/src/lib.rs"));
+            assert_eq!(record.file(), Some(file!()));
+            assert_eq!(record.level(), Level::Error);
+            RECORDS.with_borrow_mut(|records| {
+                records.push((record.line(), record.args().to_string()));
+            });
+        }
+
+        fn flush(&self) {}
+    }
+
+    fn assert_logged(line: u32, message: &str) {
+        assert_eq!(RECORDS.take(), [(Some(line), message.to_owned())]);
+    }
 }

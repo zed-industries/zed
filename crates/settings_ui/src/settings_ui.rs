@@ -656,6 +656,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::IconThemeName>(render_icon_theme_picker)
         .add_basic_renderer::<settings::BufferLineHeightDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::GitGutterWidthDiscriminants>(render_dropdown)
+        .add_basic_renderer::<settings::ProjectPanelTitleTooltipDelayDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::AutosaveSettingDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::WorkingDirectoryDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::IncludeIgnoredContent>(render_dropdown)
@@ -4694,6 +4695,20 @@ fn update_settings_file(
     cx: &mut App,
     update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
 ) -> Result<()> {
+    let mut update = Some(update);
+    update_settings_file_inner(file, file_name, window, cx, &mut || {
+        Box::new(update.take().expect("called once"))
+    })
+}
+
+#[inline(never)]
+fn update_settings_file_inner(
+    file: SettingsUiFile,
+    file_name: Option<&'static str>,
+    window: &mut Window,
+    cx: &mut App,
+    update: &mut dyn FnMut() -> Box<dyn Send + FnOnce(&mut SettingsContent, &App)>,
+) -> Result<()> {
     telemetry::event!("Settings Change", setting = file_name, type = file.setting_type());
 
     match file {
@@ -4707,7 +4722,7 @@ fn update_settings_file(
         }
         SettingsUiFile::User => {
             // todo(settings_ui) error?
-            SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), update);
+            SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), update());
             Ok(())
         }
         SettingsUiFile::Server(_) => unimplemented!(),
@@ -4832,10 +4847,11 @@ impl ProjectSettingsUpdateQueue {
     }
 }
 
+#[inline(never)]
 fn update_project_setting_file(
     worktree_id: WorktreeId,
     rel_path: Arc<RelPath>,
-    update: impl 'static + FnOnce(&mut SettingsContent, &App),
+    update: &mut dyn FnMut() -> Box<dyn Send + FnOnce(&mut SettingsContent, &App)>,
     settings_window: Entity<SettingsWindow>,
     cx: &mut App,
 ) -> Result<()> {
@@ -4856,7 +4872,7 @@ fn update_project_setting_file(
         settings_window: settings_window.downgrade(),
         project: project.downgrade(),
         worktree: worktree.downgrade(),
-        update: Box::new(update),
+        update: update(),
     };
 
     ProjectSettingsUpdateQueue::enqueue(cx, entry);

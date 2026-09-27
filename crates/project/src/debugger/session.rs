@@ -2863,6 +2863,38 @@ impl Session {
         })
     }
 
+    /// Evaluates an expression to obtain its full value for copying.
+    pub fn evaluate_variable_value(
+        &mut self,
+        expression: String,
+        frame_id: Option<u64>,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<String>> {
+        let context = if self
+            .capabilities
+            .supports_clipboard_context
+            .unwrap_or_default()
+        {
+            EvaluateArgumentsContext::Clipboard
+        } else {
+            EvaluateArgumentsContext::Variables
+        };
+        let request = self.request(
+            EvaluateCommand {
+                expression,
+                frame_id,
+                context: Some(context),
+                source: None,
+            },
+            |_, response, _| response.ok(),
+            cx,
+        );
+        cx.background_spawn(async move {
+            let response = request.await?;
+            Some(response.result)
+        })
+    }
+
     pub fn location(
         &mut self,
         reference: u64,

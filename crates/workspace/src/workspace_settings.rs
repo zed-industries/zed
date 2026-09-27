@@ -39,6 +39,8 @@ pub struct WorkspaceSettings {
     pub resize_all_panels_in_dock: Vec<DockPosition>,
     pub close_on_file_delete: bool,
     pub close_panel_on_toggle: bool,
+    pub window_title_format: String,
+    pub window_title_separator: String,
     pub use_system_window_tabs: bool,
     pub fullscreen_mode: settings::FullscreenMode,
     pub zoomed_padding: bool,
@@ -142,6 +144,8 @@ impl Settings for WorkspaceSettings {
                 .collect(),
             close_on_file_delete: workspace.close_on_file_delete.unwrap(),
             close_panel_on_toggle: workspace.close_panel_on_toggle.unwrap(),
+            window_title_format: workspace.window_title_format.clone().unwrap(),
+            window_title_separator: workspace.window_title_separator.clone().unwrap(),
             use_system_window_tabs: workspace.use_system_window_tabs.unwrap(),
             fullscreen_mode: workspace.fullscreen_mode.unwrap(),
             zoomed_padding: workspace.zoomed_padding.unwrap(),
@@ -217,6 +221,7 @@ pub struct StatusBarSettings {
     pub cursor_position_button: bool,
     pub line_endings_button: bool,
     pub active_encoding_button: EncodingDisplayOptions,
+    pub pending_keystrokes_indicator: bool,
 }
 
 impl Settings for StatusBarSettings {
@@ -229,6 +234,7 @@ impl Settings for StatusBarSettings {
             cursor_position_button: status_bar.cursor_position_button.unwrap(),
             line_endings_button: status_bar.line_endings_button.unwrap(),
             active_encoding_button: status_bar.active_encoding_button.unwrap(),
+            pending_keystrokes_indicator: status_bar.pending_keystrokes_indicator.unwrap(),
         }
     }
 }

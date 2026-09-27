@@ -160,6 +160,7 @@ impl SelectableButton for IconButton {
 }
 
 impl Clickable for IconButton {
+    #[inline(always)]
     fn on_click(
         mut self,
         handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
@@ -201,6 +202,7 @@ impl ButtonCommon for IconButton {
         self
     }
 
+    #[inline(always)]
     fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.base = self.base.tooltip(tooltip);
         self

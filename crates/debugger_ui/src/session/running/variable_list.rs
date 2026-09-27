@@ -889,13 +889,30 @@ impl VariableList {
             return;
         };
 
-        let variable_value = match &entry.entry {
-            DapEntry::Variable(dap) => dap.value.clone(),
-            DapEntry::Watcher(watcher) => watcher.value.to_string(),
+        match &entry.entry {
+            DapEntry::Variable(dap) => {
+                let fallback_value = dap.value.clone();
+                let expression = dap
+                    .evaluate_name
+                    .clone()
+                    .unwrap_or_else(|| dap.name.clone());
+                let frame_id = self.selected_stack_frame_id;
+                let task = self.session.update(cx, |session, cx| {
+                    session.evaluate_variable_value(expression, frame_id, cx)
+                });
+                cx.spawn(async move |_, cx| {
+                    let value = task.await.unwrap_or(fallback_value);
+                    cx.update(|cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(value));
+                    });
+                })
+                .detach();
+            }
+            DapEntry::Watcher(watcher) => {
+                cx.write_to_clipboard(ClipboardItem::new_string(watcher.value.to_string()));
+            }
             DapEntry::Scope(_) => return,
-        };
-
-        cx.write_to_clipboard(ClipboardItem::new_string(variable_value));
+        }
     }
 
     fn edit_variable(&mut self, _: &EditVariable, window: &mut Window, cx: &mut Context<Self>) {

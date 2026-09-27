@@ -1,3 +1,5 @@
+pub const DANGERBOT: Runner = Runner("namespace-profile-dangerbot");
+
 pub const LINUX_SMALL: Runner = Runner("namespace-profile-2x4-ubuntu-2404");
 pub const LINUX_DEFAULT: Runner = LINUX_XL;
 pub const LINUX_XL: Runner = Runner("namespace-profile-16x32-ubuntu-2204");
@@ -51,6 +53,19 @@ pub enum Platform {
     Windows,
     Linux,
     Mac,
+}
+
+impl Platform {
+    pub fn target_triple(self, arch: Arch) -> &'static str {
+        match (self, arch) {
+            (Self::Linux, Arch::X86_64) => "x86_64-unknown-linux-musl",
+            (Self::Linux, Arch::AARCH64) => "aarch64-unknown-linux-musl",
+            (Self::Mac, Arch::X86_64) => "x86_64-apple-darwin",
+            (Self::Mac, Arch::AARCH64) => "aarch64-apple-darwin",
+            (Self::Windows, Arch::X86_64) => "x86_64-pc-windows-msvc",
+            (Self::Windows, Arch::AARCH64) => "aarch64-pc-windows-msvc",
+        }
+    }
 }
 
 impl std::fmt::Display for Platform {
