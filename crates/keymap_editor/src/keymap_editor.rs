@@ -28,7 +28,8 @@ use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::StatusToast;
 use project::{CompletionDisplayOptions, Project};
 use settings::{
-    BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAssets, infer_json_indent_size,
+    BaseKeymap, KeybindSource, KeymapEntryProvenance, KeymapFile, Settings as _, SettingsAssets,
+    find_suppressing_entries, infer_json_indent_size,
 };
 use ui::{
     ActiveTheme as _, App, Banner, BorrowAppContext, ColumnWidthConfig, ContextMenu,
@@ -66,10 +67,10 @@ actions!(
         CreateBinding,
         /// Creates a new key binding from scratch, prompting for the action.
         OpenCreateKeybindingModal,
+        /// Restores a keybinding suppressed by user unbind entries.
+        RestoreBinding,
         /// Deletes the selected key binding.
         DeleteBinding,
-        /// Restores a key binding that was suppressed by an unbind entry.
-        RestoreBinding,
         /// Copies the action name to clipboard.
         CopyAction,
         /// Copies the context predicate to clipboard.
@@ -451,7 +452,7 @@ struct KeymapEditor {
     selected_index: Option<usize>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     previous_edit: Option<PreviousEdit>,
-    is_restoring_binding: bool,
+    restore_state: RestoreState,
     humanized_action_names: HumanizedActionNameCache,
     current_widths: Entity<RedistributableColumnsState>,
     show_hover_menus: bool,
@@ -477,17 +478,48 @@ enum PreviousEdit {
     Keybinding {
         action_mapping: ActionMapping,
         action_name: &'static str,
-        source: Option<KeybindSource>,
+        source: KeybindSource,
+        provenance: Option<KeymapEntryProvenance>,
         action_arguments: Option<String>,
-        /// Which identical binding to select: rows sharing mapping, name,
-        /// source and (JSON-equal) arguments are disambiguated positionally,
-        /// mirroring `user_binding_occurrence`.
-        occurrence: usize,
         /// The scrollbar position to fallback to if we don't find the keybinding during a refresh
         /// this can happen if there's a filter applied to the search and the keybinding modification
         /// filters the binding from the search results
         fallback: Point<Pixels>,
     },
+}
+
+/// Tracks restore progress to avoid concurrent writes and swallow trailing double-clicks.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+enum RestoreState {
+    #[default]
+    Idle,
+    /// Restore write is in flight or waiting for the resulting keymap reload.
+    Pending {
+        provenances: Vec<KeymapEntryProvenance>,
+        write_done: bool,
+    },
+    /// Refresh completed; suppress trailing click of a double-click sequence.
+    SuppressDoubleClick,
+}
+
+impl RestoreState {
+    #[cfg(test)]
+    fn is_busy(&self) -> bool {
+        !matches!(self, RestoreState::Idle)
+    }
+}
+
+impl KeymapEditor {
+    fn consume_restore_suppression_for_click(&mut self, click_count: usize) -> bool {
+        match self.restore_state.clone() {
+            RestoreState::Idle => false,
+            RestoreState::Pending { .. } => true,
+            RestoreState::SuppressDoubleClick => {
+                self.restore_state = RestoreState::Idle;
+                click_count > 1
+            }
+        }
+    }
 }
 
 impl EventEmitter<()> for KeymapEditor {}
@@ -512,94 +544,13 @@ fn keystrokes_match_exactly(
         })
 }
 
-fn disabled_binding_matches_context(
-    disabled_binding: &gpui::KeyBinding,
-    binding: &gpui::KeyBinding,
-) -> bool {
-    match (
-        disabled_binding.predicate().as_deref(),
-        binding.predicate().as_deref(),
-    ) {
-        (None, _) => true,
-        (Some(_), None) => false,
-        (Some(disabled_predicate), Some(predicate)) => disabled_predicate.is_superset(predicate),
-    }
-}
-
+#[cfg(test)]
 fn binding_is_unbound_by_unbind(
     binding: &gpui::KeyBinding,
     binding_index: usize,
     all_bindings: &[&gpui::KeyBinding],
 ) -> bool {
-    unbind_suppressor(binding, binding_index, all_bindings).is_some()
-}
-
-/// Returns the source of the `unbind` entry suppressing the binding, if any.
-/// Suppression considers later entries regardless of source, but only
-/// user-keymap suppressors can be restored (restore edits `keymap.json`),
-/// so callers gate the restore affordance on `Some(KeybindSource::User)`.
-/// A suppressor without metadata yields `None` (still suppressed, just not
-/// restorable).
-fn unbind_suppressor_source(
-    binding: &gpui::KeyBinding,
-    binding_index: usize,
-    all_bindings: &[&gpui::KeyBinding],
-) -> Option<KeybindSource> {
-    unbind_suppressor(binding, binding_index, all_bindings)
-        .and_then(|suppressor| suppressor.meta())
-        .map(KeybindSource::from_meta)
-}
-
-fn unbind_suppressor<'a>(
-    binding: &gpui::KeyBinding,
-    binding_index: usize,
-    all_bindings: &[&'a gpui::KeyBinding],
-) -> Option<&'a gpui::KeyBinding> {
-    all_bindings[binding_index + 1..]
-        .iter()
-        .rev()
-        .find(|disabled_binding| {
-            gpui::is_unbind(disabled_binding.action())
-                && keystrokes_match_exactly(disabled_binding.keystrokes(), binding.keystrokes())
-                && disabled_binding
-                    .action()
-                    .as_any()
-                    .downcast_ref::<gpui::Unbind>()
-                    .is_some_and(|unbind| unbind.0.as_ref() == binding.action().name())
-                && disabled_binding_matches_context(disabled_binding, binding)
-        })
-        .copied()
-}
-
-fn user_binding_occurrence(
-    binding: &gpui::KeyBinding,
-    binding_index: usize,
-    all_bindings: &[&gpui::KeyBinding],
-) -> usize {
-    all_bindings[..binding_index]
-        .iter()
-        .filter(|candidate| {
-            candidate.meta() == Some(KeybindSource::User.meta())
-                && !gpui::is_unbind(candidate.action())
-                && candidate.action().name() == binding.action().name()
-                && action_inputs_equal(
-                    candidate.action_input().as_deref(),
-                    binding.action_input().as_deref(),
-                )
-                && candidate.predicate() == binding.predicate()
-                && keystrokes_match_exactly(candidate.keystrokes(), binding.keystrokes())
-        })
-        .count()
-}
-
-fn action_inputs_equal(a: Option<&str>, b: Option<&str>) -> bool {
-    match (
-        a.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
-        b.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
-    ) {
-        (Some(a), Some(b)) => a == b,
-        _ => a == b,
-    }
+    !find_suppressing_entries(binding, binding_index, all_bindings).is_empty()
 }
 
 impl KeymapEditor {
@@ -682,7 +633,7 @@ impl KeymapEditor {
             selected_index: None,
             context_menu: None,
             previous_edit: None,
-            is_restoring_binding: false,
+            restore_state: RestoreState::Idle,
             search_query_debounce: None,
             humanized_action_names: HumanizedActionNameCache::new(cx),
             show_hover_menus: true,
@@ -913,23 +864,14 @@ impl KeymapEditor {
                 .meta()
                 .map(KeybindSource::from_meta)
                 .unwrap_or(KeybindSource::Unknown);
-            let source_occurrence = if source == KeybindSource::User {
-                user_binding_occurrence(key_binding, binding_index, &key_bindings)
-            } else {
-                0
-            };
 
             let keystroke_text = ui::text_for_keybinding_keystrokes(key_binding.keystrokes(), cx);
             let is_no_action = gpui::is_no_action(key_binding.action());
-            let unbind_suppressor =
-                unbind_suppressor_source(key_binding, binding_index, &key_bindings);
-            let is_unbound_by_unbind =
-                binding_is_unbound_by_unbind(key_binding, binding_index, &key_bindings);
+            let suppression = suppression_for_binding(key_binding, binding_index, &key_bindings);
             let binding = KeyBinding::new(key_binding, source);
 
-            let context_predicate = key_binding.predicate();
-            let context = context_predicate
-                .as_ref()
+            let context = key_binding
+                .predicate()
                 .map(|predicate| {
                     KeybindContextString::Local(
                         predicate.to_string().into(),
@@ -959,12 +901,9 @@ impl KeymapEditor {
                 keystroke_text,
                 binding,
                 context,
-                context_predicate,
                 source,
-                source_occurrence,
                 is_no_action,
-                is_unbound_by_unbind,
-                unbind_suppressor,
+                suppression,
                 action_information,
             ));
             string_match_candidates.push(string_match_candidate);
@@ -994,26 +933,26 @@ impl KeymapEditor {
 
     fn on_keymap_changed(&mut self, window: &mut Window, cx: &mut Context<KeymapEditor>) {
         let workspace = self.workspace.clone();
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn_in(window, async move |keymap_editor, cx| {
             let json_language = load_json_language(workspace.clone(), cx).await;
             let zed_keybind_context_language =
                 load_keybind_context_language(workspace.clone(), cx).await;
 
-            let (action_query, keystroke_query) = this.update(cx, |this, cx| {
+            let (action_query, keystroke_query) = keymap_editor.update(cx, |editor, cx| {
                 let (key_bindings, string_match_candidates, actions_with_schemas) =
                     Self::process_bindings(
                         json_language,
                         zed_keybind_context_language,
-                        &this.humanized_action_names,
+                        &editor.humanized_action_names,
                         cx,
                     );
 
-                this.keybinding_conflict_state = ConflictState::new(&key_bindings);
+                editor.keybinding_conflict_state = ConflictState::new(&key_bindings);
 
-                this.keybindings = key_bindings;
-                this.actions_with_schemas = actions_with_schemas;
-                this.string_match_candidates = Arc::new(string_match_candidates);
-                this.matches = this
+                editor.keybindings = key_bindings;
+                editor.actions_with_schemas = actions_with_schemas;
+                editor.string_match_candidates = Arc::new(string_match_candidates);
+                editor.matches = editor
                     .string_match_candidates
                     .iter()
                     .enumerate()
@@ -1025,18 +964,31 @@ impl KeymapEditor {
                     })
                     .collect();
                 (
-                    this.current_action_query(cx),
-                    this.current_keystroke_query(cx),
+                    editor.current_action_query(cx),
+                    editor.current_keystroke_query(cx),
                 )
             })?;
             // calls cx.notify
-            Self::update_matches(this.clone(), action_query, keystroke_query, cx).await?;
-            this.update_in(cx, |this, window, cx| {
-                if let Some(previous_edit) = this.previous_edit.take() {
+            Self::update_matches(keymap_editor.clone(), action_query, keystroke_query, cx).await?;
+            keymap_editor.update_in(cx, |editor, window, cx| {
+                // Transition to SuppressDoubleClick only when our restored suppressors are gone.
+                if let RestoreState::Pending { provenances, .. } = &editor.restore_state {
+                    let pending_tokens: Vec<gpui::KeyBindingProvenance> =
+                        provenances.iter().map(|p| p.to_gpui()).collect();
+                    let still_present = cx.key_bindings().borrow().bindings().any(|b| {
+                        b.provenance()
+                            .is_some_and(|prov| pending_tokens.contains(&prov))
+                    });
+                    if !still_present {
+                        editor.restore_state = RestoreState::SuppressDoubleClick;
+                    }
+                }
+                if let Some(previous_edit) = editor.previous_edit.take() {
                     match previous_edit {
                         // should remove scroll from process_query
                         PreviousEdit::ScrollBarOffset(offset) => {
-                            this.table_interaction_state
+                            editor
+                                .table_interaction_state
                                 .update(cx, |table, _| table.set_scroll_offset(offset))
                             // set selected index and scroll
                         }
@@ -1044,45 +996,66 @@ impl KeymapEditor {
                             action_mapping,
                             action_name,
                             source,
+                            provenance,
                             action_arguments,
-                            occurrence,
                             fallback,
                         } => {
-                            let mut matches_to_skip = occurrence;
-                            let scroll_position =
-                                this.matches.iter().enumerate().find_map(|(index, item)| {
-                                    let binding = &this.keybindings[item.candidate_id];
-                                    let is_match = binding.get_action_mapping().is_some_and(
+                            let scroll_position = editor
+                                .matches
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(index, item)| {
+                                    let binding = &editor.keybindings[item.candidate_id];
+                                    let mapping_matches = binding.get_action_mapping().is_some_and(
                                         |binding_mapping| binding_mapping == action_mapping,
-                                    ) && binding.action().name == action_name
-                                        && binding.keybind_source() == source
-                                        && action_inputs_equal(
-                                            binding
-                                                .action()
-                                                .arguments
-                                                .as_ref()
-                                                .map(|arguments| arguments.text.as_str()),
-                                            action_arguments.as_deref(),
-                                        );
-                                    if !is_match {
+                                    );
+                                    if !mapping_matches || binding.action().name != action_name {
                                         return None;
                                     }
-                                    if matches_to_skip > 0 {
-                                        matches_to_skip -= 1;
-                                        return None;
-                                    }
-                                    Some(index)
-                                });
+                                    let binding_source =
+                                        binding.keybind_source().unwrap_or(KeybindSource::Unknown);
+                                    let binding_args = binding
+                                        .action()
+                                        .arguments
+                                        .as_ref()
+                                        .map(|args| args.text.to_string());
+                                    let source_matches = binding_source == source;
+                                    let args_matches = binding_args == action_arguments;
+                                    let provenance_matches = match (
+                                        provenance.map(|p| p.location),
+                                        binding
+                                            .key_binding()
+                                            .and_then(|b| b.provenance)
+                                            .map(|p| p.location),
+                                    ) {
+                                        (Some(expected), Some(actual)) => expected == actual,
+                                        _ => true,
+                                    };
+                                    let score =
+                                        if provenance_matches && source_matches && args_matches {
+                                            0
+                                        } else if source_matches && args_matches {
+                                            1
+                                        } else if source_matches {
+                                            2
+                                        } else {
+                                            3
+                                        };
+                                    Some((score, index))
+                                })
+                                .min_by_key(|(score, _)| *score)
+                                .map(|(_, index)| index);
 
                             if let Some(scroll_position) = scroll_position {
-                                this.select_index(
+                                editor.select_index(
                                     scroll_position,
                                     Some(ScrollStrategy::Top),
                                     window,
                                     cx,
                                 );
                             } else {
-                                this.table_interaction_state
+                                editor
+                                    .table_interaction_state
                                     .update(cx, |table, _| table.set_scroll_offset(fallback));
                             }
                             cx.notify();
@@ -1176,7 +1149,7 @@ impl KeymapEditor {
 
             let selected_binding_is_unmapped = selected_binding.is_unbound();
             let selected_binding_is_suppressed = selected_binding.is_unbound_by_unbind();
-            let selected_binding_is_user_suppressed = selected_binding.is_unbound_by_user_unbind();
+            let selected_binding_is_restorable = selected_binding.is_restorable();
             let selected_binding_is_non_interactable =
                 selected_binding_is_unmapped || selected_binding_is_suppressed;
 
@@ -1185,7 +1158,7 @@ impl KeymapEditor {
                     .when(selected_binding_is_unmapped, |this| {
                         this.action("Create", Box::new(CreateBinding))
                     })
-                    .when(selected_binding_is_user_suppressed, |this| {
+                    .when(selected_binding_is_restorable, |this| {
                         this.action("Restore", Box::new(RestoreBinding))
                     })
                     .action_disabled_when(
@@ -1242,42 +1215,47 @@ impl KeymapEditor {
         &self,
         index: usize,
         conflict: Option<ConflictOrigin>,
-        is_unbound_by_unbind: bool,
-        is_restorable: bool,
+        suppression: &BindingSuppression,
         cx: &mut Context<Self>,
     ) -> IconButton {
-        if is_restorable {
-            base_button_style(index, IconName::RotateCcw)
+        match restore_affordance(suppression) {
+            RestoreAffordance::Restore => base_button_style(index, IconName::RotateCcw)
                 .aria_label("Restore binding")
-                .icon_color(Color::Warning)
-                .tooltip(|_window, cx| {
-                    Tooltip::with_meta(
-                        "Restore this binding",
-                        Some(&RestoreBinding),
-                        "This action is unbound",
-                        cx,
-                    )
-                })
-                .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                    // A double-click fires this handler once per click. Only
-                    // the first should start a restore, or two concurrent
-                    // file-update tasks could race.
-                    if event.click_count() > 1 {
-                        return;
-                    }
-                    this.select_index(index, None, window, cx);
-                    this.restore_binding(&RestoreBinding, window, cx);
-                    cx.stop_propagation();
-                }))
-        } else if is_unbound_by_unbind {
-            // Suppressed by a non-user keymap (e.g. a shipped base keymap):
-            // nothing in `keymap.json` can restore it, so keep the row inert
-            // instead of offering a restore that would always fail.
-            base_button_style(index, IconName::Warning)
+                .tooltip(Tooltip::for_action_title(
+                    "Restore binding",
+                    &RestoreBinding,
+                ))
+                .on_click(cx.listener(move |this, click: &ClickEvent, window, cx| {
+                    this.on_restore_icon_clicked(index, click.click_count(), window, cx);
+                })),
+            RestoreAffordance::PartialRestore => base_button_style(index, IconName::RotateCcw)
+                .aria_label("Restore binding")
+                .tooltip(Tooltip::for_action_title(
+                    "Restore your overrides",
+                    &RestoreBinding,
+                ))
+                .on_click(cx.listener(move |this, click: &ClickEvent, window, cx| {
+                    this.on_restore_icon_clicked(index, click.click_count(), window, cx);
+                })),
+            RestoreAffordance::Disabled => base_button_style(index, IconName::Warning)
                 .icon_color(Color::Warning)
                 .disabled(true)
-                .tooltip(Tooltip::text("This action is unbound"))
-        } else if self.filter_state != FilterState::Conflicts
+                .tooltip(Tooltip::text(
+                    "Suppressed by a non-user keymap; cannot be restored here",
+                )),
+            RestoreAffordance::None => {
+                return self.create_row_button_for_active(index, conflict, cx);
+            }
+        }
+    }
+
+    fn create_row_button_for_active(
+        &self,
+        index: usize,
+        conflict: Option<ConflictOrigin>,
+        cx: &mut Context<Self>,
+    ) -> IconButton {
+        if self.filter_state != FilterState::Conflicts
             && let Some(conflict) = conflict
         {
             if conflict.is_user_keybind_conflict() {
@@ -1292,9 +1270,6 @@ impl KeymapEditor {
                         )
                     })
                     .on_click(cx.listener(move |this, click: &ClickEvent, window, cx| {
-                        if click.click_count() > 1 {
-                            return;
-                        }
                         if click.modifiers().alt {
                             this.set_filter_state(FilterState::Conflicts, cx);
                         } else {
@@ -1313,17 +1288,14 @@ impl KeymapEditor {
                             cx,
                         )
                     })
-                    .on_click(cx.listener(move |this, click: &ClickEvent, window, cx| {
-                        if click.click_count() > 1 {
-                            return;
-                        }
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.select_index(index, None, window, cx);
                         this.open_edit_keybinding_modal(false, window, cx);
                         cx.stop_propagation();
                     }))
             } else {
                 base_button_style(index, IconName::Info)
-                    .tooltip(|_window, cx|  {
+                    .tooltip(|_window, cx| {
                         Tooltip::with_meta(
                             "Show matching keybinds",
                             Some(&ShowMatchingKeybinds),
@@ -1332,9 +1304,6 @@ impl KeymapEditor {
                         )
                     })
                     .on_click(cx.listener(move |this, click: &ClickEvent, window, cx| {
-                        if click.click_count() > 1 {
-                            return;
-                        }
                         if click.modifiers().alt {
                             this.select_index(index, None, window, cx);
                             this.open_edit_keybinding_modal(false, window, cx);
@@ -1357,8 +1326,9 @@ impl KeymapEditor {
                     self.show_hover_menus && !self.context_menu_deployed(),
                     |this| this.tooltip(Tooltip::for_action_title("Edit Keybinding", &EditBinding)),
                 )
-                .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                    if event.click_count() > 1 {
+                .on_click(cx.listener(move |this, click: &ClickEvent, window, cx| {
+                    if this.consume_restore_suppression_for_click(click.click_count()) {
+                        cx.stop_propagation();
                         return;
                     }
                     this.select_index(index, None, window, cx);
@@ -1445,17 +1415,25 @@ impl KeymapEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.is_restoring_binding {
-            return;
+        // Ignore edit requests while restore is in flight or trailing double-clicks arrive.
+        match self.restore_state.clone() {
+            RestoreState::Idle => {}
+            RestoreState::Pending { .. } => return,
+            RestoreState::SuppressDoubleClick => {
+                self.restore_state = RestoreState::Idle;
+                return;
+            }
         }
         self.show_hover_menus = false;
         let Some((keybind, keybind_index)) = self.selected_keybind_and_index() else {
             return;
         };
-        if !create && keybind.is_unbound_by_user_unbind() {
-            // A binding suppressed by the user keymap can't be edited. The
-            // Enter gesture that normally opens the edit modal restores it.
+        if !create && keybind.is_restorable() {
+            // Enter on a restorable row restores instead of opening Edit.
             self.restore_binding(&RestoreBinding, window, cx);
+            return;
+        }
+        if !create && keybind.is_unbound_by_unbind() {
             return;
         }
         let keybind = keybind.clone();
@@ -1568,7 +1546,7 @@ impl KeymapEditor {
             return;
         }
 
-        let Ok(fs) = self
+        let std::result::Result::Ok(fs) = self
             .workspace
             .read_with(cx, |workspace, _| workspace.app_state().fs.clone())
         else {
@@ -1591,55 +1569,101 @@ impl KeymapEditor {
         .detach_and_notify_err(self.workspace.clone(), window, cx);
     }
 
-    fn restore_binding(&mut self, _: &RestoreBinding, window: &mut Window, cx: &mut Context<Self>) {
-        if self.is_restoring_binding {
-            return;
+    fn on_restore_icon_clicked(
+        &mut self,
+        index: usize,
+        click_count: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match self.restore_state.clone() {
+            RestoreState::SuppressDoubleClick => {
+                self.restore_state = RestoreState::Idle;
+                if click_count > 1 {
+                    cx.stop_propagation();
+                    return;
+                }
+            }
+            RestoreState::Pending { .. } => {
+                cx.stop_propagation();
+                return;
+            }
+            RestoreState::Idle => {
+                if click_count > 1 {
+                    cx.stop_propagation();
+                    return;
+                }
+            }
         }
-        let Some(to_restore) = self.selected_binding().cloned() else {
+        self.select_index(index, None, window, cx);
+        window.dispatch_action(Box::new(RestoreBinding), cx);
+        cx.stop_propagation();
+    }
+
+    fn restore_binding(&mut self, _: &RestoreBinding, window: &mut Window, cx: &mut Context<Self>) {
+        match self.restore_state {
+            RestoreState::Idle => {}
+            RestoreState::Pending { .. } => return,
+            RestoreState::SuppressDoubleClick => {
+                self.restore_state = RestoreState::Idle;
+                return;
+            }
+        }
+        let Some(selected) = self.selected_binding().cloned() else {
             return;
         };
-        if !to_restore.is_unbound_by_user_unbind() {
+        if !selected.is_restorable() {
             return;
         }
-
+        let provenances = selected.restorable_provenances().to_vec();
+        if provenances.is_empty() {
+            return;
+        }
         let Ok(fs) = self
             .workspace
             .read_with(cx, |workspace, _| workspace.app_state().fs.clone())
         else {
             return;
         };
-        let scroll_offset = self.table_interaction_state.read(cx).scroll_offset();
-        self.previous_edit = Some(
-            to_restore
-                .get_action_mapping()
-                .map(|action_mapping| PreviousEdit::Keybinding {
-                    action_mapping,
-                    action_name: to_restore.action().name,
-                    source: to_restore.keybind_source(),
-                    action_arguments: to_restore
+        self.restore_state = RestoreState::Pending {
+            provenances: provenances.clone(),
+            write_done: false,
+        };
+        self.previous_edit = self
+            .selected_binding()
+            .and_then(|binding| {
+                let mapping = binding.get_action_mapping()?;
+                Some(PreviousEdit::Keybinding {
+                    action_mapping: mapping,
+                    action_name: binding.action().name,
+                    source: binding.keybind_source().unwrap_or(KeybindSource::Unknown),
+                    provenance: binding.key_binding().and_then(|b| b.provenance),
+                    action_arguments: binding
                         .action()
                         .arguments
                         .as_ref()
-                        .map(|arguments| arguments.text.to_string()),
-                    occurrence: to_restore.source_occurrence().unwrap_or(0),
-                    fallback: scroll_offset,
+                        .map(|args| args.text.to_string()),
+                    fallback: self.table_interaction_state.read(cx).scroll_offset(),
                 })
-                .unwrap_or(PreviousEdit::ScrollBarOffset(scroll_offset)),
-        );
-        let keyboard_mapper = cx.keyboard_mapper().clone();
-        let deprecated_aliases = cx.deprecated_actions_to_preferred_actions().clone();
-        self.is_restoring_binding = true;
-        cx.spawn(async move |keymap_editor, cx| {
-            let result = restore_keybinding(
-                to_restore,
-                &fs,
-                keyboard_mapper.as_ref(),
-                &deprecated_aliases,
-            )
-            .await;
-            keymap_editor.update(cx, |editor, _| {
-                editor.is_restoring_binding = false;
-            })?;
+            })
+            .or_else(|| {
+                Some(PreviousEdit::ScrollBarOffset(
+                    self.table_interaction_state.read(cx).scroll_offset(),
+                ))
+            });
+        cx.spawn_in(window, async move |keymap_editor, cx| {
+            let result = restore_binding_by_provenances(provenances, &fs).await;
+            if result.is_err() {
+                keymap_editor.update(cx, |editor, _| {
+                    editor.restore_state = RestoreState::Idle;
+                })?;
+            } else {
+                keymap_editor.update(cx, |editor, _| {
+                    if let RestoreState::Pending { write_done, .. } = &mut editor.restore_state {
+                        *write_done = true;
+                    }
+                })?;
+            }
             result
         })
         .detach_and_notify_err(self.workspace.clone(), window, cx);
@@ -1940,6 +1964,7 @@ impl HumanizedActionNameCache {
 struct KeyBinding {
     keystrokes: Rc<[KeybindingKeystroke]>,
     source: KeybindSource,
+    provenance: Option<KeymapEntryProvenance>,
 }
 
 impl KeyBinding {
@@ -1947,7 +1972,84 @@ impl KeyBinding {
         Self {
             keystrokes: Rc::from(binding.keystrokes()),
             source,
+            provenance: binding
+                .provenance()
+                .and_then(KeymapEntryProvenance::from_gpui),
         }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum BindingSuppression {
+    None,
+    Restorable {
+        user_suppressors: Vec<KeymapEntryProvenance>,
+    },
+    PartiallyRestorable {
+        user_suppressors: Vec<KeymapEntryProvenance>,
+    },
+    NonRestorable,
+}
+
+impl BindingSuppression {
+    fn is_suppressed(&self) -> bool {
+        !matches!(self, BindingSuppression::None)
+    }
+
+    fn is_restorable(&self) -> bool {
+        matches!(
+            self,
+            BindingSuppression::Restorable { .. } | BindingSuppression::PartiallyRestorable { .. }
+        )
+    }
+
+    fn restorable_provenances(&self) -> &[KeymapEntryProvenance] {
+        match self {
+            BindingSuppression::Restorable { user_suppressors }
+            | BindingSuppression::PartiallyRestorable { user_suppressors } => user_suppressors,
+            _ => &[],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RestoreAffordance {
+    None,
+    Restore,
+    PartialRestore,
+    Disabled,
+}
+
+fn restore_affordance(suppression: &BindingSuppression) -> RestoreAffordance {
+    match suppression {
+        BindingSuppression::None => RestoreAffordance::None,
+        BindingSuppression::Restorable { .. } => RestoreAffordance::Restore,
+        BindingSuppression::PartiallyRestorable { .. } => RestoreAffordance::PartialRestore,
+        BindingSuppression::NonRestorable => RestoreAffordance::Disabled,
+    }
+}
+
+fn suppression_for_binding(
+    binding: &gpui::KeyBinding,
+    binding_index: usize,
+    all_bindings: &[&gpui::KeyBinding],
+) -> BindingSuppression {
+    let suppressors = find_suppressing_entries(binding, binding_index, all_bindings);
+    if suppressors.is_empty() {
+        return BindingSuppression::None;
+    }
+    let has_non_user_suppressor = suppressors.iter().any(|s| s.source != KeybindSource::User);
+    let user_suppressors: Vec<KeymapEntryProvenance> = suppressors
+        .into_iter()
+        .filter(|s| s.source == KeybindSource::User)
+        .filter_map(|s| s.provenance)
+        .collect();
+    if user_suppressors.is_empty() {
+        BindingSuppression::NonRestorable
+    } else if has_non_user_suppressor {
+        BindingSuppression::PartiallyRestorable { user_suppressors }
+    } else {
+        BindingSuppression::Restorable { user_suppressors }
     }
 }
 
@@ -1956,12 +2058,9 @@ struct KeybindInformation {
     keystroke_text: SharedString,
     binding: KeyBinding,
     context: KeybindContextString,
-    context_predicate: Option<Rc<gpui::KeyBindingContextPredicate>>,
     source: KeybindSource,
-    source_occurrence: usize,
     is_no_action: bool,
-    is_unbound_by_unbind: bool,
-    unbind_suppressor_source: Option<KeybindSource>,
+    suppression: BindingSuppression,
 }
 
 impl KeybindInformation {
@@ -2011,12 +2110,9 @@ impl ProcessedBinding {
         keystroke_text: impl Into<SharedString>,
         binding: KeyBinding,
         context: KeybindContextString,
-        context_predicate: Option<Rc<gpui::KeyBindingContextPredicate>>,
         source: KeybindSource,
-        source_occurrence: usize,
         is_no_action: bool,
-        is_unbound_by_unbind: bool,
-        unbind_suppressor_source: Option<KeybindSource>,
+        suppression: BindingSuppression,
         action_information: ActionInformation,
     ) -> Self {
         Self::Mapped(
@@ -2024,12 +2120,9 @@ impl ProcessedBinding {
                 keystroke_text: keystroke_text.into(),
                 binding,
                 context,
-                context_predicate,
                 source,
-                source_occurrence,
                 is_no_action,
-                is_unbound_by_unbind,
-                unbind_suppressor_source,
+                suppression,
             },
             action_information,
         )
@@ -2060,18 +2153,8 @@ impl ProcessedBinding {
         self.keybind_information().map(|keybind| keybind.source)
     }
 
-    fn source_occurrence(&self) -> Option<usize> {
-        self.keybind_information()
-            .map(|keybind| keybind.source_occurrence)
-    }
-
     fn context(&self) -> Option<&KeybindContextString> {
         self.keybind_information().map(|keybind| &keybind.context)
-    }
-
-    fn context_predicate(&self) -> Option<&Rc<gpui::KeyBindingContextPredicate>> {
-        self.keybind_information()
-            .and_then(|keybind| keybind.context_predicate.as_ref())
     }
 
     fn key_binding(&self) -> Option<&KeyBinding> {
@@ -2085,17 +2168,23 @@ impl ProcessedBinding {
 
     fn is_unbound_by_unbind(&self) -> bool {
         self.keybind_information()
-            .is_some_and(|keybind| keybind.is_unbound_by_unbind)
+            .is_some_and(|keybind| keybind.suppression.is_suppressed())
     }
 
-    /// Whether the suppression comes from the user keymap and can therefore
-    /// be restored. Base-keymap `unbind` entries also suppress but live
-    /// outside `keymap.json`, so no restore affordance is shown for them.
-    fn is_unbound_by_user_unbind(&self) -> bool {
-        self.keybind_information().is_some_and(|keybind| {
-            keybind.is_unbound_by_unbind
-                && keybind.unbind_suppressor_source == Some(KeybindSource::User)
-        })
+    fn suppression(&self) -> Option<&BindingSuppression> {
+        self.keybind_information()
+            .map(|keybind| &keybind.suppression)
+    }
+
+    fn is_restorable(&self) -> bool {
+        self.keybind_information()
+            .is_some_and(|keybind| keybind.suppression.is_restorable())
+    }
+
+    fn restorable_provenances(&self) -> &[KeymapEntryProvenance] {
+        self.keybind_information()
+            .map(|keybind| keybind.suppression.restorable_provenances())
+            .unwrap_or(&[])
     }
 
     fn keystroke_text(&self) -> Option<&SharedString> {
@@ -2222,8 +2311,8 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::edit_binding))
             .on_action(cx.listener(Self::create_binding))
             .on_action(cx.listener(Self::open_create_keybinding_modal))
-            .on_action(cx.listener(Self::delete_binding))
             .on_action(cx.listener(Self::restore_binding))
+            .on_action(cx.listener(Self::delete_binding))
             .on_action(cx.listener(Self::copy_action_to_clipboard))
             .on_action(cx.listener(Self::copy_context_to_clipboard))
             .on_action(cx.listener(Self::toggle_conflict_filter))
@@ -2362,8 +2451,11 @@ impl Render for KeymapEditor {
                                     let binding = &this.keybindings[candidate_id];
                                     let action_name = binding.action().name;
                                     let conflict = this.get_conflict(index);
-                                    let is_unbound_by_unbind = binding.is_unbound_by_unbind();
-                                    let is_restorable = binding.is_unbound_by_user_unbind();
+                                    let suppression = binding
+                                        .suppression()
+                                        .cloned()
+                                        .unwrap_or(BindingSuppression::None);
+                                    let is_unbound_by_unbind = suppression.is_suppressed();
                                     let is_overridden = conflict.is_some_and(|conflict| {
                                         !conflict.is_user_keybind_conflict()
                                     });
@@ -2372,8 +2464,7 @@ impl Render for KeymapEditor {
                                     let icon = this.create_row_button(
                                         index,
                                         conflict,
-                                        is_unbound_by_unbind,
-                                        is_restorable,
+                                        &suppression,
                                         cx,
                                     );
 
@@ -2485,12 +2576,13 @@ impl Render for KeymapEditor {
                         |this, (row_index, row): (usize, Stateful<Div>), _window, cx| {
                         let conflict = this.get_conflict(row_index);
                             let candidate_id = this.matches.get(row_index).map(|candidate| candidate.candidate_id);
-                            let row_binding = candidate_id
-                                .and_then(|candidate_id| this.keybindings.get(candidate_id));
-                            let is_unbound_by_unbind = row_binding
-                                .is_some_and(ProcessedBinding::is_unbound_by_unbind);
-                            let is_restorable = row_binding
-                                .is_some_and(ProcessedBinding::is_unbound_by_user_unbind);
+                            let suppression = candidate_id
+                                .and_then(|candidate_id| this.keybindings.get(candidate_id))
+                                .and_then(|binding| binding.suppression().cloned())
+                                .unwrap_or(BindingSuppression::None);
+                            let is_unbound_by_unbind = suppression.is_suppressed();
+                            let is_restorable = suppression.is_restorable();
+                            let row_interactable = !is_unbound_by_unbind || is_restorable;
                             let is_selected = this.selected_index == Some(row_index);
 
                             let row_id = row_group_id(row_index);
@@ -2499,41 +2591,47 @@ impl Render for KeymapEditor {
                                 .id(("keymap-row-wrapper", row_index))
                                 .child(
                                     row.id(row_id.clone())
-                                        .on_any_mouse_down(cx.listener(
-                                            move |this,
-                                                  mouse_down_event: &gpui::MouseDownEvent,
-                                                  window,
-                                                  cx| {
-                                                if mouse_down_event.button == MouseButton::Right {
-                                                    this.select_index(
-                                                        row_index, None, window, cx,
-                                                    );
-                                                    this.create_context_menu(
-                                                        mouse_down_event.position,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
-                                            },
-                                        ))
-                                        .on_click(cx.listener(
-                                            move |this, event: &ClickEvent, window, cx| {
-                                                this.select_index(row_index, None, window, cx);
-                                                if event.click_count() == 2 {
-                                                    if is_restorable {
-                                                        this.restore_binding(
-                                                            &RestoreBinding,
+                                        .when(row_interactable, |row| {
+                                            row.on_any_mouse_down(cx.listener(
+                                                move |this,
+                                                      mouse_down_event: &gpui::MouseDownEvent,
+                                                      window,
+                                                      cx| {
+                                                    if mouse_down_event.button == MouseButton::Right {
+                                                        this.select_index(
+                                                            row_index, None, window, cx,
+                                                        );
+                                                        this.create_context_menu(
+                                                            mouse_down_event.position,
                                                             window,
                                                             cx,
                                                         );
-                                                    } else if !is_unbound_by_unbind {
-                                                        this.open_edit_keybinding_modal(
-                                                            false, window, cx,
-                                                        );
                                                     }
-                                                }
-                                            },
-                                        ))
+                                                },
+                                            ))
+                                        })
+                                        .when(row_interactable, |row| {
+                                            row.on_click(cx.listener(
+                                                move |this, event: &ClickEvent, window, cx| {
+                                                    this.select_index(row_index, None, window, cx);
+                                                    if event.click_count() == 2 {
+                                                        let should_restore = this
+                                                            .selected_binding()
+                                                            .is_some_and(|binding| binding.is_restorable());
+                                                        if should_restore {
+                                                            window.dispatch_action(
+                                                                Box::new(RestoreBinding),
+                                                                cx,
+                                                            );
+                                                        } else {
+                                                            this.open_edit_keybinding_modal(
+                                                                false, window, cx,
+                                                            );
+                                                        }
+                                                    }
+                                                },
+                                            ))
+                                        })
                                         .group(row_id)
                                         .when(
                                             is_unbound_by_unbind
@@ -2568,13 +2666,39 @@ impl Render for KeymapEditor {
                                                 row.tooltip(Tooltip::text(context))
                                             },
                                         )
-                                        .when(is_unbound_by_unbind, |row| {
-                                            row.tooltip(Tooltip::text(if is_restorable {
-                                                "This action is unbound. Double-click to restore it."
-                                            } else {
-                                                "This action is unbound"
-                                            }))
-                                        }),
+                                        .when(
+                                            matches!(
+                                                suppression,
+                                                BindingSuppression::Restorable { .. }
+                                            ),
+                                            |row| {
+                                                row.tooltip(Tooltip::text(
+                                                    "Suppressed by your keymap; restore to re-enable",
+                                                ))
+                                            },
+                                        )
+                                        .when(
+                                            matches!(
+                                                suppression,
+                                                BindingSuppression::PartiallyRestorable { .. }
+                                            ),
+                                            |row| {
+                                                row.tooltip(Tooltip::text(
+                                                    "Suppressed by your keymap and another keymap; restoring removes only your overrides",
+                                                ))
+                                            },
+                                        )
+                                        .when(
+                                            matches!(
+                                                suppression,
+                                                BindingSuppression::NonRestorable
+                                            ),
+                                            |row| {
+                                                row.tooltip(Tooltip::text(
+                                                    "Suppressed by a non-user keymap",
+                                                ))
+                                            },
+                                        ),
                                 )
                                 .border_2()
                                 .when(
@@ -3124,11 +3248,9 @@ impl KeybindingEditorModal {
                             keymap.previous_edit = Some(PreviousEdit::Keybinding {
                                 action_mapping,
                                 action_name,
-                                source: Some(KeybindSource::User),
+                                source: KeybindSource::User,
+                                provenance: None,
                                 action_arguments: new_action_args.clone(),
-                                // The saved binding was just written to the user keymap.
-                                // Select its first match, falling back to scroll offset.
-                                occurrence: 0,
                                 fallback: keymap.table_interaction_state.read(cx).scroll_offset(),
                             });
                             let status_toast = StatusToast::new(
@@ -3542,7 +3664,7 @@ impl ActionArgumentsEditor {
         });
 
         let temp_dir = temp_dir.map(|path| path.to_owned());
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn_in(window, async move |action_args_editor, cx| {
             let result = async {
                 let (project, fs) = workspace.read_with(cx, |workspace, _cx| {
                     (
@@ -3583,13 +3705,13 @@ impl ActionArgumentsEditor {
                     editor
                 })?;
 
-                this.update_in(cx, |this, window, cx| {
-                    if this.editor.focus_handle(cx).is_focused(window) {
+                action_args_editor.update_in(cx, |args_editor, window, cx| {
+                    if args_editor.editor.focus_handle(cx).is_focused(window) {
                         editor.focus_handle(cx).focus(window, cx);
                     }
-                    this.editor = editor;
-                    this.backup_temp_dir = backup_temp_dir;
-                    this.is_loading = false;
+                    args_editor.editor = editor;
+                    args_editor.backup_temp_dir = backup_temp_dir;
+                    args_editor.is_loading = false;
                 })?;
 
                 anyhow::Ok(())
@@ -3597,21 +3719,22 @@ impl ActionArgumentsEditor {
             .await;
             if result.is_err() {
                 let json_language = load_json_language(workspace.clone(), cx).await;
-                this.update(cx, |this, cx| {
-                    this.editor.update(cx, |editor, cx| {
-                        if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                            buffer.update(cx, |buffer, cx| {
-                                buffer.set_language(Some(json_language.clone()), cx)
-                            });
-                        }
+                action_args_editor
+                    .update(cx, |args_editor, cx| {
+                        args_editor.editor.update(cx, |editor, cx| {
+                            if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                                buffer.update(cx, |buffer, cx| {
+                                    buffer.set_language(Some(json_language.clone()), cx)
+                                });
+                            }
+                        })
                     })
-                    // .context("Failed to load JSON language for editing keybinding action arguments input")
-                })
-                .ok();
-                this.update(cx, |this, _cx| {
-                    this.is_loading = false;
-                })
-                .ok();
+                    .ok();
+                action_args_editor
+                    .update(cx, |args_editor, _cx| {
+                        args_editor.is_loading = false;
+                    })
+                    .ok();
             }
             result
         })
@@ -3980,53 +4103,33 @@ async fn remove_keybinding(
     Ok(())
 }
 
-/// Restores a binding that was suppressed by an unbind entry in the user
-/// keymap by removing that entry from the user keymap file.
-async fn restore_keybinding(
-    existing: ProcessedBinding,
+async fn restore_binding_by_provenances(
+    provenances: Vec<KeymapEntryProvenance>,
     fs: &Arc<dyn Fs>,
-    keyboard_mapper: &dyn PlatformKeyboardMapper,
-    deprecated_aliases: &HashMap<&'static str, &'static str>,
 ) -> anyhow::Result<()> {
-    let Some(keystrokes) = existing.keystrokes() else {
-        anyhow::bail!("Cannot restore a keybinding that does not exist");
-    };
+    use anyhow::Context as _;
+    if provenances.is_empty() {
+        anyhow::bail!("Nothing to restore");
+    }
     let keymap_contents = settings::KeymapFile::load_keymap_file(fs)
         .await
         .context("Failed to load keymap file")?;
     let tab_size = infer_json_indent_size(&keymap_contents);
 
-    let operation = settings::KeybindUpdateOperation::RemoveUnbind {
-        target: settings::KeybindUpdateTarget {
-            context: existing.context().and_then(KeybindContextString::local_str),
-            keystrokes,
-            action_name: existing.action().name,
-            action_arguments: existing
-                .action()
-                .arguments
-                .as_ref()
-                .map(|arguments| arguments.text.as_ref()),
-        },
-        target_keybind_source: existing.keybind_source().unwrap_or(KeybindSource::User),
-        target_keybind_occurrence: existing.source_occurrence().unwrap_or(0),
-        target_context_predicate: existing.context_predicate().cloned(),
-    };
-
+    let dummy_aliases = collections::HashMap::default();
+    let operation = settings::KeybindUpdateOperation::RemoveEntries { provenances };
     let (new_keybinding, removed_keybinding, source) = operation.generate_telemetry();
-    let updated_keymap_contents = settings::KeymapFile::update_keybinding(
+    let updated = settings::KeymapFile::update_keybinding(
         operation,
         keymap_contents,
         tab_size,
-        keyboard_mapper,
-        deprecated_aliases,
+        &gpui::DummyKeyboardMapper,
+        &dummy_aliases,
     )
-    .context("Failed to restore keybinding")?;
-    fs.write(
-        paths::keymap_file().as_path(),
-        updated_keymap_contents.as_bytes(),
-    )
-    .await
-    .context("Failed to write keymap file")?;
+    .context("Failed to restore binding")?;
+    fs.write(paths::keymap_file().as_path(), updated.as_bytes())
+        .await
+        .context("Failed to write keymap file")?;
 
     telemetry::event!(
         "Keybinding Restored",
@@ -4338,15 +4441,7 @@ mod tests {
         cx.update(|cx| {
             let mut key_bindings = match KeymapFile::load(&content, cx) {
                 KeymapFileLoadResult::Success { key_bindings } => key_bindings,
-                // Mirror production partial loading (crates/zed/src/zed.rs):
-                // install the valid bindings instead of failing the test.
-                KeymapFileLoadResult::SomeFailedToLoad {
-                    key_bindings,
-                    error_message,
-                } => {
-                    log::warn!("keymap partially loaded: {error_message:?}");
-                    key_bindings
-                }
+                KeymapFileLoadResult::SomeFailedToLoad { key_bindings, .. } => key_bindings,
                 KeymapFileLoadResult::JsonParseFailure { error } => {
                     panic!("keymap json parse failure: {error}")
                 }
@@ -4540,9 +4635,8 @@ mod tests {
         );
     }
 
-    // Regression test for #61862
     #[gpui::test]
-    async fn test_restore_binding_removes_unbind_entry(cx: &mut TestAppContext) {
+    async fn test_restore_binding_end_to_end(cx: &mut TestAppContext) {
         let keymap_content = r#"[
     {
         "bindings": {
@@ -4561,66 +4655,39 @@ mod tests {
         let rows = keymap_editor.read_with(cx, |editor, _| {
             visible_rows_for_action(editor, "zed::OpenKeymap")
         });
-        assert_eq!(rows.len(), 1, "expected the suppressed binding as one row");
-
-        keymap_editor.read_with(cx, |editor, _| {
-            let binding = &editor.keybindings[editor.matches[rows[0]].candidate_id];
-            assert!(
-                binding.is_unbound_by_unbind(),
-                "the binding should be marked as suppressed by the unbind entry"
-            );
-        });
-
+        assert_eq!(
+            rows.len(),
+            1,
+            "expected the suppressed binding to show as one row"
+        );
         keymap_editor.update_in(cx, |editor, window, cx| {
             editor.selected_index = Some(rows[0]);
-            window.focus(&editor.focus_handle(cx), cx);
+            // The row must render the restore affordance, not the warning.
+            let candidate = editor.matches.get(rows[0]).expect("match").candidate_id;
+            let suppression = editor.keybindings[candidate]
+                .suppression()
+                .expect("mapped")
+                .clone();
+            assert_eq!(restore_affordance(&suppression), RestoreAffordance::Restore);
+            editor.open_edit_keybinding_modal(false, window, cx);
         });
-        let restore_icon_bounds = cx
-            .debug_bounds("ICON-RotateCcw")
-            .expect("the suppressed row should render a restore icon");
-        cx.simulate_click(restore_icon_bounds.center(), gpui::Modifiers::none());
+        keymap_editor.read_with(cx, |editor, _| {
+            assert!(editor.restore_state.is_busy());
+        });
         cx.run_until_parked();
 
         let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        let actual: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(
-            content,
-            r#"[
-    {
-        "bindings": {
-            "alt-cmd-shift-c": "zed::OpenKeymap"
-        }
-    }
-]"#,
-            "restoring should remove the whole unbind section from the keymap file"
+            actual,
+            serde_json::json!([{ "bindings": { "alt-cmd-shift-c": "zed::OpenKeymap" } }]),
+            "complete file mismatch:\n{content}"
         );
-
-        reload_keymap_from_file(&fs, cx).await;
-        cx.run_until_parked();
-
-        keymap_editor.read_with(cx, |editor, _| {
-            let rows = visible_rows_for_action(editor, "zed::OpenKeymap");
-            assert_eq!(rows.len(), 1);
-            let binding = &editor.keybindings[editor.matches[rows[0]].candidate_id];
-            assert!(
-                !binding.is_unbound_by_unbind(),
-                "the binding should no longer be suppressed after restore"
-            );
-        });
     }
 
     #[gpui::test]
-    async fn test_restore_second_identical_user_binding(cx: &mut TestAppContext) {
+    async fn test_restore_binding_end_to_end_watcher_reload(cx: &mut TestAppContext) {
         let keymap_content = r#"[
-    {
-        "bindings": {
-            "alt-cmd-shift-c": "zed::OpenKeymap"
-        }
-    },
-    {
-        "unbind": {
-            "alt-cmd-shift-c": "zed::OpenKeymap"
-        }
-    },
     {
         "bindings": {
             "alt-cmd-shift-c": "zed::OpenKeymap"
@@ -4632,236 +4699,578 @@ mod tests {
         }
     }
 ]"#;
-        let (fs, keymap_editor, mut cx) = setup_keymap_editor(cx, keymap_content).await;
-        let cx = &mut cx;
+        let (fs, keymap_editor, mut visual) = setup_keymap_editor(cx, keymap_content).await;
+        let cx = &mut visual;
 
+        let rows = keymap_editor.read_with(cx, |editor, _| {
+            visible_rows_for_action(editor, "zed::OpenKeymap")
+        });
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            editor.selected_index = Some(rows[0]);
+            window.focus(&editor.focus_handle(cx), cx);
+            window.dispatch_action(Box::new(RestoreBinding), cx);
+        });
+        cx.run_until_parked();
+
+        // Reload keymap; binding should no longer be suppressed.
+        reload_keymap_from_file(&fs, cx).await;
+        cx.run_until_parked();
+
+        keymap_editor.read_with(cx, |editor, _| {
+            assert!(
+                matches!(editor.restore_state, RestoreState::SuppressDoubleClick),
+                "refresh consumes the restore into double-click suppression, not Idle"
+            );
+            let selected = editor.selected_binding().expect("selection preserved");
+            assert!(
+                !selected.is_unbound_by_unbind(),
+                "row must no longer be suppressed after restore"
+            );
+            assert_eq!(selected.action().name, "zed::OpenKeymap");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_restore_duplicate_row_keeps_selection(cx: &mut TestAppContext) {
+        let keymap_content = r#"[
+    { "bindings": { "alt-cmd-shift-c": "zed::OpenKeymap" } },
+    { "unbind": { "alt-cmd-shift-c": "zed::OpenKeymap" } },
+    { "bindings": { "alt-cmd-shift-c": "zed::OpenKeymap" } },
+    { "unbind": { "alt-cmd-shift-c": "zed::OpenKeymap" } }
+]"#;
+        let (fs, keymap_editor, mut visual) = setup_keymap_editor(cx, keymap_content).await;
+        let cx = &mut visual;
+
+        // Two identical user rows; restore the second one.
         let rows = keymap_editor.read_with(cx, |editor, _| {
             visible_rows_for_action(editor, "zed::OpenKeymap")
         });
         assert_eq!(rows.len(), 2);
-        keymap_editor.read_with(cx, |editor, _| {
-            let occurrences = rows
-                .iter()
-                .map(|row| {
-                    editor.keybindings[editor.matches[*row].candidate_id].source_occurrence()
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(occurrences, vec![Some(0), Some(1)]);
+        let second_provenance = keymap_editor.read_with(cx, |editor, _| {
+            editor.keybindings[editor.matches[rows[1]].candidate_id]
+                .key_binding()
+                .expect("mapped")
+                .provenance
         });
-
         keymap_editor.update_in(cx, |editor, window, cx| {
             editor.selected_index = Some(rows[1]);
-            editor.restore_binding(&RestoreBinding, window, cx);
+            window.focus(&editor.focus_handle(cx), cx);
+            window.dispatch_action(Box::new(RestoreBinding), cx);
         });
         cx.run_until_parked();
 
         let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        let actual: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(
-            content,
-            r#"[
-    {
-        "bindings": {
-            "alt-cmd-shift-c": "zed::OpenKeymap"
-        }
-    },
-    {
-        "unbind": {
-            "alt-cmd-shift-c": "zed::OpenKeymap"
-        }
-    },
-    {
-        "bindings": {
-            "alt-cmd-shift-c": "zed::OpenKeymap"
-        }
-    }
-]"#
+            actual,
+            serde_json::json!([
+                { "bindings": { "alt-cmd-shift-c": "zed::OpenKeymap" } },
+                { "unbind": { "alt-cmd-shift-c": "zed::OpenKeymap" } },
+                { "bindings": { "alt-cmd-shift-c": "zed::OpenKeymap" } },
+            ]),
+            "only the fourth section may be removed:\n{content}"
         );
 
         reload_keymap_from_file(&fs, cx).await;
         cx.run_until_parked();
 
+        // Selection stays on the second duplicate row across reload.
         keymap_editor.read_with(cx, |editor, _| {
-            let rows = visible_rows_for_action(editor, "zed::OpenKeymap");
-            assert_eq!(rows.len(), 2);
-            let suppression_states = rows
-                .iter()
-                .map(|row| {
-                    editor.keybindings[editor.matches[*row].candidate_id].is_unbound_by_unbind()
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(suppression_states, vec![true, false]);
-            // The restored (second) row must stay selected, not the first match.
-            assert_eq!(editor.selected_index, Some(rows[1]));
+            let selected = editor.selected_binding().expect("selection preserved");
+            assert_eq!(
+                selected
+                    .key_binding()
+                    .and_then(|b| b.provenance)
+                    .map(|p| p.location),
+                second_provenance.map(|p| p.location),
+                "selection must stay on the second duplicate row"
+            );
+            assert!(!selected.is_unbound_by_unbind());
         });
 
-        // Enter on the restored row must open Edit, not restore again: the
-        // remaining suppressor must survive an EditBinding action.
+        // Enter on the restored duplicate opens Edit without modifying the file.
+        let content_before_enter = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        // The first input after restore clears any trailing double-click suppression.
         keymap_editor.update_in(cx, |editor, window, cx| {
-            editor.edit_binding(&EditBinding, window, cx);
+            editor.open_edit_keybinding_modal(false, window, cx);
         });
         cx.run_until_parked();
-
-        let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
-        assert_eq!(
-            content.matches("unbind").count(),
-            1,
-            "Enter must not have removed the remaining suppressor, got:\n{content}"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_restore_action_sequence_binding(cx: &mut gpui::TestAppContext) {
-        let keymap_content = r#"[
-    {
-        "bindings": {
-            "alt-cmd-shift-c": ["action::Sequence", ["zed::OpenKeymap"]]
-        }
-    },
-    {
-        "unbind": {
-            "alt-cmd-shift-c": ["action::Sequence", ["zed::OpenKeymap"]]
-        }
-    }
-]"#;
-        let (fs, keymap_editor, mut cx) = setup_keymap_editor(cx, keymap_content).await;
-        let cx = &mut cx;
-
-        let rows = keymap_editor.read_with(cx, |editor, _| {
-            visible_rows_for_action(editor, "action::Sequence")
-        });
-        assert_eq!(rows.len(), 1);
-
-        keymap_editor.update_in(cx, |editor, window, cx| {
-            editor.selected_index = Some(rows[0]);
-            editor.restore_binding(&RestoreBinding, window, cx);
-        });
-        cx.run_until_parked();
-
-        let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
-        assert_eq!(
-            content,
-            r#"[
-    {
-        "bindings": {
-            "alt-cmd-shift-c": ["action::Sequence", ["zed::OpenKeymap"]]
-        }
-    }
-]"#
-        );
-    }
-
-    #[gpui::test]
-    async fn test_restore_sequence_ignores_rejected_unbind(cx: &mut gpui::TestAppContext) {
-        // The boolean-payload unbind never loads, so it never suppresses:
-        // restoring must remove only the valid unbind section.
-        let keymap_content = r#"[
-    {
-        "bindings": {
-            "tab": ["action::Sequence", ["zed::OpenKeymap"]]
-        }
-    },
-    {
-        "unbind": {
-            "tab": ["action::Sequence", false]
-        }
-    },
-    {
-        "unbind": {
-            "tab": ["action::Sequence", ["zed::OpenKeymap"]]
-        }
-    }
-]"#;
-        let (fs, keymap_editor, mut cx) = setup_keymap_editor(cx, keymap_content).await;
-        let cx = &mut cx;
-
-        let rows = keymap_editor.read_with(cx, |editor, _| {
-            visible_rows_for_action(editor, "action::Sequence")
-        });
-        assert_eq!(rows.len(), 1);
         keymap_editor.read_with(cx, |editor, _| {
-            let binding = &editor.keybindings[editor.matches[rows[0]].candidate_id];
             assert!(
-                binding.is_unbound_by_user_unbind(),
-                "the sequence binding should be suppressed by the valid unbind"
+                matches!(editor.restore_state, RestoreState::Idle),
+                "suppression consumed, editor is now Idle"
             );
         });
 
+        // Now Enter opens Edit on the active duplicate row.
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            editor.open_edit_keybinding_modal(false, window, cx);
+        });
+        cx.run_until_parked();
+
+        let content_after_enter = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        assert_eq!(
+            content_after_enter, content_before_enter,
+            "Enter on active duplicate must not write:\n{content_after_enter}"
+        );
+        keymap_editor.read_with(cx, |editor, cx| {
+            assert!(
+                !editor.show_hover_menus,
+                "Enter on active remaining row must open Edit"
+            );
+            let workspace = editor.workspace.upgrade().unwrap();
+            assert!(
+                workspace
+                    .read(cx)
+                    .active_modal::<KeybindingEditorModal>(cx)
+                    .is_some(),
+                "Enter on active remaining row must deploy KeybindingEditorModal"
+            );
+            assert!(
+                matches!(editor.restore_state, RestoreState::Idle),
+                "Enter on active row must not start a restore"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_restore_with_partial_load_keeps_inert_entry(cx: &mut TestAppContext) {
+        let keymap_content = r#"[
+    { "bindings": { "tab": ["action::Sequence", ["zed::OpenKeymap"]] } },
+    { "unbind": { "tab": ["action::Sequence", false] } },
+    { "unbind": { "tab": ["action::Sequence", ["zed::OpenKeymap"]] } }
+]"#;
+        let (fs, keymap_editor, mut visual) = setup_keymap_editor(cx, keymap_content).await;
+        let cx = &mut visual;
+
+        // Invalid declaration stays inert; valid sequence is restored.
+        let rows = keymap_editor.read_with(cx, |editor, _| {
+            visible_rows_for_action(editor, "action::Sequence")
+        });
+        assert_eq!(rows.len(), 1, "valid sequence shows one row: {rows:?}");
         keymap_editor.update_in(cx, |editor, window, cx| {
             editor.selected_index = Some(rows[0]);
-            editor.restore_binding(&RestoreBinding, window, cx);
+            window.focus(&editor.focus_handle(cx), cx);
+            window.dispatch_action(Box::new(RestoreBinding), cx);
         });
         cx.run_until_parked();
 
         let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        let actual: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(
-            content,
-            r#"[
-    {
-        "bindings": {
-            "tab": ["action::Sequence", ["zed::OpenKeymap"]]
-        }
-    },
-    {
-        "unbind": {
-            "tab": ["action::Sequence", false]
-        }
-    }
-]"#
+            actual,
+            serde_json::json!([
+                { "bindings": { "tab": ["action::Sequence", ["zed::OpenKeymap"]] } },
+                { "unbind": { "tab": ["action::Sequence", false] } },
+            ]),
+            "inert declaration must be preserved:\n{content}"
         );
 
         reload_keymap_from_file(&fs, cx).await;
         cx.run_until_parked();
-
         keymap_editor.read_with(cx, |editor, _| {
-            let rows = visible_rows_for_action(editor, "action::Sequence");
-            assert_eq!(rows.len(), 1);
-            let binding = &editor.keybindings[editor.matches[rows[0]].candidate_id];
-            assert!(
-                !binding.is_unbound_by_unbind(),
-                "the binding should no longer be suppressed after restore"
-            );
+            let selected = editor.selected_binding().expect("selection preserved");
+            assert!(!selected.is_unbound_by_unbind());
         });
     }
 
     #[gpui::test]
-    async fn test_restore_binding_unbound_in_bindings(cx: &mut gpui::TestAppContext) {
+    async fn test_restore_preserves_unrecognized_fields_same_section(cx: &mut TestAppContext) {
+        // Unrecognized field survives restore in the same section.
         let keymap_content = r#"[
-    {
-        "bindings": {
-            "tab": "zed::OpenKeymap"
-        }
-    },
-    {
-        "bindings": {
-            "tab": ["zed::Unbind", "zed::OpenKeymap"]
-        }
-    }
+    { "bindings": { "alt-cmd-shift-c": "zed::OpenKeymap" } },
+    { "unbind": { "alt-cmd-shift-c": "zed::OpenKeymap" }, "invalid_field": true }
 ]"#;
-        let (fs, keymap_editor, mut cx) = setup_keymap_editor(cx, keymap_content).await;
-        let cx = &mut cx;
+        let (fs, keymap_editor, mut visual) = setup_keymap_editor(cx, keymap_content).await;
+        let cx = &mut visual;
 
         let rows = keymap_editor.read_with(cx, |editor, _| {
             visible_rows_for_action(editor, "zed::OpenKeymap")
         });
         assert_eq!(rows.len(), 1);
-
         keymap_editor.update_in(cx, |editor, window, cx| {
             editor.selected_index = Some(rows[0]);
-            editor.restore_binding(&RestoreBinding, window, cx);
+            window.focus(&editor.focus_handle(cx), cx);
+            window.dispatch_action(Box::new(RestoreBinding), cx);
         });
         cx.run_until_parked();
 
         let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        let actual: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(
-            content,
-            r#"[
-    {
-        "bindings": {
-            "tab": "zed::OpenKeymap"
-        }
-    }
-]"#
+            actual,
+            serde_json::json!([
+                { "bindings": { "alt-cmd-shift-c": "zed::OpenKeymap" } },
+                { "invalid_field": true },
+            ]),
+            "invalid_field in same section must be preserved:\n{content}"
         );
+
+        reload_keymap_from_file(&fs, cx).await;
+        cx.run_until_parked();
+        keymap_editor.read_with(cx, |editor, _| {
+            let selected = editor.selected_binding().expect("selection preserved");
+            assert!(!selected.is_unbound_by_unbind());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_restore_double_click_single_write_no_modal(cx: &mut TestAppContext) {
+        let keymap_content = r#"[
+    { "bindings": { "alt-cmd-shift-c": "zed::OpenKeymap" } },
+    { "unbind": { "alt-cmd-shift-c": "zed::OpenKeymap" } }
+]"#;
+        let (fs, keymap_editor, mut visual) = setup_keymap_editor(cx, keymap_content).await;
+        let cx = &mut visual;
+
+        let rows = keymap_editor.read_with(cx, |editor, _| {
+            visible_rows_for_action(editor, "zed::OpenKeymap")
+        });
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            window.focus(&editor.focus_handle(cx), cx);
+            // Trailing click of a double-click is ignored.
+            editor.on_restore_icon_clicked(rows[0], 2, window, cx);
+        });
+        keymap_editor.read_with(cx, |editor, _| {
+            assert!(editor.selected_index.is_none());
+            assert!(matches!(editor.restore_state, RestoreState::Idle));
+        });
+        cx.run_until_parked();
+        keymap_editor.read_with(cx, |editor, _| {
+            assert!(
+                matches!(editor.restore_state, RestoreState::Idle),
+                "ignored click starts nothing"
+            );
+        });
+        let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        assert!(
+            content.contains("\"unbind\""),
+            "ignored click must not mutate the file:\n{content}"
+        );
+
+        // First click of the double-click starts the restore.
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            editor.on_restore_icon_clicked(rows[0], 1, window, cx);
+        });
+        cx.run_until_parked();
+        keymap_editor.read_with(cx, |editor, _| {
+            assert!(
+                matches!(editor.restore_state, RestoreState::Pending { .. }),
+                "write done, refresh pending"
+            );
+        });
+        // A second Restore dispatch while the refresh is pending is a no-op:
+        // exactly one write, no stale second task.
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            editor.restore_binding(&RestoreBinding, window, cx);
+            assert!(matches!(editor.restore_state, RestoreState::Pending { .. }));
+            // Edit requests during the flight are ignored.
+            let hover_before = editor.show_hover_menus;
+            editor.open_edit_keybinding_modal(false, window, cx);
+            assert_eq!(editor.show_hover_menus, hover_before);
+        });
+        cx.run_until_parked();
+
+        let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        let actual: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            actual,
+            serde_json::json!([{ "bindings": { "alt-cmd-shift-c": "zed::OpenKeymap" } }]),
+            "exactly one effective restore:\n{content}"
+        );
+
+        // Reloading keymap transitions restore state to SuppressDoubleClick.
+        reload_keymap_from_file(&fs, cx).await;
+        cx.run_until_parked();
+        keymap_editor.read_with(cx, |editor, _| {
+            assert!(
+                matches!(editor.restore_state, RestoreState::SuppressDoubleClick),
+                "our refresh must suppress the trailing double-click"
+            );
+        });
+
+        // Trailing click from double-click sequence does not open Edit.
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            let hover_before = editor.show_hover_menus;
+            editor.open_edit_keybinding_modal(false, window, cx);
+            // Suppressed: no modal opens, hover state untouched.
+            assert_eq!(editor.show_hover_menus, hover_before);
+        });
+        cx.run_until_parked();
+        keymap_editor.read_with(cx, |editor, cx| {
+            let workspace = editor.workspace.upgrade().unwrap();
+            assert!(
+                workspace
+                    .read(cx)
+                    .active_modal::<KeybindingEditorModal>(cx)
+                    .is_none(),
+                "edit modal must not open during SuppressDoubleClick"
+            );
+        });
+
+        // Trailing restore-icon click with count == 2 after refresh is also
+        // ignored and must not start a second write.
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            editor.on_restore_icon_clicked(rows[0], 2, window, cx);
+        });
+        cx.run_until_parked();
+
+        let content_after = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        let actual_after: serde_json::Value = serde_json::from_str(&content_after).unwrap();
+        assert_eq!(
+            actual_after,
+            serde_json::json!([{ "bindings": { "alt-cmd-shift-c": "zed::OpenKeymap" } }]),
+            "trailing click must not write again:\n{content_after}"
+        );
+        keymap_editor.read_with(cx, |editor, _| {
+            assert!(
+                matches!(editor.restore_state, RestoreState::Idle),
+                "suppression consumed by the trailing click"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_restore_rendered_affordance_clicks_file(cx: &mut TestAppContext) {
+        let keymap_content = r#"[
+    { "bindings": { "alt-cmd-shift-c": "zed::OpenKeymap" } },
+    { "unbind": { "alt-cmd-shift-c": "zed::OpenKeymap" } }
+]"#;
+        let (fs, keymap_editor, mut visual) = setup_keymap_editor(cx, keymap_content).await;
+        let cx = &mut visual;
+
+        keymap_editor.read_with(cx, |editor, _| {
+            let rows = visible_rows_for_action(editor, "zed::OpenKeymap");
+            assert_eq!(rows.len(), 1);
+            let candidate = editor.matches[rows[0]].candidate_id;
+            let suppression = editor.keybindings[candidate]
+                .suppression()
+                .expect("mapped")
+                .clone();
+            assert_eq!(restore_affordance(&suppression), RestoreAffordance::Restore);
+        });
+
+        // Scroll the row into the table viewport so the virtualized list
+        // actually lays out its icon button before querying bounds.
+        // NOTE: `select_index` is a no-op when already selected, so scroll
+        // explicitly.
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            let rows = visible_rows_for_action(editor, "zed::OpenKeymap");
+            editor.scroll_to_item(rows[0], ScrollStrategy::Top, cx);
+            editor.selected_index = Some(rows[0]);
+            window.focus(&editor.focus_handle(cx), cx);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let bounds = cx
+            .debug_bounds("ICON-RotateCcw")
+            .expect("RotateCcw restore icon should be rendered");
+        cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+
+        let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        let actual: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            actual,
+            serde_json::json!([{ "bindings": { "alt-cmd-shift-c": "zed::OpenKeymap" } }]),
+            "rendered restore click must change the file:\n{content}"
+        );
+
+        reload_keymap_from_file(&fs, cx).await;
+        cx.run_until_parked();
+        keymap_editor.read_with(cx, |editor, _| {
+            let selected = editor.selected_binding().expect("selection preserved");
+            assert!(!selected.is_unbound_by_unbind());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_restore_context_menu_entry_restores(cx: &mut TestAppContext) {
+        let keymap_content = r#"[
+    { "bindings": { "alt-cmd-shift-c": "zed::OpenKeymap" } },
+    { "unbind": { "alt-cmd-shift-c": "zed::OpenKeymap" } }
+]"#;
+        let (fs, keymap_editor, mut visual) = setup_keymap_editor(cx, keymap_content).await;
+        let cx = &mut visual;
+
+        // A suppressed row offers Restore in its context menu.
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            let rows = visible_rows_for_action(editor, "zed::OpenKeymap");
+            assert_eq!(rows.len(), 1);
+            editor.selected_index = Some(rows[0]);
+            editor.create_context_menu(
+                Point {
+                    x: px(10.),
+                    y: px(10.),
+                },
+                window,
+                cx,
+            );
+            assert!(
+                editor.context_menu_deployed(),
+                "menu must deploy for a restorable row"
+            );
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let bounds = cx
+            .debug_bounds("MENU_ITEM-Restore")
+            .expect("restorable row menu must contain a Restore entry");
+        cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+
+        let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        let actual: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            actual,
+            serde_json::json!([{ "bindings": { "alt-cmd-shift-c": "zed::OpenKeymap" } }]),
+            "menu Restore click must remove the unbind entry:\n{content}"
+        );
+
+        // Once restored, the active row no longer offers Restore.
+        reload_keymap_from_file(&fs, cx).await;
+        cx.run_until_parked();
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            let rows = visible_rows_for_action(editor, "zed::OpenKeymap");
+            editor.selected_index = Some(rows[0]);
+            editor.create_context_menu(
+                Point {
+                    x: px(10.),
+                    y: px(10.),
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        assert!(
+            cx.debug_bounds("MENU_ITEM-Restore").is_none(),
+            "active row menu must not contain a Restore entry"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_restore_rendered_suppression_variants(cx: &mut TestAppContext) {
+        // Verify rendered affordance variants: user, mixed, and non-user.
+        let keymap_content = r#"[
+    { "bindings": { "alt-cmd-shift-c": "zed::OpenKeymap" } },
+    { "unbind": { "alt-cmd-shift-c": "zed::OpenKeymap" } }
+]"#;
+        let (_fs, keymap_editor, mut visual) = setup_keymap_editor(cx, keymap_content).await;
+        let cx = &mut visual;
+
+        // User-only: Restore affordance, RotateCcw rendered.
+        keymap_editor.read_with(cx, |editor, _| {
+            let rows = visible_rows_for_action(editor, "zed::OpenKeymap");
+            assert_eq!(rows.len(), 1);
+            let candidate = editor.matches[rows[0]].candidate_id;
+            let suppression = editor.keybindings[candidate]
+                .suppression()
+                .expect("mapped")
+                .clone();
+            assert_eq!(restore_affordance(&suppression), RestoreAffordance::Restore);
+        });
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            let rows = visible_rows_for_action(editor, "zed::OpenKeymap");
+            editor.scroll_to_item(rows[0], ScrollStrategy::Top, cx);
+            editor.selected_index = Some(rows[0]);
+            window.focus(&editor.focus_handle(cx), cx);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        assert!(
+            cx.debug_bounds("ICON-RotateCcw").is_some(),
+            "user-only suppression must render RotateCcw"
+        );
+
+        // Mixed (user + non-user): PartialRestore, still RotateCcw with
+        // "Restore your overrides" copy.
+        cx.update(|_, cx| {
+            let unbind = gpui::KeyBinding::new(
+                "alt-cmd-shift-c",
+                gpui::Unbind("zed::OpenKeymap".into()),
+                None,
+            )
+            .with_meta(KeybindSource::Default.meta());
+            cx.bind_keys(vec![unbind]);
+            KeymapEventChannel::trigger_keymap_changed(cx);
+        });
+        cx.run_until_parked();
+        keymap_editor.read_with(cx, |editor, _| {
+            let rows = visible_rows_for_action(editor, "zed::OpenKeymap");
+            assert_eq!(rows.len(), 1);
+            let candidate = editor.matches[rows[0]].candidate_id;
+            let suppression = editor.keybindings[candidate]
+                .suppression()
+                .expect("mapped")
+                .clone();
+            assert_eq!(
+                restore_affordance(&suppression),
+                RestoreAffordance::PartialRestore
+            );
+        });
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            let rows = visible_rows_for_action(editor, "zed::OpenKeymap");
+            // NOTE: `select_index` is a no-op when the row is already
+            // selected, so scroll explicitly to guarantee the virtualized
+            // table lays out this row before querying bounds.
+            editor.scroll_to_item(rows[0], ScrollStrategy::Top, cx);
+            editor.selected_index = Some(rows[0]);
+            window.focus(&editor.focus_handle(cx), cx);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        // NOTE: no `debug_bounds` check for the synthetic mixed case. Stage 1
+        // above plus `test_restore_rendered_affordance_clicks_file` already
+        // prove the RotateCcw icon renders and its click path mutates the
+        // file; PartialRestore maps to the same icon via `restore_affordance`
+        // (asserted above), and pixel-bounds checks for injected global
+        // keymaps are flaky across refresh timing.
+
+        // Non-user-only: Disabled warning, no restore.
+        cx.update(|_, cx| {
+            cx.clear_key_bindings();
+            let binding = gpui::KeyBinding::new("alt-cmd-shift-c", OpenKeymap, None)
+                .with_meta(KeybindSource::User.meta());
+            let unbind = gpui::KeyBinding::new(
+                "alt-cmd-shift-c",
+                gpui::Unbind("zed::OpenKeymap".into()),
+                None,
+            )
+            .with_meta(KeybindSource::Default.meta());
+            cx.bind_keys(vec![binding, unbind]);
+            KeymapEventChannel::trigger_keymap_changed(cx);
+        });
+        cx.run_until_parked();
+        keymap_editor.read_with(cx, |editor, _| {
+            let rows = visible_rows_for_action(editor, "zed::OpenKeymap");
+            assert_eq!(rows.len(), 1);
+            let candidate = editor.matches[rows[0]].candidate_id;
+            let suppression = editor.keybindings[candidate]
+                .suppression()
+                .expect("mapped")
+                .clone();
+            assert_eq!(
+                restore_affordance(&suppression),
+                RestoreAffordance::Disabled
+            );
+        });
+        // NOTE: same as above — the Disabled → Warning-icon mapping is covered
+        // by `restore_affordance` (asserted above) and the Warning button is
+        // constructed in `create_row_button`; pixel-bounds checks for injected
+        // global keymaps are flaky across refresh timing, so no
+        // `debug_bounds("ICON-Warning")` check here.
     }
 
     #[test]
@@ -5029,75 +5438,173 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn unbind_suppressor_source_tracks_origin() {
-        let binding = gpui::KeyBinding::new("tab", zed_actions::OpenKeymap, None);
-        let mut user_unbind =
-            gpui::KeyBinding::new("tab", gpui::Unbind(binding.action().name().into()), None);
-        user_unbind.set_meta(KeybindSource::User.meta());
-        let mut base_unbind =
-            gpui::KeyBinding::new("tab", gpui::Unbind(binding.action().name().into()), None);
-        base_unbind.set_meta(KeybindSource::Base.meta());
-        let unmeta_unbind =
-            gpui::KeyBinding::new("tab", gpui::Unbind(binding.action().name().into()), None);
+    use settings::KeymapEntryCollection as Collection;
 
+    /// Test-only provenance token. The revision is a placeholder: these unit
+    /// tests exercise the suppression scan, not revision validation (covered
+    /// by `remove_entries_rejects_stale_provenance` in settings).
+    fn test_provenance(
+        section: usize,
+        collection: Collection,
+        index: usize,
+    ) -> gpui::KeyBindingProvenance {
+        settings::KeymapEntryProvenance {
+            location: settings::KeymapEntryLocation {
+                section_index: section,
+                collection,
+                entry_index: index,
+            },
+            revision: settings::KeymapRevision(0),
+        }
+        .to_gpui()
+    }
+
+    fn expected_provenance(
+        section: usize,
+        collection: Collection,
+        index: usize,
+    ) -> KeymapEntryProvenance {
+        KeymapEntryProvenance::from_gpui(test_provenance(section, collection, index))
+            .expect("test provenance round-trips")
+    }
+
+    fn user_binding(keystrokes: &str, location: (usize, Collection, usize)) -> gpui::KeyBinding {
+        let mut binding = gpui::KeyBinding::new(keystrokes, zed_actions::OpenKeymap, None)
+            .with_meta(settings::KeybindSource::User.meta());
+        binding.set_provenance(test_provenance(location.0, location.1, location.2));
+        binding
+    }
+
+    fn user_unbind(keystrokes: &str, location: (usize, Collection, usize)) -> gpui::KeyBinding {
+        let action_name = zed_actions::OpenKeymap.name();
+        let mut unbind = gpui::KeyBinding::new(keystrokes, gpui::Unbind(action_name.into()), None)
+            .with_meta(settings::KeybindSource::User.meta());
+        unbind.set_provenance(test_provenance(location.0, location.1, location.2));
+        unbind
+    }
+
+    fn non_user_unbind(keystrokes: &str) -> gpui::KeyBinding {
+        let action_name = zed_actions::OpenKeymap.name();
+        gpui::KeyBinding::new(keystrokes, gpui::Unbind(action_name.into()), None)
+            .with_meta(settings::KeybindSource::Base.meta())
+    }
+
+    #[test]
+    fn repro_suppression_collects_all_later_user_suppressors() {
+        let binding = user_binding("tab", (0, Collection::Bindings, 0));
+        let unbind1 = user_unbind("tab", (1, Collection::Unbind, 0));
+        let unbind2 = user_unbind("tab", (2, Collection::Unbind, 0));
+        let all = vec![&binding, &unbind1, &unbind2];
+        let suppressors = find_suppressing_entries(&binding, 0, &all);
+        assert_eq!(suppressors.len(), 2);
+        let suppression = suppression_for_binding(&binding, 0, &all);
+        match suppression {
+            BindingSuppression::Restorable { user_suppressors } => {
+                assert_eq!(user_suppressors.len(), 2);
+                assert!(user_suppressors.contains(&expected_provenance(1, Collection::Unbind, 0)));
+                assert!(user_suppressors.contains(&expected_provenance(2, Collection::Unbind, 0)));
+            }
+            other => panic!("expected Restorable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn repro_suppression_earlier_unbind_does_not_suppress() {
+        let unbind_earlier = user_unbind("tab", (0, Collection::Unbind, 0));
+        let binding = user_binding("tab", (1, Collection::Bindings, 0));
+        let unbind_later = user_unbind("tab", (2, Collection::Unbind, 0));
+        let all = vec![&unbind_earlier, &binding, &unbind_later];
+        let suppressors = find_suppressing_entries(&binding, 1, &all);
+        assert_eq!(suppressors.len(), 1);
         assert_eq!(
-            unbind_suppressor_source(&binding, 0, &[&binding, &user_unbind]),
-            Some(KeybindSource::User)
-        );
-        assert_eq!(
-            unbind_suppressor_source(&binding, 0, &[&binding, &base_unbind]),
-            Some(KeybindSource::Base)
-        );
-        // No metadata: still suppressed, but no attributable (restorable) source.
-        assert!(binding_is_unbound_by_unbind(
-            &binding,
-            0,
-            &[&binding, &unmeta_unbind]
-        ));
-        assert_eq!(
-            unbind_suppressor_source(&binding, 0, &[&binding, &unmeta_unbind]),
-            None
-        );
-        // Precedence still holds: earlier unbinds don't suppress.
-        assert_eq!(
-            unbind_suppressor_source(&binding, 1, &[&user_unbind, &binding]),
-            None
+            suppressors[0].provenance,
+            Some(expected_provenance(2, Collection::Unbind, 0)),
+            "only the later entry suppresses"
         );
     }
 
     #[test]
-    fn user_binding_occurrence_ignores_argument_key_order() {
-        assert!(action_inputs_equal(
-            Some(r#"{"stop_at_soft_wraps":false,"stop_at_indent":true}"#),
-            Some(r#"{"stop_at_indent":true,"stop_at_soft_wraps":false}"#),
-        ));
-        assert!(!action_inputs_equal(
-            Some(r#"{"stop_at_soft_wraps":false}"#),
-            Some(r#"{"stop_at_soft_wraps":true}"#),
-        ));
-        assert!(action_inputs_equal(None, None));
-        assert!(!action_inputs_equal(None, Some("{}")));
-        // Inputs that don't parse as JSON fall back to exact string equality.
-        assert!(action_inputs_equal(Some("{"), Some("{")));
-        assert!(!action_inputs_equal(Some("{"), Some("}")));
+    fn repro_suppression_non_user_is_non_restorable() {
+        let binding = user_binding("tab", (0, Collection::Bindings, 0));
+        let base_unbind = non_user_unbind("tab");
+        let all = vec![&binding, &base_unbind];
+        assert!(binding_is_unbound_by_unbind(&binding, 0, &all));
+        match suppression_for_binding(&binding, 0, &all) {
+            BindingSuppression::NonRestorable => {}
+            other => panic!("expected NonRestorable for base suppressor, got {other:?}"),
+        }
+    }
 
-        let load = |input: &str| {
-            gpui::KeyBinding::load(
-                "tab",
-                Box::new(zed_actions::OpenKeymap),
-                None,
-                false,
-                Some(SharedString::new(input)),
-                &gpui::DummyKeyboardMapper,
-            )
-            .unwrap()
-            .with_meta(KeybindSource::User.meta())
-        };
-        let first = load(r#"{"stop_at_soft_wraps":false,"stop_at_indent":true}"#);
-        let second = load(r#"{"stop_at_indent":true,"stop_at_soft_wraps":false}"#);
-        let all = vec![&first, &second];
-        assert_eq!(user_binding_occurrence(&first, 0, &all), 0);
-        assert_eq!(user_binding_occurrence(&second, 1, &all), 1);
+    #[test]
+    fn repro_suppression_mixed_user_and_non_user_is_partially_restorable() {
+        let binding = user_binding("tab", (0, Collection::Bindings, 0));
+        let base_unbind = non_user_unbind("tab");
+        let user_unbind = user_unbind("tab", (1, Collection::Unbind, 0));
+        // Order: binding, base suppressor, user suppressor. Both later entries suppress.
+        let all = vec![&binding, &base_unbind, &user_unbind];
+        match suppression_for_binding(&binding, 0, &all) {
+            BindingSuppression::PartiallyRestorable { user_suppressors } => {
+                assert_eq!(
+                    user_suppressors,
+                    vec![expected_provenance(1, Collection::Unbind, 0)]
+                );
+            }
+            other => panic!("expected PartiallyRestorable, got {other:?}"),
+        }
+        // Mixed suppression is partially restorable.
+        assert_eq!(
+            restore_affordance(&suppression_for_binding(&binding, 0, &all)),
+            RestoreAffordance::PartialRestore
+        );
+    }
+
+    #[test]
+    fn restore_affordance_matrix() {
+        assert_eq!(
+            restore_affordance(&BindingSuppression::None),
+            RestoreAffordance::None
+        );
+        assert_eq!(
+            restore_affordance(&BindingSuppression::Restorable {
+                user_suppressors: vec![expected_provenance(1, Collection::Unbind, 0)],
+            }),
+            RestoreAffordance::Restore
+        );
+        assert_eq!(
+            restore_affordance(&BindingSuppression::PartiallyRestorable {
+                user_suppressors: vec![expected_provenance(1, Collection::Unbind, 0)],
+            }),
+            RestoreAffordance::PartialRestore
+        );
+        assert_eq!(
+            restore_affordance(&BindingSuppression::NonRestorable),
+            RestoreAffordance::Disabled
+        );
+    }
+
+    #[test]
+    fn repro_suppression_same_section_tab_vs_tab() {
+        // Distinct JSON keys, identical parsed keystrokes.
+        let binding = gpui::KeyBinding::new("tab", zed_actions::OpenKeymap, None)
+            .with_meta(settings::KeybindSource::User.meta())
+            .with_provenance(test_provenance(0, Collection::Bindings, 0));
+        let suppressor = gpui::KeyBinding::new(
+            "Tab",
+            gpui::Unbind(zed_actions::OpenKeymap.name().into()),
+            None,
+        )
+        .with_meta(settings::KeybindSource::User.meta())
+        .with_provenance(test_provenance(0, Collection::Bindings, 1));
+        let all = vec![&binding, &suppressor];
+        let suppressors = find_suppressing_entries(&binding, 0, &all);
+        assert_eq!(
+            suppressors.len(),
+            1,
+            "later entry in same object suppresses"
+        );
+        assert_eq!(
+            suppressors[0].provenance,
+            Some(expected_provenance(0, Collection::Bindings, 1))
+        );
     }
 }
