@@ -2736,10 +2736,6 @@ impl Editor {
             editor.report_editor_event(ReportEditorEvent::EditorOpened, None, cx);
         }
 
-        if !is_minimap {
-            editor.apply_soft_wrap_indent(cx);
-        }
-
         editor
     }
 
@@ -10122,7 +10118,6 @@ impl Editor {
                 self.colorize_brackets(false, cx);
                 self.refresh_selected_text_highlights(&self.display_snapshot(cx), true, window, cx);
                 self.semantic_token_state.invalidate_buffer(&buffer_id);
-                self.apply_soft_wrap_indent(cx);
                 cx.emit(EditorEvent::BufferRangesUpdated {
                     buffer: buffer.clone(),
                     ranges: ranges.clone(),
@@ -10153,7 +10148,6 @@ impl Editor {
                     display_map.unfold_buffers(removed_buffer_ids.iter().copied(), cx);
                 });
 
-                self.apply_soft_wrap_indent(cx);
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::BuffersRemoved {
                     removed_buffer_ids: removed_buffer_ids.clone(),
@@ -10197,7 +10191,6 @@ impl Editor {
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
                 self.update_edit_prediction_settings(cx);
-                self.apply_soft_wrap_indent(cx);
                 cx.notify();
             }
             multi_buffer::Event::SettingsChanged => {
@@ -10206,7 +10199,6 @@ impl Editor {
                     self.applicable_language_settings = new_language_settings;
                     cx.notify();
                 }
-                self.apply_soft_wrap_indent(cx);
             }
             multi_buffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),
             multi_buffer::Event::Saved => cx.emit(EditorEvent::Saved),
@@ -10394,7 +10386,6 @@ impl Editor {
                 self.clear_disabled_lsp_folding_ranges(window, cx);
                 self.refresh_document_symbols(None, cx);
                 self.refresh_outline_symbols_at_cursor(cx);
-                self.apply_soft_wrap_indent(cx);
             }
 
             if let Some(inlay_splice) = self.colors.as_mut().and_then(|colors| {
