@@ -578,6 +578,9 @@ impl ViewElementNode {
                         .cache_key
                         .matches(&cache_key, false)
                         && window.retained_layout_unchanged(layout)
+                        && window
+                            .view_tree
+                            .group_reads_unchanged(node_id, &window.prepainted_groups)
                     {
                         window.graft_view_node_prepaint(node_id);
                         window.finish_node_phase(node_id, false);
@@ -2904,6 +2907,72 @@ mod tests {
             _: &mut crate::App,
         ) {
         }
+    }
+
+    /// A view's group styles resolve to the hitbox of a `.group()` element drawn by an
+    /// ancestor, whose id its listeners hold. When the ancestor renders again, the group
+    /// has a new hitbox, and a clean child must not be reused with the old one.
+    #[gpui::test]
+    fn views_follow_the_group_hitboxes_of_their_ancestors(cx: &mut TestAppContext) {
+        struct Member {
+            renders: Rc<Cell<usize>>,
+        }
+        impl Render for Member {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders.set(self.renders.get() + 1);
+                div()
+                    .size(px(20.))
+                    .bg(rgb(0x0000ff))
+                    .group_hover("row", |style| style.bg(rgb(0xff0000)))
+            }
+        }
+        struct Host {
+            member: Entity<Member>,
+            revision: usize,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().child(
+                    div()
+                        .group("row")
+                        .size(px(100.))
+                        .bg(rgb(self.revision as u32))
+                        .child(self.member.clone()),
+                )
+            }
+        }
+        let renders = Rc::new(Cell::new(0));
+        let window = cx.open_window(size(px(200.), px(200.)), |_, cx| Host {
+            member: cx.new(|_| Member {
+                renders: renders.clone(),
+            }),
+            revision: 0,
+        });
+        cx.run_until_parked();
+        let mut visual = crate::VisualTestContext::from_window(window.into(), cx);
+        visual.simulate_mouse_move(
+            crate::point(px(150.), px(150.)),
+            None,
+            crate::Modifiers::default(),
+        );
+        window
+            .update(&mut visual, |host, _, cx| {
+                host.revision += 1;
+                cx.notify();
+            })
+            .expect("window open");
+        visual.run_until_parked();
+        let before = renders.get();
+        visual.simulate_mouse_move(
+            crate::point(px(50.), px(50.)),
+            None,
+            crate::Modifiers::default(),
+        );
+        visual.run_until_parked();
+        assert!(
+            renders.get() > before,
+            "hovering the group re-renders its member"
+        );
     }
 
     /// A view under `display: none` is laid out but never prepainted, where children are

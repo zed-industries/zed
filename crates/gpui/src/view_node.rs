@@ -341,11 +341,29 @@ pub(crate) struct NodeOutput {
     /// Each state is stamped with the output generation that last stored it, so the sweep
     /// after a redraw needs no separate record of what the redraw accessed.
     pub(crate) element_states: FxHashMap<ElementStateKey, (u64, crate::window::ElementStateBox)>,
+    /// What only some scopes record, boxed so the rest do not pay for it.
+    extras: Option<Box<ScopeExtras>>,
+}
+
+#[derive(Default)]
+struct ScopeExtras {
     /// How many views of each type have rendered inline in this scope so far at each
     /// element path, so siblings of one type get distinct element-id scopes, and a keyed
-    /// element's components keep theirs when its siblings change. Boxed: few scopes render
-    /// views inline.
-    pub(crate) inline_views: Option<Box<InlineViewCounts>>,
+    /// element's components keep theirs when its siblings change.
+    inline_views: InlineViewCounts,
+    /// The groups drawn outside this scope that its elements, or its children's, resolved
+    /// while painting. Their listeners hold the groups' hitbox ids, so the scope is only
+    /// reusable while each name still resolves to the same hitbox.
+    group_reads: Vec<GroupRead>,
+}
+
+/// A group name a scope resolved, to the hitbox it found (`None` if no enclosing element
+/// had the group) and the scope whose element pushed that hitbox.
+#[derive(Clone, PartialEq)]
+pub(crate) struct GroupRead {
+    pub(crate) name: crate::SharedString,
+    pub(crate) hitbox: Option<crate::HitboxId>,
+    pub(crate) owner: Option<crate::view_tree::ViewNodeId>,
 }
 
 impl NodeOutput {
@@ -354,6 +372,24 @@ impl NodeOutput {
         let generation = self.generation;
         self.element_states
             .retain(|_, (stored_in, _)| *stored_in == generation);
+    }
+
+    pub(crate) fn inline_views(&self) -> Option<&InlineViewCounts> {
+        self.extras.as_ref().map(|extras| &extras.inline_views)
+    }
+
+    pub(crate) fn inline_views_mut(&mut self) -> &mut InlineViewCounts {
+        &mut self.extras.get_or_insert_default().inline_views
+    }
+
+    pub(crate) fn group_reads(&self) -> &[GroupRead] {
+        self.extras
+            .as_ref()
+            .map_or(&[], |extras| extras.group_reads.as_slice())
+    }
+
+    pub(crate) fn group_reads_mut(&mut self) -> &mut Vec<GroupRead> {
+        &mut self.extras.get_or_insert_default().group_reads
     }
 
     pub(crate) fn phase(&self, phase: MetadataPhase) -> &PhaseOutput {
@@ -376,8 +412,9 @@ impl NodeOutput {
             phase.items.clear();
         }
         self.dispatch.clear();
-        if let Some(inline_views) = &mut self.inline_views {
-            inline_views.clear();
+        if let Some(extras) = &mut self.extras {
+            extras.inline_views.clear();
+            extras.group_reads.clear();
         }
         self.generation += 1;
     }

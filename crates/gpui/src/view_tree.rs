@@ -29,7 +29,7 @@ struct OutputPosition {
     next_children: usize,
     /// Restored so a retry's inline components take the occurrences, and so the state,
     /// they had before the attempt.
-    inline_views: Option<Box<crate::view_node::InlineViewCounts>>,
+    inline_views: Option<crate::view_node::InlineViewCounts>,
 }
 
 /// Which frame's roots a query walks: the frame drawn last, which events are dispatched
@@ -447,7 +447,7 @@ impl ViewTree {
                     items: node.output.phase(phase).items.len(),
                     dispatch: node.output.dispatch.len(),
                     next_children: node.next_children.len(),
-                    inline_views: node.output.inline_views.clone(),
+                    inline_views: node.output.inline_views().cloned(),
                 })
             });
         OutputCheckpoint {
@@ -473,7 +473,11 @@ impl ViewTree {
                 .items
                 .truncate(position.items);
             node.output.dispatch.truncate(position.dispatch);
-            node.output.inline_views = position.inline_views;
+            if let Some(inline_views) = position.inline_views {
+                *node.output.inline_views_mut() = inline_views;
+            } else if node.output.inline_views().is_some() {
+                node.output.inline_views_mut().clear();
+            }
             node.next_children.truncate(position.next_children);
         }
         // A node laid out before the checkpoint and prepainted after it keeps its entry,
@@ -1248,8 +1252,7 @@ impl ViewTree {
             return 0;
         };
         let occurrence = output
-            .inline_views
-            .get_or_insert_default()
+            .inline_views_mut()
             .entry((path_hash, type_name))
             .or_default();
         let index = *occurrence;
@@ -1582,10 +1585,79 @@ impl ViewTree {
         let new_bounds = cache_key.bounds;
         node.cache_key = cache_key;
         node.output.retain_accessed_element_states();
+        self.inherit_group_reads(node_id);
         self.commit_dependencies(node_id, accessed_entities);
         self.frame_stats.rebuilt_scopes += 1;
         self.include_changed_bounds(old_bounds);
         self.include_changed_bounds(new_bounds);
+    }
+
+    /// Records that the scope being painted resolved group `name` to `found`, unless the
+    /// scope pushed that group itself, so the scope is not reused once the group resolves
+    /// to another hitbox.
+    pub(crate) fn record_group_read(
+        &mut self,
+        name: &crate::SharedString,
+        found: Option<(crate::HitboxId, Option<ViewNodeId>)>,
+    ) {
+        let Some((node_id, MetadataPhase::Paint)) = self.traversal_stack.last().copied() else {
+            return;
+        };
+        let owner = found.and_then(|(_, owner)| owner);
+        if owner == Some(node_id) {
+            return;
+        }
+        let read = crate::view_node::GroupRead {
+            name: name.clone(),
+            hitbox: found.map(|(hitbox, _)| hitbox),
+            owner,
+        };
+        let reads = self.nodes[node_id].output.group_reads_mut();
+        if !reads.contains(&read) {
+            reads.push(read);
+        }
+    }
+
+    /// Whether every group the node's subtree resolved outside itself still resolves to
+    /// the same hitbox in `groups`, the groups enclosing it as it is prepainted.
+    pub(crate) fn group_reads_unchanged(
+        &self,
+        node_id: ViewNodeId,
+        groups: &crate::elements::GroupHitboxes,
+    ) -> bool {
+        self.nodes.get(node_id).is_some_and(|node| {
+            node.output
+                .group_reads()
+                .iter()
+                .all(|read| groups.get(&read.name).map(|(hitbox, _)| hitbox) == read.hitbox)
+        })
+    }
+
+    /// Adds to the node's group reads its children's, except those of groups the node
+    /// pushed, so checking the node covers its subtree.
+    fn inherit_group_reads(&mut self, node_id: ViewNodeId) {
+        let Some(node) = self.nodes.get(node_id) else {
+            return;
+        };
+        let own = node.output.group_reads();
+        let mut inherited = Vec::new();
+        for child in &node.children {
+            let Some(child) = self.nodes.get(*child) else {
+                continue;
+            };
+            let reads = child.output.group_reads();
+            for read in reads {
+                if read.owner != Some(node_id) && !own.contains(read) && !inherited.contains(read) {
+                    inherited.push(read.clone());
+                }
+            }
+        }
+        if !inherited.is_empty() {
+            self.nodes[node_id]
+                .output
+                .group_reads_mut()
+                .extend(inherited);
+        }
     }
 
     pub(crate) fn store_graft(&mut self) {

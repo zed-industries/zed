@@ -1092,6 +1092,9 @@ pub struct Window {
     /// The hitboxes of the `.group()` elements being painted, for their descendants'
     /// group styles. Frame-local: it is part of drawing, not app state.
     pub(crate) group_hitboxes: crate::elements::GroupHitboxes,
+    /// The same groups during prepaint, where a reused view checks the groups its elements
+    /// resolved when it last painted.
+    pub(crate) prepainted_groups: crate::elements::GroupHitboxes,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: f32,
@@ -1924,6 +1927,7 @@ impl Window {
             next_text_style_version: 1,
             text_style_hash_cache: None,
             group_hitboxes: Default::default(),
+            prepainted_groups: Default::default(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
@@ -3702,6 +3706,15 @@ impl Window {
             opacity: self.element_opacity(),
             image_cache: self.image_cache_stack.last().map(AnyImageCache::entity_id),
         }
+    }
+
+    /// The hitbox of the nearest enclosing `.group(name)` element being painted. The view
+    /// being painted records a group pushed outside it, so it is not reused once that
+    /// group's hitbox changes: its listeners hold the id.
+    pub(crate) fn group_hitbox(&mut self, name: &SharedString) -> Option<HitboxId> {
+        let found = self.group_hitboxes.get(name);
+        self.view_tree.record_group_read(name, found);
+        found.map(|(hitbox, _)| hitbox)
     }
 
     pub(crate) fn invalidate_component(&mut self, source: EntityId) {

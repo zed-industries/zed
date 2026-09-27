@@ -2342,7 +2342,18 @@ impl Interactivity {
 
                                 let scroll_offset =
                                     self.clamp_scroll_position(bounds, &style, window, cx);
-                                let result = f(&style, scroll_offset, hitbox, window, cx);
+                                // Groups are resolved at paint; during prepaint they are known
+                                // only so a reused view can check the groups it resolved.
+                                let group = self.group.clone().zip(hitbox.as_ref());
+                                if let Some((group, hitbox)) = &group {
+                                    window
+                                        .prepainted_groups
+                                        .push(group.clone(), hitbox.id, None);
+                                }
+                                let result = f(&style, scroll_offset, hitbox.clone(), window, cx);
+                                if let Some((group, _)) = &group {
+                                    window.prepainted_groups.pop(group);
+                                }
                                 (result, element_state)
                             },
                         )
@@ -2521,7 +2532,8 @@ impl Interactivity {
                                             }
 
                                             if let Some(group) = self.group.clone() {
-                                                window.group_hitboxes.push(group, hitbox.id);
+                                                let owner = window.view_tree.current_node();
+                                                window.group_hitboxes.push(group, hitbox.id, owner);
                                             }
 
                                             if let Some(area) = self.window_control {
@@ -2808,7 +2820,7 @@ impl Interactivity {
         }
 
         if let Some(group_hover) = self.group_hover_style.as_ref() {
-            if let Some(group_hitbox_id) = window.group_hitboxes.get(&group_hover.group) {
+            if let Some(group_hitbox_id) = window.group_hitbox(&group_hover.group) {
                 let hover_state = element_state
                     .as_ref()
                     .and_then(|element| element.hover_state.as_ref())
@@ -3184,7 +3196,7 @@ impl Interactivity {
                 let active_group_hitbox = self
                     .group_active_style
                     .as_ref()
-                    .and_then(|group_active| window.group_hitboxes.get(&group_active.group));
+                    .and_then(|group_active| window.group_hitbox(&group_active.group));
                 let hitbox = hitbox.clone();
                 window.on_mouse_event(move |_: &MouseDownEvent, phase, window, _cx| {
                     if phase == DispatchPhase::Bubble && !window.default_prevented() {
@@ -3240,7 +3252,7 @@ impl Interactivity {
         let group_hitbox = self
             .group_hover_style
             .as_ref()
-            .and_then(|group_hover| window.group_hitboxes.get(&group_hover.group));
+            .and_then(|group_hover| window.group_hitbox(&group_hover.group));
 
         if let Some(group_hitbox) = group_hitbox {
             let was_hovered = group_hitbox.is_hovered(window);
@@ -3370,7 +3382,7 @@ impl Interactivity {
         if !cx.has_active_drag() {
             if let Some(group_hover) = self.group_hover_style.as_ref() {
                 let is_group_hovered =
-                    if let Some(group_hitbox_id) = window.group_hitboxes.get(&group_hover.group) {
+                    if let Some(group_hitbox_id) = window.group_hitbox(&group_hover.group) {
                         !window.last_input_was_touch() && group_hitbox_id.is_hovered(window)
                     } else if let Some(element_state) = element_state.as_ref() {
                         !window.last_input_was_touch()
@@ -3417,8 +3429,7 @@ impl Interactivity {
 
                 if can_drop {
                     for (state_type, group_drag_style) in &self.group_drag_over_styles {
-                        if let Some(group_hitbox_id) =
-                            window.group_hitboxes.get(&group_drag_style.group)
+                        if let Some(group_hitbox_id) = window.group_hitbox(&group_drag_style.group)
                             && *state_type == drag.value.as_ref().type_id()
                             && group_hitbox_id.is_hovered(window)
                         {
@@ -3906,23 +3917,30 @@ fn handle_tooltip_check_visible_and_update(
     active_tooltip.borrow().is_some()
 }
 
-/// The hitboxes of the `.group()` elements currently being prepainted, by group name, so
-/// their descendants can resolve `group_hover` and the other group styles. Lives in the
-/// [`Window`] (see [`Window::group_hitboxes`]) rather than as an app global, since it is
-/// frame scratch and reading it must not make the reading node depend on anything.
+/// The hitboxes of the `.group()` elements enclosing the element being drawn, by group
+/// name, each with the view node whose element pushed it, so their descendants can resolve
+/// `group_hover` and the other group styles. Lives in the [`Window`] (see
+/// [`Window::group_hitbox`]) rather than as an app global, since it is frame scratch.
 #[derive(Default)]
-pub(crate) struct GroupHitboxes(HashMap<SharedString, SmallVec<[HitboxId; 1]>>);
+pub(crate) struct GroupHitboxes(
+    HashMap<SharedString, SmallVec<[(HitboxId, Option<crate::ViewNodeId>); 1]>>,
+);
 
 impl GroupHitboxes {
-    pub fn get(&self, name: &SharedString) -> Option<HitboxId> {
+    pub fn get(&self, name: &SharedString) -> Option<(HitboxId, Option<crate::ViewNodeId>)> {
         self.0
             .get(name)
             .and_then(|bounds_stack| bounds_stack.last())
             .cloned()
     }
 
-    pub fn push(&mut self, name: SharedString, hitbox_id: HitboxId) {
-        self.0.entry(name).or_default().push(hitbox_id);
+    pub fn push(
+        &mut self,
+        name: SharedString,
+        hitbox_id: HitboxId,
+        owner: Option<crate::ViewNodeId>,
+    ) {
+        self.0.entry(name).or_default().push((hitbox_id, owner));
     }
 
     pub fn pop(&mut self, name: &SharedString) {
