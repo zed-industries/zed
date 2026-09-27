@@ -4384,40 +4384,17 @@ impl LspCommand for InlayHints {
 
         let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
         let last_row = snapshot.max_point().row;
-        let lsp_hints: Vec<(lsp::InlayHint, PointUtf16, Bias)> = message
+        let hints = message
             .unwrap_or_default()
             .into_iter()
             .filter(|lsp_hint| lsp_hint.position.line <= last_row)
             .map(|lsp_hint| {
-                let (position, bias) = InlayHints::hint_position_and_bias(&lsp_hint, &snapshot);
-                (lsp_hint, position, bias)
-            })
-            .collect();
-
-        // All hints at the same position must share a single bias: mixing Left and Right
-        // anchors would trap the cursor between them and scramble insertion order.
-        // On conflict, fall back to Right.
-        let mut bias_by_position: collections::HashMap<PointUtf16, Bias> = Default::default();
-        for (_, position, bias) in &lsp_hints {
-            bias_by_position
-                .entry(*position)
-                .and_modify(|existing| {
-                    if *existing != *bias {
-                        *existing = Bias::Right;
-                    }
-                })
-                .or_insert(*bias);
-        }
-
-        let hints = lsp_hints
-            .into_iter()
-            .map(|(lsp_hint, position, _)| {
                 let resolve_state = if can_resolve {
                     ResolveState::CanResolve(lsp_server.server_id(), lsp_hint.data.clone())
                 } else {
                     ResolveState::Resolved
                 };
-                let bias = bias_by_position[&position];
+                let (position, bias) = InlayHints::hint_position_and_bias(&lsp_hint, &snapshot);
                 InlayHints::lsp_to_project_hint(
                     lsp_hint,
                     snapshot.anchor_at(position, bias),
