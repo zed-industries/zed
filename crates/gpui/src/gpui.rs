@@ -151,11 +151,26 @@ macro_rules! bench_group {
 /// Defines the entry point for GPUI Criterion benchmark groups.
 ///
 /// This mirrors `criterion::criterion_main!` so GPUI benchmark files can keep the
-/// same shape as ordinary Criterion benchmarks.
+/// same shape as ordinary Criterion benchmarks. It also installs
+/// [`CountingAllocator`] as the binary's global allocator, so reports include
+/// heap allocations per iteration. It wraps the system allocator by default;
+/// `allocator = Path;` wraps another unit-struct allocator instead, e.g. to
+/// compare allocators, which pay the same small counting cost:
+///
+/// ```ignore
+/// gpui::bench_main!(allocator = mimalloc::MiMalloc; benches);
+/// ```
 #[macro_export]
 macro_rules! bench_main {
-    ($($tokens:tt)*) => {
-        criterion::criterion_main!($($tokens)*);
+    (allocator = $allocator:path; $($groups:tt)*) => {
+        #[global_allocator]
+        static GPUI_BENCH_ALLOCATOR: $crate::CountingAllocator<$allocator> =
+            $crate::CountingAllocator::new($allocator);
+
+        criterion::criterion_main!($($groups)*);
+    };
+    ($($groups:tt)*) => {
+        $crate::bench_main!(allocator = ::std::alloc::System; $($groups)*);
     };
 }
 pub use gpui_shared_string::*;

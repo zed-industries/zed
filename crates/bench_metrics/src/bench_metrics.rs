@@ -6,8 +6,9 @@
 //! measurements taken over the same iterations, whose per-iteration values a
 //! benchmark harness records into a [`MetricReport`]. The measurements here
 //! are process- or thread-scoped counters: Linux hardware performance
-//! counters ([`HardwareCounter`]) and `getrusage` statistics
-//! ([`ResourceCounter`]). Nothing in this crate depends on GPUI, so any
+//! counters ([`HardwareCounter`]), `getrusage` statistics
+//! ([`ResourceCounter`]), and heap allocations counted by
+//! [`CountingAllocator`] ([`AllocationCounter`]). Nothing in this crate depends on GPUI, so any
 //! Criterion benchmark can use it:
 //!
 //! ```ignore
@@ -993,6 +994,281 @@ impl Measurement for ResourceCounter {
 }
 
 // ---------------------------------------------------------------------------
+// Heap allocations
+// ---------------------------------------------------------------------------
+
+/// A global allocator that forwards to `A` and counts what passes through it,
+/// for [`AllocationCounter`] and [`allocation_stats`].
+///
+/// Counting records no backtraces, so it adds a few relaxed atomic increments
+/// per allocation and is cheap enough to install in every benchmark binary.
+/// `A` can be any allocator, so a binary that wants to measure the allocator it
+/// ships with wraps that one:
+///
+/// ```ignore
+/// #[global_allocator]
+/// static ALLOCATOR: bench_metrics::CountingAllocator<mimalloc::MiMalloc> =
+///     bench_metrics::CountingAllocator::new(mimalloc::MiMalloc);
+/// ```
+///
+/// A binary has exactly one global allocator, so this can't be installed where a
+/// dependency already sets one (such as `ztracing` built with
+/// `ztracing_with_memory`); allocation metrics are then skipped.
+pub struct CountingAllocator<A = std::alloc::System> {
+    inner: A,
+}
+
+impl<A> CountingAllocator<A> {
+    /// Wraps `inner`, which serves every allocation.
+    pub const fn new(inner: A) -> Self {
+        Self { inner }
+    }
+}
+
+// SAFETY: every method forwards to `inner` with the caller's arguments and
+// returns its result unchanged; counting never touches the memory.
+unsafe impl<A: std::alloc::GlobalAlloc> std::alloc::GlobalAlloc for CountingAllocator<A> {
+    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+        // SAFETY: the caller upholds `GlobalAlloc::alloc`'s contract.
+        let pointer = unsafe { self.inner.alloc(layout) };
+        if !pointer.is_null() {
+            allocation_counts::record_allocation(layout.size());
+        }
+        pointer
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
+        // SAFETY: the caller upholds `GlobalAlloc::alloc_zeroed`'s contract.
+        let pointer = unsafe { self.inner.alloc_zeroed(layout) };
+        if !pointer.is_null() {
+            allocation_counts::record_allocation(layout.size());
+        }
+        pointer
+    }
+
+    unsafe fn dealloc(&self, pointer: *mut u8, layout: std::alloc::Layout) {
+        // SAFETY: the caller upholds `GlobalAlloc::dealloc`'s contract.
+        unsafe { self.inner.dealloc(pointer, layout) };
+        allocation_counts::record_free(layout.size());
+    }
+
+    unsafe fn realloc(
+        &self,
+        pointer: *mut u8,
+        layout: std::alloc::Layout,
+        new_size: usize,
+    ) -> *mut u8 {
+        // SAFETY: the caller upholds `GlobalAlloc::realloc`'s contract.
+        let new_pointer = unsafe { self.inner.realloc(pointer, layout, new_size) };
+        // A reallocation is counted as a new allocation replacing the old one,
+        // as dhat and heaptrack count it, so growing a `Vec` shows up as churn.
+        if !new_pointer.is_null() {
+            allocation_counts::record_free(layout.size());
+            allocation_counts::record_allocation(new_size);
+        }
+        new_pointer
+    }
+}
+
+/// Totals counted by [`CountingAllocator`] since the process started.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct AllocationStats {
+    /// Allocations served, including reallocations.
+    pub allocations: u64,
+    /// Bytes requested by those allocations.
+    pub allocated_bytes: u64,
+    /// Bytes returned by frees and by the old side of reallocations.
+    pub freed_bytes: u64,
+}
+
+impl AllocationStats {
+    /// Bytes allocated and not yet freed.
+    pub fn live_bytes(&self) -> i64 {
+        self.allocated_bytes as i64 - self.freed_bytes as i64
+    }
+}
+
+/// Returns the process's allocation totals, or `None` when this binary's
+/// global allocator is not a [`CountingAllocator`]. Differences between two
+/// calls give the allocations, bytes, and live-heap change of the code between
+/// them, across every thread.
+pub fn allocation_stats() -> Option<AllocationStats> {
+    allocation_counts::installed().then(allocation_counts::read)
+}
+
+/// Counters shared by every thread. Each thread increments one of several
+/// cache-line-aligned shards, so threads allocating concurrently rarely
+/// contend on a line; readers sum the shards.
+mod allocation_counts {
+    use super::AllocationStats;
+    use std::{
+        cell::Cell,
+        sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+    };
+
+    const SHARD_COUNT: usize = 32;
+
+    #[repr(align(128))]
+    struct Shard {
+        allocations: AtomicU64,
+        allocated_bytes: AtomicU64,
+        freed_bytes: AtomicU64,
+    }
+
+    static SHARDS: [Shard; SHARD_COUNT] = [const {
+        Shard {
+            allocations: AtomicU64::new(0),
+            allocated_bytes: AtomicU64::new(0),
+            freed_bytes: AtomicU64::new(0),
+        }
+    }; SHARD_COUNT];
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
+    static NEXT_SHARD: AtomicUsize = AtomicUsize::new(0);
+
+    thread_local! {
+        // `const` and without `Drop`, so reading it never allocates and still
+        // works while the thread's other thread-locals are being destroyed.
+        static SHARD_INDEX: Cell<Option<usize>> = const { Cell::new(None) };
+    }
+
+    fn shard() -> &'static Shard {
+        let index = SHARD_INDEX
+            .try_with(|index| match index.get() {
+                Some(index) => index,
+                None => {
+                    let next = NEXT_SHARD.fetch_add(1, Ordering::Relaxed) % SHARD_COUNT;
+                    index.set(Some(next));
+                    next
+                }
+            })
+            .unwrap_or(0);
+        &SHARDS[index % SHARD_COUNT]
+    }
+
+    pub(super) fn record_allocation(size: usize) {
+        // Loaded first so the flag's cache line stays shared across threads
+        // instead of being written on every allocation.
+        if !INSTALLED.load(Ordering::Relaxed) {
+            INSTALLED.store(true, Ordering::Relaxed);
+        }
+        let shard = shard();
+        shard.allocations.fetch_add(1, Ordering::Relaxed);
+        shard
+            .allocated_bytes
+            .fetch_add(size as u64, Ordering::Relaxed);
+    }
+
+    pub(super) fn record_free(size: usize) {
+        shard()
+            .freed_bytes
+            .fetch_add(size as u64, Ordering::Relaxed);
+    }
+
+    pub(super) fn installed() -> bool {
+        INSTALLED.load(Ordering::Relaxed)
+    }
+
+    pub(super) fn read() -> AllocationStats {
+        SHARDS
+            .iter()
+            .fold(AllocationStats::default(), |total, shard| AllocationStats {
+                allocations: total.allocations + shard.allocations.load(Ordering::Relaxed),
+                allocated_bytes: total.allocated_bytes
+                    + shard.allocated_bytes.load(Ordering::Relaxed),
+                freed_bytes: total.freed_bytes + shard.freed_bytes.load(Ordering::Relaxed),
+            })
+    }
+}
+
+/// What [`AllocationCounter`] counts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AllocationMetric {
+    /// Allocations served, including reallocations: the churn put through the
+    /// allocator, and nearly deterministic for the same work.
+    Allocations,
+    /// Bytes requested by those allocations.
+    AllocatedBytes,
+}
+
+impl AllocationMetric {
+    /// The unit noun used in reports.
+    pub fn unit(self) -> &'static str {
+        match self {
+            Self::Allocations => "allocations",
+            Self::AllocatedBytes => "bytes",
+        }
+    }
+
+    fn read(self, stats: &AllocationStats) -> u64 {
+        match self {
+            Self::Allocations => stats.allocations,
+            Self::AllocatedBytes => stats.allocated_bytes,
+        }
+    }
+}
+
+/// Criterion measurement for heap allocations across every thread in the
+/// process. Needs [`CountingAllocator`] installed as the binary's global
+/// allocator.
+pub struct AllocationCounter {
+    metric: AllocationMetric,
+    formatter: CountFormatter,
+}
+
+impl AllocationCounter {
+    /// Creates a counter for `metric`, failing when the binary's global
+    /// allocator is not a [`CountingAllocator`].
+    pub fn new(metric: AllocationMetric) -> Result<Self> {
+        if !allocation_counts::installed() {
+            return Err(anyhow!(
+                "this binary's global allocator is not bench_metrics::CountingAllocator; \
+                 install it with #[global_allocator] (gpui::bench_main! does this for GPUI \
+                 benchmarks)"
+            ));
+        }
+        Ok(Self {
+            metric,
+            formatter: CountFormatter::new(metric.unit()),
+        })
+    }
+
+    /// The counted statistic.
+    pub fn metric(&self) -> AllocationMetric {
+        self.metric
+    }
+}
+
+impl Measurement for AllocationCounter {
+    type Intermediate = u64;
+    type Value = f64;
+
+    fn start(&self) -> Self::Intermediate {
+        self.metric.read(&allocation_counts::read())
+    }
+
+    fn end(&self, start: Self::Intermediate) -> Self::Value {
+        let end = self.metric.read(&allocation_counts::read());
+        end.saturating_sub(start) as f64
+    }
+
+    fn add(&self, first: &Self::Value, second: &Self::Value) -> Self::Value {
+        first + second
+    }
+
+    fn zero(&self) -> Self::Value {
+        0.0
+    }
+
+    fn to_f64(&self, value: &Self::Value) -> f64 {
+        *value
+    }
+
+    fn formatter(&self) -> &dyn ValueFormatter {
+        &self.formatter
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Composite measurement
 // ---------------------------------------------------------------------------
 
@@ -1090,31 +1366,41 @@ impl BenchMeasurement {
     ///   supports is a secondary: process and calling-thread instructions,
     ///   cycles, and their ratios where [`HardwareCounter`] has a backend
     ///   (Linux, Apple Silicon); branch and cache misses on Linux; voluntary
-    ///   context switches and minor page faults from `getrusage`. Counters
-    ///   that fail to open are skipped with a note printed once.
+    ///   context switches and minor page faults from `getrusage`; heap
+    ///   allocations and allocated bytes where the binary installs
+    ///   [`CountingAllocator`]. Counters that fail to open are skipped with a
+    ///   note printed once.
     /// * `wall-time`: wall time only, no counters.
     /// * `instructions`: Criterion analyzes process-wide retired instructions.
     /// * `foreground-instructions`: Criterion analyzes the benchmark thread's
     ///   retired instructions, which excludes background and driver threads
     ///   and is the tighter regression gate for frame cost.
+    /// * `allocations`: Criterion analyzes process-wide heap allocations.
     ///
-    /// In the instruction modes wall time becomes a secondary, and construction
-    /// fails when counters are unavailable so CI does not silently measure
-    /// something else.
+    /// In the instruction and allocation modes wall time becomes a secondary,
+    /// and construction fails when the primary is unavailable so CI does not
+    /// silently measure something else.
     pub fn from_env() -> Result<Self> {
         match std::env::var(BENCH_MEASUREMENT_ENV_VAR).as_deref() {
             Err(std::env::VarError::NotPresent) => {
                 let measurement = Self::new(criterion::measurement::WallTime);
-                Ok(measurement.with_default_secondaries(None))
+                Ok(measurement.with_default_secondaries(Primary::WallTime))
             }
             Ok("wall-time") => Ok(Self::new(criterion::measurement::WallTime)),
             Ok("instructions") => Self::with_instructions_primary(MetricScope::Process),
             Ok("foreground-instructions") => {
                 Self::with_instructions_primary(MetricScope::CallingThread)
             }
+            Ok("allocations") => {
+                let allocations = AllocationCounter::new(AllocationMetric::Allocations)?;
+                Ok(Self::new(allocations)
+                    .named("allocations")
+                    .with_default_secondaries(Primary::Allocations)
+                    .with_secondary("wall time", criterion::measurement::WallTime))
+            }
             Ok(value) => Err(anyhow!(
                 "unsupported {BENCH_MEASUREMENT_ENV_VAR} value {value:?}; expected \"wall-time\", \
-                 \"instructions\", or \"foreground-instructions\""
+                 \"instructions\", \"foreground-instructions\", or \"allocations\""
             )),
             Err(error) => Err(anyhow!(
                 "{BENCH_MEASUREMENT_ENV_VAR} is not valid Unicode: {error}"
@@ -1141,14 +1427,17 @@ impl BenchMeasurement {
         };
         Ok(Self::new(instructions)
             .named(name)
-            .with_default_secondaries(Some(scope))
+            .with_default_secondaries(Primary::Instructions(scope))
             .with_secondary("wall time", criterion::measurement::WallTime))
     }
 
-    /// Adds every counter this machine supports, leaving out the instruction
-    /// count for `primary_instructions` when that scope is already the
-    /// primary.
-    fn with_default_secondaries(mut self, primary_instructions: Option<MetricScope>) -> Self {
+    /// Adds every counter this machine supports, leaving out the one that is
+    /// already the primary.
+    fn with_default_secondaries(mut self, primary: Primary) -> Self {
+        let primary_instructions = match primary {
+            Primary::Instructions(scope) => Some(scope),
+            Primary::WallTime | Primary::Allocations => None,
+        };
         // Every hardware counter needs the same access, so a denial of the
         // first one is reported once for all of them rather than once per
         // event. Events a platform lacks are still noted individually.
@@ -1217,8 +1506,26 @@ impl BenchMeasurement {
             ResourceMetric::MinorPageFaults,
             MetricScope::Process,
         );
-        self
+        let allocation = |this: Self, name, metric| match AllocationCounter::new(metric) {
+            Ok(counter) => this.with_secondary(name, counter),
+            Err(error) => {
+                note_unavailable("heap allocations", &error);
+                this
+            }
+        };
+        if primary != Primary::Allocations {
+            self = allocation(self, "allocations", AllocationMetric::Allocations);
+        }
+        allocation(self, "allocated bytes", AllocationMetric::AllocatedBytes)
     }
+}
+
+/// The metric Criterion analyzes in a [`BenchMeasurement::from_env`] mode.
+#[derive(Clone, Copy, PartialEq)]
+enum Primary {
+    WallTime,
+    Instructions(MetricScope),
+    Allocations,
 }
 
 /// Prints why a default secondary is unavailable, once per metric per process,
@@ -1596,6 +1903,35 @@ mod tests {
         Arc,
         atomic::{AtomicU64, Ordering},
     };
+
+    #[global_allocator]
+    static ALLOCATOR: CountingAllocator = CountingAllocator::new(std::alloc::System);
+
+    #[test]
+    fn counting_allocator_counts_allocations_bytes_and_frees() {
+        // Other tests allocate concurrently and the counts are process-wide, so
+        // these assert lower bounds.
+        let allocations = AllocationCounter::new(AllocationMetric::Allocations)
+            .expect("this test binary installs CountingAllocator");
+        let bytes = AllocationCounter::new(AllocationMetric::AllocatedBytes)
+            .expect("this test binary installs CountingAllocator");
+        let before = allocation_stats().expect("CountingAllocator is installed");
+        let allocations_start = allocations.start();
+        let bytes_start = bytes.start();
+
+        let mut buffers = Vec::with_capacity(10);
+        for _ in 0..10 {
+            buffers.push(std::hint::black_box(vec![0_u8; 1 << 16]));
+        }
+        let during = allocation_stats().expect("CountingAllocator is installed");
+        drop(std::hint::black_box(buffers));
+
+        assert!(allocations.end(allocations_start) >= 11.0);
+        assert!(bytes.end(bytes_start) >= (10 << 16) as f64);
+        let after = allocation_stats().expect("CountingAllocator is installed");
+        assert!(after.freed_bytes - during.freed_bytes >= 10 << 16);
+        assert!(during.allocated_bytes - before.allocated_bytes >= 10 << 16);
+    }
 
     fn fast_criterion(measurement: BenchMeasurement) -> criterion::Criterion<BenchMeasurement> {
         criterion::Criterion::default()

@@ -22,8 +22,8 @@ use slotmap::SlotMap;
 pub use async_context::*;
 #[cfg(feature = "bench-support")]
 pub use bench_context::{
-    BenchAppContext, BenchMeasurement, BenchReport, BenchWindowContext, MetricReport,
-    bench_platform,
+    BenchAppContext, BenchMeasurement, BenchReport, BenchWindowContext, CountingAllocator,
+    MetricReport, bench_platform,
 };
 use collections::{FxHashMap, FxHashSet, HashMap, TypeIdHashMap, TypeIdHashSet, VecDeque};
 pub use context::*;
