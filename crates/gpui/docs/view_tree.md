@@ -537,7 +537,11 @@ Ordered by dependency. Items marked **critical path** unblock several others.
   sibling mounts of one entity keep separate recordings and local state.
 - [ ] Inspector: identity and per-element overrides on node state; overrides read as
   entities so edits dirty exactly one node. Deletes the inspector full-refresh
-  fallback.
+  fallback. Build on main's cheaper inspector bookkeeping (#64309) rather than beside it.
+- [ ] Debug selectors (`debug_selector`, `Window::debug_bounds`): a dedicated pass for
+  reused views. Main fixed their interaction with the old `.cached()` views (#64433);
+  the view tree replaces that caching, so selectors must be recorded in node output and
+  replayed, not recollected only by views that render.
 - [ ] Accessibility: stable per-mount ids; partial `TreeUpdate`s for rebuilt
   subtrees. Deletes the accessibility full-refresh fallback.
 
@@ -545,7 +549,9 @@ Ordered by dependency. Items marked **critical path** unblock several others.
 
 - [ ] Images: node-local `Entity` holding the load; completion notifies; release
   calls `drop_image`; a per-window `WeakEntity` lookup shares tiles between nodes.
-  Retire `ImageCache`'s lifecycle logic; keep a decode cache as a plain LRU.
+  Retire `ImageCache`'s lifecycle logic; keep a decode cache as a plain LRU. Start from
+  main's owning asset cache entries (#63934), and keep every view waiting on a load
+  redrawn when it completes.
 - [ ] `window.on_unmount` for plain `Entity<V>` views (components already get it via
   `on_release`).
 - [ ] GPU damage regions from `changed_bounds` through submission and presentation,
