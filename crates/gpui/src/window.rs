@@ -1059,6 +1059,10 @@ pub struct Window {
     atlas_invalidated: bool,
     /// The font generation the view tree's retained text was shaped in.
     font_generation: usize,
+    /// Set when window state that renders can read without a dependency (visibility,
+    /// appearance) changes; the next frame rebuilds every view. It does not request a
+    /// frame itself, so a window that became hidden is not woken.
+    ambient_change: Option<&'static str>,
     pub(crate) removed: bool,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: Option<DisplayId>,
@@ -1941,6 +1945,7 @@ impl Window {
             view_tree: crate::ViewTree::new(),
             atlas_invalidated: false,
             font_generation: text_system.font_generation(),
+            ambient_change: None,
             removed: false,
             platform_window,
             display_id,
@@ -2075,6 +2080,7 @@ impl Window {
         let visibility = self.platform_window.visibility();
         if self.visibility != visibility {
             self.visibility = visibility;
+            self.ambient_change = Some("window visibility changed");
             #[cfg(feature = "profiler")]
             profiler::journal::record_window_visibility(self.handle.window_id(), visibility);
             self.visibility_observers
@@ -2677,7 +2683,11 @@ impl Window {
     }
 
     pub(crate) fn appearance_changed(&mut self, cx: &mut App) {
-        self.appearance = self.platform_window.appearance();
+        let appearance = self.platform_window.appearance();
+        if self.appearance != appearance {
+            self.appearance = appearance;
+            self.ambient_change = Some("window appearance changed");
+        }
 
         self.appearance_observers
             .clone()
@@ -3431,8 +3441,11 @@ impl Window {
         let font_generation = self.text_system.font_generation();
         let fonts_changed = font_generation != self.font_generation;
         self.font_generation = font_generation;
+        let ambient_change = self.ambient_change.take();
         let full_refresh_reason = if self.refreshing {
             Some("window refresh")
+        } else if let Some(reason) = ambient_change {
+            Some(reason)
         } else if fonts_changed {
             // Every retained recording holds text shaped against the previous fonts.
             Some("fonts changed")
@@ -8250,6 +8263,66 @@ mod tests {
             .update(cx, |_, window, _| assert!(window.is_visible()))
             .unwrap();
         assert_eq!(test_window.frame_wake_count(), frame_wake_count);
+    }
+
+    /// A view that reads visibility while rendering is not replayed after the
+    /// visibility changes, even when the next frame is caused by another view.
+    #[gpui::test]
+    fn test_visibility_change_rerenders_retained_views(cx: &mut TestAppContext) {
+        use crate::WindowVisibility;
+
+        struct VisibilityReader {
+            seen: Rc<RefCell<Vec<bool>>>,
+        }
+        impl Render for VisibilityReader {
+            fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.seen.borrow_mut().push(window.is_visible());
+                div().size_full()
+            }
+        }
+        struct Root {
+            reader: crate::Entity<VisibilityReader>,
+            sibling: crate::Entity<EmptyView>,
+        }
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .child(self.reader.clone())
+                    .child(self.sibling.clone())
+            }
+        }
+
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let seen = seen.clone();
+            move |_, cx| Root {
+                reader: cx.new(|_| VisibilityReader { seen }),
+                sibling: cx.new(|_| EmptyView),
+            }
+        });
+        let sibling = window
+            .update(cx, |root, _, _| root.sibling.clone())
+            .unwrap();
+        cx.run_until_parked();
+
+        let redraw_through = |sibling: &crate::Entity<EmptyView>, cx: &mut TestAppContext| {
+            cx.update(|cx| sibling.update(cx, |_, cx| cx.notify()));
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+        };
+        redraw_through(&sibling, cx);
+        seen.borrow_mut().clear();
+        redraw_through(&sibling, cx);
+        assert!(seen.borrow().is_empty(), "clean views are replayed");
+
+        let test_window = cx.test_window(window.into());
+        test_window.simulate_visibility_change(WindowVisibility::Hidden);
+        redraw_through(&sibling, cx);
+        assert_eq!(*seen.borrow(), [false]);
+
+        redraw_through(&sibling, cx);
+        assert_eq!(*seen.borrow(), [false], "clean views are replayed");
     }
 
     #[gpui::test]

@@ -53,6 +53,9 @@ where they occur.
 2. It is part of `ViewNodeCacheKey` (bounds, content mask, text style, rem size,
    scale factor, opacity, image cache) and compared before reuse.
 3. It is an ambient input whose mutation invalidates the nodes that read it.
+   Window visibility, window appearance, and the font generation are coarse ambient
+   inputs: a change makes the next frame rebuild every view, without requesting a
+   frame itself.
 
 There is no fourth category. Adding an ambient input to `Window` or `App` that
 renders can observe means adding it to (2) or (3). Falling back to `Window::refresh`
