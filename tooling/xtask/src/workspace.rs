@@ -67,6 +67,46 @@ mod tests {
     }
 
     #[test]
+    fn no_test_support_in_non_dev_dependencies() {
+        let workspace = load_workspace().expect("failed to load cargo metadata");
+        let mut violations = Vec::new();
+
+        for package in workspace.workspace_packages() {
+            for dependency in &package.dependencies {
+                if dependency.kind == DependencyKind::Development
+                    || !dependency
+                        .features
+                        .iter()
+                        .any(|feature| feature == "test-support")
+                {
+                    continue;
+                }
+
+                let manifest = package
+                    .manifest_path
+                    .strip_prefix(&workspace.workspace_root)
+                    .unwrap_or(&package.manifest_path);
+                let name = dependency.rename.as_deref().unwrap_or(&dependency.name);
+                let target = dependency
+                    .target
+                    .as_ref()
+                    .map(|target| format!(" for {target}"))
+                    .unwrap_or_default();
+                violations.push(format!(
+                    "{manifest}: `{name}` enables `test-support` in {:?} dependencies{target}",
+                    dependency.kind,
+                ));
+            }
+        }
+
+        assert!(
+            violations.is_empty(),
+            "non-dev dependencies must not enable `test-support`; \
+             use dev-dependencies or explicit feature forwarding instead:\n{violations:?}",
+        );
+    }
+
+    #[test]
     fn no_forbidden_dependencies_between_feature_crates() {
         let workspace = load_workspace().expect("failed to load cargo metadata");
         let packages = workspace.workspace_packages();
