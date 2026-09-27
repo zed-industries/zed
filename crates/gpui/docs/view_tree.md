@@ -110,8 +110,10 @@ built by the parent's render, plus the `use_state` entities it creates. It has n
 of its own to notify about, so it gets `&mut App`, not a `Context`.
 
 A component renders inline by default, as part of its parent's node, in an element-id
-scope of `(type name, nth inline view of that type in the node)` — Flutter's
-type-and-position identity — so two siblings of one type keep separate `use_state`.
+scope of `(type name, nth inline view of that type at the same element path in the
+node)` — Flutter's type-and-position identity — so two siblings of one type keep
+separate `use_state`, and a component inside a keyed element keeps its state when the
+keyed elements reorder.
 (Every inline view, `RenderOnce` included, gets this scope; it fixes the sibling
 collision `RenderOnce` had.) `.cached()` mounts a component as a node of its own with
 an entity holding the value, and requires `PartialEq`: when the parent renders again,
@@ -497,6 +499,11 @@ Ordered by dependency. Items marked **critical path** unblock several others.
 - [x] A grafted layout whose bounds or ambient inputs then differ at prepaint calls
   `restart_render` before rendering, so `next_children` and the dependency set start
   clean.
+- [x] Replayed dispatch registers focus and view ids interleaved with children, in
+  push order, so the last element to track a handle wins as in a fresh frame. Known
+  divergence: when two elements track one focus handle (itself a bug in the caller),
+  an element that registers after prepainting its children, or a rolled-back
+  `transact` that registered the handle, can resolve differently in a replayed frame.
 - [ ] The `expect`s in `taffy.rs` (`replace_layout`: "retained layout was computed
   before prepaint") are engine invariants, kept as panics so a violated invariant is
   found rather than papered over by a fallback render.
