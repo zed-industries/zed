@@ -56,7 +56,7 @@ pub fn decode_text(bytes: Vec<u8>) -> Result<DecodedText> {
     }
     anyhow::ensure!(
         byte_content != ByteContent::Binary,
-        "Binary files are not supported"
+        "Binary files cannot be decoded into text"
     );
 
     match String::from_utf8(bytes) {
@@ -361,83 +361,84 @@ fn first_non_ascii_or_escape(bytes: &[u8]) -> Option<usize> {
 }
 
 const KNOWN_BINARY_HEADERS: &[&[u8]] = &[
+    b"\x00\x00\x00\x0CJXL \r\n\x87\n",   // JPEG XL container
+    b"\x00\x00\x00\x0CjP  ",             // JPEG 2000
+    b"\x00\x00\x01\x00",                 // Windows ICO
+    b"\x00\x00\x02\x00",                 // Windows CUR
+    b"\x00\x01\x00\x00\x00",             // TrueType font
+    b"\x00asm",                          // WebAssembly
+    b"\x04\x22\x4D\x18",                 // LZ4 frame
+    b"\x1A\x45\xDF\xA3",                 // Matroska, WebM
+    b"\x1F\x8B\x08",                     // gzip
+    b"\x1F\x9D",                         // compress (LZW)
+    b"!<arch>\n",                        // ar archive (static library, deb)
     b"%PDF-",                            // PDF
+    b"\x28\xB5\x2F\xFD",                 // Zstandard
+    b"7z\xBC\xAF\x27\x1C",               // 7-Zip
+    b"8BPS\x00",                         // Photoshop PSD
+    b"DDS |\x00\x00\x00",                // DirectDraw Surface
+    b"FLV\x01",                          // Flash Video
+    b"GIF87a",                           // GIF87a
+    b"GIF89a",                           // GIF89a
+    b"ID3",                              // MP3 with ID3v2 tag
+    b"II*\x00",                          // TIFF little-endian
+    b"IWAD",                             // Doom IWAD archive
+    b"Kaydara FBX Binary  \x00",         // FBX binary
+    b"MM\x00*",                          // TIFF big-endian
+    b"MSCF\x00\x00\x00\x00",             // Microsoft Cabinet
+    b"OTTO\x00",                         // OpenType font with CFF outlines
+    b"OggS",                             // OGG (Vorbis, Opus, FLAC)
     b"PK\x03\x04",                       // ZIP local header
     b"PK\x05\x06",                       // ZIP end of central directory
     b"PK\x07\x08",                       // ZIP spanning/splitting
-    b"\x89PNG\r\n\x1a\n",                // PNG
-    b"\xFF\xD8\xFF",                     // JPEG
-    b"GIF87a",                           // GIF87a
-    b"GIF89a",                           // GIF89a
-    b"IWAD",                             // Doom IWAD archive
     b"PWAD",                             // Doom PWAD archive
     b"RIFF",                             // WAV, AVI, WebP
-    b"OggS",                             // OGG (Vorbis, Opus, FLAC)
+    b"Rar!\x1A\x07",                     // RAR
+    b"SQLite format 3\x00",              // SQLite database
     b"fLaC",                             // FLAC
-    b"ID3",                              // MP3 with ID3v2 tag
-    b"\xFF\xFB",                         // MP3 frame sync (MPEG1 Layer3)
-    b"\xFF\xFA",                         // MP3 frame sync (MPEG1 Layer3)
-    b"\xFF\xF3",                         // MP3 frame sync (MPEG2 Layer3)
-    b"\xFF\xF2",                         // MP3 frame sync (MPEG2 Layer3)
-    b"\xFF\xF1",                         // AAC ADTS frame sync (MPEG-4)
-    b"\xFF\xF9",                         // AAC ADTS frame sync (MPEG-2)
-    b"II*\x00",                          // TIFF little-endian
-    b"MM\x00*",                          // TIFF big-endian
     b"glTF\x01\x00\x00\x00",             // Binary glTF 1
     b"glTF\x02\x00\x00\x00",             // Binary glTF 2
+    b"\x76\x2F\x31\x01",                 // OpenEXR
+    b"wOF2",                             // WOFF2 font
+    b"wOFF",                             // WOFF font
     b"\x7FELF",                          // ELF
-    b"\xFE\xED\xFA\xCE",                 // Mach-O 32-bit big-endian
-    b"\xFE\xED\xFA\xCF",                 // Mach-O 64-bit big-endian
-    b"\xCE\xFA\xED\xFE",                 // Mach-O 32-bit little-endian
-    b"\xCF\xFA\xED\xFE",                 // Mach-O 64-bit little-endian
-    b"\xCA\xFE\xBA\xBE",                 // Mach-O universal binary, Java class
-    b"!<arch>\n",                        // ar archive (static library, deb)
-    b"\x00asm",                          // WebAssembly
-    b"\x1F\x8B\x08",                     // gzip
-    b"\x1F\x9D",                         // compress (LZW)
-    b"\xFD7zXZ\x00",                     // xz
-    b"\x28\xB5\x2F\xFD",                 // Zstandard
-    b"\x04\x22\x4D\x18",                 // LZ4 frame
-    b"7z\xBC\xAF\x27\x1C",               // 7-Zip
-    b"Rar!\x1A\x07",                     // RAR
-    b"MSCF\x00\x00\x00\x00",             // Microsoft Cabinet
-    b"\xED\xAB\xEE\xDB",                 // RPM package
-    b"SQLite format 3\x00",              // SQLite database
-    b"\x89HDF\r\n\x1a\n",                // HDF5
-    b"\x93NUMPY",                        // NumPy array
     b"\x80\x02",                         // Python pickle protocol 2
     b"\x80\x03",                         // Python pickle protocol 3
     b"\x80\x04",                         // Python pickle protocol 4
     b"\x80\x05",                         // Python pickle protocol 5
-    b"wOFF",                             // WOFF font
-    b"wOF2",                             // WOFF2 font
-    b"OTTO\x00",                         // OpenType font with CFF outlines
-    b"\x00\x01\x00\x00\x00",             // TrueType font
-    b"\x1A\x45\xDF\xA3",                 // Matroska, WebM
-    b"FLV\x01",                          // Flash Video
-    b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1", // OLE2 compound file (legacy MS Office)
-    b"Kaydara FBX Binary  \x00",         // FBX binary
-    b"\x76\x2F\x31\x01",                 // OpenEXR
-    b"DDS |\x00\x00\x00",                // DirectDraw Surface
-    b"8BPS\x00",                         // Photoshop PSD
+    b"\x89HDF\r\n\x1a\n",                // HDF5
+    b"\x89PNG\r\n\x1a\n",                // PNG
+    b"\x93NUMPY",                        // NumPy array
+    b"\x95\x04\x12\xDE",                 // gettext MO big-endian
+    b"\xA1\xB2\xC3\xD4",                 // pcap big-endian
     b"\xABKTX ",                         // KTX texture
     b"\xC1\x83\x2A\x9E",                 // Unreal Engine package
-    b"\xDE\x12\x04\x95",                 // gettext MO little-endian
-    b"\x95\x04\x12\xDE",                 // gettext MO big-endian
-    b"\xD4\xC3\xB2\xA1",                 // pcap little-endian
-    b"\xA1\xB2\xC3\xD4",                 // pcap big-endian
     b"\xC5\xD0\xD3\xC6",                 // DOS EPS binary
-    b"\x00\x00\x00\x0CjP  ",             // JPEG 2000
-    b"\x00\x00\x00\x0CJXL \r\n\x87\n",   // JPEG XL container
+    b"\xCA\xFE\xBA\xBE",                 // Mach-O universal binary, Java class
+    b"\xCE\xFA\xED\xFE",                 // Mach-O 32-bit little-endian
+    b"\xCF\xFA\xED\xFE",                 // Mach-O 64-bit little-endian
+    b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1", // OLE2 compound file (legacy MS Office)
+    b"\xD4\xC3\xB2\xA1",                 // pcap little-endian
+    b"\xDE\x12\x04\x95",                 // gettext MO little-endian
+    b"\xED\xAB\xEE\xDB",                 // RPM package
+    b"\xFD7zXZ\x00",                     // xz
+    b"\xFE\xED\xFA\xCE",                 // Mach-O 32-bit big-endian
+    b"\xFE\xED\xFA\xCF",                 // Mach-O 64-bit big-endian
     b"\xFF\x0A",                         // JPEG XL codestream
-    b"\x00\x00\x01\x00",                 // Windows ICO
-    b"\x00\x00\x02\x00",                 // Windows CUR
+    b"\xFF\xD8\xFF",                     // JPEG
+    b"\xFF\xF1",                         // AAC ADTS frame sync (MPEG-4)
+    b"\xFF\xF2",                         // MP3 frame sync (MPEG2 Layer3)
+    b"\xFF\xF3",                         // MP3 frame sync (MPEG2 Layer3)
+    b"\xFF\xF9",                         // AAC ADTS frame sync (MPEG-2)
+    b"\xFF\xFA",                         // MP3 frame sync (MPEG1 Layer3)
+    b"\xFF\xFB",                         // MP3 frame sync (MPEG1 Layer3)
 ];
 
 fn is_known_binary_header(bytes: &[u8]) -> bool {
-    KNOWN_BINARY_HEADERS
-        .iter()
-        .any(|header| bytes.starts_with(header))
+    let index = KNOWN_BINARY_HEADERS.partition_point(|header| *header <= bytes);
+    KNOWN_BINARY_HEADERS[..index]
+        .last()
+        .is_some_and(|header| bytes.starts_with(header))
         || is_iso_media_header(bytes)
         || is_bitmap_header(bytes)
         || is_gguf_header(bytes)
@@ -593,6 +594,11 @@ mod tests {
             let mut bytes = header.to_vec();
             bytes.resize(FILE_ANALYSIS_BYTES, b'A');
             assert_eq!(analyze_byte_content(&bytes), ByteContent::Binary, "{label}");
+            assert_eq!(
+                decode_text(bytes).err().map(|error| error.to_string()),
+                Some(String::from("Binary files cannot be decoded into text")),
+                "{label}"
+            );
         }
         for text in ["glTF Sample Models\n", "OTTO GmbH\n", "GGUF is a format\n"] {
             assert_eq!(
@@ -600,6 +606,43 @@ mod tests {
                 ByteContent::Unknown,
                 "{text:?}"
             );
+        }
+    }
+
+    #[test]
+    fn binary_header_lookup_matches_linear_scan() {
+        for headers in KNOWN_BINARY_HEADERS.windows(2) {
+            assert!(headers[0] < headers[1], "{headers:?}");
+            assert_eq!(headers[1].strip_prefix(headers[0]), None, "{headers:?}");
+        }
+
+        let check = |bytes: &[u8]| {
+            let expected = KNOWN_BINARY_HEADERS
+                .iter()
+                .any(|header| bytes.starts_with(header))
+                || is_iso_media_header(bytes)
+                || is_bitmap_header(bytes)
+                || is_gguf_header(bytes)
+                || is_safetensors_header(bytes);
+            assert_eq!(is_known_binary_header(bytes), expected, "{bytes:?}");
+        };
+
+        for header in KNOWN_BINARY_HEADERS {
+            for length in 0..=header.len() {
+                check(&header[..length]);
+            }
+            for suffix in [0, u8::MAX] {
+                let mut bytes = header.to_vec();
+                bytes.push(suffix);
+                check(&bytes);
+            }
+            for index in 0..header.len() {
+                let mut bytes = header.to_vec();
+                for byte in 0..=u8::MAX {
+                    bytes[index] = byte;
+                    check(&bytes);
+                }
+            }
         }
     }
 
