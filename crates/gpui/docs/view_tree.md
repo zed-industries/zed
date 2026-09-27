@@ -504,6 +504,10 @@ Ordered by dependency. Items marked **critical path** unblock several others.
   divergence: when two elements track one focus handle (itself a bug in the caller),
   an element that registers after prepainting its children, or a rolled-back
   `transact` that registered the handle, can resolve differently in a replayed frame.
+- [ ] A clean view that renders a key binding label (`bindings_for_action`) is not
+  rendered again when an ancestor changes its `key_context` without a focus change, so
+  the label can show the previous context's binding until the view next renders. The
+  contexts are frame output, not a tracked read.
 - [ ] The `expect`s in `taffy.rs` (`replace_layout`: "retained layout was computed
   before prepaint") are engine invariants, kept as panics so a violated invariant is
   found rather than papered over by a fallback render.
