@@ -5,7 +5,10 @@ use std::{
     borrow::Borrow,
     cell::RefCell,
     hash::{Hash, Hasher},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use super::LineWrapper;
@@ -411,10 +414,11 @@ impl WrappedLineLayout {
                     .unwrapped_layout
                     .closest_index_for_x(position_in_unwrapped_line.x))
             } else {
-                Ok(self
-                    .unwrapped_layout
+                // The shaper can place a trailing zero-width wrap boundary glyph slightly past
+                // the line's width, so the row can extend past where `index_for_x` has glyphs.
+                self.unwrapped_layout
                     .index_for_x(position_in_unwrapped_line.x)
-                    .unwrap())
+                    .ok_or(wrapped_line_end_index)
             }
         }
     }
@@ -456,6 +460,10 @@ pub(crate) struct LineLayoutCache {
     previous_frame: RefCell<FrameCache>,
     current_frame: RefCell<FrameCache>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
+    /// Advances when [`TextSystem::add_fonts`] successfully changes the font database.
+    font_generation: Arc<AtomicUsize>,
+    /// Records the generation represented by both frame caches.
+    cached_font_generation: AtomicUsize,
 }
 
 #[derive(Default)]
@@ -485,12 +493,18 @@ struct FrameCache {
 
 impl FrameCache {
     fn clear(&mut self) {
+        self.clear_layouts();
+        self.uses.clear();
+        self.scope_depth = 0;
+    }
+
+    /// Drops the cached layouts but not the uses being recorded, which scopes still
+    /// being drawn hold.
+    fn clear_layouts(&mut self) {
         self.lines.clear();
         self.wrapped_lines.clear();
         self.lines_by_hash.clear();
         self.wrapped_lines_by_hash.clear();
-        self.uses.clear();
-        self.scope_depth = 0;
     }
 
     fn current_use(&mut self) -> &mut TextUse {
@@ -558,11 +572,17 @@ impl TextUse {
 pub(crate) struct TextUseCheckpoint(usize);
 
 impl LineLayoutCache {
-    pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
+    pub fn new(
+        platform_text_system: Arc<dyn PlatformTextSystem>,
+        font_generation: Arc<AtomicUsize>,
+    ) -> Self {
+        let cached_font_generation = font_generation.load(Ordering::Acquire);
         Self {
             previous_frame: RefCell::default(),
             current_frame: RefCell::default(),
             platform_text_system,
+            font_generation,
+            cached_font_generation: AtomicUsize::new(cached_font_generation),
         }
     }
 
@@ -639,6 +659,7 @@ impl LineLayoutCache {
     }
 
     pub fn finish_frame(&self) {
+        self.clear_if_font_generation_changed();
         let mut previous_frame = self.previous_frame.borrow_mut();
         let mut current_frame = self.current_frame.borrow_mut();
         std::mem::swap(&mut *previous_frame, &mut *current_frame);
@@ -657,6 +678,7 @@ impl LineLayoutCache {
         Text: AsRef<str>,
         SharedString: From<Text>,
     {
+        self.clear_if_font_generation_changed();
         let key = &CacheKeyRef {
             text: text.as_ref(),
             font_size,
@@ -737,6 +759,7 @@ impl LineLayoutCache {
         Text: AsRef<str>,
         SharedString: From<Text>,
     {
+        self.clear_if_font_generation_changed();
         let key = &CacheKeyRef {
             text: text.as_ref(),
             font_size,
@@ -808,6 +831,7 @@ impl LineLayoutCache {
         runs: &[FontRun],
         force_width: Option<Pixels>,
     ) -> Option<Arc<LineLayout>> {
+        self.clear_if_font_generation_changed();
         let key_ref = HashedCacheKeyRef {
             text_hash,
             text_len,
@@ -865,6 +889,7 @@ impl LineLayoutCache {
         force_width: Option<Pixels>,
         materialize_text: impl FnOnce() -> SharedString,
     ) -> Arc<LineLayout> {
+        self.clear_if_font_generation_changed();
         let key_ref = HashedCacheKeyRef {
             text_hash,
             text_len,
@@ -954,6 +979,24 @@ impl LineLayoutCache {
             .entries
             .push(TextUseEntry::LineByHash(key, layout.clone()));
         layout
+    }
+
+    /// How many times the font database has changed; see [`TextSystem::add_fonts`].
+    pub(crate) fn font_generation(&self) -> usize {
+        self.font_generation.load(Ordering::Acquire)
+    }
+
+    /// Drops the cached layouts once the font database has changed, since they were
+    /// shaped against the previous fonts.
+    fn clear_if_font_generation_changed(&self) {
+        let font_generation = self.font_generation();
+        if self.cached_font_generation.load(Ordering::Acquire) == font_generation {
+            return;
+        }
+        self.current_frame.borrow_mut().clear_layouts();
+        self.previous_frame.borrow_mut().clear_layouts();
+        self.cached_font_generation
+            .store(font_generation, Ordering::Release);
     }
 }
 

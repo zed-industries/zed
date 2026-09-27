@@ -204,6 +204,10 @@ pub struct ThemeColors {
     // Editor
     // ===
     pub editor_foreground: Hsla,
+    /// Text color used for CodeLens items in the editor.
+    ///
+    /// Falls back to `text_muted` when not explicitly set.
+    pub editor_code_lens_foreground: Option<Hsla>,
     pub editor_background: Hsla,
     pub editor_gutter_background: Hsla,
     pub editor_subheader_background: Hsla,
@@ -404,6 +408,7 @@ pub enum ThemeColorField {
     MinimapThumbActiveBackground,
     MinimapThumbBorder,
     EditorForeground,
+    EditorCodeLensForeground,
     EditorBackground,
     EditorGutterBackground,
     EditorSubheaderBackground,
@@ -522,6 +527,9 @@ impl ThemeColors {
             ThemeColorField::MinimapThumbActiveBackground => self.minimap_thumb_active_background,
             ThemeColorField::MinimapThumbBorder => self.minimap_thumb_border,
             ThemeColorField::EditorForeground => self.editor_foreground,
+            ThemeColorField::EditorCodeLensForeground => {
+                self.editor_code_lens_foreground.unwrap_or(self.text_muted)
+            }
             ThemeColorField::EditorBackground => self.editor_background,
             ThemeColorField::EditorGutterBackground => self.editor_gutter_background,
             ThemeColorField::EditorSubheaderBackground => self.editor_subheader_background,

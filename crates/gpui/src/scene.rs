@@ -174,6 +174,12 @@ fn sort_keys<T>(
 
 #[expect(missing_docs)]
 impl Scene {
+    /// Underlines in paint order, before `finish` sorts them into `underlines`.
+    #[cfg(test)]
+    pub(crate) fn painted_underlines(&self) -> &[Underline] {
+        &self.painted.underlines
+    }
+
     pub fn clear(&mut self) {
         debug_assert!(self.node_scene.is_none() && self.node_scene_stack.is_empty());
         self.operation_count = 0;

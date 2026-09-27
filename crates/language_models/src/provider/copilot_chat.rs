@@ -2,20 +2,23 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use copilot_chat::{
-    CopilotChat, CopilotChatConfiguration, Model as CopilotChatModel, PROVIDER_ID, PROVIDER_NAME,
-    create_language_model,
+    CopilotChat, CopilotChatConfiguration, PROVIDER_ID, PROVIDER_NAME, language_model,
 };
-use gpui::{App, Entity, Subscription, Task};
+use futures::{FutureExt as _, future::BoxFuture};
+use gpui::{App, AsyncApp, Entity, Subscription, Task};
 use language::language_settings::all_language_settings;
 use language_model::{
-    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, ProviderSettingsView,
+    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelClient, LanguageModelCompletionError,
+    LanguageModelCompletionStream, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, ModelRateLimiters,
+    ProviderSettingsView, unavailable_error,
 };
 use settings::SettingsStore;
 use ui::prelude::*;
 
 pub struct CopilotChatLanguageModelProvider {
     state: Entity<State>,
+    request_limiters: ModelRateLimiters,
 }
 
 pub struct State {
@@ -57,15 +60,32 @@ impl CopilotChatLanguageModelProvider {
             }
         });
 
-        Self { state }
+        Self {
+            state,
+            request_limiters: ModelRateLimiters::default(),
+        }
     }
 
-    fn create_language_model(
+    /// The current configuration of `model`, and the Copilot Chat client that
+    /// serves it, if Copilot Chat still offers it.
+    fn config(
         &self,
-        model: CopilotChatModel,
-        copilot_chat: Entity<CopilotChat>,
-    ) -> Arc<dyn LanguageModel> {
-        create_language_model(model, copilot_chat)
+        model: &LanguageModel,
+        cx: &App,
+    ) -> Result<(copilot_chat::Model, Entity<CopilotChat>), LanguageModelCompletionError> {
+        let unavailable = || unavailable_error(model);
+        let copilot_chat = CopilotChat::global(cx).ok_or_else(unavailable)?;
+        let config = copilot_chat
+            .read(cx)
+            .models()
+            .and_then(|models| {
+                models
+                    .iter()
+                    .find(|config| config.id() == model.id.0.as_ref())
+            })
+            .cloned()
+            .ok_or_else(unavailable)?;
+        Ok((config, copilot_chat))
     }
 }
 
@@ -90,30 +110,25 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         IconOrSvg::Icon(IconName::Copilot)
     }
 
-    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn default_model(&self, cx: &App) -> Option<LanguageModel> {
         let copilot_chat = CopilotChat::global(cx)?;
-        let model = copilot_chat.read(cx).models()?.first()?.clone();
-        Some(self.create_language_model(model, copilot_chat))
+        Some(language_model(copilot_chat.read(cx).models()?.first()?))
     }
 
-    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn default_fast_model(&self, cx: &App) -> Option<LanguageModel> {
         // The default model should be Copilot Chat's 'base model', which is likely a relatively fast
         // model (e.g. 4o) and a sensible choice when considering premium requests
         self.default_model(cx)
     }
 
-    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+    fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
         let Some(copilot_chat) = CopilotChat::global(cx) else {
             return Vec::new();
         };
         let Some(models) = copilot_chat.read(cx).models() else {
             return Vec::new();
         };
-        models
-            .iter()
-            .cloned()
-            .map(|model| self.create_language_model(model, copilot_chat.clone()))
-            .collect()
+        models.iter().map(language_model).collect()
     }
 
     fn is_authenticated(&self, cx: &App) -> bool {
@@ -177,5 +192,22 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
             return Task::ready(Ok(()));
         };
         copilot_chat.update(cx, |chat, cx| chat.sign_out(cx))
+    }
+}
+
+impl LanguageModelClient for CopilotChatLanguageModelProvider {
+    fn stream_completion(
+        &self,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
+        let (config, copilot_chat) = match cx.update(|cx| self.config(model, cx)) {
+            Ok(config) => config,
+            Err(error) => return async move { Err(error) }.boxed(),
+        };
+        let request_limiter = self.request_limiters.for_model(&model.id);
+        copilot_chat::stream_completion(&config, &copilot_chat, &request_limiter, request, cx)
     }
 }

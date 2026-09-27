@@ -227,14 +227,6 @@
     },
   },
   {
-    "context": "AgentPanel > Markdown",
-    "bindings": {
-      "copy": "markdown::CopyAsMarkdown",
-      "ctrl-insert": "markdown::CopyAsMarkdown",
-      "ctrl-c": "markdown::CopyAsMarkdown",
-    },
-  },
-  {
     "context": "AgentFeedbackMessageEditor > Editor",
     "bindings": {
       "escape": "menu::Cancel",
@@ -385,6 +377,15 @@
     "bindings": {
       "ctrl-enter": "agent::Chat",
       "enter": "editor::Newline",
+    },
+  },
+  {
+    "context": "Elicitation || (Elicitation > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "menu::Confirm",
+      "tab": "menu::SelectNext",
+      "shift-tab": "menu::SelectPrevious",
     },
   },
   {
@@ -555,8 +556,8 @@
       "ctrl-k ctrl-shift-d": ["editor::SelectPrevious", { "replace_newest": true }], // editor.action.moveSelectionToPreviousFindMatch
       "ctrl-k ctrl-i": "editor::Hover",
       "ctrl-k ctrl-b": "editor::BlameHover",
-      "ctrl-/": ["editor::ToggleComments", { "advance_downwards": false }],
-      "ctrl-k ctrl-c": ["editor::ToggleComments", { "advance_downwards": false }],
+      "ctrl-/": ["editor::ToggleComments", { "advance_downwards": false, "comment_empty_lines": true }],
+      "ctrl-k ctrl-c": ["editor::ToggleComments", { "advance_downwards": false, "comment_empty_lines": true }],
       "ctrl-k ctrl-/": "editor::ToggleBlockComments",
       "shift-alt-a": "editor::ToggleBlockComments",
       "f8": ["editor::GoToDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
@@ -616,7 +617,7 @@
     },
   },
   {
-    "context": "Editor && (extension == csv || extension == tsv || extension == ssv || extension == psv)",
+    "context": "Editor && (extension == csv || extension == tsv || extension == ssv || extension == psv || extension == jsonl || extension == ndjson)",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-k v": "tabular_data::OpenPreviewToTheSide",
@@ -736,8 +737,9 @@
       // or by tag:
       // "foo-bar": ["task::Spawn", { "task_tag": "MyTag" }],
       "f5": "debugger::Rerun",
-      "ctrl-f4": "workspace::CloseActiveDock",
-      "ctrl-w": "workspace::CloseActiveDock",
+      "ctrl-f4": ["pane::CloseActiveItem", { "close_pinned": false }],
+      "ctrl-w": ["pane::CloseActiveItem", { "close_pinned": false }],
+      "ctrl-alt-w": "workspace::CloseActiveDock",
     },
   },
   {
@@ -1017,6 +1019,8 @@
       "alt-d": "project_panel::CompareMarkedFiles",
       "shift-find": "project_panel::NewSearchInDirectory",
       "ctrl-alt-shift-f": "project_panel::NewSearchInDirectory",
+      "menu": "project_panel::OpenContextMenu",
+      "shift-f10": "project_panel::OpenContextMenu",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
       "escape": "menu::Cancel",
@@ -1231,6 +1235,12 @@
     },
   },
   {
+    "context": "LspCommandSelector > Picker > Editor",
+    "bindings": {
+      "tab": "lsp_command_selector::ToggleArgumentsFocus",
+    },
+  },
+  {
     "context": "ChannelModal > Picker > Editor",
     "bindings": {
       "tab": "channel_modal::ToggleMode",
@@ -1248,6 +1258,12 @@
     "bindings": {
       "ctrl-p": "file_finder::Toggle",
       "ctrl-shift-i": "search::ToggleIncludeIgnored",
+    },
+  },
+  {
+    "context": "CommandPalette || (CommandPalette > Picker > Editor)",
+    "bindings": {
+      "shift-backspace": "command_palette::RemoveSelected",
     },
   },
   {

@@ -17,7 +17,11 @@ impl TabularDataPreviewPane {
         current_widths: &Entity<ResizableColumnsState>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        self.create_table_inner(self.engine.contents.rows.len(), current_widths, cx)
+        self.create_table_inner(
+            self.engine.d2d_mapping().visible_row_count(),
+            current_widths,
+            cx,
+        )
     }
 
     fn create_table_inner(
@@ -164,6 +168,7 @@ impl TabularDataPreviewPane {
                                     format!("Pos {so}(L{slv})-{eo}(L{elv})")
                                 }
                                 TableCell::Virtual => "Virtual cell".into(),
+                                TableCell::Generated(_) => "Generated cell".into(),
                             },
                         ))
                     })

@@ -189,6 +189,9 @@ pub(crate) struct ViewTree {
     /// The `rendered_phases` entries whose layout was followed by a prepaint this frame,
     /// so `rollback` can return an entry from before the checkpoint to its layout.
     prepainted_layouts: Vec<usize>,
+    /// The first engine frame whose text can still be seeded back into the line cache;
+    /// see `discard_held_text`.
+    text_valid_from: u64,
     /// A frame is its roots, in drawing order: the window's root view, then the roots
     /// attached by `defer_draw` in priority order, then the prompt, drag overlay or
     /// tooltip. Walking them in order reproduces the frame. `roots` is the frame drawn
@@ -239,6 +242,7 @@ impl ViewTree {
             rendered_phases: Vec::new(),
             mounted_this_frame: Vec::new(),
             prepainted_layouts: Vec::new(),
+            text_valid_from: 0,
             spare_scenes: Vec::new(),
             invalidation_scratch: Vec::new(),
             roots: Vec::new(),
@@ -1307,23 +1311,29 @@ impl ViewTree {
     }
 
     /// Takes the text each phase of the node looked up, ahead of a redraw that records anew,
-    /// with whether it was looked up this frame or the one before. The line cache keeps two
-    /// frames of layouts, so such text is still in it and needs no seeding.
+    /// with whether to seed it back into the line cache. Text looked up this frame or the
+    /// one before is still in the cache, which keeps two frames of layouts; text from
+    /// before the fonts changed was shaped against the previous fonts.
     pub(crate) fn take_text(
         &mut self,
         node_id: ViewNodeId,
     ) -> impl Iterator<Item = (crate::text_system::TextUse, bool)> + '_ {
         let frame = self.frame;
+        let text_valid_from = self.text_valid_from;
         self.nodes
             .get_mut(node_id)
             .into_iter()
             .flat_map(|node| node.output.phases_mut())
             .map(move |phase| {
-                (
-                    std::mem::take(&mut phase.text),
-                    phase.text_frame + 1 >= frame,
-                )
+                let reseed = phase.text_frame + 1 < frame && phase.text_frame >= text_valid_from;
+                (std::mem::take(&mut phase.text), reseed)
             })
+    }
+
+    /// Stops the text nodes looked up before this frame from being seeded back into the
+    /// line cache, as when the fonts it was shaped against changed.
+    pub(crate) fn discard_held_text(&mut self) {
+        self.text_valid_from = self.frame;
     }
 
     pub(crate) fn restart_render(&mut self, node_id: ViewNodeId) {

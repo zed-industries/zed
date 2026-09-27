@@ -7,6 +7,8 @@ license = "Apache-2.0"
 
 [lib]
 path = "gpui_shared_string.rs"
+test = false
+doctest = false
 
 [dependencies]
 schemars.workspace = true

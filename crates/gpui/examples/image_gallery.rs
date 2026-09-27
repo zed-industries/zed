@@ -3,12 +3,11 @@
 #[path = "example_support/fonts.rs"]
 mod example_support;
 
-use futures::FutureExt;
 use gpui::{
-    App, AppContext, Asset as _, AssetLogger, Bounds, ClickEvent, Context, ElementId, Entity,
-    EntityId, ImageAssetLoader, ImageCache, ImageCacheProvider, KeyBinding, Menu, MenuItem,
-    RetainAllImageCache, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
-    actions, div, hash, image_cache, img, prelude::*, px, rgb, size,
+    App, AppContext, Bounds, ClickEvent, Context, ElementId, Entity, ImageCache,
+    ImageCacheProvider, KeyBinding, Menu, MenuItem, RetainAllImageCache, SharedString,
+    TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, hash, image_cache, img,
+    prelude::*, px, rgb, size,
 };
 #[cfg(not(target_family = "wasm"))]
 use reqwest_client::ReqwestClient;
@@ -171,14 +170,12 @@ struct SimpleLruCache {
     max_items: usize,
     usages: Vec<u64>,
     cache: HashMap<u64, gpui::ImageCacheItem>,
-    /// Notified when a load completes: every view that loads through the cache reads it.
-    entity_id: EntityId,
 }
 
 impl SimpleLruCache {
     fn new(max_items: usize, cx: &mut Context<Self>) -> Self {
         cx.on_release(|simple_cache, cx| {
-            for (_, mut item) in std::mem::take(&mut simple_cache.cache) {
+            for (_, item) in std::mem::take(&mut simple_cache.cache) {
                 if let Some(Ok(image)) = item.get() {
                     cx.drop_image(image, None);
                 }
@@ -190,7 +187,6 @@ impl SimpleLruCache {
             max_items,
             usages: Vec::with_capacity(max_items),
             cache: HashMap::with_capacity(max_items),
-            entity_id: cx.entity_id(),
         }
     }
 }
@@ -216,14 +212,12 @@ impl ImageCache for SimpleLruCache {
             self.usages.remove(current_ix);
             self.usages.insert(0, hash);
 
-            return item.get();
+            return item.use_image(window);
         }
 
-        let fut = AssetLogger::<ImageAssetLoader>::load(resource.clone(), cx);
-        let task = cx.background_executor().spawn(fut).shared();
         if self.usages.len() == self.max_items {
             let oldest = self.usages.pop().unwrap();
-            let mut image = self
+            let image = self
                 .cache
                 .remove(&oldest)
                 .expect("cache and usages must be in sync");
@@ -231,18 +225,12 @@ impl ImageCache for SimpleLruCache {
                 cx.drop_image(image, Some(window));
             }
         }
-        self.cache
-            .insert(hash, gpui::ImageCacheItem::Loading(task.clone()));
+        let item = gpui::ImageCacheItem::new(resource, cx);
+        let result = item.use_image(window);
+        self.cache.insert(hash, item);
         self.usages.insert(0, hash);
 
-        let entity = self.entity_id;
-        cx.spawn(async move |cx| {
-            _ = task.await;
-            cx.update(|cx| cx.notify(entity));
-        })
-        .detach();
-
-        None
+        result
     }
 }
 

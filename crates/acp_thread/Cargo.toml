@@ -17,6 +17,7 @@ test-support = ["gpui/test-support", "project/test-support", "dep:parking_lot"]
 
 [dependencies]
 action_log.workspace = true
+agent_settings.workspace = true
 agent-client-protocol.workspace = true
 async-channel.workspace = true
 base64.workspace = true
@@ -59,6 +60,7 @@ urlencoding.workspace = true
 env_logger.workspace = true
 gpui = { workspace = true, "features" = ["test-support"] }
 indoc.workspace = true
+markdown = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true
 project = { workspace = true, "features" = ["test-support"] }
 rand.workspace = true

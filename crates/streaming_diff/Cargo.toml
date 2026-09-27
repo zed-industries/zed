@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/streaming_diff.rs"
+doctest = false
 
 [dependencies]
 ordered-float.workspace = true

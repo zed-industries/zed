@@ -109,6 +109,11 @@ impl<V: 'static + Render> IntoElement for Entity<V> {
     fn into_element(self) -> Self::Element {
         ViewElement::new(self)
     }
+
+    #[inline(never)]
+    fn into_any_element(self) -> AnyElement {
+        self.into_element().into_any()
+    }
 }
 
 impl IntoElement for AnyView {

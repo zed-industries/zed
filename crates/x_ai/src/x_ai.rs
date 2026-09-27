@@ -7,13 +7,15 @@ pub const XAI_API_URL: &str = "https://api.x.ai/v1";
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
-    #[default]
     #[serde(rename = "grok-4.3", alias = "grok-4.3-latest")]
     Grok43,
     #[serde(rename = "grok-4.5", alias = "grok-4.5-latest")]
     Grok45,
     #[serde(rename = "grok-4.6", alias = "grok-4.6-latest")]
     Grok46,
+    #[default]
+    #[serde(rename = "grok-4.7", alias = "grok-4.7-latest")]
+    Grok47,
     #[serde(rename = "grok-4.20-0309-reasoning")]
     Grok420Reasoning,
     #[serde(rename = "grok-4.20-0309-non-reasoning")]
@@ -42,6 +44,7 @@ impl Model {
             "grok-4.3" => Ok(Self::Grok43),
             "grok-4.5" => Ok(Self::Grok45),
             "grok-4.6" => Ok(Self::Grok46),
+            "grok-4.7" => Ok(Self::Grok47),
             "grok-4.20-0309-reasoning" => Ok(Self::Grok420Reasoning),
             "grok-4.20-0309-non-reasoning" => Ok(Self::Grok420NonReasoning),
             _ => anyhow::bail!("invalid model id '{id}'"),
@@ -53,6 +56,7 @@ impl Model {
             Self::Grok43 => "grok-4.3",
             Self::Grok45 => "grok-4.5",
             Self::Grok46 => "grok-4.6",
+            Self::Grok47 => "grok-4.7",
             Self::Grok420Reasoning => "grok-4.20-0309-reasoning",
             Self::Grok420NonReasoning => "grok-4.20-0309-non-reasoning",
             Self::Custom { name, .. } => name,
@@ -64,6 +68,7 @@ impl Model {
             Self::Grok43 => "Grok 4.3",
             Self::Grok45 => "Grok 4.5",
             Self::Grok46 => "Grok 4.6",
+            Self::Grok47 => "Grok 4.7",
             Self::Grok420Reasoning => "Grok 4.20 Reasoning",
             Self::Grok420NonReasoning => "Grok 4.20 (Non-Reasoning)",
             Self::Custom {
@@ -75,7 +80,7 @@ impl Model {
     pub fn max_token_count(&self) -> u64 {
         match self {
             Self::Grok43 => 1_000_000,
-            Self::Grok45 | Self::Grok46 => 500_000,
+            Self::Grok45 | Self::Grok46 | Self::Grok47 => 500_000,
             Self::Grok420Reasoning | Self::Grok420NonReasoning => 2_000_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -84,7 +89,7 @@ impl Model {
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
             Self::Grok43 | Self::Grok420Reasoning | Self::Grok420NonReasoning => Some(64_000),
-            Self::Grok45 | Self::Grok46 => None,
+            Self::Grok45 | Self::Grok46 | Self::Grok47 => None,
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
@@ -96,6 +101,7 @@ impl Model {
             Self::Grok43
             | Self::Grok45
             | Self::Grok46
+            | Self::Grok47
             | Self::Grok420Reasoning
             | Self::Grok420NonReasoning => true,
             Self::Custom {
@@ -115,6 +121,7 @@ impl Model {
             Self::Grok43
             | Self::Grok45
             | Self::Grok46
+            | Self::Grok47
             | Self::Grok420Reasoning
             | Self::Grok420NonReasoning => true,
             Self::Custom {
@@ -130,6 +137,7 @@ impl Model {
             Self::Grok43
             | Self::Grok45
             | Self::Grok46
+            | Self::Grok47
             | Self::Grok420Reasoning
             | Self::Grok420NonReasoning => true,
             Self::Custom {
@@ -142,7 +150,7 @@ impl Model {
 
     pub fn supports_reasoning_effort(&self) -> bool {
         match self {
-            Self::Grok43 | Self::Grok45 | Self::Grok46 => true,
+            Self::Grok43 | Self::Grok45 | Self::Grok46 | Self::Grok47 => true,
             Self::Grok420Reasoning | Self::Grok420NonReasoning | Self::Custom { .. } => false,
         }
     }
