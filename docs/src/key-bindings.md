@@ -200,6 +200,7 @@ shortcut to `alt-h`:
 [
   {
     "context": "Workspace",
+    "use_key_equivalents": true,
     "bindings": {
       "alt-/": null,
       "alt-h": "which_key::ShowPendingBindings"
