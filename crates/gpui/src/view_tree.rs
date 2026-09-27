@@ -129,6 +129,9 @@ struct RenderingNode {
     phase: MetadataPhase,
     reads: DependencySet,
     cache_key: Option<ViewNodeCacheKey>,
+    /// Whether a prepaint reconciled the node's children, which it keeps when a rollback
+    /// returns the entry to its layout.
+    reconciled: bool,
 }
 
 /// Adds `entity_id` to a set being recorded. Reads of one entity tend to repeat back to
@@ -1438,13 +1441,14 @@ impl ViewTree {
     /// Adds text looked up on the node's behalf outside its traversal, such as while
     /// measuring its layout. A reused node's layout can be measured again every frame
     /// without the node rendering, so the first such text in a frame replaces what the
-    /// node held rather than adding to it.
+    /// node held rather than adding to it. A measurement that looked nothing up (it
+    /// answered from its own cache) leaves the held text alone.
     pub(crate) fn append_text(&mut self, node_id: ViewNodeId, text: crate::text_system::TextUse) {
         if let Some(node) = self.nodes.get_mut(node_id) {
             let phase = node.output.phase_mut(MetadataPhase::Layout);
             if phase.text_frame == self.frame {
                 phase.text.append(text);
-            } else {
+            } else if !text.is_empty() {
                 phase.text = text;
                 phase.text_frame = self.frame;
             }
@@ -1490,6 +1494,7 @@ impl ViewTree {
             phase,
             reads,
             cache_key: None,
+            reconciled: false,
         });
         RenderedReads(index)
     }
@@ -1516,6 +1521,7 @@ impl ViewTree {
                 self.prepainted_layouts.push(reads.0);
             }
             rendering.phase = MetadataPhase::Prepaint;
+            rendering.reconciled = true;
             rendering.reads = set;
             rendering.cache_key = Some(cache_key);
         }
@@ -1548,6 +1554,7 @@ impl ViewTree {
             node_id,
             phase,
             reads: accessed,
+            reconciled,
             ..
         } in rendered.drain(..)
         {
@@ -1560,11 +1567,13 @@ impl ViewTree {
                 continue;
             }
             self.commit_dependencies(node_id, accessed);
-            match phase {
-                MetadataPhase::Prepaint => self.snapshot_dispatch_nodes(node_id, tree),
-                // Prepaint reconciles a node's children; one only laid out (under
-                // `display: none`) does it here, before its next render discards them.
-                _ => self.reconcile_children(node_id),
+            if phase == MetadataPhase::Prepaint {
+                self.snapshot_dispatch_nodes(node_id, tree);
+            }
+            // Prepaint reconciles a node's children; one only laid out (under
+            // `display: none`) does it here, before its next render discards them.
+            if !reconciled {
+                self.reconcile_children(node_id);
             }
             if let Some(node) = self.nodes.get_mut(node_id) {
                 node.output.retain_accessed_element_states();
@@ -1653,16 +1662,27 @@ impl ViewTree {
         })
     }
 
-    /// Adds to the node's group reads its children's, except those of groups the node
-    /// pushed, so checking the node covers its subtree.
+    /// Adds to the node's group reads those of the scopes painted inside it, except those
+    /// of groups the node pushed, so checking the node covers what it paints.
     fn inherit_group_reads(&mut self, node_id: ViewNodeId) {
         let Some(node) = self.nodes.get(node_id) else {
             return;
         };
         let own = node.output.group_reads();
         let mut inherited = Vec::new();
-        for child in &node.children {
-            let Some(child) = self.nodes.get(*child) else {
+        // The scopes painted inside this one, which are not always its `children`: a view
+        // drawn by a deferred root paints outside its owner, under other groups.
+        let painted = node
+            .output
+            .phase(MetadataPhase::Paint)
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                OutputItem::Child(child, MetadataPhase::Paint) => Some(*child),
+                _ => None,
+            });
+        for child in painted {
+            let Some(child) = self.nodes.get(child) else {
                 continue;
             };
             let reads = child.output.group_reads();

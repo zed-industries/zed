@@ -532,6 +532,10 @@ impl TextUse {
         self.entries.clear();
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     /// Whether the use holds nothing, not even a buffer worth keeping.
     fn is_unallocated(&self) -> bool {
         self.entries.capacity() == 0

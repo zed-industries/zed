@@ -3020,6 +3020,78 @@ mod tests {
         );
     }
 
+    /// A view drawn by a deferred root paints outside the groups around its owner. The
+    /// groups it resolves there are not the owner's, so the owner stays reusable when a
+    /// group around it moves.
+    #[gpui::test]
+    fn deferred_views_do_not_pass_their_groups_to_their_owner(cx: &mut TestAppContext) {
+        struct Member;
+        impl Render for Member {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size(px(20.))
+                    .group_hover("row", |style| style.bg(rgb(0xff0000)))
+            }
+        }
+        struct Owner {
+            member: Entity<Member>,
+            revision: usize,
+            renders: Rc<Cell<usize>>,
+        }
+        impl Render for Owner {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders.set(self.renders.get() + 1);
+                div()
+                    .size(px(40.))
+                    .bg(rgb(self.revision as u32))
+                    .child(deferred(self.member.clone()))
+            }
+        }
+        struct Host {
+            owner: Entity<Owner>,
+            revision: usize,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .group("row")
+                    .size(px(100.))
+                    .bg(rgb(self.revision as u32))
+                    .child(self.owner.clone())
+            }
+        }
+        let renders = Rc::new(Cell::new(0));
+        let window = cx.open_window(size(px(200.), px(200.)), |_, cx| Host {
+            owner: cx.new(|cx| Owner {
+                member: cx.new(|_| Member),
+                revision: 0,
+                renders: renders.clone(),
+            }),
+            revision: 0,
+        });
+        cx.run_until_parked();
+        window
+            .update(cx, |host, _, cx| {
+                host.owner.update(cx, |owner, cx| {
+                    owner.revision += 1;
+                    cx.notify();
+                })
+            })
+            .expect("window open");
+        cx.run_until_parked();
+        let before = renders.get();
+        for _ in 0..3 {
+            window
+                .update(cx, |host, _, cx| {
+                    host.revision += 1;
+                    cx.notify();
+                })
+                .expect("window open");
+            cx.run_until_parked();
+        }
+        assert_eq!(renders.get(), before, "the owner is reused");
+    }
+
     /// A view under `display: none` is laid out but never prepainted, where children are
     /// otherwise reconciled. The children its renders drop must still be removed.
     #[gpui::test]
@@ -3274,10 +3346,22 @@ mod tests {
     /// left as laid out: the frame does not record the dispatch nodes the rollback removed.
     #[gpui::test]
     fn view_prepainted_only_in_a_failed_transaction_is_left_as_laid_out(cx: &mut TestAppContext) {
-        struct Leaf;
+        type States = Rc<std::cell::RefCell<Vec<crate::EntityId>>>;
+        struct Grandchild(States);
+        impl Render for Grandchild {
+            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                let state = window.use_state(cx, |_, _| 0usize);
+                self.0.borrow_mut().push(state.entity_id());
+                div().size(px(5.))
+            }
+        }
+        struct Leaf(Entity<Grandchild>);
         impl Render for Leaf {
             fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div().key_context("Leaf").size(px(10.))
+                div()
+                    .key_context("Leaf")
+                    .size(px(10.))
+                    .child(self.0.clone())
             }
         }
         struct Host {
@@ -3291,8 +3375,9 @@ mod tests {
                     .child(div().size(px(10.)).bg(rgb(self.revision as u32)))
             }
         }
+        let states = States::default();
         let window = cx.open_window(size(px(100.), px(100.)), |_, cx| Host {
-            leaf: cx.new(|_| Leaf),
+            leaf: cx.new(|cx| Leaf(cx.new(|_| Grandchild(states.clone())))),
             revision: 0,
         });
         cx.run_until_parked();
@@ -3305,6 +3390,11 @@ mod tests {
                 .expect("window open");
             cx.run_until_parked();
         }
+        let states = states.borrow();
+        assert!(
+            states.iter().all(|state| *state == states[0]),
+            "the grandchild keeps its node, and so its state: {states:?}"
+        );
     }
 
     struct OptionalPaintRoot {
