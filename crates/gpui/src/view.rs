@@ -2906,6 +2906,110 @@ mod tests {
         }
     }
 
+    /// A view under `display: none` is laid out but never prepainted, where children are
+    /// otherwise reconciled. The children its renders drop must still be removed.
+    #[gpui::test]
+    fn views_only_laid_out_retire_the_children_they_drop(cx: &mut TestAppContext) {
+        struct Leaf;
+        impl Render for Leaf {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size(px(10.))
+            }
+        }
+        struct Hidden {
+            leaves: Vec<Entity<Leaf>>,
+            shown: usize,
+        }
+        impl Render for Hidden {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().child(self.leaves[self.shown % self.leaves.len()].clone())
+            }
+        }
+        struct Host(Entity<Hidden>);
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().child(div().hidden().child(self.0.clone()))
+            }
+        }
+        let window = cx.open_window(size(px(100.), px(100.)), |_, cx| {
+            Host(cx.new(|cx| Hidden {
+                leaves: (0..8).map(|_| cx.new(|_| Leaf)).collect(),
+                shown: 0,
+            }))
+        });
+        cx.run_until_parked();
+        let live_nodes = |cx: &mut TestAppContext| {
+            window
+                .update(cx, |_, window, _| window.view_tree_stats().live_nodes)
+                .expect("window open")
+        };
+        let before = live_nodes(cx);
+        for _ in 0..8 {
+            window
+                .update(cx, |host, _, cx| {
+                    host.0.update(cx, |hidden, cx| {
+                        hidden.shown += 1;
+                        cx.notify();
+                    })
+                })
+                .expect("window open");
+            cx.run_until_parked();
+        }
+        assert_eq!(live_nodes(cx), before);
+    }
+
+    /// A view under `visibility: hidden` renders without painting. The element states its
+    /// renders stop using must still be dropped, as a painted render drops them.
+    #[gpui::test]
+    fn unpainted_views_drop_unused_element_state(cx: &mut TestAppContext) {
+        struct Invisible {
+            key: usize,
+            states: Rc<std::cell::RefCell<Vec<crate::WeakEntity<usize>>>>,
+        }
+        impl Render for Invisible {
+            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                let state = window.use_keyed_state(
+                    crate::ElementId::Integer(self.key as u64),
+                    cx,
+                    |_, _| self.key,
+                );
+                self.states.borrow_mut().push(state.downgrade());
+                div().size(px(10.))
+            }
+        }
+        struct Host(Entity<Invisible>);
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().child(div().invisible().child(self.0.clone()))
+            }
+        }
+        let states = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let window = cx.open_window(size(px(100.), px(100.)), |_, cx| {
+            Host(cx.new(|_| Invisible {
+                key: 0,
+                states: states.clone(),
+            }))
+        });
+        cx.run_until_parked();
+        for _ in 0..4 {
+            window
+                .update(cx, |host, _, cx| {
+                    host.0.update(cx, |invisible, cx| {
+                        invisible.key += 1;
+                        cx.notify();
+                    })
+                })
+                .expect("window open");
+            cx.run_until_parked();
+        }
+        let live = states
+            .borrow()
+            .iter()
+            .filter(|state| state.upgrade().is_some())
+            .count();
+        assert_eq!(live, 1, "only the current key's state is kept");
+    }
+
     /// A view that renders another view directly shares that child's layout root. When it
     /// then wraps the reused child in an element of its own, retiring its previous root must
     /// not remove the child's.

@@ -1509,7 +1509,8 @@ impl ViewTree {
     }
 
     /// Records, for the nodes that rendered this frame without painting, what they read and
-    /// the dispatch nodes they pushed, as painting does for the rest. Without it a notify of
+    /// the dispatch nodes they pushed, as painting does for the rest, and retires the
+    /// children and element states their render dropped. Without it a notify of
     /// something such a node read would be unknown to the tree, and every node would be
     /// rebuilt to be safe. Called once drawing is done, while the frame's dispatch tree is
     /// still the one the nodes pushed into.
@@ -1536,8 +1537,14 @@ impl ViewTree {
                 continue;
             }
             self.commit_dependencies(node_id, accessed);
-            if phase == MetadataPhase::Prepaint {
-                self.snapshot_dispatch_nodes(node_id, tree);
+            match phase {
+                MetadataPhase::Prepaint => self.snapshot_dispatch_nodes(node_id, tree),
+                // Prepaint reconciles a node's children; one only laid out (under
+                // `display: none`) does it here, before its next render discards them.
+                _ => self.reconcile_children(node_id),
+            }
+            if let Some(node) = self.nodes.get_mut(node_id) {
+                node.output.retain_accessed_element_states();
             }
         }
         self.rendered_phases = rendered;
