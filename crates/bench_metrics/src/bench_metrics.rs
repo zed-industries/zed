@@ -8,7 +8,23 @@
 //! are process- or thread-scoped counters: Linux hardware performance
 //! counters ([`HardwareCounter`]) and `getrusage` statistics
 //! ([`ResourceCounter`]). Nothing in this crate depends on GPUI, so any
-//! Criterion benchmark can use it.
+//! Criterion benchmark can use it:
+//!
+//! ```ignore
+//! fn benches(c: &mut Criterion<bench_metrics::BenchMeasurement>) {
+//!     let report = bench_metrics::MetricReport::new();
+//!     c.bench_function("append", |b| report.iter(b, || work()));
+//!     report.print("  ");
+//! }
+//!
+//! criterion_group! {
+//!     name = group;
+//!     config = Criterion::default()
+//!         .with_measurement(bench_metrics::BenchMeasurement::from_env_or_exit());
+//!     targets = benches
+//! }
+//! criterion_main!(group);
+//! ```
 
 use std::{
     cell::{Cell, RefCell},

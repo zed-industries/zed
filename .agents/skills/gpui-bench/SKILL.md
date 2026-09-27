@@ -154,7 +154,30 @@ Default secondaries, each skipped with a one-time note when unavailable:
 
 Hardware counters need Linux `perf_event_open` access: `CAP_PERFMON`, or `/proc/sys/kernel/perf_event_paranoid` at 2 or below. Docker's default seccomp profile and many cloud VMs block it; the default mode then reports wall time plus the `getrusage` metrics (context switches, page faults), which need no privileges and also work on macOS. Criterion baselines are keyed by benchmark id, not measurement, so use distinct `--save-baseline` names when switching the primary on one machine.
 
-Never present instructions alone for a latency claim; pair them with wall time and the frame metrics from the same run. Other Criterion measurements plug in with `criterion_group!` and `config = Criterion::default().with_measurement(gpui::BenchMeasurement::new(primary).with_secondary("name", other))`. A plain Criterion benchmark without GPUI can use `bench_metrics::MetricReport::iter` to get the same per-iteration report.
+Never present instructions alone for a latency claim; pair them with wall time and the frame metrics from the same run. Other Criterion measurements plug in with `criterion_group!` and `config = Criterion::default().with_measurement(gpui::BenchMeasurement::new(primary).with_secondary("name", other))`.
+
+#### Benchmarks outside GPUI
+
+`bench_metrics` has no GPUI dependency, so any Criterion benchmark in the workspace (`rope`, `sum_tree`, `text`, ...) gets the same metrics and the same `BENCH_MEASUREMENT` switch. Add `bench_metrics.workspace = true` to `[dev-dependencies]`, take `&mut Criterion<bench_metrics::BenchMeasurement>` in the benchmark functions, and register them with:
+
+```rust
+criterion_group! {
+    name = benches;
+    config = Criterion::default()
+        .with_measurement(bench_metrics::BenchMeasurement::from_env_or_exit());
+    targets = rope_benchmarks
+}
+```
+
+That alone switches Criterion's analyzed metric with `BENCH_MEASUREMENT=instructions`. To also print the per-iteration secondaries, run each routine through a `MetricReport`, which counts iterations for you:
+
+```rust
+let report = bench_metrics::MetricReport::new();
+group.bench_function("append", |b| report.iter(b, || rope.append(small.clone())));
+report.print("  ");
+```
+
+Criterion's `Throughput` lines keep working alongside. Page faults per iteration are a useful allocation-pressure signal for data-structure crates even without a counting allocator.
 
 ### `bench_iter`: synchronous functions and compute work
 
