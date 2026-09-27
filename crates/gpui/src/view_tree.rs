@@ -18,6 +18,7 @@ pub(crate) struct OutputCheckpoint {
     output: Option<OutputPosition>,
     mounted: usize,
     rendered_phases: usize,
+    prepainted_layouts: usize,
 }
 
 struct OutputPosition {
@@ -182,6 +183,9 @@ pub(crate) struct ViewTree {
     /// The nodes mounted this frame, in order, each with whether it was created by the
     /// mount, so `rollback` can undo mounts.
     mounted_this_frame: Vec<(ViewNodeId, bool)>,
+    /// The `rendered_phases` entries whose layout was followed by a prepaint this frame,
+    /// so `rollback` can return an entry from before the checkpoint to its layout.
+    prepainted_layouts: Vec<usize>,
     /// A frame is its roots, in drawing order: the window's root view, then the roots
     /// attached by `defer_draw` in priority order, then the prompt, drag overlay or
     /// tooltip. Walking them in order reproduces the frame. `roots` is the frame drawn
@@ -231,6 +235,7 @@ impl ViewTree {
             painted_grafts: Vec::new(),
             rendered_phases: Vec::new(),
             mounted_this_frame: Vec::new(),
+            prepainted_layouts: Vec::new(),
             spare_scenes: Vec::new(),
             invalidation_scratch: Vec::new(),
             roots: Vec::new(),
@@ -449,6 +454,7 @@ impl ViewTree {
             output,
             mounted: self.mounted_this_frame.len(),
             rendered_phases: self.rendered_phases.len(),
+            prepainted_layouts: self.prepainted_layouts.len(),
         }
     }
 
@@ -469,6 +475,23 @@ impl ViewTree {
             node.output.dispatch.truncate(position.dispatch);
             node.output.inline_views = position.inline_views;
             node.next_children.truncate(position.next_children);
+        }
+        // A node laid out before the checkpoint and prepainted after it keeps its entry,
+        // which goes back to its layout: the prepaint's dispatch nodes and cache key are
+        // gone. Its reads keep what the discarded prepaint added, which can only make it
+        // invalidate more often.
+        for index in self
+            .prepainted_layouts
+            .split_off(checkpoint.prepainted_layouts)
+        {
+            if index < checkpoint.rendered_phases
+                && let Some(rendering) = self.rendered_phases.get_mut(index)
+            {
+                rendering.phase = MetadataPhase::Layout;
+                rendering.cache_key = None;
+                let node_id = rendering.node_id;
+                self.set_dirty(node_id);
+            }
         }
         let discarded = self.rendered_phases.split_off(checkpoint.rendered_phases);
         for rendering in discarded {
@@ -965,6 +988,7 @@ impl ViewTree {
     /// `draw` between frames).
     fn discard_frame_records(&mut self) {
         self.mounted_this_frame.clear();
+        self.prepainted_layouts.clear();
         let rendered = std::mem::take(&mut self.rendered_phases);
         for rendering in rendered {
             self.recycle_dependency_set(rendering.reads);
@@ -1445,6 +1469,9 @@ impl ViewTree {
         cache_key: ViewNodeCacheKey,
     ) {
         if let Some(rendering) = self.rendered_phases.get_mut(reads.0) {
+            if rendering.phase == MetadataPhase::Layout {
+                self.prepainted_layouts.push(reads.0);
+            }
             rendering.phase = MetadataPhase::Prepaint;
             rendering.reads = set;
             rendering.cache_key = Some(cache_key);

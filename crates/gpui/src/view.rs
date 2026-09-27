@@ -2849,6 +2849,100 @@ mod tests {
         }
     }
 
+    /// Lays its child out, then prepaints it only inside a transaction that fails, and
+    /// never paints it.
+    struct DiscardedPrepaint(crate::AnyElement);
+
+    impl IntoElement for DiscardedPrepaint {
+        type Element = Self;
+        fn into_element(self) -> Self {
+            self
+        }
+    }
+
+    impl crate::Element for DiscardedPrepaint {
+        type RequestLayoutState = ();
+        type PrepaintState = ();
+        fn id(&self) -> Option<crate::ElementId> {
+            None
+        }
+        fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+            None
+        }
+        fn request_layout(
+            &mut self,
+            _: Option<&crate::GlobalElementId>,
+            _: Option<&crate::InspectorElementId>,
+            window: &mut Window,
+            cx: &mut crate::App,
+        ) -> (crate::LayoutId, ()) {
+            (self.0.request_layout(window, cx), ())
+        }
+        fn prepaint(
+            &mut self,
+            _: Option<&crate::GlobalElementId>,
+            _: Option<&crate::InspectorElementId>,
+            _: crate::Bounds<crate::Pixels>,
+            _: &mut (),
+            window: &mut Window,
+            cx: &mut crate::App,
+        ) {
+            let attempt: Result<(), ()> = window.transact(|window| {
+                self.0.prepaint(window, cx);
+                Err(())
+            });
+            assert!(attempt.is_err());
+        }
+        fn paint(
+            &mut self,
+            _: Option<&crate::GlobalElementId>,
+            _: Option<&crate::InspectorElementId>,
+            _: crate::Bounds<crate::Pixels>,
+            _: &mut (),
+            _: &mut (),
+            _: &mut Window,
+            _: &mut crate::App,
+        ) {
+        }
+    }
+
+    /// A view laid out before a transaction and prepainted only inside it, which fails, is
+    /// left as laid out: the frame does not record the dispatch nodes the rollback removed.
+    #[gpui::test]
+    fn view_prepainted_only_in_a_failed_transaction_is_left_as_laid_out(cx: &mut TestAppContext) {
+        struct Leaf;
+        impl Render for Leaf {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().key_context("Leaf").size(px(10.))
+            }
+        }
+        struct Host {
+            leaf: Entity<Leaf>,
+            revision: usize,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .child(DiscardedPrepaint(self.leaf.clone().into_any_element()))
+                    .child(div().size(px(10.)).bg(rgb(self.revision as u32)))
+            }
+        }
+        let window = cx.open_window(size(px(100.), px(100.)), |_, cx| Host {
+            leaf: cx.new(|_| Leaf),
+            revision: 0,
+        });
+        cx.run_until_parked();
+        for _ in 0..2 {
+            window
+                .update(cx, |host, _, cx| {
+                    host.revision += 1;
+                    cx.notify();
+                })
+                .expect("window open");
+            cx.run_until_parked();
+        }
+    }
+
     struct OptionalPaintRoot {
         leaf: Entity<InteractiveLeaf>,
         paint_child: bool,
