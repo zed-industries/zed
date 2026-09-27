@@ -6,6 +6,19 @@ use crate::{
 };
 use smallvec::SmallVec;
 
+/// Opaque token identifying a successfully loaded declaration in its source keymap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct KeyBindingProvenance {
+    /// Loader-assigned group ordinal for the declaration.
+    pub group: usize,
+    /// Loader-assigned entry kind within the group.
+    pub kind: u8,
+    /// Loader-assigned position within the group and kind, in file order.
+    pub index: usize,
+    /// Fingerprint of the keymap content for stale-token rejection.
+    pub revision: u64,
+}
+
 /// A keybinding and its associated metadata, from the keymap.
 pub struct KeyBinding {
     pub(crate) action: Box<dyn Action>,
@@ -14,6 +27,7 @@ pub struct KeyBinding {
     pub(crate) meta: Option<KeyBindingMetaIndex>,
     /// The json input string used when building the keybinding, if any
     pub(crate) action_input: Option<SharedString>,
+    pub(crate) provenance: Option<KeyBindingProvenance>,
 }
 
 impl Clone for KeyBinding {
@@ -24,6 +38,7 @@ impl Clone for KeyBinding {
             context_predicate: self.context_predicate.clone(),
             meta: self.meta,
             action_input: self.action_input.clone(),
+            provenance: self.provenance,
         }
     }
 }
@@ -71,6 +86,7 @@ impl KeyBinding {
             context_predicate,
             meta: None,
             action_input,
+            provenance: None,
         })
     }
 
@@ -123,6 +139,22 @@ impl KeyBinding {
     /// Get the action input associated with the action for this binding
     pub fn action_input(&self) -> Option<SharedString> {
         self.action_input.clone()
+    }
+
+    /// Get the loader provenance for this binding, if any.
+    pub fn provenance(&self) -> Option<KeyBindingProvenance> {
+        self.provenance
+    }
+
+    /// Set the loader provenance for this binding.
+    pub fn set_provenance(&mut self, provenance: KeyBindingProvenance) {
+        self.provenance = Some(provenance);
+    }
+
+    /// Set the loader provenance, builder style.
+    pub fn with_provenance(mut self, provenance: KeyBindingProvenance) -> Self {
+        self.provenance = Some(provenance);
+        self
     }
 }
 

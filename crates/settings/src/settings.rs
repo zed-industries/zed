@@ -40,7 +40,8 @@ pub use editorconfig_store::{
 pub use granted_write_path::GrantedWritePath;
 pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
-    KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
+    KeybindUpdateTarget, KeymapEntryCollection, KeymapEntryLocation, KeymapEntryProvenance,
+    KeymapFile, KeymapFileLoadResult, KeymapRevision, SuppressingEntry, find_suppressing_entries,
 };
 pub use settings_file::*;
 pub use settings_json::*;
