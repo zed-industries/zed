@@ -143,6 +143,9 @@ windows = { workspace = true, features = [
 [target.'cfg(target_os = "windows")'.dev-dependencies]
 webview2-com = "0.38"
 
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dev-dependencies]
+wgpu.workspace = true
+
 [dev-dependencies]
 backtrace.workspace = true
 collections = { workspace = true, features = ["test-support"] }

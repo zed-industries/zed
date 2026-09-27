@@ -7575,6 +7575,7 @@ dependencies = [
  "web-sys",
  "web-time",
  "webview2-com",
+ "wgpu",
  "windows 0.62.2",
  "zed-font-kit",
  "zed-scap",

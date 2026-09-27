@@ -1,13 +1,27 @@
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "freebsd"
+)))]
 fn main() {
-    eprintln!("The native_webview example is only available on macOS and Windows.");
+    eprintln!("The native_webview example is only available on macOS, Windows, and Linux.");
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "freebsd"
+))]
 mod platform {
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    use std::cell::RefCell;
     use std::rc::Rc;
     #[cfg(target_os = "windows")]
     use std::sync::mpsc;
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    use std::time::Instant;
 
     #[cfg(target_os = "macos")]
     use cocoa::{
@@ -24,7 +38,11 @@ mod platform {
     use gpui_platform::application;
     #[cfg(target_os = "macos")]
     use objc::{class, msg_send, sel, sel_impl};
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    use raw_window_handle::HasWindowHandle;
+    use raw_window_handle::RawWindowHandle;
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    use raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
 
     #[cfg(target_os = "windows")]
     use gpui::{
@@ -50,7 +68,391 @@ mod platform {
     #[link(name = "WebKit", kind = "framework")]
     unsafe extern "C" {}
 
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     const PAGE: &str = include_str!("native_webview.html");
+
+    #[cfg(target_os = "macos")]
+    const NATIVE_LAYER_LABEL: &str = "WKWebView";
+    #[cfg(target_os = "windows")]
+    const NATIVE_LAYER_LABEL: &str = "WebView2";
+    // WebKitGTK cannot render into another client's Wayland surface, so Linux
+    // demonstrates the native layer with content from an independent wgpu
+    // device instead of a browser engine.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    const NATIVE_LAYER_LABEL: &str = "Native wgpu surface";
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    mod copy {
+        pub const TITLE: &str = "GPUI NATIVE WEBVIEW";
+        pub const HEADING: &str = "WebView overlay proof";
+        pub const NATIVE_TAB: &str = "WebView";
+        pub const RELOAD: &str = "Reload WebView";
+        pub const ABOUT: &str = "This tab is rendered by GPUI above the native WebView. It \
+                                 verifies that non-popup content can replace and fully occlude \
+                                 a native surface.";
+        pub const POPOVER: &str = "Painted after the native WebView without changing its AppKit \
+                                   z-order.";
+        pub const DIALOG: &str = "GPUI splits its scene before deferred draws. AppKit places \
+                                  WKWebView between the base and this transparent overlay \
+                                  surface.";
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    mod copy {
+        pub const TITLE: &str = "GPUI NATIVE SURFACE";
+        pub const HEADING: &str = "Native surface overlay proof";
+        pub const NATIVE_TAB: &str = "Native";
+        pub const RELOAD: &str = "Reload native surface";
+        pub const ABOUT: &str = "This tab is rendered by GPUI above the native surface. It \
+                                 verifies that non-popup content can replace and fully occlude \
+                                 a native surface.";
+        pub const POPOVER: &str = "Painted after the native surface without changing its \
+                                   Wayland or X11 stacking.";
+        pub const DIALOG: &str = "GPUI splits its scene before deferred draws. Wayland stacks \
+                                  the native subsurface between the base and this overlay; X11 \
+                                  cuts the overlay out of the native child window.";
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    const NATIVE_SHADER: &str = r#"
+struct Globals {
+    size: vec2<f32>,
+    time: f32,
+    _padding: f32,
+};
+
+@group(0) @binding(0) var<uniform> globals: Globals;
+
+@vertex
+fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
+    let uv = vec2<f32>(f32((index << 1u) & 2u), f32(index & 2u));
+    return vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
+}
+
+// 5x7 glyphs, one bit per pixel in row-major order: ' ABCDEFGINOPRSTUVWY'
+var<private> FONT: array<vec2<u32>, 19> = array<vec2<u32>, 19>(
+    vec2<u32>(0u, 0u),
+    vec2<u32>(1663026734u, 4u),
+    vec2<u32>(3809986095u, 3u),
+    vec2<u32>(2718991918u, 3u),
+    vec2<u32>(3810051631u, 3u),
+    vec2<u32>(3256321087u, 7u),
+    vec2<u32>(1108837439u, 0u),
+    vec2<u32>(2736686638u, 7u),
+    vec2<u32>(2286030990u, 3u),
+    vec2<u32>(1662834289u, 4u),
+    vec2<u32>(2736309806u, 3u),
+    vec2<u32>(1108854319u, 0u),
+    vec2<u32>(1381484079u, 4u),
+    vec2<u32>(3775333438u, 3u),
+    vec2<u32>(138547359u, 1u),
+    vec2<u32>(2736309809u, 3u),
+    vec2<u32>(353945137u, 1u),
+    vec2<u32>(2874852913u, 2u),
+    vec2<u32>(138553905u, 1u),
+);
+// NATIVE SURFACE / DRAWN BY ITS OWN WGPU DEVICE / NOT BY GPUI
+var<private> TEXT: array<u32, 53> = array<u32, 53>(
+    9u, 1u, 14u, 8u, 16u, 5u, 0u, 13u, 15u, 12u, 6u, 1u, 3u, 5u, 4u, 12u,
+    1u, 17u, 9u, 0u, 2u, 18u, 0u, 8u, 14u, 13u, 0u, 10u, 17u, 9u, 0u, 17u,
+    7u, 11u, 15u, 0u, 4u, 5u, 16u, 8u, 3u, 5u, 9u, 10u, 14u, 0u, 2u, 18u,
+    0u, 7u, 11u, 15u, 8u,
+);
+const LINE_STARTS = vec3<u32>(0u, 14u, 42u);
+const LINE_LENGTHS = vec3<u32>(14u, 28u, 11u);
+
+fn glyph_pixel(glyph: u32, column: u32, row: u32) -> f32 {
+    let bits = FONT[glyph];
+    let bit = row * 5u + column;
+    var word = bits.x;
+    var shift = bit;
+    if (bit >= 32u) {
+        word = bits.y;
+        shift = bit - 32u;
+    }
+    return f32((word >> shift) & 1u);
+}
+
+fn text_line(position: vec2<f32>, start: u32, length: u32, top: f32, scale: f32) -> f32 {
+    let width = f32(length) * 6.0 * scale - scale;
+    let left = floor((globals.size.x - width) * 0.5);
+    let local = (position - vec2<f32>(left, top)) / scale;
+    if (local.x < 0.0 || local.y < 0.0 || local.y >= 7.0 || local.x >= f32(length) * 6.0) {
+        return 0.0;
+    }
+    let cell = u32(local.x / 6.0);
+    let column = u32(local.x) - cell * 6u;
+    if (column >= 5u) {
+        return 0.0;
+    }
+    return glyph_pixel(TEXT[start + cell], column, u32(local.y));
+}
+
+@fragment
+fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let size = max(globals.size, vec2<f32>(1.0));
+    let x = position.x / size.x;
+    var intensity = 0.0;
+    for (var index = 0; index < 5; index++) {
+        let offset = f32(index);
+        let amplitude = size.y * (0.08 + 0.04 * offset);
+        let frequency = 6.2831853 * (1.0 + 0.25 * offset);
+        let phase = globals.time * (0.6 + 0.15 * offset) + offset * 0.9;
+        let curve = size.y * 0.5 + amplitude * sin(x * frequency + phase);
+        let slope = amplitude * frequency / size.x * cos(x * frequency + phase);
+        let distance = abs(position.y - curve) / sqrt(1.0 + slope * slope);
+        let line = 1.0 - smoothstep(0.5, 1.5, distance);
+        intensity = max(intensity, line * (1.0 - 0.16 * offset));
+    }
+    var color = mix(vec3<f32>(0.04), vec3<f32>(0.92), intensity);
+
+    let title_fit = size.x * 0.6 / (f32(LINE_LENGTHS.x) * 6.0);
+    let body_fit = size.x * 0.75 / (f32(max(LINE_LENGTHS.y, LINE_LENGTHS.z)) * 6.0);
+    let title_scale = clamp(floor(min(size.y / 110.0, title_fit)), 1.0, 8.0);
+    let body_scale = clamp(floor(min(max(title_scale * 0.5, 2.0), body_fit)), 1.0, 4.0);
+    let widest = max(
+        f32(LINE_LENGTHS.x) * 6.0 * title_scale,
+        max(f32(LINE_LENGTHS.y), f32(LINE_LENGTHS.z)) * 6.0 * body_scale,
+    );
+    let text_height = 7.0 * title_scale + 19.0 * body_scale;
+    let padding = 6.0 * body_scale;
+    let top = floor((size.y - text_height) * 0.5);
+    let panel_min = vec2<f32>((size.x - widest) * 0.5, top) - padding;
+    let panel_max = vec2<f32>((size.x + widest) * 0.5, top + text_height) + padding;
+    if (all(position.xy >= panel_min) && all(position.xy <= panel_max)) {
+        color = mix(color, vec3<f32>(0.04), 0.9);
+    }
+    var text = text_line(position.xy, LINE_STARTS.x, LINE_LENGTHS.x, top, title_scale);
+    let body_top = top + 7.0 * title_scale + 5.0 * body_scale;
+    text = max(text, 0.6 * text_line(position.xy, LINE_STARTS.y, LINE_LENGTHS.y, body_top, body_scale));
+    text = max(
+        text,
+        0.6 * text_line(position.xy, LINE_STARTS.z, LINE_LENGTHS.z, body_top + 10.0 * body_scale, body_scale),
+    );
+    color = mix(color, vec3<f32>(0.95), text);
+    return vec4<f32>(color, 1.0);
+}
+"#;
+
+    /// Content for the native surface slot, rendered by a wgpu device that
+    /// GPUI does not own, standing in for an embedded browser or video player.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    struct NativeSurfaceRenderer {
+        // Declared first so the wgpu surface is released before the native
+        // surface it presents to.
+        surface: wgpu::Surface<'static>,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        config: wgpu::SurfaceConfiguration,
+        pipeline: wgpu::RenderPipeline,
+        globals: wgpu::Buffer,
+        bind_group: wgpu::BindGroup,
+        started: Instant,
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[derive(Debug)]
+    struct DisplayHandle(RawDisplayHandle);
+
+    // SAFETY: the handle refers to the GPUI window's display connection, which
+    // outlives the example's wgpu instance.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    unsafe impl Send for DisplayHandle {}
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    unsafe impl Sync for DisplayHandle {}
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    impl HasDisplayHandle for DisplayHandle {
+        fn display_handle(
+            &self,
+        ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+            // SAFETY: see the `Send` implementation above.
+            Ok(unsafe { raw_window_handle::DisplayHandle::borrow_raw(self.0) })
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    impl NativeSurfaceRenderer {
+        fn new(display: RawDisplayHandle, window: RawWindowHandle) -> anyhow::Result<Self> {
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
+                flags: wgpu::InstanceFlags::default(),
+                backend_options: wgpu::BackendOptions::default(),
+                memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+                display: Some(Box::new(DisplayHandle(display))),
+            });
+            // SAFETY: the native surface outlives this renderer, which is
+            // dropped before the composition surface in `NativeWebView`.
+            let surface = unsafe {
+                instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                    raw_display_handle: Some(display),
+                    raw_window_handle: window,
+                })?
+            };
+            let adapter = gpui::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            }))?;
+            let (device, queue) =
+                gpui::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
+            let capabilities = surface.get_capabilities(&adapter);
+            let format = capabilities
+                .formats
+                .iter()
+                .copied()
+                .find(|format| !format.is_srgb())
+                .or_else(|| capabilities.formats.first().copied())
+                .ok_or_else(|| anyhow::anyhow!("native surface has no supported formats"))?;
+            // Presenting must not wait for the compositor, since it runs on
+            // GPUI's foreground thread.
+            let present_mode = [wgpu::PresentMode::Mailbox, wgpu::PresentMode::Immediate]
+                .into_iter()
+                .find(|mode| capabilities.present_modes.contains(mode))
+                .unwrap_or(wgpu::PresentMode::Fifo);
+            let config = wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format,
+                width: 1,
+                height: 1,
+                present_mode,
+                desired_maximum_frame_latency: 2,
+                alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                view_formats: Vec::new(),
+            };
+
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("native_surface_shader"),
+                source: wgpu::ShaderSource::Wgsl(NATIVE_SHADER.into()),
+            });
+            let globals = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("native_surface_globals"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let bind_group_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("native_surface_globals"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }],
+                });
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("native_surface_globals"),
+                layout: &bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: globals.as_entire_binding(),
+                }],
+            });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("native_surface"),
+                bind_group_layouts: &[Some(&bind_group_layout)],
+                immediate_size: 0,
+            });
+            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("native_surface"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(format.into())],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            });
+
+            Ok(Self {
+                surface,
+                device,
+                queue,
+                config,
+                pipeline,
+                globals,
+                bind_group,
+                started: Instant::now(),
+            })
+        }
+
+        fn render(&mut self, size: gpui::Size<gpui::DevicePixels>) {
+            let width = size.width.0.max(1) as u32;
+            let height = size.height.0.max(1) as u32;
+            if (width, height) != (self.config.width, self.config.height) {
+                self.config.width = width;
+                self.config.height = height;
+                self.surface.configure(&self.device, &self.config);
+            }
+            let frame = match self.surface.get_current_texture() {
+                wgpu::CurrentSurfaceTexture::Success(frame)
+                | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+                wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
+                    self.surface.configure(&self.device, &self.config);
+                    return;
+                }
+                _ => return,
+            };
+            let mut globals = [0u8; 16];
+            for (index, value) in [
+                width as f32,
+                height as f32,
+                self.started.elapsed().as_secs_f32(),
+                0.,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                globals[index * 4..index * 4 + 4].copy_from_slice(&value.to_ne_bytes());
+            }
+            self.queue.write_buffer(&self.globals, 0, &globals);
+            let view = frame
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("native_surface"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &self.bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            self.queue.submit([encoder.finish()]);
+            frame.present();
+        }
+    }
 
     enum NativeWebViewRoot {
         Ready(Entity<NativeWebViewExample>),
@@ -76,6 +478,9 @@ mod platform {
     struct NativeWebView {
         #[cfg(target_os = "macos")]
         gpui_view: id,
+        // Dropped before `surface`, whose native surface it presents to.
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        renderer: RefCell<NativeSurfaceRenderer>,
         surface: WindowCompositionSurface,
         #[cfg(target_os = "macos")]
         view: id,
@@ -226,6 +631,24 @@ mod platform {
             })
         }
 
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        fn new(window: &Window, composition: &WindowComposition<'_>) -> anyhow::Result<Self> {
+            let display = HasDisplayHandle::display_handle(window)
+                .map_err(|error| anyhow::anyhow!("failed to get display handle: {error:?}"))?
+                .as_raw();
+            let surface = composition.create_native_surface()?;
+            let native_window = surface
+                .platform_surface()?
+                .platform_handle()?
+                .downcast::<RawWindowHandle>()
+                .map_err(|_| anyhow::anyhow!("native surface did not provide a window handle"))?;
+            let renderer = NativeSurfaceRenderer::new(display, *native_window)?;
+            Ok(Self {
+                renderer: RefCell::new(renderer),
+                surface,
+            })
+        }
+
         fn set_bounds(&self, bounds: Bounds<Pixels>, scale_factor: f32) -> anyhow::Result<()> {
             self.surface
                 .platform_surface()?
@@ -253,6 +676,9 @@ mod platform {
                 }
             }
         }
+
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        fn focus_parent(&self) {}
 
         #[cfg(target_os = "windows")]
         fn focus_parent(&self) {
@@ -323,6 +749,7 @@ mod platform {
         }
     }
 
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     impl Drop for NativeWebView {
         #[cfg(target_os = "macos")]
         fn drop(&mut self) {
@@ -390,6 +817,14 @@ mod platform {
         ) -> Self::PrepaintState {
             if let Err(error) = self.webview.set_bounds(bounds, window.scale_factor()) {
                 log::error!("failed to update native WebView surface bounds: {error:#}");
+            }
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            {
+                self.webview
+                    .renderer
+                    .borrow_mut()
+                    .render(bounds.to_device_pixels(window.scale_factor()).size);
+                window.request_animation_frame();
             }
         }
 
@@ -608,7 +1043,7 @@ mod platform {
                                         .text_lg()
                                         .font_weight(gpui::FontWeight::SEMIBOLD)
                                         .text_color(rgb(0xfeb454))
-                                        .child("GPUI NATIVE WEBVIEW"),
+                                        .child(copy::TITLE),
                                 )
                                 .child(div().mt_2().text_sm().text_color(rgb(0x8a8986)).child(
                                     "Native composition.\nThree surfaces, one visual stack.",
@@ -621,7 +1056,7 @@ mod platform {
                                 .gap_1()
                                 .text_xs()
                                 .child(layer_row("03", "GPUI overlay", rgb(0xfeb454)))
-                                .child(layer_row("02", "WKWebView", rgb(0x5ac1fe)))
+                                .child(layer_row("02", NATIVE_LAYER_LABEL, rgb(0x5ac1fe)))
                                 .child(layer_row("01", "GPUI base", rgb(0x8a8986))),
                         ),
                 )
@@ -646,9 +1081,7 @@ mod platform {
                                                 .text_color(rgb(0x8a8986))
                                                 .child("COMPOSITION TARGET"),
                                         )
-                                        .child(
-                                            div().mt_1().text_lg().child("WebView overlay proof"),
-                                        ),
+                                        .child(div().mt_1().text_lg().child(copy::HEADING)),
                                 )
                                 .child(
                                     div()
@@ -690,18 +1123,22 @@ mod platform {
                                     div()
                                         .flex()
                                         .child(
-                                            tab("webview-tab", "WebView", !self.about_active)
-                                                .on_mouse_down(
-                                                    MouseButton::Left,
-                                                    cx.listener(|this, _, _, cx| {
-                                                        cx.stop_propagation();
-                                                        this.about_active = false;
-                                                        this.popover_open = false;
-                                                        this.dialog_open = false;
-                                                        this.menu_open = false;
-                                                        cx.notify();
-                                                    }),
-                                                ),
+                                            tab(
+                                                "webview-tab",
+                                                copy::NATIVE_TAB,
+                                                !self.about_active,
+                                            )
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(|this, _, _, cx| {
+                                                    cx.stop_propagation();
+                                                    this.about_active = false;
+                                                    this.popover_open = false;
+                                                    this.dialog_open = false;
+                                                    this.menu_open = false;
+                                                    cx.notify();
+                                                }),
+                                            ),
                                         )
                                         .child(
                                             tab("about-tab", "About", self.about_active)
@@ -759,10 +1196,7 @@ mod platform {
                                                 .border_color(rgb(0x3f4043))
                                                 .bg(rgb(0x1f2127))
                                                 .shadow_xl()
-                                                .child(menu_item(
-                                                    "popup-menu-reload",
-                                                    "Reload WebView",
-                                                ))
+                                                .child(menu_item("popup-menu-reload", copy::RELOAD))
                                                 .child(menu_item(
                                                     "popup-menu-inspect",
                                                     "Inspect native surface",
@@ -825,12 +1259,7 @@ mod platform {
                                                         .max_w(px(520.))
                                                         .text_color(rgb(0x8a8986))
                                                         .line_height(relative(1.6))
-                                                        .child(
-                                                            "This tab is rendered by GPUI above \
-                                                             the native WebView. It verifies that \
-                                                             non-popup content can replace and \
-                                                             fully occlude a native surface.",
-                                                        ),
+                                                        .child(copy::ABOUT),
                                                 ),
                                         )
                                         .priority(1),
@@ -865,10 +1294,13 @@ mod platform {
                                         .font_weight(gpui::FontWeight::SEMIBOLD)
                                         .child("Deferred GPUI popover"),
                                 )
-                                .child(div().mt_2().text_sm().text_color(rgb(0x8a8986)).child(
-                                    "Painted after the native WebView without changing its \
-                                         AppKit z-order.",
-                                )),
+                                .child(
+                                    div()
+                                        .mt_2()
+                                        .text_sm()
+                                        .text_color(rgb(0x8a8986))
+                                        .child(copy::POPOVER),
+                                ),
                         )
                         .priority(3),
                     )
@@ -924,11 +1356,12 @@ mod platform {
                                                     "The native layer stays exactly where it is.",
                                                 ),
                                         )
-                                        .child(div().mt_3().text_color(rgb(0x8a8986)).child(
-                                            "GPUI splits its scene before deferred draws. \
-                                                     AppKit places WKWebView between the base and \
-                                                     this transparent overlay surface.",
-                                        ))
+                                        .child(
+                                            div()
+                                                .mt_3()
+                                                .text_color(rgb(0x8a8986))
+                                                .child(copy::DIALOG),
+                                        )
                                         .child(div().mt_5().h(px(1.)).w_full().bg(rgb(0x3f4043)))
                                         .child(div().mt_5().flex().child(
                                             button("close-dialog", "Close").on_mouse_down(
@@ -1012,7 +1445,12 @@ mod platform {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "freebsd"
+))]
 fn main() {
     platform::run();
 }
