@@ -129,12 +129,14 @@ impl BenchMeasurement {
     /// Returns the measurement configured by [`BENCH_MEASUREMENT_ENV_VAR`].
     ///
     /// * unset: Criterion analyzes wall time. On Linux, retired instructions
-    ///   are reported as a secondary metric when hardware counters are
-    ///   available; otherwise a note is printed once and only wall time runs.
+    ///   for the whole process and for the foreground thread alone are
+    ///   reported as secondary metrics when hardware counters are available;
+    ///   otherwise a note is printed once and only wall time runs.
     /// * `wall-time`: wall time only.
-    /// * `instructions`: Criterion analyzes retired instructions and wall time
-    ///   is reported as a secondary metric. This fails when counters are
-    ///   unavailable so CI does not silently measure something else.
+    /// * `instructions`: Criterion analyzes process-wide retired instructions;
+    ///   foreground instructions and wall time are reported as secondary
+    ///   metrics. This fails when counters are unavailable so CI does not
+    ///   silently measure something else.
     pub fn from_env() -> Result<Self> {
         match std::env::var(BENCH_MEASUREMENT_ENV_VAR).as_deref() {
             Err(std::env::VarError::NotPresent) => {
@@ -143,9 +145,14 @@ impl BenchMeasurement {
                 {
                     static UNAVAILABLE_NOTE: std::sync::Once = std::sync::Once::new();
                     match RetiredInstructions::new() {
-                        Ok(instructions) => {
-                            Ok(measurement.with_secondary("instructions", instructions))
-                        }
+                        Ok(instructions) => Ok(measurement
+                            .with_secondary("instructions", instructions)
+                            .with_secondary(
+                                "foreground instructions",
+                                RetiredInstructions::with_scope(
+                                    InstructionScope::ForegroundThread,
+                                )?,
+                            )),
                         Err(error) => {
                             UNAVAILABLE_NOTE.call_once(|| {
                                 eprintln!(
@@ -165,6 +172,10 @@ impl BenchMeasurement {
                 #[cfg(target_os = "linux")]
                 {
                     Ok(Self::new(RetiredInstructions::new()?)
+                        .with_secondary(
+                            "foreground instructions",
+                            RetiredInstructions::with_scope(InstructionScope::ForegroundThread)?,
+                        )
                         .with_secondary("wall time", criterion::measurement::WallTime))
                 }
                 #[cfg(not(target_os = "linux"))]
@@ -324,16 +335,34 @@ impl criterion::measurement::Measurement for BenchMeasurement {
     }
 }
 
+/// Which threads a [`RetiredInstructions`] measurement counts.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InstructionScope {
+    /// Every thread in the benchmark process, including GPUI dispatcher and
+    /// graphics-driver threads.
+    Process,
+    /// Only the thread that calls `Measurement::start`. In `#[gpui::bench]`
+    /// benchmarks that is the GPUI foreground thread, where task polls,
+    /// action dispatch, layout, paint, and scene submission run, so this
+    /// scope is the deterministic proxy for per-frame foreground cost.
+    ForegroundThread,
+}
+
 /// Criterion measurement for retired userspace CPU instructions.
 ///
-/// `Measurement::start` attaches one `perf_event_open` counter to every thread
-/// then present in the benchmark process. Inheritance includes threads
-/// subsequently created by those threads. Opening at the measurement boundary
-/// means fixture-created GPUI dispatcher and graphics-driver threads are
-/// included without counting fixture construction.
-/// The result includes CPU work performed by the benchmark process during
-/// `Measurement::start`/`end`, including GPUI and WGPU submission work on those
-/// threads. It does not count GPU shader instructions.
+/// With [`InstructionScope::Process`], `Measurement::start` attaches one
+/// `perf_event_open` counter to every thread then present in the benchmark
+/// process. Inheritance includes threads subsequently created by those
+/// threads. Opening at the measurement boundary means fixture-created GPUI
+/// dispatcher and graphics-driver threads are included without counting
+/// fixture construction. The result includes CPU work performed by the
+/// benchmark process during `Measurement::start`/`end`, including GPUI and
+/// WGPU submission work on those threads. It does not count GPU shader
+/// instructions.
+///
+/// With [`InstructionScope::ForegroundThread`], a single non-inherited counter
+/// observes the calling thread only.
 ///
 /// One hardware event is opened per thread on conventional CPUs. Hybrid CPUs
 /// use one event for each CPU PMU, of which only the event matching the CPU
@@ -342,6 +371,7 @@ impl criterion::measurement::Measurement for BenchMeasurement {
 /// `time_enabled / time_running` and a warning is printed once.
 #[cfg(target_os = "linux")]
 pub struct RetiredInstructions {
+    scope: InstructionScope,
     multiplexing_reported: std::cell::Cell<bool>,
 }
 
@@ -353,22 +383,136 @@ pub struct InstructionCounter {
 }
 
 #[cfg(target_os = "linux")]
+#[derive(Clone, Copy)]
+enum CounterTarget {
+    /// `pid = 0` to `perf_event_open`: the calling thread, with no inheritance.
+    CallingThread,
+    /// A specific thread plus every thread it creates afterwards.
+    ThreadAndDescendants(i32),
+}
+
+#[cfg(target_os = "linux")]
+impl CounterTarget {
+    fn configure(self, builder: &mut perf_event::Builder) {
+        use perf_event::ReadFormat;
+
+        match self {
+            Self::CallingThread => builder.observe_self().inherit(false),
+            Self::ThreadAndDescendants(thread_id) => builder.observe_pid(thread_id).inherit(true),
+        };
+        builder.read_format(ReadFormat::TOTAL_TIME_ENABLED | ReadFormat::TOTAL_TIME_RUNNING);
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl std::fmt::Display for CounterTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CallingThread => write!(f, "the calling thread"),
+            Self::ThreadAndDescendants(thread_id) => write!(f, "thread {thread_id}"),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
 impl RetiredInstructions {
     /// Opens retired-instruction counters for the current benchmark process.
     ///
     /// This returns an actionable error rather than falling back to wall time
     /// when the kernel's perf security policy denies access.
     pub fn new() -> Result<Self> {
-        Self::open_counters()?;
+        Self::with_scope(InstructionScope::Process)
+    }
+
+    /// Opens retired-instruction counters for `scope`, failing with an
+    /// actionable error when the kernel's perf security policy denies access.
+    pub fn with_scope(scope: InstructionScope) -> Result<Self> {
+        Self::open_counters(scope)?;
         Ok(Self {
+            scope,
             multiplexing_reported: std::cell::Cell::new(false),
         })
     }
 
-    fn open_counters() -> Result<Vec<InstructionCounter>> {
+    fn open_counters(scope: InstructionScope) -> Result<Vec<InstructionCounter>> {
+        let hybrid_events = Self::hybrid_events()?;
+        let mut counters = Vec::new();
+        match scope {
+            InstructionScope::ForegroundThread => {
+                Self::open_thread_counters(
+                    CounterTarget::CallingThread,
+                    &hybrid_events,
+                    &mut counters,
+                )?;
+            }
+            InstructionScope::Process => {
+                for entry in std::fs::read_dir("/proc/self/task").map_err(|error| {
+                    anyhow!("failed to enumerate benchmark process threads: {error}")
+                })? {
+                    let entry = entry.map_err(|error| {
+                        anyhow!("failed to enumerate a benchmark process thread: {error}")
+                    })?;
+                    let Some(thread_id) = entry
+                        .file_name()
+                        .to_str()
+                        .and_then(|thread_id| thread_id.parse().ok())
+                    else {
+                        continue;
+                    };
+                    Self::open_thread_counters(
+                        CounterTarget::ThreadAndDescendants(thread_id),
+                        &hybrid_events,
+                        &mut counters,
+                    )?;
+                }
+            }
+        }
+        if counters.is_empty() {
+            return Err(anyhow!(
+                "failed to open Linux retired-instruction counters: the benchmark process had no \
+                 observable threads"
+            ));
+        }
+        Ok(counters)
+    }
+
+    /// Opens the instructions event for one target, or one event per PMU on
+    /// hybrid CPUs. A thread that exited between enumeration and open is
+    /// skipped.
+    fn open_thread_counters(
+        target: CounterTarget,
+        hybrid_events: &[(u32, u64)],
+        counters: &mut Vec<InstructionCounter>,
+    ) -> Result<()> {
         use perf_event::events::Hardware;
 
-        let mut counters = Vec::new();
+        if hybrid_events.is_empty() {
+            match Self::build_counter(Hardware::INSTRUCTIONS, target) {
+                Ok(counter) => counters.push(InstructionCounter {
+                    counter,
+                    scale_for_multiplexing: true,
+                }),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(Self::open_error(target, error)),
+            }
+        } else {
+            for &(pmu_type, event) in hybrid_events {
+                match Self::build_hybrid_counter(pmu_type, event, target) {
+                    Ok(counter) => counters.push(InstructionCounter {
+                        counter,
+                        scale_for_multiplexing: false,
+                    }),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                    Err(error) => return Err(Self::open_error(target, error)),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns `(pmu_type, event_config)` for each hybrid CPU PMU, or an empty
+    /// list on conventional CPUs where the generic hardware event suffices.
+    fn hybrid_events() -> Result<Vec<(u32, u64)>> {
         let mut hybrid_events = Vec::new();
         for pmu in ["cpu_core", "cpu_atom"] {
             let path = std::path::Path::new("/sys/bus/event_source/devices").join(pmu);
@@ -402,83 +546,32 @@ impl RetiredInstructions {
                 hybrid_events.push((pmu_type, event));
             }
         }
-        for entry in std::fs::read_dir("/proc/self/task")
-            .map_err(|error| anyhow!("failed to enumerate benchmark process threads: {error}"))?
-        {
-            let entry = entry.map_err(|error| {
-                anyhow!("failed to enumerate a benchmark process thread: {error}")
-            })?;
-            let Some(thread_id) = entry
-                .file_name()
-                .to_str()
-                .and_then(|thread_id| thread_id.parse().ok())
-            else {
-                continue;
-            };
-            if hybrid_events.is_empty() {
-                match Self::build_counter(Hardware::INSTRUCTIONS, thread_id) {
-                    Ok(counter) => counters.push(InstructionCounter {
-                        counter,
-                        scale_for_multiplexing: true,
-                    }),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(Self::open_error(thread_id, error)),
-                }
-            } else {
-                for &(pmu_type, event) in &hybrid_events {
-                    match Self::build_hybrid_counter(pmu_type, event, thread_id) {
-                        Ok(counter) => counters.push(InstructionCounter {
-                            counter,
-                            scale_for_multiplexing: false,
-                        }),
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
-                        Err(error) => return Err(Self::open_error(thread_id, error)),
-                    }
-                }
-            }
-        }
-        if counters.is_empty() {
-            return Err(anyhow!(
-                "failed to open Linux retired-instruction counters: the benchmark process had no \
-                 observable threads"
-            ));
-        }
-        Ok(counters)
+        Ok(hybrid_events)
     }
 
     fn build_counter(
         event: impl perf_event::events::Event,
-        thread_id: i32,
+        target: CounterTarget,
     ) -> std::io::Result<perf_event::Counter> {
-        use perf_event::{Builder, ReadFormat};
-
-        let mut builder = Builder::new(event);
-        builder
-            .observe_pid(thread_id)
-            .inherit(true)
-            .read_format(ReadFormat::TOTAL_TIME_ENABLED | ReadFormat::TOTAL_TIME_RUNNING);
+        let mut builder = perf_event::Builder::new(event);
+        target.configure(&mut builder);
         builder.build()
     }
 
     fn build_hybrid_counter(
         pmu_type: u32,
         event: u64,
-        thread_id: i32,
+        target: CounterTarget,
     ) -> std::io::Result<perf_event::Counter> {
-        use perf_event::{Builder, ReadFormat, events::Raw};
-
-        let mut builder = Builder::new(Raw::new(event));
+        let mut builder = perf_event::Builder::new(perf_event::events::Raw::new(event));
         builder.attrs_mut().type_ = pmu_type;
-        builder
-            .observe_pid(thread_id)
-            .inherit(true)
-            .read_format(ReadFormat::TOTAL_TIME_ENABLED | ReadFormat::TOTAL_TIME_RUNNING);
+        target.configure(&mut builder);
         builder.build()
     }
 
-    fn open_error(thread_id: i32, error: std::io::Error) -> anyhow::Error {
+    fn open_error(target: CounterTarget, error: std::io::Error) -> anyhow::Error {
         anyhow!(
-            "failed to open Linux retired-instruction counter for thread {thread_id}: {error}. \
+            "failed to open Linux retired-instruction counter for {target}: {error}. \
              Grant this benchmark CAP_PERFMON or adjust /proc/sys/kernel/perf_event_paranoid \
              according to your CI security policy"
         )
@@ -543,7 +636,7 @@ impl criterion::measurement::Measurement for RetiredInstructions {
     type Value = f64;
 
     fn start(&self) -> Self::Intermediate {
-        let mut counters = Self::open_counters()
+        let mut counters = Self::open_counters(self.scope)
             .unwrap_or_else(|error| panic!("failed to open instruction counters: {error:#}"));
         for counter in &mut counters {
             counter
@@ -2221,7 +2314,7 @@ mod tests {
     #[test]
     fn perf_permission_error_is_actionable() {
         let error = RetiredInstructions::open_error(
-            42,
+            CounterTarget::ThreadAndDescendants(42),
             std::io::Error::from(std::io::ErrorKind::PermissionDenied),
         );
         let message = error.to_string();
@@ -2229,14 +2322,15 @@ mod tests {
         assert!(message.contains("perf_event_paranoid"));
     }
 
+    /// Measures a background task of `iterations` additions with `scope`, or
+    /// returns `None` when this machine has no usable hardware counters.
     #[cfg(target_os = "linux")]
-    #[test]
-    fn retired_instructions_include_gpui_background_thread() {
+    fn background_task_instructions(scope: InstructionScope) -> Option<impl Fn(u64) -> f64> {
         use criterion::measurement::Measurement as _;
 
         let dispatcher = Arc::new(ThreadedDispatcher::new());
         let background_executor = BackgroundExecutor::new(dispatcher);
-        let measurement = match RetiredInstructions::new() {
+        let measurement = match RetiredInstructions::with_scope(scope) {
             Ok(measurement) => measurement,
             Err(error) => {
                 let message = error.to_string();
@@ -2245,11 +2339,11 @@ mod tests {
                         || message.contains("hardware performance counters"),
                     "unavailable counters should have an actionable error: {message}"
                 );
-                return;
+                return None;
             }
         };
 
-        let measure_background_task = |iterations| {
+        Some(move |iterations: u64| {
             let intermediate = measurement.start();
             let (sender, receiver) = std::sync::mpsc::sync_channel(1);
             background_executor
@@ -2269,12 +2363,41 @@ mod tests {
                     .expect("GPUI background validation task should finish"),
             );
             measurement.end(intermediate)
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn retired_instructions_include_gpui_background_thread() {
+        let Some(measure) = background_task_instructions(InstructionScope::Process) else {
+            return;
         };
-        let idle_instructions = measure_background_task(0);
-        let busy_instructions = measure_background_task(100_000);
+        let idle_instructions = measure(0);
+        let busy_instructions = measure(1_000_000);
         assert!(
             busy_instructions > idle_instructions,
             "GPUI background work should increase the process-wide count: \
+             idle={idle_instructions}, busy={busy_instructions}"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn foreground_instructions_exclude_gpui_background_thread() {
+        let Some(measure) = background_task_instructions(InstructionScope::ForegroundThread) else {
+            return;
+        };
+        // The calling thread only spawns and then blocks on the channel, so its
+        // count is dominated by executor bookkeeping that doesn't depend on
+        // `iterations`. Each of these iterations retires at least one
+        // instruction, so leaking them into the foreground count would exceed
+        // this margin many times over.
+        let iterations = 1_000_000;
+        let idle_instructions = measure(0);
+        let busy_instructions = measure(iterations);
+        assert!(
+            busy_instructions < idle_instructions + iterations as f64 / 10.0,
+            "GPUI background work should not count toward the foreground thread: \
              idle={idle_instructions}, busy={busy_instructions}"
         );
     }
