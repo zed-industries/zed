@@ -8,7 +8,7 @@ use crate::{
 use collections::{FxHashMap, FxHashSet};
 use slotmap::SlotMap;
 use smallvec::SmallVec;
-use std::{any::TypeId, ops::ControlFlow, ops::Range};
+use std::{ops::ControlFlow, ops::Range};
 
 /// A point in the frame being drawn that `ViewTree::rollback` returns to: the output of the
 /// scope being drawn (`None` outside every node, where nothing is recorded), with the
@@ -358,7 +358,7 @@ impl ViewTree {
     /// back stamped with this redraw, which is what keeps it past the redraw.
     pub(crate) fn take_element_state(
         &mut self,
-        key: &(GlobalElementId, TypeId),
+        key: &crate::view_node::ElementStateKey,
     ) -> Option<crate::window::ElementStateBox> {
         let Some(node_id) = self.current_node() else {
             debug_assert!(false, "element state is only kept inside a node");
@@ -370,7 +370,7 @@ impl ViewTree {
 
     pub(crate) fn put_element_state(
         &mut self,
-        key: (GlobalElementId, TypeId),
+        key: crate::view_node::ElementStateKey,
         state: crate::window::ElementStateBox,
     ) {
         if let Some((_, _, output)) = self.current_output() {

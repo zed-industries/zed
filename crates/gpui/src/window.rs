@@ -4139,7 +4139,7 @@ impl Window {
     {
         self.invalidator.debug_assert_paint_or_prepaint();
 
-        let key = (global_id.clone(), TypeId::of::<S>());
+        let key = crate::view_node::ElementStateKey::new(global_id.clone(), TypeId::of::<S>());
         if let Some(any) = self.view_tree.take_element_state(&key) {
             let ElementStateBox {
                 inner,

@@ -275,6 +275,35 @@ pub(crate) enum DispatchOp {
     Root(crate::view_tree::ViewNodeId, usize, DispatchLink),
 }
 
+/// Identifies an element's state by element id and state type. A state is taken out and put
+/// back on every access, so the id path, which can be long, is hashed once when the key is
+/// made rather than on each map operation. Equality still compares the full path.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct ElementStateKey {
+    hash: u64,
+    id: GlobalElementId,
+    type_id: TypeId,
+}
+
+impl ElementStateKey {
+    pub(crate) fn new(id: GlobalElementId, type_id: TypeId) -> Self {
+        let mut hasher = collections::FxHasher::default();
+        std::hash::Hash::hash(&id, &mut hasher);
+        std::hash::Hash::hash(&type_id, &mut hasher);
+        Self {
+            hash: std::hash::Hasher::finish(&hasher),
+            id,
+            type_id,
+        }
+    }
+}
+
+impl std::hash::Hash for ElementStateKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(self.hash);
+    }
+}
+
 /// Inline views counted by the hash of the element path they render at and their type.
 pub(crate) type InlineViewCounts = FxHashMap<(u64, &'static str), u64>;
 
@@ -311,8 +340,7 @@ pub(crate) struct NodeOutput {
     /// survives redraws; entries not accessed by a redraw are dropped when it finishes.
     /// Each state is stamped with the output generation that last stored it, so the sweep
     /// after a redraw needs no separate record of what the redraw accessed.
-    pub(crate) element_states:
-        FxHashMap<(GlobalElementId, TypeId), (u64, crate::window::ElementStateBox)>,
+    pub(crate) element_states: FxHashMap<ElementStateKey, (u64, crate::window::ElementStateBox)>,
     /// How many views of each type have rendered inline in this scope so far at each
     /// element path, so siblings of one type get distinct element-id scopes, and a keyed
     /// element's components keep theirs when its siblings change. Boxed: few scopes render
