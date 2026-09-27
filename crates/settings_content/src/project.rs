@@ -151,7 +151,7 @@ pub struct WorktreeSettingsContent {
     /// }
     /// ```
     ///
-    /// Use `"..."` to add patterns without repeating Zed’s defaults. In project
+    /// Use `"..."` to add patterns without repeating Zed's defaults. In project
     /// settings, it extends the user or parent configuration value. Omit
     /// `"..."` to replace the inherited list.
     ///
@@ -177,7 +177,7 @@ pub struct WorktreeSettingsContent {
     /// }
     /// ```
     ///
-    /// Use `"..."` to add patterns without repeating Zed’s defaults. In project
+    /// Use `"..."` to add patterns without repeating Zed's defaults. In project
     /// settings, it extends the user or parent configuration value. Omit
     /// `"..."` to replace the inherited list.
     ///
@@ -224,7 +224,7 @@ pub struct WorktreeSettingsContent {
     /// }
     /// ```
     ///
-    /// Use `"..."` to add patterns without repeating Zed’s defaults. In project
+    /// Use `"..."` to add patterns without repeating Zed's defaults. In project
     /// settings, it extends the user or parent configuration value. Omit
     /// `"..."` to replace the inherited list.
     ///
@@ -253,7 +253,7 @@ pub struct WorktreeSettingsContent {
     /// }
     /// ```
     ///
-    /// Use `"..."` to add patterns without repeating Zed’s defaults. In project
+    /// Use `"..."` to add patterns without repeating Zed's defaults. In project
     /// settings, it extends the user or parent configuration value. Omit
     /// `"..."` to replace the inherited list.
     ///

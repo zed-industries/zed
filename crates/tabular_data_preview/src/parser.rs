@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use indexmap::{IndexMap, IndexSet};
+
+use anyhow::Context as _;
+use serde_json::value::RawValue;
 
 use crate::{
     TabularDataPreviewPane,
@@ -19,12 +22,13 @@ pub(crate) struct EditorState {
     pub _subscription: Subscription,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TabularFormat {
     Csv,
     Tsv,
     Psv,
     Ssv,
+    JsonLines,
 }
 
 const TABULAR_FORMATS: &[(&str, TabularFormat)] = &[
@@ -32,6 +36,8 @@ const TABULAR_FORMATS: &[(&str, TabularFormat)] = &[
     ("tsv", TabularFormat::Tsv),
     ("psv", TabularFormat::Psv),
     ("ssv", TabularFormat::Ssv),
+    ("jsonl", TabularFormat::JsonLines),
+    ("ndjson", TabularFormat::JsonLines),
 ];
 
 impl TabularFormat {
@@ -46,13 +52,15 @@ impl TabularFormat {
             .map(|(_, format)| *format)
     }
 
-    fn delimiter(self) -> char {
-        match self {
-            TabularFormat::Csv => ',',
-            TabularFormat::Tsv => '\t',
-            TabularFormat::Psv => '|',
-            TabularFormat::Ssv => ';',
-        }
+    fn parse(self, buffer_snapshot: &BufferSnapshot) -> anyhow::Result<TableLikeContent> {
+        let delimiter = match self {
+            Self::Csv => ',',
+            Self::Tsv => '\t',
+            Self::Psv => '|',
+            Self::Ssv => ';',
+            Self::JsonLines => return from_json_lines(buffer_snapshot),
+        };
+        Ok(from_buffer_with_delimiter(buffer_snapshot, delimiter))
     }
 }
 
@@ -101,7 +109,7 @@ impl TabularDataPreviewPane {
                 }
             }
 
-            let (buffer_snapshot, delimiter) = view.update(cx, |_, cx| {
+            let (buffer_snapshot, format) = view.update(cx, |_, cx| {
                 let buffer_ref = editor
                     .read(cx)
                     .buffer()
@@ -111,26 +119,30 @@ impl TabularDataPreviewPane {
 
                 let extension = editor_file_extension(&editor, cx);
 
-                let delimiter = extension
+                let format = extension
                     .and_then(TabularFormat::from_extension)
-                    .map(TabularFormat::delimiter)
                     .unwrap_or_else(|| {
                         log::warn!(
-                            "unrecognized tabular data extension {extension:?}, defaulting to comma delimiter"
+                            "unrecognized tabular data extension {extension:?}, defaulting to CSV"
                         );
-                        ','
+                        TabularFormat::Csv
                     });
 
-                (buffer_ref, delimiter)
+                (buffer_ref, format)
             })?;
 
             let Some(buffer_snapshot) = buffer_snapshot else {
+                view.update(cx, |view, cx| {
+                    view.is_parsing = false;
+                    view.parse_error = Some("Preview requires a single file".into());
+                    cx.notify();
+                })?;
                 return Ok(());
             };
 
             let instant = Instant::now();
             let parsed_contents = cx
-                .background_spawn(async move { from_buffer_with_delimiter(&buffer_snapshot, delimiter) })
+                .background_spawn(async move { format.parse(&buffer_snapshot) })
                 .await;
             let parse_duration = instant.elapsed();
             let parse_end_time: Instant = Instant::now();
@@ -140,18 +152,121 @@ impl TabularDataPreviewPane {
                     .timings
                     .insert("Parsing", (parse_duration, Instant::now()));
 
-                log::debug!("Parsed {} rows", parsed_contents.rows.len());
-                view.engine.contents = Arc::new(parsed_contents);
-                view.engine.calculate_available_filters();
-                view.sync_column_widths(cx);
                 view.last_parse_end_time = Some(parse_end_time);
-
                 view.is_parsing = false;
+                let parsed_contents = match parsed_contents {
+                    Ok(contents) => contents,
+                    Err(error) => {
+                        view.parse_error = Some(format!("{error:#}").into());
+                        view.filter_sort_task = None;
+                        cx.notify();
+                        return;
+                    }
+                };
+
+                log::debug!("Parsed {} rows", parsed_contents.rows.len());
+                view.parse_error = None;
+                view.engine.set_contents(parsed_contents);
+                view.list_state
+                    .reset_with_uniform_height(0, view.row_height);
+                view.sync_column_widths(cx);
                 view.apply_filter_sort(cx);
                 cx.notify();
             })
         })
     }
+}
+
+fn from_json_lines(buffer_snapshot: &BufferSnapshot) -> anyhow::Result<TableLikeContent> {
+    let text = buffer_snapshot.text();
+    let mut records = Vec::new();
+    let mut columns = IndexSet::new();
+    let mut line_numbers = Vec::new();
+
+    for (line_index, line) in text.lines().enumerate() {
+        // Ignore blank lines, but keep physical line numbers for the source gutter.
+        if line.trim().is_empty() {
+            continue;
+        }
+        let record: IndexMap<String, &RawValue> =
+            serde_json::from_str(line).with_context(|| {
+                format!(
+                    "Cannot preview JSONL line {}: expected a JSON object",
+                    line_index + 1
+                )
+            })?;
+        columns.extend(record.keys().cloned());
+        records.push(record);
+        line_numbers.push(LineNumber::Line(line_index + 1));
+    }
+
+    let number_of_cols = columns.len();
+    let headers = TableRow::from_vec(
+        columns
+            .iter()
+            .map(|name| TableCell::Generated(name.clone().into()))
+            .collect(),
+        number_of_cols,
+    );
+    let rows = records
+        .into_iter()
+        .map(|record| {
+            let cells = columns
+                .iter()
+                .map(|name| {
+                    let Some(value) = record.get(name) else {
+                        return Ok(TableCell::Virtual);
+                    };
+                    let raw = value.get();
+                    // RawValue borrows the original text, so its span stays exact even
+                    // for repeated values, escaped strings, and large numbers.
+                    let start = (raw.as_ptr() as usize)
+                        .checked_sub(text.as_ptr() as usize)
+                        .context("JSON value is outside the source buffer")?;
+                    Ok(TableCell::from_buffer_position(
+                        compact_json(raw).into(),
+                        start,
+                        start + raw.len(),
+                        buffer_snapshot,
+                    ))
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            Ok(TableRow::from_vec(cells, number_of_cols))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    Ok(TableLikeContent {
+        headers,
+        rows,
+        line_numbers,
+        number_of_cols,
+    })
+}
+
+fn compact_json(raw: &str) -> String {
+    // Reserializing through Value can round numbers. Remove only insignificant
+    // whitespace from the already validated JSON instead.
+    let mut compact = String::with_capacity(raw.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    for character in raw.chars() {
+        if in_string {
+            compact.push(character);
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+        } else if character == '"' {
+            in_string = true;
+            compact.push(character);
+        } else if !matches!(character, ' ' | '\t' | '\r' | '\n') {
+            compact.push(character);
+        }
+    }
+    compact
 }
 
 pub fn from_buffer_with_delimiter(
@@ -383,6 +498,201 @@ fn create_table_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use text::{Buffer, BufferId, ReplicaId, ToOffset};
+
+    fn snapshot(text: &str) -> anyhow::Result<BufferSnapshot> {
+        let buffer_id = BufferId::new(1).context("invalid test buffer ID")?;
+        Ok(Buffer::new(ReplicaId::LOCAL, buffer_id, text.to_owned())
+            .snapshot()
+            .clone())
+    }
+
+    fn values(row: &TableRow<TableCell>) -> Vec<Option<&str>> {
+        row.as_slice()
+            .iter()
+            .map(|cell| cell.display_value().map(|value| value.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn test_json_lines_columns_and_values() -> anyhow::Result<()> {
+        let input = concat!(
+            "{\"b\":null,\"a\":\"null\",\"nested\":{ \"items\": [1, true] }}\n",
+            "{\"b\":\"\",\"late\":123456789012345678901234567890}\n",
+            "{}"
+        );
+        let parsed = TabularFormat::JsonLines.parse(&snapshot(input)?)?;
+        assert_eq!(
+            values(&parsed.headers),
+            vec![Some("b"), Some("a"), Some("nested"), Some("late")]
+        );
+        assert_eq!(parsed.rows.len(), 3);
+        let rows: Vec<_> = parsed.rows.iter().map(values).collect();
+        assert_eq!(
+            rows,
+            vec![
+                vec![
+                    Some("null"),
+                    Some(r#""null""#),
+                    Some(r#"{"items":[1,true]}"#),
+                    None
+                ],
+                vec![
+                    Some(r#""""#),
+                    None,
+                    None,
+                    Some("123456789012345678901234567890")
+                ],
+                vec![None, None, None, None],
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_json_lines_columns_follow_first_seen_key_order() -> anyhow::Result<()> {
+        let input = concat!(
+            "{}\n",
+            "{\"id\":2,\"name\":\"Grace\",\"active\":true}\n",
+            "{\"name\":\"Ada\",\"tags\":[],\"id\":1,\"details\":{}}\n",
+            "{\"details\":{},\"active\":false,\"extra\":null}\n"
+        );
+        let parsed = from_json_lines(&snapshot(input)?)?;
+        assert_eq!(
+            values(&parsed.headers),
+            vec![
+                Some("id"),
+                Some("name"),
+                Some("active"),
+                Some("tags"),
+                Some("details"),
+                Some("extra")
+            ]
+        );
+        assert_eq!(
+            values(parsed.rows.get(2).context("missing record")?),
+            vec![
+                Some("1"),
+                Some(r#""Ada""#),
+                None,
+                Some("[]"),
+                Some("{}"),
+                None
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_json_lines_source_spans_and_line_numbers() -> anyhow::Result<()> {
+        let input =
+            "\r\n{\"é\": \"🦀\", \"same\": \"🦀\"}\r\n \t\r\n{\"é\": 1.234567890123456789e100}\n";
+        let snapshot = snapshot(input)?;
+        let parsed = from_json_lines(&snapshot)?;
+        let normalized_input = snapshot.text();
+        assert!(matches!(
+            parsed.line_numbers.as_slice(),
+            [LineNumber::Line(2), LineNumber::Line(4)]
+        ));
+        assert_eq!(values(&parsed.headers), vec![Some("é"), Some("same")]);
+        let first_row = parsed.rows.first().context("missing first row")?;
+        for (cell, expected_start) in first_row.as_slice().iter().zip([
+            normalized_input
+                .find("\"🦀\"")
+                .context("missing first value")?,
+            normalized_input
+                .rfind("\"🦀\"")
+                .context("missing second value")?,
+        ]) {
+            let TableCell::Real { position, .. } = cell else {
+                anyhow::bail!("expected a source-backed cell");
+            };
+            assert_eq!(position.start.to_offset(&snapshot), expected_start);
+            assert_eq!(
+                position.end.to_offset(&snapshot),
+                expected_start + "\"🦀\"".len()
+            );
+        }
+        assert_eq!(
+            values(parsed.rows.last().context("missing last row")?),
+            vec![Some("1.234567890123456789e100"), None]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_json_lines_compact_values_preserve_strings_and_numbers() -> anyhow::Result<()> {
+        let input = r#"{"value": { "text": "a b\t\"c\\", "numbers": [ -0, 1e999, 123456789012345678901234567890 ] }}"#;
+        let parsed = from_json_lines(&snapshot(input)?)?;
+        assert_eq!(
+            values(parsed.rows.first().context("missing row")?),
+            vec![Some(
+                r#"{"text":"a b\t\"c\\","numbers":[-0,1e999,123456789012345678901234567890]}"#
+            )]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_json_lines_empty_input_and_empty_objects() -> anyhow::Result<()> {
+        for input in ["", "\n \t\r\n"] {
+            let parsed = from_json_lines(&snapshot(input)?)?;
+            assert!(parsed.rows.is_empty());
+            assert_eq!(parsed.number_of_cols, 0);
+        }
+        let parsed = from_json_lines(&snapshot("{}\n{}\n")?)?;
+        assert_eq!(parsed.number_of_cols, 0);
+        assert_eq!(parsed.rows.len(), 2);
+        assert!(parsed.rows.iter().all(|row| row.cols() == 0));
+        Ok(())
+    }
+
+    #[test]
+    fn test_json_lines_errors_identify_the_source_line() -> anyhow::Result<()> {
+        for invalid in [
+            "{",
+            "{\"a\":}",
+            "{} trailing",
+            "{} {}",
+            "[]",
+            "null",
+            "true",
+            "42",
+            "\"text\"",
+        ] {
+            let input = format!("{{}}\n\n{invalid}\n{{}}\n");
+            let result = from_json_lines(&snapshot(&input)?);
+            let Err(error) = result else {
+                anyhow::bail!("accepted invalid record: {invalid}");
+            };
+            assert!(error.to_string().contains("line 3"), "{error:#}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_dispatch() -> anyhow::Result<()> {
+        for extension in ["jsonl", "ndjson", "JSONL", "nDjSoN"] {
+            let format = TabularFormat::from_extension(extension).context("format not detected")?;
+            assert_eq!(format, TabularFormat::JsonLines);
+            assert_eq!(
+                format.parse(&snapshot("{\"name\":\"Ada\"}")?)?.rows.len(),
+                1
+            );
+        }
+        assert!(TabularFormat::from_extension("json").is_none());
+        for (extension, delimiter) in [("csv", ','), ("tsv", '\t'), ("psv", '|'), ("ssv", ';')] {
+            let input = format!("name{delimiter}age\nAda{delimiter}36");
+            let format = TabularFormat::from_extension(extension).context("format not detected")?;
+            let parsed = format.parse(&snapshot(&input)?)?;
+            assert_eq!(values(&parsed.headers), vec![Some("name"), Some("age")]);
+            assert_eq!(
+                values(parsed.rows.first().context("missing row")?),
+                vec![Some("Ada"), Some("36")]
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn test_csv_parsing_basic() {

@@ -1,3 +1,5 @@
+pub const DANGERBOT: Runner = Runner("namespace-profile-dangerbot");
+
 pub const LINUX_SMALL: Runner = Runner("namespace-profile-2x4-ubuntu-2404");
 pub const LINUX_DEFAULT: Runner = LINUX_XL;
 pub const LINUX_XL: Runner = Runner("namespace-profile-16x32-ubuntu-2204");

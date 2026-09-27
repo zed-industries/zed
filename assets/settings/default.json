@@ -540,8 +540,18 @@
   // Controls whether edit predictions are shown immediately (true)
   // or manually by triggering `editor::ShowEditPrediction` (false).
   "show_edit_predictions": true,
-  // Controls whether edit predictions are shown in a given language scope.
-  // Example: ["string", "comment"]
+  // Disable edit predictions in these language scopes, such as "comment" and
+  // "string".
+  //
+  // Use `"..."` to add scopes without repeating the inherited list. In project
+  // settings, it extends the user or parent configuration value. In
+  // language-specific settings, it extends the scopes inherited by that
+  // language. Omit `"..."` to replace the inherited list.
+  //
+  // Inherited scopes are inserted at `"..."`, and duplicates keep their first
+  // occurrence.
+  //
+  // Set `[]` to clear the inherited list. Omit this setting to inherit it unchanged.
   "edit_predictions_disabled_in": [],
   // Whether to show tabs and spaces in the editor.
   // This setting can take four values:
@@ -586,7 +596,7 @@
     // Whether to show code action buttons in the editor toolbar.
     "code_actions": false,
   },
-  // Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
+  // Whether to allow windows to tab together based on the user's tabbing preference (macOS only).
   "use_system_window_tabs": false,
   // Which fullscreen mode the `zed::ToggleFullScreen` action enters (macOS only).
   //
@@ -1152,15 +1162,15 @@
     //
     // Default: true
     "flexible": true,
-    // Where to position the sidebar holding the agent panel and the list of
-    // agent threads. Can be 'left' or 'right'.
-    "sidebar_side": "left",
-    // Default width of the Threads Sidebar.
-    "threads_sidebar_default_width": 300,
-    // Whether opening a folder in an existing window automatically opens the
-    // Threads Sidebar. Applies when `default_open_behavior` or
-    // `cli_default_open_behavior` is set to "existing_window".
-    "threads_sidebar_auto_open": true,
+    // Settings for the sidebar holding the agent panel and the list of agent threads.
+    "threads_sidebar": {
+      // Where to position the Threads Sidebar. Can be 'left' or 'right'.
+      "position": "left",
+      // Default width of the Threads Sidebar.
+      "default_width": 300,
+      // Automatically open the Threads Sidebar when opening a folder in an existing window.
+      "auto_open": true,
+    },
     // Default fixed width when the agent panel is docked to the left or right and
     // `flexible` is false.
     "default_width": 640,
@@ -1873,11 +1883,20 @@
   "edit_predictions": {
     // Which edit prediction provider to use.
     "provider": "zed",
-    // A list of globs representing files that edit predictions should be disabled for.
-    // There's a sensible default list of globs already included.
-    // Any addition to this list will be merged with the default list.
-    // Globs are matched relative to the worktree root,
-    // except when starting with a slash (/) or equivalent in Windows.
+    // Disable edit predictions for files matching these glob patterns.
+    //
+    // Use `"..."` to add patterns without repeating Zed's defaults. In project
+    // settings, it extends the user or parent configuration value. Omit
+    // `"..."` to replace the inherited list.
+    //
+    // Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    // occurrence.
+    //
+    // Set `[]` to clear the inherited list. Omit this setting to inherit it unchanged.
+    //
+    // Relative patterns are matched against paths relative to the worktree root.
+    // Absolute patterns are matched against absolute paths.
+    // A leading `~` is expanded to your home folder.
     "disabled_globs": [
       "**/.env*",
       "**/*.pem",
@@ -2188,14 +2207,23 @@
     //
     // [
     //   "\\s+(-->|:::|at) (?<link>(?<path>.+?))(:$|$)",
-    //   "\\s+(Compiling|Checking|Documenting) [^(]+\\((?<link>(?<path>.+))\\)"
+    //   "\\s+(Compiling|Checking|Documenting) [^(]+\\((?<link>(?<path>.+))\\)",
+    //   "..."
     // ],
     //
-    // could be used. Processing stops at the first regex with a match, even if no link is
+    // could be used. The `"..."` entry inserts inherited regexes at that position. In project
+    // settings, it extends the user or parent configuration value. Omit `"..."` to replace the
+    // inherited list, or set `[]` to clear it. Duplicates keep their first occurrence, comparing
+    // regex text after joining multiline entries with newlines. The marker is recognized only
+    // as a top-level string. Write `["..."]` as an entry to keep the three-character regex instead.
+    // A `"..."` line inside a multiline entry is always regex text. Invalid regexes are logged
+    // and ignored.
+    //
+    // Processing stops at the first regex with a match, even if no link is
     // produced which is the case when the cursor is not over the hyperlinked text. For best
     // performance it is recommended to order regexes from most common to least common. For
-    // readability and documentation, each regex may be an array of strings which are collected
-    // into one multi-line regex string for use in terminal path hyperlink detection.
+    // readability and documentation, each regex may be an array of strings which are joined
+    // with newlines into one regex string for use in terminal path hyperlink detection.
     "path_hyperlink_regexes": [
       // Python-style diagnostics
       "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",

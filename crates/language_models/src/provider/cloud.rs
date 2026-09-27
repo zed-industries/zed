@@ -9,14 +9,16 @@ use cloud_api_types::Plan;
 use futures::FutureExt;
 use futures::StreamExt;
 use futures::future::BoxFuture;
-use gpui::{AnyElement, App, AppContext, Context, Entity, Subscription, Task, TaskExt};
+
+use gpui::{AnyElement, App, AppContext, AsyncApp, Context, Entity, Subscription, Task, TaskExt};
 use language_model::{
-    AuthenticateError, FastModeConfirmation, IconOrSvg, InlineDescription, LanguageModel,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, ProviderSettingsView, ZED_CLOUD_PROVIDER_ID,
-    ZED_CLOUD_PROVIDER_NAME,
+    AuthenticateError, CompactionResult, FastModeConfirmation, IconOrSvg, InlineDescription,
+    LanguageModel, LanguageModelClient, LanguageModelCompletionError,
+    LanguageModelCompletionStream, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    ProviderSettingsView, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
 };
-use language_models_cloud::{CloudLlmTokenProvider, CloudModelProvider};
+use language_models_cloud::{CloudLlmTokenProvider, CloudModelProvider, language_model};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use release_channel::AppVersion;
 
@@ -287,37 +289,35 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiZed)
     }
 
-    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn default_model(&self, cx: &App) -> Option<LanguageModel> {
         let state = self.state.read(cx);
         let provider = state.provider.read(cx);
-        let model = provider.default_model()?;
-        Some(provider.create_model(model))
+        Some(language_model(provider.default_model()?))
     }
 
-    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn default_fast_model(&self, cx: &App) -> Option<LanguageModel> {
         let state = self.state.read(cx);
         let provider = state.provider.read(cx);
-        let model = provider.default_fast_model()?;
-        Some(provider.create_model(model))
+        Some(language_model(provider.default_fast_model()?))
     }
 
-    fn recommended_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+    fn recommended_models(&self, cx: &App) -> Vec<LanguageModel> {
         let state = self.state.read(cx);
         let provider = state.provider.read(cx);
         provider
             .recommended_models()
             .iter()
-            .map(|model| provider.create_model(model))
+            .map(|model| language_model(model))
             .collect()
     }
 
-    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+    fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
         let state = self.state.read(cx);
         let provider = state.provider.read(cx);
         provider
             .models()
             .iter()
-            .map(|model| provider.create_model(model))
+            .map(|model| language_model(model))
             .collect()
     }
 
@@ -421,6 +421,54 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                 upstream provider's premium per-token pricing applies and is passed through to \
                 your Zed billing."
                 .into(),
+        })
+    }
+}
+
+impl LanguageModelClient for CloudLanguageModelProvider {
+    fn stream_completion(
+        &self,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
+        cx.update(|cx| {
+            self.state
+                .read(cx)
+                .provider
+                .read(cx)
+                .stream_completion(model, request, cx)
+        })
+    }
+
+    fn count_input_tokens(
+        &self,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
+        cx.update(|cx| {
+            self.state
+                .read(cx)
+                .provider
+                .read(cx)
+                .count_input_tokens(model, request, cx)
+        })
+    }
+
+    fn compact(
+        &self,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
+        cx.update(|cx| {
+            self.state
+                .read(cx)
+                .provider
+                .read(cx)
+                .compact(model, request, cx)
         })
     }
 }

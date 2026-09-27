@@ -1544,7 +1544,7 @@ impl ProjectPanel {
         loop {
             let entry_id = entry.id;
             match expanded_dir_ids.binary_search(&entry_id) {
-                Ok(ix) => {
+                Ok(ix) if entry.is_dir() => {
                     expanded_dir_ids.remove(ix);
                     self.selection = Some(SelectedEntry {
                         worktree_id,
@@ -1560,7 +1560,7 @@ impl ProjectPanel {
                     cx.notify();
                     break;
                 }
-                Err(_) => {
+                Ok(_) | Err(_) => {
                     if let Some(parent_entry) =
                         entry.path.parent().and_then(|p| worktree.entry_for_path(p))
                     {
@@ -1722,7 +1722,9 @@ impl ProjectPanel {
         };
         let include_ignored_dirs = !entry.is_ignored;
 
-        if let Err(ix) = expanded_dir_ids.binary_search(&entry_id) {
+        if entry.is_dir()
+            && let Err(ix) = expanded_dir_ids.binary_search(&entry_id)
+        {
             expanded_dir_ids.insert(ix, entry_id);
         }
 
@@ -1814,7 +1816,9 @@ impl ProjectPanel {
 
                 if let Some(mut entry) = worktree.entry_for_id(entry_id) {
                     loop {
-                        if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
+                        if entry.is_dir()
+                            && let Err(ix) = expanded_dir_ids.binary_search(&entry.id)
+                        {
                             expanded_dir_ids.insert(ix, entry.id);
                         }
 
@@ -2041,10 +2045,8 @@ impl ProjectPanel {
                 return;
             };
 
-            if let Some(worktree) = self
-                .project
-                .read(cx)
-                .worktree_for_id(edit_state.worktree_id, cx)
+            let project = self.project.read(cx);
+            if let Some(worktree) = project.worktree_for_id(edit_state.worktree_id, cx)
                 && let Some(entry) = worktree.read(cx).entry_for_id(edit_state.entry_id)
             {
                 let mut already_exists = false;
@@ -2054,12 +2056,18 @@ impl ProjectPanel {
                         already_exists = true;
                     }
                 } else {
-                    let new_path = if let Some(parent) = entry.path.clone().parent() {
-                        parent.join(&filename)
-                    } else {
-                        filename.to_owned()
+                    let new_path = match entry.path.clone().parent() {
+                        Some(parent) => parent.join(&filename),
+                        None => filename.to_owned(),
                     };
-                    if let Some(existing) = worktree.read(cx).entry_for_path(&new_path)
+
+                    // We skip the collision check for worktree roots as the
+                    // lookup resolves paths relative to the root itself,
+                    // whereas renaming the root should resolve it against its
+                    // parent directory. Otherwise, renaming `bar/` to `foo/`
+                    // would report a false collision with `bar/foo/`.
+                    if !project.entry_is_worktree_root(entry.id, cx)
+                        && let Some(existing) = worktree.read(cx).entry_for_path(&new_path)
                         && existing.id != entry.id
                     {
                         already_exists = true;
@@ -2142,12 +2150,19 @@ impl ProjectPanel {
             });
             changes = vec![Change::Created(new_project_path)];
         } else {
-            let new_path = if let Some(parent) = entry.path.parent() {
-                parent.join(&filename).into()
-            } else {
-                filename.clone()
+            let new_path = match entry.path.parent() {
+                Some(parent) => parent.join(&filename).into(),
+                None => filename.clone(),
             };
-            if let Some(existing) = worktree.read(cx).entry_for_path(&new_path) {
+
+            // We skip the collision check for worktree roots as the lookup
+            // resolves paths relative to the root itself, whereas renaming the
+            // root should resolve it against its parent directory. Otherwise,
+            // renaming `bar/` to `foo/` would report a false collision with
+            // `bar/foo/`.
+            if !self.project.read(cx).entry_is_worktree_root(entry.id, cx)
+                && let Some(existing) = worktree.read(cx).entry_for_path(&new_path)
+            {
                 if existing.id == entry.id && refocus {
                     window.focus(&self.focus_handle, cx);
                 }
@@ -4842,7 +4857,9 @@ impl ProjectPanel {
 
                 if let Some(mut entry) = worktree.entry_for_id(entry_id) {
                     loop {
-                        if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
+                        if entry.is_dir()
+                            && let Err(ix) = expanded_dir_ids.binary_search(&entry.id)
+                        {
                             expanded_dir_ids.insert(ix, entry.id);
                         }
 
