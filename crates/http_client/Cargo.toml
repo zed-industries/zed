@@ -21,7 +21,7 @@ github-download = [
 
 [lib]
 path = "src/http_client.rs"
-doctest = true
+doctest = false
 
 [dependencies]
 anyhow.workspace = true

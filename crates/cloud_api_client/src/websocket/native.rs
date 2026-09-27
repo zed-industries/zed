@@ -5,6 +5,7 @@ use cloud_api_types::websocket_protocol::{PROTOCOL_VERSION, PROTOCOL_VERSION_HEA
 use futures::channel::mpsc::unbounded;
 use futures::stream::{SplitSink, SplitStream};
 use futures::{FutureExt as _, SinkExt as _, StreamExt as _, TryStreamExt as _};
+use futures_lite::future::yield_now;
 use gpui::{App, AppContext, Task};
 use http_client::http::request;
 use yawc::frame::Frame;
@@ -52,6 +53,8 @@ impl Connection {
                         }
                     }
                 }
+
+                yield_now().await;
             }
         });
 

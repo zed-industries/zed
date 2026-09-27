@@ -9,14 +9,16 @@ use cloud_api_types::Plan;
 use futures::FutureExt;
 use futures::StreamExt;
 use futures::future::BoxFuture;
-use gpui::{AnyElement, App, AppContext, Context, Entity, Subscription, Task, TaskExt};
+
+use gpui::{AnyElement, App, AppContext, AsyncApp, Context, Entity, Subscription, Task, TaskExt};
 use language_model::{
-    AuthenticateError, FastModeConfirmation, IconOrSvg, InlineDescription, LanguageModel,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, ProviderSettingsView, ZED_CLOUD_PROVIDER_ID,
-    ZED_CLOUD_PROVIDER_NAME,
+    AuthenticateError, CompactionResult, FastModeConfirmation, IconOrSvg, InlineDescription,
+    LanguageModel, LanguageModelClient, LanguageModelCompletionError,
+    LanguageModelCompletionStream, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    ProviderSettingsView, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
 };
-use language_models_cloud::{CloudLlmTokenProvider, CloudModelProvider};
+use language_models_cloud::{CloudLlmTokenProvider, CloudModelProvider, language_model};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use release_channel::AppVersion;
 
@@ -287,37 +289,35 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiZed)
     }
 
-    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn default_model(&self, cx: &App) -> Option<LanguageModel> {
         let state = self.state.read(cx);
         let provider = state.provider.read(cx);
-        let model = provider.default_model()?;
-        Some(provider.create_model(model))
+        Some(language_model(provider.default_model()?))
     }
 
-    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn default_fast_model(&self, cx: &App) -> Option<LanguageModel> {
         let state = self.state.read(cx);
         let provider = state.provider.read(cx);
-        let model = provider.default_fast_model()?;
-        Some(provider.create_model(model))
+        Some(language_model(provider.default_fast_model()?))
     }
 
-    fn recommended_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+    fn recommended_models(&self, cx: &App) -> Vec<LanguageModel> {
         let state = self.state.read(cx);
         let provider = state.provider.read(cx);
         provider
             .recommended_models()
             .iter()
-            .map(|model| provider.create_model(model))
+            .map(|model| language_model(model))
             .collect()
     }
 
-    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+    fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
         let state = self.state.read(cx);
         let provider = state.provider.read(cx);
         provider
             .models()
             .iter()
-            .map(|model| provider.create_model(model))
+            .map(|model| language_model(model))
             .collect()
     }
 
@@ -425,6 +425,54 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 }
 
+impl LanguageModelClient for CloudLanguageModelProvider {
+    fn stream_completion(
+        &self,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
+        cx.update(|cx| {
+            self.state
+                .read(cx)
+                .provider
+                .read(cx)
+                .stream_completion(model, request, cx)
+        })
+    }
+
+    fn count_input_tokens(
+        &self,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
+        cx.update(|cx| {
+            self.state
+                .read(cx)
+                .provider
+                .read(cx)
+                .count_input_tokens(model, request, cx)
+        })
+    }
+
+    fn compact(
+        &self,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
+        cx.update(|cx| {
+            self.state
+                .read(cx)
+                .provider
+                .read(cx)
+                .compact(model, request, cx)
+        })
+    }
+}
+
 #[derive(IntoElement, RegisterComponent)]
 struct ZedAiConfiguration {
     is_connected: bool,
@@ -434,6 +482,24 @@ struct ZedAiConfiguration {
     account_too_young: bool,
     compact: bool,
     sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support {
+    use super::*;
+
+    pub fn young_account_configuration() -> AnyElement {
+        ZedAiConfiguration {
+            is_connected: true,
+            plan: Some(Plan::ZedBusiness),
+            is_zed_model_provider_enabled: true,
+            eligible_for_trial: false,
+            account_too_young: true,
+            compact: true,
+            sign_in_callback: Arc::new(|_, _| {}),
+        }
+        .into_any_element()
+    }
 }
 
 fn zed_ai_description(
@@ -450,7 +516,9 @@ fn zed_ai_description(
         Some(Plan::ZedPro) => {
             "You have access to Zed's hosted models through your Pro subscription."
         }
-        Some(Plan::ZedProTrial) => "You have access to Zed's hosted models through your Pro trial.",
+        Some(Plan::ZedProTrial) => {
+            "Your Pro trial includes $5 of GPT Luna and unlimited edit predictions for 14 days from trial start."
+        }
         Some(Plan::ZedStudent) => {
             "You have access to Zed's hosted models through your Student subscription."
         }
@@ -466,7 +534,7 @@ fn zed_ai_description(
         }
         Some(Plan::ZedFree) | None => {
             if eligible_for_trial {
-                "Subscribe for access to Zed's hosted models. Start with a 14 day free trial."
+                "Start a free trial with $5 of GPT Luna and unlimited edit predictions for 14 days from trial start."
             } else {
                 "Subscribe for access to Zed's hosted models."
             }
@@ -498,7 +566,7 @@ impl RenderOnce for ZedAiConfiguration {
                 .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx)))
                 .into_any_element()
         } else if self.plan.is_none() || self.eligible_for_trial {
-            Button::new("start_trial", "Start 14-day Free Pro Trial")
+            Button::new("start_trial", "Start Free Trial")
                 .when(!self.compact, |this| {
                     this.full_width().label_size(LabelSize::Small)
                 })
@@ -538,7 +606,10 @@ impl RenderOnce for ZedAiConfiguration {
 
         v_flex()
             .gap_2()
-            .when(!self.compact, |this| this.w_full())
+            .debug_selector(|| "zed-ai-configuration".into())
+            .when(!self.compact || self.account_too_young, |this| {
+                this.w_full()
+            })
             .map(|this| {
                 if self.account_too_young {
                     this.child(YoungAccountBanner).child(

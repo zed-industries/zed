@@ -36,7 +36,6 @@ menu.workspace = true
 multi_buffer.workspace = true
 paths.workspace = true
 project.workspace = true
-regex.workspace = true
 settings.workspace = true
 telemetry.workspace = true
 text.workspace = true

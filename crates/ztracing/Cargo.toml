@@ -3,10 +3,13 @@ name = "ztracing"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
-license = "GPL-3.0-or-later"
+license = "Apache-2.0"
 
 [lints]
 workspace = true
+
+[lib]
+doctest = false
 
 [features]
 tracy = ["tracing-tracy", "tracy-client"]

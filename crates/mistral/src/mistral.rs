@@ -66,6 +66,9 @@ pub enum Model {
     #[serde(rename = "ministral-14b-latest", alias = "ministral-14b-latest")]
     Ministral14bLatest,
 
+    #[serde(rename = "zai-glm-latest", alias = "zai-glm-latest")]
+    ZaiGlmLatest,
+
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -94,6 +97,7 @@ impl Model {
             "ministral-3b-latest" => Ok(Self::Ministral3bLatest),
             "ministral-8b-latest" => Ok(Self::Ministral8bLatest),
             "ministral-14b-latest" => Ok(Self::Ministral14bLatest),
+            "zai-glm-latest" => Ok(Self::ZaiGlmLatest),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -107,6 +111,7 @@ impl Model {
             Self::Ministral3bLatest => "ministral-3b-latest",
             Self::Ministral8bLatest => "ministral-8b-latest",
             Self::Ministral14bLatest => "ministral-14b-latest",
+            Self::ZaiGlmLatest => "zai-glm-latest",
             Self::Custom { name, .. } => name,
         }
     }
@@ -120,6 +125,7 @@ impl Model {
             Self::Ministral3bLatest => "ministral-3b-latest",
             Self::Ministral8bLatest => "ministral-8b-latest",
             Self::Ministral14bLatest => "ministral-14b-latest",
+            Self::ZaiGlmLatest => "zai-glm-latest",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -135,6 +141,7 @@ impl Model {
             Self::Ministral3bLatest => 256000,
             Self::Ministral8bLatest => 256000,
             Self::Ministral14bLatest => 256000,
+            Self::ZaiGlmLatest => 1_048_576,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -156,7 +163,8 @@ impl Model {
             | Self::MistralSmallLatest
             | Self::Ministral3bLatest
             | Self::Ministral8bLatest
-            | Self::Ministral14bLatest => true,
+            | Self::Ministral14bLatest
+            | Self::ZaiGlmLatest => true,
             Self::Custom { supports_tools, .. } => supports_tools.unwrap_or(false),
         }
     }
@@ -169,7 +177,7 @@ impl Model {
             | Self::Ministral3bLatest
             | Self::Ministral8bLatest
             | Self::Ministral14bLatest => true,
-            Self::CodestralLatest => false,
+            Self::CodestralLatest | Self::ZaiGlmLatest => false,
             Self::Custom {
                 supports_images, ..
             } => supports_images.unwrap_or(false),
@@ -178,12 +186,18 @@ impl Model {
 
     pub fn supports_thinking(&self) -> bool {
         match self {
-            Self::MistralMediumLatest | Self::MistralSmallLatest => true,
+            Self::MistralMediumLatest | Self::MistralSmallLatest | Self::ZaiGlmLatest => true,
             Self::Custom {
                 supports_thinking, ..
             } => supports_thinking.unwrap_or(false),
             _ => false,
         }
+    }
+
+    /// Whether thinking can be turned off. Z.ai GLM models always think and
+    /// reject `reasoning_effort: "none"`.
+    pub fn supports_disabling_thinking(&self) -> bool {
+        !matches!(self, Self::ZaiGlmLatest)
     }
 }
 
