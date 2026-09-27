@@ -3101,15 +3101,6 @@ impl Window {
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
         self.next_frame.clear();
-        // Key binding queries read the tree's context stack, which drawing leaves at
-        // whatever node was active last, and which differs when that node's paint was
-        // replayed. They describe the focused element, so its path is made active.
-        if self.rendered_frame.dispatch_tree.len() > 0 {
-            let focus_node = self.focus_node_id_in_rendered_frame(self.focus);
-            self.rendered_frame
-                .dispatch_tree
-                .set_active_node(focus_node);
-        }
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
 
@@ -6761,8 +6752,12 @@ impl Window {
 
     /// Returns the current context stack.
     pub fn context_stack(&self) -> Vec<KeyContext> {
-        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
         let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        // Before the first frame is drawn there is no tree to find the focus in.
+        if dispatch_tree.len() == 0 {
+            return Vec::new();
+        }
+        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
         dispatch_tree
             .dispatch_path(node_id)
             .iter()
@@ -6785,12 +6780,13 @@ impl Window {
         actions
     }
 
-    /// Returns key bindings that invoke an action on the currently focused element. Bindings are
+    /// Returns key bindings that invoke an action on the currently focused element, in the
+    /// contexts of its path in the last drawn frame. Bindings are
     /// returned in the order they were added. For display, the last binding should take precedence.
     pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
         self.rendered_frame
             .dispatch_tree
-            .bindings_for_action(action, &self.rendered_frame.dispatch_tree.context_stack)
+            .bindings_for_action(action, &self.context_stack())
     }
 
     /// Returns the highest precedence key binding that invokes an action on the currently focused
@@ -6798,10 +6794,7 @@ impl Window {
     pub fn highest_precedence_binding_for_action(&self, action: &dyn Action) -> Option<KeyBinding> {
         self.rendered_frame
             .dispatch_tree
-            .highest_precedence_binding_for_action(
-                action,
-                &self.rendered_frame.dispatch_tree.context_stack,
-            )
+            .highest_precedence_binding_for_action(action, &self.context_stack())
     }
 
     /// Returns the key bindings for an action in a context.

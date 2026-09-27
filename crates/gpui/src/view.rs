@@ -1845,7 +1845,7 @@ mod tests {
     }
 
     /// Key binding queries describe the focused element, in a replayed frame as in a fresh
-    /// one, whatever element happened to paint last.
+    /// one, whatever element happened to paint last, and follow focus that moved since.
     #[gpui::test]
     fn bindings_for_action_follow_focus_in_replayed_frames(cx: &mut TestAppContext) {
         crate::actions!(view_tests, [ChildAction]);
@@ -1902,6 +1902,13 @@ mod tests {
             .expect("window open");
         cx.run_until_parked();
         assert_eq!(bindings(cx), 1, "replayed frame");
+        let after_blur = window
+            .update(cx, |_, window, cx| {
+                window.blur(cx);
+                window.bindings_for_action(&ChildAction).len()
+            })
+            .expect("window open");
+        assert_eq!(after_blur, 0, "focus moved since the frame was drawn");
     }
 
     use crate::{
