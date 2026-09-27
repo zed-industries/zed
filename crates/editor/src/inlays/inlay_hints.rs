@@ -5212,11 +5212,20 @@ let c = 3;"#
         );
 
         editor
-            .update(cx, |editor, _window, cx| {
+            .update(cx, |editor, window, cx| {
                 assert_eq!(
                     editor.display_text(cx),
                     expected,
                     "a refresh from one server must not duplicate the other server's identical hint"
+                );
+
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges([MultiBufferOffset(14)..MultiBufferOffset(14)])
+                });
+                editor.handle_input("X", window, cx);
+                assert_eq!(
+                    editor.display_text(cx),
+                    "fn main() { f(Xhint: x); } // padding to keep hints from being trimmed",
                 );
             })
             .unwrap();
