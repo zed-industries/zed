@@ -658,8 +658,10 @@ pub mod perf {
 /// `RUSAGE_INFO_V4` for the whole process (every thread, including exited
 /// ones), and `thread_selfcounts` for the calling thread. Both are plain
 /// reads with no counter to open or close. Intel Macs report zero for both,
-/// which [`HardwareCounter::new`] detects. Branch and cache events require the
-/// private `kperf` framework and root, so they are unsupported here.
+/// which [`HardwareCounter::new`] detects, and macOS virtual machines (CI
+/// runners included) reject `thread_selfcounts` with `ENOTSUP` while still
+/// serving `proc_pid_rusage`. Branch and cache events require the private
+/// `kperf` framework and root, so they are unsupported here.
 #[cfg(target_os = "macos")]
 pub mod darwin {
     use super::*;
@@ -746,7 +748,13 @@ pub mod darwin {
                 ));
             }
             let this = Self { event, scope };
-            this.read()?;
+            this.read().map_err(|error| {
+                anyhow!(
+                    "{error}; hardware counters are unavailable for {} on this Mac (Intel Macs and \
+                     macOS virtual machines such as CI runners do not expose them)",
+                    scope.label()
+                )
+            })?;
             Ok(this)
         }
 
@@ -1711,7 +1719,8 @@ mod tests {
                 assert!(
                     message.contains("CAP_PERFMON")
                         || message.contains("does not advance")
-                        || message.contains("unavailable on this platform"),
+                        || message.contains("unavailable on this platform")
+                        || message.contains("unavailable for"),
                     "unavailable counters should have an actionable error: {message}"
                 );
                 return None;
@@ -1781,7 +1790,8 @@ mod tests {
                             || message.contains("does not expose")
                             || message.contains("does not advance")
                             || message.contains("needs kperf")
-                            || message.contains("unavailable on this platform"),
+                            || message.contains("unavailable on this platform")
+                            || message.contains("unavailable for"),
                         "{event:?}: {message}"
                     );
                 }
