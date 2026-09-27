@@ -73,6 +73,7 @@ members = [
     "crates/extension_api",
     "crates/extension_cli",
     "crates/extension_host",
+    "crates/extension_suggest",
     "crates/extensions_ui",
     "crates/feature_flags",
     "crates/feature_flags_macros",
@@ -342,6 +343,7 @@ etw_tracing = { path = "crates/etw_tracing" }
 eval_utils = { path = "crates/eval_utils" }
 extension = { path = "crates/extension" }
 extension_host = { path = "crates/extension_host" }
+extension_suggest = { path = "crates/extension_suggest" }
 extensions_ui = { path = "crates/extensions_ui" }
 feature_flags = { path = "crates/feature_flags" }
 feature_flags_macros = { path = "crates/feature_flags_macros" }
@@ -550,13 +552,17 @@ async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.33"
 async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
-aws-config = { version = "1.8.10", features = ["behavior-version-latest"] }
+aws-config = { version = "1.8.10", default-features = false, features = [
+    "behavior-version-latest",
+    "credentials-process",
+    "rt-tokio",
+    "sso",
+] }
 aws-credential-types = { version = "1.2.8", features = [
     "hardcoded-credentials",
 ] }
 aws-sdk-bedrockruntime = { version = "1.112.0", default-features = false, features = [
     "behavior-version-latest",
-    "default-https-client",
     "rt-tokio",
 ] }
 aws-sigv4 = { version = "1.4.0", features = ["http1"] }
@@ -566,7 +572,6 @@ backtrace = "0.3"
 base64 = "0.22"
 betlang = "0.1.1"
 bitflags = "2.6.0"
-block = "0.1"
 block2 = "0.6"
 brush-parser = "0.3"
 bytes = "1.0"
@@ -921,7 +926,7 @@ wasmtime = { version = "48", default-features = false, features = [
 ] }
 wasm-bindgen = "0.2.120"
 wasm-bindgen-futures = "0.4"
-wasmtime-wasi = "48"
+wasmtime-wasi = { version = "48", default-features = false, features = ["p2"] }
 wax = "0.7"
 web-time = "1.1.0"
 webpki-roots = "1.0.8"
@@ -931,7 +936,7 @@ which = "8"
 windows-core = "0.62"
 windows-registry = "0.6.0"
 yaml-rust2 = "0.8"
-yawc = { git = "https://github.com/zed-industries/yawc", rev = "71a452f551cac178367eaac5d7418a09afa1f3a2", version = "0.3.3" }
+yawc = "0.4.2"
 zeroize = "1.8"
 zstd = "0.11"
 

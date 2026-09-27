@@ -39,6 +39,7 @@ use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
 };
 use notifications::status_toast::StatusToast;
+use platform_title_bar::apply_title_bar_insets;
 use project::{
     AgentId, AgentRegistryStore, Event as ProjectEvent, WorktreeId, repo_identity_path_if_local,
 };
@@ -2390,9 +2391,10 @@ impl Sidebar {
             .pr_1p5()
             .justify_between()
             .border_1()
+            .border_r_2()
             .map(|this| {
                 if is_focused {
-                    this.border_color(color.border_focused)
+                    this.border_color(color.panel_focused_border)
                 } else {
                     this.border_color(gpui::transparent_black())
                 }
@@ -3839,9 +3841,7 @@ impl Sidebar {
             }
         }
 
-        let Some(configured_model) =
-            LanguageModelRegistry::read_global(cx).thread_summary_model(cx)
-        else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).thread_summary_model(cx) else {
             if let Some(workspace) = self.active_workspace(cx) {
                 Self::show_no_thread_summary_model_toast(workspace, cx);
             }
@@ -3852,7 +3852,6 @@ impl Sidebar {
             return;
         }
 
-        let model = configured_model.model;
         let temperature = AgentSettings::temperature_for_model(&model, cx);
 
         let thread_store = ThreadStore::global(cx);
@@ -7347,7 +7346,13 @@ impl Sidebar {
         h_flex()
             .h(header_height)
             .map(|header| match window.window_decorations() {
-                Decorations::Client { .. } => header.mt(px(-1.)),
+                // Without projects there's no bottom border to match the title bar's.
+                Decorations::Client { .. } => apply_title_bar_insets(
+                    header,
+                    left_window_controls,
+                    right_window_controls,
+                    no_open_projects,
+                ),
                 Decorations::Server => header.mt_px().pb_px(),
             })
             .when(left_window_controls, |this| {
