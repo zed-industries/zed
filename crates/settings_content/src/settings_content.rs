@@ -1304,9 +1304,9 @@ pub enum LineIndicatorFormat {
 #[serde(rename_all = "snake_case")]
 pub enum MermaidAlignment {
     /// Align the diagram to the left.
-    #[default]
     Left,
     /// Center the diagram.
+    #[default]
     Center,
     /// Align the diagram to the right.
     Right,
@@ -1345,8 +1345,8 @@ pub struct MarkdownPreviewSettingsContent {
     pub max_width: Option<PixelSetting>,
     /// Whether to constrain top-level Mermaid blocks to `mermaid_max_width`.
     /// When disabled, no Mermaid-specific maximum width is applied.
-    /// Zed's default layout is preserved when both Mermaid width options
-    /// are disabled and `mermaid_alignment` is `left`.
+    /// To restore Zed's native layout, disable both Mermaid width options
+    /// and set `mermaid_alignment` to `left`.
     ///
     /// Default: false
     pub limit_mermaid_width: Option<bool>,
@@ -1362,7 +1362,7 @@ pub struct MarkdownPreviewSettingsContent {
     /// the Mermaid block. When `mermaid_width_follows_diagram` is enabled,
     /// it aligns the block itself.
     ///
-    /// Default: left
+    /// Default: center
     pub mermaid_alignment: Option<MermaidAlignment>,
     /// Whether top-level Mermaid blocks follow the rendered diagram's 100%
     /// natural width, with enough space for controls, instead of using Zed's

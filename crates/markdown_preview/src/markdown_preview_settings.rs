@@ -3,7 +3,7 @@ use markdown::{MermaidAlignment, MermaidLayout};
 use settings::{IntoGpui, RegisterSetting, Settings};
 
 /// The settings for the markdown preview.
-#[derive(Clone, Copy, Debug, Default, RegisterSetting)]
+#[derive(Clone, Copy, Debug, RegisterSetting)]
 pub struct MarkdownPreviewSettings {
     /// Whether to automatically open Markdown files in the preview.
     pub open_markdown_files_in_preview: bool,
@@ -12,6 +12,12 @@ pub struct MarkdownPreviewSettings {
     pub max_width: Option<Pixels>,
     /// How Mermaid diagrams are laid out.
     pub mermaid_layout: MermaidLayout,
+}
+
+impl Default for MarkdownPreviewSettings {
+    fn default() -> Self {
+        Self::from_settings(&settings::SettingsContent::default())
+    }
 }
 
 impl Settings for MarkdownPreviewSettings {
@@ -64,8 +70,48 @@ mod tests {
                 .expect("valid preview settings");
                 let settings = MarkdownPreviewSettings::from_settings(&content);
                 assert_eq!(settings.max_width, limit_content_width.then_some(px(900.)));
-                assert_eq!(settings.mermaid_layout, MermaidLayout::default());
+                assert_eq!(
+                    settings.mermaid_layout,
+                    MermaidLayout {
+                        alignment: MermaidAlignment::Center,
+                        ..MermaidLayout::default()
+                    }
+                );
+                assert!(!settings.mermaid_layout.has_width_override());
             }
+        }
+    }
+
+    #[test]
+    fn test_mermaid_alignment_defaults_to_center_and_preserves_explicit_choices() {
+        assert_eq!(
+            MarkdownPreviewSettings::default().mermaid_layout.alignment,
+            MermaidAlignment::Center
+        );
+        for (content, expected) in [
+            (json!({}), MermaidAlignment::Center),
+            (json!({"markdown_preview": {}}), MermaidAlignment::Center),
+            (
+                json!({"markdown_preview": {"mermaid_alignment": null}}),
+                MermaidAlignment::Center,
+            ),
+            (
+                json!({"markdown_preview": {"mermaid_alignment": "left"}}),
+                MermaidAlignment::Left,
+            ),
+            (
+                json!({"markdown_preview": {"mermaid_alignment": "center"}}),
+                MermaidAlignment::Center,
+            ),
+            (
+                json!({"markdown_preview": {"mermaid_alignment": "right"}}),
+                MermaidAlignment::Right,
+            ),
+        ] {
+            let content = serde_json::from_value(content).expect("valid preview settings");
+            let settings = MarkdownPreviewSettings::from_settings(&content);
+            assert_eq!(settings.mermaid_layout.alignment, expected);
+            assert!(!settings.mermaid_layout.has_width_override());
         }
     }
 

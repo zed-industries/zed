@@ -1731,9 +1731,9 @@ pub enum MermaidAlignment {
 
 /// Layout overrides for top-level Mermaid diagrams.
 ///
-/// Default values preserve Zed's native Mermaid layout. Diagrams nested in
-/// lists, block quotes, or other constrained parents continue to use their
-/// parent layout.
+/// These defaults describe Zed's native renderer, independently of the
+/// Markdown Preview preference defaults. Nested diagrams use this baseline
+/// to retain their parent layout.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct MermaidLayout {
     /// Optional Mermaid-specific maximum width for the block.

@@ -507,6 +507,7 @@ fn render_custom_agent_form_page(
                 None,
                 None,
                 false,
+                None,
                 cx,
             )
             .into_any_element(),
@@ -521,6 +522,7 @@ fn render_custom_agent_form_page(
                 None,
                 None,
                 false,
+                None,
                 cx,
             )
             .into_any_element(),
@@ -535,6 +537,7 @@ fn render_custom_agent_form_page(
                 None,
                 None,
                 false,
+                None,
                 cx,
             )
             .into_any_element(),
@@ -642,6 +645,7 @@ fn render_env_section(
         None,
         None,
         false,
+        None,
         cx,
     )
     .into_any_element()
