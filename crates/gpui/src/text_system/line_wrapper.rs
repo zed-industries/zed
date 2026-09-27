@@ -118,6 +118,12 @@ impl LineWrapper {
 
                 width += item_width;
                 if width > wrap_width && ix > last_wrap_ix {
+                    let carried_width = if last_candidate_ix > 0 {
+                        width - last_candidate_width
+                    } else {
+                        item_width
+                    };
+
                     if let (None, Some(first_non_whitespace_ix)) = (indent, first_non_whitespace_ix)
                     {
                         let base_indent =
@@ -127,11 +133,14 @@ impl LineWrapper {
                             IndentAdjustment::SameIndent => base_indent,
                             IndentAdjustment::ExtraColumns(extra) => {
                                 let candidate = base_indent + extra;
-                                // Reserve headroom for at least one full-width character (2 columns)
-                                // so a multi-column glyph on the continuation line does not
-                                // immediately exceed wrap width and degrade into 1-character rows.
-                                if (candidate as f32 + 2.0) * self.width_for_char(' ') > wrap_width
-                                {
+                                let candidate_indent_width =
+                                    self.width_for_char(' ') * candidate as f32;
+                                // Reserve headroom for any carried suffix from an earlier word boundary
+                                // (and at least 2 columns for a full-width character) so the continuation
+                                // line does not immediately exceed wrap width.
+                                let min_headroom =
+                                    carried_width.max(self.width_for_char(' ') * 2.0);
+                                if candidate_indent_width + min_headroom > wrap_width {
                                     0
                                 } else {
                                     Self::MAX_INDENT.min(candidate)
@@ -1715,6 +1724,63 @@ mod tests {
                 )
                 .collect::<Vec<_>>(),
             &[Boundary::new(17, 0)]
+        );
+
+        // When the carried suffix fits within wrap width alongside extra indent
+        // (1 indent + 9 carried suffix = 10 <= 10), the extra indent is applied.
+        //
+        // Expected wrapped lines (10 columns):
+        //   |a         |  (row 0: "a ", len 2)
+        //   | abcdefghi|  (row 1: 1 indent + "abcdefghi", len 10)
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text("a abcdefghi")],
+                    wrap_width,
+                    IndentAdjustment::ExtraColumns(1),
+                )
+                .collect::<Vec<_>>(),
+            &[Boundary::new(2, 1)]
+        );
+
+        // When extra indent exceeds wrap width by even 1 column
+        // (2 indent + 9 carried suffix = 11 > 10), indent falls back to 0.
+        //
+        // Expected wrapped lines (10 columns):
+        //   |a         |  (row 0: "a ", len 2)
+        //   |abcdefghi |  (row 1: 0 indent + "abcdefghi", len 9)
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text("a abcdefghi")],
+                    wrap_width,
+                    IndentAdjustment::ExtraColumns(2),
+                )
+                .collect::<Vec<_>>(),
+            &[Boundary::new(2, 0)]
+        );
+
+        // When text wraps at an earlier word boundary, the carried suffix
+        // must be accounted for so indent + carried_suffix <= wrap_width.
+        //
+        // "a abcdefghij" with wrap_width 10 columns, ExtraColumns(8):
+        // candidate = 0 + 8 = 8.
+        // carried suffix = "abcdefghi" (9 columns).
+        // 8 indent + 9 carried suffix = 17 > 10, so indent falls back to 0.
+        //
+        // Expected wrapped lines (10 columns):
+        //   |a         |  (row 0: "a ", len 2)
+        //   |abcdefghij|  (row 1: 0 indent + "abcdefghij", len 10)
+        let carried_text = "a abcdefghij";
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text(carried_text)],
+                    wrap_width,
+                    IndentAdjustment::ExtraColumns(8),
+                )
+                .collect::<Vec<_>>(),
+            &[Boundary::new(2, 0)]
         );
     }
 }
