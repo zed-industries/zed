@@ -535,23 +535,26 @@ Ordered by dependency. Items marked **critical path** unblock several others.
   `Entity<T: Render>` uses its own id for both, as before the view tree; a repeated
   mount of one entity gets the next occurrence, and element state is per node, so
   sibling mounts of one entity keep separate recordings and local state.
-- [ ] Inspector: identity and per-element overrides on node state; overrides read as
-  entities so edits dirty exactly one node. Deletes the inspector full-refresh
-  fallback. Build on main's cheaper inspector bookkeeping (#64309) rather than beside it.
-- [ ] Debug selectors (`debug_selector`, `Window::debug_bounds`): a dedicated pass for
-  reused views. Main fixed their interaction with the old `.cached()` views (#64433);
-  the view tree replaces that caching, so selectors must be recorded in node output and
-  replayed, not recollected only by views that render.
+- [ ] Rewrite the inspector and debug selectors on the node tree (separate PRs). Today
+  both are per-frame side channels: the inspector rebuilds its picture of the elements
+  every frame (main made that cheaper in #64309, and the view tree falls back to full
+  refreshes while it is open), and debug selectors are collected by whichever views
+  render (main patched their interaction with `.cached()` in #64433). On the node tree:
+  element identity, bounds and overrides live on node state and are walked on demand;
+  overrides are entities, so an edit dirties exactly one node; selectors are node
+  output and replay with it. Deletes the inspector full-refresh fallback.
 - [ ] Accessibility: stable per-mount ids; partial `TreeUpdate`s for rebuilt
   subtrees. Deletes the accessibility full-refresh fallback.
 
 ### Capabilities the lifecycle enables
 
-- [ ] Images: node-local `Entity` holding the load; completion notifies; release
-  calls `drop_image`; a per-window `WeakEntity` lookup shares tiles between nodes.
-  Retire `ImageCache`'s lifecycle logic; keep a decode cache as a plain LRU. Start from
-  main's owning asset cache entries (#63934), and keep every view waiting on a load
-  redrawn when it completes.
+- [ ] Rewrite assets and images on node lifecycle (separate PR): a load is a
+  node-local `Entity`; the views that read it depend on it, so completion notifies
+  exactly them; unmount releases it (`drop_image` for images); a per-window
+  `WeakEntity` lookup shares loads between nodes. Retires `ImageCache`, the
+  `use_asset` completion tracking, and the per-cache notify-on-completion code (see
+  `RetainAllImageCache`); a decode cache stays as a plain LRU. Supersedes main's owning
+  asset cache entries (#63934), which fix ownership without the node lifecycle.
 - [ ] `window.on_unmount` for plain `Entity<V>` views (components already get it via
   `on_release`).
 - [ ] GPU damage regions from `changed_bounds` through submission and presentation,
