@@ -1370,10 +1370,24 @@ impl ViewTree {
     pub(crate) fn take_retired_layouts(&mut self) -> Vec<LayoutId> {
         let mut retired = std::mem::take(&mut self.retired_layouts);
         if self.frame_bound_count > 0 {
-            for node in self.nodes.values_mut() {
-                if node.frame_bound
-                    && let Some(layout) = node.layout.take()
-                {
+            let frame_bound: Vec<ViewNodeId> = self
+                .nodes
+                .iter()
+                .filter(|(_, node)| node.frame_bound && node.layout.is_some())
+                .map(|(node_id, _)| node_id)
+                .collect();
+            for node_id in frame_bound {
+                let Some(layout) = self.nodes[node_id].layout.take() else {
+                    continue;
+                };
+                // A node that rendered a child view directly shares the child's root,
+                // which stays retained while the child is not frame-bound itself.
+                let shared = self.nodes[node_id].children.iter().any(|child| {
+                    self.nodes
+                        .get(*child)
+                        .is_some_and(|child| !child.frame_bound && child.layout == Some(layout))
+                });
+                if !shared {
                     retired.push(layout);
                 }
             }

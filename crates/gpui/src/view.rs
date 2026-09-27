@@ -3168,6 +3168,108 @@ mod tests {
         }
     }
 
+    /// Takes a measured sample, which binds its view to the frame, and lays its child out
+    /// as its own layout.
+    struct SampledPassThrough(crate::AnyElement);
+
+    impl IntoElement for SampledPassThrough {
+        type Element = Self;
+        fn into_element(self) -> Self {
+            self
+        }
+    }
+
+    impl crate::Element for SampledPassThrough {
+        type RequestLayoutState = ();
+        type PrepaintState = ();
+        fn id(&self) -> Option<crate::ElementId> {
+            None
+        }
+        fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+            None
+        }
+        fn request_layout(
+            &mut self,
+            _: Option<&crate::GlobalElementId>,
+            _: Option<&crate::InspectorElementId>,
+            window: &mut Window,
+            cx: &mut crate::App,
+        ) -> (crate::LayoutId, ()) {
+            window.request_measured_layout(Default::default(), |_, _, _, _| size(px(1.), px(1.)));
+            (self.0.request_layout(window, cx), ())
+        }
+        fn prepaint(
+            &mut self,
+            _: Option<&crate::GlobalElementId>,
+            _: Option<&crate::InspectorElementId>,
+            _: crate::Bounds<crate::Pixels>,
+            _: &mut (),
+            window: &mut Window,
+            cx: &mut crate::App,
+        ) {
+            self.0.prepaint(window, cx);
+        }
+        fn paint(
+            &mut self,
+            _: Option<&crate::GlobalElementId>,
+            _: Option<&crate::InspectorElementId>,
+            _: crate::Bounds<crate::Pixels>,
+            _: &mut (),
+            _: &mut (),
+            window: &mut Window,
+            cx: &mut crate::App,
+        ) {
+            self.0.paint(window, cx);
+        }
+    }
+
+    /// A view bound to the frame gives up its layout root when the frame ends. When it laid
+    /// a clean child view out as its own root, that root is still the child's.
+    #[gpui::test]
+    fn frame_bound_views_keep_a_child_root_they_share(cx: &mut TestAppContext) {
+        struct Leaf;
+        impl Render for Leaf {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size(px(20.)).bg(rgb(0x336699))
+            }
+        }
+        struct Sampler(Entity<Leaf>);
+        impl Render for Sampler {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                SampledPassThrough(self.0.clone().into_any_element())
+            }
+        }
+        struct Host {
+            sampler: Entity<Sampler>,
+            revision: usize,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .child(div().size(px(10.)).bg(rgb(self.revision as u32)))
+                    .child(self.sampler.clone())
+            }
+        }
+        let window = cx.open_window(size(px(100.), px(100.)), |_, cx| Host {
+            sampler: cx.new(|cx| Sampler(cx.new(|_| Leaf))),
+            revision: 0,
+        });
+        cx.run_until_parked();
+        for _ in 0..2 {
+            window
+                .update(cx, |host, _, cx| {
+                    host.revision += 1;
+                    cx.notify();
+                })
+                .expect("window open");
+            cx.run_until_parked();
+            let quads = window
+                .update(cx, |_, window, _| window.rendered_frame.scene.quads.len())
+                .expect("window open");
+            assert_eq!(quads, 2);
+        }
+    }
+
     /// A view laid out before a transaction and prepainted only inside it, which fails, is
     /// left as laid out: the frame does not record the dispatch nodes the rollback removed.
     #[gpui::test]
