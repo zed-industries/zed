@@ -1,11 +1,14 @@
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use client::Client;
+use gpui::profiler::hang::{HangDetector, SerializedHangIncident};
 use gpui::{AppContext, TasksIncluded, profiler};
 use parking_lot::Mutex;
 use ui::App;
+
+use crate::STARTUP_TIME;
 
 mod logging;
 mod task_traces;
@@ -23,6 +26,8 @@ gpui::actions!(
     ]
 );
 
+const MAX_SERIALIZED_CONTRIBUTORS: usize = 8;
+
 pub(crate) fn start(client: Arc<Client>, cx: &mut App) {
     let hang_time = if cfg!(debug_assertions) {
         if cfg!(windows) {
@@ -36,11 +41,22 @@ pub(crate) fn start(client: Arc<Client>, cx: &mut App) {
         Duration::from_millis(100)
     };
 
+    let frame_budget = if cfg!(debug_assertions) {
+        // Unoptimized builds routinely spend more than a release frame
+        // budget on ordinary frames; keep dev builds from reporting
+        // constantly.
+        Duration::from_millis(100)
+    } else {
+        // At least one dropped frame on any display. Generous while budget
+        // incidents are plentiful; lower it as they get fixed.
+        Duration::from_millis(24)
+    };
+
     if cfg!(debug_assertions) {
         log::warn!("debug build, only reporting hangs longer then {hang_time:?}");
     }
 
-    start_hang_detection(hang_time, client, cx);
+    start_hang_detection(hang_time, frame_budget, client, cx);
 
     cx.on_action(move |_: &HangAction, _| {
         log::warn!(
@@ -75,16 +91,44 @@ pub(crate) fn start(client: Arc<Client>, cx: &mut App) {
     });
 }
 
-fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &App) {
+fn start_hang_detection(
+    report_longer_then: Duration,
+    frame_budget: Duration,
+    client: Arc<Client>,
+    cx: &App,
+) {
     let foreground_thread = thread::current().id();
     let monitor_interval = Duration::from_secs(1);
-    let telemetry = Arc::new(Mutex::new(telemetry::Reporter::new(foreground_thread)));
+    let telemetry = Arc::new(Mutex::new(telemetry::Reporter::new()));
+    let incident_detector = Arc::new(spin::Mutex::new(HangDetector::new(
+        cx.foreground_journal(),
+        report_longer_then,
+        frame_budget,
+    )));
+    let started = Instant::now();
+    let startup = *STARTUP_TIME.get().unwrap_or(&started);
     let mut log = logging::Reporter::new(monitor_interval, report_longer_then, foreground_thread);
 
-    let telemetry2 = Arc::clone(&telemetry);
     cx.on_app_quit({
+        let telemetry = Arc::clone(&telemetry);
+        let incident_detector = Arc::clone(&incident_detector);
         move |_| {
-            telemetry2.lock().send();
+            let mut incident_detector = incident_detector.lock();
+            let incidents = incident_detector.poll();
+            let first_present_at = incident_detector.first_present_at();
+            drop(incident_detector);
+
+            let mut telemetry = telemetry.lock();
+            for incident in &incidents {
+                telemetry.add(SerializedHangIncident::convert(
+                    startup,
+                    incident,
+                    MAX_SERIALIZED_CONTRIBUTORS,
+                    first_present_at,
+                ));
+            }
+            telemetry.send();
+            drop(telemetry);
             client.telemetry().flush_events()
         }
     })
@@ -100,14 +144,25 @@ fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &
             thread::sleep(Duration::from_millis(200));
             loop {
                 thread::sleep(monitor_interval);
-                // TODO(yara) the telemetry should not include still running tasks while the
-                // reports being logged should.
                 let task_stats = profiler::take_all_stats(TasksIncluded::CompletedAndRunning);
                 let action_stats = profiler::take_action_stats();
 
                 {
+                    let mut incident_detector = incident_detector.lock();
+                    let incidents = incident_detector.poll();
+                    let first_present_at = incident_detector.first_present_at();
+                    drop(incident_detector);
+
                     let mut telemetry = telemetry.lock();
-                    telemetry.update(&task_stats, &action_stats);
+                    for incident in &incidents {
+                        let serialized_incident = SerializedHangIncident::convert(
+                            startup,
+                            incident,
+                            MAX_SERIALIZED_CONTRIBUTORS,
+                            first_present_at,
+                        );
+                        telemetry.add(serialized_incident);
+                    }
                     telemetry.send_periodically();
                 }
 

@@ -246,7 +246,7 @@ fn linux_location_is_equal_or_descendant(
     location: &HostFilesystemLocation,
     ancestor: &HostFilesystemLocation,
 ) -> bool {
-    use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
+    use std::os::fd::{AsFd as _, AsRawFd as _, FromRawFd as _, OwnedFd};
 
     if location == ancestor {
         return true;
@@ -270,15 +270,15 @@ fn linux_location_is_equal_or_descendant(
             OwnedFd::from_raw_fd(fd)
         };
 
-        let Some(parent_identity) = linux_fd_identity(parent.as_raw_fd()) else {
+        let Some(parent_identity) = linux_fd_identity(parent.as_fd()) else {
             log::warn!("failed to fstat parent fd while checking protected path overlap");
             return false;
         };
-        let Some(current_identity) = linux_fd_identity(current.as_raw_fd()) else {
+        let Some(current_identity) = linux_fd_identity(current.as_fd()) else {
             log::warn!("failed to fstat current fd while checking protected path overlap");
             return false;
         };
-        let Some(ancestor_identity) = linux_fd_identity(ancestor.linux_fd().as_raw_fd()) else {
+        let Some(ancestor_identity) = linux_fd_identity(ancestor.linux_fd().as_fd()) else {
             log::warn!("failed to fstat protected fd while checking protected path overlap");
             return false;
         };

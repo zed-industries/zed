@@ -22,6 +22,7 @@ use std::borrow::Cow;
 use std::fmt::Write as _;
 
 use anyhow::Result;
+use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
 
 use crate::MermaidTheme;
@@ -68,7 +69,7 @@ fn is_bad_rect(e: &BytesStart) -> Result<bool> {
         match e.try_get_attribute(attr_name)? {
             None => return Ok(true),
             Some(attr) => {
-                let val = attr.unescape_value()?;
+                let val = attr.normalized_value(XmlVersion::Implicit1_0)?;
                 let trimmed = val.trim();
                 if trimmed.is_empty() {
                     return Ok(true);
@@ -183,7 +184,7 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
     fn rewrite_svg_style(&self, e: &BytesStart<'_>) -> Result<Option<BytesStart<'a>>> {
         let Some(style) = e
             .try_get_attribute("style")?
-            .map(|a| a.unescape_value())
+            .map(|a| a.normalized_value(XmlVersion::Implicit1_0))
             .transpose()?
         else {
             return Ok(None);
@@ -207,7 +208,7 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
             let attr = attr?;
             match attr.key.local_name().as_ref() {
                 b"fill" if fix_fill => {
-                    let val = attr.unescape_value()?;
+                    let val = attr.normalized_value(XmlVersion::Implicit1_0)?;
                     if is_hardcoded_text_fill(&val) {
                         new_elem.push_attribute(("fill", self.text_color_css.as_str()));
                     } else {
@@ -220,7 +221,7 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
                 }
                 b"style" => {
                     has_style = true;
-                    let style = attr.unescape_value()?;
+                    let style = attr.normalized_value(XmlVersion::Implicit1_0)?;
                     let style = rewrite_font_style(&style, &self.font_family_css);
                     new_elem.push_attribute(("style", style.as_ref()));
                 }

@@ -7,7 +7,7 @@ use menu::{Cancel, Confirm, SelectNext, SelectPrevious};
 use pretty_assertions::{assert_eq, assert_matches};
 use project::{FS_WATCH_LATENCY, RemoveOptions};
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{SettingsStore, SplicingVec};
 use util::{path, rel_path::rel_path};
 use workspace::{
     AppState, CloseActiveItem, Item, MultiWorkspace, OpenOptions, ToggleFileFinder, Workspace,
@@ -1003,10 +1003,10 @@ async fn test_ignored_root_with_file_inclusions(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_inclusions = Some(vec![
-                    "height_demo/**/hi_bonjour".to_string(),
+                settings.project.worktree.file_scan_inclusions = Some(SplicingVec::from(vec![
                     "**/height_1".to_string(),
-                ]);
+                    "height_demo/**/hi_bonjour".to_string(),
+                ]));
             });
         })
     });
@@ -1097,7 +1097,8 @@ async fn test_ignored_root_with_file_inclusions_repro(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_inclusions = Some(vec!["**/.env".to_string()]);
+                settings.project.worktree.file_scan_inclusions =
+                    Some(SplicingVec::from(vec!["**/.env".to_string()]));
             });
         })
     });
@@ -5183,6 +5184,67 @@ async fn test_exact_filename_with_directory_token(cx: &mut TestAppContext) {
         assert_eq!(
             matches[0].path.as_unix_str(),
             "crates/agent_servers/src/acp.rs",
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_hover_does_not_set_has_changed_selected_index(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a.rs": "",
+                "b.rs": "",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    open_close_queried_buffer("a", 1, "a.rs", &workspace, cx).await;
+    open_close_queried_buffer("b", 1, "b.rs", &workspace, cx).await;
+
+    let picker = open_file_picker(&workspace, cx);
+
+    picker.update(cx, |picker, _| {
+        assert!(
+            picker.delegate.matches.len() >= 2,
+            "need at least 2 matches"
+        );
+    });
+
+    picker.update_in(cx, |picker, window, cx| {
+        picker.set_hovered_index(1, window, cx);
+    });
+
+    picker.update(cx, |picker, _| {
+        assert!(
+            !picker.delegate.has_changed_selected_index,
+            "hover should not set `has_changed_selected_index`"
+        );
+        assert_eq!(
+            picker.delegate.selected_index(),
+            1,
+            "hover should change `selected_index`"
+        );
+    });
+
+    picker.update_in(cx, |picker, window, cx| {
+        picker.cycle_selection(window, cx);
+    });
+
+    picker.update(cx, |picker, _| {
+        assert!(
+            picker.delegate.has_changed_selected_index,
+            "keyboard should set `has_changed_selected_index`"
         );
     });
 }

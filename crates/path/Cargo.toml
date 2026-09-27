@@ -7,6 +7,7 @@ license = "Apache-2.0"
 
 [lib]
 path = "src/path.rs"
+doctest = false
 
 [features]
 test-support = []
@@ -18,6 +19,7 @@ serde = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
+pretty_assertions.workspace = true
 
 [lints]
 workspace = true

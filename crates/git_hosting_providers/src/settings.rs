@@ -8,7 +8,7 @@ use settings::{
 use url::Url;
 use util::ResultExt as _;
 
-use crate::{Bitbucket, Forgejo, Gitea, Github, Gitlab, SourceHut};
+use crate::{Bitbucket, Forgejo, Gitea, Github, Gitlab, SourceHut, Tangled};
 
 pub(crate) fn init(cx: &mut App) {
     init_git_hosting_provider_settings(cx);
@@ -51,6 +51,7 @@ fn update_git_hosting_providers_from_settings(cx: &mut App) {
                 GitHostingProviderKind::SourceHut => {
                     Arc::new(SourceHut::new(&provider.name, url)) as _
                 }
+                GitHostingProviderKind::Tangled => Arc::new(Tangled::new(&provider.name, url)) as _,
             })
         });
 

@@ -109,6 +109,11 @@ pub struct NotebookEditor {
     kernel_picker_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>>,
 }
 
+enum SaveDestination {
+    CurrentPath,
+    NewPath(ProjectPath),
+}
+
 impl NotebookEditor {
     pub fn new(
         project: Entity<Project>,
@@ -335,6 +340,56 @@ impl NotebookEditor {
             }
         }
         cx.notify();
+    }
+
+    fn save_impl(
+        &mut self,
+        destination: SaveDestination,
+        project: Entity<Project>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let notebook = self.to_notebook(cx);
+        let project_path = self.notebook_item.read(cx).project_path.clone();
+
+        self.mark_as_saved(cx);
+
+        cx.spawn(async move |this, cx| {
+            let json =
+                serde_json::to_string_pretty(&notebook).context("Failed to serialize notebook")?;
+            let buffer = project
+                .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                .await?;
+            buffer.update(cx, |buffer, cx| buffer.set_text(json, cx));
+
+            match destination {
+                SaveDestination::CurrentPath => {
+                    project
+                        .update(cx, |project, cx| project.save_buffer(buffer, cx))
+                        .await
+                }
+                SaveDestination::NewPath(new_path) => {
+                    project
+                        .update(cx, |project, cx| {
+                            project.save_buffer_as(buffer, new_path.clone(), cx)
+                        })
+                        .await?;
+
+                    // The buffer now lives at the new path, so the notebook has
+                    // to follow it or the next save writes to the old file.
+                    let entry_id = project.read_with(cx, |project, cx| {
+                        project.entry_for_path(&new_path, cx).map(|entry| entry.id)
+                    });
+                    this.update(cx, |this, cx| {
+                        this.notebook_item.update(cx, |notebook_item, _| {
+                            notebook_item.project_path = new_path;
+                            if let Some(entry_id) = entry_id {
+                                notebook_item.id = entry_id;
+                            }
+                        })
+                    })
+                }
+            }
+        })
     }
 
     fn launch_kernel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1578,7 +1633,6 @@ impl Focusable for NotebookEditor {
 
 // Intended to be a NotebookBuffer
 pub struct NotebookItem {
-    path: PathBuf,
     project_path: ProjectPath,
     languages: Arc<LanguageRegistry>,
     // Raw notebook data
@@ -1595,7 +1649,6 @@ impl project::ProjectItem for NotebookItem {
     ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
         let path = path.clone();
         let project = project.clone();
-        let fs = project.read(cx).fs().clone();
         let languages = project.read(cx).languages().clone();
 
         // For single-file worktrees the relative path is empty, so fall back
@@ -1609,9 +1662,6 @@ impl project::ProjectItem for NotebookItem {
 
         if is_notebook {
             Some(cx.spawn(async move |cx| {
-                let abs_path =
-                    abs_path.with_context(|| format!("finding the absolute path of {path:?}"))?;
-
                 // todo: watch for changes to the file
                 let buffer = project
                     .update(cx, |project, cx| project.open_buffer(path.clone(), cx))
@@ -1668,7 +1718,6 @@ impl project::ProjectItem for NotebookItem {
                     .context("Entry not found")?;
 
                 Ok(cx.new(|_| NotebookItem {
-                    path: abs_path,
                     project_path: path,
                     languages,
                     notebook,
@@ -1862,18 +1911,7 @@ impl Item for NotebookEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let notebook = self.to_notebook(cx);
-        let path = self.notebook_item.read(cx).path.clone();
-        let fs = project.read(cx).fs().clone();
-
-        self.mark_as_saved(cx);
-
-        cx.spawn(async move |_this, _cx| {
-            let json =
-                serde_json::to_string_pretty(&notebook).context("Failed to serialize notebook")?;
-            fs.atomic_write(path, json).await?;
-            Ok(())
-        })
+        self.save_impl(SaveDestination::CurrentPath, project, cx)
     }
 
     fn save_as(
@@ -1883,20 +1921,7 @@ impl Item for NotebookEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let notebook = self.to_notebook(cx);
-        let fs = project.read(cx).fs().clone();
-
-        let abs_path = project.read(cx).absolute_path(&path, cx);
-
-        self.mark_as_saved(cx);
-
-        cx.spawn(async move |_this, _cx| {
-            let abs_path = abs_path.context("Failed to get absolute path")?;
-            let json =
-                serde_json::to_string_pretty(&notebook).context("Failed to serialize notebook")?;
-            fs.atomic_write(abs_path, json).await?;
-            Ok(())
-        })
+        self.save_impl(SaveDestination::NewPath(path), project, cx)
     }
 
     fn reload(
@@ -2245,6 +2270,98 @@ mod tests {
 
         notebook_item.read_with(cx, |item, _| {
             assert_eq!(item.notebook.cells.len(), 1);
+        });
+    }
+
+    /// Notebooks must be saved through the project rather than through the
+    /// client's own filesystem, otherwise a remote notebook's path is resolved
+    /// against the local machine and the save fails.
+    #[gpui::test]
+    async fn test_save_goes_through_the_project(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/notebooks"),
+            json!({ "test.ipynb": NOTEBOOK_WITH_ONE_CODE_CELL }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/notebooks").as_ref()], cx).await;
+        cx.update(|cx| ReplStore::init(fs.clone(), cx));
+
+        let project_path = project.read_with(cx, |project, cx| ProjectPath {
+            worktree_id: project.worktrees(cx).next().unwrap().read(cx).id(),
+            path: rel_path("test.ipynb").into(),
+        });
+
+        let notebook_item = cx
+            .update(|cx| {
+                NotebookItem::try_open(&project, &project_path, cx)
+                    .expect("ipynb files should be openable as notebooks")
+            })
+            .await
+            .expect("notebook should parse");
+
+        // Held across the save: a save that bypasses the project writes the file
+        // behind this buffer's back, leaving it stale.
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer(project_path.clone(), cx)
+            })
+            .await
+            .expect("notebook buffer should open");
+
+        // Rendering the notebook animates the kernel status icon, which makes
+        // `run_until_parked` spin forever; only the editor entity is needed here.
+        let cx = cx.add_empty_window();
+        let notebook_editor = cx.update(|window, cx| {
+            cx.new(|cx| NotebookEditor::new(project.clone(), notebook_item, window, cx))
+        });
+
+        let cell_editor = notebook_editor.read_with(cx, |notebook_editor, cx| {
+            let cell_id = notebook_editor
+                .cell_order
+                .first()
+                .expect("notebook has one cell");
+            let Some(Cell::Code(cell)) = notebook_editor.cell_map.get(cell_id) else {
+                panic!("expected a code cell");
+            };
+            cell.read(cx).editor().clone()
+        });
+        cell_editor.update_in(cx, |cell_editor, window, cx| {
+            cell_editor.set_text("print('goodbye')", window, cx);
+        });
+
+        notebook_editor
+            .update_in(cx, |notebook_editor, window, cx| {
+                notebook_editor.save(SaveOptions::default(), project.clone(), window, cx)
+            })
+            .await
+            .expect("saving the notebook should succeed");
+
+        let saved = String::from_utf8(
+            fs.read_file_sync(path!("/notebooks/test.ipynb"))
+                .expect("notebook should still exist"),
+        )
+        .expect("notebook should be valid UTF-8");
+        assert!(
+            saved.contains("print('goodbye')"),
+            "the edited cell should be written to the notebook, got: {saved}"
+        );
+
+        buffer.read_with(cx, |buffer, _| {
+            assert_eq!(
+                buffer.text(),
+                saved,
+                "the project's buffer should hold the saved notebook"
+            );
+            assert!(!buffer.is_dirty(), "saving should leave the buffer clean");
         });
     }
 }

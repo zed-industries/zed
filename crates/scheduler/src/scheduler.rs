@@ -17,7 +17,6 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    thread,
     time::Duration,
 };
 
@@ -84,6 +83,7 @@ pub trait Scheduler: Send + Sync {
     /// Returns `true` if the future completed, `false` if it timed out.
     /// The future is passed as a pinned mutable reference so the caller
     /// retains ownership and can continue polling or return it on timeout.
+    #[cfg(not(target_family = "wasm"))]
     fn block(
         &self,
         session_id: Option<SessionId>,
@@ -151,10 +151,21 @@ pub trait Scheduler: Send + Sync {
 /// work don't disturb any other executor in the process.
 ///
 /// `f` is called on the dedicated thread with a [`LocalExecutor`] pinned
-/// to it. The future `f` returns may freely be `!Send`. The returned `Task` is
-/// that future's task: dropping it cancels the root, but detached children
-/// keep running until they finish. The thread shuts down once the executor and
-/// every task on it are gone.
+/// to it. The future `f` returns may freely be `!Send`. The returned `Task`
+/// resolves to that future's output: dropping it cancels the root, but
+/// detached children keep running until they finish. The thread shuts down
+/// once the executor and every task on it are gone.
+///
+/// This function never blocks: the returned task starts as an asynchronous
+/// rendezvous that resolves to the root task's handle once the dedicated
+/// thread has spawned it, and behaves like that handle from then on. That
+/// makes it safe to call from threads that must not block, such as the web
+/// main thread. On wasm targets the thread is a web worker and requires the
+/// `wasm-threads` cargo feature (and a shared-memory build); without it this
+/// panics. Spawning a worker is far more expensive than an OS thread —
+/// module instantiation plus a fresh function table — so on the web treat a
+/// dedicated session as a long-lived place to send work, not a per-job
+/// convenience.
 ///
 /// The caller is responsible for supplying a `session_id` that's distinct from
 /// every other live session on `scheduler`. Concrete schedulers typically wrap
@@ -169,32 +180,47 @@ where
     Fut: Future + 'static,
     Fut::Output: Send + 'static,
 {
-    let (runnable_sender, runnable_receiver) = flume::unbounded::<Runnable<RunnableMeta>>();
-    let (task_sender, task_receiver) = flume::bounded::<Task<Fut::Output>>(1);
+    let (task, delivery) = Task::rendezvous();
+    let thread_body = move || {
+        let (runnable_sender, runnable_receiver) = flume::unbounded::<Runnable<RunnableMeta>>();
+        let dispatch = move |runnable: Runnable<RunnableMeta>| {
+            let _ = runnable_sender.send(runnable);
+        };
+        let executor = LocalExecutor::new(session_id, scheduler, dispatch);
+        let root_task = executor.spawn(f(executor.clone()));
+        // If the caller already dropped or detached the rendezvous task,
+        // delivery applies that disposition to the root task here.
+        delivery.deliver(root_task);
+        // After this drop, every strong reference to the runnable sender
+        // lives inside a spawned task or a user-held executor clone. The
+        // recv loop exits once all of those are gone.
+        drop(executor);
 
-    thread::Builder::new()
-        .name(format!("spawn_dedicated session {:?}", session_id))
-        .spawn(move || {
-            let dispatch = move |runnable: Runnable<RunnableMeta>| {
-                let _ = runnable_sender.send(runnable);
-            };
-            let executor = LocalExecutor::new(session_id, scheduler, dispatch);
-            let root_task = executor.spawn(f(executor.clone()));
-            let _ = task_sender.send(root_task);
-            // After this drop, every strong reference to the runnable sender
-            // lives inside a spawned task or a user-held executor clone. The
-            // recv loop exits once all of those are gone.
-            drop(executor);
+        while let Ok(runnable) = runnable_receiver.recv() {
+            runnable.run();
+        }
+    };
+    spawn_dedicated_os_thread(session_id, thread_body);
+    task
+}
 
-            while let Ok(runnable) = runnable_receiver.recv() {
-                runnable.run();
-            }
-        })
+fn spawn_dedicated_os_thread(session_id: SessionId, thread_body: impl FnOnce() + Send + 'static) {
+    let thread_name = format!("spawn_dedicated session {:?}", session_id);
+    #[cfg(not(target_family = "wasm"))]
+    std::thread::Builder::new()
+        .name(thread_name)
+        .spawn(thread_body)
         .expect("failed to spawn dedicated thread");
-
-    task_receiver
-        .recv()
-        .expect("dedicated thread failed to produce root task")
+    #[cfg(all(target_family = "wasm", feature = "wasm-threads"))]
+    wasm_thread::Builder::new()
+        .name(thread_name)
+        .spawn(thread_body)
+        .expect("failed to spawn dedicated thread");
+    #[cfg(all(target_family = "wasm", not(feature = "wasm-threads")))]
+    {
+        let _ = (thread_name, thread_body);
+        panic!("spawn_dedicated on wasm requires the scheduler crate's `wasm-threads` feature");
+    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]

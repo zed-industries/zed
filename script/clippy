@@ -11,11 +11,11 @@ set -x
 
 # If local, run other checks if we have the tools installed.
 if [[ -z "${GITHUB_ACTIONS+x}" ]]; then
-    which cargo-machete >/dev/null 2>&1 || exit 0
-    cargo machete
+    which cargo-shear >/dev/null 2>&1 || exit 0
+    cargo shear --locked --deny-warnings
 
     which typos >/dev/null 2>&1 || exit 0
-    typos --config typos.toml
+    typos --config .config/typos.toml
 
     which buf >/dev/null 2>&1 || exit 0
     buf lint crates/proto/proto
