@@ -1,9 +1,13 @@
 use crate::{
     AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, Context, Element, ElementId, Entity,
     EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, Pixels, Render,
-    RenderOnce, Style, StyleRefinement, ViewNodeCacheKey, ViewNodeId, WeakEntity,
+    RenderOnce, Style, StyleRefinement, ViewNodeId, WeakEntity,
 };
-use crate::{AppContext as _, Empty, Window, view_node::MetadataPhase, view_tree::RenderedReads};
+use crate::{
+    AppContext as _, Empty, Window,
+    view_node::MetadataPhase,
+    view_tree::{DependencySet, RenderedReads},
+};
 use anyhow::Result;
 use refineable::Refineable;
 use std::{any::TypeId, fmt};
@@ -403,9 +407,9 @@ enum ViewNodePrepaintState {
     Graft {
         node_id: ViewNodeId,
     },
+    /// The cache key the render is stored under is kept with its reads.
     Render {
         node_id: ViewNodeId,
-        cache_key: ViewNodeCacheKey,
         reads: RenderedReads,
     },
 }
@@ -602,29 +606,20 @@ impl ViewElementNode {
                         element
                     }
                 });
-                let reads = match reads {
-                    Some(reads) => {
-                        window.view_tree.continue_rendered_reads(
-                            reads,
-                            MetadataPhase::Prepaint,
-                            accessed_entities,
-                        );
-                        reads
-                    }
-                    None => window.view_tree.begin_rendered_reads(
+                let reads = reads.unwrap_or_else(|| {
+                    window.view_tree.begin_rendered_reads(
                         node_id,
                         MetadataPhase::Prepaint,
-                        accessed_entities,
-                    ),
-                };
+                        DependencySet::new(),
+                    )
+                });
+                window
+                    .view_tree
+                    .finish_rendered_prepaint(reads, accessed_entities, cache_key);
                 window.finish_node_phase(node_id, true);
                 ViewElementPrepaintState {
                     element: Some(element),
-                    node: Some(ViewNodePrepaintState::Render {
-                        node_id,
-                        cache_key,
-                        reads,
-                    }),
+                    node: Some(ViewNodePrepaintState::Render { node_id, reads }),
                 }
             });
         }
@@ -653,12 +648,13 @@ impl ViewElementNode {
                         window.graft_view_node_paint(node_id);
                         window.view_tree.store_graft();
                     }
-                    ViewNodePrepaintState::Render {
-                        node_id,
-                        cache_key,
-                        reads,
-                    } => {
-                        let mut accessed_entities = window.view_tree.take_rendered_reads(reads);
+                    ViewNodePrepaintState::Render { node_id, reads } => {
+                        let Some((mut accessed_entities, cache_key)) =
+                            window.view_tree.take_rendered_prepaint(reads)
+                        else {
+                            debug_assert!(false, "a rendered prepaint is painted once");
+                            return;
+                        };
                         window.begin_view_node_paint(node_id);
                         if let Some(element) = element.element.as_mut() {
                             cx.track_reads(&mut accessed_entities, |cx| element.paint(window, cx));

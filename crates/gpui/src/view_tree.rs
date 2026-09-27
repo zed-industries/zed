@@ -121,6 +121,15 @@ pub(crate) type DependencySet = SmallVec<[EntityId; 4]>;
 #[derive(Clone, Copy)]
 pub(crate) struct RenderedReads(usize);
 
+/// A node rendering this frame: the last phase it rendered, what it has read so far, and,
+/// once it has prepainted, the cache key its render will be stored under.
+struct RenderingNode {
+    node_id: ViewNodeId,
+    phase: MetadataPhase,
+    reads: DependencySet,
+    cache_key: Option<ViewNodeCacheKey>,
+}
+
 /// Adds `entity_id` to a set being recorded. Reads of one entity tend to repeat back to
 /// back, so the last entry is checked before the rest.
 pub(crate) fn record_dependency(set: &mut DependencySet, entity_id: EntityId) {
@@ -169,7 +178,7 @@ pub(crate) struct ViewTree {
     painted_grafts: Vec<ViewNodeId>,
     /// The nodes rendering this frame, each with the last phase it rendered and what it has
     /// read so far, taken when it paints; see `begin_rendered_reads`.
-    rendered_phases: Vec<(ViewNodeId, MetadataPhase, DependencySet)>,
+    rendered_phases: Vec<RenderingNode>,
     /// The nodes mounted this frame, in order, each with whether it was created by the
     /// mount, so `rollback` can undo mounts.
     mounted_this_frame: Vec<(ViewNodeId, bool)>,
@@ -462,8 +471,8 @@ impl ViewTree {
             node.next_children.truncate(position.next_children);
         }
         let discarded = self.rendered_phases.split_off(checkpoint.rendered_phases);
-        for (_, _, accessed) in discarded {
-            self.recycle_dependency_set(accessed);
+        for rendering in discarded {
+            self.recycle_dependency_set(rendering.reads);
         }
         let rolled_back = self.mounted_this_frame.split_off(checkpoint.mounted);
         for (node_id, created) in rolled_back {
@@ -957,8 +966,8 @@ impl ViewTree {
     fn discard_frame_records(&mut self) {
         self.mounted_this_frame.clear();
         let rendered = std::mem::take(&mut self.rendered_phases);
-        for (_, _, accessed) in rendered {
-            self.recycle_dependency_set(accessed);
+        for rendering in rendered {
+            self.recycle_dependency_set(rendering.reads);
         }
     }
 
@@ -1409,30 +1418,47 @@ impl ViewTree {
         reads: DependencySet,
     ) -> RenderedReads {
         let index = self.rendered_phases.len();
-        self.rendered_phases.push((node_id, phase, reads));
+        self.rendered_phases.push(RenderingNode {
+            node_id,
+            phase,
+            reads,
+            cache_key: None,
+        });
         RenderedReads(index)
     }
 
-    /// Takes the reads kept for a node, to extend them in its next phase and return them with
-    /// `continue_rendered_reads`, or to commit them when it paints.
+    /// Takes the reads kept for a node, to extend them in its prepaint and return them with
+    /// `finish_rendered_prepaint`.
     pub(crate) fn take_rendered_reads(&mut self, reads: RenderedReads) -> DependencySet {
         self.rendered_phases
             .get_mut(reads.0)
-            .map(|(_, _, set)| std::mem::take(set))
+            .map(|rendering| std::mem::take(&mut rendering.reads))
             .unwrap_or_default()
     }
 
-    /// Returns the reads taken with `take_rendered_reads`, as of the end of `phase`.
-    pub(crate) fn continue_rendered_reads(
+    /// Returns the reads taken with `take_rendered_reads` as of the end of the node's
+    /// prepaint, with the cache key its render is stored under once it paints.
+    pub(crate) fn finish_rendered_prepaint(
         &mut self,
         reads: RenderedReads,
-        phase: MetadataPhase,
         set: DependencySet,
+        cache_key: ViewNodeCacheKey,
     ) {
-        if let Some(entry) = self.rendered_phases.get_mut(reads.0) {
-            entry.1 = phase;
-            entry.2 = set;
+        if let Some(rendering) = self.rendered_phases.get_mut(reads.0) {
+            rendering.phase = MetadataPhase::Prepaint;
+            rendering.reads = set;
+            rendering.cache_key = Some(cache_key);
         }
+    }
+
+    /// Takes what a node's layout and prepaint recorded for its paint to extend and store.
+    pub(crate) fn take_rendered_prepaint(
+        &mut self,
+        reads: RenderedReads,
+    ) -> Option<(DependencySet, ViewNodeCacheKey)> {
+        let rendering = self.rendered_phases.get_mut(reads.0)?;
+        let cache_key = rendering.cache_key.take()?;
+        Some((std::mem::take(&mut rendering.reads), cache_key))
     }
 
     /// Records, for the nodes that rendered this frame without painting, what they read and
@@ -1447,7 +1473,13 @@ impl ViewTree {
     /// painted frame, so clearing the flag does not make it reusable.
     pub(crate) fn finish_unpainted_renders(&mut self, tree: &crate::key_dispatch::DispatchTree) {
         let mut rendered = std::mem::take(&mut self.rendered_phases);
-        for (node_id, phase, accessed) in rendered.drain(..) {
+        for RenderingNode {
+            node_id,
+            phase,
+            reads: accessed,
+            ..
+        } in rendered.drain(..)
+        {
             let painted = self
                 .nodes
                 .get(node_id)
