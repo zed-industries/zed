@@ -428,6 +428,7 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                 .id(self.id.clone())
                 .items_stretch()
                 .role(Role::SpinButton)
+                .aria_disabled(true)
                 .when_some(self.aria_label, |this, label| this.aria_label(label))
                 .when_some(self.aria_description, |this, description| {
                     this.aria_description(description)
@@ -956,20 +957,69 @@ impl Component for NumberField<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::Stateful;
+
+    #[gpui::test]
+    fn number_field_accessibility_tracks_disabled_state(cx: &mut gpui::TestAppContext) {
+        cx.update(crate::test::register_settings);
+        let (view, cx) = cx.add_window_view(|_, _| NumberFieldTestView {
+            value: 1200,
+            mode: NumberFieldMode::Read,
+            disabled: false,
+            changes: 0,
+            editor_state: None,
+            callback_state: None,
+            accessibility_node: None,
+        });
+
+        for mode in [NumberFieldMode::Read, NumberFieldMode::Edit] {
+            for disabled in [false, true, false] {
+                view.update(cx, |view, cx| {
+                    view.mode = mode;
+                    view.disabled = disabled;
+                    cx.notify();
+                });
+                cx.run_until_parked();
+                view.read_with(cx, |view, _| {
+                    let node = view
+                        .accessibility_node
+                        .as_ref()
+                        .expect("accessibility node");
+                    assert_eq!(node.role(), Role::SpinButton);
+                    assert_eq!(node.label(), Some("Maximum Width"));
+                    assert_eq!(node.description(), Some("Maximum Mermaid width in pixels"));
+                    assert_eq!(node.numeric_value(), Some(1200.0));
+                    assert_eq!(node.is_disabled(), disabled);
+                    for action in [
+                        AccessibleAction::Focus,
+                        AccessibleAction::SetValue,
+                        AccessibleAction::Increment,
+                        AccessibleAction::Decrement,
+                    ] {
+                        assert_eq!(node.supports_action(action), !disabled);
+                    }
+                });
+            }
+        }
+    }
 
     struct NumberFieldTestView {
         value: usize,
+        mode: NumberFieldMode,
         disabled: bool,
         changes: usize,
         editor_state: Option<Entity<Option<WeakEntity<Editor>>>>,
         callback_state: Option<Entity<Option<OnChangeCallback<usize>>>>,
+        accessibility_node: Option<gpui::accesskit::Node>,
     }
 
     impl Render for NumberFieldTestView {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             let field = NumberField::new("number-field", self.value, window, cx)
-                .mode(NumberFieldMode::Edit, cx)
+                .mode(self.mode, cx)
                 .disabled(self.disabled)
+                .aria_label("Maximum Width")
+                .aria_description("Maximum Mermaid width in pixels")
                 .on_change(cx.listener(|this, value, _, cx| {
                     this.value = *value;
                     this.changes += 1;
@@ -977,7 +1027,16 @@ mod tests {
                 }));
             self.editor_state = Some(field.edit_editor.clone());
             self.callback_state = Some(field.on_change_state.clone());
-            div().child(field)
+            let mut element = field.render(window, cx).into_any_element();
+            let root = element
+                .downcast_mut::<Stateful<Div>>()
+                .expect("number field root");
+            let mut node = gpui::accesskit::Node::new(
+                root.a11y_role().expect("number field accessibility role"),
+            );
+            root.write_a11y_info(&mut node);
+            self.accessibility_node = Some(node);
+            div().child(element)
         }
     }
 
@@ -986,10 +1045,12 @@ mod tests {
         cx.update(crate::test::register_settings);
         let (view, cx) = cx.add_window_view(|_, _| NumberFieldTestView {
             value: 1200,
+            mode: NumberFieldMode::Edit,
             disabled: false,
             changes: 0,
             editor_state: None,
             callback_state: None,
+            accessibility_node: None,
         });
         cx.run_until_parked();
 
