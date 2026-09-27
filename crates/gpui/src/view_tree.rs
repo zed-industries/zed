@@ -167,9 +167,10 @@ pub(crate) struct ViewTree {
     invalidation_scratch: Vec<ViewNodeId>,
     /// Emptied scene records, so a replayed node records into buffers with capacity.
     spare_scenes: Vec<ViewNodeScene>,
-    /// Scratch for `snapshot_dispatch_nodes`: where each live dispatch node in the scope's
-    /// range resolves to, so parents of later nodes resolve in one step.
-    dispatch_resolution: Vec<DispatchParent>,
+    /// Scratch for `snapshot_dispatch_nodes`: where each live dispatch node the scope
+    /// pushed itself resolves to, by ascending live index, so parents of later nodes
+    /// resolve by binary search without sizing anything by the scope's whole subtree.
+    dispatch_resolution: Vec<(usize, DispatchParent)>,
     /// Scratch for `snapshot_dispatch_nodes`: the live dispatch ranges of the scope's
     /// children, which it skips.
     child_dispatch_ranges: Vec<Range<usize>>,
@@ -762,14 +763,17 @@ impl ViewTree {
             node.output.dispatch_range.start as usize..node.output.dispatch_range.end as usize;
         let mut resolution = std::mem::take(&mut self.dispatch_resolution);
         resolution.clear();
-        resolution.resize(range.len(), DispatchParent::Attachment);
-        let resolve =
-            |resolution: &[DispatchParent], live: Option<crate::DispatchNodeId>| match live {
-                Some(live) if range.contains(&live.index()) => {
-                    resolution[live.index() - range.start]
-                }
-                _ => DispatchParent::Attachment,
-            };
+        // A parent in a child's range, or outside this scope's, resolves to the attachment.
+        let resolve = |resolution: &[(usize, DispatchParent)],
+                       live: Option<crate::DispatchNodeId>| {
+            live.and_then(|live| {
+                resolution
+                    .binary_search_by_key(&live.index(), |(index, _)| *index)
+                    .ok()
+                    .map(|position| resolution[position].1)
+            })
+            .unwrap_or(DispatchParent::Attachment)
+        };
 
         // The scopes whose prepaint ran inside this one — the `Child` ops, in drawing order —
         // pushed nested ranges that they record themselves. They are not always this
@@ -803,32 +807,25 @@ impl ViewTree {
         let mut next_child_ranges = child_ranges.iter().peekable();
         let mut kept = 0u32;
         let mut live = range.start;
-        let mut skip_until = None;
         let output = &mut self.nodes[node_id].output;
         output.dispatch_nodes.clear();
         while live < range.end {
-            if skip_until.is_none()
-                && let Some(next) = next_child_ranges.peek()
+            // Children record their own ranges; jump past them rather than stepping
+            // through, so this costs the scope's own pushes, not its subtree's.
+            if let Some(next) = next_child_ranges.peek()
                 && next.start <= live
             {
-                skip_until = Some(next.end);
+                live = live.max(next.end);
                 next_child_ranges.next();
-            }
-            if let Some(end) = skip_until {
-                if live < end {
-                    live += 1;
-                    continue;
-                }
-                skip_until = None;
                 continue;
             }
             let source = crate::DispatchNodeId::from_index(live);
             let recorded = dispatch_tree.node(source);
             let parent = resolve(&resolution, recorded.parent());
             if recorded.is_empty() {
-                resolution[live - range.start] = parent;
+                resolution.push((live, parent));
             } else {
-                resolution[live - range.start] = DispatchParent::Recorded(kept);
+                resolution.push((live, DispatchParent::Recorded(kept)));
                 kept += 1;
                 output
                     .dispatch_nodes
