@@ -146,15 +146,15 @@ Register benchmark functions with `gpui::bench_group!` and `gpui::bench_main!` (
 
 Default secondaries, each skipped with a one-time note when unavailable:
 
-- **instructions** (process-wide) and **foreground instructions** (the benchmark thread only, where GPUI polls tasks, lays out, paints, and submits). Near-deterministic, so a ~0.1% spread is typical and small regressions are detectable. Blind to waits, memory stalls, and GPU work. Their ratio, **foreground share of instructions**, shows work moving between the foreground and background threads even when the total is flat.
+- **instructions** (process-wide) and **foreground instructions** (the benchmark thread only, where GPUI polls tasks, lays out, paints, and submits). Near-deterministic, so a ~0.1% spread is typical and small regressions are detectable. Blind to waits, memory stalls, and GPU shader work. Their ratio, **foreground share of instructions**, shows work moving between the foreground and background threads even when the total is flat; with a headless renderer it also exposes driver-thread submission work (about 7% of a small Metal frame).
 - **cycles** and **IPC** (`instructions / cycles`). Falling IPC with flat instructions means worse cache or branch behavior, not more work.
-- **branch misses** and **cache misses** (last-level), for diagnosing an IPC drop.
-- **foreground context switches**: voluntary switches on the benchmark thread per iteration, i.e. how many times a frame blocked on a lock, channel, or fence. This is the metric that catches the waits instructions cannot see.
+- **branch misses** and **cache misses** (last-level), for diagnosing an IPC drop. Linux only.
+- **foreground context switches**: voluntary switches on the benchmark thread per iteration, i.e. how many times a frame blocked on a lock, channel, or fence. This is the metric that catches the waits instructions cannot see. Linux only.
 - **page faults**: minor faults per iteration, a privilege-free proxy for fresh memory touched.
 
 Run one benchmark process per machine at a time. Hardware counters are per task, so instruction counts stay correct next to a concurrent `cargo bench`, but wall time, IPC, and cache misses share the hardware and degrade, and two processes requesting counters can exceed a core's counter slots, at which point the kernel multiplexes and the counts become scaled estimates (a warning is printed once). Within one process, benchmarks already run sequentially; process-wide counters can still attribute a previous benchmark's trailing background work to the next benchmark's first sample, which the foreground-thread metrics are immune to.
 
-Hardware counters need Linux `perf_event_open` access: `CAP_PERFMON`, or `/proc/sys/kernel/perf_event_paranoid` at 2 or below. Docker's default seccomp profile and many cloud VMs block it; the default mode then reports wall time plus the `getrusage` metrics (context switches, page faults), which need no privileges and also work on macOS. Criterion baselines are keyed by benchmark id, not measurement, so use distinct `--save-baseline` names when switching the primary on one machine.
+Platform support: on Linux, hardware counters come from `perf_event_open` and need `CAP_PERFMON` or `/proc/sys/kernel/perf_event_paranoid` at 2 or below; Docker's default seccomp profile and many cloud VMs block it, and the default mode then reports wall time plus the `getrusage` metrics. On Apple Silicon, instructions and cycles (both scopes) come from `proc_pid_rusage` and `thread_selfcounts` with no privileges; Intel Macs have no source. Criterion baselines are keyed by benchmark id, not measurement, so use distinct `--save-baseline` names when switching the primary on one machine.
 
 Never present instructions alone for a latency claim; pair them with wall time and the frame metrics from the same run. Other Criterion measurements plug in with `criterion_group!` and `config = Criterion::default().with_measurement(gpui::BenchMeasurement::new(primary).with_secondary("name", other))`.
 
@@ -409,7 +409,7 @@ Before accepting a GPUI benchmark, verify:
 - [ ] Cache state is controlled and documented.
 - [ ] A responsiveness signal competes with the heavy work when foreground starvation matters.
 - [ ] Frame metrics and completion throughput are both reported.
-- [ ] On Linux, instructions, IPC, and foreground context switches are reported next to wall time, and none is presented alone as the whole result.
+- [ ] Instructions and IPC (Linux and Apple Silicon) and foreground context switches (Linux) are reported next to wall time, and none is presented alone as the whole result.
 - [ ] Final correctness, ordering, and work counts are asserted.
 - [ ] The workload completes under bounded smoke and measured runs.
 - [ ] The same benchmark code runs on baseline and candidate.
