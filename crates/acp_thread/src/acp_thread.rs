@@ -3844,7 +3844,8 @@ impl AcpThread {
     }
 
     /// Form elicitations stop rendering after accept, so the associated tool
-    /// call is the scroll target for the user's answer.
+    /// call is the scroll target for the user's answer. Accepting a URL
+    /// elicitation only consents to opening a link, so it isn't an answer.
     pub fn is_user_authored_scroll_target(&self, entry: &AgentThreadEntry) -> bool {
         match entry {
             AgentThreadEntry::UserMessage(_) => true,
@@ -3856,6 +3857,7 @@ impl AcpThread {
     fn tool_call_has_accepted_user_answer(&self, tool_call_id: &acp_v1::ToolCallId) -> bool {
         self.elicitations.elicitations().iter().any(|elicitation| {
             matches!(elicitation.status, ElicitationStatus::Accepted)
+                && matches!(elicitation.request.mode, acp::ElicitationMode::Form(_))
                 && elicitation_targets_tool_call(&elicitation.request, tool_call_id)
         })
     }

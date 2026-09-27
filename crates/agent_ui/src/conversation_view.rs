@@ -9410,6 +9410,115 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_scroll_to_user_message_skips_accepted_url_elicitation(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("sign-in-1");
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
+            acp::ToolCall::new(tool_call_id.clone(), "Sign in to continue")
+                .kind(acp::ToolKind::Other)
+                .status(acp::ToolCallStatus::InProgress),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread = conversation_view
+            .read_with(cx, |view, cx| {
+                view.active_thread().map(|r| r.read(cx).thread.clone())
+            })
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw("Fetch my private repos", cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let response_task = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationUrlMode::new(
+                            acp::ElicitationSessionScope::new(session_id.clone())
+                                .tool_call_id(tool_call_id.clone()),
+                            acp::ElicitationId::new("sign-in-url-1"),
+                            "https://example.com/sign-in",
+                        ),
+                        "Continue in the browser",
+                    ),
+                    cx,
+                )
+                .expect("URL elicitation should be accepted")
+        });
+
+        let elicitation_id = thread.read_with(cx, |thread, _| {
+            thread.entries().iter().find_map(|entry| {
+                if let AgentThreadEntry::Elicitation(id) = entry {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+        });
+        let elicitation_id = elicitation_id.expect("elicitation entry should exist");
+
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &elicitation_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                    acp::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+        });
+        response_task.await;
+        cx.run_until_parked();
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                        "Waiting for sign-in to finish.".into(),
+                    )),
+                    cx,
+                )
+                .expect("follow-up assistant message should apply");
+        });
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            let entries = thread.entries();
+            assert_eq!(entries.len(), 4);
+            assert!(matches!(entries[0], AgentThreadEntry::UserMessage(_)));
+            assert!(matches!(entries[1], AgentThreadEntry::ToolCall(_)));
+            assert!(matches!(entries[2], AgentThreadEntry::Elicitation(_)));
+            assert!(matches!(entries[3], AgentThreadEntry::AssistantMessage(_)));
+            let (_, elicitation) = thread
+                .elicitation(&elicitation_id)
+                .expect("elicitation should be stored");
+            assert!(matches!(
+                elicitation.status,
+                acp_thread::ElicitationStatus::Accepted
+            ));
+        });
+
+        active_thread(&conversation_view, cx).update(cx, |view, cx| {
+            view.scroll_to_top(cx);
+            view.scroll_to_user_message_index(None, cx);
+            let scroll_top = view.list_state.logical_scroll_top();
+            assert_eq!(
+                scroll_top.item_ix, 0,
+                "consenting to open a URL is not a user answer, so scroll should land on the prompt"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_thread_search_finds_matches_across_entries(cx: &mut TestAppContext) {
         init_test(cx);
 
