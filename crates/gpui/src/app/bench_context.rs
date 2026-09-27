@@ -710,9 +710,12 @@ impl BenchReport {
             {
                 Some(histogram) => histogram,
                 None => {
+                    // Hardware counters vary by well under 0.1% between
+                    // samples, so the 3 digits used for frame timings would
+                    // quantize away the spread this metric exists to show.
                     histograms.push(SecondaryMetricHistogram {
                         metric,
-                        per_iteration: Histogram::new(3).expect("3 significant digits is valid"),
+                        per_iteration: Histogram::new(5).expect("5 significant digits is valid"),
                     });
                     histograms.last_mut().expect("a histogram was just pushed")
                 }
