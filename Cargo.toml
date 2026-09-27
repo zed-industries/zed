@@ -675,7 +675,6 @@ indoc = "2"
 inventory = "0.3.19"
 itertools = "0.14.0"
 js-sys = "0.3"
-json_dotpath = "1.1"
 jsonschema = { version = "0.51", default-features = false }
 jsonwebtoken = "10.0"
 jupyter-protocol = "1.4.0"
