@@ -137,132 +137,209 @@ fn intern(first: &str, second: &str) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
-// Linux hardware performance counters
+// Hardware performance counters
 // ---------------------------------------------------------------------------
 
-#[cfg(target_os = "linux")]
-pub use linux_perf::{CounterSnapshot, HardwareCounter, HardwareEvent};
+/// A CPU event counted by [`HardwareCounter`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HardwareEvent {
+    /// Retired userspace instructions: near-deterministic, so small
+    /// regressions are detectable, but blind to waits and memory stalls.
+    Instructions,
+    /// Userspace CPU cycles. `instructions / cycles` is IPC; a falling IPC with
+    /// flat instructions means worse cache or branch behavior.
+    Cycles,
+    /// Mispredicted branches. Linux only.
+    BranchMisses,
+    /// Last-level cache misses, i.e. accesses served from memory. Linux only.
+    CacheMisses,
+    /// Last-level cache accesses. Linux only.
+    CacheReferences,
+}
 
-/// Hardware performance counters read through Linux `perf_event_open`.
+impl HardwareEvent {
+    /// The unit noun used in reports.
+    pub fn unit(self) -> &'static str {
+        match self {
+            Self::Instructions => "instructions",
+            Self::Cycles => "cycles",
+            Self::BranchMisses => "branch misses",
+            Self::CacheMisses => "cache misses",
+            Self::CacheReferences => "cache references",
+        }
+    }
+
+    /// The event's `perf` name, also used in error messages on every platform.
+    fn name(self) -> &'static str {
+        match self {
+            Self::Instructions => "instructions",
+            Self::Cycles => "cpu-cycles",
+            Self::BranchMisses => "branch-misses",
+            Self::CacheMisses => "cache-misses",
+            Self::CacheReferences => "cache-references",
+        }
+    }
+}
+
+/// Criterion measurement for a CPU hardware event.
 ///
-/// Everything here is Linux-only; the public types are re-exported at the
-/// crate root. Items from the `perf-event2` crate are referenced through the
-/// `perf_event` path so this module's own helpers are distinguishable from
-/// the crate's.
+/// The counter is opened once, at construction; each `Measurement::start`/`end`
+/// reads it and reports the difference, so a sample costs one read per counter
+/// (tens to hundreds of nanoseconds). Which events and scopes are available
+/// depends on the platform backend:
+///
+/// * **Linux** (`perf_event_open`): every event, both scopes. Needs
+///   `CAP_PERFMON` or `perf_event_paranoid <= 2`. See [`perf`] for how
+///   process scope, hybrid CPUs, and multiplexing are handled.
+/// * **macOS** (`proc_pid_rusage` and `thread_selfcounts`): instructions and
+///   cycles, both scopes, on Apple Silicon without privileges. Intel Macs and
+///   the cache/branch events are unsupported.
+///
+/// Unsupported combinations fail at construction with an actionable error, so
+/// callers can skip them (as [`BenchMeasurement::from_env`] does) rather than
+/// measure zeros.
+pub struct HardwareCounter {
+    event: HardwareEvent,
+    scope: MetricScope,
+    backend: backend::Counter,
+    formatter: CountFormatter,
+}
+
+impl HardwareCounter {
+    /// Opens a counter for `event` over `scope`.
+    pub fn new(event: HardwareEvent, scope: MetricScope) -> Result<Self> {
+        let backend = backend::Counter::open(event, scope)?;
+        let this = Self {
+            event,
+            scope,
+            backend,
+            formatter: CountFormatter::new(event.unit()),
+        };
+        this.verify_counting()?;
+        Ok(this)
+    }
+
+    /// The counted event.
+    pub fn event(&self) -> HardwareEvent {
+        self.event
+    }
+
+    /// The covered threads.
+    pub fn scope(&self) -> MetricScope {
+        self.scope
+    }
+
+    /// Confirms the counter advances for work on this thread. A virtual machine
+    /// can accept the open yet never schedule the event, and Intel Macs report
+    /// zero; failing here is clearer than measuring zeros.
+    fn verify_counting(&self) -> Result<()> {
+        let before = self.backend.snapshot();
+        std::hint::black_box((0..10_000_u64).fold(0_u64, |total, value| total.wrapping_add(value)));
+        let after = self.backend.snapshot();
+        if self.backend.advanced(&before, &after) {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "the {} counter for {} opened but does not advance; hardware performance \
+                 counters are unavailable to this machine or CI runner",
+                self.event.name(),
+                self.scope.label()
+            ))
+        }
+    }
+}
+
+impl Measurement for HardwareCounter {
+    type Intermediate = backend::Snapshot;
+    type Value = f64;
+
+    fn start(&self) -> Self::Intermediate {
+        self.backend.snapshot()
+    }
+
+    fn end(&self, start: Self::Intermediate) -> Self::Value {
+        let end = self.backend.snapshot();
+        self.backend.delta(&start, &end)
+    }
+
+    fn add(&self, first: &Self::Value, second: &Self::Value) -> Self::Value {
+        first + second
+    }
+
+    fn zero(&self) -> Self::Value {
+        0.0
+    }
+
+    fn to_f64(&self, value: &Self::Value) -> f64 {
+        *value
+    }
+
+    fn formatter(&self) -> &dyn ValueFormatter {
+        &self.formatter
+    }
+}
+
+#[cfg(target_os = "macos")]
+use darwin as backend;
+/// The platform backend behind [`HardwareCounter`]. Each provides a `Counter`
+/// with `open`, `snapshot`, `advanced`, and `delta`, and a `Snapshot` type.
 #[cfg(target_os = "linux")]
-mod linux_perf {
+use perf as backend;
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+use unsupported as backend;
+
+/// Linux backend: `perf_event_open` through the `perf-event2` crate, whose
+/// items are referenced through the `perf_event` path so this module's own
+/// helpers are distinguishable from the crate's.
+///
+/// With [`MetricScope::Process`], one inherited counter is opened for every
+/// thread that exists at construction. Inheritance extends each counter to
+/// the threads that thread later creates, and live descendants are summed on
+/// read, so the whole process is covered for the counter's lifetime. With
+/// [`MetricScope::CallingThread`], a single non-inherited counter observes the
+/// constructing thread only.
+///
+/// Hybrid CPUs (separate performance and efficiency core PMUs) need one event
+/// per PMU, of which only the one matching the CPU a thread runs on can be
+/// scheduled; each PMU's encoding is read from sysfs. If the kernel
+/// multiplexes a conventional counter with other profiling, its count is
+/// scaled by `time_enabled / time_running` and a warning is printed once.
+#[cfg(target_os = "linux")]
+pub mod perf {
     use super::*;
-    use crate::linux_perf;
 
-    /// A hardware event counted by [`HardwareCounter`].
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    pub enum HardwareEvent {
-        /// Retired userspace instructions: near-deterministic, so small
-        /// regressions are detectable, but blind to waits and memory stalls.
-        Instructions,
-        /// Userspace CPU cycles. `instructions / cycles` is IPC; a falling IPC with
-        /// flat instructions means worse cache or branch behavior.
-        Cycles,
-        /// Mispredicted branches.
-        BranchMisses,
-        /// Last-level cache misses, i.e. accesses served from memory.
-        CacheMisses,
-        /// Last-level cache accesses.
-        CacheReferences,
-    }
-
-    impl HardwareEvent {
-        fn generic(self) -> perf_event::events::Hardware {
-            use perf_event::events::Hardware;
-            match self {
-                Self::Instructions => Hardware::INSTRUCTIONS,
-                Self::Cycles => Hardware::CPU_CYCLES,
-                Self::BranchMisses => Hardware::BRANCH_MISSES,
-                Self::CacheMisses => Hardware::CACHE_MISSES,
-                Self::CacheReferences => Hardware::CACHE_REFERENCES,
-            }
-        }
-
-        /// The event's name under `/sys/bus/event_source/devices/<pmu>/events`.
-        fn sysfs_name(self) -> &'static str {
-            match self {
-                Self::Instructions => "instructions",
-                Self::Cycles => "cpu-cycles",
-                Self::BranchMisses => "branch-misses",
-                Self::CacheMisses => "cache-misses",
-                Self::CacheReferences => "cache-references",
-            }
-        }
-
-        /// The unit noun used in reports.
-        pub fn unit(self) -> &'static str {
-            match self {
-                Self::Instructions => "instructions",
-                Self::Cycles => "cycles",
-                Self::BranchMisses => "branch misses",
-                Self::CacheMisses => "cache misses",
-                Self::CacheReferences => "cache references",
-            }
-        }
-    }
-
-    /// Criterion measurement for a Linux hardware performance counter, read
-    /// through `perf_event_open`.
-    ///
-    /// Counters are opened once, at construction, and left enabled; each
-    /// `Measurement::start`/`end` reads them and reports the difference, so the
-    /// measured interval costs one `read` syscall per counter (a few hundred
-    /// nanoseconds) rather than reopening counters per sample.
-    ///
-    /// With [`MetricScope::Process`], one inherited counter is opened for every
-    /// thread that exists at construction. Inheritance extends each counter to the
-    /// threads that thread later creates, and live descendants are summed on read,
-    /// so the whole process is covered for the counter's lifetime. With
-    /// [`MetricScope::CallingThread`], a single non-inherited counter observes the
-    /// constructing thread only.
-    ///
-    /// Hybrid CPUs (separate performance and efficiency core PMUs) need one event
-    /// per PMU, of which only the one matching the CPU a thread runs on can be
-    /// scheduled; each PMU's encoding is read from sysfs. If the kernel multiplexes
-    /// a conventional counter with other profiling, its count is scaled by
-    /// `time_enabled / time_running` and a warning is printed once.
-    pub struct HardwareCounter {
+    pub(super) struct Counter {
         event: HardwareEvent,
-        scope: MetricScope,
         counters: RefCell<Vec<PerfCounter>>,
-        formatter: CountFormatter,
         multiplexing_reported: Cell<bool>,
     }
 
     struct PerfCounter {
         counter: perf_event::Counter,
-        /// Generic events on conventional CPUs are scaled when multiplexed. Hybrid
-        /// per-PMU events are not, since a thread on the other core type shows as
-        /// "not running" for that PMU by design.
+        /// Generic events on conventional CPUs are scaled when multiplexed.
+        /// Hybrid per-PMU events are not, since a thread on the other core type
+        /// shows as "not running" for that PMU by design.
         scale_for_multiplexing: bool,
     }
 
-    /// One counter's state at `Measurement::start`.
+    /// Every counter's state at one instant.
     #[doc(hidden)]
+    pub struct Snapshot(Vec<CounterState>);
+
     #[derive(Clone, Copy)]
-    pub struct CounterSnapshot {
+    struct CounterState {
         count: u64,
         time_enabled: std::time::Duration,
         time_running: std::time::Duration,
     }
 
-    impl HardwareCounter {
-        /// Opens counters for `event` over `scope`.
-        ///
-        /// Fails with an actionable error when the kernel's perf security policy
-        /// denies access, or with `NotFound`-style errors when the CPU or
-        /// virtual machine does not expose the event.
-        pub fn new(event: HardwareEvent, scope: MetricScope) -> Result<Self> {
-            let hybrid_events = linux_perf::hybrid_pmu_events(event)?;
+    impl Counter {
+        pub(super) fn open(event: HardwareEvent, scope: MetricScope) -> Result<Self> {
+            let hybrid_events = perf::hybrid_pmu_events(event)?;
             let mut counters = Vec::new();
             match scope {
                 MetricScope::CallingThread => {
-                    Self::open(
+                    Self::open_target(
                         event,
                         CounterTarget::CallingThread,
                         &hybrid_events,
@@ -270,8 +347,8 @@ mod linux_perf {
                     )?;
                 }
                 MetricScope::Process => {
-                    for thread_id in linux_perf::process_thread_ids()? {
-                        Self::open(
+                    for thread_id in perf::process_thread_ids()? {
+                        Self::open_target(
                             event,
                             CounterTarget::ThreadAndDescendants(thread_id),
                             &hybrid_events,
@@ -283,7 +360,7 @@ mod linux_perf {
             if counters.is_empty() {
                 return Err(anyhow!(
                     "no Linux {} counter could be opened for {}: the CPU does not expose this event",
-                    event.sysfs_name(),
+                    event.name(),
                     scope.label()
                 ));
             }
@@ -293,52 +370,14 @@ mod linux_perf {
                     .enable()
                     .map_err(|error| Self::operation_error(event, "enable", error))?;
             }
-            let this = Self {
+            Ok(Self {
                 event,
-                scope,
                 counters: RefCell::new(counters),
-                formatter: CountFormatter::new(event.unit()),
                 multiplexing_reported: Cell::new(false),
-            };
-            this.verify_scheduled()?;
-            Ok(this)
+            })
         }
 
-        /// The counted event.
-        pub fn event(&self) -> HardwareEvent {
-            self.event
-        }
-
-        /// The covered threads.
-        pub fn scope(&self) -> MetricScope {
-            self.scope
-        }
-
-        /// Confirms the PMU actually schedules at least one counter. A virtual
-        /// machine can accept `perf_event_open` yet never run the event; failing
-        /// here is clearer than measuring zeros.
-        fn verify_scheduled(&self) -> Result<()> {
-            let before = self.snapshot();
-            std::hint::black_box(
-                (0..10_000_u64).fold(0_u64, |total, value| total.wrapping_add(value)),
-            );
-            let after = self.snapshot();
-            let ran = before
-                .iter()
-                .zip(&after)
-                .any(|(before, after)| after.time_running > before.time_running);
-            if ran {
-                Ok(())
-            } else {
-                Err(anyhow!(
-                    "Linux opened the {} counters but the PMU never ran them; ensure hardware \
-                     performance counters are available to this machine or CI runner",
-                    self.event.sysfs_name()
-                ))
-            }
-        }
-
-        fn open(
+        fn open_target(
             event: HardwareEvent,
             target: CounterTarget,
             hybrid_events: &[(u32, u64)],
@@ -346,7 +385,7 @@ mod linux_perf {
         ) -> Result<()> {
             let opened: Vec<(std::io::Result<perf_event::Counter>, bool)> =
                 if hybrid_events.is_empty() {
-                    let mut builder = perf_event::Builder::new(event.generic());
+                    let mut builder = perf_event::Builder::new(generic_event(event));
                     target.configure(&mut builder);
                     vec![(builder.build(), true)]
                 } else {
@@ -384,7 +423,7 @@ mod linux_perf {
                 "failed to open Linux {} counter for {target}: {error}. Grant this benchmark \
                  CAP_PERFMON or adjust /proc/sys/kernel/perf_event_paranoid according to your CI \
                  security policy",
-                event.sysfs_name()
+                event.name()
             )
         }
 
@@ -393,48 +432,45 @@ mod linux_perf {
             operation: &str,
             error: std::io::Error,
         ) -> anyhow::Error {
-            anyhow!(
-                "Linux {} counter {operation} failed: {error}",
-                event.sysfs_name()
+            anyhow!("Linux {} counter {operation} failed: {error}", event.name())
+        }
+
+        pub(super) fn snapshot(&self) -> Snapshot {
+            Snapshot(
+                self.counters
+                    .borrow_mut()
+                    .iter_mut()
+                    .map(|counter| {
+                        let data = counter.counter.read_full().unwrap_or_else(|error| {
+                            panic!("{}", Self::operation_error(self.event, "read", error))
+                        });
+                        CounterState {
+                            count: data.count(),
+                            time_enabled: data
+                                .time_enabled()
+                                .expect("time-enabled counter data was requested"),
+                            time_running: data
+                                .time_running()
+                                .expect("time-running counter data was requested"),
+                        }
+                    })
+                    .collect(),
             )
         }
 
-        fn snapshot(&self) -> Vec<CounterSnapshot> {
-            self.counters
-                .borrow_mut()
-                .iter_mut()
-                .map(|counter| {
-                    let data = counter.counter.read_full().unwrap_or_else(|error| {
-                        panic!("{}", Self::operation_error(self.event, "read", error))
-                    });
-                    CounterSnapshot {
-                        count: data.count(),
-                        time_enabled: data
-                            .time_enabled()
-                            .expect("time-enabled counter data was requested"),
-                        time_running: data
-                            .time_running()
-                            .expect("time-running counter data was requested"),
-                    }
-                })
-                .collect()
-        }
-    }
-
-    impl Measurement for HardwareCounter {
-        type Intermediate = Vec<CounterSnapshot>;
-        type Value = f64;
-
-        fn start(&self) -> Self::Intermediate {
-            self.snapshot()
+        pub(super) fn advanced(&self, before: &Snapshot, after: &Snapshot) -> bool {
+            before
+                .0
+                .iter()
+                .zip(&after.0)
+                .any(|(before, after)| after.time_running > before.time_running)
         }
 
-        fn end(&self, start: Self::Intermediate) -> Self::Value {
-            let end = self.snapshot();
+        pub(super) fn delta(&self, start: &Snapshot, end: &Snapshot) -> f64 {
             let counters = self.counters.borrow();
             let mut total = 0.0;
             let mut any_counter_ran = false;
-            for ((counter, start), end) in counters.iter().zip(&start).zip(&end) {
+            for ((counter, start), end) in counters.iter().zip(&start.0).zip(&end.0) {
                 let count = end.count.saturating_sub(start.count) as f64;
                 let time_enabled = end.time_enabled.saturating_sub(start.time_enabled);
                 let time_running = end.time_running.saturating_sub(start.time_running);
@@ -450,7 +486,7 @@ mod linux_perf {
                         eprintln!(
                             "{} counters were multiplexed by the kernel; counts are scaled using \
                              time_enabled/time_running",
-                            self.event.sysfs_name()
+                            self.event.name()
                         );
                     }
                     total += count * time_enabled.as_secs_f64() / time_running.as_secs_f64();
@@ -462,26 +498,21 @@ mod linux_perf {
                 panic!(
                     "Linux {} counters did not run during the measured interval; ensure hardware \
                      performance counters are available to this machine or CI runner",
-                    self.event.sysfs_name()
+                    self.event.name()
                 );
             }
             total
         }
+    }
 
-        fn add(&self, first: &Self::Value, second: &Self::Value) -> Self::Value {
-            first + second
-        }
-
-        fn zero(&self) -> Self::Value {
-            0.0
-        }
-
-        fn to_f64(&self, value: &Self::Value) -> f64 {
-            *value
-        }
-
-        fn formatter(&self) -> &dyn ValueFormatter {
-            &self.formatter
+    fn generic_event(event: HardwareEvent) -> perf_event::events::Hardware {
+        use perf_event::events::Hardware;
+        match event {
+            HardwareEvent::Instructions => Hardware::INSTRUCTIONS,
+            HardwareEvent::Cycles => Hardware::CPU_CYCLES,
+            HardwareEvent::BranchMisses => Hardware::BRANCH_MISSES,
+            HardwareEvent::CacheMisses => Hardware::CACHE_MISSES,
+            HardwareEvent::CacheReferences => Hardware::CACHE_REFERENCES,
         }
     }
 
@@ -564,11 +595,8 @@ mod linux_perf {
                 .trim()
                 .parse::<u32>()
                 .with_context(|| format!("invalid Linux {pmu} performance-counter type"))?;
-            let encoding =
-                std::fs::read_to_string(pmu_path.join("events").join(event.sysfs_name()))
-                    .with_context(|| {
-                        format!("failed to read Linux {pmu} {} event", event.sysfs_name())
-                    })?;
+            let encoding = std::fs::read_to_string(pmu_path.join("events").join(event.name()))
+                .with_context(|| format!("failed to read Linux {pmu} {} event", event.name()))?;
             let mut config = 0_u64;
             for term in encoding.trim().split(',') {
                 let (name, value) = term.split_once('=').unwrap_or((term, "1"));
@@ -576,10 +604,7 @@ mod linux_perf {
                     .strip_prefix("0x")
                     .map_or_else(|| value.parse::<u64>(), |hex| u64::from_str_radix(hex, 16))
                     .with_context(|| {
-                        format!(
-                            "invalid Linux {pmu} {} event term {term:?}",
-                            event.sysfs_name()
-                        )
+                        format!("invalid Linux {pmu} {} event term {term:?}", event.name())
                     })?;
                 let layout = std::fs::read_to_string(pmu_path.join("format").join(name))
                     .with_context(|| format!("failed to read Linux {pmu} format for {name:?}"))?;
@@ -608,13 +633,14 @@ mod linux_perf {
         }
         Ok(events)
     }
+
     #[cfg(test)]
     mod tests {
         use super::*;
 
         #[test]
         fn perf_permission_error_is_actionable() {
-            let error = HardwareCounter::open_error(
+            let error = Counter::open_error(
                 HardwareEvent::Instructions,
                 CounterTarget::ThreadAndDescendants(42),
                 std::io::Error::from(std::io::ErrorKind::PermissionDenied),
@@ -623,6 +649,202 @@ mod linux_perf {
             assert!(message.contains("CAP_PERFMON"));
             assert!(message.contains("perf_event_paranoid"));
             assert!(message.contains("thread 42"));
+        }
+    }
+}
+
+/// macOS backend. Apple Silicon exposes retired instructions and cycles to
+/// unprivileged processes through two XNU interfaces: `proc_pid_rusage` with
+/// `RUSAGE_INFO_V4` for the whole process (every thread, including exited
+/// ones), and `thread_selfcounts` for the calling thread. Both are plain
+/// reads with no counter to open or close. Intel Macs report zero for both,
+/// which [`HardwareCounter::new`] detects. Branch and cache events require the
+/// private `kperf` framework and root, so they are unsupported here.
+#[cfg(target_os = "macos")]
+pub mod darwin {
+    use super::*;
+
+    pub(super) struct Counter {
+        event: HardwareEvent,
+        scope: MetricScope,
+    }
+
+    /// `[instructions, cycles]` at one instant.
+    #[doc(hidden)]
+    pub struct Snapshot([u64; 2]);
+
+    /// The leading fields of `struct rusage_info_v4` from `<sys/resource.h>`,
+    /// up to and including the two counters this backend reads. Only a
+    /// prefix is declared: the kernel copies out `sizeof` the flavor's full
+    /// struct, so the buffer below is padded to that size.
+    #[repr(C)]
+    struct RusageInfoV4Prefix {
+        ri_uuid: [u8; 16],
+        ri_user_time: u64,
+        ri_system_time: u64,
+        ri_pkg_idle_wkups: u64,
+        ri_interrupt_wkups: u64,
+        ri_pageins: u64,
+        ri_wired_size: u64,
+        ri_resident_size: u64,
+        ri_phys_footprint: u64,
+        ri_proc_start_abstime: u64,
+        ri_proc_exit_abstime: u64,
+        ri_child_user_time: u64,
+        ri_child_system_time: u64,
+        ri_child_pkg_idle_wkups: u64,
+        ri_child_interrupt_wkups: u64,
+        ri_child_pageins: u64,
+        ri_child_elapsed_abstime: u64,
+        ri_diskio_bytesread: u64,
+        ri_diskio_byteswritten: u64,
+        ri_cpu_time_qos_default: u64,
+        ri_cpu_time_qos_maintenance: u64,
+        ri_cpu_time_qos_background: u64,
+        ri_cpu_time_qos_utility: u64,
+        ri_cpu_time_qos_legacy: u64,
+        ri_cpu_time_qos_user_initiated: u64,
+        ri_cpu_time_qos_user_interactive: u64,
+        ri_billed_system_time: u64,
+        ri_serviced_system_time: u64,
+        ri_logical_writes: u64,
+        ri_lifetime_max_phys_footprint: u64,
+        ri_instructions: u64,
+        ri_cycles: u64,
+    }
+
+    /// `sizeof(struct rusage_info_v4)`: the prefix above plus the four trailing
+    /// `u64` fields (`ri_billed_energy`, `ri_serviced_energy`,
+    /// `ri_interval_max_phys_footprint`, `ri_runnable_time`).
+    const RUSAGE_INFO_V4_SIZE: usize = std::mem::size_of::<RusageInfoV4Prefix>() + 4 * 8;
+    const RUSAGE_INFO_V4: libc::c_int = 4;
+    /// `THSC_CPI` in `<sys/thread_selfcounts.h>` (not in `libc`).
+    const THREAD_SELFCOUNTS_CPI: libc::c_int = 1;
+
+    #[repr(C, align(8))]
+    struct RusageInfoV4Buffer([u8; RUSAGE_INFO_V4_SIZE]);
+
+    unsafe extern "C" {
+        fn proc_pid_rusage(
+            pid: libc::c_int,
+            flavor: libc::c_int,
+            buffer: *mut RusageInfoV4Buffer,
+        ) -> libc::c_int;
+        fn thread_selfcounts(
+            kind: libc::c_int,
+            buffer: *mut u64,
+            size: libc::size_t,
+        ) -> libc::c_int;
+    }
+
+    impl Counter {
+        pub(super) fn open(event: HardwareEvent, scope: MetricScope) -> Result<Self> {
+            if !matches!(event, HardwareEvent::Instructions | HardwareEvent::Cycles) {
+                return Err(anyhow!(
+                    "macOS exposes only instructions and cycles without root; {} needs kperf",
+                    event.name()
+                ));
+            }
+            let this = Self { event, scope };
+            this.read()?;
+            Ok(this)
+        }
+
+        fn read(&self) -> Result<[u64; 2]> {
+            match self.scope {
+                MetricScope::Process => {
+                    let mut buffer = RusageInfoV4Buffer([0; RUSAGE_INFO_V4_SIZE]);
+                    // SAFETY: the buffer is the flavor's full size and aligned
+                    // for its `u64` fields; the kernel fills it on success.
+                    let status = unsafe {
+                        proc_pid_rusage(
+                            std::process::id() as libc::c_int,
+                            RUSAGE_INFO_V4,
+                            &mut buffer,
+                        )
+                    };
+                    if status != 0 {
+                        return Err(anyhow!(
+                            "proc_pid_rusage failed: {}",
+                            std::io::Error::last_os_error()
+                        ));
+                    }
+                    // SAFETY: the buffer is at least as large and as aligned as
+                    // the prefix struct, and every field is a plain integer.
+                    let info = unsafe { &*(buffer.0.as_ptr() as *const RusageInfoV4Prefix) };
+                    Ok([info.ri_instructions, info.ri_cycles])
+                }
+                MetricScope::CallingThread => {
+                    let mut counts = [0_u64; 2];
+                    // SAFETY: `counts` holds the two `u64`s the CPI flavor writes.
+                    let status = unsafe {
+                        thread_selfcounts(
+                            THREAD_SELFCOUNTS_CPI,
+                            counts.as_mut_ptr(),
+                            std::mem::size_of_val(&counts),
+                        )
+                    };
+                    if status != 0 {
+                        return Err(anyhow!(
+                            "thread_selfcounts failed: {}",
+                            std::io::Error::last_os_error()
+                        ));
+                    }
+                    Ok(counts)
+                }
+            }
+        }
+
+        fn value(&self, snapshot: &Snapshot) -> u64 {
+            match self.event {
+                HardwareEvent::Instructions => snapshot.0[0],
+                _ => snapshot.0[1],
+            }
+        }
+
+        pub(super) fn snapshot(&self) -> Snapshot {
+            Snapshot(self.read().unwrap_or_else(|error| panic!("{error}")))
+        }
+
+        pub(super) fn advanced(&self, before: &Snapshot, after: &Snapshot) -> bool {
+            self.value(after) > self.value(before)
+        }
+
+        pub(super) fn delta(&self, start: &Snapshot, end: &Snapshot) -> f64 {
+            self.value(end).saturating_sub(self.value(start)) as f64
+        }
+    }
+}
+
+/// Fallback backend for platforms without a hardware-counter source.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub mod unsupported {
+    use super::*;
+
+    pub(super) struct Counter;
+
+    #[doc(hidden)]
+    pub struct Snapshot;
+
+    impl Counter {
+        pub(super) fn open(event: HardwareEvent, scope: MetricScope) -> Result<Self> {
+            Err(anyhow!(
+                "hardware counters ({} for {}) are unavailable on this platform",
+                event.name(),
+                scope.label()
+            ))
+        }
+
+        pub(super) fn snapshot(&self) -> Snapshot {
+            Snapshot
+        }
+
+        pub(super) fn advanced(&self, _: &Snapshot, _: &Snapshot) -> bool {
+            false
+        }
+
+        pub(super) fn delta(&self, _: &Snapshot, _: &Snapshot) -> f64 {
+            0.0
         }
     }
 }
@@ -842,11 +1064,11 @@ impl BenchMeasurement {
     /// Returns the measurement configured by [`BENCH_MEASUREMENT_ENV_VAR`].
     ///
     /// * unset: Criterion analyzes wall time; every counter this machine
-    ///   supports is a secondary. On Linux with hardware counters available
-    ///   that is process and calling-thread instructions, cycles, branch
-    ///   misses, and cache misses; everywhere, voluntary context switches and
-    ///   minor page faults from `getrusage`. Counters that fail to open are
-    ///   skipped with a note printed once.
+    ///   supports is a secondary: process and calling-thread instructions,
+    ///   cycles, and their ratios where [`HardwareCounter`] has a backend
+    ///   (Linux, Apple Silicon); branch and cache misses on Linux; voluntary
+    ///   context switches and minor page faults from `getrusage`. Counters
+    ///   that fail to open are skipped with a note printed once.
     /// * `wall-time`: wall time only, no counters.
     /// * `instructions`: Criterion analyzes process-wide retired instructions
     ///   and wall time becomes a secondary. Fails when counters are
@@ -859,21 +1081,11 @@ impl BenchMeasurement {
             }
             Ok("wall-time") => Ok(Self::new(criterion::measurement::WallTime)),
             Ok("instructions") => {
-                #[cfg(target_os = "linux")]
-                {
-                    let instructions =
-                        HardwareCounter::new(HardwareEvent::Instructions, MetricScope::Process)?;
-                    Ok(Self::new(instructions)
-                        .with_default_secondaries(true)
-                        .with_secondary("wall time", criterion::measurement::WallTime))
-                }
-                #[cfg(not(target_os = "linux"))]
-                {
-                    Err(anyhow!(
-                        "retired-instruction benchmarks require Linux perf_event_open; run with \
-                         {BENCH_MEASUREMENT_ENV_VAR}=wall-time on this platform"
-                    ))
-                }
+                let instructions =
+                    HardwareCounter::new(HardwareEvent::Instructions, MetricScope::Process)?;
+                Ok(Self::new(instructions)
+                    .with_default_secondaries(true)
+                    .with_secondary("wall time", criterion::measurement::WallTime))
             }
             Ok(value) => Err(anyhow!(
                 "unsupported {BENCH_MEASUREMENT_ENV_VAR} value {value:?}; expected \"wall-time\" \
@@ -899,57 +1111,53 @@ impl BenchMeasurement {
     /// Adds every counter this machine supports. `skip_process_instructions`
     /// leaves out the process-wide instruction count when it is already the
     /// primary.
-    #[cfg_attr(not(target_os = "linux"), expect(unused_variables))]
     fn with_default_secondaries(mut self, skip_process_instructions: bool) -> Self {
-        #[cfg(target_os = "linux")]
-        {
-            // Every hardware counter needs the same perf_event_open access, so
-            // a denial on the first one is reported once for all of them
-            // rather than once per event.
-            let probe = if skip_process_instructions {
-                Ok(None)
-            } else {
-                HardwareCounter::new(HardwareEvent::Instructions, MetricScope::Process).map(Some)
-            };
-            match probe {
-                Err(error) => note_unavailable("hardware counters", &error),
-                Ok(instructions) => {
-                    if let Some(instructions) = instructions {
-                        self = self.with_secondary("instructions", instructions);
-                    }
-                    let hardware =
-                        |this: Self, name, event, scope| match HardwareCounter::new(event, scope) {
-                            Ok(counter) => this.with_secondary(name, counter),
-                            Err(error) => {
-                                note_unavailable(name, &error);
-                                this
-                            }
-                        };
-                    self = hardware(
-                        self,
-                        "foreground instructions",
-                        HardwareEvent::Instructions,
-                        MetricScope::CallingThread,
-                    );
-                    self = hardware(self, "cycles", HardwareEvent::Cycles, MetricScope::Process);
-                    self = hardware(
-                        self,
-                        "branch misses",
-                        HardwareEvent::BranchMisses,
-                        MetricScope::Process,
-                    );
-                    self = hardware(
-                        self,
-                        "cache misses",
-                        HardwareEvent::CacheMisses,
-                        MetricScope::Process,
-                    );
-                    self = self.with_ratio("IPC", "instructions", "cycles").with_ratio(
-                        "foreground share of instructions",
-                        "foreground instructions",
-                        "instructions",
-                    );
+        // Every hardware counter needs the same access, so a denial of the
+        // first one is reported once for all of them rather than once per
+        // event. Events a platform lacks are still noted individually.
+        let probe = if skip_process_instructions {
+            Ok(None)
+        } else {
+            HardwareCounter::new(HardwareEvent::Instructions, MetricScope::Process).map(Some)
+        };
+        match probe {
+            Err(error) => note_unavailable("hardware counters", &error),
+            Ok(instructions) => {
+                if let Some(instructions) = instructions {
+                    self = self.with_secondary("instructions", instructions);
                 }
+                let hardware =
+                    |this: Self, name, event, scope| match HardwareCounter::new(event, scope) {
+                        Ok(counter) => this.with_secondary(name, counter),
+                        Err(error) => {
+                            note_unavailable(name, &error);
+                            this
+                        }
+                    };
+                self = hardware(
+                    self,
+                    "foreground instructions",
+                    HardwareEvent::Instructions,
+                    MetricScope::CallingThread,
+                );
+                self = hardware(self, "cycles", HardwareEvent::Cycles, MetricScope::Process);
+                self = hardware(
+                    self,
+                    "branch misses",
+                    HardwareEvent::BranchMisses,
+                    MetricScope::Process,
+                );
+                self = hardware(
+                    self,
+                    "cache misses",
+                    HardwareEvent::CacheMisses,
+                    MetricScope::Process,
+                );
+                self = self.with_ratio("IPC", "instructions", "cycles").with_ratio(
+                    "foreground share of instructions",
+                    "foreground instructions",
+                    "instructions",
+                );
             }
         }
         let resource = |this: Self, name, metric, scope| match ResourceCounter::new(metric, scope) {
@@ -1441,14 +1649,15 @@ mod tests {
 
     /// Returns a closure measuring a background thread spinning `iterations`
     /// times, or `None` when this machine has no usable hardware counters.
-    #[cfg(target_os = "linux")]
     fn background_spin_instructions(scope: MetricScope) -> Option<impl Fn(u64) -> f64> {
         let counter = match HardwareCounter::new(HardwareEvent::Instructions, scope) {
             Ok(counter) => counter,
             Err(error) => {
                 let message = error.to_string();
                 assert!(
-                    message.contains("CAP_PERFMON") || message.contains("PMU never ran"),
+                    message.contains("CAP_PERFMON")
+                        || message.contains("does not advance")
+                        || message.contains("unavailable on this platform"),
                     "unavailable counters should have an actionable error: {message}"
                 );
                 return None;
@@ -1468,7 +1677,6 @@ mod tests {
         })
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn process_instructions_include_threads_spawned_after_open() {
         let Some(measure) = background_spin_instructions(MetricScope::Process) else {
@@ -1483,7 +1691,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn calling_thread_instructions_exclude_other_threads() {
         let Some(measure) = background_spin_instructions(MetricScope::CallingThread) else {
@@ -1498,7 +1705,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn hardware_events_open_or_fail_actionably() {
         for event in [
@@ -1519,7 +1725,9 @@ mod tests {
                     assert!(
                         message.contains("CAP_PERFMON")
                             || message.contains("does not expose")
-                            || message.contains("PMU never ran"),
+                            || message.contains("does not advance")
+                            || message.contains("needs kperf")
+                            || message.contains("unavailable on this platform"),
                         "{event:?}: {message}"
                     );
                 }
