@@ -134,21 +134,27 @@ Inspect the current macro before depending on an option because the API is evolv
 
 Register benchmark functions with `gpui::bench_group!` and `gpui::bench_main!` (drop-in for Criterion's `criterion_group!`/`criterion_main!`, including the `name = ...; config = ...; targets = ...` form). The generated functions take `&mut criterion::Criterion<gpui::BenchMeasurement>`; `bench_group!` supplies that measurement from the environment.
 
-### Measurements: wall time and retired instructions
+### Measurements: wall time, hardware counters, and rusage
 
-`gpui::BenchMeasurement` records several metrics per Criterion sample. Criterion analyzes one of them (the *primary*, shown on its `time:` line with confidence intervals and baseline comparison); the rest are *secondaries*, printed per iteration in the GPUI bench report. `GPUI_BENCH_MEASUREMENT` selects the arrangement:
+`gpui::BenchMeasurement` (from the gpui-independent `bench_metrics` crate) records several metrics per Criterion sample. Criterion analyzes one of them (the *primary*, shown on its `time:` line with confidence intervals and baseline comparison); the rest are *secondaries*, printed per iteration in the GPUI bench report as median/min/max. `BENCH_MEASUREMENT` selects the arrangement:
 
-| `GPUI_BENCH_MEASUREMENT` | Criterion analyzes | Reported as secondary |
+| `BENCH_MEASUREMENT` | Criterion analyzes | Reported as secondaries |
 |---|---|---|
-| unset (default) | wall time | retired instructions on Linux when perf counters open; otherwise one note is printed and only wall time runs |
-| `instructions` | retired instructions; fails fast if counters are unavailable | wall time |
-| `wall-time` | wall time | nothing; counters are never opened |
+| unset (default) | wall time | every counter the machine supports (below) |
+| `instructions` | process-wide retired instructions; fails fast if counters are unavailable | the rest, plus wall time |
+| `wall-time` | wall time | nothing; no counters are opened |
 
-Use the default locally and for exploratory work. Use `instructions` for CI regression gates: retired userspace instructions are near-deterministic (spreads under 0.1% are typical), so a small real regression is detectable where wall time would need a large one. Instructions are process-wide, including GPUI dispatcher and GPU-driver submission threads, but they are blind to lock waits, sleeps, cache and memory-bandwidth effects, and GPU shader work, so never report instructions alone for latency claims; pair them with the wall-time and frame metrics from the same run.
+Default secondaries, each skipped with a one-time note when unavailable:
 
-Counters require `perf_event_open` access: `CAP_PERFMON`, or `/proc/sys/kernel/perf_event_paranoid` at 2 or below. Docker's default seccomp profile and many cloud VMs block it; the default mode degrades to wall time only and says so. Criterion baselines are keyed by benchmark id, not measurement, so use distinct `--save-baseline` names when switching the primary on one machine.
+- **instructions** (process-wide) and **foreground instructions** (the benchmark thread only, where GPUI polls tasks, lays out, paints, and submits). Near-deterministic, so a ~0.1% spread is typical and small regressions are detectable. Blind to waits, memory stalls, and GPU work. Their ratio, **foreground share of instructions**, shows work moving between the foreground and background threads even when the total is flat.
+- **cycles** and **IPC** (`instructions / cycles`). Falling IPC with flat instructions means worse cache or branch behavior, not more work.
+- **branch misses** and **cache misses** (last-level), for diagnosing an IPC drop.
+- **foreground context switches**: voluntary switches on the benchmark thread per iteration, i.e. how many times a frame blocked on a lock, channel, or fence. This is the metric that catches the waits instructions cannot see.
+- **page faults**: minor faults per iteration, a privilege-free proxy for fresh memory touched.
 
-Other Criterion measurements plug in with `criterion_group!` and `config = Criterion::default().with_measurement(gpui::BenchMeasurement::new(primary).with_secondary("name", other))`.
+Hardware counters need Linux `perf_event_open` access: `CAP_PERFMON`, or `/proc/sys/kernel/perf_event_paranoid` at 2 or below. Docker's default seccomp profile and many cloud VMs block it; the default mode then reports wall time plus the `getrusage` metrics (context switches, page faults), which need no privileges and also work on macOS. Criterion baselines are keyed by benchmark id, not measurement, so use distinct `--save-baseline` names when switching the primary on one machine.
+
+Never present instructions alone for a latency claim; pair them with wall time and the frame metrics from the same run. Other Criterion measurements plug in with `criterion_group!` and `config = Criterion::default().with_measurement(gpui::BenchMeasurement::new(primary).with_secondary("name", other))`. A plain Criterion benchmark without GPUI can use `bench_metrics::MetricReport::iter` to get the same per-iteration report.
 
 ### `bench_iter`: synchronous functions and compute work
 
@@ -217,7 +223,7 @@ On platforms without a headless renderer, GPUI still performs CPU-side window wo
 
 `BenchReport` is printed once per benchmark, and once per input for `inputs = ...` benchmarks, labeled with the Criterion benchmark id so the two can be correlated. Depending on the pinned revision, it can include:
 
-- secondary measurements per iteration (median, min, max) such as retired instructions, in the measurement's own units;
+- secondary measurements per iteration (median, min, max): instructions, foreground instructions, cycles, IPC, branch and cache misses, foreground context switches, page faults;
 - dirty-to-draw duration;
 - draw and present intervals;
 - invalidations per frame;
@@ -378,7 +384,7 @@ Before accepting a GPUI benchmark, verify:
 - [ ] Cache state is controlled and documented.
 - [ ] A responsiveness signal competes with the heavy work when foreground starvation matters.
 - [ ] Frame metrics and completion throughput are both reported.
-- [ ] On Linux, retired instructions are reported next to wall time, and neither is presented alone as the whole result.
+- [ ] On Linux, instructions, IPC, and foreground context switches are reported next to wall time, and none is presented alone as the whole result.
 - [ ] Final correctness, ordering, and work counts are asserted.
 - [ ] The workload completes under bounded smoke and measured runs.
 - [ ] The same benchmark code runs on baseline and candidate.

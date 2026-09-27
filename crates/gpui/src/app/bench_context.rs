@@ -10,6 +10,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
+pub use bench_metrics::{BenchMeasurement, MetricReport};
 use hdrhistogram::Histogram;
 
 use crate::{
@@ -69,650 +70,6 @@ const DEFAULT_FPS: u64 = 120;
 
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
 
-/// The environment variable `bench_group!` reads to configure [`BenchMeasurement`].
-pub const BENCH_MEASUREMENT_ENV_VAR: &str = "GPUI_BENCH_MEASUREMENT";
-
-/// A Criterion measurement that records several metrics per sample.
-///
-/// Criterion analyzes exactly one scalar per benchmark, fixed in the
-/// `Criterion<M>` type. `#[gpui::bench]` functions take
-/// `&mut criterion::Criterion<BenchMeasurement>`, and this type erases the
-/// concrete [`criterion::measurement::Measurement`] Criterion analyzes (the
-/// *primary*) so benchmark code needs no type parameter. Any number of
-/// *secondary* measurements are taken over the same iterations; their
-/// per-iteration values are collected by [`BenchAppContext`] into the
-/// [`BenchReport`] printed after each benchmark, so one run reports, for
-/// example, both wall time and retired instructions.
-///
-/// Every measurement already reduces to `f64` for Criterion's statistics, so
-/// the erased value is that `f64` and each measurement's own formatter still
-/// labels it.
-pub struct BenchMeasurement {
-    primary: Box<dyn ErasedMeasurement>,
-    secondaries: Rc<SecondaryMeasurements>,
-}
-
-impl BenchMeasurement {
-    /// Wraps the Criterion measurement whose values Criterion analyzes.
-    pub fn new<M>(primary: M) -> Self
-    where
-        M: criterion::measurement::Measurement + 'static,
-        M::Intermediate: 'static,
-    {
-        Self {
-            primary: Box::new(ErasedMeasurementCell::new(primary)),
-            secondaries: Rc::new(SecondaryMeasurements::default()),
-        }
-    }
-
-    /// Adds a measurement taken alongside the primary on every sample.
-    ///
-    /// `name` labels the metric in the benchmark report, e.g. `"instructions"`.
-    /// Secondaries start before and end after the primary, so their own setup
-    /// and readout stays outside the primary's measured interval.
-    pub fn with_secondary<M>(mut self, name: &'static str, measurement: M) -> Self
-    where
-        M: criterion::measurement::Measurement + 'static,
-        M::Intermediate: 'static,
-    {
-        Rc::get_mut(&mut self.secondaries)
-            .expect("secondaries are only shared once measurement starts")
-            .metrics
-            .push(Rc::new(SecondaryMetric {
-                name,
-                measurement: Box::new(ErasedMeasurementCell::new(measurement)),
-                total: std::cell::Cell::new(0.0),
-            }));
-        self
-    }
-
-    /// Returns the measurement configured by [`BENCH_MEASUREMENT_ENV_VAR`].
-    ///
-    /// * unset: Criterion analyzes wall time. On Linux, retired instructions
-    ///   for the whole process and for the foreground thread alone are
-    ///   reported as secondary metrics when hardware counters are available;
-    ///   otherwise a note is printed once and only wall time runs.
-    /// * `wall-time`: wall time only.
-    /// * `instructions`: Criterion analyzes process-wide retired instructions;
-    ///   foreground instructions and wall time are reported as secondary
-    ///   metrics. This fails when counters are unavailable so CI does not
-    ///   silently measure something else.
-    pub fn from_env() -> Result<Self> {
-        match std::env::var(BENCH_MEASUREMENT_ENV_VAR).as_deref() {
-            Err(std::env::VarError::NotPresent) => {
-                let measurement = Self::new(criterion::measurement::WallTime);
-                #[cfg(target_os = "linux")]
-                {
-                    static UNAVAILABLE_NOTE: std::sync::Once = std::sync::Once::new();
-                    match RetiredInstructions::new() {
-                        Ok(instructions) => Ok(measurement
-                            .with_secondary("instructions", instructions)
-                            .with_secondary(
-                                "foreground instructions",
-                                RetiredInstructions::with_scope(
-                                    InstructionScope::ForegroundThread,
-                                )?,
-                            )),
-                        Err(error) => {
-                            UNAVAILABLE_NOTE.call_once(|| {
-                                eprintln!(
-                                    "GPUI benchmarks: retired-instruction counts unavailable, \
-                                     reporting wall time only ({error:#})"
-                                );
-                            });
-                            Ok(measurement)
-                        }
-                    }
-                }
-                #[cfg(not(target_os = "linux"))]
-                Ok(measurement)
-            }
-            Ok("wall-time") => Ok(Self::new(criterion::measurement::WallTime)),
-            Ok("instructions") => {
-                #[cfg(target_os = "linux")]
-                {
-                    Ok(Self::new(RetiredInstructions::new()?)
-                        .with_secondary(
-                            "foreground instructions",
-                            RetiredInstructions::with_scope(InstructionScope::ForegroundThread)?,
-                        )
-                        .with_secondary("wall time", criterion::measurement::WallTime))
-                }
-                #[cfg(not(target_os = "linux"))]
-                {
-                    Err(anyhow!(
-                        "GPUI retired-instruction benchmarks require Linux perf_event_open; run \
-                         with {BENCH_MEASUREMENT_ENV_VAR}=wall-time on this platform"
-                    ))
-                }
-            }
-            Ok(value) => Err(anyhow!(
-                "unsupported {BENCH_MEASUREMENT_ENV_VAR} value {value:?}; expected \"wall-time\" \
-                 or \"instructions\""
-            )),
-            Err(error) => Err(anyhow!(
-                "{BENCH_MEASUREMENT_ENV_VAR} is not valid Unicode: {error}"
-            )),
-        }
-    }
-}
-
-/// [`BenchMeasurement::from_env`] for `bench_group!`, exiting with an actionable
-/// message instead of a panic when the requested measurement can't be used on
-/// this machine.
-#[doc(hidden)]
-pub fn bench_measurement_from_env() -> BenchMeasurement {
-    BenchMeasurement::from_env().unwrap_or_else(|error| {
-        eprintln!("failed to select GPUI benchmark measurement: {error:#}");
-        std::process::exit(2);
-    })
-}
-
-/// Object-safe view of a Criterion measurement.
-///
-/// Criterion always pairs `start` with `end` on the same thread and never nests
-/// them, so the intermediate value can be parked in the measurement between the
-/// two calls instead of flowing through the generic `Intermediate` type.
-trait ErasedMeasurement {
-    fn start(&self);
-    fn end(&self) -> f64;
-    fn formatter(&self) -> &dyn criterion::measurement::ValueFormatter;
-}
-
-struct ErasedMeasurementCell<M: criterion::measurement::Measurement> {
-    measurement: M,
-    intermediate: RefCell<Option<M::Intermediate>>,
-}
-
-impl<M: criterion::measurement::Measurement> ErasedMeasurementCell<M> {
-    fn new(measurement: M) -> Self {
-        Self {
-            measurement,
-            intermediate: RefCell::new(None),
-        }
-    }
-}
-
-impl<M: criterion::measurement::Measurement> ErasedMeasurement for ErasedMeasurementCell<M> {
-    fn start(&self) {
-        let previous = self
-            .intermediate
-            .borrow_mut()
-            .replace(self.measurement.start());
-        assert!(
-            previous.is_none(),
-            "Measurement::start called again before Measurement::end"
-        );
-    }
-
-    fn end(&self) -> f64 {
-        let intermediate = self
-            .intermediate
-            .borrow_mut()
-            .take()
-            .expect("Measurement::end called without a matching Measurement::start");
-        self.measurement.to_f64(&self.measurement.end(intermediate))
-    }
-
-    fn formatter(&self) -> &dyn criterion::measurement::ValueFormatter {
-        self.measurement.formatter()
-    }
-}
-
-/// A secondary metric and its total since [`SecondaryMeasurements::take_totals`]
-/// last ran.
-struct SecondaryMetric {
-    name: &'static str,
-    measurement: Box<dyn ErasedMeasurement>,
-    total: std::cell::Cell<f64>,
-}
-
-#[derive(Default)]
-struct SecondaryMeasurements {
-    metrics: Vec<Rc<SecondaryMetric>>,
-}
-
-impl SecondaryMeasurements {
-    /// Returns each metric with its total since the previous call, resetting
-    /// the totals to zero.
-    fn take_totals(&self) -> Vec<(Rc<SecondaryMetric>, f64)> {
-        self.metrics
-            .iter()
-            .map(|metric| (metric.clone(), metric.total.replace(0.0)))
-            .collect()
-    }
-}
-
-thread_local! {
-    /// The secondaries of the `BenchMeasurement` most recently started on this
-    /// thread. Criterion owns the measurement and hands benchmark code only a
-    /// `Bencher`, so this is how `BenchAppContext` reaches the secondary totals
-    /// after Criterion's iteration loop returns.
-    static ACTIVE_SECONDARIES: RefCell<Option<Rc<SecondaryMeasurements>>> =
-        const { RefCell::new(None) };
-}
-
-fn active_secondaries() -> Option<Rc<SecondaryMeasurements>> {
-    ACTIVE_SECONDARIES.with(|active| active.borrow().clone())
-}
-
-impl criterion::measurement::Measurement for BenchMeasurement {
-    type Intermediate = ();
-    type Value = f64;
-
-    fn start(&self) -> Self::Intermediate {
-        ACTIVE_SECONDARIES.with(|active| *active.borrow_mut() = Some(self.secondaries.clone()));
-        for metric in &self.secondaries.metrics {
-            metric.measurement.start();
-        }
-        self.primary.start();
-    }
-
-    fn end(&self, (): Self::Intermediate) -> Self::Value {
-        let value = self.primary.end();
-        for metric in self.secondaries.metrics.iter().rev() {
-            metric
-                .total
-                .set(metric.total.get() + metric.measurement.end());
-        }
-        value
-    }
-
-    fn add(&self, first: &Self::Value, second: &Self::Value) -> Self::Value {
-        first + second
-    }
-
-    fn zero(&self) -> Self::Value {
-        0.0
-    }
-
-    fn to_f64(&self, value: &Self::Value) -> f64 {
-        *value
-    }
-
-    fn formatter(&self) -> &dyn criterion::measurement::ValueFormatter {
-        self.primary.formatter()
-    }
-}
-
-/// Which threads a [`RetiredInstructions`] measurement counts.
-#[cfg(target_os = "linux")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum InstructionScope {
-    /// Every thread in the benchmark process, including GPUI dispatcher and
-    /// graphics-driver threads.
-    Process,
-    /// Only the thread that calls `Measurement::start`. In `#[gpui::bench]`
-    /// benchmarks that is the GPUI foreground thread, where task polls,
-    /// action dispatch, layout, paint, and scene submission run, so this
-    /// scope is the deterministic proxy for per-frame foreground cost.
-    ForegroundThread,
-}
-
-/// Criterion measurement for retired userspace CPU instructions.
-///
-/// With [`InstructionScope::Process`], `Measurement::start` attaches one
-/// `perf_event_open` counter to every thread then present in the benchmark
-/// process. Inheritance includes threads subsequently created by those
-/// threads. Opening at the measurement boundary means fixture-created GPUI
-/// dispatcher and graphics-driver threads are included without counting
-/// fixture construction. The result includes CPU work performed by the
-/// benchmark process during `Measurement::start`/`end`, including GPUI and
-/// WGPU submission work on those threads. It does not count GPU shader
-/// instructions.
-///
-/// With [`InstructionScope::ForegroundThread`], a single non-inherited counter
-/// observes the calling thread only.
-///
-/// One hardware event is opened per thread on conventional CPUs. Hybrid CPUs
-/// use one event for each CPU PMU, of which only the event matching the CPU
-/// where the thread runs can be scheduled. If a conventional counter is
-/// multiplexed with other system profiling, its count is scaled using
-/// `time_enabled / time_running` and a warning is printed once.
-#[cfg(target_os = "linux")]
-pub struct RetiredInstructions {
-    scope: InstructionScope,
-    multiplexing_reported: std::cell::Cell<bool>,
-}
-
-#[cfg(target_os = "linux")]
-#[doc(hidden)]
-pub struct InstructionCounter {
-    counter: perf_event::Counter,
-    scale_for_multiplexing: bool,
-}
-
-#[cfg(target_os = "linux")]
-#[derive(Clone, Copy)]
-enum CounterTarget {
-    /// `pid = 0` to `perf_event_open`: the calling thread, with no inheritance.
-    CallingThread,
-    /// A specific thread plus every thread it creates afterwards.
-    ThreadAndDescendants(i32),
-}
-
-#[cfg(target_os = "linux")]
-impl CounterTarget {
-    fn configure(self, builder: &mut perf_event::Builder) {
-        use perf_event::ReadFormat;
-
-        match self {
-            Self::CallingThread => builder.observe_self().inherit(false),
-            Self::ThreadAndDescendants(thread_id) => builder.observe_pid(thread_id).inherit(true),
-        };
-        builder.read_format(ReadFormat::TOTAL_TIME_ENABLED | ReadFormat::TOTAL_TIME_RUNNING);
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl std::fmt::Display for CounterTarget {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::CallingThread => write!(f, "the calling thread"),
-            Self::ThreadAndDescendants(thread_id) => write!(f, "thread {thread_id}"),
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl RetiredInstructions {
-    /// Opens retired-instruction counters for the current benchmark process.
-    ///
-    /// This returns an actionable error rather than falling back to wall time
-    /// when the kernel's perf security policy denies access.
-    pub fn new() -> Result<Self> {
-        Self::with_scope(InstructionScope::Process)
-    }
-
-    /// Opens retired-instruction counters for `scope`, failing with an
-    /// actionable error when the kernel's perf security policy denies access.
-    pub fn with_scope(scope: InstructionScope) -> Result<Self> {
-        Self::open_counters(scope)?;
-        Ok(Self {
-            scope,
-            multiplexing_reported: std::cell::Cell::new(false),
-        })
-    }
-
-    fn open_counters(scope: InstructionScope) -> Result<Vec<InstructionCounter>> {
-        let hybrid_events = Self::hybrid_events()?;
-        let mut counters = Vec::new();
-        match scope {
-            InstructionScope::ForegroundThread => {
-                Self::open_thread_counters(
-                    CounterTarget::CallingThread,
-                    &hybrid_events,
-                    &mut counters,
-                )?;
-            }
-            InstructionScope::Process => {
-                for entry in std::fs::read_dir("/proc/self/task").map_err(|error| {
-                    anyhow!("failed to enumerate benchmark process threads: {error}")
-                })? {
-                    let entry = entry.map_err(|error| {
-                        anyhow!("failed to enumerate a benchmark process thread: {error}")
-                    })?;
-                    let Some(thread_id) = entry
-                        .file_name()
-                        .to_str()
-                        .and_then(|thread_id| thread_id.parse().ok())
-                    else {
-                        continue;
-                    };
-                    Self::open_thread_counters(
-                        CounterTarget::ThreadAndDescendants(thread_id),
-                        &hybrid_events,
-                        &mut counters,
-                    )?;
-                }
-            }
-        }
-        if counters.is_empty() {
-            return Err(anyhow!(
-                "failed to open Linux retired-instruction counters: the benchmark process had no \
-                 observable threads"
-            ));
-        }
-        Ok(counters)
-    }
-
-    /// Opens the instructions event for one target, or one event per PMU on
-    /// hybrid CPUs. A thread that exited between enumeration and open is
-    /// skipped.
-    fn open_thread_counters(
-        target: CounterTarget,
-        hybrid_events: &[(u32, u64)],
-        counters: &mut Vec<InstructionCounter>,
-    ) -> Result<()> {
-        use perf_event::events::Hardware;
-
-        if hybrid_events.is_empty() {
-            match Self::build_counter(Hardware::INSTRUCTIONS, target) {
-                Ok(counter) => counters.push(InstructionCounter {
-                    counter,
-                    scale_for_multiplexing: true,
-                }),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(Self::open_error(target, error)),
-            }
-        } else {
-            for &(pmu_type, event) in hybrid_events {
-                match Self::build_hybrid_counter(pmu_type, event, target) {
-                    Ok(counter) => counters.push(InstructionCounter {
-                        counter,
-                        scale_for_multiplexing: false,
-                    }),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
-                    Err(error) => return Err(Self::open_error(target, error)),
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Returns `(pmu_type, event_config)` for each hybrid CPU PMU, or an empty
-    /// list on conventional CPUs where the generic hardware event suffices.
-    fn hybrid_events() -> Result<Vec<(u32, u64)>> {
-        let mut hybrid_events = Vec::new();
-        for pmu in ["cpu_core", "cpu_atom"] {
-            let path = std::path::Path::new("/sys/bus/event_source/devices").join(pmu);
-            if path.exists() {
-                let pmu_type = std::fs::read_to_string(path.join("type"))
-                    .map_err(|error| {
-                        anyhow!("failed to read Linux {pmu} performance-counter type: {error}")
-                    })?
-                    .trim()
-                    .parse::<u32>()
-                    .map_err(|error| {
-                        anyhow!("invalid Linux {pmu} performance-counter type: {error}")
-                    })?;
-                let event =
-                    std::fs::read_to_string(path.join("events/instructions")).map_err(|error| {
-                        anyhow!("failed to read Linux {pmu} instructions event: {error}")
-                    })?;
-                let event = event
-                    .trim()
-                    .strip_prefix("event=")
-                    .and_then(|event| event.strip_prefix("0x"))
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "unsupported Linux {pmu} instructions event encoding {:?}",
-                            event.trim()
-                        )
-                    })?;
-                let event = u64::from_str_radix(event, 16).map_err(|error| {
-                    anyhow!("invalid Linux {pmu} instructions event encoding: {error}")
-                })?;
-                hybrid_events.push((pmu_type, event));
-            }
-        }
-        Ok(hybrid_events)
-    }
-
-    fn build_counter(
-        event: impl perf_event::events::Event,
-        target: CounterTarget,
-    ) -> std::io::Result<perf_event::Counter> {
-        let mut builder = perf_event::Builder::new(event);
-        target.configure(&mut builder);
-        builder.build()
-    }
-
-    fn build_hybrid_counter(
-        pmu_type: u32,
-        event: u64,
-        target: CounterTarget,
-    ) -> std::io::Result<perf_event::Counter> {
-        let mut builder = perf_event::Builder::new(perf_event::events::Raw::new(event));
-        builder.attrs_mut().type_ = pmu_type;
-        target.configure(&mut builder);
-        builder.build()
-    }
-
-    fn open_error(target: CounterTarget, error: std::io::Error) -> anyhow::Error {
-        anyhow!(
-            "failed to open Linux retired-instruction counter for {target}: {error}. \
-             Grant this benchmark CAP_PERFMON or adjust /proc/sys/kernel/perf_event_paranoid \
-             according to your CI security policy"
-        )
-    }
-
-    fn fail(operation: &str, error: std::io::Error) -> ! {
-        panic!("Linux retired-instruction counter {operation} failed: {error}")
-    }
-}
-
-#[cfg(target_os = "linux")]
-struct InstructionFormatter;
-
-#[cfg(target_os = "linux")]
-impl criterion::measurement::ValueFormatter for InstructionFormatter {
-    fn scale_values(&self, typical_value: f64, values: &mut [f64]) -> &'static str {
-        let (scale, unit) = if typical_value < 1_000.0 {
-            (1.0, "instructions")
-        } else if typical_value < 1_000_000.0 {
-            (1_000.0, "K instructions")
-        } else if typical_value < 1_000_000_000.0 {
-            (1_000_000.0, "M instructions")
-        } else {
-            (1_000_000_000.0, "G instructions")
-        };
-        for value in values {
-            *value /= scale;
-        }
-        unit
-    }
-
-    fn scale_throughputs(
-        &self,
-        _typical_value: f64,
-        throughput: &criterion::Throughput,
-        values: &mut [f64],
-    ) -> &'static str {
-        let (units, unit) = match throughput {
-            criterion::Throughput::Bits(units) => (*units, "instructions/bit"),
-            criterion::Throughput::Bytes(units) | criterion::Throughput::BytesDecimal(units) => {
-                (*units, "instructions/byte")
-            }
-            criterion::Throughput::Elements(units)
-            | criterion::Throughput::ElementsAndBytes {
-                elements: units, ..
-            } => (*units, "instructions/element"),
-        };
-        for value in values {
-            *value /= units as f64;
-        }
-        unit
-    }
-
-    fn scale_for_machines(&self, _values: &mut [f64]) -> &'static str {
-        "instructions"
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl criterion::measurement::Measurement for RetiredInstructions {
-    type Intermediate = Vec<InstructionCounter>;
-    type Value = f64;
-
-    fn start(&self) -> Self::Intermediate {
-        let mut counters = Self::open_counters(self.scope)
-            .unwrap_or_else(|error| panic!("failed to open instruction counters: {error:#}"));
-        for counter in &mut counters {
-            counter
-                .counter
-                .enable()
-                .unwrap_or_else(|error| Self::fail("enable", error));
-        }
-        counters
-    }
-
-    fn end(&self, mut counters: Self::Intermediate) -> Self::Value {
-        for counter in &mut counters {
-            counter
-                .counter
-                .disable()
-                .unwrap_or_else(|error| Self::fail("disable", error));
-        }
-
-        let mut instructions = 0.0;
-        let mut any_counter_ran = false;
-        for counter in counters.iter_mut() {
-            let data = counter
-                .counter
-                .read_full()
-                .unwrap_or_else(|error| Self::fail("read", error));
-            let time_enabled = data
-                .time_enabled()
-                .expect("time-enabled counter data was requested");
-            let time_running = data
-                .time_running()
-                .expect("time-running counter data was requested");
-            if time_running.is_zero() {
-                // Process-wide measurement includes persistent workers that
-                // may remain asleep for the entire measured interval.
-                continue;
-            }
-            any_counter_ran = true;
-            if counter.scale_for_multiplexing && time_running < time_enabled {
-                if !self.multiplexing_reported.replace(true) {
-                    eprintln!(
-                        "GPUI instruction counters were multiplexed by the kernel; counts \
-                         are scaled using time_enabled/time_running"
-                    );
-                }
-                instructions +=
-                    data.count() as f64 * time_enabled.as_secs_f64() / time_running.as_secs_f64();
-            } else {
-                instructions += data.count() as f64;
-            }
-        }
-        if !any_counter_ran {
-            panic!(
-                "Linux opened the retired-instruction counters but the PMU never ran them; \
-                 ensure hardware performance counters are available to this CI runner"
-            );
-        }
-        instructions
-    }
-
-    fn add(&self, first: &Self::Value, second: &Self::Value) -> Self::Value {
-        first + second
-    }
-
-    fn zero(&self) -> Self::Value {
-        0.0
-    }
-
-    fn to_f64(&self, value: &Self::Value) -> f64 {
-        *value
-    }
-
-    fn formatter(&self) -> &dyn criterion::measurement::ValueFormatter {
-        &InstructionFormatter
-    }
-}
-
 /// Aggregate statistics for total foreground executor work observed during a
 /// measured interval, returned by [`BenchReport::foreground_work`].
 #[derive(Clone, Copy, Debug)]
@@ -743,14 +100,8 @@ pub struct ForegroundWorkSummary {
 #[derive(Clone)]
 pub struct BenchReport {
     frame_snapshot: Rc<RefCell<WindowFrameSnapshot>>,
-    secondary_metrics: Rc<RefCell<Vec<SecondaryMetricHistogram>>>,
+    metrics: MetricReport,
     frame_budget_nanos: u128,
-}
-
-/// Per-iteration values of one secondary metric across every measured sample.
-struct SecondaryMetricHistogram {
-    metric: Rc<SecondaryMetric>,
-    per_iteration: Histogram<u64>,
 }
 
 impl Default for BenchReport {
@@ -776,58 +127,16 @@ impl BenchReport {
         );
         Self {
             frame_snapshot: Rc::new(RefCell::new(WindowFrameSnapshot::new())),
-            secondary_metrics: Rc::new(RefCell::new(Vec::new())),
+            metrics: MetricReport::new(),
             frame_budget_nanos,
         }
     }
 
-    /// Records the per-iteration value of every active secondary metric for
-    /// the Criterion sample that just finished, using the totals accumulated
-    /// since the previous call.
-    ///
-    /// `iterations` is counted by the caller because Criterion's `Bencher`
-    /// does not expose it, and `iter_batched_ref` with
-    /// `BatchSize::PerIteration` ends the measurement once per iteration.
-    fn record_secondary_metrics(&self, iterations: u64) {
-        let Some(secondaries) = active_secondaries() else {
-            return;
-        };
-        if iterations == 0 {
-            return;
-        }
-        let mut histograms = self.secondary_metrics.borrow_mut();
-        for (metric, total) in secondaries.take_totals() {
-            let histogram = match histograms
-                .iter_mut()
-                .find(|histogram| Rc::ptr_eq(&histogram.metric, &metric))
-            {
-                Some(histogram) => histogram,
-                None => {
-                    // Hardware counters vary by well under 0.1% between
-                    // samples, so the 3 digits used for frame timings would
-                    // quantize away the spread this metric exists to show.
-                    histograms.push(SecondaryMetricHistogram {
-                        metric,
-                        per_iteration: Histogram::new(5).expect("5 significant digits is valid"),
-                    });
-                    histograms.last_mut().expect("a histogram was just pushed")
-                }
-            };
-            let per_iteration = (total / iterations as f64).round();
-            // `.ok()`: the histogram auto-resizes, so recording is infallible.
-            histogram
-                .per_iteration
-                .record(per_iteration.clamp(0.0, u64::MAX as f64) as u64)
-                .ok();
-        }
-    }
-
-    /// Discards secondary totals accumulated outside a measured interval, e.g.
-    /// by Criterion iterating a different benchmark on this thread.
-    fn discard_secondary_totals(&self) {
-        if let Some(secondaries) = active_secondaries() {
-            secondaries.take_totals();
-        }
+    /// Returns the per-iteration secondary metrics (retired instructions,
+    /// cycles, context switches, ...) recorded alongside Criterion's primary
+    /// measurement.
+    pub fn metrics(&self) -> &MetricReport {
+        &self.metrics
     }
 
     fn record_frame_timings<'i>(&self, events: impl IntoIterator<Item = &'i FrameEvent>) {
@@ -940,16 +249,13 @@ impl BenchReport {
     /// Prints this report to stderr.
     pub fn print(&self, benchmark_name: &str) {
         let frame_snapshot = self.frame_snapshot.borrow();
-        let secondary_metrics = self.secondary_metrics.borrow();
-        if frame_snapshot.is_empty() && secondary_metrics.is_empty() {
+        if frame_snapshot.is_empty() && self.metrics.is_empty() {
             return;
         }
 
         eprintln!("GPUI bench report (all observed iterations): {benchmark_name}");
         eprintln!("  note: includes Criterion warmup/calibration");
-        for histogram in secondary_metrics.iter() {
-            Self::print_secondary_metric(histogram);
-        }
+        self.metrics.print("  ");
         self.print_histogram("window dirty-to-draw", &frame_snapshot.dirty_to_draw);
         self.print_histogram("window draw", &frame_snapshot.draw);
         self.print_histogram("window present interval", &frame_snapshot.present_interval);
@@ -961,24 +267,6 @@ impl BenchReport {
             );
         }
         self.print_foreground_work(&frame_snapshot.foreground_work);
-    }
-
-    fn print_secondary_metric(histogram: &SecondaryMetricHistogram) {
-        let values = &histogram.per_iteration;
-        let median = values.value_at_quantile(0.50) as f64;
-        let mut scaled = [median, values.min() as f64, values.max() as f64];
-        let unit = histogram
-            .metric
-            .measurement
-            .formatter()
-            .scale_values(median, &mut scaled);
-        let [median, min, max] = scaled;
-        eprintln!(
-            "  {} per iteration: median {median:.3} {unit} (min {min:.3}, max {max:.3}, \
-             samples {})",
-            histogram.metric.name,
-            values.len()
-        );
     }
 
     fn print_histogram(&self, name: &str, histogram: &Histogram<u64>) {
@@ -1382,7 +670,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         let bencher = self.take_bencher("bench_iter");
         self.dispatch_pending_frames(|| true);
         let collector = TraceScope::start(self.foreground_journal_collector());
-        self.report.discard_secondary_totals();
+        self.report.metrics.discard_pending();
         let mut iterations = 0;
         let mut benchmark = || {
             iterations += 1;
@@ -1391,7 +679,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         };
         bencher.iter(&mut benchmark);
         let events = collector.finish();
-        self.report.record_secondary_metrics(iterations);
+        self.report.metrics.record_sample(iterations);
         self.report.record_frame_timings(events.frame_events.iter());
         self.report
             .record_foreground_events(events.foreground_events());
@@ -1446,7 +734,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         let mut benchmark_context = self.clone();
         let foreground_executor = self.foreground_executor.clone();
         let report = self.report.clone();
-        report.discard_secondary_totals();
+        report.metrics.discard_pending();
         let iterations = std::cell::Cell::new(0);
 
         bencher.iter_batched_ref(
@@ -1486,7 +774,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             },
             criterion::BatchSize::PerIteration,
         );
-        report.record_secondary_metrics(iterations.get());
+        report.metrics.record_sample(iterations.get());
         self.replace_bencher(bencher);
     }
 
@@ -1517,7 +805,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         let dispatcher = self.background_executor.dispatcher().clone();
         self.dispatch_pending_frames(|| true);
         let collector = TraceScope::start(self.foreground_journal_collector());
-        self.report.discard_secondary_totals();
+        self.report.metrics.discard_pending();
         let mut iterations = 0;
         let mut benchmark = || {
             iterations += 1;
@@ -1539,7 +827,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         bencher.iter(&mut benchmark);
 
         let events = collector.finish();
-        self.report.record_secondary_metrics(iterations);
+        self.report.metrics.record_sample(iterations);
         self.report.record_frame_timings(events.frame_events.iter());
         self.report
             .record_foreground_events(events.foreground_events());
@@ -1585,7 +873,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             .as_threaded()
             .expect("validated in BenchAppContext::build");
         let report = self.report.clone();
-        report.discard_secondary_totals();
+        report.metrics.discard_pending();
         let iterations = std::cell::Cell::new(0);
 
         bencher.iter_batched_ref(
@@ -1667,7 +955,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             },
             criterion::BatchSize::PerIteration,
         );
-        report.record_secondary_metrics(iterations.get());
+        report.metrics.record_sample(iterations.get());
         self.replace_bencher(bencher);
     }
 
@@ -2073,144 +1361,6 @@ mod tests {
     use super::*;
     use crate::profiler::journal::install_test_foreground_journal;
 
-    struct FakeCounterMeasurement {
-        counter: Arc<AtomicU64>,
-        measurements: Arc<std::sync::Mutex<Vec<u64>>>,
-        wall_time: criterion::measurement::WallTime,
-    }
-
-    impl FakeCounterMeasurement {
-        fn new(counter: Arc<AtomicU64>, measurements: Arc<std::sync::Mutex<Vec<u64>>>) -> Self {
-            Self {
-                counter,
-                measurements,
-                wall_time: criterion::measurement::WallTime,
-            }
-        }
-    }
-
-    impl criterion::measurement::Measurement for FakeCounterMeasurement {
-        type Intermediate = u64;
-        type Value = u64;
-
-        fn start(&self) -> Self::Intermediate {
-            self.counter.load(Ordering::SeqCst)
-        }
-
-        fn end(&self, start: Self::Intermediate) -> Self::Value {
-            let value = self.counter.load(Ordering::SeqCst) - start;
-            self.measurements
-                .lock()
-                .expect("fake measurement lock should not be poisoned")
-                .push(value);
-            value
-        }
-
-        fn add(&self, first: &Self::Value, second: &Self::Value) -> Self::Value {
-            first + second
-        }
-
-        fn zero(&self) -> Self::Value {
-            0
-        }
-
-        fn to_f64(&self, value: &Self::Value) -> f64 {
-            *value as f64
-        }
-
-        fn formatter(&self) -> &dyn criterion::measurement::ValueFormatter {
-            self.wall_time.formatter()
-        }
-    }
-
-    fn fake_criterion(
-        measurement: FakeCounterMeasurement,
-    ) -> criterion::Criterion<BenchMeasurement> {
-        criterion::Criterion::default()
-            .with_measurement(BenchMeasurement::new(measurement))
-            .without_plots()
-            .sample_size(10)
-            .warm_up_time(Duration::from_millis(1))
-            .measurement_time(Duration::from_millis(1))
-    }
-
-    #[test]
-    fn measurement_lifecycle_excludes_fixture_setup() {
-        let counter = Arc::new(AtomicU64::new(0));
-        let measurements = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let mut criterion = fake_criterion(FakeCounterMeasurement::new(
-            counter.clone(),
-            measurements.clone(),
-        ));
-
-        criterion.bench_function("measurement_lifecycle_excludes_fixture_setup", |bencher| {
-            counter.fetch_add(7, Ordering::SeqCst);
-            bencher.iter(|| {
-                counter.fetch_add(11, Ordering::SeqCst);
-            });
-        });
-
-        let measurements = measurements
-            .lock()
-            .expect("fake measurement lock should not be poisoned");
-        assert!(!measurements.is_empty());
-        assert!(
-            measurements
-                .iter()
-                .all(|measurement| *measurement > 0 && measurement % 11 == 0),
-            "only the iteration workload should be inside start/end: {measurements:?}"
-        );
-    }
-
-    #[test]
-    fn measurement_lifecycle_excludes_batched_setup() {
-        let counter = Arc::new(AtomicU64::new(0));
-        let measurements = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let mut criterion = fake_criterion(FakeCounterMeasurement::new(
-            counter.clone(),
-            measurements.clone(),
-        ));
-
-        criterion.bench_function("measurement_lifecycle_excludes_batched_setup", |bencher| {
-            bencher.iter_batched(
-                || {
-                    counter.fetch_add(7, Ordering::SeqCst);
-                },
-                |()| {
-                    counter.fetch_add(11, Ordering::SeqCst);
-                },
-                criterion::BatchSize::PerIteration,
-            );
-        });
-
-        let measurements = measurements
-            .lock()
-            .expect("fake measurement lock should not be poisoned");
-        assert!(!measurements.is_empty());
-        assert!(
-            measurements.iter().all(|measurement| *measurement == 11),
-            "PerIteration setup should be outside each start/end pair: {measurements:?}"
-        );
-    }
-
-    #[test]
-    fn erased_measurement_preserves_wrapped_values() {
-        use criterion::measurement::Measurement as _;
-
-        let counter = Arc::new(AtomicU64::new(0));
-        let measurements = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let measurement =
-            BenchMeasurement::new(FakeCounterMeasurement::new(counter.clone(), measurements));
-
-        let intermediate = measurement.start();
-        counter.fetch_add(5, Ordering::SeqCst);
-        assert_eq!(measurement.end(intermediate), 5.0);
-
-        let intermediate = measurement.start();
-        counter.fetch_add(3, Ordering::SeqCst);
-        assert_eq!(measurement.end(intermediate), 3.0);
-    }
-
     /// Runs `benchmark` under a wall-time primary with a fake counter as the
     /// secondary metric and returns the per-iteration values the report
     /// recorded for it.
@@ -2220,12 +1370,11 @@ mod tests {
     ) -> Vec<u64> {
         let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
         let report = BenchReport::default();
-        let measurements = Arc::new(std::sync::Mutex::new(Vec::new()));
         let mut criterion = criterion::Criterion::default()
             .with_measurement(
                 BenchMeasurement::new(criterion::measurement::WallTime).with_secondary(
                     "fake counter",
-                    FakeCounterMeasurement::new(counter.clone(), measurements),
+                    bench_metrics::FakeCounter::new(counter.clone()),
                 ),
             )
             .without_plots()
@@ -2247,15 +1396,12 @@ mod tests {
             cx.teardown();
         });
 
-        let histograms = report.secondary_metrics.borrow();
-        assert_eq!(histograms.len(), 1);
-        assert_eq!(histograms[0].metric.name, "fake counter");
-        histograms[0]
-            .per_iteration
-            .iter_recorded()
-            .flat_map(|value| {
-                std::iter::repeat_n(value.value_iterated_to(), value.count_at_value() as usize)
-            })
+        report
+            .metrics()
+            .values("fake counter")
+            .expect("the fake counter was recorded")
+            .into_iter()
+            .map(|value| value as u64)
             .collect()
     }
 
@@ -2291,114 +1437,6 @@ mod tests {
         assert!(
             values.iter().all(|value| *value == 11),
             "PerIteration batches should sum to one per-iteration value: {values:?}"
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn instruction_formatter_uses_instruction_units() {
-        use criterion::measurement::ValueFormatter as _;
-
-        let mut values = [123.0];
-        assert_eq!(
-            InstructionFormatter.scale_values(123.0, &mut values),
-            "instructions"
-        );
-        assert_eq!(
-            InstructionFormatter.scale_for_machines(&mut values),
-            "instructions"
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn perf_permission_error_is_actionable() {
-        let error = RetiredInstructions::open_error(
-            CounterTarget::ThreadAndDescendants(42),
-            std::io::Error::from(std::io::ErrorKind::PermissionDenied),
-        );
-        let message = error.to_string();
-        assert!(message.contains("CAP_PERFMON"));
-        assert!(message.contains("perf_event_paranoid"));
-    }
-
-    /// Measures a background task of `iterations` additions with `scope`, or
-    /// returns `None` when this machine has no usable hardware counters.
-    #[cfg(target_os = "linux")]
-    fn background_task_instructions(scope: InstructionScope) -> Option<impl Fn(u64) -> f64> {
-        use criterion::measurement::Measurement as _;
-
-        let dispatcher = Arc::new(ThreadedDispatcher::new());
-        let background_executor = BackgroundExecutor::new(dispatcher);
-        let measurement = match RetiredInstructions::with_scope(scope) {
-            Ok(measurement) => measurement,
-            Err(error) => {
-                let message = error.to_string();
-                assert!(
-                    (message.contains("CAP_PERFMON") && message.contains("perf_event_paranoid"))
-                        || message.contains("hardware performance counters"),
-                    "unavailable counters should have an actionable error: {message}"
-                );
-                return None;
-            }
-        };
-
-        Some(move |iterations: u64| {
-            let intermediate = measurement.start();
-            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-            background_executor
-                .spawn(async move {
-                    let mut total = 0_u64;
-                    for value in 0..iterations {
-                        total = std::hint::black_box(total.wrapping_add(value));
-                    }
-                    sender
-                        .send(total)
-                        .expect("background result receiver should remain alive");
-                })
-                .detach();
-            std::hint::black_box(
-                receiver
-                    .recv()
-                    .expect("GPUI background validation task should finish"),
-            );
-            measurement.end(intermediate)
-        })
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn retired_instructions_include_gpui_background_thread() {
-        let Some(measure) = background_task_instructions(InstructionScope::Process) else {
-            return;
-        };
-        let idle_instructions = measure(0);
-        let busy_instructions = measure(1_000_000);
-        assert!(
-            busy_instructions > idle_instructions,
-            "GPUI background work should increase the process-wide count: \
-             idle={idle_instructions}, busy={busy_instructions}"
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn foreground_instructions_exclude_gpui_background_thread() {
-        let Some(measure) = background_task_instructions(InstructionScope::ForegroundThread) else {
-            return;
-        };
-        // The calling thread only spawns and then blocks on the channel, so its
-        // count is dominated by executor bookkeeping that doesn't depend on
-        // `iterations`. Each of these iterations retires at least one
-        // instruction, so leaking them into the foreground count would exceed
-        // this margin many times over.
-        let iterations = 1_000_000;
-        let idle_instructions = measure(0);
-        let busy_instructions = measure(iterations);
-        assert!(
-            busy_instructions < idle_instructions + iterations as f64 / 10.0,
-            "GPUI background work should not count toward the foreground thread: \
-             idle={idle_instructions}, busy={busy_instructions}"
         );
     }
 

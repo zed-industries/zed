@@ -113,14 +113,16 @@ pub use spring::*;
 /// Defines a Criterion benchmark group for benchmarks annotated with [`gpui::bench`].
 ///
 /// This mirrors `criterion::criterion_group!`, but the group measures with the
-/// `gpui::BenchMeasurement` configured by `GPUI_BENCH_MEASUREMENT`. By default
-/// Criterion analyzes wall time and, on Linux with hardware counters available,
-/// retired CPU instructions per iteration are printed in the GPUI bench report.
-/// `GPUI_BENCH_MEASUREMENT=instructions` swaps the two so Criterion analyzes
-/// instructions; `wall-time` disables the counters entirely. A `config = ...`
-/// expression may set any other Criterion option; its measurement is replaced.
-/// To measure with something else, call `criterion::criterion_group!` directly
-/// with `config = criterion::Criterion::default().with_measurement(gpui::BenchMeasurement::new(...))`.
+/// `gpui::BenchMeasurement` configured by `BENCH_MEASUREMENT` (see
+/// `BenchMeasurement::from_env`). By default Criterion analyzes wall time
+/// while retired instructions, cycles, IPC, context switches, and the other
+/// counters this machine supports are printed per iteration in the GPUI bench
+/// report. `BENCH_MEASUREMENT=instructions` makes Criterion analyze
+/// process-wide instructions instead; `wall-time` disables all counters. A
+/// `config = ...` expression may set any other Criterion option; its
+/// measurement is replaced. To measure with something else, call
+/// `criterion::criterion_group!` directly with
+/// `config = criterion::Criterion::default().with_measurement(gpui::BenchMeasurement::new(...))`.
 ///
 /// [`gpui::bench`]: crate::bench
 #[macro_export]
@@ -128,7 +130,7 @@ macro_rules! bench_group {
     (name = $name:ident; config = $config:expr; targets = $($target:path),+ $(,)?) => {
         criterion::criterion_group! {
             name = $name;
-            config = ($config).with_measurement($crate::bench_measurement_from_env());
+            config = ($config).with_measurement($crate::BenchMeasurement::from_env_or_exit());
             targets = $($target),+
         }
     };

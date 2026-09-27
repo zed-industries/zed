@@ -2122,6 +2122,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
+name = "bench_metrics"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "criterion",
+ "libc",
+ "perf-event2",
+]
+
+[[package]]
 name = "benchmarks"
 version = "0.1.0"
 dependencies = [
@@ -7520,6 +7530,7 @@ dependencies = [
  "async-channel 2.5.0",
  "async-task",
  "backtrace",
+ "bench_metrics",
  "bindgen",
  "bitflags 2.13.1",
  "chrono",
@@ -7553,7 +7564,6 @@ dependencies = [
  "objc2-metal 0.3.2",
  "parking",
  "parking_lot",
- "perf-event2",
  "pin-project",
  "pollster 0.4.0",
  "postage",
