@@ -5030,6 +5030,163 @@ let c = 3;"#
     }
 
     #[gpui::test]
+    async fn test_multi_server_identical_hints_deduplicated_regardless_of_bias(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                // Type hints are hidden: server B's colocated `Type` hint is never shown,
+                // it only influences the bias chosen for B's `None` hint.
+                show_type_hints: Some(false),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                ..InlayHintSettingsContent::default()
+            })
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "fn main() { f(x); } // padding to keep hints from being trimmed",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+
+        const HINT_POSITION: lsp::Position = lsp::Position {
+            line: 0,
+            character: 14,
+        };
+
+        // `None` kind with padding (false, true): in isolation this gets `Bias::Left`.
+        fn none_hint() -> lsp::InlayHint {
+            lsp::InlayHint {
+                position: HINT_POSITION,
+                label: lsp::InlayHintLabel::String("hint:".to_string()),
+                kind: None,
+                text_edits: None,
+                tooltip: None,
+                padding_left: Some(false),
+                padding_right: Some(true),
+                data: None,
+            }
+        }
+
+        // `Type` kind: always `Bias::Right`.
+        fn type_hint() -> lsp::InlayHint {
+            lsp::InlayHint {
+                position: HINT_POSITION,
+                label: lsp::InlayHintLabel::String(": i32".to_string()),
+                kind: Some(lsp::InlayHintKind::TYPE),
+                text_edits: None,
+                tooltip: None,
+                padding_left: None,
+                padding_right: None,
+                data: None,
+            }
+        }
+
+        // Server A: only the `None` hint, so no conflict and it stays Left.
+        let mut fake_servers_a = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new(|fake_server| {
+                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                        |_, _| async move { Ok(Some(vec![none_hint()])) },
+                    );
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        // Server B: the same `None` hint plus a colocated `Type` hint. Per-response
+        // normalization sees a Left/Right conflict and turns B's `None` hint into Right.
+        let mut fake_servers_b = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "secondary-ls",
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new(|fake_server| {
+                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                        |_, _| async move { Ok(Some(vec![none_hint(), type_hint()])) },
+                    );
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let (buffer, _buffer_handle) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/a/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor =
+            cx.add_window(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
+        cx.executor().run_until_parked();
+
+        let _fake_server_a = fake_servers_a.next().await.unwrap();
+        let fake_server_b = fake_servers_b.next().await.unwrap();
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.set_visible_line_count(50.0, window, cx);
+                editor.set_visible_column_count(120.0);
+                editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+            })
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        let expected = "fn main() { f(hint: x); } // padding to keep hints from being trimmed";
+
+        // 1. Initial fetch: both servers answer in the same batch, so dedup must merge them.
+        editor
+            .update(cx, |editor, _window, cx| {
+                assert_eq!(
+                    editor.display_text(cx),
+                    expected,
+                    "identical hints from two servers must be deduplicated regardless of bias"
+                );
+            })
+            .unwrap();
+
+        // 2. B-only refresh: still exactly one `hint:`.
+        fake_server_b
+            .request::<lsp::request::InlayHintRefreshRequest>((), lsp::DEFAULT_LSP_REQUEST_TIMEOUT)
+            .await
+            .into_response()
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _window, cx| {
+                assert_eq!(
+                    editor.display_text(cx),
+                    expected,
+                    "a refresh from one server must not duplicate the other server's identical hint"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
     async fn test_multi_language_multibuffer_no_duplicate_hints(cx: &mut gpui::TestAppContext) {
         init_test(cx, &|settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
