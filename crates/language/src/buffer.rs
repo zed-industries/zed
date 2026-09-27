@@ -29,7 +29,7 @@ use clock::Lamport;
 pub use clock::ReplicaId;
 use collections::HashMap;
 use encoding_rs::Encoding;
-use file_content::{ByteContent, analyze_byte_content};
+use file_content::{ByteContent, decode_byte_header};
 use fs::MTime;
 use futures::channel::oneshot;
 use futures_lite::future::yield_now;
@@ -1693,7 +1693,7 @@ impl Buffer {
             let bytes = load_bytes_task.await?;
 
             anyhow::ensure!(
-                analyze_byte_content(&bytes) != ByteContent::Binary,
+                decode_byte_header(&bytes).1 != ByteContent::Binary,
                 "Binary files are not supported"
             );
 

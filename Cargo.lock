@@ -6413,6 +6413,7 @@ dependencies = [
  "anyhow",
  "chardetng",
  "encoding_rs",
+ "futures-lite 2.6.1",
 ]
 
 [[package]]

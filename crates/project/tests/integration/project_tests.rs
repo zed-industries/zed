@@ -19656,6 +19656,22 @@ async fn test_undo_encoding_change(cx: &mut gpui::TestAppContext) {
         assert_ne!(buffer.text(), "Hi");
         assert!(!buffer.is_dirty());
     });
+
+    let thai = "สวัสดีชาวโลกนี่คือข้อความทดสอบภาษาไทย";
+    fs.insert_file(
+        path!("/dir/test.txt"),
+        thai.encode_utf16().flat_map(u16::to_le_bytes).collect(),
+    )
+    .await;
+    cx.run_until_parked();
+    assert_eq!(buffer.read_with(cx, |buffer, _| buffer.text()), thai);
+    buffer
+        .update(cx, |buffer, cx| {
+            buffer.reload_with_encoding(encoding_rs::UTF_16LE, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(buffer.read_with(cx, |buffer, _| buffer.text()), thai);
 }
 
 #[gpui::test]

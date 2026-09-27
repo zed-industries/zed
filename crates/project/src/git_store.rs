@@ -43,6 +43,7 @@ use git::{
         GitCommitTemplate, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData,
         LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
         SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag,
+        is_binary_content,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -216,7 +217,12 @@ fn pending_hunks(
 }
 
 fn decode_git_text(bytes: Vec<u8>) -> Result<String> {
-    Ok(decode_text(bytes)?.text)
+    let text = decode_text(bytes)?.text;
+    anyhow::ensure!(
+        !is_binary_content(text.as_bytes()),
+        "Binary files are not supported"
+    );
+    Ok(text)
 }
 
 #[derive(Debug)]
@@ -10347,41 +10353,52 @@ impl Repository {
         cx: &App,
     ) -> Task<Result<(String, git::blame::Blame)>> {
         let repository_id = self.snapshot.id;
-        let rx = self.send_job("blame_buffer_at_revision", None, move |state, _| async move {
-            match state {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    let content_task = backend
-                        .load_revisions(vec![format!("{revision}:{}", path.as_unix_str())]);
-                    let blame_task = backend.blame_at_revision(path.clone(), revision);
-                    let (mut contents, blame) = futures::try_join!(content_task, blame_task)?;
-                    let content = contents.pop().flatten().with_context(|| {
-                        format!(
-                            "cannot load {:?} at revision {revision}: the file is missing or binary",
-                            path.as_ref()
-                        )
-                    })?;
-                    let content = decode_git_text(content)?;
-                    anyhow::Ok((content, blame))
-                }
-                RepositoryState::Remote(RemoteRepositoryState { client, project_id }) => {
-                    let response = client
-                        .request(proto::BlameBufferAtRevision {
-                            project_id: project_id.to_proto(),
-                            repository_id: repository_id.0,
-                            path: path.as_unix_str().to_owned(),
-                            revision: revision.to_string(),
-                        })
-                        .await?;
-                    let blame = blame_from_proto(
-                        response.entries,
-                        response.messages,
-                        response.tag_names,
-                    );
-                    Ok((response.content, blame))
+        let rx = self.send_job("blame_buffer_at_revision", None, {
+            let path = path.clone();
+            move |state, _| async move {
+                match state {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        let content_task = backend
+                            .load_revisions(vec![format!("{revision}:{}", path.as_unix_str())]);
+                        let blame_task = backend.blame_at_revision(path.clone(), revision);
+                        let (mut contents, blame) = futures::try_join!(content_task, blame_task)?;
+                        let content = contents.pop().flatten().with_context(|| {
+                            format!(
+                                "cannot load {:?} at revision {revision}: the file is missing or binary",
+                                path.as_ref()
+                            )
+                        })?;
+                        let content = decode_git_text(content)?;
+                        anyhow::Ok((content, blame))
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { client, project_id }) => {
+                        let response = client
+                            .request(proto::BlameBufferAtRevision {
+                                project_id: project_id.to_proto(),
+                                repository_id: repository_id.0,
+                                path: path.as_unix_str().to_owned(),
+                                revision: revision.to_string(),
+                            })
+                            .await?;
+                        let blame = blame_from_proto(
+                            response.entries,
+                            response.messages,
+                            response.tag_names,
+                        );
+                        Ok((response.content, blame))
+                    }
                 }
             }
         });
-        cx.background_spawn(async move { rx.await? })
+        cx.background_spawn(async move {
+            let (content, blame) = rx.await??;
+            anyhow::ensure!(
+                !is_binary_content(content.as_bytes()),
+                "cannot blame binary file {:?} at revision {revision}",
+                path.as_ref()
+            );
+            Ok((content, blame))
+        })
     }
 
     /// Bypasses the serial git job queue: blobs are content-addressed, so this read
@@ -11650,28 +11667,45 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_decode_git_text_windows_1251_one_line_change(cx: &mut TestAppContext) {
+    fn test_decode_git_text(cx: &mut TestAppContext) {
         let old_text = "строка один\nстрока два\n";
         let new_text = "строка один\nстрока три\n";
-        let (old_bytes, _, _) = encoding_rs::WINDOWS_1251.encode(old_text);
-        let (new_bytes, _, _) = encoding_rs::WINDOWS_1251.encode(new_text);
+        let sparse_nul_text = format!("{}\0", "a".repeat(4096));
+        for (encoding, has_bom) in [
+            (encoding_rs::WINDOWS_1251, false),
+            (encoding_rs::UTF_16LE, false),
+            (encoding_rs::UTF_16LE, true),
+            (encoding_rs::UTF_16BE, false),
+            (encoding_rs::UTF_16BE, true),
+        ] {
+            let old_bytes = encode_text(old_text.to_owned(), encoding, has_bom);
+            let new_bytes = encode_text(new_text.to_owned(), encoding, has_bom);
+            let decoded_old = decode_git_text(old_bytes).unwrap();
+            let decoded_new = decode_git_text(new_bytes).unwrap();
+            assert_eq!(decoded_old, old_text);
+            assert_eq!(decoded_new, new_text);
+            let buffer = cx.new(|cx| Buffer::local(decoded_new, cx));
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+            let diff =
+                cx.new(|cx| BufferDiff::new_with_base_text(&decoded_old, &buffer_snapshot, cx));
+            let diff = diff.update(cx, |diff, cx| diff.snapshot(cx));
+            let hunks = diff.hunks(&buffer_snapshot).collect::<Vec<_>>();
+            let [hunk] = hunks.as_slice() else {
+                panic!("expected one modified hunk, got {hunks:?}");
+            };
 
-        let decoded_old = decode_git_text(old_bytes.into_owned()).unwrap();
-        let decoded_new = decode_git_text(new_bytes.into_owned()).unwrap();
-        let buffer = cx.new(|cx| Buffer::local(decoded_new, cx));
-        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-        let diff = cx.new(|cx| BufferDiff::new_with_base_text(&decoded_old, &buffer_snapshot, cx));
-        let diff = diff.update(cx, |diff, cx| diff.snapshot(cx));
-        let hunks = diff.hunks(&buffer_snapshot).collect::<Vec<_>>();
-        let [hunk] = hunks.as_slice() else {
-            panic!("expected one modified hunk, got {hunks:?}");
-        };
-
-        assert_eq!(hunk.range, text::Point::new(1, 0)..text::Point::new(2, 0));
-        assert_eq!(
-            hunk.diff_base_byte_range,
-            old_text.find("строка два").unwrap()..old_text.len()
-        );
+            assert_eq!(hunk.range, text::Point::new(1, 0)..text::Point::new(2, 0));
+            assert_eq!(
+                hunk.diff_base_byte_range,
+                old_text.find("строка два").unwrap()..old_text.len()
+            );
+            assert_eq!(
+                decode_git_text(encode_text(sparse_nul_text.clone(), encoding, has_bom))
+                    .unwrap_err()
+                    .to_string(),
+                "Binary files are not supported"
+            );
+        }
     }
 
     #[gpui::test]

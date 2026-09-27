@@ -7,7 +7,7 @@ use clock::ReplicaId;
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use encoding_rs::Encoding;
 use file_content::{
-    ByteContent, DecodingReader, FILE_ANALYSIS_BYTES, decode_byte_header, encode_text,
+    ByteContent, DecodingReader, decode_byte_header, detect_encoding, encode_text, read_byte_header,
 };
 use fs::{
     Fs, MTime, PathEvent, PathEventKind, RemoveOptions, TrashId, Watcher, copy_recursive,
@@ -7218,25 +7218,6 @@ impl fs::Watcher for NullWatcher {
     }
 }
 
-/// Reads the beginning of `file` to determine its kind and encoding, returning
-/// the bytes consumed and whether the file ended within them.
-fn read_file_header(file: &mut dyn Read, abs_path: &Path) -> Result<(Vec<u8>, bool)> {
-    let mut header = Vec::with_capacity(FILE_ANALYSIS_BYTES);
-    let mut buf = [0u8; FILE_ANALYSIS_BYTES];
-    let mut reached_eof = false;
-    while header.len() < FILE_ANALYSIS_BYTES {
-        let n = file
-            .read(&mut buf)
-            .with_context(|| format!("reading bytes of the file {abs_path:?}"))?;
-        if n == 0 {
-            reached_eof = true;
-            break;
-        }
-        header.extend_from_slice(&buf[..n]);
-    }
-    Ok((header, reached_eof))
-}
-
 const STREAM_BLOCK_BYTES: usize = 1024 * 1024;
 
 /// Reads and decodes a file straight into a [`Rope`].
@@ -7251,7 +7232,8 @@ pub async fn decode_file_text_to_rope(
         .await
         .with_context(|| format!("opening file {abs_path:?}"))?;
 
-    let (prefix, reached_eof) = read_file_header(&mut *file, abs_path)?;
+    let (prefix, reached_eof) = read_byte_header(&mut *file)
+        .with_context(|| format!("reading bytes of the file {abs_path:?}"))?;
     let (bom_encoding, byte_content) = decode_byte_header(&prefix);
     anyhow::ensure!(
         byte_content != ByteContent::Binary,
@@ -7266,18 +7248,21 @@ pub async fn decode_file_text_to_rope(
         return Ok((rope, line_ending, encoding_rs::UTF_8, false));
     }
 
-    let mut file = fs
-        .open_sync(abs_path)
-        .await
-        .with_context(|| format!("opening file {abs_path:?}"))?;
-    let encoding = bom_encoding.or(byte_content.encoding());
+    file.rewind()?;
+    let encoding = match bom_encoding.or(byte_content.encoding()) {
+        Some(encoding) => encoding,
+        None => {
+            let encoding = detect_encoding(&mut *file).await?;
+            file.rewind()?;
+            encoding
+        }
+    };
     let mut reader = DecodingReader::new(&mut *file, encoding);
     let (rope, line_ending) =
         stream_utf8_into_rope(&mut reader, Vec::new(), false, abs_path, false)
             .await?
             .with_context(|| format!("decoding the file {abs_path:?}"))?;
-    let encoding = reader.encoding().unwrap_or(encoding_rs::UTF_8);
-    Ok((rope, line_ending, encoding, bom_encoding.is_some()))
+    Ok((rope, line_ending, reader.encoding(), bom_encoding.is_some()))
 }
 
 /// Streams a presumed-UTF-8 file into a [`Rope`], normalizing line endings as it

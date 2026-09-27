@@ -409,8 +409,7 @@ impl SearchQuery {
         match self {
             Self::Text { search, .. } => {
                 if query_str.contains('\n') {
-                    let mut text = String::new();
-                    reader.read_to_string(&mut text)?;
+                    let mut text = read_to_string(reader).await?;
                     text::LineEnding::normalize(&mut text);
                     if search.is_match(&text) {
                         Ok(Some(MatchPositionHint::default()))
@@ -418,46 +417,98 @@ impl SearchQuery {
                         Ok(None)
                     }
                 } else {
+                    let batch_size = search.max_pattern_len().max(BLOCK_BYTES);
                     let carry_len = search.max_pattern_len().saturating_sub(1).max(3);
-                    let mut block = vec![0u8; BLOCK_BYTES];
-                    let mut window = Vec::with_capacity(BLOCK_BYTES + carry_len);
+                    let mut block = vec![0; BLOCK_BYTES];
+                    let mut window = Vec::new();
+                    let mut batch_start = 0usize;
                     let mut validated_len = 0usize;
                     let mut lines_before_window = 0usize;
+                    let mut first_match = None;
                     loop {
-                        let read = reader.read(&mut block)?;
-                        if read == 0 {
+                        let batch_end = batch_start
+                            + if first_match.is_some() {
+                                BLOCK_BYTES
+                            } else {
+                                batch_size
+                            };
+                        let limit = (batch_end - window.len()).min(BLOCK_BYTES);
+                        let read_result = match reader.read(&mut block[..limit]) {
+                            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                            result => result,
+                        };
+                        if let std::result::Result::Ok(read) = read_result {
+                            if window.len() + read > window.capacity() {
+                                let capacity = window
+                                    .capacity()
+                                    .saturating_mul(2)
+                                    .max(window.len() + read)
+                                    .min(batch_size + carry_len);
+                                window.try_reserve_exact(capacity - window.len())?;
+                            }
+                            window.extend_from_slice(&block[..read]);
+                            if read > 0 && window.len() < batch_end {
+                                yield_now().await;
+                                continue;
+                            }
+                        }
+                        let line_end_search_start = if first_match.is_some() {
+                            Some(batch_start)
+                        } else if let Some(found) = search.find(&window) {
+                            let line =
+                                lines_before_window + count_newlines(&window[..found.start()]);
+                            first_match = Some(MatchPositionHint::Line(
+                                u32::try_from(line).unwrap_or(u32::MAX),
+                            ));
+                            Some(found.end())
+                        } else {
+                            None
+                        };
+                        let line_end = line_end_search_start.and_then(|start| {
+                            window[start..]
+                                .iter()
+                                .position(|&byte| byte == b'\n')
+                                .map(|offset| start + offset + 1)
+                        });
+                        let validation_end = line_end.unwrap_or_else(|| {
+                            if read_result.is_err() {
+                                window
+                                    .iter()
+                                    .rposition(|&byte| byte == b'\n')
+                                    .map_or(validated_len, |offset| (offset + 1).max(validated_len))
+                            } else {
+                                window.len()
+                            }
+                        });
+                        validated_len +=
+                            match std::str::from_utf8(&window[validated_len..validation_end]) {
+                                Err(error) if error.error_len().is_some() => {
+                                    return Err(invalid_data());
+                                }
+                                Err(error) => error.valid_up_to(),
+                                _ => validation_end - validated_len,
+                            };
+                        if line_end.is_some() {
+                            return Ok(first_match);
+                        }
+                        if read_result? == 0 {
                             if validated_len < window.len() {
                                 return Err(invalid_data());
                             }
-                            return Ok(None);
+                            return Ok(first_match);
                         }
-                        window.extend_from_slice(&block[..read]);
-                        validated_len += match std::str::from_utf8(&window[validated_len..]) {
-                            Err(error) if error.error_len().is_some() => {
-                                return Err(invalid_data());
-                            }
-                            Err(error) => error.valid_up_to(),
-                            _ => window.len() - validated_len,
-                        };
-                        if let Some(found) = search.find(&window) {
-                            let line =
-                                lines_before_window + count_newlines(&window[..found.start()]);
-                            return Ok(Some(MatchPositionHint::Line(
-                                u32::try_from(line).unwrap_or(u32::MAX),
-                            )));
-                        }
-                        let consumed = window.len().saturating_sub(carry_len);
+                        let retained_len = if first_match.is_some() { 3 } else { carry_len };
+                        let consumed = window.len().saturating_sub(retained_len);
                         lines_before_window += count_newlines(&window[..consumed]);
                         window.drain(..consumed);
+                        batch_start = window.len();
                         validated_len -= consumed;
                         yield_now().await;
                     }
                 }
             }
             Self::Regex { regex, .. } => {
-                let mut text = String::new();
-
-                reader.read_to_string(&mut text)?;
+                let mut text = read_to_string(reader).await?;
                 text::LineEnding::normalize(&mut text);
                 if let Some(m) = regex.find(&text)? {
                     Ok(Some(MatchPositionHint::ByteOffset(m.start())))
@@ -729,6 +780,20 @@ impl SearchQuery {
             }
         }
         matches
+    }
+}
+
+async fn read_to_string(reader: &mut (dyn Read + Send)) -> Result<String> {
+    const BLOCK_BYTES: usize = 64 * 1024;
+    let mut bytes = Vec::new();
+    loop {
+        let bytes_read = (&mut *reader)
+            .take(BLOCK_BYTES as u64)
+            .read_to_end(&mut bytes)?;
+        if bytes_read < BLOCK_BYTES {
+            return String::from_utf8(bytes).map_err(|_| invalid_data());
+        }
+        yield_now().await;
     }
 }
 

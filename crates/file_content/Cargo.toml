@@ -16,3 +16,4 @@ doctest = false
 anyhow.workspace = true
 chardetng.workspace = true
 encoding_rs.workspace = true
+futures-lite.workspace = true

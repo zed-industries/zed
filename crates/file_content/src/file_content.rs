@@ -6,11 +6,10 @@ use std::io::{self, Read};
 use anyhow::Result;
 use chardetng::EncodingDetector;
 use encoding_rs::{CoderResult, Decoder, Encoding, UTF_8, UTF_16BE, UTF_16LE};
+use futures_lite::future::yield_now;
 
 /// Number of leading bytes that [`analyze_byte_content`] inspects.
 pub const FILE_ANALYSIS_BYTES: usize = 1024;
-
-const ENCODING_DETECTION_BYTES: usize = 1024 * 1024;
 
 const DECODING_BLOCK_BYTES: usize = 64 * 1024;
 
@@ -22,6 +21,23 @@ pub struct DecodedText {
     pub encoding: &'static Encoding,
     /// Whether the bytes started with a byte order mark.
     pub has_bom: bool,
+}
+
+pub fn read_byte_header(reader: &mut dyn Read) -> io::Result<(Vec<u8>, bool)> {
+    let mut header = vec![0; FILE_ANALYSIS_BYTES];
+    let mut length = 0;
+    while length < header.len() {
+        let read = match reader.read(&mut header[length..]) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            result => result?,
+        };
+        if read == 0 {
+            header.truncate(length);
+            return Ok((header, true));
+        }
+        length += read;
+    }
+    Ok((header, false))
 }
 
 /// Inspects the start of a file.
@@ -70,6 +86,28 @@ pub fn decode_text(bytes: Vec<u8>) -> Result<DecodedText> {
     }
 }
 
+pub async fn detect_encoding(reader: &mut (dyn Read + Send)) -> io::Result<&'static Encoding> {
+    let mut detector = EncodingDetector::new();
+    let mut block = [0; DECODING_BLOCK_BYTES];
+    let mut length = 0;
+    loop {
+        let read = match reader.read(&mut block[length..]) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            result => result?,
+        };
+        if read == 0 {
+            detector.feed(&block[..length], true);
+            return Ok(detector.guess(None, true));
+        }
+        length += read;
+        if length == block.len() {
+            detector.feed(&block, false);
+            yield_now().await;
+            length = 0;
+        }
+    }
+}
+
 /// Inverse of [`decode_text`]: encodes UTF-8 text into `encoding`, prepending a BOM when asked.
 pub fn encode_text(text: String, encoding: &'static Encoding, has_bom: bool) -> Vec<u8> {
     if encoding == UTF_8 && !has_bom {
@@ -107,94 +145,58 @@ pub fn encode_text(text: String, encoding: &'static Encoding, has_bom: bool) -> 
 }
 
 /// A [`Read`] adapter that transcodes its source into UTF-8 block by block, with bounded memory.
-/// When constructed without an encoding, it passes leading ASCII through and guesses the encoding
-/// from a bounded window of the following bytes.
 pub struct DecodingReader<'a> {
     inner: &'a mut (dyn Read + Send),
-    decoder: Option<Decoder>,
+    decoder: Decoder,
     input: Vec<u8>,
-    pending: Vec<u8>,
     output: Vec<u8>,
     output_position: usize,
-    input_exhausted: bool,
     finished: bool,
 }
 
 impl<'a> DecodingReader<'a> {
-    /// Wraps `inner`, decoding with `encoding` or detecting one lazily when `None`.
-    pub fn new(inner: &'a mut (dyn Read + Send), encoding: Option<&'static Encoding>) -> Self {
+    pub fn new(inner: &'a mut (dyn Read + Send), encoding: &'static Encoding) -> Self {
         Self {
             inner,
-            decoder: encoding.map(Encoding::new_decoder),
+            decoder: encoding.new_decoder(),
             input: vec![0; DECODING_BLOCK_BYTES],
-            pending: Vec::new(),
             output: Vec::new(),
             output_position: 0,
-            input_exhausted: false,
             finished: false,
         }
     }
 
-    /// The encoding in use, `None` until detection has happened.
-    pub fn encoding(&self) -> Option<&'static Encoding> {
-        self.decoder.as_ref().map(Decoder::encoding)
+    pub fn encoding(&self) -> &'static Encoding {
+        self.decoder.encoding()
     }
 
     fn fill_output(&mut self) -> io::Result<()> {
         self.output.clear();
         self.output_position = 0;
-
-        let read = if self.input_exhausted {
-            0
-        } else {
-            self.inner.read(&mut self.input)?
-        };
-        if read == 0 {
-            self.input_exhausted = true;
-        }
-        let block = &self.input[..read];
-
-        self.finished = self.input_exhausted;
-        match self.decoder.as_mut() {
-            Some(decoder) => decode_block(decoder, block, self.input_exhausted, &mut self.output),
-            None => {
-                if self.pending.is_empty() {
-                    let Some(ascii_len) = first_non_ascii_or_escape(block) else {
-                        self.output.extend_from_slice(block);
-                        return Ok(());
-                    };
-                    self.output.extend_from_slice(&block[..ascii_len]);
-                    self.pending.extend_from_slice(&block[ascii_len..]);
-                } else {
-                    self.pending.extend_from_slice(block);
-                }
-                if self.pending.len() < ENCODING_DETECTION_BYTES && !self.input_exhausted {
-                    return Ok(());
-                }
-
-                let mut decoder =
-                    detect_encoding(&self.pending, self.input_exhausted).new_decoder();
-                let pending = std::mem::take(&mut self.pending);
-                decode_block(
-                    &mut decoder,
-                    &pending,
-                    self.input_exhausted,
-                    &mut self.output,
-                )?;
-                self.decoder = Some(decoder);
-                Ok(())
-            }
-        }
+        let read = self.inner.read(&mut self.input)?;
+        self.finished = read == 0;
+        decode_block(
+            &mut self.decoder,
+            &self.input[..read],
+            self.finished,
+            &mut self.output,
+        )
     }
 }
 
 impl Read for DecodingReader<'_> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if buffer.is_empty() {
+            return Ok(0);
+        }
         while self.output_position == self.output.len() {
             if self.finished {
                 return Ok(0);
             }
-            self.fill_output()?;
+            match self.fill_output() {
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                result => result?,
+            }
         }
 
         let available = &self.output[self.output_position..];
@@ -239,7 +241,7 @@ pub fn analyze_byte_content(bytes: &[u8]) -> ByteContent {
         return ByteContent::Unknown;
     }
 
-    if is_known_binary_header(bytes) {
+    if has_binary_header(bytes, KNOWN_BINARY_HEADERS) {
         return ByteContent::Binary;
     }
 
@@ -247,7 +249,6 @@ pub fn analyze_byte_content(bytes: &[u8]) -> ByteContent {
     let mut even_null_count = 0usize;
     let mut odd_null_count = 0usize;
     let mut non_text_like_count = 0usize;
-    let mut seen_control_bytes = 0u128;
 
     for (i, &byte) in bytes[..limit].iter().enumerate() {
         if byte == 0 {
@@ -261,15 +262,13 @@ pub fn analyze_byte_content(bytes: &[u8]) -> ByteContent {
         }
 
         let is_text_like = match byte {
-            b'\t' | b'\n' | b'\r' | 0x0C | 0x1B => true,
-            0x20..=0x7E => true,
-            0x80..=0xFF => true,
+            b'\t' | b'\n' | b'\r' | 0x0C => true,
+            0x20..=0x7E | 0x80..=0xBF | 0xC2..=0xF4 => true,
             _ => false,
         };
 
         if !is_text_like {
             non_text_like_count += 1;
-            seen_control_bytes |= 1u128 << byte;
         }
     }
 
@@ -295,10 +294,15 @@ pub fn analyze_byte_content(bytes: &[u8]) -> ByteContent {
         return ByteContent::Binary;
     }
 
-    let few_distinct_control_bytes = seen_control_bytes.count_ones() < 4;
-    if non_text_like_count * 100 < limit * 8
-        || (total_null_count == 0 && few_distinct_control_bytes)
+    if has_binary_header(bytes, ADDITIONAL_BINARY_HEADERS)
+        || is_bitmap_header(bytes)
+        || is_gguf_header(bytes)
+        || is_safetensors_header(bytes)
     {
+        return ByteContent::Binary;
+    }
+
+    if total_null_count == 0 || non_text_like_count * 100 < limit * 8 {
         ByteContent::Unknown
     } else {
         ByteContent::Binary
@@ -324,18 +328,10 @@ fn decode_block(
     Ok(())
 }
 
-fn detect_encoding(bytes: &[u8], complete: bool) -> &'static Encoding {
-    let start = first_non_ascii_or_escape(bytes).unwrap_or(0);
-    let end = bytes
-        .len()
-        .min(start.saturating_add(ENCODING_DETECTION_BYTES));
-    let mut detector = EncodingDetector::new();
-    detector.feed(&bytes[start..end], complete && end == bytes.len());
-    detector.guess(None, true)
-}
-
 fn decode_with_detected_encoding(bytes: Vec<u8>) -> DecodedText {
-    let encoding = detect_encoding(&bytes, true);
+    let mut detector = EncodingDetector::new();
+    detector.feed(&bytes, true);
+    let encoding = detector.guess(None, true);
     let (text, _, _) = encoding.decode(&bytes);
     DecodedText {
         text: text.into_owned(),
@@ -344,113 +340,73 @@ fn decode_with_detected_encoding(bytes: Vec<u8>) -> DecodedText {
     }
 }
 
-fn first_non_ascii_or_escape(bytes: &[u8]) -> Option<usize> {
-    const CHUNK: usize = 4096;
-    bytes
-        .chunks(CHUNK)
-        .enumerate()
-        .find_map(|(chunk_index, chunk)| {
-            if chunk.is_ascii() && !chunk.contains(&0x1B) {
-                return None;
-            }
-            chunk
-                .iter()
-                .position(|&byte| !byte.is_ascii() || byte == 0x1B)
-                .map(|offset| chunk_index * CHUNK + offset)
-        })
-}
-
 const KNOWN_BINARY_HEADERS: &[&[u8]] = &[
-    b"\x00\x00\x00\x0CJXL \r\n\x87\n",   // JPEG XL container
-    b"\x00\x00\x00\x0CjP  ",             // JPEG 2000
-    b"\x00\x00\x01\x00",                 // Windows ICO
-    b"\x00\x00\x02\x00",                 // Windows CUR
-    b"\x00\x01\x00\x00\x00",             // TrueType font
-    b"\x00asm",                          // WebAssembly
-    b"\x04\x22\x4D\x18",                 // LZ4 frame
-    b"\x1A\x45\xDF\xA3",                 // Matroska, WebM
-    b"\x1F\x8B\x08",                     // gzip
-    b"\x1F\x9D",                         // compress (LZW)
-    b"!<arch>\n",                        // ar archive (static library, deb)
-    b"%PDF-",                            // PDF
-    b"\x28\xB5\x2F\xFD",                 // Zstandard
-    b"7z\xBC\xAF\x27\x1C",               // 7-Zip
-    b"8BPS\x00",                         // Photoshop PSD
-    b"DDS |\x00\x00\x00",                // DirectDraw Surface
-    b"FLV\x01",                          // Flash Video
-    b"GIF87a",                           // GIF87a
-    b"GIF89a",                           // GIF89a
-    b"ID3",                              // MP3 with ID3v2 tag
-    b"II*\x00",                          // TIFF little-endian
-    b"IWAD",                             // Doom IWAD archive
-    b"Kaydara FBX Binary  \x00",         // FBX binary
-    b"MM\x00*",                          // TIFF big-endian
-    b"MSCF\x00\x00\x00\x00",             // Microsoft Cabinet
-    b"OTTO\x00",                         // OpenType font with CFF outlines
-    b"OggS",                             // OGG (Vorbis, Opus, FLAC)
-    b"PK\x03\x04",                       // ZIP local header
-    b"PK\x05\x06",                       // ZIP end of central directory
-    b"PK\x07\x08",                       // ZIP spanning/splitting
-    b"PWAD",                             // Doom PWAD archive
-    b"RIFF",                             // WAV, AVI, WebP
-    b"Rar!\x1A\x07",                     // RAR
-    b"SQLite format 3\x00",              // SQLite database
-    b"fLaC",                             // FLAC
-    b"glTF\x01\x00\x00\x00",             // Binary glTF 1
-    b"glTF\x02\x00\x00\x00",             // Binary glTF 2
-    b"\x76\x2F\x31\x01",                 // OpenEXR
-    b"wOF2",                             // WOFF2 font
-    b"wOFF",                             // WOFF font
-    b"\x7FELF",                          // ELF
-    b"\x80\x02",                         // Python pickle protocol 2
-    b"\x80\x03",                         // Python pickle protocol 3
-    b"\x80\x04",                         // Python pickle protocol 4
-    b"\x80\x05",                         // Python pickle protocol 5
-    b"\x89HDF\r\n\x1a\n",                // HDF5
-    b"\x89PNG\r\n\x1a\n",                // PNG
-    b"\x93NUMPY",                        // NumPy array
-    b"\x95\x04\x12\xDE",                 // gettext MO big-endian
-    b"\xA1\xB2\xC3\xD4",                 // pcap big-endian
-    b"\xABKTX ",                         // KTX texture
-    b"\xC1\x83\x2A\x9E",                 // Unreal Engine package
-    b"\xC5\xD0\xD3\xC6",                 // DOS EPS binary
-    b"\xCA\xFE\xBA\xBE",                 // Mach-O universal binary, Java class
-    b"\xCE\xFA\xED\xFE",                 // Mach-O 32-bit little-endian
-    b"\xCF\xFA\xED\xFE",                 // Mach-O 64-bit little-endian
-    b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1", // OLE2 compound file (legacy MS Office)
-    b"\xD4\xC3\xB2\xA1",                 // pcap little-endian
-    b"\xDE\x12\x04\x95",                 // gettext MO little-endian
-    b"\xED\xAB\xEE\xDB",                 // RPM package
-    b"\xFD7zXZ\x00",                     // xz
-    b"\xFE\xED\xFA\xCE",                 // Mach-O 32-bit big-endian
-    b"\xFE\xED\xFA\xCF",                 // Mach-O 64-bit big-endian
-    b"\xFF\x0A",                         // JPEG XL codestream
-    b"\xFF\xD8\xFF",                     // JPEG
-    b"\xFF\xF1",                         // AAC ADTS frame sync (MPEG-4)
-    b"\xFF\xF2",                         // MP3 frame sync (MPEG2 Layer3)
-    b"\xFF\xF3",                         // MP3 frame sync (MPEG2 Layer3)
-    b"\xFF\xF9",                         // AAC ADTS frame sync (MPEG-2)
-    b"\xFF\xFA",                         // MP3 frame sync (MPEG1 Layer3)
-    b"\xFF\xFB",                         // MP3 frame sync (MPEG1 Layer3)
+    b"%PDF-",             // PDF
+    b"GIF87a",            // GIF87a
+    b"GIF89a",            // GIF89a
+    b"ID3",               // MP3 with ID3v2 tag
+    b"IWAD",              // Doom IWAD archive
+    b"OggS",              // OGG (Vorbis, Opus, FLAC)
+    b"PK\x03\x04",        // ZIP local header
+    b"PK\x05\x06",        // ZIP end of central directory
+    b"PK\x07\x08",        // ZIP spanning/splitting
+    b"PWAD",              // Doom PWAD archive
+    b"RIFF",              // WAV, AVI, WebP
+    b"fLaC",              // FLAC
+    b"\x89PNG\r\n\x1a\n", // PNG
+    b"\xFF\xD8\xFF",      // JPEG
+    b"\xFF\xF2",          // MP3 frame sync (MPEG2 Layer3)
+    b"\xFF\xF3",          // MP3 frame sync (MPEG2 Layer3)
+    b"\xFF\xFA",          // MP3 frame sync (MPEG1 Layer3)
+    b"\xFF\xFB",          // MP3 frame sync (MPEG1 Layer3)
 ];
 
-fn is_known_binary_header(bytes: &[u8]) -> bool {
-    let index = KNOWN_BINARY_HEADERS.partition_point(|header| *header <= bytes);
-    KNOWN_BINARY_HEADERS[..index]
+const ADDITIONAL_BINARY_HEADERS: &[&[u8]] = &[
+    b"\x00\x00\x00\x0CJXL \r\n\x87\n", // JPEG XL container
+    b"\x00\x00\x00\x0CjP  ",           // JPEG 2000
+    b"\x00\x00\x01\x00",               // Windows ICO
+    b"\x00\x00\x02\x00",               // Windows CUR
+    b"\x00\x01\x00\x00\x00",           // TrueType font
+    b"\x00asm",                        // WebAssembly
+    b"\x04\x22\x4D\x18",               // LZ4 frame
+    b"\x1A\x45\xDF\xA3",               // Matroska, WebM
+    b"\x1F\x8B\x08",                   // gzip
+    b"7z\xBC\xAF\x27\x1C",             // 7-Zip
+    b"8BPS\x00",                       // Photoshop PSD
+    b"DDS |\x00\x00\x00",              // DirectDraw Surface
+    b"II*\x00",                        // TIFF little-endian
+    b"Kaydara FBX Binary  \x00",       // FBX binary
+    b"MM\x00*",                        // TIFF big-endian
+    b"MSCF\x00\x00\x00\x00",           // Microsoft Cabinet
+    b"OTTO\x00",                       // OpenType font with CFF outlines
+    b"Rar!\x1A\x07",                   // RAR
+    b"SQLite format 3\x00",            // SQLite database
+    b"glTF\x01\x00\x00\x00",           // Binary glTF 1
+    b"glTF\x02\x00\x00\x00",           // Binary glTF 2
+    b"\x7FELF",                        // ELF
+    b"\x89HDF\r\n\x1a\n",              // HDF5
+    b"\x93NUMPY\x01\x00",              // NumPy array
+    b"\x93NUMPY\x02\x00",
+    b"\x93NUMPY\x03\x00",
+    b"\x95\x04\x12\xDE",                 // gettext MO big-endian
+    b"\xA1\xB2\xC3\xD4\x00\x02\x00\x04", // pcap big-endian
+    b"\xABKTX 11\xBB\r\n\x1A\n",         // KTX texture
+    b"\xABKTX 20\xBB\r\n\x1A\n",
+    b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1", // OLE2 compound file (legacy MS Office)
+    b"\xD4\xC3\xB2\xA1\x02\x00\x04\x00", // pcap little-endian
+    b"\xDE\x12\x04\x95",                 // gettext MO little-endian
+    b"\xFD7zXZ\x00",                     // xz
+];
+
+fn has_binary_header(bytes: &[u8], headers: &[&[u8]]) -> bool {
+    let index = headers.partition_point(|header| *header <= bytes);
+    headers[..index]
         .last()
         .is_some_and(|header| bytes.starts_with(header))
-        || is_iso_media_header(bytes)
-        || is_bitmap_header(bytes)
-        || is_gguf_header(bytes)
-        || is_safetensors_header(bytes)
 }
 
 fn is_gguf_header(bytes: &[u8]) -> bool {
     bytes.starts_with(b"GGUF") && bytes.get(5..8) == Some(&[0, 0, 0])
-}
-
-fn is_iso_media_header(bytes: &[u8]) -> bool {
-    bytes.first() == Some(&0) && bytes.get(4..8) == Some(b"ftyp")
 }
 
 fn is_bitmap_header(bytes: &[u8]) -> bool {
@@ -536,28 +492,86 @@ fn read_u16(bytes: &[u8], offset: usize, little_endian: bool) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures_lite::future::{block_on, poll_once};
 
     #[test]
-    fn decodes_and_encodes_windows_1251() {
-        let expected = "строка один\nстрока два\n";
-        let (bytes, _, _) = encoding_rs::WINDOWS_1251.encode(expected);
+    fn decodes_and_encodes_legacy_text() {
+        for (expected, encoding) in [
+            (
+                String::from("“NUMPY is useful for array processing.”\n"),
+                encoding_rs::WINDOWS_1252,
+            ),
+            (
+                String::from(
+                    "«KTX est un format de texture déjà utilisé à côté des images françaises.»\n",
+                ),
+                encoding_rs::WINDOWS_1252,
+            ),
+            (
+                String::from(
+                    "〔迷宫〕这是一个用于测试编码检测的中文句子，其中不包含任何西文字符。\n",
+                ),
+                encoding_rs::GBK,
+            ),
+            (
+                String::from(
+                    "€\x02£\x02Symboles monétaires déjà utilisés à côté des factures françaises.\n",
+                ),
+                encoding_rs::WINDOWS_1252,
+            ),
+            (
+                String::from(
+                    "\x1fќерка\x1fОва е обичен македонски текст за проверка на кодирањето.\n",
+                ),
+                encoding_rs::WINDOWS_1251,
+            ),
+            (
+                format!(
+                    "я{}{}",
+                    "x".repeat(1024 * 1024),
+                    "Съешь же ещё этих мягких французских булок, да выпей чаю.\n".repeat(1000)
+                ),
+                encoding_rs::WINDOWS_1251,
+            ),
+            (
+                String::from("ясно, что это обычный русский текст. Сегодня хорошая погода.\n"),
+                encoding_rs::WINDOWS_1251,
+            ),
+            (
+                String::from("ящик содержит обычный русский текст. Сегодня хорошая погода.\n"),
+                encoding_rs::WINDOWS_1251,
+            ),
+            (
+                format!(
+                    "\x1b[0m{}{}",
+                    "x".repeat(1024 * 1024),
+                    " déjà été à côté français ".repeat(1000)
+                ),
+                encoding_rs::WINDOWS_1252,
+            ),
+        ] {
+            let (bytes, _, _) = encoding.encode(&expected);
+            let decoded = decode_text(bytes.clone().into_owned()).unwrap();
 
-        let decoded = decode_text(bytes.clone().into_owned()).unwrap();
-
-        assert_eq!(decoded.text, expected);
-        assert_eq!(decoded.encoding, encoding_rs::WINDOWS_1251);
-        assert!(!decoded.has_bom);
-        assert_eq!(
-            encode_text(decoded.text, decoded.encoding, decoded.has_bom),
-            bytes.as_ref()
-        );
+            assert_eq!(decoded.encoding, encoding);
+            assert_eq!(decoded.text, expected);
+            assert!(!decoded.has_bom);
+            assert_eq!(
+                encode_text(decoded.text, decoded.encoding, decoded.has_bom),
+                bytes.as_ref()
+            );
+        }
     }
 
     #[test]
     fn preserves_unicode_boms() {
-        let expected = "Hello, мир\n";
+        let expected = "七个人上山，下个月再来。";
         for encoding in [UTF_8, UTF_16LE, UTF_16BE] {
             let bytes = encode_text(expected.to_owned(), encoding, true);
+            assert_eq!(
+                decode_byte_header(&bytes),
+                (Some(encoding), ByteContent::Unknown)
+            );
             let decoded = decode_text(bytes.clone()).unwrap();
 
             assert_eq!(decoded.text, expected);
@@ -577,13 +591,22 @@ mod tests {
             (b"MM\x00*\x00\x00\x00\x08", "TIFF big endian"),
             (b"glTF\x02\x00\x00\x00\x10\x00\x00\x00", "glTF binary"),
             (b"\x7FELF\x02\x01\x01\x00", "ELF"),
-            (b"\xCF\xFA\xED\xFE\x0C\x00\x00\x01", "Mach-O 64-bit"),
             (b"\x1F\x8B\x08\x00", "gzip"),
-            (b"\x28\xB5\x2F\xFD\x04", "zstd"),
             (b"SQLite format 3\x00", "SQLite"),
-            (b"\x93NUMPY\x01\x00", "NumPy"),
+            (b"\x93NUMPY\x01\x00\x76\x00{'descr': '|u1'", "NumPy 1"),
+            (b"\x93NUMPY\x02\x00\x74\x00\x00\x00{'descr': '|u1'", "NumPy 2"),
+            (b"\x93NUMPY\x03\x00\x74\x00\x00\x00{'descr': '|u1'", "NumPy 3"),
+            (b"\xABKTX 11\xBB\r\n\x1A\n\x04\x03\x02\x01", "KTX 1"),
+            (b"\xABKTX 20\xBB\r\n\x1A\n\x00\x00\x00\x00", "KTX 2"),
+            (
+                b"\xA1\xB2\xC3\xD4\x00\x02\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xFF\xFF\x00\x00\x00\x01",
+                "pcap big endian",
+            ),
+            (
+                b"\xD4\xC3\xB2\xA1\x02\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\xFF\xFF\x00\x00\x01\x00\x00\x00",
+                "pcap little endian",
+            ),
             (b"GGUF\x03\x00\x00\x00", "GGUF"),
-            (b"\x00\x00\x00\x18ftypmp42", "MP4"),
             (b"BM\x36\x10\x0E\x00\x00\x00\x00\x00\x36\x00\x00\x00", "BMP"),
             (
                 b"\x90\x01\x00\x00\x00\x00\x00\x00{\"__metadata__\"",
@@ -600,7 +623,26 @@ mod tests {
                 "{label}"
             );
         }
-        for text in ["glTF Sample Models\n", "OTTO GmbH\n", "GGUF is a format\n"] {
+        assert_eq!(
+            analyze_byte_content(b"\x28\xB5\x2F\xFD\x20\x00\x01\x00\x00"),
+            ByteContent::Binary
+        );
+        assert_eq!(
+            analyze_byte_content(
+                b"\x28\xB5\x2F\xFD\x20\x20\x01\x01\x00needle-abcdefghijklmnopqrstuvwxy"
+            ),
+            ByteContent::Binary
+        );
+        for text in [
+            "FLV\x01video/x-flv\x01Flash video\n",
+            "v/1\x01api/users\x01version one route\n",
+            "!<arch>\nThis documents the archive identifier.\n",
+            "glTF Sample Models\n",
+            "OTTO GmbH\n",
+            "GGUF is a format\n",
+            "wOFF = 1\n",
+            "wOF2 = 1\n",
+        ] {
             assert_eq!(
                 analyze_byte_content(text.as_bytes()),
                 ByteContent::Unknown,
@@ -611,36 +653,32 @@ mod tests {
 
     #[test]
     fn binary_header_lookup_matches_linear_scan() {
-        for headers in KNOWN_BINARY_HEADERS.windows(2) {
-            assert!(headers[0] < headers[1], "{headers:?}");
-            assert_eq!(headers[1].strip_prefix(headers[0]), None, "{headers:?}");
-        }
-
-        let check = |bytes: &[u8]| {
-            let expected = KNOWN_BINARY_HEADERS
-                .iter()
-                .any(|header| bytes.starts_with(header))
-                || is_iso_media_header(bytes)
-                || is_bitmap_header(bytes)
-                || is_gguf_header(bytes)
-                || is_safetensors_header(bytes);
-            assert_eq!(is_known_binary_header(bytes), expected, "{bytes:?}");
-        };
-
-        for header in KNOWN_BINARY_HEADERS {
-            for length in 0..=header.len() {
-                check(&header[..length]);
+        for headers in [KNOWN_BINARY_HEADERS, ADDITIONAL_BINARY_HEADERS] {
+            for pair in headers.windows(2) {
+                assert!(pair[0] < pair[1], "{pair:?}");
+                assert_eq!(pair[1].strip_prefix(pair[0]), None, "{pair:?}");
             }
-            for suffix in [0, u8::MAX] {
-                let mut bytes = header.to_vec();
-                bytes.push(suffix);
-                check(&bytes);
-            }
-            for index in 0..header.len() {
-                let mut bytes = header.to_vec();
-                for byte in 0..=u8::MAX {
-                    bytes[index] = byte;
+
+            let check = |bytes: &[u8]| {
+                let expected = headers.iter().any(|header| bytes.starts_with(header));
+                assert_eq!(has_binary_header(bytes, headers), expected, "{bytes:?}");
+            };
+
+            for header in headers {
+                for length in 0..=header.len() {
+                    check(&header[..length]);
+                }
+                for suffix in [0, u8::MAX] {
+                    let mut bytes = header.to_vec();
+                    bytes.push(suffix);
                     check(&bytes);
+                }
+                for index in 0..header.len() {
+                    let mut bytes = header.to_vec();
+                    for byte in 0..=u8::MAX {
+                        bytes[index] = byte;
+                        check(&bytes);
+                    }
                 }
             }
         }
@@ -668,8 +706,8 @@ mod tests {
             "N\x08NA\x08AM\x08ME\x08E\n       ls - list directory contents\n".repeat(30);
 
         let cases: [(&str, &[u8], ByteContent); 7] = [
-            ("protobuf-like", &protobuf_like, ByteContent::Binary),
-            ("random without NUL", &random_like, ByteContent::Binary),
+            ("protobuf-like", &protobuf_like, ByteContent::Unknown),
+            ("random without NUL", &random_like, ByteContent::Unknown),
             ("windows-1251", &russian, ByteContent::Unknown),
             ("gbk", &chinese, ByteContent::Unknown),
             ("ansi log", ansi_log.as_bytes(), ByteContent::Unknown),
@@ -687,6 +725,14 @@ mod tests {
         for (label, bytes, expected) in cases {
             assert_eq!(analyze_byte_content(bytes), expected, "{label}");
         }
+
+        let thai = "สวัสดีชาวโลกนี่คือข้อความทดสอบภาษาไทย";
+        for encoding in [UTF_16LE, UTF_16BE] {
+            let bytes = encode_text(String::from(thai), encoding, false);
+            assert_eq!(decode_byte_header(&bytes), (None, ByteContent::Unknown));
+            assert_eq!(decode_text(bytes.clone()).unwrap().encoding, UTF_8);
+            assert_eq!(encoding.decode(&bytes).0, thai);
+        }
     }
 
     #[test]
@@ -694,7 +740,7 @@ mod tests {
         let chinese_text =
             "这是一个用于测试编码检测的中文句子，其中不包含任何西文字符。\n".repeat(20_000);
         let (chinese, _, _) = encoding_rs::GBK.encode(&chinese_text);
-        assert!(chinese.len() > ENCODING_DETECTION_BYTES);
+        assert!(chinese.len() > 1024 * 1024);
         let (russian, _, _) =
             encoding_rs::WINDOWS_1251.encode("Съешь же ещё этих мягких французских булок\n");
         let mut ascii_then_russian = "plain ascii line\n".repeat(5_000).into_bytes();
@@ -707,19 +753,77 @@ mod tests {
                 .flat_map(u16::to_le_bytes),
         );
 
+        let interior_bom = "prefix ï»¿ déjà été à côté français ".repeat(10);
+        let (interior_bom_bytes, _, _) = encoding_rs::WINDOWS_1252.encode(&interior_bom);
+        assert_eq!(
+            decode_text(interior_bom_bytes.to_vec()).unwrap().text,
+            interior_bom
+        );
+
         for (label, bytes) in [
-            ("gbk beyond the detection window", chinese.into_owned()),
+            ("large gbk", chinese.into_owned()),
             ("ascii prefix then windows-1251", ascii_then_russian),
             ("utf-16 with bom", utf16),
             ("pure ascii", b"just ascii\n".repeat(3)),
+            ("empty", Vec::new()),
+            ("truncated utf-16", b"\xFF\xFEa\0b".to_vec()),
+            (
+                "short utf-16le",
+                encode_text(String::from("needleé"), UTF_16LE, false),
+            ),
+            (
+                "short utf-16be",
+                encode_text(String::from("needleé"), UTF_16BE, false),
+            ),
+            (
+                "utf-16be fullwidth asterisk",
+                encode_text(
+                    String::from("＊ This is a fullwidth asterisk followed by ordinary text.\n"),
+                    UTF_16BE,
+                    false,
+                ),
+            ),
+            (
+                "utf-16be pickle prefix",
+                encode_text(
+                    String::from("考试 instructions for tomorrow\n"),
+                    UTF_16BE,
+                    false,
+                ),
+            ),
+            (
+                "utf-16be ftyp",
+                encode_text(
+                    String::from("AB晴祰 ordinary UTF-16 text\n"),
+                    UTF_16BE,
+                    false,
+                ),
+            ),
+            (
+                "interior BOM in windows-1252",
+                interior_bom_bytes.into_owned(),
+            ),
+            (
+                "interior UTF-8 BOM",
+                "prefix \u{feff}suffix\x1b[0m".as_bytes().to_vec(),
+            ),
         ] {
             let expected = decode_text(bytes.clone()).unwrap();
             for read_limit in [usize::MAX, 8 * 1024, 7] {
                 let mut source = ShortReads {
                     inner: io::Cursor::new(bytes.clone()),
-                    limit: read_limit,
+                    limit: 1,
                 };
-                let mut reader = DecodingReader::new(&mut source, None);
+                let (header, _) = read_byte_header(&mut source).unwrap();
+                let (bom_encoding, byte_content) = decode_byte_header(&header);
+                assert_ne!(byte_content, ByteContent::Binary, "{label}");
+                source.inner.set_position(0);
+                source.limit = read_limit;
+                let encoding = bom_encoding
+                    .or(byte_content.encoding())
+                    .unwrap_or_else(|| block_on(detect_encoding(&mut source)).unwrap());
+                source.inner.set_position(0);
+                let mut reader = DecodingReader::new(&mut source, encoding);
                 let mut streamed = String::new();
                 reader.read_to_string(&mut streamed).unwrap();
                 assert_eq!(
@@ -727,12 +831,19 @@ mod tests {
                     "{label}, read_limit = {read_limit}"
                 );
                 assert_eq!(
-                    reader.encoding().unwrap_or(UTF_8),
+                    reader.encoding(),
                     expected.encoding,
                     "{label}, read_limit = {read_limit}"
                 );
             }
         }
+    }
+
+    #[test]
+    fn encoding_detection_yields_between_blocks() {
+        let mut source = io::Cursor::new(vec![b'a'; 2 * DECODING_BLOCK_BYTES]);
+        assert!(block_on(poll_once(detect_encoding(&mut source))).is_none());
+        assert_eq!(source.position(), DECODING_BLOCK_BYTES as u64);
     }
 
     /// reproduction of issue #50785

@@ -1,12 +1,22 @@
 use std::io::{self, BufReader, Cursor};
 
+use collections::HashMap;
+use fs::FakeFs;
+use futures::FutureExt as _;
 use language::Buffer;
-use project::search::{MatchPositionHint, SearchQuery};
+use project::{
+    Project,
+    search::{MatchPositionHint, SearchQuery},
+};
+use serde_json::json;
 use text::Rope;
 use util::{
+    path,
     paths::{PathMatcher, PathStyle},
     rel_path::RelPath,
 };
+
+use crate::init_test;
 
 #[test]
 fn path_matcher_creation_for_valid_paths() {
@@ -246,6 +256,9 @@ fn detect_reports_line_across_block_boundaries() {
             None,
         )
         .unwrap();
+        let mut input = reader(text.as_bytes());
+        assert!(query.detect(&mut input).now_or_never().is_none());
+        assert_eq!(input.inner.position(), 64 * 1024);
         let hint = smol::block_on(query.detect(&mut reader(text.as_bytes()))).unwrap();
         let expected = if query.as_str().contains('\n') {
             MatchPositionHint::default()
@@ -253,6 +266,16 @@ fn detect_reports_line_across_block_boundaries() {
             MatchPositionHint::Line(needle_line as u32)
         };
         assert_eq!(hint, Some(expected), "{:?}", query.as_str());
+
+        if !query.as_str().contains('\n') {
+            let mut invalid = format!("needle{}", "x".repeat(128 * 1024)).into_bytes();
+            invalid.push(0xff);
+            let error = smol::block_on(query.detect(&mut reader(&invalid))).unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<io::Error>().map(|error| error.kind()),
+                Some(io::ErrorKind::InvalidData)
+            );
+        }
     }
 
     let query = SearchQuery::text(
@@ -305,12 +328,43 @@ fn detect_handles_block_boundary_splits() {
             } else {
                 MatchPositionHint::Line(0)
             };
+            let mut input = reader(text.as_bytes());
+            assert!(query.detect(&mut input).now_or_never().is_none());
+            assert_eq!(input.inner.position(), BLOCK_BYTES as u64);
             assert_eq!(
                 smol::block_on(query.detect(&mut reader(text.as_bytes()))).unwrap(),
                 Some(expected),
                 "split = {split}, case_sensitive = {case_sensitive}"
             );
         }
+    }
+
+    let needle = (0..9000)
+        .map(|index| format!("{index:08x}"))
+        .collect::<String>();
+    let query = SearchQuery::text(
+        &needle,
+        false,
+        true,
+        false,
+        PathMatcher::default(),
+        PathMatcher::default(),
+        false,
+        None,
+    )
+    .unwrap();
+    let text = format!("ignored\n{}x{needle}\n", &needle[..BLOCK_BYTES - 1]);
+    for max_read in [257, BLOCK_BYTES] {
+        let mut input = reader(text.as_bytes());
+        input.max_read = max_read;
+        assert!(query.detect(&mut input).now_or_never().is_none());
+        assert_eq!(input.inner.position(), max_read as u64);
+        let mut input = reader(text.as_bytes());
+        input.max_read = max_read;
+        assert_eq!(
+            smol::block_on(query.detect(&mut input)).unwrap(),
+            Some(MatchPositionHint::Line(1)),
+        );
     }
 
     let query = SearchQuery::text(
@@ -344,6 +398,97 @@ fn detect_handles_block_boundary_splits() {
     }
 }
 
-fn reader(bytes: &[u8]) -> Cursor<Vec<u8>> {
-    Cursor::new(bytes.to_vec())
+#[gpui::test]
+async fn searches_legacy_text_after_utf8_prefixes(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    for (text, encoding, needle) in [
+        (
+            format!("Ã©\n{} où voilà un garçon à la maison ", "x".repeat(1021)),
+            encoding_rs::WINDOWS_1252,
+            "é",
+        ),
+        (
+            format!(
+                "Ã©\nÂ©{}{}",
+                "x".repeat(70000),
+                " déjà été à côté français ".repeat(1000)
+            ),
+            encoding_rs::WINDOWS_1252,
+            "©",
+        ),
+        (
+            format!(
+                "\x1b[0m{}{}©",
+                "x".repeat(1024 * 1024),
+                " déjà été à côté français ".repeat(1000)
+            ),
+            encoding_rs::WINDOWS_1252,
+            "©",
+        ),
+        (
+            format!(
+                "я{}{}ЖЕТОН",
+                "x".repeat(1024 * 1024),
+                "Съешь же ещё этих мягких французских булок, да выпей чаю.\n".repeat(1000)
+            ),
+            encoding_rs::WINDOWS_1251,
+            "ЖЕТОН",
+        ),
+    ] {
+        let (bytes, _, had_errors) = encoding.encode(&text);
+        assert!(!had_errors);
+        let expected = text
+            .match_indices(needle)
+            .map(|(offset, matched)| offset..offset + matched.len())
+            .collect::<Vec<_>>();
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({})).await;
+        fs.insert_file(path!("/dir/legacy.txt"), bytes.into_owned())
+            .await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let query = SearchQuery::text(
+            needle,
+            false,
+            true,
+            false,
+            PathMatcher::default(),
+            PathMatcher::default(),
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            super::search(&project, query, cx).await.unwrap(),
+            HashMap::from_iter(
+                (!expected.is_empty()).then(|| (path!("dir/legacy.txt").to_string(), expected))
+            ),
+        );
+    }
+}
+
+fn reader(bytes: &[u8]) -> InterruptingReader {
+    InterruptingReader {
+        inner: Cursor::new(bytes.to_vec()),
+        interrupt_next_read: false,
+        max_read: usize::MAX,
+    }
+}
+
+struct InterruptingReader {
+    inner: Cursor<Vec<u8>>,
+    interrupt_next_read: bool,
+    max_read: usize,
+}
+
+impl io::Read for InterruptingReader {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.interrupt_next_read = !self.interrupt_next_read;
+        if self.interrupt_next_read {
+            Err(io::Error::from(io::ErrorKind::Interrupted))
+        } else {
+            let length = buffer.len().min(self.max_read);
+            self.inner.read(&mut buffer[..length])
+        }
+    }
 }
