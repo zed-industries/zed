@@ -3706,8 +3706,25 @@ impl AgentCodeSpanResolver {
     }
 }
 
+fn plan_summary_label(stats: &acp_thread::PlanStats<'_>, entry_count: usize) -> String {
+    if stats.pending == 0 {
+        if stats.cancelled == 0 {
+            "All Done"
+        } else if stats.completed == 0 {
+            "Cancelled"
+        } else {
+            "Finished"
+        }
+        .to_owned()
+    } else if stats.completed == 0 {
+        format!("{entry_count} Tasks")
+    } else {
+        format!("{}/{entry_count}", stats.completed)
+    }
+}
+
 fn plan_label_markdown_style(
-    status: &acp_v1::PlanEntryStatus,
+    status: &agent_client_protocol::schema::v2::PlanEntryStatus,
     window: &Window,
     cx: &App,
 ) -> MarkdownStyle {
@@ -3716,7 +3733,10 @@ fn plan_label_markdown_style(
     MarkdownStyle {
         base_text_style: TextStyle {
             color: cx.theme().colors().text_muted,
-            strikethrough: if matches!(status, acp_v1::PlanEntryStatus::Completed) {
+            strikethrough: if matches!(
+                status,
+                agent_client_protocol::schema::v2::PlanEntryStatus::Completed
+            ) {
                 Some(gpui::StrikethroughStyle {
                     thickness: px(1.),
                     color: Some(cx.theme().colors().text_muted.opacity(0.8)),
@@ -6024,6 +6044,7 @@ pub(crate) mod tests {
             view.thread
                 .read(cx)
                 .plan()
+                .expect("active plan")
                 .entries
                 .first()
                 .expect("active plan entry")
@@ -6054,11 +6075,12 @@ pub(crate) mod tests {
             let thread = view.thread.read(cx);
             assert_eq!(thread.status(), ThreadStatus::Idle);
             assert_eq!(thread.entries().len(), entry_count);
-            assert_eq!(thread.plan().stats().completed, 1);
-            assert_eq!(thread.plan().stats().pending, 0);
+            assert_eq!(thread.plan().expect("completed plan").stats().completed, 1);
+            assert_eq!(thread.plan().expect("completed plan").stats().pending, 0);
             assert_eq!(
                 thread
                     .plan()
+                    .expect("completed plan")
                     .entries
                     .first()
                     .expect("completed plan entry")
@@ -6082,17 +6104,22 @@ pub(crate) mod tests {
         active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
             assert_thread_list_item_count_matches_entries(view, cx);
             let thread = view.thread.read(cx);
-            let entry = thread.plan().entries.first().expect("reopened plan entry");
+            let entry = thread
+                .plan()
+                .expect("reopened plan")
+                .entries
+                .first()
+                .expect("reopened plan entry");
             assert_eq!(entry.content, plan_content);
             assert_eq!(entry.content.read(cx).source(), "Revise the thing");
-            assert_eq!(thread.plan().stats().pending, 1);
+            assert_eq!(thread.plan().expect("reopened plan").stats().pending, 1);
             assert_eq!(thread.entries().len(), entry_count);
         });
 
         active_thread(&conversation_view, cx).update(cx, |view, cx| {
             view.thread.update(cx, |thread, cx| {
                 thread.clear_plan(cx);
-                assert!(thread.plan().is_empty());
+                assert!(thread.plan().is_none());
                 assert_eq!(thread.entries().len(), entry_count);
             });
         });
@@ -6109,7 +6136,15 @@ pub(crate) mod tests {
         });
         cx.run_until_parked();
         active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
-            assert_eq!(view.thread.read(cx).plan().stats().completed, 1);
+            assert_eq!(
+                view.thread
+                    .read(cx)
+                    .plan()
+                    .expect("next plan")
+                    .stats()
+                    .completed,
+                1
+            );
         });
 
         message_editor(&conversation_view, cx).update_in(cx, |editor, window, cx| {
@@ -6121,10 +6156,150 @@ pub(crate) mod tests {
         cx.run_until_parked();
         active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
             assert_thread_list_item_count_matches_entries(view, cx);
-            assert!(view.thread.read(cx).plan().is_empty());
+            assert!(view.thread.read(cx).plan().is_none_or(Plan::is_empty));
         });
         connection.end_turn(session_id, acp_v1::StopReason::EndTurn);
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_plan_panel_dismissal_and_status_updates(cx: &mut TestAppContext) {
+        use agent_client_protocol::schema::v2 as acp_v2;
+
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let entry = |status| {
+            acp_v2::PlanEntry::new("Unchanged task", acp_v2::PlanEntryPriority::Medium, status)
+        };
+        thread.update(cx, |thread, cx| {
+            thread.upsert_plan_items(
+                acp_v2::PlanItems::new(
+                    "status-plan",
+                    vec![entry(acp_v2::PlanEntryStatus::Pending)],
+                ),
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        let markdown = thread.read_with(cx, |thread, _| {
+            thread.plan().expect("visible plan").entries[0]
+                .content
+                .clone()
+        });
+        assert!(cx.debug_bounds("plan-status-1 Tasks").is_some());
+        let plan_bounds = cx.debug_bounds("plan_summary").expect("visible plan panel");
+        let dismiss = cx.debug_bounds("ICON-Close").expect("Clear Plan button");
+        assert!(plan_bounds.contains(&dismiss.center()));
+        cx.simulate_click(dismiss.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("plan_summary").is_none());
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.plan().is_none());
+            assert!(thread.plan_by_id(&"status-plan".into()).is_some());
+        });
+        thread.update(cx, |thread, cx| {
+            for meta in [None, Some(acp_v2::Meta::new())] {
+                thread.upsert_plan_items(
+                    acp_v2::PlanItems::new(
+                        "status-plan",
+                        vec![entry(acp_v2::PlanEntryStatus::Pending).meta(meta.clone())],
+                    )
+                    .meta(meta.clone()),
+                    meta,
+                    cx,
+                );
+            }
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("plan_summary").is_none());
+        thread.update(cx, |thread, cx| {
+            thread.upsert_plan_items(
+                acp_v2::PlanItems::new(
+                    "status-plan",
+                    vec![entry(acp_v2::PlanEntryStatus::InProgress)],
+                ),
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        let summary = cx.debug_bounds("plan_summary").expect("plan disclosure");
+        cx.simulate_click(summary.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("plan-entry-0-TodoProgress").is_some());
+
+        for (status, summary, row) in [
+            (
+                acp_v2::PlanEntryStatus::Completed,
+                "plan-status-All Done",
+                "plan-entry-0-TodoComplete",
+            ),
+            (
+                acp_v2::PlanEntryStatus::Cancelled,
+                "plan-status-Cancelled",
+                "plan-entry-0-Close",
+            ),
+            (
+                acp_v2::PlanEntryStatus::Other("_blocked".into()),
+                "plan-status-1 Tasks",
+                "plan-entry-0-TodoPending",
+            ),
+        ] {
+            thread.update(cx, |thread, cx| {
+                thread.upsert_plan_items(
+                    acp_v2::PlanItems::new("status-plan", vec![entry(status)]),
+                    None,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            assert!(cx.debug_bounds(summary).is_some(), "{summary}");
+            assert!(cx.debug_bounds(row).is_some(), "{row}");
+            thread.read_with(cx, |thread, cx| {
+                assert_eq!(
+                    thread.plan().expect("visible plan").entries[0].content,
+                    markdown
+                );
+                assert_eq!(markdown.read(cx).source(), "Unchanged task");
+            });
+        }
+        thread.update(cx, |thread, cx| {
+            thread.upsert_plan_items(
+                acp_v2::PlanItems::new(
+                    "status-plan",
+                    vec![
+                        entry(acp_v2::PlanEntryStatus::Cancelled),
+                        acp_v2::PlanEntry::new(
+                            "Finished task",
+                            acp_v2::PlanEntryPriority::Medium,
+                            acp_v2::PlanEntryStatus::Completed,
+                        ),
+                    ],
+                ),
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("plan-status-Finished").is_some());
+        assert!(cx.debug_bounds("plan-entry-0-Close").is_some());
+        assert!(cx.debug_bounds("plan-entry-1-TodoComplete").is_some());
+        assert!(cx.debug_bounds("plan-status-All Done").is_none());
+        thread.update(cx, |thread, cx| {
+            thread.upsert_plan_items(acp_v2::PlanItems::new("status-plan", vec![]), None, cx);
+            assert!(thread.plan().expect("empty selected plan").is_empty());
+            assert!(thread.entries().is_empty());
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("plan_summary").is_none());
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(view.render_activity_bar(window, cx).is_none());
+        });
     }
 
     async fn setup_conversation_view_with_initial_content(
