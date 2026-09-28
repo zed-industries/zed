@@ -63,6 +63,76 @@ pub struct GroupStyle {
     pub style: Box<StyleRefinement>,
 }
 
+#[derive(Default)]
+struct InteractiveStyle {
+    style: Style,
+    visibility: HoverVisibility,
+}
+
+impl InteractiveStyle {
+    fn refine(&mut self, refinement: &StyleRefinement) {
+        self.style.refine(refinement);
+        if let Some(visibility) = refinement.visibility {
+            self.visibility = HoverVisibility {
+                base: visibility,
+                ..Default::default()
+            };
+        }
+    }
+
+    fn refine_hover(&mut self, refinement: &StyleRefinement, hovered: bool) {
+        if hovered {
+            self.style.refine(refinement);
+        }
+        if let Some(visibility) = refinement.visibility {
+            self.visibility.hover = Some(visibility);
+        }
+    }
+
+    fn refine_group_hover(&mut self, refinement: &StyleRefinement, hovered: bool) {
+        if hovered {
+            self.style.refine(refinement);
+        }
+        if let Some(visibility) = refinement.visibility {
+            self.visibility.group_hover = Some(visibility);
+        }
+    }
+}
+
+// Later hitboxes can change which elements are hovered.
+// Preserve visibility overrides in style order until hover can be resolved.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct HoverVisibility {
+    base: Visibility,
+    hover: Option<Visibility>,
+    group_hover: Option<Visibility>,
+}
+
+impl HoverVisibility {
+    pub(crate) fn is_always_visible(&self) -> bool {
+        self.base == Visibility::Visible
+            && self
+                .hover
+                .is_none_or(|visibility| visibility == Visibility::Visible)
+            && self
+                .group_hover
+                .is_none_or(|visibility| visibility == Visibility::Visible)
+    }
+
+    pub(crate) fn resolve(&self, hovered: bool, group_hovered: bool) -> Visibility {
+        let mut visibility = self.base;
+
+        if group_hovered && let Some(value) = self.group_hover {
+            visibility = value;
+        }
+        if hovered && let Some(value) = self.hover {
+            visibility = value;
+        }
+
+        visibility
+    }
+}
+
 /// An event for when a drag is moving over this element, with the given state type.
 pub struct DragMoveEvent<T> {
     /// The mouse move event that triggered this drag move event.
@@ -2285,7 +2355,8 @@ impl Interactivity {
                     );
                 }
 
-                let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
+                let InteractiveStyle { style, .. } =
+                    self.compute_style_internal(None, element_state.as_mut(), window, cx);
                 let layout_id = f(style, window, cx);
                 (layout_id, element_state)
             },
@@ -2350,7 +2421,8 @@ impl Interactivity {
             |element_state, window| {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
-                let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
+                let InteractiveStyle { style, visibility } =
+                    self.compute_style_internal(None, element_state.as_mut(), window, cx);
 
                 if let Some(element_state) = element_state.as_mut() {
                     if let Some(clicked_state) = element_state.clicked_state.as_ref() {
@@ -2386,10 +2458,31 @@ impl Interactivity {
                             } else {
                                 None
                             };
-
+                            let hover_state = element_state
+                                .as_ref()
+                                .and_then(|state| state.hover_state.as_ref());
                             let scroll_offset =
                                 self.clamp_scroll_position(bounds, &style, window, cx);
-                            let result = f(&style, scroll_offset, hitbox, window, cx);
+                            let result = window.with_tooltip_visibility(
+                                visibility,
+                                hitbox.as_ref().map(|hitbox| hitbox.id),
+                                self.group.as_ref(),
+                                self.group_hover_style.as_ref().map(|style| &style.group),
+                                hover_state,
+                                |window| {
+                                    if let (Some(global_id), Some(hitbox)) =
+                                        (global_id, hitbox.as_ref())
+                                        && self.tooltip_builder.is_some()
+                                    {
+                                        window.register_tooltip_owner_candidate(
+                                            global_id,
+                                            hitbox,
+                                            Rc::new(|_, _| true),
+                                        );
+                                    }
+                                    f(&style, scroll_offset, hitbox, window, cx)
+                                },
+                            );
                             (result, element_state)
                         },
                     )
@@ -2515,7 +2608,8 @@ impl Interactivity {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
 
-                let style = self.compute_style_internal(hitbox, element_state.as_mut(), window, cx);
+                let InteractiveStyle { style, .. } =
+                    self.compute_style_internal(hitbox, element_state.as_mut(), window, cx);
 
                 #[cfg(any(feature = "test-support", test))]
                 if let Some(debug_selector) = &self.debug_selector {
@@ -2581,6 +2675,7 @@ impl Interactivity {
                                             }
 
                                             self.paint_mouse_listeners(
+                                                global_id,
                                                 hitbox,
                                                 element_state.as_mut(),
                                                 window,
@@ -2751,6 +2846,7 @@ impl Interactivity {
 
     fn paint_mouse_listeners(
         &mut self,
+        global_id: Option<&GlobalElementId>,
         hitbox: &Hitbox,
         element_state: Option<&mut InteractiveElementState>,
         window: &mut Window,
@@ -3178,7 +3274,10 @@ impl Interactivity {
                 });
             }
 
-            if let Some(tooltip_builder) = self.tooltip_builder.take() {
+            if let (Some(tooltip_builder), Some(tooltip_owner_id)) =
+                (self.tooltip_builder.take(), global_id.cloned())
+            {
+                window.register_tooltip_owner(&tooltip_owner_id, hitbox, Rc::new(|_, _| true));
                 let active_tooltip = element_state
                     .active_tooltip
                     .get_or_insert_with(Default::default)
@@ -3196,20 +3295,20 @@ impl Interactivity {
                 let build_tooltip = Rc::new(move |window: &mut Window, cx: &mut App| {
                     Some(((tooltip_builder.build)(window, cx), tooltip_is_hoverable))
                 });
-                // Use bounds instead of testing hitbox since this is called during prepaint.
                 let check_is_hovered_during_prepaint = Rc::new({
                     let pending_mouse_down = pending_mouse_down.clone();
-                    let source_bounds = hitbox.bounds;
+                    let tooltip_owner_id = tooltip_owner_id.clone();
                     move |window: &Window| {
                         !window.last_input_was_keyboard()
                             && pending_mouse_down.borrow().is_none()
-                            && source_bounds.contains(&window.mouse_position())
+                            && window.is_topmost_tooltip_owner_during_prepaint(&tooltip_owner_id)
                     }
                 });
                 let check_is_hovered = Rc::new({
-                    let hitbox = hitbox.clone();
                     move |window: &Window| {
-                        pending_mouse_down.borrow().is_none() && hitbox.is_hovered(window)
+                        !window.last_input_was_keyboard()
+                            && pending_mouse_down.borrow().is_none()
+                            && window.is_topmost_tooltip_owner(&tooltip_owner_id)
                     }
                 });
                 register_tooltip_mouse_handlers(
@@ -3391,7 +3490,8 @@ impl Interactivity {
         window.with_optional_element_state(global_id, |element_state, window| {
             let mut element_state =
                 element_state.map(|element_state| element_state.unwrap_or_default());
-            let style = self.compute_style_internal(hitbox, element_state.as_mut(), window, cx);
+            let InteractiveStyle { style, .. } =
+                self.compute_style_internal(hitbox, element_state.as_mut(), window, cx);
             (style, element_state)
         })
     }
@@ -3403,28 +3503,28 @@ impl Interactivity {
         element_state: Option<&mut InteractiveElementState>,
         window: &mut Window,
         cx: &mut App,
-    ) -> Style {
-        let mut style = Style::default();
-        style.refine(&self.base_style);
+    ) -> InteractiveStyle {
+        let mut interactive_style = InteractiveStyle::default();
+        interactive_style.refine(&self.base_style);
 
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
             if let Some(in_focus_style) = self.in_focus_style.as_ref()
                 && focus_handle.within_focused(window, cx)
             {
-                style.refine(in_focus_style);
+                interactive_style.refine(in_focus_style);
             }
 
             if let Some(focus_style) = self.focus_style.as_ref()
                 && focus_handle.is_focused(window)
             {
-                style.refine(focus_style);
+                interactive_style.refine(focus_style);
             }
 
             if let Some(focus_visible_style) = self.focus_visible_style.as_ref()
                 && focus_handle.is_focused(window)
                 && window.last_input_was_keyboard()
             {
-                style.refine(focus_visible_style);
+                interactive_style.refine(focus_visible_style);
             }
         }
 
@@ -3444,9 +3544,7 @@ impl Interactivity {
                         false
                     };
 
-                if is_group_hovered {
-                    style.refine(&group_hover.style);
-                }
+                interactive_style.refine_group_hover(&group_hover.style, is_group_hovered);
             }
 
             if let Some(hover_style) = self.hover_style.as_ref() {
@@ -3463,9 +3561,7 @@ impl Interactivity {
                     false
                 };
 
-                if is_hovered {
-                    style.refine(hover_style);
-                }
+                interactive_style.refine_hover(hover_style, is_hovered);
             }
         }
 
@@ -3483,19 +3579,23 @@ impl Interactivity {
                             && *state_type == drag.value.as_ref().type_id()
                             && group_hitbox_id.is_hovered(window)
                         {
-                            style.refine(&group_drag_style.style);
+                            interactive_style.refine(&group_drag_style.style);
                         }
                     }
 
                     for (state_type, build_drag_over_style) in &self.drag_over_styles {
                         if *state_type == drag.value.as_ref().type_id() && hitbox.is_hovered(window)
                         {
-                            style.refine(&build_drag_over_style(drag.value.as_ref(), window, cx));
+                            interactive_style.refine(&build_drag_over_style(
+                                drag.value.as_ref(),
+                                window,
+                                cx,
+                            ));
                         }
                     }
                 }
 
-                style.mouse_cursor = drag.cursor_style;
+                interactive_style.style.mouse_cursor = drag.cursor_style;
                 cx.active_drag = Some(drag);
             }
         }
@@ -3508,17 +3608,17 @@ impl Interactivity {
             if clicked_state.group
                 && let Some(group) = self.group_active_style.as_ref()
             {
-                style.refine(&group.style)
+                interactive_style.refine(&group.style)
             }
 
             if let Some(active_style) = self.active_style.as_ref()
                 && clicked_state.element
             {
-                style.refine(active_style)
+                interactive_style.refine(active_style)
             }
         }
 
-        style
+        interactive_style
     }
 
     pub(crate) fn write_a11y_info(&self, node: &mut accesskit::Node) {
@@ -3798,13 +3898,8 @@ pub(crate) fn register_tooltip_mouse_handlers(
 ///
 /// The mouse hovering logic also relies on being called from window prepaint in order to handle the
 /// case where the element the tooltip is on is not rendered - in that case its mouse listeners are
-/// also not registered. During window prepaint, the hitbox information is not available, so
-/// `check_is_hovered_during_prepaint` is used which bases the check off of the absolute bounds of
-/// the element.
-///
-/// TODO: There's a minor bug due to the use of absolute bounds while checking during prepaint - it
-/// does not know if the hitbox is occluded. In the case where a tooltip gets displayed and then
-/// gets occluded after display, it will stick around until the mouse exits the hover bounds.
+/// also not registered. During window prepaint, `check_is_hovered_during_prepaint` checks the
+/// current frame's topmost tooltip owner instead of the rendered frame's hit-test state.
 fn handle_tooltip_mouse_move(
     active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
     build_tooltip: &Rc<dyn Fn(&mut Window, &mut App) -> Option<(AnyView, bool)>>,
@@ -4436,8 +4531,9 @@ impl ScrollHandle {
 mod tests {
     use super::*;
     use crate::{
-        AnyWindowHandle, AppContext as _, Context, GestureTuning, InputEvent, Keystroke,
-        MouseMoveEvent, TestAppContext, TouchEvent, TouchId, canvas, util::FluentBuilder as _,
+        AnyWindowHandle, AppContext as _, Context, GestureTuning, InputEvent, InteractiveText,
+        Keystroke, MouseMoveEvent, StyledText, TestAppContext, TextLayout, TouchEvent, TouchId,
+        canvas, util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
 
@@ -4778,7 +4874,9 @@ mod tests {
 
     struct TooltipCaptureElement {
         child: AnyElement,
-        captured_active_tooltip: CapturedActiveTooltip,
+        tooltip_owner_id: ElementId,
+        tooltip_owner_capture: CapturedActiveTooltip,
+        tooltip_child: Option<(ElementId, CapturedActiveTooltip)>,
     }
 
     impl IntoElement for TooltipCaptureElement {
@@ -4834,42 +4932,78 @@ mod tests {
             cx: &mut App,
         ) {
             self.child.paint(window, cx);
-            window.with_global_id("target".into(), |global_id, window| {
+            window.with_global_id(self.tooltip_owner_id.clone(), |global_id, window| {
                 window.with_element_state::<InteractiveElementState, _>(
                     global_id,
                     |state, _window| {
                         let state = state.unwrap();
-                        *self.captured_active_tooltip.borrow_mut() =
+                        *self.tooltip_owner_capture.borrow_mut() =
                             state.active_tooltip.as_ref().map(Rc::downgrade);
                         ((), state)
                     },
                 )
             });
+            if let Some((tooltip_child_id, tooltip_child_capture)) = &self.tooltip_child {
+                window.with_element_namespace(self.tooltip_owner_id.clone(), |window| {
+                    window.with_global_id(tooltip_child_id.clone(), |global_id, window| {
+                        window.with_element_state::<InteractiveElementState, _>(
+                            global_id,
+                            |state, _window| {
+                                let state = state.unwrap();
+                                *tooltip_child_capture.borrow_mut() =
+                                    state.active_tooltip.as_ref().map(Rc::downgrade);
+                                ((), state)
+                            },
+                        )
+                    });
+                });
+            }
         }
     }
 
     struct TooltipOwner {
-        captured_active_tooltip: CapturedActiveTooltip,
+        tooltip_owner_id: ElementId,
+        tooltip_owner_capture: CapturedActiveTooltip,
+        tooltip_child: Option<(ElementId, CapturedActiveTooltip)>,
         show_delay_override: Option<Duration>,
     }
 
     impl Render for TooltipOwner {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let tooltip_child_id = self
+                .tooltip_child
+                .as_ref()
+                .map(|(tooltip_child_id, _)| tooltip_child_id.clone());
             TooltipCaptureElement {
                 child: div()
                     .size_full()
                     .child(
                         div()
-                            .id("target")
-                            .w(px(50.))
+                            .id(self.tooltip_owner_id.clone())
+                            .w(if tooltip_child_id.is_some() {
+                                px(100.)
+                            } else {
+                                px(50.)
+                            })
                             .h(px(50.))
                             .tooltip(|_, cx| cx.new(|_| TestTooltipView).into())
                             .when_some(self.show_delay_override, |this, delay| {
                                 this.tooltip_show_delay(delay)
+                            })
+                            .when_some(tooltip_child_id, |this, tooltip_child_id| {
+                                this.child(
+                                    div()
+                                        .id(tooltip_child_id)
+                                        .w(px(50.))
+                                        .h(px(50.))
+                                        .tooltip(|_, cx| cx.new(|_| TestTooltipView).into()),
+                                )
                             }),
                     )
                     .into_any_element(),
-                captured_active_tooltip: self.captured_active_tooltip.clone(),
+                tooltip_owner_id: self.tooltip_owner_id.clone(),
+                tooltip_owner_capture: self.tooltip_owner_capture.clone(),
+                tooltip_child: self.tooltip_child.clone(),
             }
         }
     }
@@ -4914,7 +5048,8 @@ mod tests {
 
     #[test]
     fn long_press_shows_tooltip_until_touch_ends() {
-        let (mut test_app, any_window, captured_active_tooltip) = create_tooltip_owner_test(None);
+        let (mut test_app, any_window, captured_active_tooltip) =
+            create_tooltip_owner_test("target".into(), None, None);
         let active_tooltip = captured_active_tooltip
             .borrow()
             .clone()
@@ -4991,39 +5126,46 @@ mod tests {
     }
 
     fn setup_tooltip_owner_test(
+        tooltip_owner_id: ElementId,
+        tooltip_child: Option<(ElementId, CapturedActiveTooltip)>,
         show_delay_override: Option<Duration>,
+        mouse_position: Option<Point<Pixels>>,
     ) -> (
         TestAppContext,
         crate::AnyWindowHandle,
         CapturedActiveTooltip,
     ) {
         let (mut test_app, any_window, captured_active_tooltip) =
-            create_tooltip_owner_test(show_delay_override);
+            create_tooltip_owner_test(tooltip_owner_id, tooltip_child, show_delay_override);
 
-        test_app
-            .update_window(any_window, |_, window, cx| {
-                window.dispatch_event(
-                    MouseMoveEvent {
-                        position: point(px(10.), px(10.)),
-                        modifiers: Default::default(),
-                        pressed_button: None,
-                    }
-                    .to_platform_input(),
-                    cx,
-                );
-            })
-            .unwrap();
+        if let Some(mouse_position) = mouse_position {
+            test_app
+                .update_window(any_window, |_, window, cx| {
+                    window.dispatch_event(
+                        MouseMoveEvent {
+                            position: mouse_position,
+                            modifiers: Default::default(),
+                            pressed_button: None,
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                })
+                .unwrap();
 
-        test_app
-            .update_window(any_window, |_, window, cx| {
-                window.draw(cx).clear(cx);
-            })
-            .unwrap();
+            test_app
+                .update_window(any_window, |_, window, cx| {
+                    window.draw(cx).clear(cx);
+                })
+                .unwrap();
+        }
 
         (test_app, any_window, captured_active_tooltip)
     }
 
     fn create_tooltip_owner_test(
+        tooltip_owner_id: ElementId,
+        tooltip_child: Option<(ElementId, CapturedActiveTooltip)>,
         show_delay_override: Option<Duration>,
     ) -> (
         TestAppContext,
@@ -5035,7 +5177,9 @@ mod tests {
         let window = test_app.add_window({
             let captured_active_tooltip = captured_active_tooltip.clone();
             move |_, _| TooltipOwner {
-                captured_active_tooltip,
+                tooltip_owner_id,
+                tooltip_owner_capture: captured_active_tooltip,
+                tooltip_child,
                 show_delay_override,
             }
         });
@@ -5052,7 +5196,8 @@ mod tests {
 
     #[test]
     fn tooltip_waiting_for_show_is_released_when_its_owner_disappears() {
-        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test(None);
+        let (mut test_app, any_window, captured_active_tooltip) =
+            setup_tooltip_owner_test("target".into(), None, None, Some(point(px(10.), px(10.))));
 
         let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
         let active_tooltip = weak_active_tooltip.upgrade().unwrap();
@@ -5076,8 +5221,12 @@ mod tests {
     fn tooltip_respects_custom_show_delay() {
         let extra_delay = Duration::from_secs(1);
         let show_delay_override = DEFAULT_TOOLTIP_SHOW_DELAY + extra_delay;
-        let (mut test_app, _any_window, captured_active_tooltip) =
-            setup_tooltip_owner_test(Some(show_delay_override));
+        let (mut test_app, _any_window, captured_active_tooltip) = setup_tooltip_owner_test(
+            "target".into(),
+            None,
+            Some(show_delay_override),
+            Some(point(px(10.), px(10.))),
+        );
 
         let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
         let active_tooltip = weak_active_tooltip.upgrade().unwrap();
@@ -5103,7 +5252,8 @@ mod tests {
 
     #[test]
     fn tooltip_is_released_when_its_owner_disappears() {
-        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test(None);
+        let (mut test_app, any_window, captured_active_tooltip) =
+            setup_tooltip_owner_test("target".into(), None, None, Some(point(px(10.), px(10.))));
 
         let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
         let active_tooltip = weak_active_tooltip.upgrade().unwrap();
@@ -5131,7 +5281,8 @@ mod tests {
 
     #[test]
     fn tooltip_hides_after_mouse_leaves_origin() {
-        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test(None);
+        let (mut test_app, any_window, captured_active_tooltip) =
+            setup_tooltip_owner_test("target".into(), None, None, Some(point(px(10.), px(10.))));
 
         let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
         let active_tooltip = weak_active_tooltip.upgrade().unwrap();
@@ -5161,6 +5312,692 @@ mod tests {
             .unwrap();
 
         assert!(active_tooltip.borrow().is_none());
+    }
+
+    #[gpui::test]
+    fn test_hoverable_tooltip_visibility(cx: &mut TestAppContext) {
+        struct TestView(CapturedActiveTooltip);
+
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                TooltipCaptureElement {
+                    child: div()
+                        .size_full()
+                        .child(
+                            div()
+                                .id("target")
+                                .size(px(50.0))
+                                .hoverable_tooltip(|_, cx| cx.new(|_| TestTooltipView).into()),
+                        )
+                        .into_any_element(),
+                    tooltip_owner_id: "target".into(),
+                    tooltip_owner_capture: self.0.clone(),
+                    tooltip_child: None,
+                }
+            }
+        }
+
+        let captured_active_tooltip: CapturedActiveTooltip = Rc::new(RefCell::new(None));
+        let window = cx.add_window({
+            let captured_active_tooltip = captured_active_tooltip.clone();
+            move |_, _| TestView(captured_active_tooltip)
+        });
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.simulate_mouse_move(point(px(49.0), px(10.0)), cx);
+        })
+        .unwrap();
+        cx.dispatcher.advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        cx.run_until_parked();
+
+        cx.update_window(window.into(), |_, window, _| {
+            assert!(window.tooltip_bounds.is_some());
+        })
+        .unwrap();
+        let active_tooltip = captured_active_tooltip
+            .borrow()
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .unwrap();
+        assert!(matches!(
+            active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible {
+                is_hoverable: true,
+                ..
+            })
+        ));
+
+        // Enter the tooltip outside the owner's bounds so owner hover cannot keep it visible.
+        cx.update_window(window.into(), |_, window, cx| {
+            window.simulate_mouse_move(point(px(60.0), px(20.0)), cx);
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        cx.dispatcher
+            .advance_clock(HOVERABLE_TOOLTIP_HIDE_DELAY * 2);
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, _| {
+            assert!(window.tooltip_bounds.is_some());
+        })
+        .unwrap();
+        assert!(matches!(
+            active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.simulate_mouse_move(point(px(100.0), px(100.0)), cx);
+            window.draw(cx).clear(cx);
+            assert!(window.tooltip_bounds.is_some());
+        })
+        .unwrap();
+        assert!(matches!(
+            active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::WaitingForHide { .. })
+        ));
+
+        cx.dispatcher
+            .advance_clock(HOVERABLE_TOOLTIP_HIDE_DELAY / 2);
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.simulate_mouse_move(point(px(60.0), px(20.0)), cx);
+            window.draw(cx).clear(cx);
+            assert!(window.tooltip_bounds.is_some());
+        })
+        .unwrap();
+        assert!(matches!(
+            active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+
+        cx.dispatcher
+            .advance_clock(HOVERABLE_TOOLTIP_HIDE_DELAY * 2);
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, _| {
+            assert!(window.tooltip_bounds.is_some());
+        })
+        .unwrap();
+        assert!(matches!(
+            active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.simulate_mouse_move(point(px(100.0), px(100.0)), cx);
+            window.draw(cx).clear(cx);
+            assert!(window.tooltip_bounds.is_some());
+        })
+        .unwrap();
+        assert!(matches!(
+            active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::WaitingForHide { .. })
+        ));
+        cx.dispatcher
+            .advance_clock(HOVERABLE_TOOLTIP_HIDE_DELAY * 2);
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, _| {
+            assert!(window.tooltip_bounds.is_none());
+        })
+        .unwrap();
+        assert!(active_tooltip.borrow().is_none());
+    }
+
+    #[gpui::test]
+    fn test_tooltip_hides_when_owner_is_occluded(cx: &mut TestAppContext) {
+        struct TestView {
+            show_overlay: bool,
+            captured_active_tooltip: CapturedActiveTooltip,
+        }
+
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                TooltipCaptureElement {
+                    child: div()
+                        .relative()
+                        .size_full()
+                        .child(
+                            div()
+                                .id("target")
+                                .size(px(50.0))
+                                .tooltip(|_, cx| cx.new(|_| TestTooltipView).into()),
+                        )
+                        .when(self.show_overlay, |this| {
+                            this.child(div().absolute().top_0().left_0().size(px(50.0)).occlude())
+                        })
+                        .into_any_element(),
+                    tooltip_owner_id: "target".into(),
+                    tooltip_owner_capture: self.captured_active_tooltip.clone(),
+                    tooltip_child: None,
+                }
+            }
+        }
+
+        let captured_active_tooltip: CapturedActiveTooltip = Rc::new(RefCell::new(None));
+        let window = cx.add_window({
+            let captured_active_tooltip = captured_active_tooltip.clone();
+            move |_, _| TestView {
+                show_overlay: false,
+                captured_active_tooltip,
+            }
+        });
+        let mouse_position = point(px(10.0), px(10.0));
+        cx.update_window(window.into(), |_, window, cx| {
+            window.simulate_mouse_move(mouse_position, cx);
+        })
+        .unwrap();
+        cx.dispatcher.advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        cx.run_until_parked();
+
+        cx.update_window(window.into(), |_, window, _| {
+            assert!(window.tooltip_bounds.is_some());
+        })
+        .unwrap();
+        let active_tooltip = captured_active_tooltip
+            .borrow()
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .unwrap();
+        assert!(matches!(
+            active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+
+        window
+            .update(cx, |view, _, cx| {
+                view.show_overlay = true;
+                cx.notify();
+            })
+            .unwrap();
+        cx.update_window(window.into(), |_, window, _| {
+            assert_eq!(window.mouse_position(), mouse_position);
+            assert!(window.tooltip_bounds.is_none());
+        })
+        .unwrap();
+        assert!(active_tooltip.borrow().is_none());
+    }
+
+    #[test]
+    fn test_nested_tooltip_owner_hover() {
+        let captured_child_active_tooltip: CapturedActiveTooltip = Rc::new(RefCell::new(None));
+        let (mut test_app, any_window, captured_parent_active_tooltip) = setup_tooltip_owner_test(
+            "parent".into(),
+            Some(("child".into(), captured_child_active_tooltip.clone())),
+            None,
+            None,
+        );
+
+        let weak_parent_active_tooltip = captured_parent_active_tooltip.borrow().clone().unwrap();
+        let parent_active_tooltip = weak_parent_active_tooltip.upgrade().unwrap();
+        let weak_child_active_tooltip = captured_child_active_tooltip.borrow().clone().unwrap();
+        let child_active_tooltip = weak_child_active_tooltip.upgrade().unwrap();
+
+        assert!(parent_active_tooltip.borrow().is_none());
+        assert!(child_active_tooltip.borrow().is_none());
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(75.0), px(10.0)),
+                        modifiers: Default::default(),
+                        pressed_button: None,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            })
+            .unwrap();
+        assert!(matches!(
+            parent_active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::WaitingForShow { .. })
+        ));
+        assert!(child_active_tooltip.borrow().is_none());
+
+        test_app
+            .dispatcher
+            .advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        test_app.run_until_parked();
+
+        assert!(matches!(
+            parent_active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+        assert!(child_active_tooltip.borrow().is_none());
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(10.0), px(10.0)),
+                        modifiers: Default::default(),
+                        pressed_button: None,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            })
+            .unwrap();
+
+        assert!(parent_active_tooltip.borrow().is_none());
+        assert!(matches!(
+            child_active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::WaitingForShow { .. })
+        ));
+
+        test_app
+            .dispatcher
+            .advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        test_app.run_until_parked();
+
+        assert!(parent_active_tooltip.borrow().is_none());
+        assert!(matches!(
+            child_active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(75.0), px(10.0)),
+                        modifiers: Default::default(),
+                        pressed_button: None,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            })
+            .unwrap();
+
+        assert!(child_active_tooltip.borrow().is_none());
+        assert!(matches!(
+            parent_active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::WaitingForShow { .. })
+        ));
+
+        test_app
+            .dispatcher
+            .advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        test_app.run_until_parked();
+
+        assert!(matches!(
+            parent_active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+        assert!(child_active_tooltip.borrow().is_none());
+    }
+
+    #[gpui::test]
+    fn test_parent_tooltip_when_text_tooltip_is_none(cx: &mut TestAppContext) {
+        struct TestView {
+            text_layout: TextLayout,
+            captured_parent_active_tooltip: CapturedActiveTooltip,
+        }
+
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let text = StyledText::new("foo bar");
+                self.text_layout = text.layout().clone();
+                TooltipCaptureElement {
+                    child: div()
+                        .size_full()
+                        .child(
+                            div()
+                                .id("parent")
+                                .size(px(100.0))
+                                .tooltip(|_, cx| cx.new(|_| TestTooltipView).into())
+                                .child(InteractiveText::new("text", text).tooltip(
+                                    |index, _, cx| {
+                                        (4..7)
+                                            .contains(&index)
+                                            .then(|| cx.new(|_| TestTooltipView).into())
+                                    },
+                                )),
+                        )
+                        .into_any_element(),
+                    tooltip_owner_id: "parent".into(),
+                    tooltip_owner_capture: self.captured_parent_active_tooltip.clone(),
+                    tooltip_child: None,
+                }
+            }
+        }
+
+        let captured_parent_active_tooltip: CapturedActiveTooltip = Rc::new(RefCell::new(None));
+        let window = cx.add_window({
+            let captured_parent_active_tooltip = captured_parent_active_tooltip.clone();
+            move |_, _| TestView {
+                text_layout: TextLayout::default(),
+                captured_parent_active_tooltip,
+            }
+        });
+
+        for (index, parent_visible) in [(0, true), (4, false), (0, true)] {
+            let position = window
+                .read_with(cx, |view, _| {
+                    view.text_layout.position_for_index(index).unwrap() + point(px(1.0), px(1.0))
+                })
+                .unwrap();
+            cx.update_window(window.into(), |_, window, cx| {
+                window.simulate_mouse_move(position, cx);
+            })
+            .unwrap();
+            cx.dispatcher.advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+            cx.run_until_parked();
+
+            cx.update_window(window.into(), |_, window, _| {
+                assert!(
+                    window.tooltip_bounds.is_some(),
+                    "hovering character {index} should show a tooltip"
+                );
+            })
+            .unwrap();
+            let parent_active_tooltip = captured_parent_active_tooltip
+                .borrow()
+                .as_ref()
+                .and_then(Weak::upgrade)
+                .unwrap();
+            if parent_visible {
+                assert!(matches!(
+                    parent_active_tooltip.borrow().as_ref(),
+                    Some(ActiveTooltip::Visible { .. })
+                ));
+            } else {
+                assert!(parent_active_tooltip.borrow().is_none());
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_parent_tooltip_when_child_is_invisible(cx: &mut TestAppContext) {
+        struct TestView(CapturedActiveTooltip);
+
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                TooltipCaptureElement {
+                    child: div()
+                        .size_full()
+                        .child(
+                            div()
+                                .id("parent")
+                                .size(px(100.0))
+                                .tooltip(|_, cx| cx.new(|_| TestTooltipView).into())
+                                .child(
+                                    div()
+                                        .id("child")
+                                        .size(px(50.0))
+                                        .invisible()
+                                        .tooltip(|_, cx| cx.new(|_| TestTooltipView).into()),
+                                ),
+                        )
+                        .into_any_element(),
+                    tooltip_owner_id: "parent".into(),
+                    tooltip_owner_capture: self.0.clone(),
+                    tooltip_child: None,
+                }
+            }
+        }
+
+        let captured_parent_active_tooltip: CapturedActiveTooltip = Rc::new(RefCell::new(None));
+        let window = cx.add_window({
+            let captured_parent_active_tooltip = captured_parent_active_tooltip.clone();
+            move |_, _| TestView(captured_parent_active_tooltip)
+        });
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: point(px(10.0), px(10.0)),
+                    modifiers: Default::default(),
+                    pressed_button: None,
+                }
+                .to_platform_input(),
+                cx,
+            );
+        })
+        .unwrap();
+
+        cx.dispatcher.advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        cx.run_until_parked();
+
+        cx.update_window(window.into(), |_, window, _| {
+            assert!(window.tooltip_bounds.is_some());
+        })
+        .unwrap();
+
+        let parent_active_tooltip = captured_parent_active_tooltip
+            .borrow()
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .unwrap();
+        assert!(
+            matches!(
+                parent_active_tooltip.borrow().as_ref(),
+                Some(ActiveTooltip::Visible { .. })
+            ),
+            "hovering the hidden child's bounds should show the parent's tooltip"
+        );
+    }
+
+    #[gpui::test]
+    fn test_parent_tooltip_when_child_container_is_invisible(cx: &mut TestAppContext) {
+        struct TestView(CapturedActiveTooltip);
+
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                TooltipCaptureElement {
+                    child: div()
+                        .size_full()
+                        .child(
+                            div()
+                                .id("parent")
+                                .size(px(100.0))
+                                .tooltip(|_, cx| cx.new(|_| TestTooltipView).into())
+                                .child(
+                                    div().size(px(50.0)).invisible().child(
+                                        div()
+                                            .id("child")
+                                            .size(px(50.0))
+                                            .tooltip(|_, cx| cx.new(|_| TestTooltipView).into()),
+                                    ),
+                                ),
+                        )
+                        .into_any_element(),
+                    tooltip_owner_id: "parent".into(),
+                    tooltip_owner_capture: self.0.clone(),
+                    tooltip_child: None,
+                }
+            }
+        }
+
+        let captured_parent_active_tooltip: CapturedActiveTooltip = Rc::new(RefCell::new(None));
+        let window = cx.add_window({
+            let captured_parent_active_tooltip = captured_parent_active_tooltip.clone();
+            move |_, _| TestView(captured_parent_active_tooltip)
+        });
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: point(px(10.0), px(10.0)),
+                    modifiers: Default::default(),
+                    pressed_button: None,
+                }
+                .to_platform_input(),
+                cx,
+            );
+        })
+        .unwrap();
+
+        cx.dispatcher.advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        cx.run_until_parked();
+
+        cx.update_window(window.into(), |_, window, _| {
+            assert!(window.tooltip_bounds.is_some());
+        })
+        .unwrap();
+
+        let parent_active_tooltip = captured_parent_active_tooltip
+            .borrow()
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .unwrap();
+        assert!(
+            matches!(
+                parent_active_tooltip.borrow().as_ref(),
+                Some(ActiveTooltip::Visible { .. })
+            ),
+            "hovering the hidden child's bounds should show the parent's tooltip"
+        );
+    }
+
+    #[gpui::test]
+    fn test_parent_tooltip_when_cached_child_container_becomes_invisible(cx: &mut TestAppContext) {
+        struct CachedChild {
+            render_count: Rc<Cell<usize>>,
+            captured_active_tooltip: CapturedActiveTooltip,
+        }
+
+        impl Render for CachedChild {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.render_count.set(self.render_count.get() + 1);
+                TooltipCaptureElement {
+                    child: div()
+                        .id("child")
+                        .group("cached-child")
+                        .size(px(50.0))
+                        .tooltip(|_, cx| cx.new(|_| TestTooltipView).into())
+                        .into_any_element(),
+                    tooltip_owner_id: "child".into(),
+                    tooltip_owner_capture: self.captured_active_tooltip.clone(),
+                    tooltip_child: None,
+                }
+            }
+        }
+
+        struct TestView {
+            child: Entity<CachedChild>,
+            hide_child: bool,
+            captured_parent_active_tooltip: CapturedActiveTooltip,
+        }
+
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                TooltipCaptureElement {
+                    child: div()
+                        .size_full()
+                        .child(
+                            div()
+                                .id("parent")
+                                .size(px(100.0))
+                                .tooltip(|_, cx| cx.new(|_| TestTooltipView).into())
+                                .child(
+                                    div()
+                                        .size(px(50.0))
+                                        .when(self.hide_child, |this| this.invisible())
+                                        .child(
+                                            self.child
+                                                .clone()
+                                                .cached(StyleRefinement::default().size(px(50.0))),
+                                        ),
+                                ),
+                        )
+                        .into_any_element(),
+                    tooltip_owner_id: "parent".into(),
+                    tooltip_owner_capture: self.captured_parent_active_tooltip.clone(),
+                    tooltip_child: None,
+                }
+            }
+        }
+
+        let captured_parent_active_tooltip: CapturedActiveTooltip = Rc::new(RefCell::new(None));
+        let captured_child_active_tooltip: CapturedActiveTooltip = Rc::new(RefCell::new(None));
+        let child_render_count = Rc::new(Cell::new(0));
+        let window = cx.add_window({
+            let captured_parent_active_tooltip = captured_parent_active_tooltip.clone();
+            let captured_child_active_tooltip = captured_child_active_tooltip.clone();
+            let child_render_count = child_render_count.clone();
+            move |_, cx| TestView {
+                child: cx.new(|_| CachedChild {
+                    render_count: child_render_count,
+                    captured_active_tooltip: captured_child_active_tooltip,
+                }),
+                hide_child: false,
+                captured_parent_active_tooltip,
+            }
+        });
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.simulate_mouse_move(point(px(10.0), px(10.0)), cx);
+        })
+        .unwrap();
+        cx.dispatcher.advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        cx.run_until_parked();
+
+        cx.update_window(window.into(), |_, window, _| {
+            assert!(window.tooltip_bounds.is_some());
+        })
+        .unwrap();
+        let child_active_tooltip = captured_child_active_tooltip
+            .borrow()
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .unwrap();
+        assert!(matches!(
+            child_active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+        let previous_render_count = child_render_count.get();
+
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        cx.update_window(window.into(), |_, window, _| {
+            assert!(window.tooltip_bounds.is_some());
+        })
+        .unwrap();
+        assert_eq!(child_render_count.get(), previous_render_count);
+        assert!(matches!(
+            child_active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.simulate_mouse_move(point(px(75.0), px(75.0)), cx);
+        })
+        .unwrap();
+        cx.dispatcher.advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        cx.run_until_parked();
+
+        let parent_active_tooltip = captured_parent_active_tooltip
+            .borrow()
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .unwrap();
+        cx.update_window(window.into(), |_, window, _| {
+            assert!(window.tooltip_bounds.is_some());
+        })
+        .unwrap();
+        assert!(matches!(
+            parent_active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+        let previous_render_count = child_render_count.get();
+
+        window
+            .update(cx, |view, _, cx| {
+                view.hide_child = true;
+                cx.notify();
+            })
+            .unwrap();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.simulate_mouse_move(point(px(10.0), px(10.0)), cx);
+            window.draw(cx).clear(cx);
+            assert!(window.tooltip_bounds.is_some());
+        })
+        .unwrap();
+        assert!(matches!(
+            parent_active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+        assert_eq!(child_render_count.get(), previous_render_count);
     }
 
     struct MouseDownOutOwner {
