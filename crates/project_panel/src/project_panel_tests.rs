@@ -4131,6 +4131,112 @@ async fn test_collapse_selected_entry_scrolls_into_view(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+async fn test_collapse_opened_file_scrolls_to_parent(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    let (panel, mut cx) = open_panel_with_tree(
+        json!({
+            "src": {
+                "a.rs": "",
+                "b.rs": "",
+                "c.rs": "",
+                "d.rs": "",
+                "e.rs": "",
+                "f.rs": "",
+                "g.rs": "",
+                "h.rs": "",
+            },
+            "tests": {
+                "a.rs": "",
+                "b.rs": "",
+                "c.rs": "",
+                "d.rs": "",
+                "e.rs": "",
+                "f.rs": "",
+                "g.rs": "",
+                "h.rs": "",
+            }
+        }),
+        size(px(800.), px(160.)),
+        cx,
+    )
+    .await;
+    let cx = &mut cx;
+    toggle_expand_dir(&panel, "root/src", cx);
+    toggle_expand_dir(&panel, "root/tests", cx);
+    select_path(&panel, "root/src/h.rs", cx);
+    panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
+    cx.run_until_parked();
+
+    let workspace = panel.read_with(cx, |panel, _| {
+        panel.workspace.upgrade().expect("workspace is open")
+    });
+    ensure_single_file_is_opened(&workspace, "src/h.rs", cx);
+    let parent_id = find_project_entry(&panel, "root/src", cx).expect("src exists");
+    let opened_entry = panel.read_with(cx, |panel, _| panel.selection.expect("file is selected"));
+    let mut expected_expanded_dir_ids = ["root", "root/src", "root/tests"]
+        .map(|path| find_project_entry(&panel, path, cx).expect("directory exists"));
+    expected_expanded_dir_ids.sort_unstable();
+    for expand_children in [false, true] {
+        if expand_children {
+            toggle_expand_dir(&panel, "root/src", cx);
+            select_path(&panel, "root/src/h.rs", cx);
+            panel.update_in(cx, |panel, window, cx| {
+                panel.expand_selected_entry_and_children(
+                    &ExpandSelectedEntryAndChildren,
+                    window,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+        }
+        panel.update_in(cx, |panel, window, cx| {
+            panel.scroll_cursor_center(&ScrollCursorCenter, window, cx);
+        });
+        cx.run_until_parked();
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(
+                panel.state.expanded_dir_ids[&opened_entry.worktree_id], expected_expanded_dir_ids,
+                "expand_children={expand_children}"
+            );
+            assert!(
+                entry_row_bounds(panel, parent_id).bottom() < panel.scroll_handle.viewport().top()
+            );
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..usize::MAX, cx),
+            &[
+                "v root",
+                "    > src  <== selected",
+                "    v tests",
+                "          a.rs",
+                "          b.rs",
+                "          c.rs",
+                "          d.rs",
+                "          e.rs",
+                "          f.rs",
+                "          g.rs",
+                "          h.rs",
+            ],
+            "expand_children={expand_children}"
+        );
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(panel.marked_entries, [opened_entry]);
+            let parent_bounds = entry_row_bounds(panel, parent_id);
+            let viewport = panel.scroll_handle.viewport();
+            let sticky_height = parent_bounds.size.height * panel.sticky_items_count;
+            assert!(parent_bounds.top() >= viewport.top() + sticky_height);
+            assert!(parent_bounds.bottom() <= viewport.bottom());
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_collapse_selected_entry_does_not_scroll_visible_parent(cx: &mut TestAppContext) {
     init_test(cx);
     let (panel, mut cx) = open_panel_with_tree(

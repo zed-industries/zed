@@ -633,10 +633,11 @@ mod tests {
     };
 
     use crate::{
-        Action, ActionRegistry, App, Bounds, Context, DispatchPhase, DispatchTree, FocusHandle,
-        InputHandler, IntoElement, KeyBinding, KeyContext, Keymap, Modifiers, Pixels,
-        PlatformWindow, Point, Render, Subscription, TestAppContext, UTF16Selection, Unbind,
-        VisualContext, VisualTestContext, Window,
+        Action, ActionRegistry, App, Bounds, Context, DispatchEventResult, DispatchPhase,
+        DispatchTree, Entity, FocusHandle, InputHandler, InputPreference, IntoElement, KeyBinding,
+        KeyContext, KeyDownEvent, Keymap, Modifiers, Pixels, PlatformInput, PlatformWindow, Point,
+        Render, Subscription, TestAppContext, UTF16Selection, Unbind, VisualContext,
+        VisualTestContext, Window,
     };
 
     actions!(dispatch_test, [TestAction, SecondaryTestAction]);
@@ -661,6 +662,7 @@ mod tests {
         focus_handle: FocusHandle,
         text: Rc<RefCell<String>>,
         action_count: Rc<Cell<usize>>,
+        accepts_text_input: Rc<Cell<bool>>,
     }
 
     impl PendingTextInputTestView {
@@ -669,6 +671,7 @@ mod tests {
                 focus_handle: cx.focus_handle(),
                 text: Rc::default(),
                 action_count: Rc::default(),
+                accepts_text_input: Rc::new(Cell::new(true)),
             }
         }
     }
@@ -742,6 +745,10 @@ mod tests {
     }
 
     impl InputHandler for PendingTextInputTestView {
+        fn accepts_text_input(&mut self, _: &mut Window, _: &mut App) -> bool {
+            self.accepts_text_input.get()
+        }
+
         fn selected_text_range(
             &mut self,
             _: bool,
@@ -919,6 +926,37 @@ mod tests {
         let prefers_ime = input_handler.query_prefers_ime_for_printable_keys();
         platform_window.set_input_handler(input_handler);
         Some(prefers_ime)
+    }
+
+    fn setup_altgr_test(
+        cx: &mut TestAppContext,
+    ) -> (Entity<PendingTextInputTestView>, &mut VisualTestContext) {
+        let (test, cx) = cx.add_window_view(|_, cx| PendingTextInputTestView::new(cx));
+        test.update_in(cx, |test, window, cx| {
+            window.focus(&test.focus_handle, cx);
+            window.activate_window();
+            cx.bind_keys([KeyBinding::new("ctrl-alt-a", TestAction, Some("Terminal"))]);
+        });
+        (test, cx)
+    }
+
+    fn dispatch_altgr_key_down(
+        cx: &mut VisualTestContext,
+        prefer_character_input: bool,
+    ) -> DispatchEventResult {
+        cx.update(|window, cx| {
+            window.dispatch_event(
+                PlatformInput::KeyDown(KeyDownEvent {
+                    keystroke: Keystroke {
+                        key_char: Some("ą".into()),
+                        ..Keystroke::parse("ctrl-alt-a").expect("valid keystroke")
+                    },
+                    is_held: false,
+                    prefer_character_input,
+                }),
+                cx,
+            )
+        })
     }
 
     fn simulate_pending_binding(cx: &mut VisualTestContext) {
@@ -1586,6 +1624,137 @@ mod tests {
             }]
         );
         assert_eq!(action_count.get(), 1);
+    }
+
+    #[crate::test]
+    fn test_keystroke_input_preference(cx: &mut TestAppContext) {
+        let (test, cx) = setup_altgr_test(cx);
+        let intercepted_preferences = Rc::new(RefCell::new(Vec::new()));
+        let observed_preferences = Rc::new(RefCell::new(Vec::new()));
+        let _interceptor = cx.update(|_, cx| {
+            cx.intercept_keystrokes({
+                let intercepted_preferences = intercepted_preferences.clone();
+                move |event, _, _| {
+                    intercepted_preferences
+                        .borrow_mut()
+                        .push(event.input_preference);
+                }
+            })
+        });
+        let _observer = cx.update(|_, cx| {
+            cx.observe_keystrokes({
+                let observed_preferences = observed_preferences.clone();
+                move |event, _, _| {
+                    observed_preferences
+                        .borrow_mut()
+                        .push(event.input_preference);
+                }
+            })
+        });
+
+        for (prefer_character_input, accepts_text_input, input_preference) in [
+            (true, true, InputPreference::CharacterInput),
+            (false, true, InputPreference::KeyBindings),
+            (true, false, InputPreference::KeyBindings),
+            (false, false, InputPreference::KeyBindings),
+        ] {
+            test.update(cx, |test, _| {
+                test.accepts_text_input.set(accepts_text_input);
+                test.action_count.set(0);
+            });
+            intercepted_preferences.borrow_mut().clear();
+            observed_preferences.borrow_mut().clear();
+            let result = dispatch_altgr_key_down(cx, prefer_character_input);
+            assert_eq!(
+                result.propagate,
+                input_preference == InputPreference::CharacterInput
+            );
+            assert_eq!(
+                intercepted_preferences.borrow().as_slice(),
+                &[input_preference]
+            );
+            assert_eq!(
+                observed_preferences.borrow().as_slice(),
+                &[input_preference]
+            );
+            test.read_with(cx, |test, _| {
+                assert_eq!(
+                    test.action_count.get(),
+                    usize::from(input_preference == InputPreference::KeyBindings)
+                );
+            });
+        }
+    }
+
+    #[crate::test]
+    fn test_input_preference_rechecked_after_interception(cx: &mut TestAppContext) {
+        let (test, cx) = setup_altgr_test(cx);
+        let accepts_text_input = test.read_with(cx, |test, _| test.accepts_text_input.clone());
+        let _interceptor = cx.update(|_, cx| {
+            cx.intercept_keystrokes({
+                let accepts_text_input = accepts_text_input.clone();
+                move |event, _, _| {
+                    assert_eq!(
+                        event.input_preference == InputPreference::CharacterInput,
+                        accepts_text_input.get()
+                    );
+                    accepts_text_input.set(!accepts_text_input.get());
+                }
+            })
+        });
+        let observed_preferences = Rc::new(RefCell::new(Vec::new()));
+        let _observer = cx.update(|_, cx| {
+            cx.observe_keystrokes({
+                let observed_preferences = observed_preferences.clone();
+                move |event, _, _| {
+                    observed_preferences
+                        .borrow_mut()
+                        .push(event.input_preference);
+                }
+            })
+        });
+
+        for (initially_accepts_text_input, observed_preference) in [
+            (true, InputPreference::KeyBindings),
+            (false, InputPreference::CharacterInput),
+        ] {
+            accepts_text_input.set(initially_accepts_text_input);
+            test.update(cx, |test, _| test.action_count.set(0));
+            observed_preferences.borrow_mut().clear();
+            let result = dispatch_altgr_key_down(cx, true);
+            assert_eq!(result.propagate, !initially_accepts_text_input);
+            assert_eq!(
+                observed_preferences.borrow().as_slice(),
+                &[observed_preference]
+            );
+            test.read_with(cx, |test, _| {
+                assert_eq!(
+                    test.action_count.get(),
+                    usize::from(initially_accepts_text_input)
+                );
+            });
+        }
+    }
+
+    #[crate::test]
+    fn test_keystroke_interceptors_can_consume_preferred_character_input(cx: &mut TestAppContext) {
+        let (test, cx) = setup_altgr_test(cx);
+        let intercepted = Rc::new(Cell::new(false));
+        let _interceptor = cx.update(|_, cx| {
+            cx.intercept_keystrokes({
+                let intercepted = intercepted.clone();
+                move |event, _, cx| {
+                    assert_eq!(event.input_preference, InputPreference::CharacterInput);
+                    intercepted.set(true);
+                    cx.stop_propagation();
+                }
+            })
+        });
+
+        let result = dispatch_altgr_key_down(cx, true);
+        assert!(intercepted.get());
+        assert!(!result.propagate);
+        test.read_with(cx, |test, _| assert_eq!(test.action_count.get(), 0));
     }
 
     #[crate::test]

@@ -4710,16 +4710,16 @@ pub(crate) fn apply_native_model_override(
         );
         return;
     };
-    let configured = LanguageModelRegistry::global(cx)
+    let model = LanguageModelRegistry::global(cx)
         .update(cx, |registry, cx| registry.select_model(&selected, cx));
-    let Some(configured) = configured else {
+    let Some(model) = model else {
         log::warn!(
             "create_thread: no model registered for {model_id:?}; using thread's default model"
         );
         return;
     };
     thread.update(cx, |thread, cx| {
-        thread.set_model(configured.model, cx);
+        thread.set_model(model, cx);
     });
 }
 
@@ -6178,9 +6178,7 @@ impl AgentPanel {
                 if LanguageModelRegistry::global(cx)
                     .read(cx)
                     .default_model()
-                    .is_some_and(|model| {
-                        model.provider.id() != language_model::ZED_CLOUD_PROVIDER_ID
-                    })
+                    .is_some_and(|model| model.provider_id != language_model::ZED_CLOUD_PROVIDER_ID)
                 {
                     return false;
                 }
