@@ -454,11 +454,12 @@ impl MarksState {
                 anchors
                     .iter()
                     .map(|(name, anchors)| {
+                        let snapshot = buffer.read(cx);
                         (
                             name.clone(),
-                            buffer
-                                .read(cx)
-                                .summaries_for_anchors::<Point, _>(anchors.iter().copied())
+                            anchors
+                                .iter()
+                                .map(|anchor| snapshot.summary_for_anchor::<Point>(anchor))
                                 .collect(),
                         )
                     })
