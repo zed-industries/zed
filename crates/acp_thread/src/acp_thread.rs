@@ -3081,9 +3081,17 @@ pub struct ToolCallUpdateTerminal {
     pub terminal: Entity<Terminal>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum PlanIdentity {
+    Legacy,
+    Keyed(acp_v2::PlanId),
+}
+
 #[derive(Debug, Default)]
 pub struct Plan {
     pub entries: Vec<PlanEntry>,
+    pub meta: Option<acp_v2::Meta>,
+    pub update_meta: Option<acp_v2::Meta>,
 }
 
 #[derive(Debug)]
@@ -3091,6 +3099,7 @@ pub struct PlanStats<'a> {
     pub in_progress_entry: Option<&'a PlanEntry>,
     pub pending: u32,
     pub completed: u32,
+    pub cancelled: u32,
 }
 
 impl Plan {
@@ -3103,43 +3112,88 @@ impl Plan {
             in_progress_entry: None,
             pending: 0,
             completed: 0,
+            cancelled: 0,
         };
 
         for entry in &self.entries {
-            match &entry.status {
-                acp_v1::PlanEntryStatus::Pending => {
-                    stats.pending += 1;
-                }
-                acp_v1::PlanEntryStatus::InProgress => {
+            match &entry.source.status {
+                acp_v2::PlanEntryStatus::InProgress => {
                     stats.in_progress_entry = stats.in_progress_entry.or(Some(entry));
                     stats.pending += 1;
                 }
-                acp_v1::PlanEntryStatus::Completed => {
+                acp_v2::PlanEntryStatus::Completed => {
                     stats.completed += 1;
                 }
-                _ => {}
+                acp_v2::PlanEntryStatus::Cancelled => {
+                    stats.cancelled += 1;
+                }
+                _ => stats.pending += 1,
             }
         }
 
         stats
     }
+
+    fn replace(
+        &mut self,
+        entries: Vec<acp_v2::PlanEntry>,
+        meta: Option<acp_v2::Meta>,
+        update_meta: Option<acp_v2::Meta>,
+        cx: &mut App,
+    ) -> bool {
+        let changed = self.entries.len() != entries.len()
+            || self.entries.iter().zip(&entries).any(|(old, new)| {
+                old.source.content != new.content
+                    || old.source.priority != new.priority
+                    || old.source.status != new.status
+            });
+        let new_length = entries.len();
+        let mut entries = entries.into_iter();
+        for (old, new) in self.entries.iter_mut().zip(entries.by_ref()) {
+            if old.source.content != new.content {
+                update_markdown_in_place(&old.content, &new.content, cx);
+            }
+            old.source = new;
+        }
+        self.entries
+            .extend(entries.map(|source| PlanEntry::new(source, cx)));
+        self.entries.truncate(new_length);
+        self.meta = meta;
+        self.update_meta = update_meta;
+        changed
+    }
 }
 
 #[derive(Debug)]
 pub struct PlanEntry {
+    pub source: acp_v2::PlanEntry,
     pub content: Entity<Markdown>,
-    pub priority: acp_v1::PlanEntryPriority,
-    pub status: acp_v1::PlanEntryStatus,
 }
 
 impl PlanEntry {
-    pub fn from_acp(entry: acp_v1::PlanEntry, cx: &mut App) -> Self {
+    fn new(source: acp_v2::PlanEntry, cx: &mut App) -> Self {
         Self {
-            content: cx.new(|cx| Markdown::new(entry.content.into(), None, None, cx)),
-            priority: entry.priority,
-            status: entry.status,
+            content: cx.new(|cx| Markdown::new(source.content.clone().into(), None, None, cx)),
+            source,
         }
     }
+}
+
+fn plan_entry_from_v1(entry: acp_v1::PlanEntry) -> Result<acp_v2::PlanEntry> {
+    let priority = match entry.priority {
+        acp_v1::PlanEntryPriority::High => acp_v2::PlanEntryPriority::High,
+        acp_v1::PlanEntryPriority::Medium => acp_v2::PlanEntryPriority::Medium,
+        acp_v1::PlanEntryPriority::Low => acp_v2::PlanEntryPriority::Low,
+        // V2 preserves future wire names through its Other variant.
+        other => serde_json::from_value(serde_json::to_value(other)?)?,
+    };
+    let status = match entry.status {
+        acp_v1::PlanEntryStatus::Pending => acp_v2::PlanEntryStatus::Pending,
+        acp_v1::PlanEntryStatus::InProgress => acp_v2::PlanEntryStatus::InProgress,
+        acp_v1::PlanEntryStatus::Completed => acp_v2::PlanEntryStatus::Completed,
+        other => serde_json::from_value(serde_json::to_value(other)?)?,
+    };
+    Ok(acp_v2::PlanEntry::new(entry.content, priority, status).meta(entry.meta))
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -3230,7 +3284,8 @@ pub struct AcpThread {
     notices: Vec<(usize, acp_v1::Notice)>,
     next_notice_id: usize,
     elicitations: ElicitationStore,
-    plan: Plan,
+    plans: HashMap<PlanIdentity, Plan>,
+    visible_plan: Option<PlanIdentity>,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
     _git_store_subscription: Subscription,
@@ -3545,7 +3600,8 @@ impl AcpThread {
             notices: Vec::new(),
             next_notice_id: 0,
             elicitations: ElicitationStore::default(),
-            plan: Default::default(),
+            plans: HashMap::default(),
+            visible_plan: None,
             title,
             provisional_title: None,
             project,
@@ -3875,7 +3931,7 @@ impl AcpThread {
                     .map_err(acp_v1::Error::from)?;
             }
             acp_v1::SessionUpdate::Plan(plan) => {
-                self.update_plan(plan, cx);
+                self.update_plan(plan, cx).map_err(acp_v1::Error::from)?;
             }
             acp_v1::SessionUpdate::Notice(notice) => {
                 let notice_id = self.next_notice_id;
@@ -5230,44 +5286,70 @@ impl AcpThread {
         Some((index, elicitation))
     }
 
-    pub fn plan(&self) -> &Plan {
-        &self.plan
+    pub fn plan(&self) -> Option<&Plan> {
+        self.plans.get(self.visible_plan.as_ref()?)
     }
 
-    pub fn update_plan(&mut self, request: acp_v1::Plan, cx: &mut Context<Self>) {
-        let new_entries_len = request.entries.len();
-        let mut new_entries = request.entries.into_iter();
+    pub fn plan_by_id(&self, id: &acp_v2::PlanId) -> Option<&Plan> {
+        self.plans.get(&PlanIdentity::Keyed(id.clone()))
+    }
 
-        // Reuse existing markdown to prevent flickering
-        for (old, new) in self.plan.entries.iter_mut().zip(new_entries.by_ref()) {
-            let PlanEntry {
-                content,
-                priority,
-                status,
-            } = old;
-            content.update(cx, |old, cx| {
-                old.replace(new.content, cx);
-            });
-            *priority = new.priority;
-            *status = new.status;
-        }
-        for new in new_entries {
-            self.plan.entries.push(PlanEntry::from_acp(new, cx))
-        }
-        self.plan.entries.truncate(new_entries_len);
+    pub fn update_plan(&mut self, request: acp_v1::Plan, cx: &mut Context<Self>) -> Result<()> {
+        let entries = request
+            .entries
+            .into_iter()
+            .map(plan_entry_from_v1)
+            .collect::<Result<_>>()?;
+        self.replace_plan(PlanIdentity::Legacy, entries, request.meta, None, cx);
+        Ok(())
+    }
 
+    pub fn upsert_plan_items(
+        &mut self,
+        plan: acp_v2::PlanItems,
+        update_meta: Option<acp_v2::Meta>,
+        cx: &mut Context<Self>,
+    ) {
+        self.replace_plan(
+            PlanIdentity::Keyed(plan.plan_id),
+            plan.entries,
+            plan.meta,
+            update_meta,
+            cx,
+        );
+    }
+
+    fn replace_plan(
+        &mut self,
+        identity: PlanIdentity,
+        entries: Vec<acp_v2::PlanEntry>,
+        meta: Option<acp_v2::Meta>,
+        update_meta: Option<acp_v2::Meta>,
+        cx: &mut Context<Self>,
+    ) {
+        let is_new = !self.plans.contains_key(&identity);
+        let changed =
+            self.plans
+                .entry(identity.clone())
+                .or_default()
+                .replace(entries, meta, update_meta, cx);
+        if is_new || changed || identity == PlanIdentity::Legacy {
+            self.visible_plan = Some(identity);
+        }
         cx.notify();
     }
 
     fn clear_completed_plan_entries(&mut self, cx: &mut Context<Self>) {
-        self.plan
-            .entries
-            .retain(|entry| !matches!(entry.status, acp_v1::PlanEntryStatus::Completed));
+        // V1's next-turn cleanup is a compatibility policy, not authority to alter keyed plans.
+        if let Some(plan) = self.plans.get_mut(&PlanIdentity::Legacy) {
+            plan.entries
+                .retain(|entry| !matches!(entry.source.status, acp_v2::PlanEntryStatus::Completed));
+        }
         cx.notify();
     }
 
     pub fn clear_plan(&mut self, cx: &mut Context<Self>) {
-        self.plan.entries.clear();
+        self.visible_plan = None;
         cx.notify();
     }
 
@@ -6646,6 +6728,303 @@ mod tests {
             settings_store.register_setting::<feature_flags::FeatureFlagsSettings>();
             cx.set_global(settings_store);
         });
+    }
+
+    #[test]
+    fn test_legacy_plan_entry_conversion_preserves_fields() {
+        for priority in [
+            acp_v1::PlanEntryPriority::High,
+            acp_v1::PlanEntryPriority::Medium,
+            acp_v1::PlanEntryPriority::Low,
+        ] {
+            for status in [
+                acp_v1::PlanEntryStatus::Pending,
+                acp_v1::PlanEntryStatus::InProgress,
+                acp_v1::PlanEntryStatus::Completed,
+            ] {
+                for meta in [
+                    None,
+                    Some(acp_v1::Meta::new()),
+                    Some(acp_v1::Meta::from_iter([(
+                        "nested".into(),
+                        json!({"value": [1, null]}),
+                    )])),
+                ] {
+                    let entry =
+                        acp_v1::PlanEntry::new("Task 🦀\n`code`", priority.clone(), status.clone())
+                            .meta(meta);
+                    let expected = serde_json::to_value(&entry).expect("v1 entry");
+                    let converted = plan_entry_from_v1(entry).expect("supported v1 entry");
+                    assert_eq!(serde_json::to_value(converted).expect("v2 entry"), expected);
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_keyed_plan_metadata_and_unknown_values_are_retained(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let id = acp_v2::PlanId::new("plan");
+            let mut items: acp_v2::PlanItems = serde_json::from_value(json!({
+                "planId": "plan",
+                "entries": [
+                    {"content": "Unknown state", "priority": "_urgent", "status": "_blocked", "_meta": {"entry": [1, null]}},
+                    {"content": "Finished", "priority": "medium", "status": "completed"},
+                    {"content": "Not needed", "priority": "low", "status": "cancelled"}
+                ],
+                "_meta": {"plan": true}
+            })).expect("keyed items");
+            let update_meta = Some(acp_v2::Meta::from_iter([("update".into(), json!(true))]));
+            thread.upsert_plan_items(items.clone(), update_meta.clone(), cx);
+            let plan = thread.plan().expect("visible plan");
+            assert_eq!(plan.meta, items.meta);
+            assert_eq!(plan.update_meta, update_meta);
+            for (entry, source) in plan.entries.iter().zip(&items.entries) {
+                assert_eq!(&entry.source, source);
+                assert_eq!(entry.content.read(cx).source().as_ref(), source.content);
+            }
+            let markdown = plan.entries[0].content.clone();
+            let stats = plan.stats();
+            assert_eq!((stats.pending, stats.completed, stats.cancelled), (1, 1, 1));
+            assert!(stats.in_progress_entry.is_none());
+            thread.clear_plan(cx);
+            thread.upsert_plan_items(items.clone(), update_meta, cx);
+            assert!(thread.plan().is_none(), "an identical snapshot does not undo dismissal");
+            items.meta = Some(acp_v2::Meta::new());
+            items.entries[0].meta = Some(acp_v2::Meta::new());
+            thread.upsert_plan_items(items.clone(), Some(acp_v2::Meta::new()), cx);
+            assert!(thread.plan().is_none());
+            let plan = thread.plan_by_id(&id).expect("retained hidden plan");
+            assert_eq!(plan.meta, Some(acp_v2::Meta::new()));
+            assert_eq!(plan.update_meta, Some(acp_v2::Meta::new()));
+            assert_eq!(plan.entries[0].source.meta, Some(acp_v2::Meta::new()));
+            assert_eq!(plan.entries[0].content, markdown);
+            items.meta = None;
+            items.entries[0].meta = None;
+            thread.upsert_plan_items(items.clone(), None, cx);
+            let plan = thread.plan_by_id(&id).expect("retained plan");
+            assert_eq!(plan.meta, None);
+            assert_eq!(plan.update_meta, None);
+            assert_eq!(plan.entries[0].source.meta, None);
+            assert!(thread.plan().is_none(), "absent metadata replaces, but does not show the plan");
+            items.entries[0].status = acp_v2::PlanEntryStatus::Other("_waiting".into());
+            thread.upsert_plan_items(items, None, cx);
+            let plan = thread.plan().expect("changed unknown status reopens the plan");
+            assert_eq!(plan.entries[0].content, markdown);
+            assert_eq!(plan.stats().pending, 1);
+            assert!(thread.entries().is_empty(), "plans never become transcript entries");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_keyed_plan_task_changes_reopen_dismissed_plan(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let original = vec![
+                acp_v2::PlanEntry::new(
+                    "First",
+                    acp_v2::PlanEntryPriority::Medium,
+                    acp_v2::PlanEntryStatus::Pending,
+                ),
+                acp_v2::PlanEntry::new(
+                    "Second",
+                    acp_v2::PlanEntryPriority::Low,
+                    acp_v2::PlanEntryStatus::Pending,
+                ),
+            ];
+            let mut content = original.clone();
+            content[0].content = "First, revised".into();
+            let mut status = original.clone();
+            status[0].status = acp_v2::PlanEntryStatus::InProgress;
+            let mut priority = original.clone();
+            priority[0].priority = acp_v2::PlanEntryPriority::High;
+            let mut reordered = original.clone();
+            reordered.swap(0, 1);
+            let mut appended = original.clone();
+            appended.push(acp_v2::PlanEntry::new(
+                "Third",
+                acp_v2::PlanEntryPriority::Low,
+                acp_v2::PlanEntryStatus::Pending,
+            ));
+            for updated in [
+                content,
+                status,
+                priority,
+                reordered,
+                appended,
+                vec![original[0].clone()],
+                vec![],
+            ] {
+                thread.upsert_plan_items(
+                    acp_v2::PlanItems::new("plan", original.clone()),
+                    None,
+                    cx,
+                );
+                let markdown = thread.plan_by_id(&"plan".into()).expect("plan").entries[0]
+                    .content
+                    .clone();
+                thread.clear_plan(cx);
+                thread.upsert_plan_items(acp_v2::PlanItems::new("plan", updated.clone()), None, cx);
+                let plan = thread.plan().expect("meaningful changes select the plan");
+                assert_eq!(plan.entries.len(), updated.len());
+                for (entry, source) in plan.entries.iter().zip(&updated) {
+                    assert_eq!(&entry.source, source);
+                    assert_eq!(entry.content.read(cx).source().as_ref(), source.content);
+                }
+                if let Some(first) = plan.entries.first() {
+                    assert_eq!(first.content, markdown);
+                }
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_keyed_plan_selection_and_empty_snapshots(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let entries = vec![acp_v2::PlanEntry::new(
+                "Same task",
+                acp_v2::PlanEntryPriority::Medium,
+                acp_v2::PlanEntryStatus::Pending,
+            )];
+            thread.upsert_plan_items(acp_v2::PlanItems::new("a", entries.clone()), None, cx);
+            let first_markdown = thread.plan().expect("A").entries[0].content.clone();
+            thread.upsert_plan_items(acp_v2::PlanItems::new("b", entries.clone()), None, cx);
+            let second_markdown = thread
+                .plan()
+                .expect("new B selects despite identical contents")
+                .entries[0]
+                .content
+                .clone();
+            assert_ne!(
+                first_markdown, second_markdown,
+                "identity owns its render cache"
+            );
+            thread.upsert_plan_items(
+                acp_v2::PlanItems::new("a", entries.clone()).meta(acp_v2::Meta::new()),
+                Some(acp_v2::Meta::new()),
+                cx,
+            );
+            assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("b".into())));
+            thread.upsert_plan_items(acp_v2::PlanItems::new("empty", vec![]), None, cx);
+            assert!(thread.plan().expect("selected empty plan").is_empty());
+            thread.upsert_plan_items(acp_v2::PlanItems::new("a", entries.clone()), None, cx);
+            assert_eq!(
+                thread.visible_plan,
+                Some(PlanIdentity::Keyed("empty".into()))
+            );
+            let mut changed = entries;
+            changed[0].content = "Changed".into();
+            thread.upsert_plan_items(acp_v2::PlanItems::new("a", changed), None, cx);
+            assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("a".into())));
+            assert_eq!(
+                thread.plan().expect("A reopens").entries[0].content,
+                first_markdown
+            );
+            thread.upsert_plan_items(acp_v2::PlanItems::new("b", vec![]), None, cx);
+            assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("b".into())));
+            assert!(
+                thread
+                    .plan()
+                    .expect("clearing older B selects empty B")
+                    .is_empty()
+            );
+            assert_eq!(
+                thread
+                    .plan_by_id(&"a".into())
+                    .expect("A retained")
+                    .entries
+                    .len(),
+                1
+            );
+            assert!(thread.entries().is_empty());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_legacy_plan_cleanup_does_not_mutate_keyed_plans(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let keyed = acp_v2::PlanItems::new(
+            "legacy",
+            vec![
+                acp_v2::PlanEntry::new(
+                    "Keyed completion",
+                    acp_v2::PlanEntryPriority::High,
+                    acp_v2::PlanEntryStatus::Completed,
+                ),
+                acp_v2::PlanEntry::new(
+                    "Keyed cancellation",
+                    acp_v2::PlanEntryPriority::Low,
+                    acp_v2::PlanEntryStatus::Cancelled,
+                ),
+            ],
+        )
+        .meta(acp_v2::Meta::from_iter([("keyed".into(), json!(true))]));
+        thread.update(cx, |thread, cx| {
+            let legacy = acp_v1::Plan::new(vec![
+                acp_v1::PlanEntry::new(
+                    "Done",
+                    acp_v1::PlanEntryPriority::High,
+                    acp_v1::PlanEntryStatus::Completed,
+                ),
+                acp_v1::PlanEntry::new(
+                    "Pending",
+                    acp_v1::PlanEntryPriority::Medium,
+                    acp_v1::PlanEntryStatus::Pending,
+                )
+                .meta(acp_v1::Meta::new()),
+            ])
+            .meta(acp_v1::Meta::from_iter([("legacy".into(), json!(true))]));
+            thread
+                .update_plan(legacy.clone(), cx)
+                .expect("legacy snapshot");
+            assert_eq!(thread.plan().expect("legacy plan").meta, legacy.meta);
+            assert_eq!(thread.plan().expect("legacy plan").update_meta, None);
+            assert_eq!(
+                thread.plan().expect("legacy plan").entries[1].source.meta,
+                Some(acp_v2::Meta::new())
+            );
+            thread.clear_plan(cx);
+            assert!(thread.plan().is_none());
+            thread
+                .update_plan(legacy, cx)
+                .expect("identical legacy update restores the panel");
+            assert_eq!(
+                thread.plan().expect("legacy compatibility").entries.len(),
+                2
+            );
+            thread.upsert_plan_items(keyed.clone(), None, cx);
+            assert_eq!(thread.plans.len(), 2, "legacy has no reserved protocol ID");
+        });
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread.visible_plan,
+                Some(PlanIdentity::Keyed("legacy".into()))
+            );
+            let retained = thread.plan_by_id(&keyed.plan_id).expect("keyed plan");
+            assert_eq!(retained.meta, keyed.meta);
+            assert_eq!(retained.entries.len(), keyed.entries.len());
+            for (entry, expected) in retained.entries.iter().zip(&keyed.entries) {
+                assert_eq!(&entry.source, expected);
+            }
+            let legacy = thread
+                .plans
+                .get(&PlanIdentity::Legacy)
+                .expect("legacy record");
+            assert_eq!(legacy.entries.len(), 1);
+            assert_eq!(legacy.entries[0].source.content, "Pending");
+        });
+        complete
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+            .expect("turn is running");
+        request.await.expect("turn completes");
     }
 
     fn enable_acp_beta(cx: &mut TestAppContext) {

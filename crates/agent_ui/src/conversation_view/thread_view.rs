@@ -801,6 +801,8 @@ impl ThreadView {
         let session_id = thread.read(cx).session_id().clone();
         let parent_session_id = thread.read(cx).parent_session_id().cloned();
 
+        subscriptions.push(cx.observe(&thread, |_, _, cx| cx.notify()));
+
         let has_slash_completions = session_capabilities.read().has_slash_completions();
         let placeholder = placeholder_text(agent_display_name.as_ref(), has_slash_completions);
 
@@ -3116,7 +3118,8 @@ impl ThreadView {
         let action_log = thread.action_log();
         let telemetry = ActionLogTelemetry::from(thread);
         let changed_buffers = action_log.read(cx).changed_buffers(cx).collect::<Vec<_>>();
-        let plan = thread.plan();
+        let plan = thread.plan().filter(|plan| !plan.is_empty());
+        let has_plan = plan.is_some();
         let queue_is_empty = !self.has_queued_messages();
 
         let awaiting_permission = self
@@ -3124,11 +3127,7 @@ impl ThreadView {
             .or_else(|| self.render_subagents_awaiting_permission(cx));
         let has_awaiting_permission = awaiting_permission.is_some();
 
-        if changed_buffers.is_empty()
-            && plan.is_empty()
-            && queue_is_empty
-            && !has_awaiting_permission
-        {
+        if changed_buffers.is_empty() && !has_plan && queue_is_empty && !has_awaiting_permission {
             return None;
         }
 
@@ -3174,16 +3173,16 @@ impl ThreadView {
                     .when_some(awaiting_permission, |this, element| this.child(element))
                     .when(
                         has_awaiting_permission
-                            && (!plan.is_empty() || !changed_buffers.is_empty() || !queue_is_empty),
+                            && (has_plan || !changed_buffers.is_empty() || !queue_is_empty),
                         |this| this.child(Divider::horizontal().color(DividerColor::Border)),
                     )
-                    .when(!plan.is_empty(), |this| {
+                    .when_some(plan, |this, plan| {
                         this.child(self.render_plan_summary(plan, window, cx))
                             .when(plan_expanded, |parent| {
                                 parent.child(self.render_plan_entries(plan, window, cx))
                             })
                     })
-                    .when(!plan.is_empty() && !changed_buffers.is_empty(), |this| {
+                    .when(has_plan && !changed_buffers.is_empty(), |this| {
                         this.child(Divider::horizontal().color(DividerColor::Border))
                     })
                     .when(
@@ -3207,7 +3206,7 @@ impl ThreadView {
                         },
                     )
                     .when(!queue_is_empty, |this| {
-                        this.when(!plan.is_empty() || !changed_buffers.is_empty(), |this| {
+                        this.when(has_plan || !changed_buffers.is_empty(), |this| {
                             this.child(Divider::horizontal().color(DividerColor::Border))
                         })
                         .child(self.render_message_queue_summary(window, cx))
@@ -3740,7 +3739,7 @@ impl ThreadView {
                         .line_clamp(1)
                         .child(MarkdownElement::new(
                             entry.content.clone(),
-                            plan_label_markdown_style(&entry.status, window, cx),
+                            plan_label_markdown_style(&entry.source.status, window, cx),
                         )),
                 )
                 .when(stats.pending > 0, |this| {
@@ -3765,15 +3764,10 @@ impl ThreadView {
                     )
                 })
         } else {
-            let status_label = if stats.pending == 0 {
-                "All Done".to_string()
-            } else if stats.completed == 0 {
-                format!("{} Tasks", plan.entries.len())
-            } else {
-                format!("{}/{}", stats.completed, plan.entries.len())
-            };
+            let status_label = plan_summary_label(&stats, plan.entries.len());
 
             h_flex()
+                .debug_selector(|| format!("plan-status-{status_label}"))
                 .w_full()
                 .gap_1()
                 .justify_between()
@@ -3792,6 +3786,7 @@ impl ThreadView {
 
         h_flex()
             .id("plan_summary")
+            .debug_selector(|| "plan_summary".into())
             .p_1()
             .w_full()
             .gap_1()
@@ -3832,10 +3827,28 @@ impl ThreadView {
                     let entry_bg = cx.theme().colors().editor_background;
                     let tooltip_text: SharedString =
                         entry.content.read(cx).source().to_string().into();
+                    let (icon_name, icon_color) = match &entry.source.status {
+                        acp_v2::PlanEntryStatus::InProgress => {
+                            (IconName::TodoProgress, Color::Accent)
+                        }
+                        acp_v2::PlanEntryStatus::Completed => {
+                            (IconName::TodoComplete, Color::Success)
+                        }
+                        acp_v2::PlanEntryStatus::Cancelled => (IconName::Close, Color::Muted),
+                        _ => (IconName::TodoPending, Color::Muted),
+                    };
+                    let icon = Icon::new(icon_name).size(IconSize::Small).color(icon_color);
+                    let icon = if matches!(entry.source.status, acp_v2::PlanEntryStatus::InProgress)
+                    {
+                        icon.with_rotate_animation(2).into_any_element()
+                    } else {
+                        icon.into_any_element()
+                    };
 
                     Some(
                         h_flex()
                             .id(("plan_entry_row", index))
+                            .debug_selector(|| format!("plan-entry-{index}-{icon_name:?}"))
                             .py_1()
                             .px_2()
                             .gap_2()
@@ -3853,30 +3866,10 @@ impl ThreadView {
                                     .min_w_0()
                                     .text_xs()
                                     .text_color(cx.theme().colors().text_muted)
-                                    .child(match entry.status {
-                                        acp_v1::PlanEntryStatus::InProgress => {
-                                            Icon::new(IconName::TodoProgress)
-                                                .size(IconSize::Small)
-                                                .color(Color::Accent)
-                                                .with_rotate_animation(2)
-                                                .into_any_element()
-                                        }
-                                        acp_v1::PlanEntryStatus::Completed => {
-                                            Icon::new(IconName::TodoComplete)
-                                                .size(IconSize::Small)
-                                                .color(Color::Success)
-                                                .into_any_element()
-                                        }
-                                        acp_v1::PlanEntryStatus::Pending | _ => {
-                                            Icon::new(IconName::TodoPending)
-                                                .size(IconSize::Small)
-                                                .color(Color::Muted)
-                                                .into_any_element()
-                                        }
-                                    })
+                                    .child(icon)
                                     .child(MarkdownElement::new(
                                         entry.content.clone(),
-                                        plan_label_markdown_style(&entry.status, window, cx),
+                                        plan_label_markdown_style(&entry.source.status, window, cx),
                                     )),
                             )
                             .child(div().absolute().top_0().right_0().h_full().w_8().bg(
