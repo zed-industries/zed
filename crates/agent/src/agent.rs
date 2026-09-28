@@ -4791,7 +4791,7 @@ mod internal_tests {
                     acp_thread::AgentThreadEntry::ToolCall(tool_call) => Some((
                         tool_call.id.clone(),
                         tool_call.tool_name.clone(),
-                        std::mem::discriminant(&tool_call.status),
+                        std::mem::discriminant(&tool_call.status()),
                     )),
                     _ => None,
                 })

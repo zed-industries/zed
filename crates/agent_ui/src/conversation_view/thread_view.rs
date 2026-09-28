@@ -2855,9 +2855,8 @@ impl ThreadView {
                     .find_map(|entry| {
                         if let AgentThreadEntry::ToolCall(call) = entry {
                             if call.id == tool_call_id {
-                                if let ToolCallStatus::WaitingForConfirmation { options, .. } =
-                                    &call.status
-                                {
+                                if let Some(authorization) = call.authorization() {
+                                    let options = &authorization.options;
                                     if let PermissionOptions::DropdownWithPatterns {
                                         patterns,
                                         ..
@@ -4219,7 +4218,7 @@ impl ThreadView {
                     .tool_call_for_subagent(&my_session_id)
                     .is_some_and(|tc| {
                         matches!(
-                            tc.status,
+                            tc.status(),
                             ToolCallStatus::Canceled
                                 | ToolCallStatus::Failed
                                 | ToolCallStatus::Rejected
@@ -6383,11 +6382,24 @@ impl ThreadView {
                 // A canceled tool call that produced visible output is still worth
                 // showing, but one that was canceled before producing anything just
                 // renders as a useless "Canceled" card — hide those entirely.
-                if matches!(tool_call.status, ToolCallStatus::Canceled) {
+                if matches!(tool_call.status(), ToolCallStatus::Canceled) {
                     let has_visible_content =
                         tool_call.content().iter().any(|content| match content {
-                            ToolCallContent::ContentBlock(block) => block.visible_content(cx),
-                            ToolCallContent::Diff(_) | ToolCallContent::Terminal(_) => true,
+                            ToolCallContent::ContentBlock { block, .. } => {
+                                block.visible_content(cx)
+                            }
+                            ToolCallContent::Diff(_)
+                            | ToolCallContent::LegacyDiff { .. }
+                            | ToolCallContent::Terminal { .. } => true,
+                            ToolCallContent::DiffPatch { render, .. } => {
+                                !render.files.is_empty()
+                                    || render.fallback.as_ref().is_some_and(|markdown| {
+                                        !markdown.read(cx).source().is_empty()
+                                    })
+                            }
+                            ToolCallContent::Other { markdown, .. } => {
+                                !markdown.read(cx).source().is_empty()
+                            }
                         });
                     if !has_visible_content {
                         return Empty.into_any();
@@ -7740,11 +7752,11 @@ impl ThreadView {
                 AgentThreadEntry::UserMessage(_) => break,
                 AgentThreadEntry::ToolCall(tool_call)
                     if matches!(
-                        tool_call.status,
+                        tool_call.status(),
                         ToolCallStatus::InProgress | ToolCallStatus::Pending
                     ) =>
                 {
-                    if matches!(tool_call.kind, acp_v1::ToolKind::Execute) {
+                    if matches!(tool_call.kind(), acp_v2::ToolKind::Execute) {
                         has_running_terminal_call = true;
                     } else {
                         return false;
@@ -7843,20 +7855,19 @@ impl ThreadView {
         let started_at = terminal_data.started_at();
 
         let tool_failed = matches!(
-            &tool_call.status,
+            tool_call.status(),
             ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed
         );
 
-        let confirmation_options = match &tool_call.status {
-            ToolCallStatus::WaitingForConfirmation { options, .. } => Some(options),
-            _ => None,
-        };
+        let confirmation_options = tool_call
+            .authorization()
+            .map(|authorization| &authorization.options);
         let needs_confirmation = confirmation_options.is_some();
 
         let output = terminal_data.output();
         let command_finished = output.is_some()
             && !matches!(
-                tool_call.status,
+                tool_call.status(),
                 ToolCallStatus::InProgress | ToolCallStatus::Pending
             );
         let truncated_output =
@@ -8181,21 +8192,23 @@ impl ThreadView {
         let has_location = tool_call.locations.len() == 1;
         let card_header_id = SharedString::from(format!("inner-tool-call-header-{entry_ix}"));
 
-        let failed_or_canceled = match &tool_call.status {
+        let failed_or_canceled = match tool_call.status() {
             ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed => true,
             _ => false,
         };
 
-        let needs_confirmation = matches!(
-            tool_call.status,
-            ToolCallStatus::WaitingForConfirmation { .. }
-        );
-        let is_terminal_tool = matches!(tool_call.kind, acp_v1::ToolKind::Execute);
+        let needs_confirmation =
+            matches!(tool_call.status(), ToolCallStatus::WaitingForConfirmation);
+        let is_terminal_tool = matches!(tool_call.kind(), acp_v2::ToolKind::Execute);
 
-        let is_edit =
-            matches!(tool_call.kind, acp_v1::ToolKind::Edit) || tool_call.diffs().next().is_some();
+        let is_edit = matches!(tool_call.kind(), acp_v2::ToolKind::Edit)
+            || tool_call.diffs().next().is_some()
+            || tool_call
+                .content()
+                .iter()
+                .any(|content| matches!(content, ToolCallContent::DiffPatch { .. }));
 
-        let is_cancelled_edit = is_edit && matches!(tool_call.status, ToolCallStatus::Canceled);
+        let is_cancelled_edit = is_edit && matches!(tool_call.status(), ToolCallStatus::Canceled);
         let (has_revealed_diff, tool_call_output_focus, tool_call_output_focus_handle) = tool_call
             .diffs()
             .next()
@@ -8222,12 +8235,10 @@ impl ThreadView {
             || (should_show_raw_input && tool_call.raw_input.is_some());
 
         let is_collapsible = has_content && !needs_confirmation;
-        let mut is_open = self
+        let is_open = self
             .entry_view_state
             .read(cx)
-            .is_tool_call_expanded(&tool_call.id);
-
-        is_open |= needs_confirmation;
+            .is_tool_call_content_visible(tool_call);
 
         let input_output_header = |label: SharedString| {
             Label::new(label)
@@ -8237,8 +8248,8 @@ impl ThreadView {
         };
 
         let tool_output_display = if is_open {
-            match &tool_call.status {
-                ToolCallStatus::WaitingForConfirmation { .. } => {
+            match tool_call.status() {
+                ToolCallStatus::WaitingForConfirmation => {
                     let confirmation_content = v_flex()
                         .w_full()
                         .children(tool_call.content().iter().enumerate().map(
@@ -8446,21 +8457,21 @@ impl ThreadView {
             None
         };
 
-        let permission_buttons =
-            if let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status {
-                Some(self.render_permission_buttons(
-                    self.thread.read(cx).session_id().clone(),
-                    self.is_first_tool_call(active_session_id, &tool_call.id, cx),
-                    options,
-                    entry_ix,
-                    tool_call.id.clone(),
-                    focus_handle,
-                    self.sandbox_confusables_block_allow(tool_call, cx),
-                    cx,
-                ))
-            } else {
-                None
-            };
+        let permission_buttons = if let Some(authorization) = tool_call.authorization() {
+            let options = &authorization.options;
+            Some(self.render_permission_buttons(
+                self.thread.read(cx).session_id().clone(),
+                self.is_first_tool_call(active_session_id, &tool_call.id, cx),
+                options,
+                entry_ix,
+                tool_call.id.clone(),
+                focus_handle,
+                self.sandbox_confusables_block_allow(tool_call, cx),
+                cx,
+            ))
+        } else {
+            None
+        };
 
         let body = v_flex()
             .map(|this| {
@@ -9991,7 +10002,7 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> Div {
         let has_location = tool_call.locations.len() == 1;
-        let is_file = tool_call.kind == acp_v1::ToolKind::Edit && has_location;
+        let is_file = matches!(tool_call.kind(), acp_v2::ToolKind::Edit) && has_location;
         let is_subagent_tool_call = tool_call.is_subagent();
 
         let file_icon = if has_location {
@@ -10029,17 +10040,17 @@ impl ThreadView {
                 .color(Color::Muted)
                 .into_any_element()
         } else {
-            Icon::new(match tool_call.kind {
-                acp_v1::ToolKind::Read => IconName::ToolSearch,
-                acp_v1::ToolKind::Edit => IconName::ToolPencil,
-                acp_v1::ToolKind::Delete => IconName::ToolDeleteFile,
-                acp_v1::ToolKind::Move => IconName::ArrowRightLeft,
-                acp_v1::ToolKind::Search => IconName::ToolSearch,
-                acp_v1::ToolKind::Execute => IconName::ToolTerminal,
-                acp_v1::ToolKind::Think => IconName::ToolThink,
-                acp_v1::ToolKind::Fetch => IconName::ToolWeb,
-                acp_v1::ToolKind::SwitchMode => IconName::ArrowRightLeft,
-                acp_v1::ToolKind::Other | _ => IconName::ToolHammer,
+            Icon::new(match tool_call.kind() {
+                acp_v2::ToolKind::Read => IconName::ToolSearch,
+                acp_v2::ToolKind::Edit => IconName::ToolPencil,
+                acp_v2::ToolKind::Delete => IconName::ToolDeleteFile,
+                acp_v2::ToolKind::Move => IconName::ArrowRightLeft,
+                acp_v2::ToolKind::Search => IconName::ToolSearch,
+                acp_v2::ToolKind::Execute => IconName::ToolTerminal,
+                acp_v2::ToolKind::Think => IconName::ToolThink,
+                acp_v2::ToolKind::Fetch => IconName::ToolWeb,
+                acp_v2::ToolKind::SwitchMode => IconName::ArrowRightLeft,
+                _ => IconName::ToolHammer,
             })
             .size(IconSize::Small)
             .color(Color::Muted)
@@ -10222,25 +10233,98 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         match content {
-            ToolCallContent::ContentBlock(content) => self.render_output_content_block(
+            ToolCallContent::ContentBlock { block, .. } => self.render_output_content_block(
                 entry_ix,
                 context_ix,
-                content.as_view(),
+                block.as_view(),
                 Some(tool_call),
                 card_layout,
                 window,
                 cx,
             ),
-            ToolCallContent::Diff(diff) => {
+            ToolCallContent::Diff(diff) | ToolCallContent::LegacyDiff { diff, .. } => {
                 self.render_diff_editor(entry_ix, diff, tool_call, has_failed, cx)
             }
-            ToolCallContent::Terminal(terminal) => self.render_terminal_tool_call(
+            ToolCallContent::Terminal { terminal, .. } => self.render_terminal_tool_call(
                 session_id,
                 entry_ix,
                 terminal,
                 tool_call,
                 focus_handle,
                 ToolCallLayout::Standalone,
+                window,
+                cx,
+            ),
+            ToolCallContent::DiffPatch { source, render } => {
+                let files = render.files.iter().filter_map(|file| {
+                    let change = source.changes.get(file.change_index)?;
+                    Some(
+                        v_flex()
+                            .gap_1()
+                            .p_2()
+                            .when(context_ix > 0, |this| {
+                                this.border_t_1()
+                                    .border_color(self.tool_card_border_color(cx))
+                            })
+                            .child(
+                                Label::new(acp_thread::diff_change_label(change))
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .when(file.hunks.is_empty(), |this| {
+                                this.child(
+                                    Label::new("No text preview available")
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                            })
+                            .children(file.hunks.iter().map(|hunk| {
+                                v_flex()
+                                    .child(
+                                        Label::new(hunk.header.clone())
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                    .when_some(
+                                        self.entry_view_state.read(cx).entry(entry_ix).and_then(
+                                            |entry| entry.editor_for_patch_hunk(&hunk.buffer),
+                                        ),
+                                        |this, editor| this.child(editor),
+                                    )
+                            })),
+                    )
+                });
+                v_flex()
+                    .children(files)
+                    .when(
+                        render.files.is_empty() && render.fallback.is_none(),
+                        |this| {
+                            this.p_2().child(
+                                Label::new("No text preview available")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                        },
+                    )
+                    .when_some(render.fallback.as_ref(), |this, markdown| {
+                        this.child(self.render_markdown_output(
+                            markdown.clone(),
+                            entry_ix,
+                            context_ix,
+                            tool_call,
+                            card_layout,
+                            window,
+                            cx,
+                        ))
+                    })
+                    .into_any_element()
+            }
+            ToolCallContent::Other { markdown, .. } => self.render_markdown_output(
+                markdown.clone(),
+                entry_ix,
+                context_ix,
+                tool_call,
+                card_layout,
                 window,
                 cx,
             ),
@@ -10415,7 +10499,7 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         let tool_progress = matches!(
-            &tool_call.status,
+            tool_call.status(),
             ToolCallStatus::InProgress | ToolCallStatus::Pending
         );
 
@@ -10631,20 +10715,20 @@ impl ThreadView {
         let diff_stats = DiffStats::all_files(changed_buffers, cx);
 
         let is_running = matches!(
-            tool_call.status,
+            tool_call.status(),
             ToolCallStatus::Pending
                 | ToolCallStatus::InProgress
-                | ToolCallStatus::WaitingForConfirmation { .. }
+                | ToolCallStatus::WaitingForConfirmation
         );
 
         let is_failed = matches!(
-            tool_call.status,
+            tool_call.status(),
             ToolCallStatus::Failed | ToolCallStatus::Rejected
         );
 
-        let is_cancelled = matches!(tool_call.status, ToolCallStatus::Canceled)
+        let is_cancelled = matches!(tool_call.status(), ToolCallStatus::Canceled)
             || tool_call.content().iter().any(|c| match c {
-                ToolCallContent::ContentBlock(block) => {
+                ToolCallContent::ContentBlock { block, .. } => {
                     block.text_content(cx) == Some("User canceled")
                 }
                 _ => false,
@@ -10726,7 +10810,7 @@ impl ThreadView {
             "Click to Preview"
         };
 
-        let error_message = self.subagent_error_message(&tool_call.status, tool_call, cx);
+        let error_message = self.subagent_error_message(&tool_call.status(), tool_call, cx);
 
         v_flex()
             .w_full()
@@ -10971,7 +11055,7 @@ impl ThreadView {
         let session_id = subagent_view.thread.read(cx).session_id().clone();
 
         let is_canceled_or_failed = matches!(
-            tool_call.status,
+            tool_call.status(),
             ToolCallStatus::Canceled | ToolCallStatus::Failed | ToolCallStatus::Rejected
         );
 
@@ -11059,7 +11143,7 @@ impl ThreadView {
     ) -> Option<SharedString> {
         if matches!(status, ToolCallStatus::Failed) {
             tool_call.content().iter().find_map(|content| {
-                if let ToolCallContent::ContentBlock(block) = content {
+                if let ToolCallContent::ContentBlock { block, .. } = content {
                     if let Some(source) = block.text_content(cx).filter(|source| !source.is_empty())
                     {
                         if source == "User canceled" {
