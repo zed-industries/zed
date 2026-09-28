@@ -733,7 +733,6 @@ mod tests {
         }
     }
 
-
     impl InputHandler for PendingTextInputTestView {
         fn selected_text_range(
             &mut self,
@@ -1168,7 +1167,6 @@ mod tests {
                 window.on_action(std::any::TypeId::of::<TestAction>(), |_, _, _, _| {});
             }
         }
-
 
         impl InputHandler for CustomElement {
             fn selected_text_range(

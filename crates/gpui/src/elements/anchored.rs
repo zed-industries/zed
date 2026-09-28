@@ -2,8 +2,8 @@ use smallvec::SmallVec;
 
 use crate::{
     Anchor, AnyElement, App, Axis, Bounds, Display, Edges, Element, GlobalElementId,
-    InspectorElementId, IntoElement, LayoutId, ParentElement, Pixels, Point, Position, Size, Style,
-    Window, point, px,
+    InspectorElementId, LayoutId, ParentElement, Pixels, Point, Position, Size, Style, Window,
+    point, px,
 };
 
 /// The state that the anchored element element uses to track its children.

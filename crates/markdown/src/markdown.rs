@@ -4299,14 +4299,6 @@ impl Element for RenderedLineElement {
     }
 }
 
-impl IntoElement for RenderedLineElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 struct RenderedLine {
     layout: TextLayout,
     visible_bounds: Cell<Option<Bounds<Pixels>>>,
