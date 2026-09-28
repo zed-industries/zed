@@ -22657,6 +22657,8 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "strum 0.28.0",
+ "tempfile",
+ "thiserror 2.0.17",
  "tokio",
  "toml 0.8.23",
  "toml_edit 0.22.27",
