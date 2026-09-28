@@ -16,7 +16,7 @@
 //! constructed by combining these two systems into an all-in-one element.
 
 use crate::{
-    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
+    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Axis, Bounds, ClickEvent, DispatchPhase,
     Display, Element, ElementId, Entity, EntityId, ExternalDragPayload, ExternalDragPayloadSource,
     FileDropEvent, FocusHandle, Global, GlobalElementId, Hitbox, HitboxBehavior, HitboxId,
     InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton,
@@ -2425,6 +2425,34 @@ impl Interactivity {
             || window.is_inspector_picking(cx)
     }
 
+    fn scroll_max(&self, bounds: Bounds<Pixels>, style: &Style, window: &Window) -> Point<Pixels> {
+        fn round_to_two_decimals(pixels: Pixels) -> Pixels {
+            const ROUNDING_FACTOR: f32 = 100.0;
+            (pixels * ROUNDING_FACTOR).round() / ROUNDING_FACTOR
+        }
+
+        let rem_size = window.rem_size();
+        // Taffy lays the box out with the padding snapped to the device pixel
+        // grid (`to_taffy`); recomputed unsnapped, e.g. py_1 at a fractional
+        // rem size, it exceeds `bounds` and leaves the box scrollable by the
+        // sub-pixel difference.
+        let padding = style
+            .padding
+            .to_pixels(bounds.size.into(), rem_size)
+            .map(|edge| window.pixel_snap(*edge));
+        let padding_size = size(padding.left + padding.right, padding.top + padding.bottom);
+        // The floating point values produced by Taffy and ours often vary
+        // slightly after ~5 decimal places. This can lead to cases where after
+        // subtracting these, the container becomes scrollable for less than
+        // 0.00000x pixels. As we generally don't benefit from a precision that
+        // high for the maximum scroll, we round the scroll max to 2 decimal
+        // places here.
+        let padded_content_size = self.content_size + padding_size;
+        Point::from(padded_content_size - bounds.size)
+            .map(round_to_two_decimals)
+            .max(&Default::default())
+    }
+
     fn clamp_scroll_position(
         &self,
         bounds: Bounds<Pixels>,
@@ -2432,11 +2460,6 @@ impl Interactivity {
         window: &mut Window,
         _cx: &mut App,
     ) -> Point<Pixels> {
-        fn round_to_two_decimals(pixels: Pixels) -> Pixels {
-            const ROUNDING_FACTOR: f32 = 100.0;
-            (pixels * ROUNDING_FACTOR).round() / ROUNDING_FACTOR
-        }
-
         if let Some(scroll_offset) = self.scroll_offset.as_ref() {
             let mut scroll_to_bottom = false;
             let mut tracked_scroll_handle = self
@@ -2448,26 +2471,7 @@ impl Interactivity {
                 scroll_to_bottom = mem::take(&mut scroll_handle_state.scroll_to_bottom);
             }
 
-            let rem_size = window.rem_size();
-            // Taffy lays the box out with the padding snapped to the device pixel
-            // grid (`to_taffy`); recomputed unsnapped, e.g. py_1 at a fractional
-            // rem size, it exceeds `bounds` and leaves the box scrollable by the
-            // sub-pixel difference.
-            let padding = style
-                .padding
-                .to_pixels(bounds.size.into(), rem_size)
-                .map(|edge| window.pixel_snap(*edge));
-            let padding_size = size(padding.left + padding.right, padding.top + padding.bottom);
-            // The floating point values produced by Taffy and ours often vary
-            // slightly after ~5 decimal places. This can lead to cases where after
-            // subtracting these, the container becomes scrollable for less than
-            // 0.00000x pixels. As we generally don't benefit from a precision that
-            // high for the maximum scroll, we round the scroll max to 2 decimal
-            // places here.
-            let padded_content_size = self.content_size + padding_size;
-            let scroll_max = Point::from(padded_content_size - bounds.size)
-                .map(round_to_two_decimals)
-                .max(&Default::default());
+            let scroll_max = self.scroll_max(bounds, style, window);
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();
@@ -2553,6 +2557,7 @@ impl Interactivity {
                                         if let Some(focus_handle) = &self.tracked_focus_handle {
                                             window.next_frame.tab_stops.insert(focus_handle);
                                         }
+                                        let mut scroll_container_id = None;
                                         if let Some(hitbox) = hitbox {
                                             #[cfg(debug_assertions)]
                                             self.paint_debug_info(
@@ -2586,7 +2591,8 @@ impl Interactivity {
                                                 window,
                                                 cx,
                                             );
-                                            self.paint_scroll_listener(hitbox, &style, window, cx);
+                                            scroll_container_id = self
+                                                .paint_scroll_listener(hitbox, &style, window, cx);
                                         }
 
                                         self.paint_keyboard_listeners(window, cx);
@@ -2606,7 +2612,14 @@ impl Interactivity {
                                             }
                                         }
 
-                                        f(&style, window, cx);
+                                        if let Some(scroll_container_id) = scroll_container_id {
+                                            window.with_scroll_container(
+                                                scroll_container_id,
+                                                |window| f(&style, window, cx),
+                                            );
+                                        } else {
+                                            f(&style, window, cx);
+                                        }
 
                                         if let Some(_hitbox) = hitbox {
                                             #[cfg(any(feature = "inspector", debug_assertions))]
@@ -3321,63 +3334,96 @@ impl Interactivity {
         style: &Style,
         window: &mut Window,
         _cx: &mut App,
-    ) {
-        if let Some(scroll_offset) = self.scroll_offset.clone() {
-            let ongoing_scroll = self.ongoing_scroll.clone();
-            let overflow = style.overflow;
-            let allow_concurrent_scroll = style.allow_concurrent_scroll;
-            let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
-            let line_height = window.line_height();
-            let hitbox = hitbox.clone();
-            let current_view = window.current_view();
-            window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
-                    let mut scroll_offset = scroll_offset.borrow_mut();
-                    let old_scroll_offset = *scroll_offset;
-                    let mut delta = event.delta.pixel_delta(line_height);
+    ) -> Option<HitboxId> {
+        let scroll_offset = self.scroll_offset.clone()?;
+        let overflow = style.overflow;
+        if overflow.x != Overflow::Scroll && overflow.y != Overflow::Scroll {
+            return None;
+        }
 
-                    if restrict_scroll_to_axis
-                        && event.delta.precise()
-                        && let Some(ongoing_scroll) = &ongoing_scroll
+        let scroll_container_id = hitbox.id;
+        let scroll_container = window.default_scroll_container(scroll_container_id);
+        let ongoing_scroll = self.ongoing_scroll.clone();
+        let allow_concurrent_scroll = style.allow_concurrent_scroll;
+        let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
+        let line_height = window.line_height();
+        let scroll_max = self.scroll_max(hitbox.bounds, style, window);
+        let hitbox = hitbox.clone();
+        let current_view = window.current_view();
+        window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+            if phase == DispatchPhase::Bubble
+                && hitbox.should_handle_scroll(window)
+                && window.default_scroll_container_should_handle(&scroll_container)
+            {
+                let mut scroll_offset = scroll_offset.borrow_mut();
+                let old_scroll_offset = *scroll_offset;
+                let mut delta = event.delta.pixel_delta(line_height);
+
+                if restrict_scroll_to_axis
+                    && event.delta.precise()
+                    && let Some(ongoing_scroll) = &ongoing_scroll
+                {
+                    ongoing_scroll
+                        .borrow_mut()
+                        .filter(&mut delta, event.touch_phase);
+                }
+
+                if window.default_scroll_input_consumed(Axis::Horizontal) {
+                    delta.x = Pixels::ZERO;
+                }
+                if window.default_scroll_input_consumed(Axis::Vertical) {
+                    delta.y = Pixels::ZERO;
+                }
+
+                let (mut delta_x, delta_x_source) = match overflow.x {
+                    Overflow::Scroll if !delta.x.is_zero() => (delta.x, Some(Axis::Horizontal)),
+                    Overflow::Scroll
+                        if !restrict_scroll_to_axis && overflow.y != Overflow::Scroll =>
                     {
-                        ongoing_scroll
-                            .borrow_mut()
-                            .filter(&mut delta, event.touch_phase);
+                        (delta.y, Some(Axis::Vertical))
                     }
-
-                    let mut delta_x = match overflow.x {
-                        Overflow::Scroll if !delta.x.is_zero() => delta.x,
-                        Overflow::Scroll
-                            if !restrict_scroll_to_axis && overflow.y != Overflow::Scroll =>
-                        {
-                            delta.y
-                        }
-                        _ => Pixels::ZERO,
-                    };
-                    let mut delta_y = match overflow.y {
-                        Overflow::Scroll if !delta.y.is_zero() => delta.y,
-                        Overflow::Scroll
-                            if !restrict_scroll_to_axis && overflow.x != Overflow::Scroll =>
-                        {
-                            delta.x
-                        }
-                        _ => Pixels::ZERO,
-                    };
-                    if !allow_concurrent_scroll && !delta_x.is_zero() && !delta_y.is_zero() {
-                        if delta_x.abs() > delta_y.abs() {
-                            delta_y = Pixels::ZERO;
-                        } else {
-                            delta_x = Pixels::ZERO;
-                        }
+                    _ => (Pixels::ZERO, None),
+                };
+                let (mut delta_y, delta_y_source) = match overflow.y {
+                    Overflow::Scroll if !delta.y.is_zero() => (delta.y, Some(Axis::Vertical)),
+                    Overflow::Scroll
+                        if !restrict_scroll_to_axis && overflow.x != Overflow::Scroll =>
+                    {
+                        (delta.x, Some(Axis::Horizontal))
                     }
-                    scroll_offset.y += delta_y;
-                    scroll_offset.x += delta_x;
-                    if *scroll_offset != old_scroll_offset {
-                        cx.notify(current_view);
+                    _ => (Pixels::ZERO, None),
+                };
+                if window.default_scroll_axis_consumed(Axis::Horizontal) {
+                    delta_x = Pixels::ZERO;
+                }
+                if window.default_scroll_axis_consumed(Axis::Vertical) {
+                    delta_y = Pixels::ZERO;
+                }
+                if !allow_concurrent_scroll && !delta_x.is_zero() && !delta_y.is_zero() {
+                    if delta_x.abs() > delta_y.abs() {
+                        delta_y = Pixels::ZERO;
+                    } else {
+                        delta_x = Pixels::ZERO;
                     }
                 }
-            });
-        }
+                scroll_offset.y = (scroll_offset.y + delta_y).clamp(-scroll_max.y, px(0.));
+                scroll_offset.x = (scroll_offset.x + delta_x).clamp(-scroll_max.x, px(0.));
+                let consumed_x = scroll_offset.x != old_scroll_offset.x;
+                let consumed_y = scroll_offset.y != old_scroll_offset.y;
+                drop(scroll_offset);
+
+                if consumed_x && let Some(axis) = delta_x_source {
+                    window.consume_default_scroll_delta(axis, Axis::Horizontal);
+                }
+                if consumed_y && let Some(axis) = delta_y_source {
+                    window.consume_default_scroll_delta(axis, Axis::Vertical);
+                }
+                if consumed_x || consumed_y {
+                    cx.notify(current_view);
+                }
+            }
+        });
+        Some(scroll_container_id)
     }
 
     /// Compute the visual style for this element, based on the current bounds and the element's state.
@@ -4437,7 +4483,8 @@ mod tests {
     use super::*;
     use crate::{
         AnyWindowHandle, AppContext as _, Context, GestureTuning, InputEvent, Keystroke,
-        MouseMoveEvent, TestAppContext, TouchEvent, TouchId, canvas, util::FluentBuilder as _,
+        MouseMoveEvent, ScrollDelta, TestAppContext, TouchEvent, TouchId, VisualTestContext,
+        canvas, util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
 
@@ -4910,6 +4957,303 @@ mod tests {
         handle.scroll_to_active_item();
 
         assert_eq!(handle.offset().y, px(-25.));
+    }
+
+    struct NestedScrollTestView {
+        outer_scroll: ScrollHandle,
+        inner_scroll: ScrollHandle,
+        outer_events: Rc<Cell<usize>>,
+        inner_events: Rc<Cell<usize>>,
+    }
+
+    impl Render for NestedScrollTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let outer_events = self.outer_events.clone();
+            let inner_events = self.inner_events.clone();
+
+            div()
+                .id("outer-scroll")
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(&self.outer_scroll)
+                .on_scroll_wheel(move |_, _, _| {
+                    outer_events.set(outer_events.get() + 1);
+                })
+                .child(
+                    div().w_full().h(px(300.)).flex_none().child(
+                        div()
+                            .id("inner-scroll")
+                            .w_full()
+                            .h(px(50.))
+                            .flex_none()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.inner_scroll)
+                            .on_scroll_wheel(move |_, _, _| {
+                                inner_events.set(inner_events.get() + 1);
+                            })
+                            .child(div().w_full().h(px(200.)).flex_none()),
+                    ),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn nested_scroll_consumes_each_delta_in_only_one_container(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let outer_scroll = ScrollHandle::new();
+        let inner_scroll = ScrollHandle::new();
+        let outer_events = Rc::new(Cell::new(0));
+        let inner_events = Rc::new(Cell::new(0));
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+            cx.new(|_| NestedScrollTestView {
+                outer_scroll: outer_scroll.clone(),
+                inner_scroll: inner_scroll.clone(),
+                outer_events: outer_events.clone(),
+                inner_events: inner_events.clone(),
+            })
+            .into_any_element()
+        });
+
+        let scroll_at = |cx: &mut VisualTestContext, position_y, delta_y| {
+            cx.simulate_event(ScrollWheelEvent {
+                position: point(px(10.), position_y),
+                delta: ScrollDelta::Pixels(point(px(0.), delta_y)),
+                ..Default::default()
+            });
+        };
+
+        // A diagonal delta must not let the outer vertical scroller reuse the unconsumed
+        // horizontal component as another vertical scroll.
+        cx.simulate_event(ScrollWheelEvent {
+            position: point(px(10.), px(10.)),
+            delta: ScrollDelta::Pixels(point(px(-5.), px(-25.))),
+            ..Default::default()
+        });
+        assert_eq!(inner_scroll.offset().y, px(-25.));
+        assert_eq!(outer_scroll.offset().y, px(0.));
+        assert_eq!(inner_events.get(), 1);
+        assert_eq!(outer_events.get(), 1);
+
+        scroll_at(cx, px(10.), px(-500.));
+        assert_eq!(inner_scroll.offset().y, px(-150.));
+        assert_eq!(outer_scroll.offset().y, px(0.));
+
+        scroll_at(cx, px(10.), px(-25.));
+        assert_eq!(inner_scroll.offset().y, px(-150.));
+        assert_eq!(outer_scroll.offset().y, px(-25.));
+        assert_eq!(inner_events.get(), 3);
+        assert_eq!(outer_events.get(), 3);
+
+        // Reversing direction gives the inner container ownership again as soon as it can move.
+        scroll_at(cx, px(10.), px(25.));
+        assert_eq!(inner_scroll.offset().y, px(-125.));
+        assert_eq!(outer_scroll.offset().y, px(-25.));
+
+        // At the inner container's top boundary, the next upward delta chains to the outer one.
+        inner_scroll.set_offset(point(px(0.), px(0.)));
+        scroll_at(cx, px(10.), px(25.));
+        assert_eq!(inner_scroll.offset().y, px(0.));
+        assert_eq!(outer_scroll.offset().y, px(0.));
+
+        // Outside the inner hitbox, only the outer container is a scroll candidate.
+        let inner_events_before = inner_events.get();
+        scroll_at(cx, px(75.), px(-25.));
+        assert_eq!(inner_scroll.offset().y, px(0.));
+        assert_eq!(outer_scroll.offset().y, px(-25.));
+        assert_eq!(inner_events.get(), inner_events_before);
+        assert_eq!(outer_events.get(), 6);
+    }
+
+    struct HorizontalNestedScrollTestView {
+        outer_scroll: ScrollHandle,
+        inner_scroll: ScrollHandle,
+    }
+
+    impl Render for HorizontalNestedScrollTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("outer-scroll")
+                .size_full()
+                .overflow_x_scroll()
+                .track_scroll(&self.outer_scroll)
+                .child(
+                    div().h_full().w(px(300.)).flex_none().child(
+                        div()
+                            .id("inner-scroll")
+                            .w(px(50.))
+                            .h_full()
+                            .flex_none()
+                            .overflow_x_scroll()
+                            .track_scroll(&self.inner_scroll)
+                            .child(div().w(px(200.)).h_full().flex_none()),
+                    ),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn horizontal_nested_scroll_consumes_each_delta_in_only_one_container(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let outer_scroll = ScrollHandle::new();
+        let inner_scroll = ScrollHandle::new();
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+            cx.new(|_| HorizontalNestedScrollTestView {
+                outer_scroll: outer_scroll.clone(),
+                inner_scroll: inner_scroll.clone(),
+            })
+            .into_any_element()
+        });
+
+        let scroll = |cx: &mut VisualTestContext, delta_x| {
+            cx.simulate_event(ScrollWheelEvent {
+                position: point(px(10.), px(10.)),
+                delta: ScrollDelta::Pixels(point(delta_x, px(0.))),
+                ..Default::default()
+            });
+        };
+
+        scroll(cx, px(-25.));
+        assert_eq!(inner_scroll.offset().x, px(-25.));
+        assert_eq!(outer_scroll.offset().x, px(0.));
+
+        scroll(cx, px(-500.));
+        assert_eq!(inner_scroll.offset().x, px(-150.));
+        assert_eq!(outer_scroll.offset().x, px(0.));
+
+        scroll(cx, px(-25.));
+        assert_eq!(inner_scroll.offset().x, px(-150.));
+        assert_eq!(outer_scroll.offset().x, px(-25.));
+    }
+
+    struct OrthogonalNestedScrollTestView {
+        outer_scroll: ScrollHandle,
+        inner_scroll: ScrollHandle,
+    }
+
+    impl Render for OrthogonalNestedScrollTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("outer-scroll")
+                .size_full()
+                .overflow_y_scroll()
+                .restrict_scroll_to_axis()
+                .track_scroll(&self.outer_scroll)
+                .child(
+                    div().w_full().h(px(300.)).flex_none().child(
+                        div()
+                            .id("inner-scroll")
+                            .w(px(50.))
+                            .h(px(50.))
+                            .flex_none()
+                            .overflow_x_scroll()
+                            .restrict_scroll_to_axis()
+                            .track_scroll(&self.inner_scroll)
+                            .child(div().w(px(200.)).h_full().flex_none()),
+                    ),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn nested_scroll_consumes_deltas_per_axis(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let outer_scroll = ScrollHandle::new();
+        let inner_scroll = ScrollHandle::new();
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+            cx.new(|_| OrthogonalNestedScrollTestView {
+                outer_scroll: outer_scroll.clone(),
+                inner_scroll: inner_scroll.clone(),
+            })
+            .into_any_element()
+        });
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: point(px(10.), px(10.)),
+            delta: ScrollDelta::Lines(point(-1., -1.)),
+            ..Default::default()
+        });
+
+        assert!(inner_scroll.offset().x < px(0.));
+        assert_eq!(inner_scroll.offset().y, px(0.));
+        assert_eq!(outer_scroll.offset().x, px(0.));
+        assert!(outer_scroll.offset().y < px(0.));
+    }
+
+    struct OverlappingScrollTestView {
+        outer_scroll: ScrollHandle,
+        background_scroll: ScrollHandle,
+        foreground_scroll: ScrollHandle,
+    }
+
+    impl Render for OverlappingScrollTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("outer-scroll")
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(&self.outer_scroll)
+                .child(
+                    div()
+                        .relative()
+                        .w_full()
+                        .h(px(300.))
+                        .flex_none()
+                        .child(
+                            div()
+                                .id("background-scroll")
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .w_full()
+                                .h(px(50.))
+                                .overflow_y_scroll()
+                                .track_scroll(&self.background_scroll)
+                                .child(div().w_full().h(px(200.)).flex_none()),
+                        )
+                        .child(
+                            div()
+                                .id("foreground-scroll")
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .w_full()
+                                .h(px(50.))
+                                .overflow_y_scroll()
+                                .track_scroll(&self.foreground_scroll)
+                                .child(div().w_full().h(px(50.)).flex_none()),
+                        ),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn nested_scroll_chains_to_ancestors_not_overlapping_siblings(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let outer_scroll = ScrollHandle::new();
+        let background_scroll = ScrollHandle::new();
+        let foreground_scroll = ScrollHandle::new();
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+            cx.new(|_| OverlappingScrollTestView {
+                outer_scroll: outer_scroll.clone(),
+                background_scroll: background_scroll.clone(),
+                foreground_scroll: foreground_scroll.clone(),
+            })
+            .into_any_element()
+        });
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: point(px(10.), px(10.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(-25.))),
+            ..Default::default()
+        });
+
+        assert_eq!(foreground_scroll.offset().y, px(0.));
+        assert_eq!(background_scroll.offset().y, px(0.));
+        assert_eq!(outer_scroll.offset().y, px(-25.));
     }
 
     #[test]
