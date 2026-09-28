@@ -7711,6 +7711,7 @@ name = "gpui_platform"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bench_metrics",
  "console_error_panic_hook",
  "criterion",
  "gpui",

@@ -7,18 +7,22 @@
 //! before/after harness for changes to rendering.
 //!
 //! Trees come from *families*: bounds on topology, element count and entity density that
-//! a seed is drawn against (see [`RandomizedElementTreeBounds`]). Every input is one
-//! `family-s<seed>` and its whole shape follows from the seed, so a run over a family's
-//! seeds is a sample of that family and any single input reproduces exactly. Filter by
-//! family to ask a narrower question, e.g. `--bench randomized_element_tree -- 'tall-'`.
+//! a seeded RNG is drawn against (see [`RandomizedElementTreeBounds`]). Each family is an
+//! input and `#[gpui::bench]` runs it once per seed, so an id like `tree/wide/seed-3`
+//! names one tree whose whole shape follows from the seed, and a run over a family's
+//! seeds is a sample of that family. `SEED` and `ITERATIONS` choose the seeds as for
+//! `#[gpui::test]`. Filter by family to ask a narrower question, e.g.
+//! `--bench randomized_element_tree -- 'tree/tall/'`. Each tree is described once, with
+//! the heap its window holds after the first frame, before it is measured.
 //!
 //! The tree's own work counters are asserted after each measured loop: a faster frame that
 //! stopped rendering the changed element is not an improvement.
 
-use std::fmt;
+use std::{cell::RefCell, fmt};
 
 use gpui::{
     BenchAppContext, Context, Window,
+    private::rand::rngs::StdRng,
     randomized_element_tree::{
         ChangeLocality, RandomizedElementTree, RandomizedElementTreeBounds,
         RandomizedElementTreeConfig, RandomizedElementTreeMutation,
@@ -26,17 +30,32 @@ use gpui::{
     },
 };
 
-/// How many seeds each family is sampled at. Criterion reports each seed on its own;
-/// the family's average is read across them.
-const SEEDS_PER_FAMILY: u64 = 6;
-
-/// A named family of trees, and one seed's draw from it. `seed` counts within the family;
-/// the config's seed is offset per family so families with overlapping bounds do not
-/// draw the same trees.
+/// A named family of trees: the bounds one seed's tree is drawn against.
 #[derive(Clone)]
+struct TreeFamily {
+    name: &'static str,
+    bounds: RandomizedElementTreeBounds,
+}
+
+impl TreeFamily {
+    fn sample(&self, rng: &mut StdRng) -> TreeInput {
+        TreeInput {
+            family: self.name,
+            config: self.bounds.sample(rng),
+        }
+    }
+}
+
+impl fmt::Display for TreeFamily {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.name)
+    }
+}
+
+/// One tree drawn from a family. Its `Display` describes the draw, which the benchmark
+/// id (family and seed) does not.
 struct TreeInput {
     family: &'static str,
-    seed: u64,
     config: RandomizedElementTreeConfig,
 }
 
@@ -50,11 +69,11 @@ impl fmt::Display for TreeInput {
         };
         write!(
             formatter,
-            "{}-s{}-{topology}-e{}-ent{}",
+            "{} tree: {topology}, {} elements, {}% entities, {}% handlers",
             self.family,
-            self.seed,
             self.config.element_count(),
-            (self.config.entity_density() * 100.0).round() as usize
+            (self.config.entity_density() * 100.0).round() as usize,
+            (self.config.handler_density() * 100.0).round() as usize
         )
     }
 }
@@ -71,25 +90,25 @@ const MIN_ENTITY_DENSITY: f64 = 0.05;
 
 /// The families every benchmark samples. Each is a question: what does this class of
 /// change cost on a tree like *this*?
-fn families() -> Vec<(&'static str, RandomizedElementTreeBounds)> {
+fn families() -> Vec<TreeFamily> {
     let handlers = 0.1..=0.4;
     vec![
-        (
-            "any",
-            RandomizedElementTreeBounds::new(32..=TALL_MAX_ELEMENTS)
+        TreeFamily {
+            name: "any",
+            bounds: RandomizedElementTreeBounds::new(32..=TALL_MAX_ELEMENTS)
                 .with_entity_density(MIN_ENTITY_DENSITY..=0.5)
                 .with_handler_density(handlers.clone()),
-        ),
-        (
-            "wide",
-            RandomizedElementTreeBounds::new(128..=2048)
+        },
+        TreeFamily {
+            name: "wide",
+            bounds: RandomizedElementTreeBounds::new(128..=2048)
                 .with_topologies([RandomizedElementTreeTopology::Wide])
                 .with_entity_density(MIN_ENTITY_DENSITY..=0.25)
                 .with_handler_density(handlers.clone()),
-        ),
-        (
-            "tall",
-            RandomizedElementTreeBounds::new(32..=TALL_MAX_ELEMENTS)
+        },
+        TreeFamily {
+            name: "tall",
+            bounds: RandomizedElementTreeBounds::new(32..=TALL_MAX_ELEMENTS)
                 .with_topologies(
                     RandomizedElementTreeTopology::ALL
                         .into_iter()
@@ -97,39 +116,25 @@ fn families() -> Vec<(&'static str, RandomizedElementTreeBounds)> {
                 )
                 .with_entity_density(MIN_ENTITY_DENSITY..=0.25)
                 .with_handler_density(handlers.clone()),
-        ),
-        (
-            "mixed",
-            RandomizedElementTreeBounds::new(128..=1024)
+        },
+        TreeFamily {
+            name: "mixed",
+            bounds: RandomizedElementTreeBounds::new(128..=1024)
                 .with_topologies([RandomizedElementTreeTopology::Mixed])
                 .with_entity_density(MIN_ENTITY_DENSITY..=0.25)
                 .with_handler_density(handlers.clone()),
-        ),
-        (
-            "dense-entities",
-            RandomizedElementTreeBounds::new(128..=1024)
+        },
+        TreeFamily {
+            name: "dense-entities",
+            bounds: RandomizedElementTreeBounds::new(128..=1024)
                 .with_topologies([
                     RandomizedElementTreeTopology::Wide,
                     RandomizedElementTreeTopology::Mixed,
                 ])
                 .with_entity_density(0.75..=1.0)
                 .with_handler_density(handlers),
-        ),
+        },
     ]
-}
-
-fn inputs() -> Vec<TreeInput> {
-    families()
-        .into_iter()
-        .enumerate()
-        .flat_map(|(family_index, (family, bounds))| {
-            (0..SEEDS_PER_FAMILY).map(move |seed| TreeInput {
-                family,
-                seed,
-                config: bounds.sample((family_index as u64) << 32 | seed),
-            })
-        })
-        .collect()
 }
 
 /// Builds the tree, draws it once so layout and the scene are warm, and measures
@@ -156,6 +161,7 @@ fn measure_in_window(
     mut mutate: impl FnMut(&mut RandomizedElementTree, &mut Window, &mut Context<RandomizedElementTree>),
 ) -> Measured {
     let config = input.config;
+    let before_window = bench_metrics::allocation_stats();
     let mut window = cx.add_empty_window();
     let tree = window.update(|window, cx| {
         window.replace_root(cx, |_, cx| {
@@ -163,6 +169,7 @@ fn measure_in_window(
         })
     });
     cx.run_until_idle();
+    describe_once(input, before_window, bench_metrics::allocation_stats());
 
     let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
     assert_eq!(snapshot.descendant_count(), config.element_count());
@@ -205,14 +212,42 @@ fn measure_in_window(
     }
 }
 
+thread_local! {
+    static LAST_DESCRIBED: RefCell<Option<RandomizedElementTreeConfig>> =
+        const { RefCell::new(None) };
+}
+
+/// Prints the tree and the heap its window holds after the first frame, once per run of
+/// consecutive routine calls on the same tree: Criterion calls a benchmark's routine for
+/// warm-up and every sample, and each call builds the same tree.
+fn describe_once(
+    input: &TreeInput,
+    before_window: Option<bench_metrics::AllocationStats>,
+    after_first_frame: Option<bench_metrics::AllocationStats>,
+) {
+    let is_new =
+        LAST_DESCRIBED.with(|last| last.borrow_mut().replace(input.config)) != Some(input.config);
+    if !is_new {
+        return;
+    }
+    match before_window.zip(after_first_frame) {
+        Some((before, after)) => eprintln!(
+            "{input}; window holds {:.1} KB after the first frame",
+            (after.live_bytes() - before.live_bytes()) as f64 / 1024.
+        ),
+        None => eprintln!("{input}"),
+    }
+}
+
 /// A frame that rebuilds everything: `Window::refresh`, the fallback GPUI uses whenever
 /// it cannot tell what changed (window activation, theme or settings changes via
 /// `refresh_windows`, an inspector toggle). Nothing in the tree changes, so this is the
 /// pure cost of the known-good path, and the renderer's worst case: every view and element
 /// rendered again, none reused. Its difference between two GPUI revisions is the price of
 /// a full refresh on the newer one.
-#[gpui::bench(inputs = inputs(), input_name = "tree", group = "RandomizedTree/full refresh", fps = 120)]
-fn full_refresh(input: &TreeInput, cx: &mut BenchAppContext) {
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 6, group = "RandomizedTree/full refresh", fps = 120)]
+fn full_refresh(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = &family.sample(&mut rng);
     let measured = measure_in_window(input, cx, |_, window, _| window.refresh());
     assert!(measured.frames > 0);
     // A full refresh renders every entity; a renderer that replayed them would render none.
@@ -227,16 +262,18 @@ fn full_refresh(input: &TreeInput, cx: &mut BenchAppContext) {
 /// A frame in which the root is notified but nothing in the tree changed. On a renderer
 /// that rebuilds every frame this is the whole tree's cost; on one that retains output
 /// it is the floor for a frame that has to do nothing.
-#[gpui::bench(inputs = inputs(), input_name = "tree", group = "RandomizedTree/unchanged", fps = 120)]
-fn unchanged(input: &TreeInput, cx: &mut BenchAppContext) {
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 6, group = "RandomizedTree/unchanged", fps = 120)]
+fn unchanged(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = &family.sample(&mut rng);
     let frames = measure(input, cx, |_, cx| cx.notify());
     assert!(frames > 0);
 }
 
 /// One descendant's background color changes each frame: the smallest possible change,
 /// confined to one element and, when it has one, its owning entity.
-#[gpui::bench(inputs = inputs(), input_name = "tree", group = "RandomizedTree/leaf style", fps = 120)]
-fn leaf_style(input: &TreeInput, cx: &mut BenchAppContext) {
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 6, group = "RandomizedTree/leaf style", fps = 120)]
+fn leaf_style(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = &family.sample(&mut rng);
     let mut recolored = 0usize;
     let frames = measure(input, cx, |tree, cx| {
         if let RandomizedElementTreeMutation::ChildColor { .. } =
@@ -254,8 +291,9 @@ fn leaf_style(input: &TreeInput, cx: &mut BenchAppContext) {
 
 /// A descendant's width and height change each frame, so its siblings and ancestors
 /// re-lay out even where their own content did not change.
-#[gpui::bench(inputs = inputs(), input_name = "tree", group = "RandomizedTree/leaf bounds", fps = 120)]
-fn leaf_bounds(input: &TreeInput, cx: &mut BenchAppContext) {
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 6, group = "RandomizedTree/leaf bounds", fps = 120)]
+fn leaf_bounds(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = &family.sample(&mut rng);
     let frames = measure(input, cx, |tree, cx| {
         tree.apply_mutation(RandomizedElementTreeMutationKind::ChildBounds, cx);
     });
@@ -263,8 +301,9 @@ fn leaf_bounds(input: &TreeInput, cx: &mut BenchAppContext) {
 }
 
 /// The root's width and height change each frame: every element's layout is stale.
-#[gpui::bench(inputs = inputs(), input_name = "tree", group = "RandomizedTree/root layout", fps = 120)]
-fn root_layout(input: &TreeInput, cx: &mut BenchAppContext) {
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 6, group = "RandomizedTree/root layout", fps = 120)]
+fn root_layout(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = &family.sample(&mut rng);
     let frames = measure(input, cx, |tree, cx| {
         tree.apply_mutation(RandomizedElementTreeMutationKind::RootBounds, cx);
     });
@@ -273,8 +312,9 @@ fn root_layout(input: &TreeInput, cx: &mut BenchAppContext) {
 
 /// One element is inserted or removed per frame, alternating so the tree keeps its size
 /// to within one element over the whole loop. Removal takes a leaf, never a subtree.
-#[gpui::bench(inputs = inputs(), input_name = "tree", group = "RandomizedTree/insert-remove", fps = 120)]
-fn insert_remove(input: &TreeInput, cx: &mut BenchAppContext) {
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 6, group = "RandomizedTree/insert-remove", fps = 120)]
+fn insert_remove(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = &family.sample(&mut rng);
     let mut insert = true;
     let mut inserted = 0usize;
     let mut removed = 0usize;
@@ -304,8 +344,9 @@ fn insert_remove(input: &TreeInput, cx: &mut BenchAppContext) {
 
 /// A descendant moves among its siblings each frame; the set of elements is unchanged
 /// but their order, and therefore every sibling's position, is not.
-#[gpui::bench(inputs = inputs(), input_name = "tree", group = "RandomizedTree/reorder", fps = 120)]
-fn reorder(input: &TreeInput, cx: &mut BenchAppContext) {
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 6, group = "RandomizedTree/reorder", fps = 120)]
+fn reorder(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = &family.sample(&mut rng);
     let mut reordered = 0usize;
     let frames = measure(input, cx, |tree, cx| {
         if let RandomizedElementTreeMutation::Reordered { .. } =
@@ -322,10 +363,11 @@ fn reorder(input: &TreeInput, cx: &mut BenchAppContext) {
     }
 }
 
-/// A tree, the share of its elements that change each frame, and where those changes sit.
+/// A tree family, the share of its elements that change each frame, and where those
+/// changes sit.
 #[derive(Clone)]
 struct ChangingShareInput {
-    tree: TreeInput,
+    family: TreeFamily,
     share_percent: usize,
     locality: ChangeLocality,
 }
@@ -339,14 +381,10 @@ impl fmt::Display for ChangingShareInput {
         write!(
             formatter,
             "{}-f{}-{locality}",
-            self.tree, self.share_percent
+            self.family, self.share_percent
         )
     }
 }
-
-/// Seeds per family in the `changing share` group, which multiplies every tree by five
-/// shares; fewer seeds keep the group to a few minutes.
-const CHANGING_SHARE_SEEDS: u64 = 3;
 
 /// The share of elements recolored per frame, from one element to all of them. A renderer
 /// that retains clean entity subtrees should fall toward the left of this axis; one that
@@ -357,10 +395,9 @@ const CHANGING_SHARE_SEEDS: u64 = 3;
 /// `spread` points scatter it uniformly instead: the pessimistic bound, where every
 /// changed element may dirty a different subtree.
 fn changing_share_inputs() -> Vec<ChangingShareInput> {
-    inputs()
+    families()
         .into_iter()
-        .filter(|input| input.seed < CHANGING_SHARE_SEEDS)
-        .flat_map(|tree| {
+        .flat_map(|family| {
             [
                 (0, ChangeLocality::Localized),
                 (1, ChangeLocality::Localized),
@@ -372,7 +409,7 @@ fn changing_share_inputs() -> Vec<ChangingShareInput> {
             ]
             .into_iter()
             .map(move |(share_percent, locality)| ChangingShareInput {
-                tree: tree.clone(),
+                family: family.clone(),
                 share_percent,
                 locality,
             })
@@ -380,9 +417,12 @@ fn changing_share_inputs() -> Vec<ChangingShareInput> {
         .collect()
 }
 
-#[gpui::bench(inputs = changing_share_inputs(), input_name = "tree", group = "RandomizedTree/changing share", fps = 120)]
-fn changing_share(input: &ChangingShareInput, cx: &mut BenchAppContext) {
-    let element_count = input.tree.config.element_count();
+// Three seeds rather than six: every family is multiplied by seven shares, and fewer
+// seeds keep the group to a few minutes.
+#[gpui::bench(inputs = changing_share_inputs(), input_name = "tree", iterations = 3, group = "RandomizedTree/changing share", fps = 120)]
+fn changing_share(input: &ChangingShareInput, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let tree = &input.family.sample(&mut rng);
+    let element_count = tree.config.element_count();
     let per_frame = if input.share_percent == 0 {
         0
     } else {
@@ -392,7 +432,7 @@ fn changing_share(input: &ChangingShareInput, cx: &mut BenchAppContext) {
         recolored: 0,
         notified: 0,
     };
-    let frames = measure(&input.tree, cx, |tree, cx| {
+    let frames = measure(tree, cx, |tree, cx| {
         if per_frame == 0 {
             cx.notify();
         } else {
