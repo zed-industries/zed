@@ -89,8 +89,6 @@ impl OpenAiCompatibleLanguageModelProvider {
     fn language_model(&self, model: &AvailableModel) -> LanguageModel {
         LanguageModel {
             supports_tools: model.capabilities.tools,
-            prompt_compaction_strategy:
-                language_model::PromptCompactionStrategy::PreserveRequestPrefix,
             supports_images: model.capabilities.images,
             tool_choice_support: LanguageModelToolChoiceSupport {
                 auto: model.capabilities.tools,

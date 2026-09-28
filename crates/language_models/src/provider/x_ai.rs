@@ -388,7 +388,6 @@ fn supported_thinking_effort_levels(model: &x_ai::Model) -> Vec<LanguageModelEff
 fn language_model(model: &x_ai::Model) -> LanguageModel {
     LanguageModel {
         supports_tools: model.supports_tool(),
-        prompt_compaction_strategy: language_model::PromptCompactionStrategy::PreserveRequestPrefix,
         supports_images: model.supports_images(),
         supports_streaming_tools: true,
         tool_choice_support: LanguageModelToolChoiceSupport::ALL,

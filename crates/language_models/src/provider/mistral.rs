@@ -12,8 +12,8 @@ use language_model::{
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolChoiceSupport,
     LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, ModelRateLimiters,
-    PromptCompactionStrategy,
-    ProviderSettingsView, RateLimiter, Role, StopReason, TokenUsage, env_var, unavailable_error,
+    PromptCompactionStrategy, ProviderSettingsView, RateLimiter, Role, StopReason, TokenUsage,
+    env_var, unavailable_error,
 };
 pub use mistral::{MISTRAL_API_URL, StreamResponse};
 pub use settings::MistralAvailableModel as AvailableModel;
@@ -322,7 +322,6 @@ fn language_model(model: &mistral::Model) -> LanguageModel {
     let supports_tools = model.supports_tools();
     LanguageModel {
         supports_tools,
-        prompt_compaction_strategy: language_model::PromptCompactionStrategy::PreserveRequestPrefix,
         supports_streaming_tools: true,
         prompt_compaction_strategy: PromptCompactionStrategy::PreserveRequestPrefix,
         tool_choice_support: LanguageModelToolChoiceSupport {

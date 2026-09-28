@@ -144,7 +144,6 @@ pub struct LanguageModel {
     /// Controls how Zed builds prompt-based compaction requests, not provider-native compaction.
     pub prompt_compaction_strategy: PromptCompactionStrategy,
     pub supports_explicit_compaction: bool,
-    pub prompt_compaction_strategy: PromptCompactionStrategy,
     /// Whether native compaction honors `LanguageModelRequest::max_output_tokens`.
     pub supports_explicit_compaction_output_limit: bool,
     /// The provider-enforced input size required for explicit compaction.
@@ -221,7 +220,6 @@ impl LanguageModel {
             supports_server_side_compaction: false,
             prompt_compaction_strategy: PromptCompactionStrategy::RebuildPrompt,
             supports_explicit_compaction: false,
-            prompt_compaction_strategy: PromptCompactionStrategy::RebuildPrompt,
             supports_explicit_compaction_output_limit: false,
             minimum_explicit_compaction_input_tokens: None,
             supports_images: false,
