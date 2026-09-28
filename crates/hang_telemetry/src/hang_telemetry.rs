@@ -224,4 +224,3 @@ fn to_value(incidents: &[SerializedHangIncident]) -> Value {
         }
     }
 }
-
