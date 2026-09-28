@@ -307,14 +307,6 @@ impl Element for Anchored {
     }
 }
 
-impl IntoElement for Anchored {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 /// Which side of a box `anchor` is on along `axis`. `Less` is left or top, `Equal` is the
 /// center, and `Greater` is right or bottom.
 fn side_along(anchor: Anchor, axis: Axis) -> Ordering {

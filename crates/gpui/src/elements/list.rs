@@ -1658,14 +1658,6 @@ fn content_insets(style: &Style, size: Size<Pixels>, rem_size: Pixels) -> Edges<
     padding + border
 }
 
-impl IntoElement for List {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Styled for List {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.style

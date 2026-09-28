@@ -3671,14 +3671,6 @@ fn render_copy_code_block_button(
     })
 }
 
-impl IntoElement for MarkdownElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 pub enum AnyDiv {
     Div(Div),
     Stateful(Stateful<Div>),

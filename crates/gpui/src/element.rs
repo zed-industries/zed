@@ -49,7 +49,7 @@ use std::{
 /// Elements form a tree and are laid out according to web-based layout rules, as implemented by Taffy.
 /// You can create custom elements by implementing this trait, see the module-level documentation
 /// for more details.
-pub trait Element: 'static + IntoElement {
+pub trait Element: 'static + Sized {
     /// The type of state returned from [`Element::request_layout`]. A mutable reference to this state is subsequently
     /// provided to [`Element::prepaint`] and [`Element::paint`].
     type RequestLayoutState: 'static;
@@ -138,7 +138,15 @@ pub trait Element: 'static + IntoElement {
 
     /// Convert this element into a dynamically-typed [`AnyElement`].
     fn into_any(self) -> AnyElement {
-        AnyElement::new(self)
+        AnyElement::new_please_call_into_any_to_avoid_double_box(self)
+    }
+}
+
+impl<T: Element> IntoElement for T {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
     }
 }
 
@@ -650,7 +658,12 @@ where
 pub struct AnyElement(ArenaBox<dyn ElementObject>);
 
 impl AnyElement {
-    pub(crate) fn new<E>(element: E) -> Self
+    /// Boxes `element` into an `AnyElement`, erasing its concrete type.
+    ///
+    /// This always allocates and always adds a level of boxing, even when `element` is
+    /// already an [`AnyElement`], which would nest one `AnyElement` inside another. Call
+    /// [`Element::into_any`] instead; it skips the wrapper for `AnyElement` itself.
+    fn new_please_call_into_any_to_avoid_double_box<E>(element: E) -> Self
     where
         E: 'static + Element,
         E::RequestLayoutState: Any,
@@ -772,30 +785,14 @@ impl Element for AnyElement {
     ) {
         self.paint(window, cx);
     }
-}
 
-impl IntoElement for AnyElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-
-    fn into_any_element(self) -> AnyElement {
+    fn into_any(self) -> AnyElement {
         self
     }
 }
 
 /// The empty element, which renders nothing.
 pub struct Empty;
-
-impl IntoElement for Empty {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
 
 impl Element for Empty {
     type RequestLayoutState = ();

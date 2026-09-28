@@ -736,13 +736,6 @@ mod tests {
         }
     }
 
-    impl IntoElement for PendingTextInputTestView {
-        type Element = Self;
-
-        fn into_element(self) -> Self::Element {
-            self
-        }
-    }
 
     impl InputHandler for PendingTextInputTestView {
         fn accepts_text_input(&mut self, _: &mut Window, _: &mut App) -> bool {
@@ -1214,13 +1207,6 @@ mod tests {
             }
         }
 
-        impl IntoElement for CustomElement {
-            type Element = Self;
-
-            fn into_element(self) -> Self::Element {
-                self
-            }
-        }
 
         impl InputHandler for CustomElement {
             fn selected_text_range(

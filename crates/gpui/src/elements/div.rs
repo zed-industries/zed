@@ -2196,14 +2196,6 @@ impl Element for Div {
     }
 }
 
-impl IntoElement for Div {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 #[derive(Default)]
 pub(crate) struct AriaProperties {
     pub(crate) author_id: Option<SharedString>,
@@ -4898,14 +4890,6 @@ mod tests {
     struct TooltipCaptureElement {
         child: AnyElement,
         captured_active_tooltip: CapturedActiveTooltip,
-    }
-
-    impl IntoElement for TooltipCaptureElement {
-        type Element = Self;
-
-        fn into_element(self) -> Self::Element {
-            self
-        }
     }
 
     impl Element for TooltipCaptureElement {
