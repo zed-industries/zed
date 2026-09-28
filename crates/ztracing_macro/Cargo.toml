@@ -7,5 +7,5 @@ license = "Apache-2.0"
 
 [lib]
 proc-macro = true
-
-[dependencies]
+test = false
+doctest = false
