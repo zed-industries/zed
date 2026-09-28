@@ -3912,9 +3912,12 @@ impl InlayHints {
             // level: if the previous character's kind is greater than or equal to the next
             // character's kind, the hint is a suffix → Right; otherwise, it is a prefix → Left.
             // `None` covers both directions.
-            None => match (lsp_hint.padding_left, lsp_hint.padding_right) {
-                (Some(true), Some(false)) => Bias::Right,
-                (Some(false), Some(true)) => Bias::Left,
+            None => match (
+                lsp_hint.padding_left.unwrap_or(false),
+                lsp_hint.padding_right.unwrap_or(false),
+            ) {
+                (true, false) => Bias::Right,
+                (false, true) => Bias::Left,
                 _ => {
                     let offset = position.to_offset(snapshot);
                     let (range, _) = snapshot.surrounding_word(offset, None);
