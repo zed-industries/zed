@@ -146,6 +146,10 @@ pub struct TerminalView {
     /// background paints over the container's corners. Only the background is
     /// rounded, terminal content isn't clipped.
     background_corner_radii: Option<Corners<Rems>>,
+    /// Top padding applied inside the terminal's own container, rather than
+    /// as space around it, so that a vertical scrollbar spans the padded
+    /// area instead of stopping short of it and leaving a visible gap.
+    content_top_padding: Rems,
     read_only: bool,
     // Explicit override for whether workspace-specific context menu actions are shown.
     // When `None`, visibility is derived from `mode` (hidden for embedded terminals).
@@ -300,6 +304,7 @@ impl TerminalView {
             hover_tooltip_update: Task::ready(()),
             mode: TerminalMode::Standalone,
             background_corner_radii: None,
+            content_top_padding: Rems::ZERO,
             read_only: false,
             show_workspace_actions: None,
             workspace_id,
@@ -338,6 +343,32 @@ impl TerminalView {
     ) {
         self.background_corner_radii = corner_radii;
         cx.notify();
+    }
+
+    /// Adds top padding inside the terminal's own container, rather than as
+    /// space around it, so a vertical scrollbar spans the padded area
+    /// instead of leaving a gap above it.
+    pub fn set_content_top_padding(&mut self, padding: Rems, cx: &mut Context<Self>) {
+        self.content_top_padding = padding;
+        cx.notify();
+    }
+
+    /// Corner radii to use when painting the terminal's own background.
+    ///
+    /// When the vertical scrollbar is shown, its track already rounds the
+    /// right edge to match the container, so the terminal's own background
+    /// is kept square there to avoid a visible seam between the two.
+    pub(crate) fn background_corner_radii_for_paint(
+        &self,
+        window: &Window,
+        cx: &App,
+    ) -> Corners<Rems> {
+        let mut radii = self.background_corner_radii.unwrap_or_default();
+        if self.content_mode(window, cx).is_scrollable() {
+            radii.top_right = Rems::ZERO;
+            radii.bottom_right = Rems::ZERO;
+        }
+        radii
     }
 
     pub fn is_read_only(&self) -> bool {
@@ -1485,6 +1516,7 @@ impl Render for TerminalView {
                     .id("terminal-view-container")
                     .size_full()
                     .bg(cx.theme().colors().editor_background)
+                    .pt(self.content_top_padding)
                     .when_some(self.background_corner_radii, |this, radii| {
                         this.rounded_tl(radii.top_left)
                             .rounded_tr(radii.top_right)
@@ -1503,6 +1535,7 @@ impl Render for TerminalView {
                     ))
                     .when(self.content_mode(window, cx).is_scrollable(), |div| {
                         let colors = cx.theme().colors();
+                        let radii = self.background_corner_radii.unwrap_or_default();
                         div.custom_scrollbars(
                             Scrollbars::for_settings::<TerminalScrollbarSettingsWrapper>()
                                 .show_along(ScrollAxes::Vertical)
@@ -1510,6 +1543,11 @@ impl Render for TerminalView {
                                     ScrollAxes::Vertical,
                                     colors.editor_background,
                                 )
+                                .track_corner_radii(Corners {
+                                    top_right: radii.top_right.into(),
+                                    bottom_right: radii.bottom_right.into(),
+                                    ..Default::default()
+                                })
                                 .tracked_scroll_handle(&self.scroll_handle),
                             window,
                             cx,

@@ -1586,8 +1586,7 @@ impl Element for TerminalElement {
             let scroll_top = terminal_view.scroll_top;
             let mouse_input_mode = terminal_view.mouse_input_mode();
             let corner_radii = terminal_view
-                .background_corner_radii
-                .unwrap_or_default()
+                .background_corner_radii_for_paint(window, cx)
                 .map(|radius| radius.to_pixels(window.rem_size()))
                 .clamp_radii_for_quad_size(bounds.size);
 
