@@ -8,7 +8,7 @@ use acp_thread::{
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
 use agent::{NativeAgentServer, NoModelConfiguredError, ThreadStore};
-use agent_client_protocol::schema::v1 as acp_v1;
+use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
 #[cfg(test)]
 use agent_servers::AgentServerDelegate;
 use agent_servers::{AgentServer, GEMINI_TERMINAL_AUTH_METHOD_ID};
@@ -3724,7 +3724,7 @@ fn plan_summary_label(stats: &acp_thread::PlanStats<'_>, entry_count: usize) -> 
 }
 
 fn plan_label_markdown_style(
-    status: &agent_client_protocol::schema::v2::PlanEntryStatus,
+    status: &acp_v2::PlanEntryStatus,
     window: &Window,
     cx: &App,
 ) -> MarkdownStyle {
@@ -3733,10 +3733,7 @@ fn plan_label_markdown_style(
     MarkdownStyle {
         base_text_style: TextStyle {
             color: cx.theme().colors().text_muted,
-            strikethrough: if matches!(
-                status,
-                agent_client_protocol::schema::v2::PlanEntryStatus::Completed
-            ) {
+            strikethrough: if matches!(status, acp_v2::PlanEntryStatus::Completed) {
                 Some(gpui::StrikethroughStyle {
                     thickness: px(1.),
                     color: Some(cx.theme().colors().text_muted.opacity(0.8)),

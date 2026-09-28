@@ -2762,13 +2762,14 @@ fn plan_entry_from_v1(entry: acp_v1::PlanEntry) -> Result<acp_v2::PlanEntry> {
         acp_v1::PlanEntryPriority::High => acp_v2::PlanEntryPriority::High,
         acp_v1::PlanEntryPriority::Medium => acp_v2::PlanEntryPriority::Medium,
         acp_v1::PlanEntryPriority::Low => acp_v2::PlanEntryPriority::Low,
-        other => anyhow::bail!("Unsupported v1 plan priority: {other:?}"),
+        // V2 preserves future wire names through its Other variant.
+        other => serde_json::from_value(serde_json::to_value(other)?)?,
     };
     let status = match entry.status {
         acp_v1::PlanEntryStatus::Pending => acp_v2::PlanEntryStatus::Pending,
         acp_v1::PlanEntryStatus::InProgress => acp_v2::PlanEntryStatus::InProgress,
         acp_v1::PlanEntryStatus::Completed => acp_v2::PlanEntryStatus::Completed,
-        other => anyhow::bail!("Unsupported v1 plan status: {other:?}"),
+        other => serde_json::from_value(serde_json::to_value(other)?)?,
     };
     Ok(acp_v2::PlanEntry::new(entry.content, priority, status).meta(entry.meta))
 }
