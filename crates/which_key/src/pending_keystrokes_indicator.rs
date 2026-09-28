@@ -231,7 +231,11 @@ impl PendingKeystrokesIndicator {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !window.has_pending_keystrokes() || !Self::enabled(cx) || !Self::popover_enabled(cx) {
+        if event.character_input_preferred
+            || !window.has_pending_keystrokes()
+            || !Self::enabled(cx)
+            || !Self::popover_enabled(cx)
+        {
             return;
         }
 
@@ -402,13 +406,17 @@ impl StatusItemView for PendingKeystrokesIndicator {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
+    use std::{
+        cell::{Cell, RefCell},
+        ops::Range,
+    };
 
     use super::*;
     use command_palette::humanize_action_name;
     use gpui::{
-        Entity, FocusHandle, KeyBinding, Keystroke, Modifiers, TestAppContext, VisualTestContext,
-        actions, point,
+        Bounds, Entity, FocusHandle, InputHandler, KeyBinding, KeyDownEvent, Keystroke, Modifiers,
+        Pixels, PlatformInput, Point, TestAppContext, UTF16Selection, VisualTestContext, actions,
+        canvas, point,
     };
 
     actions!(
@@ -464,6 +472,77 @@ mod tests {
         focus_handle: FocusHandle,
         indicator: Entity<PendingKeystrokesIndicator>,
         open_key_context_view_count: Rc<Cell<usize>>,
+        input_text: Option<Rc<RefCell<String>>>,
+    }
+
+    /// Appends inserted text to a shared buffer so tests can observe text input.
+    struct TestInputHandler(Rc<RefCell<String>>);
+
+    impl InputHandler for TestInputHandler {
+        fn selected_text_range(
+            &mut self,
+            _: bool,
+            _: &mut Window,
+            _: &mut App,
+        ) -> Option<UTF16Selection> {
+            None
+        }
+
+        fn marked_text_range(&mut self, _: &mut Window, _: &mut App) -> Option<Range<usize>> {
+            None
+        }
+
+        fn text_for_range(
+            &mut self,
+            _: Range<usize>,
+            _: &mut Option<Range<usize>>,
+            _: &mut Window,
+            _: &mut App,
+        ) -> Option<String> {
+            None
+        }
+
+        fn replace_text_in_range(
+            &mut self,
+            replacement_range: Option<Range<usize>>,
+            text: &str,
+            _: &mut Window,
+            _: &mut App,
+        ) {
+            assert!(replacement_range.is_none());
+            self.0.borrow_mut().push_str(text);
+        }
+
+        fn replace_and_mark_text_in_range(
+            &mut self,
+            _: Option<Range<usize>>,
+            _: &str,
+            _: Option<Range<usize>>,
+            _: &mut Window,
+            _: &mut App,
+        ) {
+            unreachable!("test does not compose text");
+        }
+
+        fn unmark_text(&mut self, _: &mut Window, _: &mut App) {}
+
+        fn bounds_for_range(
+            &mut self,
+            _: Range<usize>,
+            _: &mut Window,
+            _: &mut App,
+        ) -> Option<Bounds<Pixels>> {
+            None
+        }
+
+        fn character_index_for_point(
+            &mut self,
+            _: Point<Pixels>,
+            _: &mut Window,
+            _: &mut App,
+        ) -> Option<usize> {
+            None
+        }
     }
 
     #[derive(Debug, PartialEq)]
@@ -536,6 +615,7 @@ mod tests {
                 focus_handle: cx.focus_handle(),
                 indicator: cx.new(|cx| PendingKeystrokesIndicator::new(window, cx)),
                 open_key_context_view_count,
+                input_text: None,
             }
         });
         let (focus_handle, indicator) = test_view.read_with(cx, |test_view, _| {
@@ -617,6 +697,15 @@ mod tests {
                 .size_full()
                 .key_context("PendingKeystrokesIndicatorTest")
                 .track_focus(&self.focus_handle)
+                .when_some(self.input_text.clone(), |this, input_text| {
+                    let focus_handle = self.focus_handle.clone();
+                    this.child(canvas(
+                        |_, _, _| {},
+                        move |_, _, window, cx| {
+                            window.handle_input(&focus_handle, TestInputHandler(input_text), cx);
+                        },
+                    ))
+                })
                 .on_action(|_: &ShorterBinding, _, _| {})
                 .on_action(|_: &LongerBinding, _, _| {})
                 .on_action(|_: &LongestBinding, _, _| {})
@@ -658,6 +747,76 @@ mod tests {
         cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
         assert!(indicator.read_with(cx, |indicator, _| indicator.render_state().is_none()));
         assert!(cx.debug_bounds("PENDING_KEYSTROKES_INDICATOR").is_none());
+    }
+
+    #[gpui::test]
+    fn test_pending_bindings_shortcut_respects_character_input(cx: &mut TestAppContext) {
+        // Whether the focused input accepts text is covered by GPUI's own preference tests.
+        for prefer_character_input in [true, false] {
+            let (indicator, action_count, cx) = setup_indicator_test(
+                cx,
+                counted_bindings(["j k"])
+                    .into_iter()
+                    .chain([binding("ctrl-alt-a", ShowPendingBindings)]),
+            );
+            let text = Rc::new(RefCell::new(String::new()));
+            cx.update(|window, cx| {
+                window
+                    .root::<TestView>()
+                    .flatten()
+                    .expect("test view")
+                    .update(cx, |view, cx| {
+                        view.input_text = Some(text.clone());
+                        cx.notify();
+                    });
+            });
+
+            cx.simulate_keystrokes("j");
+            cx.run_until_parked();
+            let pending_keystrokes = window_pending_keystrokes(cx);
+            assert_eq!(
+                pending_keystrokes
+                    .iter()
+                    .map(Keystroke::unparse)
+                    .collect::<Vec<_>>(),
+                ["j"]
+            );
+            assert!(text.borrow().is_empty());
+
+            // simulate_keystrokes hardcodes prefer_character_input to false.
+            let result = cx.update(|window, cx| {
+                window.dispatch_event(
+                    PlatformInput::KeyDown(KeyDownEvent {
+                        keystroke: Keystroke {
+                            key_char: Some("ą".into()),
+                            ..Keystroke::parse("ctrl-alt-a").expect("valid keystroke")
+                        },
+                        is_held: false,
+                        prefer_character_input,
+                    }),
+                    cx,
+                )
+            });
+            cx.run_until_parked();
+
+            if prefer_character_input {
+                assert!(result.propagate);
+                assert_eq!(*text.borrow(), "j");
+                assert!(window_pending_keystrokes(cx).is_empty());
+                assert!(!indicator.read_with(cx, |indicator, _| indicator.popover.visible));
+                assert!(!popover_rendered(cx));
+
+                // Platforms insert the character when GPUI leaves the key event unconsumed.
+                cx.simulate_input("ą");
+                assert_eq!(*text.borrow(), "ją");
+            } else {
+                assert!(!result.propagate);
+                assert!(text.borrow().is_empty());
+                assert_eq!(window_pending_keystrokes(cx), pending_keystrokes);
+                assert!(popover_rendered(cx));
+            }
+            assert_eq!(action_count.get(), 0);
+        }
     }
 
     #[gpui::test]
