@@ -5473,7 +5473,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "show_user_menu": true,
     "show_sign_in": true,
     "show_menus": false,
-    "show_menus_on_hover": false,
+    "open_menus_on_hover": false,
     "button_layout": "platform_default"
   }
 }
@@ -5490,6 +5490,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `show_user_menu`: Whether to show the user menu button in the titlebar (the one that displays your avatar by default and contains options like Settings, Keymap, Themes, etc.)
 - `show_sign_in`: Whether to show the sign in button in the titlebar
 - `show_menus`: Whether to show the menus in the titlebar
+- `open_menus_on_hover`: Whether to open title-bar menus on hover. Once a menu is open, hovering always switches between menus.
 - `button_layout`: The layout of window control buttons in the title bar (Linux only). Can be set to `"platform_default"` to follow the system setting, `"standard"` to use Zed's built-in layout, or a custom format like `"close:minimize,maximize"`
 
 ## Window Title Format

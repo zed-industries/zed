@@ -144,7 +144,7 @@ To disable this behavior use:
     "show_user_menu": true,           // Show/hide app user button
     "show_sign_in": true,             // Show/hide sign-in button
     "show_menus": false,              // Show/hide menus
-    "show_menus_on_hover": false      // Automatically show menus on hover
+    "open_menus_on_hover": false      // Automatically open menus on hover
   },
 ```
 

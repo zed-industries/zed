@@ -4607,15 +4607,15 @@ fn window_and_layout_page() -> SettingsPage {
                 description: "Automatically open menus in the titlebar on hover.",
                 field: Box::new(SettingField {
                     organization_override: None,
-                    json_path: Some("title_bar.show_menus_on_hover"),
+                    json_path: Some("title_bar.open_menus_on_hover"),
                     pick: |settings_content| {
-                        settings_content.title_bar.as_ref()?.show_menus_on_hover.as_ref()
+                        settings_content.title_bar.as_ref()?.open_menus_on_hover.as_ref()
                     },
                     write: |settings_content, value, _| {
                         settings_content
                             .title_bar
                             .get_or_insert_default()
-                            .show_menus_on_hover = value;
+                            .open_menus_on_hover = value;
                     },
                 }),
                 metadata: None,
