@@ -146,7 +146,7 @@ impl LineWrapper {
                         IndentAdjustment::SameIndent => base_indent.unwrap_or(0),
                         IndentAdjustment::ExtraColumns(extra) => {
                             if let Some(base_indent) = base_indent {
-                                let candidate = base_indent + extra;
+                                let candidate = base_indent.saturating_add(extra);
                                 let candidate_indent_width =
                                     self.width_for_char(' ') * candidate as f32;
                                 // Reserve headroom for any carried suffix from an earlier word boundary
@@ -1905,6 +1905,17 @@ mod tests {
                 Boundary::new(18, 2),
                 Boundary::new(21, 0),
             ]
+        );
+
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text("  aaaaaaaa")],
+                    space_width * 4.0,
+                    IndentAdjustment::ExtraColumns(u32::MAX),
+                )
+                .collect::<Vec<_>>(),
+            &[Boundary::new(4, 0), Boundary::new(8, 0)]
         );
     }
 }
