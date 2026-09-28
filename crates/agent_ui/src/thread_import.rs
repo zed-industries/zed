@@ -18,7 +18,7 @@ use itertools::Itertools as _;
 use notifications::status_toast::StatusToast;
 use project::{AgentId, AgentRegistryStore, AgentServerStore};
 use release_channel::ReleaseChannel;
-use remote::RemoteConnectionOptions;
+use remote::{RemoteConnectionIdentity, RemoteConnectionOptions, remote_connection_identity};
 use ui::{
     Checkbox, CommonAnimationExt, KeyBinding, ListItem, ListItemSpacing, Modal, ModalFooter,
     ModalHeader, Section, Tooltip, prelude::*,
@@ -235,10 +235,18 @@ impl ThreadImportModal {
             .map(|agent_id| (agent_id, AgentImportStatus::Loading))
             .collect();
 
-        let existing_sessions: HashSet<acp::SessionId> = ThreadMetadataStore::global(cx)
+        let existing_sessions: HashSet<AgentSessionKey> = ThreadMetadataStore::global(cx)
             .read(cx)
             .entries()
-            .filter_map(|metadata| metadata.session_id.clone())
+            .filter_map(|metadata| {
+                metadata.session_id.as_ref().map(|session_id| {
+                    agent_session_key(
+                        &metadata.agent_id,
+                        session_id,
+                        metadata.remote_connection.as_ref(),
+                    )
+                })
+            })
             .collect();
 
         for agent_id in self.agent_ids() {
@@ -362,10 +370,18 @@ impl ThreadImportModal {
         self.is_importing = true;
         self.last_error = None;
 
-        let existing_sessions: HashSet<acp::SessionId> = ThreadMetadataStore::global(cx)
+        let existing_sessions: HashSet<AgentSessionKey> = ThreadMetadataStore::global(cx)
             .read(cx)
             .entries()
-            .filter_map(|metadata| metadata.session_id.clone())
+            .filter_map(|metadata| {
+                metadata.session_id.as_ref().map(|session_id| {
+                    agent_session_key(
+                        &metadata.agent_id,
+                        session_id,
+                        metadata.remote_connection.as_ref(),
+                    )
+                })
+            })
             .collect();
 
         let selected_sessions_by_agent = self
@@ -688,7 +704,7 @@ struct AgentSessionFetchStats {
 
 fn fetch_sessions_for_agent(
     agent_id: AgentId,
-    existing_sessions: HashSet<acp::SessionId>,
+    existing_sessions: HashSet<AgentSessionKey>,
     stores: Vec<Entity<AgentConnectionStore>>,
     cx: &mut App,
 ) -> Task<AgentSessionFetchResult> {
@@ -826,19 +842,38 @@ struct SessionByAgent {
     sessions: Vec<acp_thread::AgentSessionInfo>,
 }
 
+type AgentSessionKey = (
+    AgentId,
+    acp::SessionId,
+    Option<RemoteConnectionIdentity>,
+);
+
+fn agent_session_key(
+    agent_id: &AgentId,
+    session_id: &acp::SessionId,
+    remote_connection: Option<&RemoteConnectionOptions>,
+) -> AgentSessionKey {
+    (
+        agent_id.clone(),
+        session_id.clone(),
+        remote_connection.map(remote_connection_identity),
+    )
+}
+
 fn count_importable_threads_by_agent(
     sessions_by_agent: &[SessionByAgent],
-    existing_sessions: &HashSet<acp::SessionId>,
+    existing_sessions: &HashSet<AgentSessionKey>,
 ) -> HashMap<AgentId, usize> {
     let mut counts_by_agent = HashMap::default();
-    let mut seen_sessions_by_agent = HashMap::<AgentId, HashSet<acp::SessionId>>::default();
+    let mut seen_sessions = existing_sessions.clone();
 
     for sessions_for_agent in sessions_by_agent {
-        let seen_sessions = seen_sessions_by_agent
-            .entry(sessions_for_agent.agent_id.clone())
-            .or_insert_with(|| existing_sessions.clone());
         for session in &sessions_for_agent.sessions {
-            if !seen_sessions.insert(session.session_id.clone()) {
+            if !seen_sessions.insert(agent_session_key(
+                &sessions_for_agent.agent_id,
+                &session.session_id,
+                sessions_for_agent.remote_connection.as_ref(),
+            )) {
                 continue;
             }
             if session.work_dirs.is_some() {
@@ -854,7 +889,7 @@ fn count_importable_threads_by_agent(
 
 fn collect_importable_threads(
     sessions_by_agent: Vec<SessionByAgent>,
-    mut existing_sessions: HashSet<acp::SessionId>,
+    mut existing_sessions: HashSet<AgentSessionKey>,
 ) -> Vec<ThreadMetadata> {
     let mut to_insert = Vec::new();
     for SessionByAgent {
@@ -864,7 +899,11 @@ fn collect_importable_threads(
     } in sessions_by_agent
     {
         for session in sessions {
-            if !existing_sessions.insert(session.session_id.clone()) {
+            if !existing_sessions.insert(agent_session_key(
+                &agent_id,
+                &session.session_id,
+                remote_connection.as_ref(),
+            )) {
                 continue;
             }
             let Some(folder_paths) = session.work_dirs else {
@@ -1012,7 +1051,11 @@ mod tests {
 
     #[test]
     fn test_collect_skips_sessions_already_in_existing_set() {
-        let existing = HashSet::from_iter(vec![acp::SessionId::new("existing-1")]);
+        let existing = HashSet::from_iter([agent_session_key(
+            &AgentId::new("agent-a"),
+            &acp::SessionId::new("existing-1"),
+            None,
+        )]);
         let paths = PathList::new(&[Path::new("/project")]);
 
         let sessions_by_agent = vec![SessionByAgent {
@@ -1120,7 +1163,7 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_deduplicates_across_agents() {
+    fn test_collect_keeps_same_session_id_for_different_agents() {
         let existing = HashSet::default();
         let paths = PathList::new(&[Path::new("/project")]);
 
@@ -1151,23 +1194,69 @@ mod tests {
 
         let result = collect_importable_threads(sessions_by_agent, existing);
 
-        assert_eq!(result.len(), 1);
+        assert_eq!(result.len(), 2);
         assert_eq!(
-            result[0].session_id.as_ref().unwrap().0.as_ref(),
-            "shared-session"
+            result
+                .iter()
+                .filter(|thread| {
+                    thread.session_id.as_ref().map(|session| session.0.as_ref())
+                        == Some("shared-session")
+                })
+                .count(),
+            2
         );
-        assert_eq!(
-            result[0].agent_id.as_ref(),
-            "agent-a",
-            "first agent encountered should win"
-        );
+    }
+
+    #[test]
+    fn test_collect_keeps_local_and_remote_copies_of_same_session() {
+        let existing = HashSet::default();
+        let paths = PathList::new(&[Path::new("/project")]);
+        let remote_connection =
+            RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
+                host: "example.com".into(),
+                ..Default::default()
+            });
+
+        let sessions_by_agent = vec![
+            SessionByAgent {
+                agent_id: AgentId::new("agent-a"),
+                remote_connection: None,
+                sessions: vec![make_session(
+                    "shared-session",
+                    Some("Local mirror"),
+                    Some(paths.clone()),
+                    None,
+                    None,
+                )],
+            },
+            SessionByAgent {
+                agent_id: AgentId::new("agent-a"),
+                remote_connection: Some(remote_connection),
+                sessions: vec![make_session(
+                    "shared-session",
+                    Some("Remote session"),
+                    Some(paths),
+                    None,
+                    None,
+                )],
+            },
+        ];
+
+        let result = collect_importable_threads(sessions_by_agent, existing);
+
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().any(|thread| thread.remote_connection.is_none()));
+        assert!(result.iter().any(|thread| thread.remote_connection.is_some()));
     }
 
     #[test]
     fn test_collect_all_existing_returns_empty() {
         let paths = PathList::new(&[Path::new("/project")]);
-        let existing =
-            HashSet::from_iter(vec![acp::SessionId::new("s1"), acp::SessionId::new("s2")]);
+        let agent_id = AgentId::new("agent-a");
+        let existing = HashSet::from_iter([
+            agent_session_key(&agent_id, &acp::SessionId::new("s1"), None),
+            agent_session_key(&agent_id, &acp::SessionId::new("s2"), None),
+        ]);
 
         let sessions_by_agent = vec![SessionByAgent {
             agent_id: AgentId::new("agent-a"),
@@ -1184,7 +1273,11 @@ mod tests {
 
     #[test]
     fn test_count_importable_threads_by_agent_counts_each_agent_independently() {
-        let existing = HashSet::from_iter(vec![acp::SessionId::new("existing")]);
+        let existing = HashSet::from_iter([agent_session_key(
+            &AgentId::new("agent-a"),
+            &acp::SessionId::new("existing"),
+            None,
+        )]);
         let paths = PathList::new(&[Path::new("/project")]);
         let sessions_by_agent = vec![
             SessionByAgent {
