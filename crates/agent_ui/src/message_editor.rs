@@ -669,6 +669,7 @@ impl MessageEditor {
                 padding_left: false,
                 padding_right: false,
                 tooltip: None,
+                text_edits: None,
                 resolve_state: project::ResolveState::Resolved,
             },
         ))

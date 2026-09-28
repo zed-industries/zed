@@ -51,6 +51,22 @@ impl EditorLspTestContext {
         capabilities: lsp::ServerCapabilities,
         cx: &mut gpui::TestAppContext,
     ) -> EditorLspTestContext {
+        Self::new_with_lsp_adapter(
+            language,
+            FakeLspAdapter {
+                capabilities,
+                ..FakeLspAdapter::default()
+            },
+            cx,
+        )
+        .await
+    }
+
+    pub async fn new_with_lsp_adapter(
+        language: Language,
+        adapter: FakeLspAdapter,
+        cx: &mut gpui::TestAppContext,
+    ) -> EditorLspTestContext {
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
@@ -70,13 +86,7 @@ impl EditorLspTestContext {
         let project = Project::test(app_state.fs.clone(), [], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-        let mut fake_servers = language_registry.register_fake_lsp(
-            language.name(),
-            FakeLspAdapter {
-                capabilities,
-                ..Default::default()
-            },
-        );
+        let mut fake_servers = language_registry.register_fake_lsp(language.name(), adapter);
         language_registry.add(Arc::new(language));
 
         let root = Self::root_path();
