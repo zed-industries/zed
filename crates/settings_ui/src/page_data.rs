@@ -4286,7 +4286,7 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
-    fn title_bar_section() -> [SettingsPageItem; 11] {
+    fn title_bar_section() -> [SettingsPageItem; 12] {
         [
             SettingsPageItem::SectionHeader("Title Bar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4601,6 +4601,25 @@ fn window_and_layout_page() -> SettingsPage {
                         ],
                     })
                     .collect(),
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Open Menus on Hover",
+                description: "Automatically open menus in the titlebar on hover.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("title_bar.open_menus_on_hover"),
+                    pick: |settings_content| {
+                        settings_content.title_bar.as_ref()?.open_menus_on_hover.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .title_bar
+                            .get_or_insert_default()
+                            .open_menus_on_hover = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
             }),
         ]
     }
