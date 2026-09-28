@@ -6,12 +6,12 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, CompactionResult, EnvVar,
-    FastModeConfirmation, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionStream, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoiceSupport,
-    ModelRateLimiters, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, ProviderSettingsView,
-    RateLimiter, env_var, stream_in_background, unavailable_error,
+    FastModeConfirmation, IconOrSvg, LanguageModel, LanguageModelClient,
+    LanguageModelCompletionError, LanguageModelCompletionStream, LanguageModelEffortLevel,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoiceSupport, ModelRateLimiters, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME,
+    ProviderSettingsView, RateLimiter, env_var, stream_in_background, unavailable_error,
 };
 use open_ai::{
     ResponseStreamEvent,
@@ -353,6 +353,18 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
             .update(cx, |state, cx| state.set_api_key(api_key, cx))
     }
 
+    fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
+        Some(FastModeConfirmation {
+            title: "Enable Fast Mode for OpenAI?".into(),
+            message: "Fast mode sends requests using OpenAI's Priority processing tier, which \
+                targets significantly lower latency than the standard tier and is billed at a \
+                premium per-token rate."
+                .into(),
+        })
+    }
+}
+
+impl LanguageModelClient for OpenAiLanguageModelProvider {
     fn stream_completion(
         &self,
         model: &LanguageModel,
@@ -525,16 +537,6 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
             Ok(CompactionResult { context, usage })
         }
         .boxed()
-    }
-
-    fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
-        Some(FastModeConfirmation {
-            title: "Enable Fast Mode for OpenAI?".into(),
-            message: "Fast mode sends requests using OpenAI's Priority processing tier, which \
-                targets significantly lower latency than the standard tier and is billed at a \
-                premium per-token rate."
-                .into(),
-        })
     }
 }
 

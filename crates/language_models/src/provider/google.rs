@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
@@ -11,10 +11,10 @@ use language_model::{
     LanguageModelCompletionStream, LanguageModelToolChoiceSupport, unavailable_error,
 };
 use language_model::{
-    GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, IconOrSvg, LanguageModel, LanguageModelEffortLevel,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, ModelRateLimiters,
-    ProviderSettingsView,
+    GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, IconOrSvg, LanguageModel, LanguageModelClient,
+    LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, ModelRateLimiters, ProviderSettingsView,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -170,7 +170,10 @@ impl GoogleLanguageModelProvider {
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
-        Result<futures::stream::BoxStream<'static, Result<GenerateContentResponse>>>,
+        Result<
+            futures::stream::BoxStream<'static, Result<GenerateContentResponse>>,
+            LanguageModelCompletionError,
+        >,
     > {
         let http_client = self.http_client.clone();
 
@@ -183,7 +186,11 @@ impl GoogleLanguageModelProvider {
         });
 
         async move {
-            let api_key = api_key.context("Missing Google API key")?;
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                });
+            };
             let request = google_ai::stream_generate_content(
                 http_client.as_ref(),
                 &api_url,
@@ -191,7 +198,7 @@ impl GoogleLanguageModelProvider {
                 request,
                 &extra_headers,
             );
-            request.await.context("failed to stream completion")
+            request.await
         }
         .boxed()
     }
@@ -272,7 +279,9 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
         self.state
             .update(cx, |state, cx| state.set_api_key(api_key, cx))
     }
+}
 
+impl LanguageModelClient for GoogleLanguageModelProvider {
     fn stream_completion(
         &self,
         model: &LanguageModel,
@@ -296,7 +305,7 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
         };
         let request = self.stream_google_request(request, cx);
         let future = request_limiter.stream(async move {
-            let response = request.await.map_err(LanguageModelCompletionError::from)?;
+            let response = request.await?;
             Ok(GoogleEventMapper::new().map_stream(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()

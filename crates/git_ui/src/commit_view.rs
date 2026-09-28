@@ -212,12 +212,12 @@ impl CommitView {
         cx: &mut App,
     ) {
         let commit_diff = repo
-            .update(cx, |repo, _| {
-                repo.load_commit_diff(commit_sha.clone(), ignore_shallow_boundary)
+            .update(cx, |repo, cx| {
+                repo.load_commit_diff(commit_sha.clone(), ignore_shallow_boundary, cx)
             })
             .ok();
         let commit_details = repo
-            .update(cx, |repo, _| repo.show(commit_sha.clone()))
+            .update(cx, |repo, cx| repo.show_commit(commit_sha.clone(), cx))
             .ok();
 
         window
@@ -225,8 +225,8 @@ impl CommitView {
                 let commit_diff = commit_diff?;
                 let commit_details = commit_details?;
                 let (commit_diff, commit_details) = futures::join!(commit_diff, commit_details);
-                let mut commit_diff = commit_diff.log_err()?.log_err()?;
-                let commit_details = commit_details.log_err()?.log_err()?;
+                let mut commit_diff = commit_diff.log_err()?;
+                let commit_details = commit_details.log_err()?;
 
                 // Filter to specific file if requested
                 if let Some(ref filter_path) = file_filter {

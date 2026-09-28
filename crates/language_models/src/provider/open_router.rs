@@ -7,11 +7,12 @@ use http_client::{CustomHeaders, HttpClient};
 use language_model::chat_completion::ChatCompletionEventMapper;
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionStream, LanguageModelEffortLevel,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolChoiceSupport, LanguageModelToolResultContent,
-    MessageContent, ModelRateLimiters, ProviderSettingsView, Role, env_var, unavailable_error,
+    LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionStream,
+    LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolChoiceSupport,
+    LanguageModelToolResultContent, MessageContent, ModelRateLimiters, ProviderSettingsView, Role,
+    env_var, unavailable_error,
 };
 use open_router::{
     Model, ModelMode as OpenRouterModelMode, OPEN_ROUTER_API_URL, ReasoningEffort,
@@ -350,7 +351,9 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
         self.state
             .update(cx, |state, cx| state.set_api_key(api_key, cx))
     }
+}
 
+impl LanguageModelClient for OpenRouterLanguageModelProvider {
     fn stream_completion(
         &self,
         model: &LanguageModel,

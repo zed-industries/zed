@@ -7,12 +7,12 @@ use gpui::{App, AsyncApp, Context, Entity, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionStream, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolChoiceSupport, LanguageModelToolResultContent, MessageContent,
-    ModelRateLimiters, ProviderSettingsView, RateLimiter, Role, SubPageProviderSettings, env_var,
-    unavailable_error,
+    LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionStream,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolChoiceSupport, LanguageModelToolResultContent,
+    MessageContent, ModelRateLimiters, ProviderSettingsView, RateLimiter, Role,
+    SubPageProviderSettings, env_var, unavailable_error,
 };
 use llama_cpp::{
     LLAMA_CPP_API_URL, ModelEntry, Props, get_models, get_props, stream_chat_completion,
@@ -692,7 +692,9 @@ impl LanguageModelProvider for LlamaCppLanguageModelProvider {
             )),
         ))
     }
+}
 
+impl LanguageModelClient for LlamaCppLanguageModelProvider {
     fn stream_completion(
         &self,
         model: &LanguageModel,

@@ -9,12 +9,13 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelCompletionStream,
-    LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolChoiceSupport,
-    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, ModelRateLimiters,
-    ProviderSettingsView, RateLimiter, Role, StopReason, TokenUsage, env_var, unavailable_error,
+    LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelCompletionStream, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolChoiceSupport, LanguageModelToolResultContent, LanguageModelToolUse,
+    MessageContent, ModelRateLimiters, ProviderSettingsView, RateLimiter, Role, StopReason,
+    TokenUsage, env_var, unavailable_error,
 };
 pub use settings::DeepseekAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
@@ -227,7 +228,9 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
         self.state
             .update(cx, |state, cx| state.set_api_key(api_key, cx))
     }
+}
 
+impl LanguageModelClient for DeepSeekLanguageModelProvider {
     fn stream_completion(
         &self,
         model: &LanguageModel,

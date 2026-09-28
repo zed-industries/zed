@@ -7,11 +7,11 @@ use http_client::{CustomHeaders, HttpClient};
 use language_model::chat_completion::{ChatCompletionEventMapper, ResponseStreamEvent};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionStream, LanguageModelEffortLevel,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoiceSupport, ModelRateLimiters, ProviderSettingsView, RateLimiter, env_var,
-    unavailable_error,
+    LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionStream,
+    LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoiceSupport, ModelRateLimiters, ProviderSettingsView,
+    RateLimiter, env_var, unavailable_error,
 };
 pub use settings::XaiAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
@@ -261,7 +261,9 @@ impl LanguageModelProvider for XAiLanguageModelProvider {
         self.state
             .update(cx, |state, cx| state.set_api_key(api_key, cx))
     }
+}
 
+impl LanguageModelClient for XAiLanguageModelProvider {
     fn stream_completion(
         &self,
         model: &LanguageModel,
