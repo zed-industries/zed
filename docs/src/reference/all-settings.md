@@ -2334,6 +2334,8 @@ If any of the formatters fails, the subsequent ones will still be executed.
 }
 ```
 
+External formatter commands support home-relative paths such as `~/.local/bin/my-formatter`. The home folder is resolved on the host running the formatter, so remote projects use the remote host's home. On Windows, backslashes are also supported (write `~\\` in JSON). This expansion applies only to `command`, not `arguments`. Environment variables and named-user paths such as `~user` are not expanded.
+
 ## Auto close
 
 - Description: Whether to automatically add matching closing characters when typing opening parenthesis, bracket, brace, single or double quote characters.

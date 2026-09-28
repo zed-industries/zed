@@ -321,6 +321,8 @@ Zed supports both built-in and external formatters. See [`formatter`](./referenc
 
 This example uses Prettier for JavaScript and the language server's formatter for [Rust](./languages/rust.md), both set to format on save.
 
+External formatter commands can also use home-relative paths such as `~/.local/bin/my-formatter`. These resolve against the home folder of the host running the formatter, including the remote host for remote projects. This expansion applies to `command`, not `arguments`. See [`formatter`](./reference/all-settings.md#formatter) for supported path syntax and argument handling.
+
 To disable formatting for a specific language:
 
 ```json [settings]
