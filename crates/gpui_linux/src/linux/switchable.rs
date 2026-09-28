@@ -4,38 +4,38 @@ use std::{
     rc::Rc,
 };
 
-use calloop::{Dispatcher, EventLoop, channel::Channel};
+use calloop::{EventLoop, LoopHandle};
 use futures::channel::oneshot;
 use gpui::{
     AnyWindowHandle, ClipboardItem, CursorStyle, DisplayId, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformWindow, RunnableVariant, Task, WindowParams,
+    PlatformKeyboardLayout, PlatformWindow, Task, WindowParams,
 };
 use gpui_util::ResultExt as _;
 
 use super::{
-    HeadlessDisplay, HeadlessWindow, LinuxClient, LinuxCommon, LinuxKeyboardLayout,
-    PriorityQueueCalloopReceiver, SystemPowerEvent, WaylandClient, WaylandServices,
+    HeadlessDisplay, HeadlessWindow, LinuxClient, LinuxCommon, LinuxKeyboardLayout, WaylandClient,
     take_startup_activation_token_from_environment,
 };
 
-struct HeadlessRuntime {
-    event_loop: EventLoop<'static, SwitchableClient>,
-    main_receiver: PriorityQueueCalloopReceiver<RunnableVariant>,
-    power_receiver: Channel<SystemPowerEvent>,
-}
-
 struct SwitchableClientState {
     common: Rc<RefCell<LinuxCommon>>,
-    headless_runtime: RefCell<Option<HeadlessRuntime>>,
+    /// The single event loop, until `run` takes it.
+    event_loop: RefCell<Option<EventLoop<'static, ()>>>,
+    loop_handle: LoopHandle<'static, ()>,
+    /// The attached compositor connection; `None` while headless.
     wayland: RefCell<Option<WaylandClient>>,
-    headless: Cell<bool>,
+    /// The mode `set_headless` last asked for. It differs from the current mode while a
+    /// transition is waiting for the event loop to apply it.
     requested_headless: Cell<bool>,
     transition_waiter: RefCell<Option<oneshot::Sender<anyhow::Result<()>>>>,
-    quitting: Cell<bool>,
     display: Rc<dyn PlatformDisplay>,
     startup_activation_token: RefCell<Option<String>>,
 }
 
+/// A Linux client that starts headless and can attach to and detach from Wayland at runtime.
+///
+/// One event loop serves both modes. The foreground executor and power listener are registered on
+/// it once; attaching Wayland adds the compositor's sources, and detaching removes them.
 #[derive(Clone)]
 pub(crate) struct SwitchableClient(Rc<SwitchableClientState>);
 
@@ -44,71 +44,24 @@ impl SwitchableClient {
         let startup_activation_token = take_startup_activation_token_from_environment();
         let event_loop = EventLoop::try_new().expect("failed to create Linux event loop");
         let (common, main_receiver, power_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let common = Rc::new(RefCell::new(common));
+        let loop_handle = event_loop.handle();
+        LinuxCommon::register_sources(&common, &loop_handle, main_receiver, power_receiver)
+            .expect("failed to register Linux event sources");
         Self(Rc::new(SwitchableClientState {
-            common: Rc::new(RefCell::new(common)),
-            headless_runtime: RefCell::new(Some(HeadlessRuntime {
-                event_loop,
-                main_receiver,
-                power_receiver,
-            })),
+            common,
+            event_loop: RefCell::new(Some(event_loop)),
+            loop_handle,
             wayland: RefCell::new(None),
-            headless: Cell::new(true),
             requested_headless: Cell::new(true),
             transition_waiter: RefCell::new(None),
-            quitting: Cell::new(false),
             display: Rc::new(HeadlessDisplay::new()),
             startup_activation_token: RefCell::new(startup_activation_token),
         }))
     }
 
-    fn run_headless(
-        &self,
-        mut runtime: HeadlessRuntime,
-    ) -> (
-        PriorityQueueCalloopReceiver<RunnableVariant>,
-        Channel<SystemPowerEvent>,
-    ) {
-        self.0.common.borrow_mut().signal = runtime.event_loop.get_signal();
-        let handle = runtime.event_loop.handle();
-        let main_dispatcher = Dispatcher::new(
-            runtime.main_receiver,
-            |event, _, _: &mut SwitchableClient| {
-                if let calloop::channel::Event::Msg(runnable) = event {
-                    runnable.run();
-                }
-            },
-        );
-        let main_registration = handle
-            .register_dispatcher(main_dispatcher.clone())
-            .expect("failed to register foreground executor");
-        let power_dispatcher = Dispatcher::new(
-            runtime.power_receiver,
-            |event, _, client: &mut SwitchableClient| {
-                if let calloop::channel::Event::Msg(event) = event {
-                    client
-                        .0
-                        .common
-                        .borrow_mut()
-                        .handle_system_power_event(event);
-                }
-            },
-        );
-        let power_registration = handle
-            .register_dispatcher(power_dispatcher.clone())
-            .expect("failed to register power listener");
-
-        runtime
-            .event_loop
-            .run(None, &mut self.clone(), |_| {})
-            .log_err();
-
-        handle.remove(main_registration);
-        handle.remove(power_registration);
-        drop(runtime.event_loop);
-        (
-            main_dispatcher.into_source_inner(),
-            power_dispatcher.into_source_inner(),
-        )
+    fn is_headless(&self) -> bool {
+        self.0.wayland.borrow().is_none()
     }
 
     fn with_wayland<R>(&self, function: impl FnOnce(&WaylandClient) -> R) -> Option<R> {
@@ -116,16 +69,58 @@ impl SwitchableClient {
         wayland.as_ref().map(function)
     }
 
-    fn finish_transition(&self, result: anyhow::Result<()>) {
+    /// Applies a pending `set_headless` request.
+    ///
+    /// Runs between event-loop iterations, so no event source is mid-dispatch when Wayland's
+    /// sources are added or removed.
+    fn apply_requested_mode(&self) {
+        let headless = self.0.requested_headless.get();
+        if headless == self.is_headless() {
+            return;
+        }
+        let result = if headless {
+            // `set_headless` rejects open windows, but one can be opened before this runs.
+            if self.with_wayland(WaylandClient::has_windows) == Some(true) {
+                self.0.requested_headless.set(false);
+                Err(anyhow::anyhow!(
+                    "a native window was opened while entering headless mode"
+                ))
+            } else if self.with_wayland(WaylandClient::has_window_resources) == Some(true) {
+                // A closed window is still releasing GPU resources bound to the connection, from
+                // a task that runs on this loop. Try again on a later iteration.
+                return;
+            } else {
+                let wayland = self.0.wayland.borrow_mut().take();
+                drop(wayland);
+                Ok(())
+            }
+        } else {
+            let startup_activation_token = self.0.startup_activation_token.borrow().clone();
+            match WaylandClient::attach(
+                self.0.loop_handle.clone(),
+                self.0.common.clone(),
+                startup_activation_token,
+            ) {
+                Ok(wayland) => {
+                    self.0.startup_activation_token.borrow_mut().take();
+                    *self.0.wayland.borrow_mut() = Some(wayland);
+                    Ok(())
+                }
+                Err(error) => {
+                    self.0.requested_headless.set(true);
+                    Err(error)
+                }
+            }
+        };
         if let Some(waiter) = self.0.transition_waiter.borrow_mut().take() {
-            waiter.send(result).unwrap_or(());
+            waiter.send(result).ok();
         }
     }
 }
 
 impl LinuxClient for SwitchableClient {
     fn compositor_name(&self) -> &'static str {
-        if self.0.headless.get() {
+        if self.is_headless() {
             "headless"
         } else {
             "Wayland"
@@ -166,15 +161,13 @@ impl LinuxClient for SwitchableClient {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
-        if self.0.wayland.borrow().is_some() {
-            self.with_wayland(|wayland| wayland.open_window(handle, options))
-                .expect("Wayland client disappeared while opening a window")
-        } else {
-            Ok(Box::new(HeadlessWindow::new(
-                options,
-                self.0.display.clone(),
-            )))
+        if let Some(wayland) = self.0.wayland.borrow().as_ref() {
+            return wayland.open_window(handle, options);
         }
+        Ok(Box::new(HeadlessWindow::new(
+            options,
+            self.0.display.clone(),
+        )))
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
@@ -224,96 +217,24 @@ impl LinuxClient for SwitchableClient {
     }
 
     fn run(&self) {
-        let mut runtime = self
+        let mut event_loop = self
             .0
-            .headless_runtime
+            .event_loop
             .borrow_mut()
             .take()
             .expect("App is already running");
-
-        loop {
-            let (main_receiver, power_receiver) = self.run_headless(runtime);
-            if self.0.quitting.get() {
-                break;
-            }
-            if self.0.requested_headless.get() {
-                break;
-            }
-
-            let wayland = match WaylandClient::new_with_services(
-                Some(WaylandServices {
-                    common: self.0.common.clone(),
-                    main_receiver,
-                    power_receiver,
-                }),
-                self.0.startup_activation_token.borrow().clone(),
-            ) {
-                Ok(wayland) => wayland,
-                Err(error) => {
-                    let (error, services) = error.into_parts();
-                    let Some(services) = services else {
-                        self.finish_transition(Err(error.context(
-                            "Wayland initialization did not return the headless services",
-                        )));
-                        break;
-                    };
-                    self.0.requested_headless.set(true);
-                    let event_loop = match EventLoop::try_new() {
-                        Ok(event_loop) => event_loop,
-                        Err(event_loop_error) => {
-                            self.finish_transition(Err(error.context(format!(
-                                "also failed to recreate headless event loop: {event_loop_error}"
-                            ))));
-                            break;
-                        }
-                    };
-                    runtime = HeadlessRuntime {
-                        event_loop,
-                        main_receiver: services.main_receiver,
-                        power_receiver: services.power_receiver,
-                    };
-                    self.finish_transition(Err(error));
-                    continue;
-                }
-            };
-            self.0.startup_activation_token.borrow_mut().take();
-            self.0.headless.set(false);
-            self.0.wayland.borrow_mut().replace(wayland);
-            self.finish_transition(Ok(()));
-            let (main_receiver, power_receiver) = self
-                .0
-                .wayland
-                .borrow()
-                .as_ref()
-                .expect("Wayland client was just installed")
-                .run_and_recover_services();
-
-            if self.0.quitting.get() {
-                break;
-            }
-            if !self.0.requested_headless.get() {
-                break;
-            }
-
-            self.0.wayland.borrow_mut().take();
-            self.0.headless.set(true);
-            let event_loop = EventLoop::try_new().expect("failed to recreate headless event loop");
-            runtime = HeadlessRuntime {
-                event_loop,
-                main_receiver,
-                power_receiver,
-            };
-            self.finish_transition(Ok(()));
-        }
+        event_loop
+            .run(None, &mut (), |_| self.apply_requested_mode())
+            .log_err();
     }
 
     fn set_headless(&self, headless: bool) -> Task<anyhow::Result<()>> {
-        if self.0.requested_headless.get() != self.0.headless.get() {
+        if self.0.requested_headless.get() != self.is_headless() {
             return Task::ready(Err(anyhow::anyhow!(
                 "a display backend transition is already in progress"
             )));
         }
-        if headless == self.0.headless.get() {
+        if headless == self.is_headless() {
             return Task::ready(Ok(()));
         }
         if headless
@@ -329,7 +250,9 @@ impl LinuxClient for SwitchableClient {
         let (sender, receiver) = oneshot::channel();
         self.0.transition_waiter.borrow_mut().replace(sender);
         self.0.requested_headless.set(headless);
-        self.0.common.borrow().signal.stop();
+        // The wakeup persists until the loop next polls, so a request made before `run` starts is
+        // applied after its first iteration.
+        self.0.common.borrow().signal.wakeup();
         self.0
             .common
             .borrow()
@@ -340,11 +263,6 @@ impl LinuxClient for SwitchableClient {
                     .map_err(|_| anyhow::anyhow!("display backend transition was canceled"))
                     .and_then(|result| result)
             })
-    }
-
-    fn quit(&self) {
-        self.0.quitting.set(true);
-        self.0.common.borrow().signal.stop();
     }
 }
 
@@ -370,6 +288,10 @@ mod tests {
             "{}::failed_wayland_attach_preserves_headless_app_and_allows_retry",
             module_path!()
         );
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "the test thread has nothing else to do while the child runs"
+        )]
         let output = Command::new(std::env::current_exe().expect("current test executable"))
             .args(["--exact", &test_name, "--nocapture"])
             .env(CHILD_ENV, "1")
@@ -402,6 +324,8 @@ mod tests {
                 let queued_task_ran = queued_task_ran.clone();
                 move |cx| {
                     let entity = cx.new(|_| 1usize);
+                    // Requested before the event loop starts running.
+                    let first_attach = cx.set_headless(false);
                     cx.spawn(async move |cx| {
                         let result = async {
                             entity.update(cx, |value, _| *value += 1);
@@ -413,8 +337,7 @@ mod tests {
                                 queued_task_ran.set(true);
                             });
 
-                            let first_attach = cx.update(|cx| cx.set_headless(false));
-                            assert!(first_attach.await.is_err());
+                            assert_connection_error(first_attach.await);
                             assert_eq!(entity.read_with(cx, |value, _| *value), 2);
                             release_task
                                 .send(())
@@ -422,7 +345,7 @@ mod tests {
                             queued_task.await;
 
                             let second_attach = cx.update(|cx| cx.set_headless(false));
-                            assert!(second_attach.await.is_err());
+                            assert_connection_error(second_attach.await);
                             entity.update(cx, |value, _| *value += 1);
                             assert_eq!(entity.read_with(cx, |value, _| *value), 3);
                             anyhow::Ok(())
@@ -442,5 +365,13 @@ mod tests {
             .take()
             .expect("scenario completed")
             .expect("headless app survived failed Wayland attachments");
+    }
+
+    fn assert_connection_error(result: anyhow::Result<()>) {
+        let error = result.expect_err("attaching to a missing Wayland display fails");
+        assert!(
+            format!("{error:#}").contains("failed to connect to Wayland compositor"),
+            "unexpected error: {error:#}"
+        );
     }
 }

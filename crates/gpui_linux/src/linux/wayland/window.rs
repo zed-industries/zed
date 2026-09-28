@@ -123,6 +123,8 @@ pub struct WaylandWindowState {
     tiling: Tiling,
     window_bounds: Bounds<Pixels>,
     client: WaylandClientStatePtr,
+    /// Held for as long as this window's GPU resources may still use the Wayland connection.
+    _connection_lease: Rc<()>,
     handle: AnyWindowHandle,
     active: bool,
     hovered: bool,
@@ -553,6 +555,7 @@ impl WaylandWindowState {
         appearance: WindowAppearance,
         viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
+        connection_lease: Rc<()>,
         globals: Globals,
         gpu_context: gpui_wgpu::GpuContext,
         compositor_gpu: Option<CompositorGpuHint>,
@@ -623,6 +626,7 @@ impl WaylandWindowState {
             in_progress_configure: None,
             resize_throttle: false,
             client,
+            _connection_lease: connection_lease,
             appearance,
             handle,
             active: false,
@@ -821,6 +825,7 @@ impl WaylandWindow {
         gpu_context: gpui_wgpu::GpuContext,
         compositor_gpu: Option<CompositorGpuHint>,
         client: WaylandClientStatePtr,
+        connection_lease: Rc<()>,
         params: WindowParams,
         appearance: WindowAppearance,
         parent: Option<WaylandWindowStatePtr>,
@@ -855,6 +860,7 @@ impl WaylandWindow {
                 appearance,
                 viewport,
                 client,
+                connection_lease,
                 globals,
                 gpu_context,
                 compositor_gpu,
@@ -1512,17 +1518,21 @@ impl WaylandWindowStatePtr {
 
     pub fn close(&self) {
         let state = self.state.borrow();
-        let client = state.client.get_client();
+        // Closing is deferred to a task, which can run after the client is dropped by a switch to
+        // headless mode. The client's window map, and so any child window, is gone with it.
+        let client = state.client.try_get_client();
         let children = state.children.keys().cloned().collect::<Vec<_>>();
         drop(state);
 
-        for child in children {
-            let mut client_state = client.borrow_mut();
-            let window = get_window(&mut client_state, &child);
-            drop(client_state);
+        if let Some(client) = client {
+            for child in children {
+                let mut client_state = client.borrow_mut();
+                let window = get_window(&mut client_state, &child);
+                drop(client_state);
 
-            if let Some(child) = window {
-                child.close();
+                if let Some(child) = window {
+                    child.close();
+                }
             }
         }
         let mut callbacks = self.callbacks.borrow_mut();

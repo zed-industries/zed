@@ -102,9 +102,6 @@ pub(crate) trait LinuxClient {
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn run(&self);
-    fn quit(&self) {
-        self.with_common(|common| common.signal.stop());
-    }
     fn set_headless(&self, _headless: bool) -> Task<anyhow::Result<()>> {
         Task::ready(Err(anyhow!(
             "this Linux client cannot switch display backends"
@@ -221,6 +218,45 @@ impl LinuxCommon {
 
             self.power_listener_started = true;
         }
+    }
+
+    /// Registers the foreground executor and power listener on a loop shared with display clients.
+    ///
+    /// Foreground runnables run as idle callbacks, after the loop has dispatched all pending events.
+    #[cfg(feature = "wayland")]
+    pub(crate) fn register_sources(
+        common: &Rc<std::cell::RefCell<Self>>,
+        loop_handle: &calloop::LoopHandle<'static, ()>,
+        main_receiver: PriorityQueueCalloopReceiver<RunnableVariant>,
+        power_receiver: calloop::channel::Channel<SystemPowerEvent>,
+    ) -> anyhow::Result<()> {
+        loop_handle
+            .insert_source(main_receiver, {
+                let loop_handle = loop_handle.clone();
+                move |event, _, _| {
+                    if let calloop::channel::Event::Msg(runnable) = event {
+                        loop_handle.insert_idle(|_| {
+                            let location = runnable.metadata().location;
+                            let spawned = runnable.metadata().spawned;
+                            gpui::profiler::update_running_task(spawned, location);
+                            runnable.run();
+                            gpui::profiler::save_task_timing();
+                        });
+                    }
+                }
+            })
+            .map_err(|error| anyhow!("failed to register foreground executor: {error}"))?;
+        loop_handle
+            .insert_source(power_receiver, {
+                let common = common.clone();
+                move |event, _, _| {
+                    if let calloop::channel::Event::Msg(event) = event {
+                        common.borrow_mut().handle_system_power_event(event);
+                    }
+                }
+            })
+            .map_err(|error| anyhow!("failed to register power listener: {error}"))?;
+        Ok(())
     }
 
     pub(crate) fn handle_system_power_event(&mut self, event: SystemPowerEvent) {
@@ -341,7 +377,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     }
 
     fn quit(&self) {
-        self.inner.quit();
+        self.inner.with_common(|common| common.signal.stop());
     }
 
     fn set_headless(&self, headless: bool) -> Task<anyhow::Result<()>> {

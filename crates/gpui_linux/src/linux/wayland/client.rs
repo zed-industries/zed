@@ -1,5 +1,5 @@
 use std::{
-    cell::{Cell, RefCell, RefMut},
+    cell::{RefCell, RefMut},
     hash::Hash,
     os::fd::{AsRawFd, BorrowedFd},
     path::PathBuf,
@@ -10,8 +10,7 @@ use std::{
 use anyhow::Context as _;
 use ashpd::WindowIdentifier;
 use calloop::{
-    Dispatcher, EventLoop, LoopHandle, RegistrationToken,
-    channel::Channel,
+    EventLoop, LoopHandle, RegistrationToken,
     ping::Ping,
     timer::{TimeoutAction, Timer},
 };
@@ -84,10 +83,10 @@ use super::{
 
 use crate::linux::{
     DOUBLE_CLICK_INTERVAL, LinuxClient, LinuxCommon, LinuxKeyboardLayout, PIPE_READ_TIMEOUT,
-    PriorityQueueCalloopReceiver, SCROLL_LINES, SystemPowerEvent, capslock_from_xkb,
-    cursor_style_to_icon_names, get_xkb_compose_state, is_within_click_distance,
-    keystroke_from_xkb, keystroke_underlying_dead_key, modifiers_from_xkb, new_xkb_context,
-    open_uri_internal, read_fd_with_timeout, reveal_path_internal,
+    SCROLL_LINES, capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state,
+    is_within_click_distance, keystroke_from_xkb, keystroke_underlying_dead_key,
+    modifiers_from_xkb, new_xkb_context, open_uri_internal, read_fd_with_timeout,
+    reveal_path_internal,
     wayland::{
         clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
         cursor::Cursor,
@@ -102,9 +101,8 @@ use gpui::{
     FileDragPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
     MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput,
-    PlatformKeyboardLayout, PlatformWindow, Point, RunnableVariant, ScrollDelta, ScrollWheelEvent,
-    SharedString, Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, profiler,
-    px, size,
+    PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta, ScrollWheelEvent, SharedString,
+    Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -360,7 +358,7 @@ pub(crate) struct WaylandClientState {
     button_pressed: Option<MouseButton>,
     mouse_focused_window: Option<WaylandWindowStatePtr>,
     keyboard_focused_window: Option<WaylandWindowStatePtr>,
-    loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
+    loop_handle: LoopHandle<'static, ()>,
     cursor_style: Option<CursorStyle>,
     cursor_hidden_window: Option<WaylandWindowStatePtr>,
     clipboard: Clipboard,
@@ -369,14 +367,13 @@ pub(crate) struct WaylandClientState {
     cursor: Cursor,
     pending_activation: Option<PendingActivation>,
     startup_activation_token: Option<String>,
-    event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
-    main_dispatcher: Option<
-        Dispatcher<'static, PriorityQueueCalloopReceiver<RunnableVariant>, WaylandClientStatePtr>,
-    >,
-    pending_runnable_idles: Rc<Cell<usize>>,
-    main_registration: RegistrationToken,
-    power_dispatcher: Option<Dispatcher<'static, Channel<SystemPowerEvent>, WaylandClientStatePtr>>,
-    power_registration: RegistrationToken,
+    /// The loop this client created for itself, until `run` takes it; `None` after `attach`.
+    event_loop: Option<EventLoop<'static, ()>>,
+    /// Long-lived sources this client registered on the loop, removed when it drops.
+    registrations: Vec<RegistrationToken>,
+    /// Cloned into every window state. A window's GPU resources are bound to this connection
+    /// and are released only when its state drops, which can be after the window is closed.
+    connection_lease: Rc<()>,
     pub common: Rc<RefCell<LinuxCommon>>,
     ime_enabled: Option<bool>,
 }
@@ -543,6 +540,11 @@ impl WaylandClientStatePtr {
             .expect("The pointer should always be valid when dispatching in wayland")
     }
 
+    /// Returns the client, or `None` if it was dropped, for example by a switch to headless mode.
+    pub fn try_get_client(&self) -> Option<Rc<RefCell<WaylandClientState>>> {
+        self.0.upgrade()
+    }
+
     pub fn dispatch_scheduled_frames(&self) {
         let Some(client) = self.0.upgrade() else {
             return;
@@ -567,10 +569,13 @@ impl WaylandClientStatePtr {
         let client = self.get_client();
         let state = client.borrow();
         let surface_id = surface_id.clone();
+        let this = self.clone();
         if let Err(err) = state.loop_handle.insert_source(
             Timer::from_duration(FRAME_RETRY_INTERVAL),
-            move |_, _, this| {
-                let client = this.get_client();
+            move |_, _, _| {
+                let Some(client) = this.0.upgrade() else {
+                    return TimeoutAction::Drop;
+                };
                 let window = get_window(&mut client.borrow_mut(), &surface_id);
                 if let Some(window) = window {
                     window.retry_timer_fired();
@@ -799,11 +804,24 @@ impl WaylandClientState {
     }
 }
 
-#[derive(Clone)]
+/// A connection to the Wayland compositor.
+///
+/// Not `Clone`: dropping it tears down the connection and its event-loop sources.
 pub struct WaylandClient(Rc<RefCell<WaylandClientState>>);
 
 impl Drop for WaylandClient {
     fn drop(&mut self) {
+        let (loop_handle, registrations) = {
+            let mut state = self.0.borrow_mut();
+            (
+                state.loop_handle.clone(),
+                std::mem::take(&mut state.registrations),
+            )
+        };
+        for token in registrations {
+            loop_handle.remove(token);
+        }
+
         let mut state = self.0.borrow_mut();
         state.windows.clear();
 
@@ -855,58 +873,37 @@ fn wl_output_version(version: u32) -> anyhow::Result<u32> {
     Ok(version.clamp(WL_OUTPUT_MIN_VERSION, WL_OUTPUT_MAX_VERSION))
 }
 
-pub(crate) struct WaylandServices {
-    pub(crate) common: Rc<RefCell<LinuxCommon>>,
-    pub(crate) main_receiver: PriorityQueueCalloopReceiver<RunnableVariant>,
-    pub(crate) power_receiver: Channel<SystemPowerEvent>,
-}
-
-pub(crate) struct WaylandClientInitError {
-    error: anyhow::Error,
-    services: Option<WaylandServices>,
-}
-
-impl WaylandClientInitError {
-    pub(crate) fn into_parts(self) -> (anyhow::Error, Option<WaylandServices>) {
-        (self.error, self.services)
-    }
-}
-
 impl WaylandClient {
-    /// Creates the process's initial Wayland client.
+    /// Creates the process's Wayland client with its own event loop.
     ///
-    /// This preserves the infallible platform startup API by panicking when Wayland is unavailable.
+    /// Panics when Wayland is unavailable, because platform construction is infallible.
     pub(crate) fn new() -> Self {
-        Self::new_with_services(None, take_startup_activation_token_from_environment())
-            .map_err(|error| error.error)
-            .expect("failed to initialize Wayland client")
+        let startup_activation_token = take_startup_activation_token_from_environment();
+        let event_loop = EventLoop::try_new().expect("failed to create Wayland event loop");
+        let (common, main_receiver, power_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let common = Rc::new(RefCell::new(common));
+        let handle = event_loop.handle();
+        LinuxCommon::register_sources(&common, &handle, main_receiver, power_receiver)
+            .expect("failed to register Linux event sources");
+        let client = Self::attach(handle, common, startup_activation_token)
+            .expect("failed to initialize Wayland client");
+        client.0.borrow_mut().event_loop = Some(event_loop);
+        client
     }
 
-    /// Creates a Wayland client and returns supplied services after any initialization error.
-    pub(crate) fn new_with_services(
-        services: Option<WaylandServices>,
+    /// Connects to the Wayland compositor and registers its event sources on `handle`.
+    ///
+    /// Dropping the client removes those sources, leaving the loop and `common` usable without
+    /// Wayland.
+    pub(crate) fn attach(
+        handle: LoopHandle<'static, ()>,
+        common: Rc<RefCell<LinuxCommon>>,
         startup_activation_token: Option<String>,
-    ) -> Result<Self, WaylandClientInitError> {
-        Self::try_new_with_services(services, startup_activation_token)
-            .map_err(|(error, services)| WaylandClientInitError { error, services })
-    }
-
-    fn try_new_with_services(
-        services: Option<WaylandServices>,
-        startup_activation_token: Option<String>,
-    ) -> Result<Self, (anyhow::Error, Option<WaylandServices>)> {
+    ) -> anyhow::Result<Self> {
         let conn =
-            match Connection::connect_to_env().context("failed to connect to Wayland compositor") {
-                Ok(connection) => connection,
-                Err(error) => return Err((error, services)),
-            };
-
-        let (globals, event_queue) = match registry_queue_init::<WaylandClientStatePtr>(&conn)
-            .context("failed to initialize Wayland registry")
-        {
-            Ok(registry) => registry,
-            Err(error) => return Err((error, services)),
-        };
+            Connection::connect_to_env().context("failed to connect to Wayland compositor")?;
+        let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn)
+            .context("failed to initialize Wayland registry")?;
         let qh = event_queue.handle();
 
         let mut seat: Option<wl_seat::WlSeat> = None;
@@ -914,7 +911,7 @@ impl WaylandClient {
         let mut in_progress_outputs = HashMap::default();
         #[allow(clippy::mutable_key_type)]
         let mut wl_outputs: HashMap<ObjectId, wl_output::WlOutput> = HashMap::default();
-        let global_result = globals.contents().with_list(|list| -> anyhow::Result<()> {
+        globals.contents().with_list(|list| -> anyhow::Result<()> {
             for global in list {
                 match &global.interface[..] {
                     "wl_seat" => {
@@ -939,117 +936,24 @@ impl WaylandClient {
                 }
             }
             Ok(())
-        });
-        if let Err(error) = global_result {
-            return Err((error, services));
-        }
+        })?;
 
-        let event_loop = match EventLoop::<WaylandClientStatePtr>::try_new()
-            .context("failed to create Wayland event loop")
-        {
-            Ok(event_loop) => event_loop,
-            Err(error) => return Err((error, services)),
-        };
-
-        let services = services.unwrap_or_else(|| {
-            let (common, main_receiver, power_receiver) = LinuxCommon::new(event_loop.get_signal());
-            WaylandServices {
-                common: Rc::new(RefCell::new(common)),
-                main_receiver,
-                power_receiver,
-            }
-        });
-        let WaylandServices {
-            common,
-            main_receiver,
-            power_receiver,
-        } = services;
-
-        let handle = event_loop.handle();
-        let pending_runnable_idles = Rc::new(Cell::new(0));
-        let main_dispatcher = Dispatcher::new(main_receiver, {
-            let handle = handle.clone();
-            let pending_runnable_idles = pending_runnable_idles.clone();
-            move |event, _, _: &mut WaylandClientStatePtr| {
-                if let calloop::channel::Event::Msg(runnable) = event {
-                    pending_runnable_idles.set(pending_runnable_idles.get() + 1);
-                    let pending_runnable_idles = pending_runnable_idles.clone();
-                    handle.insert_idle(move |_| {
-                        pending_runnable_idles.set(pending_runnable_idles.get() - 1);
-                        let location = runnable.metadata().location;
-                        let spawned = runnable.metadata().spawned;
-                        profiler::update_running_task(spawned, location);
-                        runnable.run();
-                        profiler::save_task_timing();
-                    });
-                }
-            }
-        });
-        let power_dispatcher = Dispatcher::new(
-            power_receiver,
-            |event, _, client: &mut WaylandClientStatePtr| {
-                if let calloop::channel::Event::Msg(event) = event {
-                    client
-                        .get_client()
-                        .borrow_mut()
-                        .common
-                        .borrow_mut()
-                        .handle_system_power_event(event);
-                }
-            },
-        );
-        macro_rules! recover_services {
-            ($result:expr, $message:literal) => {
-                match $result {
-                    Ok(value) => value,
-                    Err(error) => {
-                        return Err((
-                            anyhow::anyhow!(concat!($message, ": {}"), error),
-                            Some(WaylandServices {
-                                common,
-                                main_receiver: main_dispatcher.into_source_inner(),
-                                power_receiver: power_dispatcher.into_source_inner(),
-                            }),
-                        ));
-                    }
-                }
-            };
-        }
         let compositor_gpu = detect_compositor_gpu();
         let gpu_context = Rc::new(RefCell::new(None));
 
-        let (frame_ping, frame_ping_source) = recover_services!(
-            calloop::ping::make_ping(),
-            "failed to create Wayland frame ping"
-        );
-        recover_services!(
-            handle.insert_source(frame_ping_source, |_, _, client| {
-                client.dispatch_scheduled_frames();
-            }),
-            "failed to register Wayland frame source"
-        );
-
-        let Some(seat) = seat else {
-            return Err((
-                anyhow::anyhow!("Wayland compositor does not provide wl_seat"),
-                Some(WaylandServices {
-                    common,
-                    main_receiver: main_dispatcher.into_source_inner(),
-                    power_receiver: power_dispatcher.into_source_inner(),
-                }),
-            ));
-        };
+        let (frame_ping, frame_ping_source) =
+            calloop::ping::make_ping().context("failed to create Wayland frame ping")?;
+        let seat = seat.context("Wayland compositor does not provide wl_seat")?;
         let foreground_executor = common.borrow().foreground_executor.clone();
-        let globals = recover_services!(
-            Globals::new(
-                globals,
-                foreground_executor,
-                qh.clone(),
-                seat.clone(),
-                frame_ping,
-            ),
-            "failed to bind required Wayland globals"
-        );
+        let background_executor = common.borrow().background_executor.clone();
+        let globals = Globals::new(
+            globals,
+            foreground_executor,
+            qh.clone(),
+            seat.clone(),
+            frame_ping,
+        )
+        .context("failed to bind required Wayland globals")?;
 
         let data_device = globals
             .data_device_manager
@@ -1062,77 +966,6 @@ impl WaylandClient {
             .map(|primary_selection_manager| primary_selection_manager.get_device(&seat, &qh, ()));
 
         let cursor = Cursor::new(&conn, &globals, 24);
-
-        let background_executor = common.borrow().background_executor.clone();
-        recover_services!(
-            handle.insert_source(XDPEventSource::new(&background_executor), {
-                move |event, _, client| match event {
-                    XDPEvent::WindowAppearance(appearance) => {
-                        if let Some(client) = client.0.upgrade() {
-                            let mut client = client.borrow_mut();
-
-                            client.common.borrow_mut().appearance = appearance;
-
-                            for window in client.windows.values_mut() {
-                                window.set_appearance(appearance);
-                            }
-                        }
-                    }
-                    XDPEvent::ButtonLayout(layout_str) => {
-                        if let Some(client) = client.0.upgrade() {
-                            let layout = WindowButtonLayout::parse(&layout_str)
-                                .log_err()
-                                .unwrap_or_else(WindowButtonLayout::linux_default);
-                            let mut client = client.borrow_mut();
-                            client.common.borrow_mut().button_layout = layout;
-
-                            for window in client.windows.values_mut() {
-                                window.set_button_layout();
-                            }
-                        }
-                    }
-                    XDPEvent::CursorTheme(theme) => {
-                        if let Some(client) = client.0.upgrade() {
-                            let mut client = client.borrow_mut();
-                            client.cursor.set_theme(theme);
-                        }
-                    }
-                    XDPEvent::CursorSize(size) => {
-                        if let Some(client) = client.0.upgrade() {
-                            let mut client = client.borrow_mut();
-                            client.cursor.set_size(size);
-                        }
-                    }
-                }
-            }),
-            "failed to register desktop portal source"
-        );
-
-        recover_services!(
-            WaylandSource::new(conn.clone(), event_queue).insert(handle.clone()),
-            "failed to register Wayland connection source"
-        );
-
-        let main_registration = recover_services!(
-            handle.register_dispatcher(main_dispatcher.clone()),
-            "failed to register foreground executor with Wayland event loop"
-        );
-        let power_registration = match handle.register_dispatcher(power_dispatcher.clone()) {
-            Ok(registration) => registration,
-            Err(error) => {
-                handle.remove(main_registration);
-                return Err((
-                    anyhow::Error::new(error)
-                        .context("failed to register power listener with Wayland event loop"),
-                    Some(WaylandServices {
-                        common,
-                        main_receiver: main_dispatcher.into_source_inner(),
-                        power_receiver: power_dispatcher.into_source_inner(),
-                    }),
-                ));
-            }
-        };
-        common.borrow_mut().signal = event_loop.get_signal();
 
         let state = Rc::new(RefCell::new(WaylandClientState {
             serial_tracker: SerialTracker::new(),
@@ -1207,77 +1040,97 @@ impl WaylandClient {
             cursor,
             pending_activation: None,
             startup_activation_token,
-            event_loop: Some(event_loop),
-            main_dispatcher: Some(main_dispatcher),
-            pending_runnable_idles,
-            main_registration,
-            power_dispatcher: Some(power_dispatcher),
-            power_registration,
+            event_loop: None,
+            registrations: Vec::new(),
+            connection_lease: Rc::new(()),
             ime_enabled: None,
         }));
 
-        Ok(Self(state))
+        // From here on, `Drop` removes whatever was registered if a later step fails.
+        let client = Self(state);
+        let pointer = WaylandClientStatePtr(Rc::downgrade(&client.0));
+
+        client.register_source(
+            handle.insert_source(frame_ping_source, {
+                let client = pointer.clone();
+                move |_, _, _| client.dispatch_scheduled_frames()
+            }),
+            "failed to register Wayland frame source",
+        )?;
+
+        client.register_source(
+            handle.insert_source(XDPEventSource::new(&background_executor), {
+                let client = pointer.clone();
+                move |event, _, _| match event {
+                    XDPEvent::WindowAppearance(appearance) => {
+                        if let Some(client) = client.0.upgrade() {
+                            let mut client = client.borrow_mut();
+
+                            client.common.borrow_mut().appearance = appearance;
+
+                            for window in client.windows.values_mut() {
+                                window.set_appearance(appearance);
+                            }
+                        }
+                    }
+                    XDPEvent::ButtonLayout(layout_str) => {
+                        if let Some(client) = client.0.upgrade() {
+                            let layout = WindowButtonLayout::parse(&layout_str)
+                                .log_err()
+                                .unwrap_or_else(WindowButtonLayout::linux_default);
+                            let mut client = client.borrow_mut();
+                            client.common.borrow_mut().button_layout = layout;
+
+                            for window in client.windows.values_mut() {
+                                window.set_button_layout();
+                            }
+                        }
+                    }
+                    XDPEvent::CursorTheme(theme) => {
+                        if let Some(client) = client.0.upgrade() {
+                            let mut client = client.borrow_mut();
+                            client.cursor.set_theme(theme);
+                        }
+                    }
+                    XDPEvent::CursorSize(size) => {
+                        if let Some(client) = client.0.upgrade() {
+                            let mut client = client.borrow_mut();
+                            client.cursor.set_size(size);
+                        }
+                    }
+                }
+            }),
+            "failed to register desktop portal source",
+        )?;
+
+        client.register_source(
+            handle.insert_source(WaylandSource::new(conn, event_queue), {
+                let mut client = pointer;
+                move |_, queue, _| queue.dispatch_pending(&mut client)
+            }),
+            "failed to register Wayland connection source",
+        )?;
+
+        Ok(client)
     }
 
-    pub(crate) fn run_and_recover_services(
+    fn register_source<E: std::fmt::Display>(
         &self,
-    ) -> (
-        PriorityQueueCalloopReceiver<RunnableVariant>,
-        Channel<SystemPowerEvent>,
-    ) {
-        let mut event_loop = self
-            .0
-            .borrow_mut()
-            .event_loop
-            .take()
-            .expect("App is already running");
-        let mut client = WaylandClientStatePtr(Rc::downgrade(&self.0));
-
-        event_loop.run(None, &mut client, |_| {}).log_err();
-        let pending_runnable_idles = self.0.borrow().pending_runnable_idles.clone();
-        drain_pending_runnable_idles(&mut event_loop, &mut client, &pending_runnable_idles);
-
-        let (main_registration, power_registration, main_dispatcher, power_dispatcher) = {
-            let mut state = self.0.borrow_mut();
-            (
-                state.main_registration,
-                state.power_registration,
-                state
-                    .main_dispatcher
-                    .take()
-                    .expect("main source is registered"),
-                state
-                    .power_dispatcher
-                    .take()
-                    .expect("power source is registered"),
-            )
-        };
-        let handle = event_loop.handle();
-        handle.remove(main_registration);
-        handle.remove(power_registration);
-        drop(event_loop);
-
-        (
-            main_dispatcher.into_source_inner(),
-            power_dispatcher.into_source_inner(),
-        )
+        result: Result<RegistrationToken, E>,
+        description: &str,
+    ) -> anyhow::Result<()> {
+        let token = result.map_err(|error| anyhow::anyhow!("{description}: {error}"))?;
+        self.0.borrow_mut().registrations.push(token);
+        Ok(())
     }
 
     pub(crate) fn has_windows(&self) -> bool {
         !self.0.borrow().windows.is_empty()
     }
-}
 
-fn drain_pending_runnable_idles<Data>(
-    event_loop: &mut EventLoop<'_, Data>,
-    data: &mut Data,
-    pending_runnable_idles: &Cell<usize>,
-) {
-    loop {
-        event_loop.dispatch(Some(Duration::ZERO), data).log_err();
-        if pending_runnable_idles.get() == 0 {
-            break;
-        }
+    /// Whether a closed window's state, and the GPU resources it holds, is still alive.
+    pub(crate) fn has_window_resources(&self) -> bool {
+        Rc::strong_count(&self.0.borrow().connection_lease) > 1
     }
 }
 
@@ -1389,6 +1242,7 @@ impl LinuxClient for WaylandClient {
             state.gpu_context.clone(),
             compositor_gpu,
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
+            state.connection_lease.clone(),
             params,
             appearance,
             parent,
@@ -1493,7 +1347,14 @@ impl LinuxClient for WaylandClient {
     }
 
     fn run(&self) {
-        self.run_and_recover_services();
+        let mut event_loop = self
+            .0
+            .borrow_mut()
+            .event_loop
+            .take()
+            .expect("App is already running");
+
+        event_loop.run(None, &mut (), |_| {}).log_err();
     }
 
     fn write_to_primary(&self, item: gpui::ClipboardItem) {
@@ -2220,8 +2081,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                     is_held: true,
                                     prefer_character_input: false,
                                 });
-                                move |event_timestamp, _metadata, this| {
-                                    let client = this.get_client();
+                                let this = this.clone();
+                                move |event_timestamp, _metadata, _| {
+                                    let Some(client) = this.0.upgrade() else {
+                                        return TimeoutAction::Drop;
+                                    };
                                     let state = client.borrow();
                                     let is_repeating = id == state.repeat.current_id
                                         && state.repeat.current_keycode.is_some()
@@ -2935,7 +2799,10 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                                 data_offer.destroy();
                                 return;
                             }
-                            let client = this.get_client();
+                            let Some(client) = this.0.upgrade() else {
+                                data_offer.destroy();
+                                return;
+                            };
                             let mut state = client.borrow_mut();
                             let input = state.drag.complete_uri_read(
                                 uri_read_generation,
@@ -3178,39 +3045,6 @@ mod tests {
     use std::cell::Cell;
 
     use super::*;
-
-    #[test]
-    fn drains_runnable_idles_exceeding_calloop_idle_budget_before_migrating_sources() {
-        const RUNNABLE_COUNT: usize = 12;
-
-        let mut event_loop = EventLoop::<usize>::try_new().expect("event loop");
-        let handle = event_loop.handle();
-        let idle_handle = handle.clone();
-        let pending_runnable_idles = Rc::new(Cell::new(0));
-        let callback_pending_runnable_idles = pending_runnable_idles.clone();
-        let (sender, receiver) = calloop::channel::channel();
-        handle
-            .insert_source(receiver, move |event, _, _| {
-                if let calloop::channel::Event::Msg(()) = event {
-                    callback_pending_runnable_idles.set(callback_pending_runnable_idles.get() + 1);
-                    let pending_runnable_idles = callback_pending_runnable_idles.clone();
-                    idle_handle.insert_idle(move |ran| {
-                        pending_runnable_idles.set(pending_runnable_idles.get() - 1);
-                        std::thread::sleep(Duration::from_millis(2));
-                        *ran += 1;
-                    });
-                }
-            })
-            .expect("source registration");
-        for _ in 0..RUNNABLE_COUNT {
-            sender.send(()).expect("queue runnable");
-        }
-
-        let mut ran = 0;
-        drain_pending_runnable_idles(&mut event_loop, &mut ran, &pending_runnable_idles);
-
-        assert_eq!(ran, RUNNABLE_COUNT);
-    }
 
     #[test]
     fn rejects_required_globals_below_supported_versions() {
