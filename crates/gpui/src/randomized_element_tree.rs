@@ -11,13 +11,12 @@ use std::{
     rc::{Rc, Weak},
 };
 
-crate::actions!(
-    randomized_element_tree,
-    [
-        /// Dispatched to no one: the action generated elements register handlers for.
-        RandomizedElementTreeAction
-    ]
-);
+/// Dispatched to no one: the action generated elements register handlers for. Not
+/// registered, so builds that enable `bench-support` through feature unification (such as
+/// the workspace's tests) don't gain an action namespace.
+#[derive(Clone, Default, PartialEq, crate::Action)]
+#[action(namespace = randomized_element_tree, no_json, no_register)]
+pub struct RandomizedElementTreeAction;
 
 /// The initial shape generated for a randomized element tree.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
