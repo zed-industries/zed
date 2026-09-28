@@ -15127,14 +15127,58 @@ async fn find_worktree_for_lsp_path(
             let Ok(canonical_path) = fs.canonicalize(abs_path).await else {
                 return Ok(None);
             };
+            // Symlinked external directories are known only after they are scanned.
+            let (worktree, scans) = lsp_store.read_with(cx, |lsp_store, cx| {
+                let worktree_store = lsp_store.worktree_store.read(cx);
+                if let Some(worktree) =
+                    find_worktree_for_canonical_lsp_path(worktree_store, &canonical_path, cx)
+                {
+                    return (Some(worktree), Vec::new());
+                }
+                let scans = worktree_store
+                    .worktrees()
+                    .filter_map(|worktree| {
+                        let local_worktree = worktree.read(cx).as_local()?;
+                        local_worktree
+                            .is_scanning()
+                            .then(|| local_worktree.scan_complete())
+                    })
+                    .collect::<Vec<_>>();
+                (None, scans)
+            })?;
+            if worktree.is_some() || scans.is_empty() {
+                return Ok(worktree);
+            }
+            join_all(scans).await;
             lsp_store.read_with(cx, |lsp_store, cx| {
-                lsp_store
-                    .worktree_store
-                    .read(cx)
-                    .find_worktree(&canonical_path, cx)
+                find_worktree_for_canonical_lsp_path(
+                    lsp_store.worktree_store.read(cx),
+                    &canonical_path,
+                    cx,
+                )
             })
         }
     }
+}
+
+fn find_worktree_for_canonical_lsp_path(
+    worktree_store: &WorktreeStore,
+    canonical_path: &Path,
+    cx: &App,
+) -> Option<(Entity<Worktree>, Arc<RelPath>)> {
+    worktree_store
+        .find_worktree(canonical_path, cx)
+        .or_else(|| {
+            // Language servers may report files in symlinked external
+            // directories by their canonical path.
+            worktree_store.worktrees().find_map(|worktree| {
+                let relative_path = worktree
+                    .read(cx)
+                    .as_local()?
+                    .relative_path_for_external_abs_path(canonical_path)?;
+                Some((worktree, Arc::from(relative_path)))
+            })
+        })
 }
 
 async fn normalize_lsp_relative_path(

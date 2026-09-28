@@ -76,7 +76,7 @@ use text::{LineEnding, Rope};
 use util::{
     ResultExt, maybe,
     paths::{PathMatcher, PathStyle, SanitizedPath, home_dir},
-    rel_path::RelPath,
+    rel_path::{RelPath, RelPathBuf},
 };
 pub use worktree_settings::WorktreeSettings;
 
@@ -1611,6 +1611,10 @@ impl LocalWorktree {
         changes.into()
     }
 
+    pub fn is_scanning(&self) -> bool {
+        *self.is_scanning.1.borrow()
+    }
+
     pub fn scan_complete(&self) -> impl Future<Output = ()> + use<> {
         let mut is_scanning_rx = self.is_scanning.1.clone();
         async move {
@@ -2959,6 +2963,17 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
+    /// Maps an absolute path inside a scanned external (symlinked) directory,
+    /// given by its canonical form, to its path within this worktree.
+    pub fn relative_path_for_external_abs_path(&self, abs_path: &Path) -> Option<RelPathBuf> {
+        abs_path.ancestors().find_map(|canonical| {
+            let relative = self.external_canonical_to_relative.get(canonical)?;
+            let suffix = abs_path.strip_prefix(canonical).ok()?;
+            let suffix = RelPath::new(suffix, PathStyle::local()).ok()?;
+            Some(relative.join(&suffix))
+        })
+    }
+
     fn local_repo_for_work_directory_path(&self, path: &RelPath) -> Option<&LocalRepositoryEntry> {
         self.git_repositories
             .iter()
@@ -5068,24 +5083,10 @@ impl BackgroundScanner {
                     && let Ok(path) = RelPath::new(path, PathStyle::local())
                 {
                     path
-                } else if let Some(path) = snapshot.external_canonical_to_relative.iter().find_map(
-                    |(canonical, relative)| {
-                        abs_path
-                            .as_path()
-                            .strip_prefix(canonical.as_ref())
-                            .ok()
-                            .and_then(|suffix| {
-                                RelPath::new(suffix, PathStyle::local())
-                                    .ok()
-                                    .map(|suffix_rel| {
-                                        std::borrow::Cow::Owned(
-                                            relative.join(&suffix_rel).to_rel_path_buf(),
-                                        )
-                                    })
-                            })
-                    },
-                ) {
-                    path
+                } else if let Some(path) =
+                    snapshot.relative_path_for_external_abs_path(abs_path.as_path())
+                {
+                    std::borrow::Cow::Owned(path)
                 } else {
                     skip_ix(&mut ranges_to_drop, ix);
                     continue;
