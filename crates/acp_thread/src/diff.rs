@@ -11,7 +11,7 @@ use language::{
 };
 use markdown::Markdown;
 use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
-use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
+use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc, time::Duration};
 use util::ResultExt;
 
 #[derive(Debug)]
@@ -295,10 +295,37 @@ impl Diff {
             let path = path.clone();
             let buffer = new_buffer.clone();
             async move |_, cx| {
-                let language = language_registry
-                    .load_language_for_file_path(Path::new(&path))
+                let path = Path::new(&path);
+                let mut language = language_registry
+                    .load_language_for_file_path(path)
                     .await
-                    .log_err();
+                    .ok();
+
+                // Restored diffs can be finalized before extension languages have
+                // registered themselves (startup, thread restore). Retry while the
+                // registry's version keeps changing; stop once a language resolves
+                // or the registry has been quiet for 500 ms.
+                if language.is_none() {
+                    let mut version = language_registry.version();
+                    for _ in 0..40 {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(500))
+                            .await;
+                        let current_version = language_registry.version();
+                        let registry_changed = current_version != version;
+                        version = current_version;
+                        language = language_registry
+                            .load_language_for_file_path(path)
+                            .await
+                            .ok();
+                        if language.is_some() || !registry_changed {
+                            break;
+                        }
+                    }
+                    if language.is_none() {
+                        log::debug!("no language registered for diff path {path:?}");
+                    }
+                }
 
                 buffer.update(cx, |buffer, cx| buffer.set_language(language.clone(), cx));
                 buffer.update(cx, |buffer, _| buffer.parsing_idle()).await;
