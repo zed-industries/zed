@@ -181,23 +181,20 @@ impl WgpuContext {
     ))]
     pub(crate) fn new_headless() -> anyhow::Result<(Self, wgpu::TextureFormat)> {
         // Creating a device takes tens of milliseconds, and benchmarks create a headless
-        // renderer for every window they open, so each thread shares one device until it
-        // is lost.
-        thread_local! {
-            static HEADLESS: std::cell::RefCell<Option<(WgpuContext, wgpu::TextureFormat)>> =
-                const { std::cell::RefCell::new(None) };
+        // renderer for every window they open, so the process shares one device until it
+        // is lost. A static rather than a thread-local: the cached device is never dropped,
+        // because wgpu's queue reads its own thread-locals on drop and would panic if
+        // dropped while a thread's thread-locals are being destroyed.
+        static HEADLESS: Mutex<Option<(WgpuContext, wgpu::TextureFormat)>> = Mutex::new(None);
+        let mut headless = HEADLESS.lock();
+        if let Some((context, format)) = headless.as_ref()
+            && !context.device_lost()
+        {
+            return Ok((context.clone(), *format));
         }
-        HEADLESS.with(|headless| {
-            let mut headless = headless.borrow_mut();
-            if let Some((context, format)) = headless.as_ref()
-                && !context.device_lost()
-            {
-                return Ok((context.clone(), *format));
-            }
-            let created = Self::create_headless()?;
-            *headless = Some(created.clone());
-            Ok(created)
-        })
+        let created = Self::create_headless()?;
+        *headless = Some(created.clone());
+        Ok(created)
     }
 
     #[cfg(all(
