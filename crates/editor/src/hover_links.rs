@@ -10,7 +10,7 @@ use gpui::{
 use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
-use project::{InlayId, Location, LocationLink, Project, ResolvedPath};
+use project::{InlayId, Location, LocationLink, Project, ProjectPath, ResolvedPath};
 use regex::Regex;
 use settings::{OpenResultsIn, Settings};
 use std::{
@@ -273,6 +273,22 @@ impl Editor {
         };
         links.retain(|link| match link {
             HoverLink::Text(link) => exclude_link_to_position(&buffer, &anchor, link, cx),
+            // A file link resolving to the buffer we are already in is not a navigation:
+            // opening it returns `Navigated::Yes`, which suppresses the go-to-definition
+            // fallback, so the click appears to do nothing. Same rule as
+            // `exclude_link_to_position` above, one level coarser — file rather than position.
+            HoverLink::File(target) => {
+                let current_project_path = buffer
+                    .read(cx)
+                    .file()
+                    .map(|file| ProjectPath::from_file(file.as_ref(), cx));
+                match &target.resolved_path {
+                    ResolvedPath::ProjectPath { project_path, .. } => {
+                        Some(project_path) != current_project_path.as_ref()
+                    }
+                    ResolvedPath::AbsPath { .. } => true,
+                }
+            }
             _ => true,
         });
         let definitions = (refresh && self.lsp_data_enabled() && point.as_valid().is_some())
@@ -1199,7 +1215,7 @@ mod tests {
     };
     use indoc::indoc;
     use language::Point;
-    use lsp::request::{GotoDefinition, GotoTypeDefinition};
+    use lsp::request::{GotoDefinition, GotoTypeDefinition, References};
     use multi_buffer::{MultiBufferOffset, PathKey};
     use settings::InlayHintSettingsContent;
     use std::str::FromStr;
@@ -1391,6 +1407,140 @@ mod tests {
                 cx,
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_cmd_click_on_file_link_to_current_file_falls_back_to_references(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        // Regression test for #64063. `find_file` appends the language's suffixes when
+        // resolving a bare token, so a symbol whose name matches its own file (`file`
+        // in `file.rs`) produces a `HoverLink::File` pointing at the buffer we are
+        // already in. That link used to count as a successful navigation, so the click
+        // silently re-opened the current file and never fell back to references.
+        // The symbol name here is load-bearing: rename it and the collision — and the
+        // bug — disappear.
+
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                references_provider: Some(lsp::OneOf::Left(true)),
+                definition_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"struct fileˇ;"});
+
+        let target_range = cx.lsp_range(indoc! {"struct «file»;"});
+
+        let _definitions =
+            cx.set_request_handler::<GotoDefinition, _, _>(move |url, _, _| async move {
+                Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
+                    uri: url,
+                    range: target_range,
+                })))
+            });
+
+        let references_count = Arc::new(AtomicUsize::new(0));
+
+        let _references = cx.set_request_handler::<References, _, _>({
+            let request_count = references_count.clone();
+
+            move |_, _, _| {
+                request_count.fetch_add(1, Ordering::SeqCst);
+
+                // Return no locations: the assertion is that the request was *sent*, and an
+                // empty result keeps `find_all_references` from building a multibuffer whose
+                // task would outlive the test.
+                async move { Ok(Some(vec![])) }
+            }
+        });
+
+        cx.run_until_parked();
+        let screen_coord = cx.pixel_position(indoc! {"struct fiˇle;"});
+        cx.run_until_parked();
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        cx.run_until_parked();
+        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.run_until_parked();
+        assert_eq!(
+            references_count.load(Ordering::SeqCst),
+            1,
+            "cmd-click on a symbol named after its file should fall back to find-all-references"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cmd_click_on_file_link_to_another_file_still_navigates(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        // The other half of the self-link rule: a `HoverLink::File` is dropped only when
+        // it resolves to the buffer we are already in. A link to a different file must
+        // still navigate, so the references fallback must not fire. Guards against
+        // "fixing" #64063 by discarding every file link, which resolves the bug but
+        // breaks cmd-click on ordinary file paths in comments.
+        init_test(cx, |_| {});
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                definition_provider: Some(lsp::OneOf::Left(true)),
+                references_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        fs.as_fake()
+            .insert_file(path!("/root/dir/file2.rs"), "".as_bytes().to_vec())
+            .await;
+
+        cx.set_state(indoc! {
+            "// see file2ˇ.rs"
+        });
+
+        let _definitions = cx
+            .set_request_handler::<GotoDefinition, _, _>(move |_url, _, _| async move { Ok(None) });
+
+        let references_count = Arc::new(AtomicUsize::new(0));
+
+        let _references = cx.set_request_handler::<References, _, _>({
+            let request_count = references_count.clone();
+
+            move |_, _, _| {
+                request_count.fetch_add(1, Ordering::SeqCst);
+                async move { Ok(Some(vec![])) }
+            }
+        });
+
+        cx.run_until_parked();
+
+        let screen_coord = cx.pixel_position(indoc! {"// see fileˇ2.rs"});
+        cx.run_until_parked();
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        cx.run_until_parked();
+        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.run_until_parked();
+        cx.update_workspace(|workspace, _, cx| {
+            let path = workspace
+                .active_item(cx)
+                .and_then(|item| item.project_path(cx))
+                .expect("cmd-click should have opened a file");
+            assert_eq!(
+                path.path.as_unix_str(),
+                "dir/file2.rs",
+                "cmd-click on a file path should open that file"
+            );
+        });
+
+        assert_eq!(
+            references_count.load(Ordering::SeqCst),
+            0,
+            "a file link to a different file should navigate, not fall back to references"
+        );
     }
 
     #[gpui::test]
