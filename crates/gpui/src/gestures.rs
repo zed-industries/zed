@@ -597,11 +597,10 @@ impl TouchGestureRecognizer {
         match event.phase {
             TouchPhase::Started => {
                 let caught_fling = if let Some(momentum) = self.momentum.take() {
-                    recognized.push(RecognizedTouchGesture::Scroll(scroll_event(
-                        momentum.position,
-                        Point::default(),
-                        TouchPhase::Ended,
-                    )));
+                    let mut ended =
+                        scroll_event(momentum.position, Point::default(), TouchPhase::Ended);
+                    ended.momentum = true;
+                    recognized.push(RecognizedTouchGesture::Scroll(ended));
                     Some(momentum.axis)
                 } else {
                     None
@@ -985,20 +984,15 @@ impl TouchGestureRecognizer {
             px(momentum.direction.y * step),
         );
         let position = momentum.position;
-        if elapsed >= momentum.duration {
+        let touch_phase = if elapsed >= momentum.duration {
             self.momentum = None;
-            Some(RecognizedTouchGesture::Scroll(scroll_event(
-                position,
-                delta,
-                TouchPhase::Ended,
-            )))
+            TouchPhase::Ended
         } else {
-            Some(RecognizedTouchGesture::Scroll(scroll_event(
-                position,
-                delta,
-                TouchPhase::Moved,
-            )))
-        }
+            TouchPhase::Moved
+        };
+        let mut event = scroll_event(position, delta, touch_phase);
+        event.momentum = true;
+        Some(RecognizedTouchGesture::Scroll(event))
     }
 }
 
@@ -1012,6 +1006,7 @@ fn scroll_event(
         delta: ScrollDelta::Pixels(delta),
         modifiers: Modifiers::default(),
         touch_phase,
+        momentum: false,
     }
 }
 

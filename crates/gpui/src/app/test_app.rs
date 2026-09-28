@@ -451,6 +451,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
             delta: crate::ScrollDelta::Pixels(delta),
             modifiers: Default::default(),
             touch_phase: crate::TouchPhase::Moved,
+            momentum: false,
         });
     }
 

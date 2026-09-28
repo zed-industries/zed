@@ -7639,6 +7639,7 @@ mod tests {
             delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
+            momentum: false,
         });
         cx.run_until_parked();
 
@@ -7735,6 +7736,7 @@ mod tests {
             delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
+            momentum: false,
         });
         cx.run_until_parked();
 
