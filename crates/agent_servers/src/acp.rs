@@ -133,13 +133,42 @@ struct ForegroundBarrier {
 impl ForegroundWorkItem for ForegroundBarrier {
     fn run(self: Box<Self>, _cx: &mut AsyncApp, _context: &ClientContext) {
         if self.acknowledgment.send(()).is_err() {
-            log::debug!("ACP exit drain was cancelled before foreground acknowledgment");
+            log::debug!("ACP foreground barrier was cancelled before acknowledgment");
         }
     }
 
     fn reject(self: Box<Self>) {
-        log::debug!("ACP foreground dispatch queue closed before exit drain");
+        log::debug!("ACP foreground dispatch queue closed before acknowledgment");
     }
+}
+
+async fn close_session_and_drain(
+    connection: &ConnectionTo<Agent>,
+    session_id: acp::SessionId,
+    supports_close: bool,
+    dispatch_tx: &mpsc::UnboundedSender<ForegroundWork>,
+) -> Result<()> {
+    if supports_close {
+        connection
+            .send_request(acp::CloseSessionRequest::new(session_id))
+            .block_task()
+            .await
+            .log_err();
+    }
+    drain_foreground_queue(dispatch_tx).await
+}
+
+async fn drain_foreground_queue(dispatch_tx: &mpsc::UnboundedSender<ForegroundWork>) -> Result<()> {
+    // The SDK response can precede application of the old session's queued replay.
+    let (acknowledgment, received) = futures::channel::oneshot::channel();
+    let barrier: ForegroundWork = Box::new(ForegroundBarrier { acknowledgment });
+    if let Err(error) = dispatch_tx.unbounded_send(barrier) {
+        error.into_inner().reject();
+        return Err(anyhow!(dispatch_queue_closed_error()));
+    }
+    received
+        .await
+        .context("ACP foreground dispatch queue closed")
 }
 
 struct RequestForegroundWork<Req, Res>
@@ -241,7 +270,7 @@ pub struct AcpConnection {
     agent_version: Option<SharedString>,
     connection: ConnectionTo<Agent>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
-    pending_sessions: Rc<RefCell<HashMap<acp::SessionId, PendingAcpSession>>>,
+    pending_sessions: RefCell<HashMap<acp::SessionId, PendingAcpSession>>,
     auth_methods: Vec<acp::AuthMethod>,
     agent_server_store: WeakEntity<AgentServerStore>,
     agent_capabilities: acp::AgentCapabilities,
@@ -252,6 +281,7 @@ pub struct AcpConnection {
     debug_log: AcpDebugLog,
     _settings_subscription: Subscription,
     _io_task: Task<()>,
+    dispatch_tx: mpsc::UnboundedSender<ForegroundWork>,
     _dispatch_task: Task<()>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Shared<Task<()>>,
@@ -332,7 +362,8 @@ impl AcpConnectionDefaults {
 }
 
 struct PendingAcpSession {
-    task: Shared<Task<Result<Entity<AcpThread>, Arc<anyhow::Error>>>>,
+    thread: WeakEntity<AcpThread>,
+    task: Shared<Task<Result<(), Arc<anyhow::Error>>>>,
 }
 
 struct SessionConfigResponse {
@@ -616,7 +647,9 @@ fn client_capabilities_for_agent(
             .boolean(acp::BooleanConfigOptionCapabilities::new()),
     );
     if beta_features_enabled {
-        session_capabilities = session_capabilities.compaction(acp::CompactionCapabilities::new());
+        session_capabilities = session_capabilities
+            .compaction(acp::CompactionCapabilities::new())
+            .notices(acp::NoticeCapabilities::new());
     }
 
     acp::ClientCapabilities::new()
@@ -737,6 +770,7 @@ impl AcpConnection {
         let drained = {
             let connection = connection.clone();
             let stderr_task = stderr_task.clone();
+            let dispatch_tx = dispatch_tx.clone();
             async move {
                 let incoming = async move {
                     // EOF follows SDK dispatch, but model updates are still queued on the foreground.
@@ -881,7 +915,7 @@ impl AcpConnection {
             telemetry_id,
             agent_version,
             sessions,
-            pending_sessions: Rc::new(RefCell::new(HashMap::default())),
+            pending_sessions: RefCell::new(HashMap::default()),
             agent_capabilities: response.agent_capabilities,
             request_elicitations,
             defaults,
@@ -889,6 +923,7 @@ impl AcpConnection {
             debug_log,
             _settings_subscription: settings_subscription,
             _io_task: io_task,
+            dispatch_tx,
             _dispatch_task: dispatch_task,
             _wait_task: wait_task,
             _stderr_task: stderr_task,
@@ -908,6 +943,7 @@ impl AcpConnection {
         request_elicitations: Entity<ElicitationStore>,
         agent_server_store: WeakEntity<AgentServerStore>,
         io_task: Task<()>,
+        dispatch_tx: mpsc::UnboundedSender<ForegroundWork>,
         dispatch_task: Task<()>,
         cx: &mut App,
     ) -> Self {
@@ -921,7 +957,7 @@ impl AcpConnection {
             agent_version: None,
             connection,
             sessions,
-            pending_sessions: Rc::new(RefCell::new(HashMap::default())),
+            pending_sessions: RefCell::new(HashMap::default()),
             auth_methods: vec![],
             agent_server_store,
             agent_capabilities,
@@ -932,6 +968,7 @@ impl AcpConnection {
             debug_log: AcpDebugLog::default(),
             _settings_subscription: settings_subscription,
             _io_task: io_task,
+            dispatch_tx,
             _dispatch_task: dispatch_task,
             _wait_task: Task::ready(Ok(())),
             _stderr_task: Task::ready(()).shared(),
@@ -947,7 +984,7 @@ impl AcpConnection {
     }
 
     fn register_session(
-        &self,
+        self: &Rc<Self>,
         session_id: acp::SessionId,
         thread: &Entity<AcpThread>,
         session_modes: Option<Rc<RefCell<acp::SessionModeState>>>,
@@ -956,32 +993,12 @@ impl AcpConnection {
     ) {
         let release_subscription = cx.observe_release(thread, {
             let session_id = session_id.clone();
-            let thread_id = thread.entity_id();
-            let sessions = self.sessions.clone();
-            let connection = self.connection.clone();
-            let supports_close = self.agent_supports_session_close();
+            let thread = thread.downgrade();
+            let this = Rc::downgrade(self);
             move |_, cx| {
-                let removed = {
-                    let mut sessions = sessions.borrow_mut();
-                    match sessions.get(&session_id) {
-                        Some(session) if session.thread.entity_id() == thread_id => {
-                            sessions.remove(&session_id)
-                        }
-                        _ => None,
-                    }
-                };
-                if removed.is_none() || !supports_close {
-                    return;
+                if let Some(this) = this.upgrade() {
+                    this.release_session(session_id, thread, cx);
                 }
-                cx.foreground_executor()
-                    .spawn(async move {
-                        connection
-                            .send_request(acp::CloseSessionRequest::new(session_id))
-                            .block_task()
-                            .await
-                            .log_err();
-                    })
-                    .detach();
             }
         });
         self.sessions.borrow_mut().insert(
@@ -994,6 +1011,71 @@ impl AcpConnection {
                 _release_subscription: release_subscription,
             },
         );
+    }
+
+    fn remove_session(&self, session_id: &acp::SessionId, thread_id: gpui::EntityId) {
+        let mut sessions = self.sessions.borrow_mut();
+        if sessions
+            .get(session_id)
+            .is_some_and(|session| session.thread.entity_id() == thread_id)
+        {
+            sessions.remove(session_id);
+        }
+    }
+
+    fn remove_pending_session(&self, session_id: &acp::SessionId, thread_id: gpui::EntityId) {
+        let mut sessions = self.pending_sessions.borrow_mut();
+        if sessions
+            .get(session_id)
+            .is_some_and(|session| session.thread.entity_id() == thread_id)
+        {
+            sessions.remove(session_id);
+        }
+    }
+
+    fn release_session(
+        self: &Rc<Self>,
+        session_id: acp::SessionId,
+        thread: WeakEntity<AcpThread>,
+        cx: &mut App,
+    ) {
+        if self.pending_sessions.borrow().contains_key(&session_id)
+            || !self
+                .sessions
+                .borrow()
+                .get(&session_id)
+                .is_some_and(|session| session.thread.entity_id() == thread.entity_id())
+        {
+            return;
+        }
+
+        let task = cx
+            .spawn({
+                let this = Rc::downgrade(self);
+                let connection = self.connection.clone();
+                let dispatch_tx = self.dispatch_tx.clone();
+                let supports_close = self.agent_supports_session_close();
+                let session_id = session_id.clone();
+                let thread_id = thread.entity_id();
+                async move |_| {
+                    let result = close_session_and_drain(
+                        &connection,
+                        session_id.clone(),
+                        supports_close,
+                        &dispatch_tx,
+                    )
+                    .await;
+                    if let Some(this) = this.upgrade() {
+                        this.remove_session(&session_id, thread_id);
+                        this.remove_pending_session(&session_id, thread_id);
+                    }
+                    result.map_err(Arc::new)
+                }
+            })
+            .shared();
+        self.pending_sessions
+            .borrow_mut()
+            .insert(session_id, PendingAcpSession { thread, task });
     }
 
     fn agent_supports_session_close(&self) -> bool {
@@ -1015,26 +1097,42 @@ impl AcpConnection {
         + 'static,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
-        // Check `pending_sessions` before `sessions` because the session is now
-        // inserted into `sessions` before the load RPC completes (so that
-        // notifications dispatched during history replay can find the thread).
-        // Concurrent loads should still wait for the in-flight task so that
-        // ref-counting happens in one place and the caller sees a fully loaded
-        // session.
-        if let Some(pending) = self.pending_sessions.borrow().get(&session_id) {
-            let task = pending.task.clone();
-            return cx
-                .foreground_executor()
-                .spawn(async move { task.await.map_err(|err| anyhow!(err)) });
+        // Active callers share the thread; an abandoned operation must finish
+        // before a replacement can receive notifications under the same ID.
+        let pending = self
+            .pending_sessions
+            .borrow()
+            .get(&session_id)
+            .map(|pending| (pending.thread.clone(), pending.task.clone()));
+        if let Some((thread, task)) = pending {
+            if let Some(thread) = thread.upgrade() {
+                return cx.foreground_executor().spawn(async move {
+                    task.await.map_err(|err| anyhow!(err))?;
+                    Ok(thread)
+                });
+            }
+            return cx.spawn(async move |cx| {
+                task.await.log_err();
+                cx.update(|cx| {
+                    self.open_or_create_session(session_id, project, work_dirs, title, rpc_call, cx)
+                })
+                .await
+            });
         }
 
-        if let Some(thread) = self
+        let previous_thread = self
             .sessions
             .borrow()
             .get(&session_id)
-            .and_then(|session| session.thread.upgrade())
-        {
-            return Task::ready(Ok(thread));
+            .map(|session| session.thread.clone());
+        if let Some(thread) = previous_thread {
+            if let Some(thread) = thread.upgrade() {
+                return Task::ready(Ok(thread));
+            }
+            // Entity-release effects may not have run yet when a view reopens.
+            self.release_session(session_id.clone(), thread, cx);
+            return self
+                .open_or_create_session(session_id, project, work_dirs, title, rpc_call, cx);
         }
 
         let directories = match self.session_directories_from_work_dirs(&work_dirs) {
@@ -1042,69 +1140,102 @@ impl AcpConnection {
             Err(error) => return Task::ready(Err(error)),
         };
 
-        let shared_task = cx
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let thread = cx.new(|cx| {
+            AcpThread::new(
+                None,
+                title,
+                Some(work_dirs),
+                self.clone(),
+                project,
+                action_log,
+                session_id.clone(),
+                watch::Receiver::constant(self.agent_capabilities.prompt_capabilities.clone()),
+                cx,
+            )
+        });
+        self.register_session(session_id.clone(), &thread, None, None, cx);
+
+        // The connection owns this task, so retaining the thread (which owns the
+        // connection) here would keep both alive after all callers abandon the load.
+        let shared_task: Shared<Task<Result<(), Arc<anyhow::Error>>>> = cx
             .spawn({
                 let session_id = session_id.clone();
-                let this = self.clone();
+                let this = Rc::downgrade(&self);
+                let thread = thread.downgrade();
+                let connection = self.connection.clone();
+                let dispatch_tx = self.dispatch_tx.clone();
+                let supports_close = self.agent_supports_session_close();
                 async move |cx| {
-                    let action_log = cx.new(|_| ActionLog::new(project.clone()));
-                    let thread: Entity<AcpThread> = cx.new(|cx| {
-                        AcpThread::new(
-                            None,
-                            title,
-                            Some(work_dirs),
-                            this.clone(),
-                            project,
-                            action_log,
-                            session_id.clone(),
-                            watch::Receiver::constant(
-                                this.agent_capabilities.prompt_capabilities.clone(),
-                            ),
-                            cx,
-                        )
-                    });
-
-                    // Register the session before awaiting the RPC so that any
-                    // `session/update` notifications that arrive during the call
-                    // (e.g. history replay during `session/load`) can find the thread.
-                    // Modes/config are filled in once the response arrives.
-                    cx.update(|cx| {
-                        this.register_session(session_id.clone(), &thread, None, None, cx)
-                    });
+                    if thread.upgrade().is_none() {
+                        if let Some(this) = this.upgrade() {
+                            this.remove_session(&session_id, thread.entity_id());
+                            this.remove_pending_session(&session_id, thread.entity_id());
+                        }
+                        return Ok(());
+                    }
 
                     let response =
-                        match rpc_call(this.connection.clone(), session_id.clone(), directories)
-                            .await
+                        rpc_call(connection.clone(), session_id.clone(), directories).await;
+                    if response.is_err() {
+                        // Do not let replay from a failed load reach its replacement.
+                        drain_foreground_queue(&dispatch_tx).await.log_err();
+                    }
+                    let Some(connection_state) = this.upgrade() else {
+                        return Ok(());
+                    };
+                    let response = match response {
+                        Ok(response) => response,
+                        Err(error) => {
+                            connection_state.remove_session(&session_id, thread.entity_id());
+                            connection_state
+                                .remove_pending_session(&session_id, thread.entity_id());
+                            return Err(Arc::new(error));
+                        }
+                    };
+
+                    if let Some(_thread) = thread.upgrade() {
+                        let (modes, config_options) =
+                            config_state(response.modes, response.config_options);
                         {
-                            Ok(response) => response,
-                            Err(err) => {
-                                this.sessions.borrow_mut().remove(&session_id);
-                                this.pending_sessions.borrow_mut().remove(&session_id);
-                                return Err(Arc::new(err));
-                            }
-                        };
-
-                    let (modes, config_options) =
-                        config_state(response.modes, response.config_options);
-
-                    if let Some(config_opts) = config_options.as_ref() {
-                        this.apply_default_config_options(&session_id, config_opts, cx);
+                            let mut sessions = connection_state.sessions.borrow_mut();
+                            let Some(session) = sessions
+                                .get_mut(&session_id)
+                                .filter(|session| session.thread.entity_id() == thread.entity_id())
+                            else {
+                                connection_state
+                                    .remove_pending_session(&session_id, thread.entity_id());
+                                return Err(Arc::new(anyhow!(
+                                    "session was closed or replaced before load completed"
+                                )));
+                            };
+                            session.session_modes = modes;
+                            session.config_options = config_options.clone().map(ConfigOptions::new);
+                        }
+                        if let Some(config_opts) = config_options.as_ref() {
+                            connection_state.apply_default_config_options(
+                                &session_id,
+                                config_opts,
+                                cx,
+                            );
+                        }
+                        connection_state.remove_pending_session(&session_id, thread.entity_id());
+                        return Ok(());
                     }
 
-                    this.pending_sessions.borrow_mut().remove(&session_id);
-
-                    {
-                        let mut sessions = this.sessions.borrow_mut();
-                        let Some(session) = sessions.get_mut(&session_id) else {
-                            return Err(Arc::new(anyhow!(
-                                "session was closed before load completed"
-                            )));
-                        };
-                        session.session_modes = modes;
-                        session.config_options = config_options.map(ConfigOptions::new);
+                    drop(connection_state);
+                    let result = close_session_and_drain(
+                        &connection,
+                        session_id.clone(),
+                        supports_close,
+                        &dispatch_tx,
+                    )
+                    .await;
+                    if let Some(this) = this.upgrade() {
+                        this.remove_session(&session_id, thread.entity_id());
+                        this.remove_pending_session(&session_id, thread.entity_id());
                     }
-
-                    Ok(thread)
+                    result.map_err(Arc::new)
                 }
             })
             .shared();
@@ -1112,12 +1243,15 @@ impl AcpConnection {
         self.pending_sessions.borrow_mut().insert(
             session_id,
             PendingAcpSession {
+                thread: thread.downgrade(),
                 task: shared_task.clone(),
             },
         );
 
-        cx.foreground_executor()
-            .spawn(async move { shared_task.await.map_err(|err| anyhow!(err)) })
+        cx.foreground_executor().spawn(async move {
+            shared_task.await.map_err(|err| anyhow!(err))?;
+            Ok(thread)
+        })
     }
 
     fn apply_default_config_options(
@@ -2331,6 +2465,7 @@ pub mod test_support {
                 request_elicitations,
                 agent_server_store,
                 client_io_task,
+                dispatch_tx,
                 dispatch_task,
                 cx,
             )
@@ -2791,8 +2926,8 @@ mod tests {
     }
 
     #[test]
-    fn client_capabilities_only_include_compaction_with_acp_beta() {
-        for (beta_enabled, expected_compaction) in
+    fn client_capabilities_gate_compaction_and_notices_with_acp_beta() {
+        for (beta_enabled, expected_capability) in
             [(false, None), (true, Some(serde_json::json!({})))]
         {
             let capabilities =
@@ -2802,7 +2937,13 @@ mod tests {
             let session = capabilities
                 .get("session")
                 .expect("session capabilities should be advertised");
-            assert_eq!(session.get("compaction"), expected_compaction.as_ref());
+            for capability in ["compaction", "notices"] {
+                assert_eq!(
+                    session.get(capability),
+                    expected_capability.as_ref(),
+                    "{capability} with ACP beta enabled: {beta_enabled}"
+                );
+            }
         }
     }
 
@@ -3426,6 +3567,7 @@ mod tests {
                 request_elicitations,
                 WeakEntity::new_invalid(),
                 client_io_task,
+                mpsc::unbounded().0,
                 Task::ready(()),
                 cx,
             )
@@ -3735,6 +3877,7 @@ exit 7
     }
 
     async fn connect_fake_agent(
+        close_session_gate: Option<async_channel::Receiver<()>>,
         cx: &mut gpui::TestAppContext,
     ) -> (
         Rc<AcpConnection>,
@@ -3760,6 +3903,7 @@ exit 7
             Arc::new(std::sync::Mutex::new(Vec::new()));
         let load_session_gate: Arc<std::sync::Mutex<Option<async_channel::Receiver<()>>>> =
             Arc::new(std::sync::Mutex::new(None));
+        let close_session_gate = Arc::new(std::sync::Mutex::new(close_session_gate));
 
         let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
 
@@ -3848,8 +3992,16 @@ exit 7
             .on_receive_request(
                 {
                     let close_count = close_count.clone();
+                    let close_session_gate = close_session_gate.clone();
                     async move |_req: acp::CloseSessionRequest, responder, _cx| {
                         close_count.fetch_add(1, Ordering::SeqCst);
+                        let gate = close_session_gate
+                            .lock()
+                            .expect("close_session_gate mutex poisoned")
+                            .take();
+                        if let Some(gate) = gate {
+                            gate.recv().await.ok();
+                        }
                         responder.respond(acp::CloseSessionResponse::new())
                     }
                 },
@@ -3884,7 +4036,11 @@ exit 7
             .expect("failed to receive ACP connection handle");
 
         let response = client_conn
-            .send_request(acp::InitializeRequest::new(ProtocolVersion::V1))
+            .send_request(
+                acp::InitializeRequest::new(ProtocolVersion::V1).client_capabilities(
+                    client_capabilities_for_agent(&AgentId::new("fake-agent"), true),
+                ),
+            )
             .block_task()
             .await
             .expect("failed to initialize ACP connection");
@@ -3922,6 +4078,7 @@ exit 7
                 request_elicitations,
                 agent_server_store,
                 client_io_task,
+                dispatch_tx,
                 dispatch_task,
                 cx,
             )
@@ -3955,7 +4112,7 @@ exit 7
             _load_session_updates,
             _load_session_gate,
             _keep_agent_alive,
-        ) = connect_fake_agent(cx).await;
+        ) = connect_fake_agent(None, cx).await;
 
         let session_id = acp::SessionId::new("session-1");
         let work_dirs = util::path_list::PathList::new(&[std::path::Path::new("/a")]);
@@ -4023,6 +4180,94 @@ exit 7
         );
     }
 
+    #[gpui::test]
+    async fn test_session_notices_are_scoped_and_not_restored_on_reload(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (
+            connection,
+            project,
+            _load_count,
+            _close_count,
+            load_session_updates,
+            _load_session_gate,
+            _keep_agent_alive,
+        ) = connect_fake_agent(None, cx).await;
+
+        let notice_update: acp::SessionUpdate = serde_json::from_value(serde_json::json!({
+            "sessionUpdate": "notice",
+            "severity": "_custom",
+            "title": "A current advisory",
+            "description": null,
+            "_meta": null,
+        }))
+        .expect("unknown notice severity should deserialize");
+        // An agent may emit a fresh notice about a current condition while reconnecting.
+        *load_session_updates
+            .lock()
+            .expect("load_session_updates mutex poisoned") = vec![notice_update];
+
+        let session_id = acp::SessionId::new("session-with-notice");
+        let work_dirs = util::path_list::PathList::new(&[std::path::Path::new("/a")]);
+        let thread = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    session_id.clone(),
+                    project.clone(),
+                    work_dirs.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("session should load");
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, cx| {
+            let [(notice_id, notice)] = thread.notices() else {
+                panic!("the live notice should be received before a view is created");
+            };
+            assert_eq!(*notice_id, 0);
+            assert_eq!(notice.title, "A current advisory");
+            assert_eq!(
+                notice.severity,
+                acp::NoticeSeverity::Other("_custom".into())
+            );
+            assert_eq!(notice.description, None);
+            assert_eq!(notice.meta, None);
+            assert!(thread.entries().is_empty());
+            assert!(thread.to_markdown(cx).is_empty());
+            assert!(!thread.had_error());
+        });
+
+        let other_thread = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    acp::SessionId::new("other-session"),
+                    project.clone(),
+                    work_dirs.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("other session should load");
+        other_thread.read_with(cx, |thread, _| assert!(thread.notices().is_empty()));
+
+        drop(thread);
+        release_dropped_entities(cx);
+        let reloaded_thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .load_session(session_id, project, work_dirs, None, cx)
+            })
+            .await
+            .expect("session should reload");
+        cx.run_until_parked();
+        reloaded_thread.read_with(cx, |thread, _| assert!(thread.notices().is_empty()));
+    }
+
     // Regression test: per the ACP spec, an agent replays the entire conversation
     // history as `session/update` notifications *before* responding to the
     // `session/load` request. These notifications must be applied to the
@@ -4040,7 +4285,7 @@ exit 7
             load_session_updates,
             _load_session_gate,
             _keep_agent_alive,
-        ) = connect_fake_agent(cx).await;
+        ) = connect_fake_agent(None, cx).await;
 
         // Queue up some history updates that the fake agent will stream to
         // the client during the `load_session` call, before responding.
@@ -4081,7 +4326,6 @@ exit 7
                     acp_thread::AgentThreadEntry::AssistantMessage(_) => "assistant",
                     acp_thread::AgentThreadEntry::ToolCall(_) => "tool_call",
                     acp_thread::AgentThreadEntry::Elicitation(_) => "elicitation",
-                    acp_thread::AgentThreadEntry::CompletedPlan(_) => "plan",
                     acp_thread::AgentThreadEntry::ContextCompaction(_) => "compaction",
                 })
                 .collect::<Vec<_>>()
@@ -4092,6 +4336,67 @@ exit 7
             vec!["user", "assistant"],
             "replayed notifications should be applied to the thread"
         );
+    }
+
+    #[gpui::test]
+    async fn test_load_initializes_config_before_draining_queued_updates(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (connection, project, _, _, _, _, _keep_agent_alive) =
+            connect_fake_agent(None, cx).await;
+        let session_id = acp::SessionId::new("session-config-update");
+        let updated_options = vec![acp::SessionConfigOption::boolean(
+            "web_search",
+            "Web Search",
+            true,
+        )];
+        let thread = cx
+            .update(|cx| {
+                connection.clone().open_or_create_session(
+                    session_id.clone(),
+                    project,
+                    PathList::new(&[std::path::Path::new("/a")]),
+                    None,
+                    {
+                        let dispatch_tx = connection.dispatch_tx.clone();
+                        let updated_options = updated_options.clone();
+                        move |_, session_id, _| {
+                            async move {
+                                // Later notifications can already be queued when the response is ready.
+                                enqueue_notification(
+                                    &dispatch_tx,
+                                    acp::SessionNotification::new(
+                                        session_id,
+                                        acp::SessionUpdate::ConfigOptionUpdate(
+                                            acp::ConfigOptionUpdate::new(updated_options),
+                                        ),
+                                    ),
+                                    handle_session_notification,
+                                );
+                                Ok(SessionConfigResponse {
+                                    modes: None,
+                                    config_options: Some(vec![acp::SessionConfigOption::boolean(
+                                        "web_search",
+                                        "Web Search",
+                                        false,
+                                    )]),
+                                })
+                            }
+                            .boxed_local()
+                        }
+                    },
+                    cx,
+                )
+            })
+            .await
+            .expect("session should load");
+        cx.run_until_parked();
+
+        let sessions = connection.sessions.borrow();
+        let session = sessions.get(&session_id).expect("loaded session");
+        assert_eq!(session.thread.entity_id(), thread.entity_id());
+        let options = session.config_options.as_ref().expect("loaded config");
+        assert_eq!(*options.config_options.borrow(), updated_options);
     }
 
     #[gpui::test]
@@ -4106,7 +4411,7 @@ exit 7
             _load_session_updates,
             load_session_gate,
             _keep_agent_alive,
-        ) = connect_fake_agent(cx).await;
+        ) = connect_fake_agent(None, cx).await;
 
         // Install a gate so the fake agent's `load_session` handler parks
         // before sending its response. We'll close the session while the
@@ -4181,6 +4486,313 @@ exit 7
     }
 
     #[gpui::test]
+    async fn test_abandoned_load_releases_connection_before_rpc_response(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        for poll_load in [false, true] {
+            let (
+                connection,
+                project,
+                load_count,
+                close_count,
+                _load_session_updates,
+                load_session_gate,
+                keep_agent_alive,
+            ) = connect_fake_agent(None, cx).await;
+
+            let (gate_tx, gate_rx) = async_channel::bounded::<()>(1);
+            *load_session_gate
+                .lock()
+                .expect("load_session_gate mutex poisoned") = Some(gate_rx);
+
+            let session_id = acp::SessionId::new("session-abandoned-during-load");
+            let work_dirs = util::path_list::PathList::new(&[std::path::Path::new("/a")]);
+            let load_task = cx.update(|cx| {
+                connection.clone().load_session(
+                    session_id.clone(),
+                    project.clone(),
+                    work_dirs,
+                    None,
+                    cx,
+                )
+            });
+
+            if poll_load {
+                cx.run_until_parked();
+                assert_eq!(load_count.load(Ordering::SeqCst), 1);
+            }
+            let weak_thread = connection
+                .sessions
+                .borrow()
+                .get(&session_id)
+                .expect("in-flight load should register its thread")
+                .thread
+                .clone();
+            let weak_connection = Rc::downgrade(&connection);
+
+            drop(load_task);
+            drop(connection);
+            release_dropped_entities(cx);
+            let connection_retained_before_response = weak_connection.upgrade().is_some();
+            let thread_retained_before_response = weak_thread.upgrade().is_some();
+            let close_count_before_response = close_count.load(Ordering::SeqCst);
+
+            // Releasing the connection can also tear down the peer's gated handler.
+            if let Err(error) = gate_tx.try_send(()) {
+                assert!(error.is_closed(), "unexpected gate send failure: {error}");
+            }
+            drop(gate_tx);
+            release_dropped_entities(cx);
+            drop(keep_agent_alive);
+            cx.run_until_parked();
+
+            assert_eq!(
+                close_count_before_response, 0,
+                "closing the ACP session must wait for the in-flight load response"
+            );
+            assert!(
+                !connection_retained_before_response && !thread_retained_before_response,
+                "abandoned load retained objects while the fake agent held its response: connection={connection_retained_before_response}, thread={thread_retained_before_response}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_reopening_session_waits_for_close_acknowledgement(cx: &mut gpui::TestAppContext) {
+        for abandon_load in [false, true] {
+            let (close_gate_tx, close_gate_rx) = async_channel::bounded::<()>(1);
+            let (
+                connection,
+                project,
+                load_count,
+                close_count,
+                load_session_updates,
+                load_session_gate,
+                _keep_agent_alive,
+            ) = connect_fake_agent(Some(close_gate_rx), cx).await;
+            let (load_gate_tx, load_gate_rx) = async_channel::bounded::<()>(1);
+            *load_session_gate
+                .lock()
+                .expect("load_session_gate mutex poisoned") = Some(load_gate_rx);
+            *load_session_updates
+                .lock()
+                .expect("load_session_updates mutex poisoned") =
+                vec![acp::SessionUpdate::AgentMessageChunk(
+                    acp::ContentChunk::new(acp::ContentBlock::Text(acp::TextContent::new(
+                        "old".to_string(),
+                    ))),
+                )];
+
+            let session_id = acp::SessionId::new("session-reopen-abandoned-load");
+            let work_dirs = util::path_list::PathList::new(&[std::path::Path::new("/a")]);
+            let first_load = cx.update(|cx| {
+                connection.clone().load_session(
+                    session_id.clone(),
+                    project.clone(),
+                    work_dirs.clone(),
+                    None,
+                    cx,
+                )
+            });
+            cx.run_until_parked();
+            assert_eq!(load_count.load(Ordering::SeqCst), 1);
+            let old_thread = connection
+                .sessions
+                .borrow()
+                .get(&session_id)
+                .expect("first load should register its replay recipient")
+                .thread
+                .clone();
+            let old_thread_id = old_thread.entity_id();
+
+            if abandon_load {
+                drop(first_load);
+            } else {
+                load_gate_tx.send(()).await.expect("load gate send failed");
+                let loaded_thread = first_load.await.expect("initial load failed");
+                drop(loaded_thread);
+            }
+            release_dropped_entities(cx);
+            assert!(
+                old_thread.upgrade().is_none(),
+                "old owner should release its thread"
+            );
+            *load_session_updates
+                .lock()
+                .expect("load_session_updates mutex poisoned") =
+                vec![acp::SessionUpdate::AgentMessageChunk(
+                    acp::ContentChunk::new(acp::ContentBlock::Text(acp::TextContent::new(
+                        "new".to_string(),
+                    ))),
+                )];
+            let replacement_load = cx.update(|cx| {
+                connection.clone().load_session(
+                    session_id.clone(),
+                    project.clone(),
+                    work_dirs.clone(),
+                    None,
+                    cx,
+                )
+            });
+            cx.run_until_parked();
+            assert_eq!(load_count.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                close_count.load(Ordering::SeqCst),
+                usize::from(!abandon_load)
+            );
+
+            if abandon_load {
+                load_gate_tx.send(()).await.expect("load gate send failed");
+            }
+            drop(load_gate_tx);
+            release_dropped_entities(cx);
+            assert_eq!(
+                close_count.load(Ordering::SeqCst),
+                1,
+                "old session should close before its replacement starts"
+            );
+            assert_eq!(
+                load_count.load(Ordering::SeqCst),
+                1,
+                "replacement must wait for the old close acknowledgement"
+            );
+            assert!(
+                connection
+                    .sessions
+                    .borrow()
+                    .get(&session_id)
+                    .is_none_or(|session| session.thread.entity_id() == old_thread_id),
+                "replacement thread must not be registered before close acknowledgement"
+            );
+
+            close_gate_tx
+                .send(())
+                .await
+                .expect("close gate send failed");
+            drop(close_gate_tx);
+            let timeout = cx
+                .background_executor
+                .timer(std::time::Duration::from_secs(5))
+                .fuse();
+            let replacement_load = replacement_load.fuse();
+            futures::pin_mut!(replacement_load, timeout);
+            let replacement = futures::select! {
+                result = replacement_load => result.expect("replacement load failed"),
+                _ = timeout => panic!("timed out waiting for replacement load"),
+            };
+            cx.run_until_parked();
+            assert_ne!(replacement.entity_id(), old_thread_id);
+            assert_eq!(load_count.load(Ordering::SeqCst), 2);
+            assert_eq!(close_count.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                connection
+                    .sessions
+                    .borrow()
+                    .get(&session_id)
+                    .map(|session| session.thread.entity_id()),
+                Some(replacement.entity_id()),
+                "old cleanup must not unregister the replacement"
+            );
+            let transcript = replacement.read_with(cx, |thread, cx| thread.to_markdown(cx));
+            assert_eq!(transcript, "## Assistant\n\nnew\n\n");
+
+            drop(replacement);
+            release_dropped_entities(cx);
+            assert_eq!(close_count.load(Ordering::SeqCst), 2);
+            assert!(!connection.sessions.borrow().contains_key(&session_id));
+            assert!(
+                !connection
+                    .pending_sessions
+                    .borrow()
+                    .contains_key(&session_id)
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_reopening_after_failed_load_discards_old_replay(cx: &mut gpui::TestAppContext) {
+        let (connection, project, load_count, close_count, _, _, _keep_agent_alive) =
+            connect_fake_agent(None, cx).await;
+        let session_id = acp::SessionId::new("session-failed-load");
+        let work_dirs = PathList::new(&[std::path::Path::new("/a")]);
+        let (response_tx, response_rx) = futures::channel::oneshot::channel::<()>();
+        let first_load = cx.update(|cx| {
+            connection.clone().open_or_create_session(
+                session_id.clone(),
+                project.clone(),
+                work_dirs.clone(),
+                None,
+                {
+                    let dispatch_tx = connection.dispatch_tx.clone();
+                    move |_, session_id, _| {
+                        async move {
+                            response_rx.await?;
+                            enqueue_notification(
+                                &dispatch_tx,
+                                acp::SessionNotification::new(
+                                    session_id,
+                                    acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                                        "old replay".into(),
+                                    )),
+                                ),
+                                handle_session_notification,
+                            );
+                            Err(anyhow!("load failed"))
+                        }
+                        .boxed_local()
+                    }
+                },
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        let old_thread = connection
+            .sessions
+            .borrow()
+            .get(&session_id)
+            .expect("loading session")
+            .thread
+            .clone();
+        drop(first_load);
+        release_dropped_entities(cx);
+        assert!(old_thread.upgrade().is_none());
+
+        let replacement_load = cx.update(|cx| {
+            connection
+                .clone()
+                .load_session(session_id.clone(), project, work_dirs, None, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(load_count.load(Ordering::SeqCst), 0);
+        response_tx
+            .send(())
+            .expect("failed load should still be waiting");
+
+        let replacement = replacement_load.await.expect("replacement should load");
+        cx.run_until_parked();
+        assert_ne!(replacement.entity_id(), old_thread.entity_id());
+        assert!(replacement.read_with(cx, |thread, _| thread.entries().is_empty()));
+        assert_eq!(load_count.load(Ordering::SeqCst), 1);
+        assert_eq!(close_count.load(Ordering::SeqCst), 0);
+        assert!(
+            !connection
+                .pending_sessions
+                .borrow()
+                .contains_key(&session_id)
+        );
+        assert_eq!(
+            connection
+                .sessions
+                .borrow()
+                .get(&session_id)
+                .expect("replacement session")
+                .thread
+                .entity_id(),
+            replacement.entity_id()
+        );
+    }
+
+    #[gpui::test]
     async fn test_dropping_one_loader_during_load_preserves_other_concurrent_loader(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -4192,7 +4804,7 @@ exit 7
             _load_session_updates,
             load_session_gate,
             _keep_agent_alive,
-        ) = connect_fake_agent(cx).await;
+        ) = connect_fake_agent(None, cx).await;
 
         let (gate_tx, gate_rx) = async_channel::bounded::<()>(1);
         *load_session_gate
@@ -4276,6 +4888,8 @@ exit 7
     }
 
     fn release_dropped_entities(cx: &mut gpui::TestAppContext) {
+        // Cancelled task futures may own entities until the executor drops them.
+        cx.run_until_parked();
         cx.update(|_| ());
         cx.run_until_parked();
     }
@@ -4751,6 +5365,11 @@ fn handle_session_notification(
     {
         session_list.send_info_update(notification.session_id.clone(), info_update.clone());
     }
+
+    // Abandoned loads can keep replaying until their wire operation settles.
+    let Some(_thread) = thread.upgrade() else {
+        return;
+    };
 
     // Pre-handle: if a ToolCall carries terminal_info, create/register a display-only terminal.
     if let acp::SessionUpdate::ToolCall(tc) = &notification.update {

@@ -23,7 +23,7 @@ gpui.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 anyhow.workspace = true
-block.workspace = true
+block2.workspace = true
 cocoa.workspace = true
 core-foundation.workspace = true
 core-video.workspace = true

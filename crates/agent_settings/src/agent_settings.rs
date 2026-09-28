@@ -264,7 +264,7 @@ impl AgentSettings {
         self.enabled && !DisableAiSettings::get_global(cx).disable_ai
     }
 
-    pub fn temperature_for_model(model: &Arc<dyn LanguageModel>, cx: &App) -> Option<f32> {
+    pub fn temperature_for_model(model: &LanguageModel, cx: &App) -> Option<f32> {
         let settings = Self::get_global(cx);
         for setting in settings.model_parameters.iter().rev() {
             if let Some(provider) = &setting.provider
@@ -302,7 +302,7 @@ impl AgentSettings {
 }
 
 pub fn language_model_to_selection(
-    model: &Arc<dyn LanguageModel>,
+    model: &LanguageModel,
     override_selection: Option<&LanguageModelSelection>,
 ) -> LanguageModelSelection {
     let provider = model.provider_id().0.to_string().into();
