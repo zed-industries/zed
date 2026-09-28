@@ -3309,8 +3309,10 @@ impl BackgroundScannerState {
             return Some(removed_entry.id);
         }
 
+        let existing_entry = self.snapshot.entry_for_path(path);
+
         // An excluded symlink can share this inode without representing a rename
-        if let Some(entry) = self.snapshot.entry_for_path(path)
+        if let Some(entry) = existing_entry
             && entry.inode == inode
         {
             return Some(entry.id);
@@ -3327,7 +3329,7 @@ impl BackgroundScannerState {
             (removed_entry.mtime == Some(mtime) || *removed_entry.path == *path)
                 .then_some(removed_entry.id)
         } else {
-            Some(self.snapshot.entry_for_path(path)?.id)
+            Some(existing_entry?.id)
         }
     }
 
