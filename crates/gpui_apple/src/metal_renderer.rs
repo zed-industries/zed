@@ -1,6 +1,6 @@
 use crate::metal_atlas::MetalAtlas;
 use anyhow::{Context as _, Result};
-use block::ConcreteBlock;
+use block2::RcBlock;
 use cocoa::{
     base::{NO, YES},
     foundation::{NSSize, NSUInteger},
@@ -12,6 +12,7 @@ use gpui::{
 };
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
 use image::RgbaImage;
+use objc2::runtime::AnyObject;
 
 use core_foundation::base::TCFType;
 use core_video::{
@@ -520,13 +521,15 @@ impl MetalRenderer {
 
         let instance_buffer_pool = self.instance_buffer_pool.clone();
         let instance_buffer = Cell::new(Some(writer.finish()));
-        let block = ConcreteBlock::new(move |_| {
+        let block = RcBlock::new(move |_: ptr::NonNull<AnyObject>| {
             if let Some(instance_buffer) = instance_buffer.take() {
                 instance_buffer_pool.lock().release(instance_buffer);
             }
         });
-        let block = block.copy();
-        command_buffer.add_completed_handler(&block);
+        // SAFETY: Both pointee types are opaque views of the same Objective-C block pointer ABI.
+        unsafe {
+            command_buffer.add_completed_handler(&*RcBlock::as_ptr(&block).cast());
+        }
 
         Ok(command_buffer)
     }
@@ -575,35 +578,40 @@ impl MetalRenderer {
             anyhow::bail!("Invalid size for render_scene_to_image: {:?}", size);
         }
 
-        // Update path intermediate textures for this size
-        self.update_path_intermediate_textures(size);
+        // Headless callers do not have a Cocoa event-loop pool to release
+        // autoreleased command buffers and render-pass descriptors.
+        objc2::rc::autoreleasepool(|_| {
+            // Update path intermediate textures for this size
+            self.update_path_intermediate_textures(size);
 
-        // Create an offscreen texture as render target
-        let texture_descriptor = metal::TextureDescriptor::new();
-        texture_descriptor.set_width(size.width.0 as u64);
-        texture_descriptor.set_height(size.height.0 as u64);
-        texture_descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
-        texture_descriptor
-            .set_usage(metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead);
-        texture_descriptor.set_storage_mode(metal::MTLStorageMode::Managed);
-        let target_texture = self.device.new_texture(&texture_descriptor);
+            // Create an offscreen texture as render target
+            let texture_descriptor = metal::TextureDescriptor::new();
+            texture_descriptor.set_width(size.width.0 as u64);
+            texture_descriptor.set_height(size.height.0 as u64);
+            texture_descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+            texture_descriptor.set_usage(
+                metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
+            );
+            texture_descriptor.set_storage_mode(metal::MTLStorageMode::Managed);
+            let target_texture = self.device.new_texture(&texture_descriptor);
 
-        let command_buffer = self.render_frame(scene, &target_texture, size)?;
+            let command_buffer = self.render_frame(scene, &target_texture, size)?;
 
-        // On discrete GPUs (non-unified memory), Managed textures require an
-        // explicit blit synchronize before the CPU can read back the rendered
-        // data. Without this, get_bytes returns stale zeros.
-        if !self.is_unified_memory {
-            let blit = command_buffer.new_blit_command_encoder();
-            blit.synchronize_resource(&target_texture);
-            blit.end_encoding();
-        }
+            // On discrete GPUs (non-unified memory), Managed textures require an
+            // explicit blit synchronize before the CPU can read back the rendered
+            // data. Without this, get_bytes returns stale zeros.
+            if !self.is_unified_memory {
+                let blit = command_buffer.new_blit_command_encoder();
+                blit.synchronize_resource(&target_texture);
+                blit.end_encoding();
+            }
 
-        // Commit and wait for completion
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
+            // Commit and wait for completion
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
 
-        read_texture_to_image(&target_texture)
+            read_texture_to_image(&target_texture)
+        })
     }
 
     /// Renders a scene to a reused offscreen texture without reading pixels
@@ -619,33 +627,35 @@ impl MetalRenderer {
             anyhow::bail!("Invalid size for render_scene: {:?}", size);
         }
 
-        self.update_path_intermediate_textures(size);
+        objc2::rc::autoreleasepool(|_| {
+            self.update_path_intermediate_textures(size);
 
-        let needs_new_target = self.headless_render_target.as_ref().is_none_or(|texture| {
-            texture.width() != size.width.0 as u64 || texture.height() != size.height.0 as u64
-        });
-        if needs_new_target {
-            let texture_descriptor = metal::TextureDescriptor::new();
-            texture_descriptor.set_width(size.width.0 as u64);
-            texture_descriptor.set_height(size.height.0 as u64);
-            texture_descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
-            texture_descriptor.set_usage(
-                metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
-            );
-            texture_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
-            self.headless_render_target = Some(self.device.new_texture(&texture_descriptor));
-        }
-        let target_texture = self
-            .headless_render_target
-            .clone()
-            .expect("just ensured the render target exists");
+            let needs_new_target = self.headless_render_target.as_ref().is_none_or(|texture| {
+                texture.width() != size.width.0 as u64 || texture.height() != size.height.0 as u64
+            });
+            if needs_new_target {
+                let texture_descriptor = metal::TextureDescriptor::new();
+                texture_descriptor.set_width(size.width.0 as u64);
+                texture_descriptor.set_height(size.height.0 as u64);
+                texture_descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+                texture_descriptor.set_usage(
+                    metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
+                );
+                texture_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
+                self.headless_render_target = Some(self.device.new_texture(&texture_descriptor));
+            }
+            let target_texture = self
+                .headless_render_target
+                .clone()
+                .expect("just ensured the render target exists");
 
-        let command_buffer = self.render_frame(scene, &target_texture, size)?;
+            let command_buffer = self.render_frame(scene, &target_texture, size)?;
 
-        // Commit without waiting, mirroring presentation to a real window where
-        // the CPU doesn't block on the GPU.
-        command_buffer.commit();
-        Ok(())
+            // Commit without waiting, mirroring presentation to a real window where
+            // the CPU doesn't block on the GPU.
+            command_buffer.commit();
+            Ok(())
+        })
     }
 
     fn draw_primitives_to_texture(
@@ -1019,7 +1029,9 @@ impl MetalRenderer {
             return;
         }
 
-        let texture = self.sprite_atlas.metal_texture(texture_id);
+        let Some(texture) = self.sprite_atlas.metal_texture(texture_id) else {
+            return;
+        };
         let texture_size = size(
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),
@@ -1073,7 +1085,9 @@ impl MetalRenderer {
             return;
         }
 
-        let texture = self.sprite_atlas.metal_texture(texture_id);
+        let Some(texture) = self.sprite_atlas.metal_texture(texture_id) else {
+            return;
+        };
         let texture_size = size(
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),

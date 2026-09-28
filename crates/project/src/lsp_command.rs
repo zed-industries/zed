@@ -13,7 +13,6 @@ use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use clock::Global;
 use collections::HashMap;
-use futures::future;
 use gpui::{App, AsyncApp, Entity, SharedString, Task, TaskExt, prelude::FluentBuilder};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext,
@@ -3277,45 +3276,21 @@ impl LspCommand for GetCompletions {
                             return false;
                         }
 
-                        let default_edit_range = lsp_defaults.as_ref().and_then(|lsp_defaults| {
-                            lsp_defaults
-                                .edit_range
-                                .as_ref()
-                                .and_then(|range| match range {
-                                    CompletionListItemDefaultsEditRange::Range(r) => Some(r),
-                                    _ => None,
-                                })
-                        });
+                        let range = range_for_token
+                            .get_or_insert_with(|| {
+                                let offset = self.position.to_offset(&snapshot);
+                                let (range, kind) = snapshot
+                                    .surrounding_word(offset, Some(CharScopeContext::Completion));
+                                let range = if kind == Some(CharKind::Word) {
+                                    range
+                                } else {
+                                    offset..offset
+                                };
 
-                        let range = if let Some(range) = default_edit_range {
-                            let range = range_from_lsp(*range);
-                            let start = snapshot.clip_point_utf16(range.start, Bias::Left);
-                            let end = snapshot.clip_point_utf16(range.end, Bias::Left);
-                            if start != range.start.0 || end != range.end.0 {
-                                log::info!("completion out of expected range");
-                                return false;
-                            }
-
-                            snapshot.anchor_before(start)..snapshot.anchor_after(end)
-                        } else {
-                            range_for_token
-                                .get_or_insert_with(|| {
-                                    let offset = self.position.to_offset(&snapshot);
-                                    let (range, kind) = snapshot.surrounding_word(
-                                        offset,
-                                        Some(CharScopeContext::Completion),
-                                    );
-                                    let range = if kind == Some(CharKind::Word) {
-                                        range
-                                    } else {
-                                        offset..offset
-                                    };
-
-                                    snapshot.anchor_before(range.start)
-                                        ..snapshot.anchor_after(range.end)
-                                })
-                                .clone()
-                        };
+                                snapshot.anchor_before(range.start)
+                                    ..snapshot.anchor_after(range.end)
+                            })
+                            .clone();
 
                         // We already know text_edit is None here
                         let text = lsp_completion
@@ -3324,9 +3299,10 @@ impl LspCommand for GetCompletions {
                             .unwrap_or(&lsp_completion.label)
                             .clone();
 
+                        let insert_range = Some(range.start..snapshot.anchor_after(self.position));
                         ParsedCompletionEdit {
                             replace_range: range,
-                            insert_range: None,
+                            insert_range,
                             new_text: text,
                         }
                     }
@@ -3910,38 +3886,34 @@ impl LspCommand for OnTypeFormatting {
 }
 
 impl InlayHints {
-    pub async fn lsp_to_project_hint(
+    pub fn lsp_to_project_hint(
         lsp_hint: lsp::InlayHint,
-        buffer_handle: &Entity<Buffer>,
+        snapshot: &BufferSnapshot,
         server_id: LanguageServerId,
         resolve_state: ResolveState,
         force_no_type_left_padding: bool,
-        cx: &mut AsyncApp,
-    ) -> anyhow::Result<InlayHint> {
+    ) -> InlayHint {
         let kind = lsp_hint.kind.and_then(|kind| match kind {
             lsp::InlayHintKind::TYPE => Some(InlayHintKind::Type),
             lsp::InlayHintKind::PARAMETER => Some(InlayHintKind::Parameter),
             _ => None,
         });
 
-        let position = buffer_handle.read_with(cx, |buffer, _| {
-            let position = buffer.clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
-            if kind == Some(InlayHintKind::Parameter) {
-                buffer.anchor_before(position)
-            } else {
-                buffer.anchor_after(position)
-            }
-        });
-        let label = Self::lsp_inlay_label_to_project(lsp_hint.label, server_id)
-            .await
-            .context("lsp to project inlay hint conversion")?;
+        let position = snapshot.clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
+        let position = if kind == Some(InlayHintKind::Parameter) {
+            snapshot.anchor_before(position)
+        } else {
+            snapshot.anchor_after(position)
+        };
+
+        let label = Self::lsp_inlay_label_to_project(lsp_hint.label, server_id);
         let padding_left = if force_no_type_left_padding && kind == Some(InlayHintKind::Type) {
             false
         } else {
             lsp_hint.padding_left.unwrap_or(false)
         };
 
-        Ok(InlayHint {
+        InlayHint {
             position,
             padding_left,
             padding_right: lsp_hint.padding_right.unwrap_or(false),
@@ -3960,13 +3932,13 @@ impl InlayHints {
                 }
             }),
             resolve_state,
-        })
+        }
     }
 
-    async fn lsp_inlay_label_to_project(
+    fn lsp_inlay_label_to_project(
         lsp_label: lsp::InlayHintLabel,
         server_id: LanguageServerId,
-    ) -> anyhow::Result<InlayHintLabel> {
+    ) -> InlayHintLabel {
         let label = match lsp_label {
             lsp::InlayHintLabel::String(s) => InlayHintLabel::String(s),
             lsp::InlayHintLabel::LabelParts(lsp_parts) => {
@@ -3989,16 +3961,18 @@ impl InlayHints {
                             }
                         }),
                         location: Some(server_id).zip(lsp_part.location),
+                        command: Some(server_id).zip(lsp_part.command),
                     });
                 }
                 InlayHintLabel::LabelParts(parts)
             }
         };
 
-        Ok(label)
+        label
     }
 
     pub fn project_to_proto_hint(response_hint: InlayHint) -> proto::InlayHint {
+        let position = response_hint.position;
         let (state, lsp_resolve_state) = match response_hint.resolve_state {
             ResolveState::Resolved => (0, None),
             ResolveState::CanResolve(server_id, resolve_data) => (
@@ -4046,6 +4020,12 @@ impl InlayHints {
                                 location_range_start,
                                 location_range_end,
                                 language_server_id: label_part.location.as_ref().map(|(server_id, _)| server_id.0 as u64),
+                                command: label_part.command.map(|(server_id, command)| LspStore::serialize_code_action(&CodeAction {
+                                    server_id,
+                                    range: position..position,
+                                    lsp_action: LspAction::Command(command),
+                                    resolved: true,
+                                })),
                             }}).collect()
                         })
                     }
@@ -4164,6 +4144,23 @@ impl InlayHints {
                                     None => None,
                                 }
                             },
+                            command: match part.command {
+                                Some(command) => {
+                                    let action = LspStore::deserialize_code_action(command)
+                                        .context("invalid command in inlay hint label part")?;
+                                    match action.lsp_action {
+                                        LspAction::Command(command) => {
+                                            Some((action.server_id, command))
+                                        }
+                                        LspAction::Action(_) | LspAction::CodeLens(_) => {
+                                            anyhow::bail!(
+                                                "unexpected non-command action in inlay hint label part"
+                                            )
+                                        }
+                                    }
+                                }
+                                None => None,
+                            },
                         });
                     }
 
@@ -4249,7 +4246,7 @@ impl InlayHints {
                                 })
                             }),
                             location: part.location.map(|(_, location)| location),
-                            command: None,
+                            command: part.command.map(|(_, command)| command),
                         })
                         .collect(),
                 ),
@@ -4349,31 +4346,30 @@ impl LspCommand for InlayHints {
             )
         });
 
-        let hints = message.unwrap_or_default().into_iter().map(|lsp_hint| {
-            let resolve_state = if can_resolve {
-                ResolveState::CanResolve(lsp_server.server_id(), lsp_hint.data.clone())
-            } else {
-                ResolveState::Resolved
-            };
+        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+        let last_row = snapshot.max_point().row;
+        let hints = message
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|lsp_hint| lsp_hint.position.line <= last_row)
+            .map(|lsp_hint| {
+                let resolve_state = if can_resolve {
+                    ResolveState::CanResolve(lsp_server.server_id(), lsp_hint.data.clone())
+                } else {
+                    ResolveState::Resolved
+                };
 
-            let buffer = buffer.clone();
-            cx.spawn(async move |cx| {
                 InlayHints::lsp_to_project_hint(
                     lsp_hint,
-                    &buffer,
+                    &snapshot,
                     server_id,
                     resolve_state,
                     force_no_type_left_padding,
-                    cx,
                 )
-                .await
             })
-        });
-        future::join_all(hints)
-            .await
-            .into_iter()
-            .collect::<anyhow::Result<_>>()
-            .context("lsp to project inlay hints conversion")
+            .collect();
+
+        Ok(hints)
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::InlayHints {

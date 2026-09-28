@@ -118,6 +118,11 @@ impl AgentDiffPane {
                 cx.subscribe(&thread, |this, _thread, event, cx| {
                     this.handle_acp_thread_event(event, cx)
                 }),
+                cx.subscribe(&editor, |_, _, event: &EditorEvent, cx| {
+                    if event == &(EditorEvent::SelectionsChanged { local: true }) {
+                        cx.emit(event.clone())
+                    }
+                }),
             ],
             multibuffer,
             editor,
@@ -1465,6 +1470,7 @@ impl AgentDiff {
             AcpThreadEvent::TitleUpdated
             | AcpThreadEvent::StatusChanged
             | AcpThreadEvent::TokenUsageUpdated
+            | AcpThreadEvent::NoticesUpdated
             | AcpThreadEvent::SubagentSpawned(_)
             | AcpThreadEvent::EntriesRemoved(_)
             | AcpThreadEvent::ToolAuthorizationRequested(_)

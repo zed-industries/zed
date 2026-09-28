@@ -1797,7 +1797,7 @@ impl ExtensionStore {
                         let config = fs.load(&language_config_path).await.with_context(|| {
                             format!("loading language config from {language_config_path:?}")
                         })?;
-                        ::toml::from_str::<LanguageConfig>(&config).map_err(anyhow::Error::from)
+                        LanguageConfig::from_toml(&config).map_err(anyhow::Error::from)
                     }
                 };
                 let query_files = async {
@@ -2335,7 +2335,7 @@ async fn load_plugin_language(
         let config_path = language_path.join(LanguageConfig::FILE_NAME);
         async move {
             let contents = fs.load(&config_path).await?;
-            toml::from_str::<LanguageConfig>(&contents).map_err(anyhow::Error::from)
+            LanguageConfig::from_toml(&contents).map_err(anyhow::Error::from)
         }
     };
     let context_provider = {
