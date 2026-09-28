@@ -2456,6 +2456,7 @@ impl Window {
     pub(crate) fn dispatch_keystroke_observers(
         &mut self,
         keystroke: &Keystroke,
+        character_input_preferred: bool,
         action: Option<&dyn Action>,
         context_stack: Vec<KeyContext>,
         cx: &mut App,
@@ -2464,6 +2465,7 @@ impl Window {
             (callback)(
                 &KeystrokeEvent {
                     keystroke: keystroke.clone(),
+                    character_input_preferred,
                     action: action.map(|action| action.boxed_clone()),
                     context_stack: context_stack.clone(),
                 },
@@ -2476,6 +2478,7 @@ impl Window {
     pub(crate) fn dispatch_keystroke_interceptors(
         &mut self,
         keystroke: &Keystroke,
+        character_input_preferred: bool,
         context_stack: Vec<KeyContext>,
         cx: &mut App,
     ) {
@@ -2485,6 +2488,7 @@ impl Window {
                 (callback)(
                     &KeystrokeEvent {
                         keystroke: keystroke.clone(),
+                        character_input_preferred,
                         action: None,
                         context_stack: context_stack.clone(),
                     },
@@ -5799,6 +5803,20 @@ impl Window {
         }
     }
 
+    fn character_input_preferred(&mut self, event: &dyn Any, cx: &mut App) -> bool {
+        event
+            .downcast_ref::<KeyDownEvent>()
+            .filter(|key_down_event| key_down_event.prefer_character_input)
+            .and_then(|_| self.platform_window.take_input_handler())
+            .is_some_and(|mut input_handler| {
+                let accepts = input_handler.accepts_text_input(self, cx);
+                self.platform_window.set_input_handler(input_handler);
+                // If modifiers are not excessive (e.g. AltGr), and the input handler is accepting text input,
+                // we prefer the text input over bindings.
+                accepts
+            })
+    }
+
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
         if self.invalidator.is_dirty() {
             self.draw(cx).clear(cx);
@@ -5853,16 +5871,31 @@ impl Window {
         }
 
         let Some(keystroke) = keystroke else {
-            self.finish_dispatch_key_event(event, None, dispatch_path, self.context_stack(), cx);
+            self.finish_dispatch_key_event(
+                event,
+                None,
+                false,
+                dispatch_path,
+                self.context_stack(),
+                cx,
+            );
             return;
         };
 
+        let character_input_preferred = self.character_input_preferred(event, cx);
+
         cx.propagate_event = true;
-        self.dispatch_keystroke_interceptors(&keystroke, self.context_stack(), cx);
+        self.dispatch_keystroke_interceptors(
+            &keystroke,
+            character_input_preferred,
+            self.context_stack(),
+            cx,
+        );
         if !cx.propagate_event {
             self.finish_dispatch_key_event(
                 event,
                 Some(&keystroke),
+                character_input_preferred,
                 dispatch_path,
                 self.context_stack(),
                 cx,
@@ -5924,28 +5957,15 @@ impl Window {
             return;
         }
 
-        let skip_bindings = event
-            .downcast_ref::<KeyDownEvent>()
-            .filter(|key_down_event| key_down_event.prefer_character_input)
-            .map(|_| {
-                self.platform_window
-                    .take_input_handler()
-                    .map_or(false, |mut input_handler| {
-                        let accepts = input_handler.accepts_text_input(self, cx);
-                        self.platform_window.set_input_handler(input_handler);
-                        // If modifiers are not excessive (e.g. AltGr), and the input handler is accepting text input,
-                        // we prefer the text input over bindings.
-                        accepts
-                    })
-            })
-            .unwrap_or(false);
-
-        if !skip_bindings {
+        // Interceptors or replayed actions may have changed whether the input handler accepts text.
+        let character_input_preferred = self.character_input_preferred(event, cx);
+        if !character_input_preferred {
             for binding in match_result.bindings {
                 self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
                 if !cx.propagate_event {
                     self.dispatch_keystroke_observers(
                         &keystroke,
+                        character_input_preferred,
                         Some(binding.action.as_ref()),
                         match_result.context_stack,
                         cx,
@@ -5959,6 +5979,7 @@ impl Window {
         self.finish_dispatch_key_event(
             event,
             Some(&keystroke),
+            character_input_preferred,
             dispatch_path,
             match_result.context_stack,
             cx,
@@ -6008,6 +6029,7 @@ impl Window {
         &mut self,
         event: &dyn Any,
         recognized_keystroke: Option<&Keystroke>,
+        character_input_preferred: bool,
         dispatch_path: SmallVec<[DispatchNodeId; 32]>,
         context_stack: Vec<KeyContext>,
         cx: &mut App,
@@ -6023,7 +6045,13 @@ impl Window {
         }
 
         if let Some(keystroke) = recognized_keystroke {
-            self.dispatch_keystroke_observers(keystroke, None, context_stack, cx);
+            self.dispatch_keystroke_observers(
+                keystroke,
+                character_input_preferred,
+                None,
+                context_stack,
+                cx,
+            );
         }
     }
 
@@ -6227,6 +6255,7 @@ impl Window {
                 if !cx.propagate_event {
                     self.dispatch_keystroke_observers(
                         &replay.keystroke,
+                        false,
                         Some(binding.action.as_ref()),
                         Vec::default(),
                         cx,

@@ -634,9 +634,9 @@ mod tests {
 
     use crate::{
         Action, ActionRegistry, App, Bounds, Context, DispatchPhase, DispatchTree, FocusHandle,
-        InputHandler, IntoElement, KeyBinding, KeyContext, Keymap, Modifiers, Pixels,
-        PlatformWindow, Point, Render, Subscription, TestAppContext, UTF16Selection, Unbind,
-        VisualContext, VisualTestContext, Window,
+        InputHandler, IntoElement, KeyBinding, KeyContext, KeyDownEvent, Keymap, Modifiers, Pixels,
+        PlatformInput, PlatformWindow, Point, Render, Subscription, TestAppContext, UTF16Selection,
+        Unbind, VisualContext, VisualTestContext, Window,
     };
 
     actions!(dispatch_test, [TestAction, SecondaryTestAction]);
@@ -661,6 +661,7 @@ mod tests {
         focus_handle: FocusHandle,
         text: Rc<RefCell<String>>,
         action_count: Rc<Cell<usize>>,
+        accepts_text_input: Rc<Cell<bool>>,
     }
 
     impl PendingTextInputTestView {
@@ -669,6 +670,7 @@ mod tests {
                 focus_handle: cx.focus_handle(),
                 text: Rc::default(),
                 action_count: Rc::default(),
+                accepts_text_input: Rc::new(Cell::new(true)),
             }
         }
     }
@@ -742,6 +744,10 @@ mod tests {
     }
 
     impl InputHandler for PendingTextInputTestView {
+        fn accepts_text_input(&mut self, _: &mut Window, _: &mut App) -> bool {
+            self.accepts_text_input.get()
+        }
+
         fn selected_text_range(
             &mut self,
             _: bool,
@@ -1578,6 +1584,160 @@ mod tests {
             }]
         );
         assert_eq!(action_count.get(), 1);
+    }
+
+    #[crate::test]
+    fn test_keystroke_character_input_preference(cx: &mut TestAppContext) {
+        let (test, cx) = cx.add_window_view(|_, cx| PendingTextInputTestView::new(cx));
+        test.update_in(cx, |test, window, cx| {
+            window.focus(&test.focus_handle, cx);
+            window.activate_window();
+            cx.bind_keys([KeyBinding::new("ctrl-alt-a", TestAction, Some("Terminal"))]);
+        });
+        let intercepted_preferences = Rc::new(RefCell::new(Vec::new()));
+        let observed_preferences = Rc::new(RefCell::new(Vec::new()));
+        let _interceptor = cx.update(|_, cx| {
+            cx.intercept_keystrokes({
+                let intercepted_preferences = intercepted_preferences.clone();
+                move |event, _, _| {
+                    intercepted_preferences
+                        .borrow_mut()
+                        .push(event.character_input_preferred);
+                }
+            })
+        });
+        let _observer = cx.update(|_, cx| {
+            cx.observe_keystrokes({
+                let observed_preferences = observed_preferences.clone();
+                move |event, _, _| {
+                    observed_preferences
+                        .borrow_mut()
+                        .push((event.character_input_preferred, event.action.is_some()));
+                }
+            })
+        });
+
+        for (prefer_character_input, accepts_text_input) in
+            [(true, true), (false, true), (true, false), (false, false)]
+        {
+            test.update(cx, |test, _| {
+                test.accepts_text_input.set(accepts_text_input);
+                test.action_count.set(0);
+            });
+            intercepted_preferences.borrow_mut().clear();
+            observed_preferences.borrow_mut().clear();
+            let result = cx.update(|window, cx| {
+                window.dispatch_event(
+                    PlatformInput::KeyDown(KeyDownEvent {
+                        keystroke: Keystroke {
+                            key_char: Some("ą".into()),
+                            ..Keystroke::parse("ctrl-alt-a").expect("valid keystroke")
+                        },
+                        is_held: false,
+                        prefer_character_input,
+                    }),
+                    cx,
+                )
+            });
+            let character_input_preferred = prefer_character_input && accepts_text_input;
+            assert_eq!(result.propagate, character_input_preferred);
+            assert_eq!(
+                intercepted_preferences.borrow().as_slice(),
+                &[character_input_preferred]
+            );
+            assert_eq!(
+                observed_preferences.borrow().as_slice(),
+                &[(character_input_preferred, !character_input_preferred)]
+            );
+            test.read_with(cx, |test, _| {
+                assert_eq!(
+                    test.action_count.get(),
+                    usize::from(!character_input_preferred)
+                );
+            });
+        }
+    }
+
+    #[crate::test]
+    fn test_character_input_preference_rechecked_after_interception(cx: &mut TestAppContext) {
+        let (test, cx) = cx.add_window_view(|_, cx| PendingTextInputTestView::new(cx));
+        test.update_in(cx, |test, window, cx| {
+            window.focus(&test.focus_handle, cx);
+            window.activate_window();
+            cx.bind_keys([KeyBinding::new("ctrl-alt-a", TestAction, Some("Terminal"))]);
+        });
+        let accepts_text_input = test.read_with(cx, |test, _| test.accepts_text_input.clone());
+        let _interceptor = cx.update(|_, cx| {
+            cx.intercept_keystrokes({
+                let accepts_text_input = accepts_text_input.clone();
+                move |event, _, _| {
+                    assert_eq!(event.character_input_preferred, accepts_text_input.get());
+                    accepts_text_input.set(!accepts_text_input.get());
+                }
+            })
+        });
+
+        for initially_accepts_text_input in [true, false] {
+            accepts_text_input.set(initially_accepts_text_input);
+            test.update(cx, |test, _| test.action_count.set(0));
+            let result = cx.update(|window, cx| {
+                window.dispatch_event(
+                    PlatformInput::KeyDown(KeyDownEvent {
+                        keystroke: Keystroke {
+                            key_char: Some("ą".into()),
+                            ..Keystroke::parse("ctrl-alt-a").expect("valid keystroke")
+                        },
+                        is_held: false,
+                        prefer_character_input: true,
+                    }),
+                    cx,
+                )
+            });
+            assert_eq!(result.propagate, !initially_accepts_text_input);
+            test.read_with(cx, |test, _| {
+                assert_eq!(
+                    test.action_count.get(),
+                    usize::from(initially_accepts_text_input)
+                );
+            });
+        }
+    }
+
+    #[crate::test]
+    fn test_keystroke_interceptors_can_consume_preferred_character_input(cx: &mut TestAppContext) {
+        let (test, cx) = cx.add_window_view(|_, cx| PendingTextInputTestView::new(cx));
+        test.update_in(cx, |test, window, cx| {
+            window.focus(&test.focus_handle, cx);
+            window.activate_window();
+        });
+        let intercepted = Rc::new(Cell::new(false));
+        let _interceptor = cx.update(|_, cx| {
+            cx.intercept_keystrokes({
+                let intercepted = intercepted.clone();
+                move |event, _, cx| {
+                    assert!(event.character_input_preferred);
+                    intercepted.set(true);
+                    cx.stop_propagation();
+                }
+            })
+        });
+
+        let result = cx.update(|window, cx| {
+            window.dispatch_event(
+                PlatformInput::KeyDown(KeyDownEvent {
+                    keystroke: Keystroke {
+                        key_char: Some("ą".into()),
+                        ..Keystroke::parse("ctrl-alt-a").expect("valid keystroke")
+                    },
+                    is_held: false,
+                    prefer_character_input: true,
+                }),
+                cx,
+            )
+        });
+        assert!(intercepted.get());
+        assert!(!result.propagate);
+        assert!(test.read_with(cx, |test, _| test.text.borrow().is_empty()));
     }
 
     #[crate::test]
