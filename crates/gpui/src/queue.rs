@@ -163,13 +163,17 @@ impl<T> Drop for PriorityQueueSender<T> {
             .sender_count
             .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
         if previous == 1 {
-            // Taking the lock orders this wake after any receiver that read the old
-            // count is already waiting, so none of them misses it.
-            let _queues = self
-                .state
-                .queues
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
+            // A receiver checks the sender count and starts waiting under the queue lock,
+            // atomically. Acquiring that lock once, even with nothing to do under it,
+            // means any receiver that saw a live sender is already waiting, so the
+            // notification below reaches it; without this, a receiver between its check
+            // and its wait would miss the wake-up and block forever.
+            drop(
+                self.state
+                    .queues
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner),
+            );
             self.state.condvar.notify_all();
         }
     }
