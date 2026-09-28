@@ -128,6 +128,8 @@ pub struct Minimap {
     pub thumb_border: MinimapThumbBorder,
     pub current_line_highlight: Option<CurrentLineHighlight>,
     pub max_width_columns: num::NonZeroU32,
+    pub git_diff: bool,
+    pub diagnostics: ScrollbarDiagnostics,
 }
 
 impl Minimap {
@@ -225,6 +227,18 @@ impl Settings for EditorSettings {
         let drag_and_drop_selection = editor.drag_and_drop_selection.unwrap();
         let sticky_scroll = editor.sticky_scroll.unwrap();
         let file_diff = content.git.as_ref().unwrap().file_diff.unwrap();
+        let git_diff_enabled = content
+            .git
+            .as_ref()
+            .unwrap()
+            .enabled
+            .unwrap()
+            .is_git_diff_enabled();
+        let scrollbar_git_diff = scrollbar.git_diff.unwrap();
+        let minimap_git_diff = minimap.git_diff.unwrap_or(scrollbar_git_diff) && git_diff_enabled;
+        let scrollbar_git_diff = scrollbar_git_diff && git_diff_enabled;
+        let scrollbar_diagnostics = scrollbar.diagnostics.unwrap();
+        let minimap_diagnostics = minimap.diagnostics.unwrap_or(scrollbar_diagnostics);
         Self {
             cursor_blink: editor.cursor_blink.unwrap(),
             cursor_shape: editor.cursor_shape.map(Into::into),
@@ -248,18 +262,11 @@ impl Settings for EditorSettings {
             },
             scrollbar: Scrollbar {
                 show: scrollbar.show.map(ui_scrollbar_settings_from_raw).unwrap(),
-                git_diff: scrollbar.git_diff.unwrap()
-                    && content
-                        .git
-                        .as_ref()
-                        .unwrap()
-                        .enabled
-                        .unwrap()
-                        .is_git_diff_enabled(),
+                git_diff: scrollbar_git_diff,
                 selected_text: scrollbar.selected_text.unwrap(),
                 selected_symbol: scrollbar.selected_symbol.unwrap(),
                 search_results: scrollbar.search_results.unwrap(),
-                diagnostics: scrollbar.diagnostics.unwrap(),
+                diagnostics: scrollbar_diagnostics,
                 cursors: scrollbar.cursors.unwrap(),
                 axes: ScrollbarAxes {
                     horizontal: axes.horizontal.unwrap(),
@@ -273,6 +280,8 @@ impl Settings for EditorSettings {
                 thumb_border: minimap.thumb_border.unwrap(),
                 current_line_highlight: minimap.current_line_highlight,
                 max_width_columns: minimap.max_width_columns.unwrap(),
+                git_diff: minimap_git_diff,
+                diagnostics: minimap_diagnostics,
             },
             gutter: Gutter {
                 min_line_number_digits: gutter.min_line_number_digits.unwrap(),
@@ -364,5 +373,53 @@ pub fn ui_scrollbar_settings_from_raw(
         settings::ShowScrollbar::System => ShowScrollbar::System,
         settings::ShowScrollbar::Always => ShowScrollbar::Always,
         settings::ShowScrollbar::Never => ShowScrollbar::Never,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editor_tests::init_test;
+    use gpui::{TestAppContext, UpdateGlobal};
+    use settings::SettingsStore;
+
+    #[gpui::test]
+    fn test_minimap_marker_settings_inherit_and_override_scrollbar(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let scrollbar = settings.editor.scrollbar.get_or_insert_default();
+                    scrollbar.git_diff = Some(false);
+                    scrollbar.diagnostics = Some(ScrollbarDiagnostics::Warning);
+                    let minimap = settings.editor.minimap.get_or_insert_default();
+                    minimap.git_diff = None;
+                    minimap.diagnostics = None;
+                });
+            });
+
+            let editor_settings = EditorSettings::get_global(cx);
+            assert!(!editor_settings.minimap.git_diff);
+            assert_eq!(
+                editor_settings.minimap.diagnostics,
+                ScrollbarDiagnostics::Warning
+            );
+
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let minimap = settings.editor.minimap.get_or_insert_default();
+                    minimap.git_diff = Some(true);
+                    minimap.diagnostics = Some(ScrollbarDiagnostics::Information);
+                });
+            });
+
+            let editor_settings = EditorSettings::get_global(cx);
+            assert!(editor_settings.minimap.git_diff);
+            assert_eq!(
+                editor_settings.minimap.diagnostics,
+                ScrollbarDiagnostics::Information
+            );
+        });
     }
 }
