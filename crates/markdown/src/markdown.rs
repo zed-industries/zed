@@ -1991,10 +1991,8 @@ impl MarkdownElement {
         builder.push_image_child(image_element);
     }
 
-    /// Renders an image that neither the `data:` decoder nor the resolver could turn into
-    /// an `ImageSource` as a link to its destination, labelled with the alt text, instead of
-    /// dropping to bare alt text. Returns whether a link was opened that the matching
-    /// `MarkdownTagEnd::Image` must close.
+    /// Returns whether a link was opened that the matching `MarkdownTagEnd::Image`
+    /// must close.
     fn push_unresolved_image_link(
         &self,
         builder: &mut MarkdownElementBuilder,
