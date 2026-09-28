@@ -2602,6 +2602,9 @@
         "allowed": true,
       },
     },
+    "Typst": {
+      "allow_rewrap": "anywhere",
+    },
     "SystemVerilog": {
       "language_servers": ["slang", "!verible", "!veridian", "!svls", "..."],
       "use_on_type_format": false,
