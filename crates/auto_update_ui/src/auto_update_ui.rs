@@ -47,7 +47,7 @@ pub fn init(cx: &mut App) {
             ReleaseChannel::Nightly | ReleaseChannel::Dev
         ) {
             workspace.register_action(|_workspace, _: &ShowUpdateNotification, _window, cx| {
-                show_update_notification(cx);
+                show_update_notification(true, cx);
             });
         }
     })
@@ -187,8 +187,38 @@ fn view_release_notes_locally(
     .detach();
 }
 
+#[derive(Clone, Copy)]
+enum AnnouncementKind {
+    Delta,
+    Skills,
+}
+
+impl AnnouncementKind {
+    fn track_primary_action(self) {
+        match self {
+            Self::Delta => telemetry::event!("Delta Announcement Main Click"),
+            Self::Skills => telemetry::event!("Skills Announcement Main Click"),
+        }
+    }
+
+    fn track_secondary_action(self) {
+        match self {
+            Self::Delta => telemetry::event!("Delta Announcement Secondary Click"),
+            Self::Skills => telemetry::event!("Skills Announcement Secondary Click"),
+        }
+    }
+
+    fn track_dismiss(self) {
+        match self {
+            Self::Delta => telemetry::event!("Delta Announcement Dismiss"),
+            Self::Skills => telemetry::event!("Skills Announcement Dismiss"),
+        }
+    }
+}
+
 #[derive(Clone)]
 struct AnnouncementContent {
+    kind: AnnouncementKind,
     heading: SharedString,
     description: SharedString,
     bullet_items: Vec<SharedString>,
@@ -200,21 +230,50 @@ struct AnnouncementContent {
     on_dismiss: Option<Arc<dyn Fn(&mut App) + Send + Sync>>,
 }
 
+struct DeltaAnnouncement;
+
+impl Dismissable for DeltaAnnouncement {
+    const KEY: &'static str = "delta_announcement_dismissed";
+}
+
 struct SkillsAnnouncement;
 
 impl Dismissable for SkillsAnnouncement {
     const KEY: &'static str = "skills_announcement_dismissed";
 }
 
-fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementContent> {
-    let version_with_skills = match ReleaseChannel::global(cx) {
-        ReleaseChannel::Stable => Version::new(1, 4, 0),
-        ReleaseChannel::Dev | ReleaseChannel::Nightly | ReleaseChannel::Preview => {
-            Version::new(1, 4, 0)
+fn announcement_for_version(
+    version: &Version,
+    force_announcement: bool,
+    cx: &App,
+) -> Option<AnnouncementContent> {
+    let version_with_delta = Version::new(1, 22, 0);
+    if *version >= version_with_delta {
+        if !force_announcement && DeltaAnnouncement::dismissed(cx) {
+            return None;
         }
-    };
 
-    if *version >= version_with_skills && !SkillsAnnouncement::dismissed(cx) {
+        return Some(AnnouncementContent {
+            kind: AnnouncementKind::Delta,
+            heading: "Introducing Delta".into(),
+            description: "A new place to build software with coding agents.".into(),
+            bullet_items: vec![
+                "Delegate work across projects".into(),
+                "Keep decisions, feedback, and code changes together".into(),
+                "Continue work with your team from anywhere".into(),
+            ],
+            primary_action_label: "Try Delta".into(),
+            secondary_action_label: "Learn More".into(),
+            primary_action_url: Some("https://delta.dev".into()),
+            primary_action_callback: None,
+            secondary_action_url: Some("https://delta.dev".into()),
+            on_dismiss: Some(Arc::new(|cx| DeltaAnnouncement::set_dismissed(true, cx))),
+        });
+    }
+
+    let version_with_skills = Version::new(1, 4, 0);
+    if *version >= version_with_skills && (force_announcement || !SkillsAnnouncement::dismissed(cx))
+    {
         // Only mention the Rules → Skills migration if the user actually
         // had Rules that got migrated. New users (and existing users who
         // never created a Rule) would otherwise be confused by a bullet
@@ -233,6 +292,7 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
         }
 
         Some(AnnouncementContent {
+            kind: AnnouncementKind::Skills,
             heading: "Introducing Skills Support".into(),
             description: "Extend the agent with focused instructions and domain knowledge.".into(),
             bullet_items,
@@ -283,8 +343,14 @@ impl Notification for AnnouncementToastNotification {}
 
 impl Render for AnnouncementToastNotification {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        AnnouncementToast::new()
-            .illustration(SkillsIllustration::new())
+        let toast = match self.content.kind {
+            AnnouncementKind::Delta => AnnouncementToast::new(),
+            AnnouncementKind::Skills => {
+                AnnouncementToast::new().illustration(SkillsIllustration::new())
+            }
+        };
+
+        toast
             .heading(self.content.heading.clone())
             .description(self.content.description.clone())
             .bullet_items(
@@ -296,10 +362,11 @@ impl Render for AnnouncementToastNotification {
             .primary_action_label(self.content.primary_action_label.clone())
             .secondary_action_label(self.content.secondary_action_label.clone())
             .primary_on_click(cx.listener({
+                let kind = self.content.kind;
                 let url = self.content.primary_action_url.clone();
                 let callback = self.content.primary_action_callback.clone();
                 move |this, _, window, cx| {
-                    telemetry::event!("Skills Announcement Main Click");
+                    kind.track_primary_action();
                     if let Some(callback) = &callback {
                         callback(window, cx);
                     }
@@ -310,24 +377,28 @@ impl Render for AnnouncementToastNotification {
                 }
             }))
             .secondary_on_click(cx.listener({
+                let kind = self.content.kind;
                 let url = self.content.secondary_action_url.clone();
                 move |_, _, _window, cx| {
-                    telemetry::event!("Skills Announcement Secondary Click");
+                    kind.track_secondary_action();
                     if let Some(url) = &url {
                         cx.open_url(url);
                     }
                 }
             }))
-            .dismiss_on_click(cx.listener(|this, _, _window, cx| {
-                telemetry::event!("Skills Announcement Dismiss");
-                this.dismiss(cx);
+            .dismiss_on_click(cx.listener({
+                let kind = self.content.kind;
+                move |this, _, _window, cx| {
+                    kind.track_dismiss();
+                    this.dismiss(cx);
+                }
             }))
     }
 }
 
 struct UpdateNotification;
 
-fn show_update_notification(cx: &mut App) {
+fn show_update_notification(force_announcement: bool, cx: &mut App) {
     let Some(updater) = AutoUpdater::get(cx) else {
         return;
     };
@@ -337,7 +408,7 @@ fn show_update_notification(cx: &mut App) {
     version.build = semver::BuildMetadata::EMPTY;
     let app_name = ReleaseChannel::global(cx).display_name();
 
-    if let Some(content) = announcement_for_version(&version, cx) {
+    if let Some(content) = announcement_for_version(&version, force_announcement, cx) {
         show_app_notification(
             NotificationId::unique::<UpdateNotification>(),
             cx,
@@ -385,7 +456,7 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
 
         if should_show_notification {
             cx.update(|cx| {
-                show_update_notification(cx);
+                show_update_notification(false, cx);
                 updater.update(cx, |updater, cx| {
                     updater
                         .set_should_show_update_notification(false, cx)
