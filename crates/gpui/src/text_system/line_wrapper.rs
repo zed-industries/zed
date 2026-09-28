@@ -118,7 +118,10 @@ impl LineWrapper {
 
                 width += item_width;
                 if width > wrap_width && ix > last_wrap_ix {
-                    let carried_width = if last_candidate_ix > 0 {
+                    let wrap_at_candidate =
+                        last_candidate_ix > 0 && width - last_candidate_width <= wrap_width;
+
+                    let carried_width = if wrap_at_candidate {
                         width - last_candidate_width
                     } else {
                         item_width
@@ -162,14 +165,14 @@ impl LineWrapper {
                         }
                     };
 
-                    if last_candidate_ix > 0 {
+                    if wrap_at_candidate {
                         last_wrap_ix = last_candidate_ix;
                         width -= last_candidate_width;
-                        last_candidate_ix = 0;
                     } else {
                         last_wrap_ix = ix;
                         width = item_width;
                     }
+                    last_candidate_ix = 0;
 
                     width += self.width_for_char(' ') * next_indent as f32;
 
@@ -1866,6 +1869,41 @@ mod tests {
                 Boundary::new(10, 0),
                 Boundary::new(20, 6),
                 Boundary::new(23, 6),
+            ]
+        );
+
+        // When a word boundary precedes an oversized carried suffix that itself
+        // exceeds wrap_width (e.g. text followed by an inline element), wrapping
+        // at the earlier candidate would force the continuation row to immediately
+        // overflow even with 0 indent. The wrapper must reject the candidate and
+        // break before the overflowing item instead.
+        //
+        // "aaaaaaaaaaaaaaaaaaa a" (21 chars: 19 'a's, space, 'a') followed by 10-column element:
+        // Row 0: "aaaaaaaaaa" (10 chars, len 10) -> wraps at ix 10
+        // Row 1: "aaaaaaaa" (8 chars) with 2 indent (len 10) -> wraps at ix 18
+        // Row 2: "a a" (3 chars) with 2 indent (len 5)
+        //        candidate boundary at ix 20 (space)
+        //        Then element (10 cols): width becomes 5 + 10 = 15 > wrap_width (10).
+        //        Candidate would carry 'a' (1 col) + element (10 cols) = 11 cols > 10.
+        //        Because carried suffix (11) > wrap_width (10), candidate is rejected.
+        //        Wrapper breaks at ix 21 (before element) with indent 0.
+        // Row 3: element (10 cols, len 10)
+        let oversized_suffix_fragments = [
+            LineFragment::text("aaaaaaaaaaaaaaaaaaa a"),
+            LineFragment::element(space_width * 10.0, 1),
+        ];
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &oversized_suffix_fragments,
+                    wrap_width,
+                    IndentAdjustment::ExtraColumns(2),
+                )
+                .collect::<Vec<_>>(),
+            &[
+                Boundary::new(10, 2),
+                Boundary::new(18, 2),
+                Boundary::new(21, 0),
             ]
         );
     }
