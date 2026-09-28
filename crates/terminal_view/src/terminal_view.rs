@@ -1515,7 +1515,7 @@ impl Render for TerminalView {
                 div()
                     .id("terminal-view-container")
                     .size_full()
-                    .bg(cx.theme().colors().editor_background)
+                    .bg(cx.theme().colors().terminal_background)
                     .pt(self.content_top_padding)
                     .when_some(self.background_corner_radii, |this, radii| {
                         this.rounded_tl(radii.top_left)
