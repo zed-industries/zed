@@ -1,6 +1,6 @@
 use crate::{
     AnyElement, AnyEntity, App, AppContext, Asset, AssetLogger, Bounds, Element, ElementId, Entity,
-    GlobalElementId, ImageAssetLoader, ImageCacheError, InspectorElementId, IntoElement, LayoutId,
+    GlobalElementId, ImageAssetLoader, ImageCacheError, InspectorElementId, LayoutId,
     ParentElement, Pixels, RenderImage, Resource, Style, StyleRefinement, Styled, Window, hash,
 };
 

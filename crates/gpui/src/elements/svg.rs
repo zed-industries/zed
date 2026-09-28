@@ -7,8 +7,8 @@ use std::{
 
 use crate::{
     App, Asset, Bounds, Element, GlobalElementId, Hitbox, InspectorElementId, InteractiveElement,
-    Interactivity, IntoElement, LayoutId, Pixels, Point, Radians, SharedString, Size,
-    StyleRefinement, Styled, TransformationMatrix, Window, point, px, radians, size,
+    Interactivity, LayoutId, Pixels, Point, Radians, SharedString, Size, StyleRefinement, Styled,
+    TransformationMatrix, Window, point, px, radians, size,
 };
 use gpui_util::ResultExt;
 

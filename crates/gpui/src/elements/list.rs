@@ -10,7 +10,7 @@
 use crate::{
     Along as _, AnyElement, App, AvailableSpace, Axis, Bounds, ContentMask, DispatchPhase, Edges,
     Element, EntityId, FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
-    IntoElement, Overflow, Pixels, Point, ScrollDelta, ScrollEvent, Size, Style, StyleRefinement,
+    Overflow, Pixels, Point, ScrollDelta, ScrollEvent, Size, Style, StyleRefinement,
     Styled, Window, point, px, size,
 };
 use collections::VecDeque;
