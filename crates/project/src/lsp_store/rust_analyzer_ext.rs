@@ -71,6 +71,7 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
                                     status: Some(proto::status_update::Status::Health(
                                         status as i32,
                                     )),
+                                    worktree_id: None,
                                 },
                             ),
                         });
