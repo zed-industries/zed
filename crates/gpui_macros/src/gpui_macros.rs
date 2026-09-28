@@ -204,7 +204,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
 /// same way, so one `SEED` reproduces a test or a benchmark. Each seed is its own
 /// Criterion benchmark, named `<input>/seed-<seed>` (or `<function>/seed-<seed>`
 /// without inputs), and the RNG is rebuilt for every Criterion routine call so all
-/// samples measure the same seed. The crate must depend on `rand`.
+/// samples measure the same seed. The generated code seeds it through gpui's own
+/// `rand`, so the crate needs `rand` only to name `StdRng` in the signature.
 ///
 /// ```ignore
 /// #[gpui::bench(inputs = families(), iterations = 6)]

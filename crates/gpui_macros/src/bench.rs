@@ -170,7 +170,8 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
 
     // Criterion calls the routine several times (warm-up, then each sample), so the
     // context and the RNG are rebuilt on every call: each one measures the same seed.
-    let rng = takes_rng.then(|| quote! { let rng = ::rand::SeedableRng::seed_from_u64(seed); });
+    let rng = takes_rng
+        .then(|| quote! { let rng = gpui::private::rand::SeedableRng::seed_from_u64(seed); });
     let routine = quote! {
         #rng
         let mut cx = gpui::BenchAppContext::new_with_platform_and_report(
