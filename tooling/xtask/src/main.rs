@@ -19,8 +19,9 @@ enum CliCommand {
     Licenses(tasks::licenses::LicensesArgs),
     /// Checks that packages conform to a set of standards.
     PackageConformity(tasks::package_conformity::PackageConformityArgs),
-    /// Prints the GPUI crate graph in dependency-first order.
-    Gpui,
+    /// Inspect the GPUI publish plan and its dependencies.
+    #[command(subcommand)]
+    Gpui(tasks::gpui::GpuiCommand),
     /// Runs the Linux Bubblewrap sandboxing NixOS VM tests.
     SandboxTests(tasks::sandbox_tests::SandboxTestsArgs),
     /// Runs the Windows WSL Bubblewrap sandbox behavior tests.
@@ -43,7 +44,7 @@ fn main() -> Result<()> {
         CliCommand::PackageConformity(args) => {
             tasks::package_conformity::run_package_conformity(args)
         }
-        CliCommand::Gpui => tasks::gpui::run_gpui(),
+        CliCommand::Gpui(args) => tasks::gpui::run_gpui(args),
         CliCommand::SandboxTests(args) => tasks::sandbox_tests::run_sandbox_tests(args),
         CliCommand::WslSandboxTests(args) => tasks::wsl_sandbox_tests::run_wsl_sandbox_tests(args),
         CliCommand::SetupWebrtc(args) => tasks::setup_webrtc::run_setup_webrtc(args),

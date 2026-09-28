@@ -1,16 +1,38 @@
 #![allow(clippy::disallowed_methods, reason = "tooling is exempt")]
 
 pub mod crate_graph;
+pub mod publish_plan;
 
 use std::io::{self, Write};
 use std::process::{Command, Output, Stdio};
 
 use anyhow::{Context as _, Result, bail};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use guppy::graph::DependencyDirection;
+
+use crate::tasks::workflows::GitSha;
+
+#[derive(Subcommand)]
+pub enum GpuiCommand {
+    /// Print the publish plan in dependency-first order
+    List(GpuiArgs),
+    /// Show the dependency paths that put a crate in the publish list
+    Why {
+        /// Original Cargo package name
+        crate_name: String,
+    },
+}
 
 #[derive(Parser)]
 pub struct GpuiArgs {
+    /// Full commit SHA to use when checking out workspace crates
+    #[arg(long)]
+    sha: GitSha,
+}
+
+#[derive(Parser)]
+#[allow(unused)]
+struct PublishGpuiArgs {
     /// Perform a dry-run and wait for user confirmation before each publish
     #[arg(long)]
     dry_run: bool,
@@ -20,18 +42,40 @@ pub struct GpuiArgs {
     skip_to: Option<String>,
 }
 
-pub fn run_gpui() -> Result<()> {
+pub fn run_gpui(command: GpuiCommand) -> Result<()> {
     let graph = crate_graph::load_workspace_graph()?;
-    let crates = crate_graph::gpui_crates(&graph)?;
-
-    println!("GPUI crate graph ({} crates):", crates.len());
-    for package in crates.packages(DependencyDirection::Reverse) {
-        println!("{} ({})", package.name(), package.source());
-        for link in package.direct_links().filter(|link| !link.dev_only()) {
-            match crates.contains(link.to().id()) {
-                Ok(true) => println!("  -> {}", link.to().name()),
-                Ok(false) => {}
-                Err(e) => eprintln!("  error checking dependency {}: {}", link.to().name(), e),
+    match command {
+        GpuiCommand::List(args) => {
+            let plan = publish_plan::build_publish_plan(&graph)?;
+            println!(
+                "GPUI publish plan ({} crates, dependencies first):",
+                plan.len()
+            );
+            for entry in &plan {
+                let package = entry.repository.publish_info(entry.package.name());
+                println!(
+                    "{} -> {} ({})",
+                    package.original_name,
+                    package.repository.target_name(package.original_name),
+                    package.repository.display(&args)
+                );
+            }
+        }
+        GpuiCommand::Why { crate_name } => {
+            let explanation = crate_graph::explain_crate(&graph, &crate_name)?;
+            println!(
+                "Why `{crate_name}` is in the GPUI publish list (A -> B means A depends on B):"
+            );
+            for package in explanation.packages(DependencyDirection::Forward) {
+                if crate_graph::is_gpui_root(package) {
+                    println!("  {} is a GPUI workspace root", package.name());
+                }
+            }
+            for link in explanation
+                .links(DependencyDirection::Forward)
+                .filter(|link| !link.dev_only())
+            {
+                println!("  {} -> {}", link.from().name(), link.to().name());
             }
         }
     }
@@ -39,7 +83,7 @@ pub fn run_gpui() -> Result<()> {
 }
 
 #[allow(unused, reason = "retained while GPUI releases are reworked")]
-fn run_publish_gpui(args: GpuiArgs) -> Result<()> {
+fn run_publish_gpui(args: PublishGpuiArgs) -> Result<()> {
     println!(
         "Starting GPUI publish process{}...",
         if args.dry_run { " (with dry-run)" } else { "" }
@@ -362,6 +406,29 @@ mod tests {
     use indoc::indoc;
 
     use super::*;
+
+    #[test]
+    fn gpui_list_accepts_an_explicit_workspace_sha() -> Result<()> {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let args = crate::Args::try_parse_from(["xtask", "gpui", "list", "--sha", sha])?;
+        let crate::CliCommand::Gpui(GpuiCommand::List(args)) = args.command else {
+            bail!("expected the GPUI list command");
+        };
+        assert_eq!(args.sha.as_ref(), sha);
+        Ok(())
+    }
+
+    #[test]
+    fn gpui_list_requires_a_full_workspace_sha() {
+        assert!(crate::Args::try_parse_from(["xtask", "gpui"]).is_err());
+        assert!(crate::Args::try_parse_from(["xtask", "gpui", "list"]).is_err());
+        for sha in ["HEAD", "abc", "g123456789abcdef0123456789abcdef01234567"] {
+            assert!(
+                crate::Args::try_parse_from(["xtask", "gpui", "list", "--sha", sha]).is_err(),
+                "{sha}"
+            );
+        }
+    }
 
     #[test]
     fn test_update_dependency_version_in_toml() {

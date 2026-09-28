@@ -230,8 +230,7 @@ pub async fn test_tool_call_with_permission<T, F>(
     full_turn.await.unwrap();
 
     thread.read_with(cx, |thread, cx| {
-        let AgentThreadEntry::ToolCall(ToolCall {
-            content,
+        let AgentThreadEntry::ToolCall(tool_call @ ToolCall {
             status: ToolCallStatus::Pending
                 | ToolCallStatus::InProgress
                 | ToolCallStatus::Completed,
@@ -246,7 +245,7 @@ pub async fn test_tool_call_with_permission<T, F>(
         };
 
         assert!(
-            content.iter().any(|c| c.to_markdown(cx).contains("Hello")),
+            tool_call.content().iter().any(|content| content.to_markdown(cx).contains("Hello")),
             "Expected content to contain 'Hello'"
         );
     });

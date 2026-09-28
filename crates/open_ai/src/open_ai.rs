@@ -102,6 +102,10 @@ pub enum Model {
     FivePointSixLuna,
     #[serde(rename = "gpt-6-astra")]
     SixAstra,
+    #[serde(rename = "gpt-6-sol")]
+    SixSol,
+    #[serde(rename = "gpt-6-luna")]
+    SixLuna,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -152,6 +156,8 @@ impl Model {
             "gpt-5.6-terra" => Ok(Self::FivePointSixTerra),
             "gpt-5.6-luna" => Ok(Self::FivePointSixLuna),
             "gpt-6-astra" => Ok(Self::SixAstra),
+            "gpt-6-sol" => Ok(Self::SixSol),
+            "gpt-6-luna" => Ok(Self::SixLuna),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -177,6 +183,8 @@ impl Model {
             Self::FivePointSixTerra => "gpt-5.6-terra",
             Self::FivePointSixLuna => "gpt-5.6-luna",
             Self::SixAstra => "gpt-6-astra",
+            Self::SixSol => "gpt-6-sol",
+            Self::SixLuna => "gpt-6-luna",
             Self::Custom { name, .. } => name,
         }
     }
@@ -202,6 +210,8 @@ impl Model {
             Self::FivePointSixTerra => "GPT-5.6 Terra",
             Self::FivePointSixLuna => "GPT-5.6 Luna",
             Self::SixAstra => "GPT-6 Astra",
+            Self::SixSol => "GPT-6 Sol",
+            Self::SixLuna => "GPT-6 Luna",
             Self::Custom { display_name, .. } => display_name.as_deref().unwrap_or(&self.id()),
         }
     }
@@ -227,6 +237,8 @@ impl Model {
             Self::FivePointSixTerra => 1_050_000,
             Self::FivePointSixLuna => 1_050_000,
             Self::SixAstra => 1_050_000,
+            Self::SixSol => 1_050_000,
+            Self::SixLuna => 1_050_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -255,6 +267,8 @@ impl Model {
             Self::FivePointSixTerra => Some(128_000),
             Self::FivePointSixLuna => Some(128_000),
             Self::SixAstra => Some(128_000),
+            Self::SixSol => Some(128_000),
+            Self::SixLuna => Some(128_000),
         }
     }
 
@@ -279,7 +293,9 @@ impl Model {
             | Self::FivePointFivePro
             | Self::FivePointSixTerra
             | Self::FivePointSixLuna
-            | Self::SixAstra => Some(ReasoningEffort::Medium),
+            | Self::SixAstra
+            | Self::SixSol
+            | Self::SixLuna => Some(ReasoningEffort::Medium),
             _ => None,
         }
     }
@@ -326,7 +342,11 @@ impl Model {
                 ReasoningEffort::High,
                 ReasoningEffort::XHigh,
             ],
-            Self::FivePointSixSol | Self::FivePointSixTerra | Self::FivePointSixLuna => &[
+            Self::FivePointSixSol
+            | Self::FivePointSixTerra
+            | Self::FivePointSixLuna
+            | Self::SixSol
+            | Self::SixLuna => &[
                 ReasoningEffort::None,
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
@@ -388,6 +408,8 @@ impl Model {
             | Self::FivePointSixTerra
             | Self::FivePointSixLuna
             | Self::SixAstra
+            | Self::SixSol
+            | Self::SixLuna
             | Self::FiveNano => true,
             Self::O3 | Model::Custom { .. } => false,
         }
@@ -419,7 +441,9 @@ impl Model {
             | Self::FivePointSixSol
             | Self::FivePointSixTerra
             | Self::FivePointSixLuna
-            | Self::SixAstra => true,
+            | Self::SixAstra
+            | Self::SixSol
+            | Self::SixLuna => true,
             Self::Four
             | Self::FourOmniMini
             | Self::O3
@@ -450,7 +474,9 @@ impl Model {
             | Self::FivePointSixSol
             | Self::FivePointSixTerra
             | Self::FivePointSixLuna
-            | Self::SixAstra => true,
+            | Self::SixAstra
+            | Self::SixSol
+            | Self::SixLuna => true,
             Self::Four
             | Self::FiveNano
             | Self::FivePointFourNano

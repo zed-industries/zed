@@ -444,6 +444,8 @@ jobs:
     - check_style
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-mac-large
+    env:
+      RUST_LIB_BACKTRACE: '0'
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -614,6 +616,8 @@ jobs:
       run: cargo build -p collab
     - name: cargo build --workspace --bins --examples
       run: cargo build --workspace --bins --examples
+    - name: cargo build -p project_benchmarks --features test-support
+      run: cargo build -p project_benchmarks --features test-support
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
@@ -903,7 +907,7 @@ jobs:
     needs:
     - orchestrate
     - check_style
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
@@ -933,7 +937,7 @@ jobs:
     needs:
     - orchestrate
     - check_style
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo

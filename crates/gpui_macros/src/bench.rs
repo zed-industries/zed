@@ -83,10 +83,13 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
         let sample_size =
             sample_size.map(|sample_size| quote! { group.sample_size(#sample_size); });
         quote! {
-            let report = #report_expr;
             let mut group = criterion.benchmark_group(#group_name);
             #sample_size
             for input in #inputs {
+                // One report per input: per-iteration metrics differ across
+                // inputs, so blending them would make the summary meaningless.
+                let report = #report_expr;
+                let report_name = format!("{}/{}/{}", #group_name, #input_name, input);
                 group.bench_with_input(criterion::BenchmarkId::new(#input_name, &input), &input, {
                     let report = report.clone();
                     move |bencher, input| {
@@ -105,9 +108,9 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
                         cx.teardown();
                     }
                 });
+                report.print(&report_name);
             }
             group.finish();
-            report.print(Some(stringify!(#outer_fn_name)));
         }
     } else {
         if let Some(input_name) = input_name {
@@ -148,14 +151,14 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
                     cx.teardown();
                 }
             });
-            report.print(Some(stringify!(#outer_fn_name)));
+            report.print(stringify!(#outer_fn_name));
         }
     };
 
     TokenStream::from(quote! {
         #inner_fn
 
-        fn #outer_fn_name(criterion: &mut criterion::Criterion) {
+        fn #outer_fn_name(criterion: &mut criterion::Criterion<gpui::BenchMeasurement>) {
             #benchmark
         }
 

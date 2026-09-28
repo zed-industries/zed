@@ -14,7 +14,7 @@ use agent_ui::{
 };
 use chrono::DateTime;
 use fs::{FakeFs, Fs};
-use gpui::{TestAppContext, UpdateGlobal};
+use gpui::{Bounds, Hsla, Point, Rgba, TestAppContext, UpdateGlobal, VisualTestContext};
 use pretty_assertions::assert_eq;
 use project::AgentId;
 use settings::SettingsStore;
@@ -302,7 +302,7 @@ fn set_threads_sidebar_default_width(width: f32, cx: &mut App) {
     SettingsStore::update_global(cx, |store, cx| {
         store
             .set_user_settings(
-                &format!(r#"{{"agent": {{"threads_sidebar_default_width": {width}}}}}"#),
+                &format!(r#"{{"agent": {{"threads_sidebar": {{"default_width": {width}}}}}}}"#),
                 cx,
             )
             .unwrap();
@@ -696,6 +696,85 @@ fn visible_entries_as_strings(
 }
 
 #[gpui::test]
+async fn test_sidebar_action_hover_contrasts_with_row(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    cx.update(|cx| AgentRegistryStore::init_test_global(cx, Vec::new()));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    save_n_test_threads(1, &project, cx).await;
+
+    for (query, surface_alpha) in [("my-project", 1.0), ("", 1.0), ("", 0.0), ("", 0.2)] {
+        set_sidebar_test_surface_alpha(surface_alpha, cx);
+        type_in_search(&sidebar, query, cx);
+        let row_bounds = sidebar.read_with(cx, |sidebar, _| {
+            sidebar
+                .list_state
+                .bounds_for_item(0)
+                .expect("rendered project header")
+        });
+        if query.is_empty() {
+            cx.simulate_mouse_move(row_bounds.center(), None, Modifiers::default());
+            let hover =
+                cx.update(|_, cx| u32::from(Rgba::from(cx.theme().colors().ghost_element_hover)));
+            assert_eq!(
+                sidebar_painted_background_at(row_bounds.center(), cx),
+                hover
+            );
+        }
+        for selector in ["ICON-Plus", "ICON-Ellipsis"] {
+            assert_sidebar_action_hover(selector, row_bounds, cx);
+        }
+        if query.is_empty() {
+            let thread_bounds = sidebar.read_with(cx, |sidebar, _| {
+                sidebar
+                    .list_state
+                    .bounds_for_item(1)
+                    .expect("rendered thread")
+            });
+            for selector in ["ICON-Pencil", "ICON-Archive"] {
+                assert_sidebar_action_hover(selector, thread_bounds, cx);
+            }
+        }
+    }
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.show_archive(window, cx);
+        let SidebarView::Archive(archive) = &sidebar.view else {
+            panic!("Thread History should be open");
+        };
+        window.focus(&archive.focus_handle(cx), cx);
+    });
+    cx.run_until_parked();
+
+    for (archived, selector) in [(false, "ICON-Archive"), (true, "ICON-Trash")] {
+        if archived {
+            cx.update(|_, cx| {
+                ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                    let thread_id = store.entries().next().expect("seeded thread").thread_id;
+                    store.archive(thread_id, None, cx);
+                });
+            });
+            cx.run_until_parked();
+        }
+        cx.dispatch_action(SelectFirst);
+        let row_bounds = cx.update(|window, cx| {
+            window
+                .painted_quads()
+                .into_iter()
+                .find(|quad| quad.border_color == cx.theme().colors().panel_focused_border)
+                .expect("selected Thread History row")
+                .bounds
+                .map(|value| px(value.as_f32() / window.scale_factor()))
+        });
+        for surface_alpha in [1.0, 0.0, 0.2] {
+            set_sidebar_test_surface_alpha(surface_alpha, cx);
+            assert_sidebar_action_hover(selector, row_bounds, cx);
+        }
+    }
+}
+
+#[gpui::test]
 async fn test_thread_metadata_update_preserves_sticky_header_measurements(cx: &mut TestAppContext) {
     let (fs, project_a) = init_multi_project_test(&["/project-a", "/project-b"], cx).await;
     let (multi_workspace, cx) =
@@ -915,7 +994,7 @@ async fn test_width_reset_returns_configured_default(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_width_follows_settings_until_manually_resized(cx: &mut TestAppContext) {
+async fn test_width_setting_overrides_manual_resize(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
@@ -929,15 +1008,24 @@ async fn test_width_follows_settings_until_manually_resized(cx: &mut TestAppCont
     sidebar.update_in(cx, |sidebar, _window, cx| {
         sidebar.set_width(Some(px(420.0)), cx);
     });
-    cx.update(|_window, cx| set_threads_sidebar_default_width(500.0, cx));
-    cx.run_until_parked();
-    assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(420.0));
-
-    sidebar.update_in(cx, |sidebar, _window, cx| {
-        sidebar.set_width(None, cx);
+    cx.update(|_window, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{"agent":{"threads_sidebar":{"default_width":360,"position":"right"}}}"#,
+                    cx,
+                )
+                .expect("settings are valid");
+        });
     });
     cx.run_until_parked();
+    assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(420.0));
+    assert!(sidebar.read_with(cx, |sidebar, _| sidebar.width_set_by_user));
+
+    cx.update(|_window, cx| set_threads_sidebar_default_width(500.0, cx));
+    cx.run_until_parked();
     assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(500.0));
+    assert!(!sidebar.read_with(cx, |sidebar, _| sidebar.width_set_by_user));
 
     for (configured, expected) in [
         (5.0, THREADS_LIST_MIN_WIDTH),
@@ -996,10 +1084,8 @@ async fn test_restored_width_preserves_legacy_resizes(cx: &mut TestAppContext) {
 
         cx.update(|_window, cx| set_threads_sidebar_default_width(500.0, cx));
         cx.run_until_parked();
-        assert_eq!(
-            sidebar.read_with(cx, |sidebar, _| sidebar.width),
-            px(if width_set_by_user { expected } else { 500.0 })
-        );
+        assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(500.0));
+        assert!(!sidebar.read_with(cx, |sidebar, _| sidebar.width_set_by_user));
     }
 }
 
@@ -15724,4 +15810,60 @@ async fn test_find_or_create_workspace_returns_the_created_remote_workspace(
         local_workspace,
         "the local workspace should have re-activated during the open"
     );
+}
+
+fn set_sidebar_test_surface_alpha(alpha: f32, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        let mut theme = cx.theme().as_ref().clone();
+        theme.styles.colors.background = Hsla::from(gpui::rgb(0xdcdcdd));
+        theme.styles.colors.surface_background = Hsla::from(gpui::rgb(0xebebec)).alpha(alpha);
+        theme.styles.colors.element_background = Hsla::from(gpui::rgb(0xebebec));
+        theme.styles.colors.ghost_element_hover = Hsla::from(gpui::rgb(0xdfdfe0));
+        theme::GlobalTheme::update_theme(cx, Arc::new(theme));
+        window.refresh();
+    });
+    cx.run_until_parked();
+}
+
+fn assert_sidebar_action_hover(
+    selector: &'static str,
+    row_bounds: Bounds<Pixels>,
+    cx: &mut VisualTestContext,
+) {
+    cx.simulate_mouse_move(row_bounds.center(), None, Modifiers::default());
+    let button_bounds = cx.debug_bounds(selector).expect("visible row action");
+    assert_eq!(
+        row_bounds.intersect(&button_bounds),
+        button_bounds,
+        "{selector}: action must belong to the row"
+    );
+    cx.simulate_mouse_move(button_bounds.center(), None, Modifiers::default());
+    let background = sidebar_painted_background_at(button_bounds.center(), cx);
+    assert_ne!(
+        background,
+        sidebar_painted_background_at(row_bounds.center(), cx),
+        "{selector}: hovered action must contrast with the row"
+    );
+}
+
+fn sidebar_painted_background_at(position: Point<Pixels>, cx: &mut VisualTestContext) -> u32 {
+    cx.update(|window, _| {
+        let position = position.scale(window.scale_factor());
+        let color = window
+            .painted_quads()
+            .into_iter()
+            .filter(|quad| {
+                !quad.background.is_transparent()
+                    && quad
+                        .bounds
+                        .intersect(&quad.content_mask.bounds)
+                        .contains(&position)
+            })
+            .max_by_key(|quad| quad.order)
+            .expect("painted background at pointer")
+            .background
+            .as_solid()
+            .expect("solid background at pointer");
+        u32::from(Rgba::from(color))
+    })
 }
