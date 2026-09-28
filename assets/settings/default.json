@@ -634,6 +634,8 @@
     "show_sign_in": true,
     // Whether to show the menus in the titlebar.
     "show_menus": false,
+    // Whether to open the menus in the titlebar on hover.
+    "open_menus_on_hover": false,
     // The layout of window control buttons in the title bar (Linux only).
     "button_layout": "platform_default",
   },
@@ -1170,6 +1172,10 @@
     //
     // Default: true
     "flexible": true,
+    // Maximum number of idle threads with loadable sessions to retain in the
+    // agent panel. Set to 0 to unload every eligible idle thread when it is
+    // no longer active.
+    "max_idle_retained_threads": 5,
     // Settings for the sidebar holding the agent panel and the list of agent threads.
     "threads_sidebar": {
       // Where to position the Threads Sidebar. Can be 'left' or 'right'.
@@ -1656,6 +1662,12 @@
   // 3. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
   //      "soft_wrap": "bounded",
   "soft_wrap": "none",
+  // How to indent soft-wrapped continuation lines.
+  //   "none"      - start at column 0
+  //   "same"      - match original line's indentation (default)
+  //   "extra_one" - same + 1 indent level
+  //   "extra_two" - same + 2 indent levels
+  "soft_wrap_indent": "same",
   // The column at which to soft-wrap lines, for buffers where soft-wrap
   // is enabled.
   "preferred_line_length": 80,
@@ -2601,6 +2613,9 @@
       "prettier": {
         "allowed": true,
       },
+    },
+    "Typst": {
+      "allow_rewrap": "anywhere",
     },
     "SystemVerilog": {
       "language_servers": ["slang", "!verible", "!veridian", "!svls", "..."],

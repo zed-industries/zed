@@ -1,8 +1,8 @@
 use std::{ops::Range, sync::Arc};
 
-use acp_thread::{AcpThread, AgentThreadEntry, AssistantMessageChunk};
+use acp_thread::{AcpThread, AgentThreadEntry, AssistantMessageChunk, ToolCall};
 use agent::ThreadStore;
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v1 as acp_v1;
 use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -10,10 +10,11 @@ use editor::{
     SizingBehavior,
 };
 use gpui::{
-    AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    ScrollHandle, TextStyleRefinement, WeakEntity, Window,
+    AnyEntity, App, AppContext as _, Corners, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, ScrollHandle, TextStyleRefinement, WeakEntity, Window,
 };
 use language::language_settings::SoftWrap;
+use multi_buffer::MultiBuffer;
 use project::{AgentId, Project, project_settings::DiagnosticSeverity};
 use rope::Point;
 use settings::{Settings as _, ThinkingBlockDisplay};
@@ -47,7 +48,7 @@ pub struct EntryViewState {
     auto_expanded_thinking_block: Option<(usize, usize)>,
     user_toggled_thinking_blocks: HashSet<(usize, usize)>,
     expanded_compactions: HashSet<usize>,
-    expanded_tool_calls: HashSet<acp::ToolCallId>,
+    expanded_tool_calls: HashSet<acp_v1::ToolCallId>,
 }
 
 impl EntryViewState {
@@ -73,19 +74,23 @@ impl EntryViewState {
         }
     }
 
-    pub(crate) fn is_tool_call_expanded(&self, tool_call_id: &acp::ToolCallId) -> bool {
+    pub(crate) fn is_tool_call_expanded(&self, tool_call_id: &acp_v1::ToolCallId) -> bool {
         self.expanded_tool_calls.contains(tool_call_id)
     }
 
-    pub(crate) fn expand_tool_call(&mut self, tool_call_id: acp::ToolCallId) {
+    pub(crate) fn is_tool_call_content_visible(&self, tool_call: &ToolCall) -> bool {
+        self.is_tool_call_expanded(&tool_call.id) || tool_call.authorization().is_some()
+    }
+
+    pub(crate) fn expand_tool_call(&mut self, tool_call_id: acp_v1::ToolCallId) {
         self.expanded_tool_calls.insert(tool_call_id);
     }
 
-    pub(crate) fn collapse_tool_call(&mut self, tool_call_id: &acp::ToolCallId) {
+    pub(crate) fn collapse_tool_call(&mut self, tool_call_id: &acp_v1::ToolCallId) {
         self.expanded_tool_calls.remove(tool_call_id);
     }
 
-    pub(crate) fn toggle_tool_call_expansion(&mut self, tool_call_id: &acp::ToolCallId) {
+    pub(crate) fn toggle_tool_call_expansion(&mut self, tool_call_id: &acp_v1::ToolCallId) {
         if !self.expanded_tool_calls.remove(tool_call_id) {
             self.expanded_tool_calls.insert(tool_call_id.clone());
         }
@@ -240,16 +245,34 @@ impl EntryViewState {
                 let can_rewind = thread.read(cx).supports_truncate(cx);
                 let has_client_id = message.client_id.is_some();
                 let is_subagent = thread.read(cx).parent_session_id().is_some();
-                let chunks = message.content.source_blocks().to_vec();
-                if let Some(Entry::UserMessage(editor)) = self.entries.get_mut(index) {
-                    if !editor.focus_handle(cx).is_focused(window) {
-                        // Only update if we are not editing.
-                        // If we are, cancelling the edit will set the message to the newest content.
+                let source_blocks = message.content.source_blocks();
+                let source_version = message.content.source_version();
+                let source_is_representable = source_blocks
+                    .iter()
+                    .all(acp_thread::content::can_convert_to_v1);
+                let is_editable =
+                    can_rewind && has_client_id && !is_subagent && source_is_representable;
+                if let Some(Entry::UserMessage {
+                    editor,
+                    synced_source_version,
+                }) = self.entries.get_mut(index)
+                {
+                    // Read-only messages cannot hold drafts, so focus must not
+                    // block new content, nor should unchanged content reset their selection.
+                    let was_read_only = editor.read(cx).editor().read(cx).read_only(cx);
+                    let refreshed_source = ((!was_read_only
+                        || *synced_source_version != source_version)
+                        && (!is_editable || !editor.focus_handle(cx).is_focused(window)))
+                    .then(|| source_blocks.to_vec());
+                    editor.update(cx, |editor, cx| editor.set_read_only(!is_editable, cx));
+                    if let Some(source_blocks) = refreshed_source {
                         editor.update(cx, |editor, cx| {
-                            editor.set_message(chunks, window, cx);
+                            editor.set_source_message(source_blocks, window, cx);
                         });
+                        *synced_source_version = source_version;
                     }
                 } else {
+                    let source_blocks = source_blocks.to_vec();
                     let message_editor = cx.new(|cx| {
                         let mut editor = MessageEditor::new(
                             self.workspace.clone(),
@@ -265,10 +288,10 @@ impl EntryViewState {
                             window,
                             cx,
                         );
-                        if !can_rewind || !has_client_id || is_subagent {
+                        if !is_editable {
                             editor.set_read_only(true, cx);
                         }
-                        editor.set_message(chunks, window, cx);
+                        editor.set_source_message(source_blocks, window, cx);
                         editor
                     });
                     cx.subscribe(&message_editor, move |_, editor, event, cx| {
@@ -278,13 +301,35 @@ impl EntryViewState {
                         })
                     })
                     .detach();
-                    self.set_entry(index, Entry::UserMessage(message_editor));
+                    self.set_entry(
+                        index,
+                        Entry::UserMessage {
+                            editor: message_editor,
+                            synced_source_version: source_version,
+                        },
+                    );
                 }
             }
             AgentThreadEntry::ToolCall(tool_call) => {
                 let id = tool_call.id.clone();
                 let terminals = tool_call.terminals().cloned().collect::<Vec<_>>();
                 let diffs = tool_call.diffs().cloned().collect::<Vec<_>>();
+                let patch_hunk_buffers = tool_call
+                    .content()
+                    .iter()
+                    .filter_map(|content| match content {
+                        acp_thread::ToolCallContent::DiffPatch { render, .. } => {
+                            Some(&render.files)
+                        }
+                        _ => None,
+                    })
+                    .flat_map(|files| files.iter().flat_map(|file| &file.hunks))
+                    .map(|hunk| hunk.buffer.clone())
+                    .collect::<Vec<_>>();
+                let patch_hunk_ids: HashSet<_> = patch_hunk_buffers
+                    .iter()
+                    .map(|buffer| buffer.entity_id())
+                    .collect();
 
                 let views = if let Some(Entry::ToolCall(tool_call)) = self.entries.get_mut(index) {
                     &mut tool_call.content
@@ -293,6 +338,7 @@ impl EntryViewState {
                         index,
                         Entry::ToolCall(ToolCallEntry {
                             content: HashMap::default(),
+                            patch_hunk_ids: HashSet::default(),
                             focus_handle: cx.focus_handle(),
                         }),
                     );
@@ -303,7 +349,7 @@ impl EntryViewState {
                 };
 
                 let is_tool_call_completed =
-                    matches!(tool_call.status, acp_thread::ToolCallStatus::Completed);
+                    matches!(tool_call.status(), acp_thread::ToolCallStatus::Completed);
 
                 for terminal in terminals {
                     match views.entry(terminal.entity_id()) {
@@ -383,6 +429,22 @@ impl EntryViewState {
                         editor.into_any()
                     });
                 }
+                for buffer in patch_hunk_buffers {
+                    views.entry(buffer.entity_id()).or_insert_with(|| {
+                        let editor = create_multibuffer_diff_editor(buffer, window, cx);
+                        cx.emit(EntryViewEvent {
+                            entry_index: index,
+                            view_event: ViewEvent::NewDiff(id.clone()),
+                        });
+                        editor.into_any()
+                    });
+                }
+                if let Some(Entry::ToolCall(entry)) = self.entries.get_mut(index) {
+                    for stale_id in entry.patch_hunk_ids.difference(&patch_hunk_ids) {
+                        entry.content.remove(stale_id);
+                    }
+                    entry.patch_hunk_ids = patch_hunk_ids;
+                }
             }
             AgentThreadEntry::Elicitation(_) => {
                 if !matches!(self.entries.get(index), Some(Entry::Elicitation { .. })) {
@@ -404,6 +466,7 @@ impl EntryViewState {
                         index,
                         Entry::AssistantMessage(AssistantMessageEntry {
                             scroll_handles_by_chunk_index: HashMap::default(),
+                            last_thought_source_version: None,
                             focus_handle: cx.focus_handle(),
                         }),
                     );
@@ -491,9 +554,9 @@ pub struct EntryViewEvent {
 }
 
 pub enum ViewEvent {
-    NewDiff(acp::ToolCallId),
-    NewTerminal(acp::ToolCallId),
-    TerminalMovedToBackground(acp::ToolCallId),
+    NewDiff(acp_v1::ToolCallId),
+    NewTerminal(acp_v1::ToolCallId),
+    TerminalMovedToBackground(acp_v1::ToolCallId),
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
     OpenDiffLocation {
         path: String,
@@ -505,6 +568,7 @@ pub enum ViewEvent {
 #[derive(Debug)]
 pub struct AssistantMessageEntry {
     scroll_handles_by_chunk_index: HashMap<usize, ScrollHandle>,
+    last_thought_source_version: Option<acp_thread::MessageContentVersion>,
     focus_handle: FocusHandle,
 }
 
@@ -514,10 +578,14 @@ impl AssistantMessageEntry {
     }
 
     pub fn sync(&mut self, message: &acp_thread::AssistantMessage) {
-        if let Some(acp_thread::AssistantMessageChunk::Thought { .. }) = message.chunks.last() {
+        if let Some(acp_thread::AssistantMessageChunk::Thought { block, .. }) =
+            message.chunks.last()
+            && self.last_thought_source_version != Some(block.source_version())
+        {
             let ix = message.chunks.len() - 1;
             let handle = self.scroll_handles_by_chunk_index.entry(ix).or_default();
             handle.scroll_to_bottom();
+            self.last_thought_source_version = Some(block.source_version());
         }
     }
 }
@@ -525,22 +593,28 @@ impl AssistantMessageEntry {
 #[derive(Debug)]
 pub struct ToolCallEntry {
     content: HashMap<EntityId, AnyEntity>,
+    patch_hunk_ids: HashSet<EntityId>,
     focus_handle: FocusHandle,
 }
 
 #[derive(Debug)]
 pub enum Entry {
-    UserMessage(Entity<MessageEditor>),
+    UserMessage {
+        editor: Entity<MessageEditor>,
+        synced_source_version: acp_thread::MessageContentVersion,
+    },
     AssistantMessage(AssistantMessageEntry),
     ToolCall(ToolCallEntry),
-    Elicitation { focus_handle: FocusHandle },
+    Elicitation {
+        focus_handle: FocusHandle,
+    },
     ContextCompaction,
 }
 
 impl Entry {
     pub fn focus_handle(&self, cx: &App) -> Option<FocusHandle> {
         match self {
-            Self::UserMessage(editor) => Some(editor.read(cx).focus_handle(cx)),
+            Self::UserMessage { editor, .. } => Some(editor.read(cx).focus_handle(cx)),
             Self::AssistantMessage(message) => Some(message.focus_handle.clone()),
             Self::ToolCall(tool_call) => Some(tool_call.focus_handle.clone()),
             Self::Elicitation { focus_handle } => Some(focus_handle.clone()),
@@ -550,7 +624,7 @@ impl Entry {
 
     pub fn message_editor(&self) -> Option<&Entity<MessageEditor>> {
         match self {
-            Self::UserMessage(editor) => Some(editor),
+            Self::UserMessage { editor, .. } => Some(editor),
             Self::AssistantMessage(_)
             | Self::ToolCall(_)
             | Self::Elicitation { .. }
@@ -561,6 +635,13 @@ impl Entry {
     pub fn editor_for_diff(&self, diff: &Entity<acp_thread::Diff>) -> Option<Entity<Editor>> {
         self.content_map()?
             .get(&diff.entity_id())
+            .cloned()
+            .and_then(|entity| entity.downcast::<Editor>().ok())
+    }
+
+    pub fn editor_for_patch_hunk(&self, buffer: &Entity<MultiBuffer>) -> Option<Entity<Editor>> {
+        self.content_map()?
+            .get(&buffer.entity_id())
             .cloned()
             .and_then(|entity| entity.downcast::<Editor>().ok())
     }
@@ -581,7 +662,7 @@ impl Entry {
     ) -> Option<ScrollHandle> {
         match self {
             Self::AssistantMessage(message) => message.scroll_handle_for_chunk(chunk_ix),
-            Self::UserMessage(_)
+            Self::UserMessage { .. }
             | Self::ToolCall(_)
             | Self::Elicitation { .. }
             | Self::ContextCompaction => None,
@@ -599,7 +680,7 @@ impl Entry {
     pub fn has_content(&self) -> bool {
         match self {
             Self::ToolCall(ToolCallEntry { content, .. }) => !content.is_empty(),
-            Self::UserMessage(_)
+            Self::UserMessage { .. }
             | Self::AssistantMessage(_)
             | Self::Elicitation { .. }
             | Self::ContextCompaction => false,
@@ -616,7 +697,7 @@ impl Focusable for ToolCallEntry {
 impl Focusable for Entry {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match self {
-            Self::UserMessage(editor) => editor.read(cx).focus_handle(cx),
+            Self::UserMessage { editor, .. } => editor.read(cx).focus_handle(cx),
             Self::AssistantMessage(message) => message.focus_handle.clone(),
             Self::ToolCall(tool_call) => tool_call.focus_handle.clone(),
             Self::Elicitation { focus_handle } => focus_handle.clone(),
@@ -643,6 +724,22 @@ fn create_terminal(
             cx,
         )
         .with_read_only(read_only);
+
+        // GPUI can't clip children to rounded corners, so the terminal has to
+        // round its own background to avoid painting over the corners of the
+        // tool card it sits in.
+        // This matches the `rounded_md`/`rounded_b_md` on that card, which GPUI
+        // doesn't expose as a value, so if the card's corner radii ever change,
+        // this also needs to be updated.
+        view.set_background_corner_radii(
+            Some(Corners {
+                bottom_left: gpui::rems(0.375),
+                bottom_right: gpui::rems(0.375),
+                ..Default::default()
+            }),
+            cx,
+        );
+
         view.set_embedded_mode(Some(1000), cx);
         view
     })
@@ -653,6 +750,14 @@ fn create_editor_diff(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<Editor> {
+    create_multibuffer_diff_editor(diff.read(cx).multibuffer().clone(), window, cx)
+}
+
+fn create_multibuffer_diff_editor(
+    multibuffer: Entity<MultiBuffer>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<Editor> {
     cx.new(|cx| {
         let mut editor = Editor::new(
             EditorMode::Full {
@@ -660,7 +765,7 @@ fn create_editor_diff(
                 show_active_line_background: false,
                 sizing_behavior: SizingBehavior::SizeByContent,
             },
-            diff.read(cx).multibuffer().clone(),
+            multibuffer,
             None,
             window,
             cx,
@@ -706,7 +811,7 @@ mod tests {
     use std::sync::Arc;
 
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent_client_protocol::schema::v1 as acp;
+    use agent_client_protocol::schema::v1 as acp_v1;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::RowInfo;
     use fs::FakeFs;
@@ -757,10 +862,10 @@ mod tests {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
-        let tool_call = acp::ToolCall::new("tool", "Tool call")
-            .status(acp::ToolCallStatus::InProgress)
-            .content(vec![acp::ToolCallContent::Diff(
-                acp::Diff::new("/project/hello.txt", "hello world").old_text("hi world"),
+        let tool_call = acp_v1::ToolCall::new("tool", "Tool call")
+            .status(acp_v1::ToolCallStatus::InProgress)
+            .content(vec![acp_v1::ToolCallContent::Diff(
+                acp_v1::Diff::new("/project/hello.txt", "hello world").old_text("hi world"),
             )]);
         let connection = Rc::new(StubAgentConnection::new());
         let thread = cx
@@ -776,7 +881,7 @@ mod tests {
         let session_id = thread.update(cx, |thread, _| thread.session_id().clone());
 
         cx.update(|_, cx| {
-            connection.send_update(session_id, acp::SessionUpdate::ToolCall(tool_call), cx)
+            connection.send_update(session_id, acp_v1::SessionUpdate::ToolCall(tool_call), cx)
         });
 
         let thread_store = None;
@@ -873,10 +978,10 @@ mod tests {
         let _response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp::CreateElicitationRequest::new(
-                        acp::ElicitationFormMode::new(
-                            acp::ElicitationSessionScope::new(session_id.clone()),
-                            acp::ElicitationSchema::new().string("name", true),
+                    acp_v1::CreateElicitationRequest::new(
+                        acp_v1::ElicitationFormMode::new(
+                            acp_v1::ElicitationSessionScope::new(session_id.clone()),
+                            acp_v1::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -887,8 +992,8 @@ mod tests {
         cx.update(|_, cx| {
             connection.send_update(
                 session_id,
-                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
-                    acp::ContentBlock::Text(acp::TextContent::new("hello")),
+                acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                    acp_v1::ContentBlock::Text(acp_v1::TextContent::new("hello")),
                 )),
                 cx,
             );
