@@ -1149,7 +1149,7 @@ pub mod tests {
     use futures::{StreamExt, future};
     use gpui::{AppContext as _, Context, TestAppContext, UpdateGlobal, WindowHandle};
     use itertools::Itertools as _;
-    use language::language_settings::{InlayHintKind, InlayHintSettings};
+    use language::language_settings::{ConfiguredLanguageServer, InlayHintKind, InlayHintSettings};
     use language::{Capability, FakeLspAdapter};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use languages::rust_lang;
@@ -5078,6 +5078,164 @@ let c = 3;"#
             "fn main() { f(hint: Xx); } // padding to keep hints from being trimmed",
         )
         .await;
+    }
+
+    #[gpui::test]
+    async fn test_late_server_hint_shares_bias_with_displayed_hint(cx: &mut gpui::TestAppContext) {
+        init_test(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                ..InlayHintSettingsContent::default()
+            })
+        });
+        // start server_a
+        let rust_servers = |servers: &[&str]| settings::LanguageSettingsContent {
+            language_servers: Some(
+                servers
+                    .iter()
+                    .map(|s| ConfiguredLanguageServer::new(*s))
+                    .collect(),
+            ),
+            ..settings::LanguageSettingsContent::default()
+        };
+        update_test_language_settings(cx, &|s| {
+            s.languages.0.insert(
+                "Rust".into(),
+                rust_servers(&["rust-analyzer", "!secondary-ls"]),
+            );
+        });
+
+        let text = "fn main() { f(x); } // padding to keep hints from being trimmed";
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/a"), json!({ "main.rs": text }))
+            .await;
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |p, _| p.languages().clone());
+        language_registry.add(rust_lang());
+
+        const POS: lsp::Position = lsp::Position {
+            line: 0,
+            character: 14,
+        };
+        let hint = |label: &str, kind, pl, pr| lsp::InlayHint {
+            position: POS,
+            label: lsp::InlayHintLabel::String(label.to_string()),
+            kind,
+            text_edits: None,
+            tooltip: None,
+            padding_left: pl,
+            padding_right: pr,
+            data: None,
+        };
+        let caps = lsp::ServerCapabilities {
+            inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+            ..Default::default()
+        };
+
+        // A: None type, padding (false, true) → Left
+        let mut servers_a = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: caps.clone(),
+                initializer: Some(Box::new(move |s| {
+                    s.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                        move |_, _| async move {
+                            Ok(Some(vec![hint("hint:", None, Some(false), Some(true))]))
+                        },
+                    );
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+        // B: Same position, Type hint → Right
+        let mut servers_b = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "secondary-ls",
+                capabilities: caps,
+                initializer: Some(Box::new(move |s| {
+                    s.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                        move |_, _| async move {
+                            Ok(Some(vec![hint(
+                                ": i32",
+                                Some(lsp::InlayHintKind::TYPE),
+                                None,
+                                None,
+                            )]))
+                        },
+                    );
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let (buffer, _handle) = project
+            .update(cx, |p, cx| {
+                p.open_local_buffer_with_lsp(path!("/a/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = cx.add_window(|w, cx| Editor::for_buffer(buffer, Some(project), w, cx));
+        cx.executor().run_until_parked();
+        let _a = servers_a.next().await.unwrap();
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.set_visible_line_count(50.0, window, cx);
+                editor.set_visible_column_count(120.0);
+                editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+            })
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(
+                    editor.display_text(cx),
+                    "fn main() { f(hint: x); } // padding to keep hints from being trimmed"
+                );
+            })
+            .unwrap();
+
+        // start server_b after server_a's hint has been displayed
+        update_test_language_settings(cx, &|s| {
+            s.languages.0.insert(
+                "Rust".into(),
+                rust_servers(&["rust-analyzer", "secondary-ls"]),
+            );
+        });
+        cx.executor().run_until_parked();
+        let _b = servers_b.next().await.unwrap();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, window, cx| {
+                assert_eq!(
+                    editor.display_text(cx),
+                    "fn main() { f(hint: : i32x); } // padding to keep hints from being trimmed"
+                );
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges([MultiBufferOffset(14)..MultiBufferOffset(14)])
+                });
+                let snapshot = editor.display_snapshot(cx);
+                assert_eq!(
+                    editor.selections.newest_display(&snapshot).head().column(),
+                    14,
+                    "cursor must not be trapped between colocated hints"
+                );
+                editor.handle_input("X", window, cx);
+                assert_eq!(
+                    editor.display_text(cx),
+                    "fn main() { f(Xhint: : i32x); } // padding to keep hints from being trimmed"
+                );
+            })
+            .unwrap();
     }
 
     #[gpui::test]
