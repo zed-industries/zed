@@ -6242,6 +6242,87 @@ async fn test_single_file_worktree_deleted(cx: &mut TestAppContext) {
     );
 }
 
+#[cfg(target_os = "linux")]
+#[gpui::test]
+async fn test_watching_resumes_after_root_is_deleted_and_recreated(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    // FakeFs watches pathnames, so it cannot reproduce inotify losing watches
+    // when a directory is deleted and replaced at the same path.
+    let directory = TempTree::new(json!({
+        "project": {
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+        },
+    }));
+    let root_path = directory.path().join("project");
+    let tree = Worktree::local(
+        root_path.as_path(),
+        true,
+        RealFs::new(None, cx.executor()),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .expect("failed to open the original worktree");
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .expect("expected a local worktree")
+            .scan_complete()
+    })
+    .await;
+    tree.flush_fs_events(cx).await;
+
+    std::fs::write(root_path.join("src/before.rs"), "")
+        .expect("failed to create a file in the original worktree");
+    wait_for_condition(cx, |cx| {
+        tree.read_with(cx, |tree, _| {
+            tree.entry_for_path(rel_path("src/before.rs")).is_some()
+        })
+    })
+    .await;
+
+    std::fs::remove_dir_all(&root_path).expect("failed to remove the original worktree");
+    // Leave the root absent long enough for both native deletion events and
+    // the periodic root check, as when archiving a checkout before restoring it.
+    cx.background_executor
+        .timer(worktree::ROOT_PATH_CHECK_INTERVAL * 2)
+        .await;
+    std::fs::create_dir_all(root_path.join("src")).expect("failed to recreate the worktree");
+
+    // A second creation after recovery distinguishes restored watching from
+    // a one-off rescan that only discovers the first file.
+    for relative_path in ["src/sandbox.rs", "src/after_recovery.rs"] {
+        std::fs::write(root_path.join(relative_path), "")
+            .expect("failed to create a file in the replacement worktree");
+
+        let mut elapsed = std::time::Duration::ZERO;
+        let poll_interval = std::time::Duration::from_millis(50);
+        let timeout = worktree::ROOT_PATH_CHECK_INTERVAL * 2;
+        while !tree.read_with(cx, |tree, _| {
+            tree.entry_for_path(rel_path(relative_path)).is_some()
+        }) {
+            assert!(
+                elapsed < timeout,
+                "file {relative_path} was not detected after recreating the worktree root \
+                 without an explicit refresh"
+            );
+            cx.background_executor.timer(poll_interval).await;
+            elapsed += poll_interval;
+        }
+        tree.read_with(cx, |tree, _| {
+            tree.as_local()
+                .expect("expected a local worktree")
+                .scan_complete()
+        })
+        .await;
+    }
+}
+
 #[gpui::test]
 async fn test_root_ancestor_rename_is_detected_without_fs_events(cx: &mut TestAppContext) {
     init_test(cx);
