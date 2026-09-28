@@ -272,7 +272,10 @@ impl GoogleLanguageModel {
                 request,
                 &extra_headers,
             );
-            request.await.context("failed to stream completion")
+            request
+                .await
+                .map_err(anyhow::Error::from)
+                .context("failed to stream completion")
         }
         .boxed()
     }
