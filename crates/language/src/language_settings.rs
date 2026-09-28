@@ -1685,6 +1685,75 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_external_formatter_settings_preserve_commands(cx: &mut App) {
+        let external = settings::Formatter::External {
+            command: "~/.local/bin/formatter".to_string(),
+            arguments: Some(vec![
+                "--stdin-filepath".to_string(),
+                "{buffer_path}".to_string(),
+                "~/literal".to_string(),
+            ]),
+        };
+        let next = settings::Formatter::External {
+            command: "./bin/next-formatter".to_string(),
+            arguments: None,
+        };
+        for formatter in [
+            settings::FormatterList::Single(external.clone()),
+            settings::FormatterList::Vec(vec![external, next]),
+        ] {
+            for language_specific in [false, true] {
+                let mut store = SettingsStore::new(cx, &settings::default_settings());
+                store.register_setting::<AllLanguageSettings>();
+                let content = if language_specific {
+                    serde_json::json!({"languages": {"Rust": {"formatter": formatter}}})
+                } else {
+                    serde_json::json!({"formatter": formatter})
+                }
+                .to_string();
+                store
+                    .set_user_settings(&content, cx)
+                    .expect("valid external formatter settings");
+                let language_name = language_specific.then(|| LanguageName::new("Rust"));
+                let loaded = store.get::<AllLanguageSettings>(None).language(
+                    None,
+                    language_name.as_ref(),
+                    cx,
+                );
+                assert_eq!(loaded.formatter, formatter);
+
+                let worktree_id = WorktreeId::from_usize(1);
+                store
+                    .set_user_settings(r#"{"formatter":"none"}"#, cx)
+                    .expect("valid user settings");
+                store
+                    .set_local_settings(
+                        worktree_id,
+                        LocalSettingsPath::InWorktree(rel_path("project").into()),
+                        LocalSettingsKind::Settings,
+                        Some(&content),
+                        cx,
+                    )
+                    .expect("valid project formatter settings");
+                let location = Some(SettingsLocation {
+                    worktree_id,
+                    path: rel_path("project/main.rs"),
+                });
+                let loaded = store.get::<AllLanguageSettings>(location).language(
+                    None,
+                    language_name.as_ref(),
+                    cx,
+                );
+                assert_eq!(loaded.formatter, formatter);
+                assert_eq!(
+                    store.get::<AllLanguageSettings>(None).defaults.formatter,
+                    settings::FormatterList::Single(settings::Formatter::None),
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
     fn test_language_servers_across_settings_files(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let mut store = SettingsStore::new(cx, &settings::default_settings());

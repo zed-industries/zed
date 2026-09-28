@@ -2722,6 +2722,30 @@ impl LocalLspStore {
         }
     }
 
+    fn external_formatter_command<'a>(
+        command: &str,
+        arguments: Option<&[String]>,
+        buffer_abs_path: Option<&Path>,
+        home_dir: impl FnOnce() -> &'a Path,
+    ) -> util::command::Command {
+        let command = Path::new(command);
+        let command = match command.strip_prefix("~") {
+            Ok(relative_command) => Cow::Owned(home_dir().join(relative_command)),
+            Err(_) => Cow::Borrowed(command),
+        };
+        let mut child = util::command::new_command(command.as_os_str());
+        if let Some(arguments) = arguments {
+            child.args(arguments.iter().map(|argument| {
+                if let Some(buffer_abs_path) = buffer_abs_path {
+                    argument.replace("{buffer_path}", &buffer_abs_path.to_string_lossy())
+                } else {
+                    argument.replace("{buffer_path}", "Untitled")
+                }
+            }));
+        }
+        child
+    }
+
     async fn format_via_external_command(
         buffer: &FormattableBuffer,
         command: &str,
@@ -2739,7 +2763,12 @@ impl LocalLspStore {
         });
 
         use util::command::Stdio;
-        let mut child = util::command::new_command(command);
+        let mut child = Self::external_formatter_command(
+            command,
+            arguments,
+            buffer.abs_path.as_deref(),
+            || paths::home_dir(),
+        );
 
         if let Some(buffer_env) = buffer.env.as_ref() {
             child.envs(buffer_env);
@@ -2747,16 +2776,6 @@ impl LocalLspStore {
 
         if let Some(working_dir_path) = working_dir_path {
             child.current_dir(working_dir_path);
-        }
-
-        if let Some(arguments) = arguments {
-            child.args(arguments.iter().map(|arg| {
-                if let Some(buffer_abs_path) = buffer.abs_path.as_ref() {
-                    arg.replace("{buffer_path}", &buffer_abs_path.to_string_lossy())
-                } else {
-                    arg.replace("{buffer_path}", "Untitled")
-                }
-            }));
         }
 
         let mut child = child
@@ -16828,6 +16847,162 @@ fn extend_formatting_transaction(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_formatter_command_expands_home_paths() {
+        let home_dir = Path::new(if cfg!(windows) {
+            "C:\\Users\\formatter"
+        } else {
+            "/home/formatter"
+        });
+        for (command, relative_command) in
+            [("~", ""), ("~/", ""), ("~/bin/formatter", "bin/formatter")]
+        {
+            let child = LocalLspStore::external_formatter_command(command, None, None, || home_dir);
+            assert_eq!(
+                child.get_program(),
+                home_dir.join(relative_command).as_os_str()
+            );
+        }
+
+        let command = r"~\bin\formatter";
+        let child = LocalLspStore::external_formatter_command(command, None, None, || home_dir);
+        if cfg!(windows) {
+            assert_eq!(
+                child.get_program(),
+                home_dir.join(r"bin\formatter").as_os_str()
+            );
+        } else {
+            assert_eq!(child.get_program(), command);
+        }
+    }
+
+    #[test]
+    fn external_formatter_command_preserves_other_commands() {
+        let home_lookups = std::cell::Cell::new(0);
+        for command in [
+            "",
+            "$HOME/bin/formatter",
+            "../bin/formatter",
+            "./bin/formatter",
+            "./~/bin/formatter",
+            "/opt/bin/formatter",
+            r"C:\formatters\formatter.exe",
+            r"\\server\formatters\formatter.exe",
+            "bin/../bin//formatter",
+            "formatter",
+            "tools/~/formatter",
+            "~other/bin/formatter",
+        ] {
+            let child = LocalLspStore::external_formatter_command(command, None, None, || {
+                home_lookups.set(home_lookups.get() + 1);
+                Path::new("unused-home")
+            });
+            assert_eq!(child.get_program(), command);
+        }
+        assert_eq!(home_lookups.get(), 0);
+    }
+
+    #[test]
+    fn external_formatter_command_preserves_arguments() {
+        let arguments = vec![
+            "--stdin-filepath".to_string(),
+            "{buffer_path}".to_string(),
+            "~/literal".to_string(),
+            "$HOME".to_string(),
+            "prefix={buffer_path}".to_string(),
+        ];
+        for buffer_abs_path in [Some(Path::new("/project/file with spaces.rs")), None] {
+            let child = LocalLspStore::external_formatter_command(
+                "~/bin/formatter",
+                Some(&arguments),
+                buffer_abs_path,
+                || Path::new("/synthetic-home"),
+            );
+            let expected_path = buffer_abs_path
+                .map(|path| path.to_string_lossy())
+                .unwrap_or(Cow::Borrowed("Untitled"));
+            let expected_arguments = [
+                "--stdin-filepath".to_string(),
+                expected_path.to_string(),
+                "~/literal".to_string(),
+                "$HOME".to_string(),
+                format!("prefix={expected_path}"),
+            ];
+            assert_eq!(
+                child.get_args().collect::<Vec<_>>(),
+                expected_arguments
+                    .iter()
+                    .map(OsStr::new)
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_formatter_command_preserves_non_unicode_home() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let home_dir = Path::new(OsStr::from_bytes(b"/home/formatter-\xff"));
+        let child =
+            LocalLspStore::external_formatter_command("~/bin/formatter", None, None, || home_dir);
+        assert_eq!(
+            child.get_program(),
+            home_dir.join("bin/formatter").as_os_str()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_formatter_command_launches_supported_forms() -> Result<()> {
+        use util::command::Stdio;
+
+        smol::block_on(async {
+            let directory = tempfile::tempdir()?;
+            let home_dir = directory.path().join("synthetic home");
+            let bin_dir = home_dir.join("bin");
+            let working_dir = directory.path().join("project");
+            std::fs::create_dir_all(&bin_dir)?;
+            std::fs::create_dir(&working_dir)?;
+            let executable = bin_dir.join("formatter");
+            std::os::unix::fs::symlink("/bin/cat", &executable)?;
+            let absolute_command = executable.to_str().context("fixture path is not Unicode")?;
+            let arguments = vec!["-".to_string()];
+
+            for command in [
+                absolute_command,
+                "../synthetic home/bin/formatter",
+                "formatter",
+                "~/bin/formatter",
+            ] {
+                let mut child = LocalLspStore::external_formatter_command(
+                    command,
+                    Some(&arguments),
+                    None,
+                    || &home_dir,
+                )
+                .env_clear()
+                .env("PATH", &bin_dir)
+                .current_dir(&working_dir)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()?;
+                child
+                    .stdin
+                    .as_mut()
+                    .context("formatter stdin is unavailable")?
+                    .write_all(b"formatter input\n")
+                    .await?;
+                let output = child.output().await?;
+                assert!(output.status.success());
+                assert_eq!(output.stdout, b"formatter input\n");
+                assert!(output.stderr.is_empty());
+            }
+            Ok(())
+        })
+    }
 
     #[test]
     fn should_log_lsp_request_failure_suppresses_known_noise() {
