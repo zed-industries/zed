@@ -1000,7 +1000,7 @@ mod tests {
     #[test]
     fn test_resolve_agent_image_resolves_absolute_paths_and_file_urls() {
         let dir = tempfile::tempdir().unwrap();
-        let image = dir.path().join("dev auth.png");
+        let image = dir.path().join("my screenshot.png");
         std::fs::write(&image, b"png").unwrap();
         let expected: Arc<Path> = Arc::from(image.as_path());
 
@@ -1036,22 +1036,22 @@ mod tests {
     #[test]
     fn test_resolve_agent_image_resolves_relative_paths_against_worktree_roots() {
         let dir = tempfile::tempdir().unwrap();
-        let image = dir.path().join("shots").join("dev auth.png");
+        let image = dir.path().join("shots").join("my screenshot.png");
         std::fs::create_dir_all(image.parent().unwrap()).unwrap();
         std::fs::write(&image, b"png").unwrap();
         let roots = vec![dir.path().to_path_buf()];
         let expected: Arc<Path> = Arc::from(image.as_path());
 
         assert_eq!(
-            image_path(resolve_agent_image("shots/dev auth.png", &roots)),
+            image_path(resolve_agent_image("shots/my screenshot.png", &roots)),
             Some(expected.clone())
         );
         assert_eq!(
-            image_path(resolve_agent_image("shots/dev%20auth.png", &roots)),
+            image_path(resolve_agent_image("shots/my%20screenshot.png", &roots)),
             Some(expected)
         );
         assert!(resolve_agent_image("shots/nope.png", &roots).is_none());
-        assert!(resolve_agent_image("shots/dev auth.png", &[]).is_none());
+        assert!(resolve_agent_image("shots/my screenshot.png", &[]).is_none());
     }
 
     #[test]
