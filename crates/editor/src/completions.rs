@@ -441,7 +441,16 @@ impl Editor {
             // When `is_incomplete` is false, no need to re-query completions when the current query
             // is a suffix of the initial query.
             let was_complete = !menu.is_incomplete;
-            if was_complete && !was_snippets_only {
+            // A completion trigger character (e.g. `.`) changes the
+            // completion context (here: member access), so the previous results are stale and the
+            // server must be re-queried even though the new query is a suffix of the previous one.
+            let requery_for_trigger_character = trigger.as_ref().is_some_and(|trigger| {
+                buffer
+                    .read(cx)
+                    .completion_triggers()
+                    .contains(trigger.as_str())
+            });
+            if !requery_for_trigger_character && was_complete && !was_snippets_only {
                 // If the new query is a suffix of the old query (typing more characters) and
                 // the previous result was complete, the existing completions can be filtered.
                 //

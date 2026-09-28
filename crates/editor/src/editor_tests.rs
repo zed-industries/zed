@@ -22282,6 +22282,113 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+async fn test_completions_requery_on_trigger_character_then_filter_on_word_character(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |language_settings| {
+        language_settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Disabled),
+            ..Default::default()
+        });
+    });
+
+    let language = language::Language::new(
+        language::LanguageConfig {
+            name: "Ruby".into(),
+            matcher: (language::LanguageMatcher {
+                path_suffixes: vec!["rb".to_string()],
+                ..Default::default()
+            })
+            .into(),
+            completion_query_characters: ['.'].into_iter().collect(),
+            ..Default::default()
+        },
+        None,
+    );
+
+    let mut cx = EditorLspTestContext::new(
+        language,
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string(), "\"".to_string()]),
+                ..lsp::CompletionOptions::default()
+            }),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    let completion_requests = Arc::new(AtomicUsize::new(0));
+    let _completion_requests_handler =
+        cx.lsp
+            .server
+            .on_request::<lsp::request::Completion, _, _>({
+                let completion_requests = completion_requests.clone();
+                move |_, _| {
+                    completion_requests.fetch_add(1, atomic::Ordering::SeqCst);
+                    async move {
+                        Ok(Some(lsp::CompletionResponse::Array(vec![
+                            lsp::CompletionItem {
+                                label: "key.foo".into(),
+                                ..lsp::CompletionItem::default()
+                            },
+                            lsp::CompletionItem {
+                                label: "key.bar".into(),
+                                ..lsp::CompletionItem::default()
+                            },
+                        ])))
+                    }
+                }
+            });
+
+    cx.set_state(indoc! {r#"
+        strings["keyˇ"]
+    "#});
+    cx.simulate_keystroke(".");
+    cx.executor().run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(
+                completion_menu_entries(menu),
+                &["key.bar", "key.foo"],
+                "typing a completion trigger character must re-query the LSP instead of reusing stale results"
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
+    });
+
+    cx.simulate_keystroke("f");
+    cx.executor().run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(
+                completion_menu_entries(menu),
+                &["key.foo"],
+                "after the LSP re-query for the trigger character, typing a word character should filter the existing results instead of closing the menu"
+            );
+        } else {
+            panic!(
+                "expected completion menu to remain visible after typing a word character"
+            );
+        }
+    });
+
+    assert_eq!(
+        completion_requests.load(atomic::Ordering::SeqCst),
+        1,
+        "typing a word character after a trigger character must not re-query the LSP"
+    );
+}
+
+#[gpui::test]
 async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettingsContent {
