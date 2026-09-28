@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use itertools::Itertools as _;
 use thiserror::Error;
 
 use super::{Rule, Violation};
