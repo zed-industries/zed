@@ -1200,6 +1200,7 @@ fn check_is_known_emoji_font(postscript_name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "test-support")]
     use std::{cell::RefCell, rc::Rc};
 
     #[test]
@@ -1314,6 +1315,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "test-support")]
     #[test]
     fn reports_graphemes_that_exhaust_font_fallback() -> Result<()> {
         let platform_text_system = Arc::new(text_system()?);

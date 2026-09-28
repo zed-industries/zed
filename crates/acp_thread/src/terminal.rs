@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap as StdHashMap,
     path::PathBuf,
+    process::ExitStatus,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -475,12 +476,10 @@ impl Terminal {
             user_stopped: Arc::new(AtomicBool::new(false)),
             execution: TerminalExecution::Process(
                 cx.spawn(async move |this, cx| {
-                    let exit_status = command_task.await.map(portable_pty::ExitStatus::from);
+                    let exit_status = command_task.await.map(Self::transform_exit_status);
                     let exit_status = acp::TerminalExitStatus::new()
-                        .exit_code(exit_status.as_ref().map(|status| status.exit_code()))
-                        .signal(
-                            exit_status.and_then(|status| status.signal().map(ToOwned::to_owned)),
-                        );
+                        .exit_code(exit_status.as_ref().map(|status| status.0))
+                        .signal(exit_status.and_then(|status| status.1));
 
                     this.update(cx, |this, cx| {
                         this.cache_output(exit_status.clone(), Instant::now(), cx);
@@ -689,6 +688,36 @@ impl Terminal {
             "Terminal:\n```\n{}\n```\n",
             self.terminal.read(cx).get_content()
         )
+    }
+
+    // This method is adapted from `portable_pty::ExitStatus::from`, version 0.9.0
+    fn transform_exit_status(exit_status: ExitStatus) -> (u32, Option<String>) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+
+            if let Some(signal) = exit_status.signal() {
+                let signame = unsafe { libc::strsignal(signal) };
+                let signal = if signame.is_null() {
+                    format!("Signal {}", signal)
+                } else {
+                    let signame = unsafe { std::ffi::CStr::from_ptr(signame) };
+                    signame.to_string_lossy().to_string()
+                };
+
+                return (
+                    exit_status.code().map(|c| c as u32).unwrap_or(1),
+                    Some(signal),
+                );
+            }
+        }
+
+        let code = exit_status
+            .code()
+            .map(|c| c as u32)
+            .unwrap_or_else(|| if exit_status.success() { 0 } else { 1 });
+
+        (code, None)
     }
 }
 
