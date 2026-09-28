@@ -1250,6 +1250,74 @@ mod tests {
     use std::rc::Rc;
 
     #[gpui::test]
+    fn test_mobile_lifecycle_subscriptions(cx: &mut TestAppContext) {
+        use crate::AppLifecyclePhase;
+
+        let phases = Rc::new(RefCell::new(Vec::new()));
+        let subscription = cx.update(|cx| {
+            cx.on_app_lifecycle({
+                let phases = phases.clone();
+                move |phase, cx| {
+                    phases.borrow_mut().push(phase);
+                    cx.defer(|cx| {
+                        cx.set_global(LifecycleObserved);
+                    });
+                }
+            })
+        });
+        struct LifecycleObserved;
+        impl crate::Global for LifecycleObserved {}
+
+        let mut callback = cx
+            .test_platform
+            .app_lifecycle_callback
+            .borrow_mut()
+            .take()
+            .expect("App registers the native lifecycle callback");
+        for phase in [
+            AppLifecyclePhase::Foreground,
+            AppLifecyclePhase::Active,
+            AppLifecyclePhase::Inactive,
+            AppLifecyclePhase::Background,
+            AppLifecyclePhase::Disconnected,
+        ] {
+            callback(phase);
+        }
+        assert_eq!(phases.borrow().len(), 5);
+        assert_eq!(
+            phases.borrow().last(),
+            Some(&AppLifecyclePhase::Disconnected)
+        );
+        cx.update(|cx| assert!(cx.has_global::<LifecycleObserved>()));
+        drop(subscription);
+        callback(AppLifecyclePhase::Foreground);
+        assert_eq!(phases.borrow().len(), 5);
+    }
+
+    #[gpui::test]
+    fn test_memory_warning_subscriptions(cx: &mut TestAppContext) {
+        let warnings = Rc::new(std::cell::Cell::new(0));
+        let subscription = cx.update(|cx| {
+            cx.on_memory_warning({
+                let warnings = warnings.clone();
+                move |_| warnings.set(warnings.get() + 1)
+            })
+        });
+        let mut callback = cx
+            .test_platform
+            .memory_warning_callback
+            .borrow_mut()
+            .take()
+            .expect("App registers the native memory warning callback");
+        callback();
+        callback();
+        assert_eq!(warnings.get(), 2);
+        drop(subscription);
+        callback();
+        assert_eq!(warnings.get(), 2);
+    }
+
+    #[gpui::test]
     async fn test_system_notifications_require_identity_and_replace_matching_tags(
         cx: &mut TestAppContext,
     ) {

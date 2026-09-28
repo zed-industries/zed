@@ -4,7 +4,6 @@
 //! macOS screens have a y axis that goes up from the bottom of the screen and
 //! an origin at the bottom left of the main display.
 
-mod dispatcher;
 mod display;
 mod display_link;
 mod events;
@@ -45,9 +44,9 @@ use std::{
     ops::Range,
 };
 
-pub(crate) use dispatcher::*;
 pub(crate) use display::*;
 pub(crate) use display_link::*;
+pub(crate) use gpui_apple::{AppleDispatcher, MacActivity};
 pub(crate) use keyboard::*;
 pub(crate) use platform::*;
 pub(crate) use window::*;

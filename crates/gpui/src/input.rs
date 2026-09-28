@@ -9,6 +9,15 @@ use std::ops::Range;
 /// Once your view implements this trait, you can use it to construct an [`ElementInputHandler<V>`].
 /// This input handler can then be assigned during paint by calling [`Window::handle_input`].
 ///
+/// After application-driven edits or selection changes, also call
+/// [`Window::notify_text_input_changed`] or [`Window::notify_text_selection_changed`]
+/// so native text services can invalidate their state.
+///
+/// UIKit text input also needs `text_length_utf16` (or a bounded
+/// `text_input_editable_range`) and native selection updates through
+/// `set_selected_text_range`. Supply `selection_bounds_for_range` for native
+/// selection rectangles; it should return line/run fragments in one batch.
+///
 /// See [`InputHandler`] for details on how to implement each method.
 pub trait EntityInputHandler: 'static + Sized {
     /// See [`InputHandler::text_for_range`] for details
@@ -72,6 +81,17 @@ pub trait EntityInputHandler: 'static + Sized {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>>;
+
+    /// See [`InputHandler::selection_bounds_for_range`] for details.
+    fn selection_bounds_for_range(
+        &mut self,
+        _range_utf16: Range<usize>,
+        _element_bounds: Bounds<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Vec<Bounds<Pixels>> {
+        Vec::new()
+    }
 
     /// See [`InputHandler::character_index_for_point`] for details
     fn character_index_for_point(
@@ -223,6 +243,17 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
         })
     }
 
+    fn selection_bounds_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<Bounds<Pixels>> {
+        self.view.update(cx, |view, cx| {
+            view.selection_bounds_for_range(range_utf16, self.element_bounds, window, cx)
+        })
+    }
+
     fn character_index_for_point(
         &mut self,
         point: crate::Point<Pixels>,
@@ -304,6 +335,7 @@ mod tests {
             move |_, cx| ConfigurationTestView {
                 focus_handle: cx.focus_handle(),
                 configuration: custom,
+                accepts_text_input: true,
             }
         });
         let view = window.root(cx).unwrap();
@@ -381,9 +413,86 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn text_notifications_require_a_focused_input_and_track_field_changes(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, cx| ConfigurationTestView {
+            focus_handle: cx.focus_handle(),
+            configuration: TextInputConfiguration::default(),
+            accepts_text_input: true,
+        });
+        let view = window.root(cx).unwrap();
+        let mut test_window = cx.test_window(window.into());
+        let window = AnyWindowHandle::from(window);
+        let first_focus = view.read_with(cx, |view, _| view.focus_handle.clone());
+        cx.update_window(window, |_, window, cx| {
+            window.focus(&first_focus, cx);
+            window.draw(cx).clear(cx);
+            window.notify_text_input_changed(&first_focus);
+            window.notify_text_selection_changed(&first_focus);
+        })
+        .unwrap();
+
+        use crate::PlatformWindow as _;
+        let mut installed_handler = test_window.take_input_handler().unwrap();
+        assert!(installed_handler.query_accepts_focused_text_input());
+        let second_focus = view.update(cx, |view, cx| {
+            view.focus_handle = cx.focus_handle();
+            cx.notify();
+            view.focus_handle.clone()
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.focus(&second_focus, cx);
+        })
+        .unwrap();
+        assert!(!installed_handler.query_accepts_focused_text_input());
+        test_window.set_input_handler(installed_handler);
+        cx.update_window(window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.notify_text_input_changed(&first_focus);
+        })
+        .unwrap();
+        assert_eq!(
+            test_window.text_input_state_changes(),
+            [
+                TextInputStateChange::FocusGained,
+                TextInputStateChange::ContentChanged,
+                TextInputStateChange::SelectionChanged,
+                TextInputStateChange::FocusLost,
+                TextInputStateChange::FocusGained,
+            ]
+        );
+
+        view.update(cx, |view, cx| {
+            view.accepts_text_input = false;
+            cx.notify();
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.notify_text_input_changed(&second_focus);
+            window.notify_text_selection_changed(&second_focus);
+            let ordinary_focus = cx.focus_handle();
+            window.focus(&ordinary_focus, cx);
+            window.draw(cx).clear(cx);
+            window.notify_text_input_changed(&ordinary_focus);
+        })
+        .unwrap();
+        assert_eq!(
+            test_window.text_input_state_changes(),
+            [
+                TextInputStateChange::FocusGained,
+                TextInputStateChange::ContentChanged,
+                TextInputStateChange::SelectionChanged,
+                TextInputStateChange::FocusLost,
+                TextInputStateChange::FocusGained,
+                TextInputStateChange::FocusLost,
+            ]
+        );
+    }
+
     struct ConfigurationTestView {
         focus_handle: FocusHandle,
         configuration: TextInputConfiguration,
+        accepts_text_input: bool,
     }
 
     impl Render for ConfigurationTestView {
@@ -407,6 +516,10 @@ mod tests {
     }
 
     impl EntityInputHandler for ConfigurationTestView {
+        fn accepts_text_input(&self, _window: &mut Window, _cx: &mut Context<Self>) -> bool {
+            self.accepts_text_input
+        }
+
         fn text_for_range(
             &mut self,
             _range: std::ops::Range<usize>,

@@ -186,7 +186,13 @@ impl<M: ManagedView> PopoverMenu<M> {
             t.toggle_state(open)
                 .when_some(builder, |el, builder| {
                     el.on_click(move |_event, window, cx| {
-                        show_menu(&builder, &menu, on_open.clone(), window, cx)
+                        if open {
+                            if let Some(menu) = menu.borrow().as_ref() {
+                                menu.update(cx, |_, cx| cx.emit(DismissEvent));
+                            }
+                        } else {
+                            show_menu(&builder, &menu, on_open.clone(), window, cx)
+                        }
                     })
                 })
                 .into_any_element()
@@ -206,7 +212,13 @@ impl<M: ManagedView> PopoverMenu<M> {
             t.toggle_state(open)
                 .when_some(builder, |el, builder| {
                     el.on_click(move |_, window, cx| {
-                        show_menu(&builder, &menu, on_open.clone(), window, cx)
+                        if open {
+                            if let Some(menu) = menu.borrow().as_ref() {
+                                menu.update(cx, |_, cx| cx.emit(DismissEvent));
+                            }
+                        } else {
+                            show_menu(&builder, &menu, on_open.clone(), window, cx)
+                        }
                     })
                     .when(!open, |t| {
                         t.tooltip(move |window, cx| tooltip_builder(window, cx))
