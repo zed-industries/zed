@@ -32,6 +32,7 @@ use project::{
 use serde::{Deserialize, Serialize};
 use serde_json::to_string_pretty;
 use settings::{Settings, SettingsStore};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Formatter, Write};
@@ -296,12 +297,28 @@ pub fn subagent_session_info_from_meta(meta: &Option<acp_v1::Meta>) -> Option<Su
 
 #[derive(Debug)]
 pub struct UserMessage {
-    pub protocol_id: Option<acp_v1::MessageId>,
+    pub identity: MessageIdentity,
+    pub meta: Option<acp_v2::Meta>,
     pub client_id: Option<ClientUserMessageId>,
     pub is_optimistic: bool,
     pub content: MessageContent,
     pub checkpoint: Option<Checkpoint>,
     pub indented: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MessageIdentity {
+    /// Legacy IDs delimit adjacent chunks; they do not identify a global upsert target.
+    Legacy(Option<acp_v1::MessageId>),
+    /// Keeps its first kind and transcript position even when updates are non-adjacent.
+    Keyed(acp_v2::MessageId),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MessageKind {
+    User,
+    Assistant,
+    Thought,
 }
 
 #[derive(Debug)]
@@ -351,11 +368,13 @@ impl AssistantMessage {
 #[derive(Debug, PartialEq)]
 pub enum AssistantMessageChunk {
     Message {
-        id: Option<acp_v1::MessageId>,
+        identity: MessageIdentity,
+        meta: Option<acp_v2::Meta>,
         block: MessageContent,
     },
     Thought {
-        id: Option<acp_v1::MessageId>,
+        identity: MessageIdentity,
+        meta: Option<acp_v2::Meta>,
         block: MessageContent,
     },
 }
@@ -368,8 +387,22 @@ impl AssistantMessageChunk {
         cx: &mut App,
     ) -> Self {
         Self::Message {
-            id: None,
+            identity: MessageIdentity::Legacy(None),
+            meta: None,
             block: MessageContent::new(chunk.into(), language_registry, path_style, cx),
+        }
+    }
+
+    fn identity(&self) -> &MessageIdentity {
+        match self {
+            Self::Message { identity, .. } | Self::Thought { identity, .. } => identity,
+        }
+    }
+
+    fn kind(&self) -> MessageKind {
+        match self {
+            Self::Message { .. } => MessageKind::Assistant,
+            Self::Thought { .. } => MessageKind::Thought,
         }
     }
 
@@ -390,6 +423,51 @@ fn can_merge_message_chunks(
     match (existing, incoming) {
         (Some(existing), Some(incoming)) => existing == incoming,
         _ => true,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MessageLocation {
+    User {
+        entry_index: usize,
+    },
+    Assistant {
+        entry_index: usize,
+        chunk_index: usize,
+    },
+}
+
+impl MessageLocation {
+    fn entry_index(self) -> usize {
+        match self {
+            Self::User { entry_index } | Self::Assistant { entry_index, .. } => entry_index,
+        }
+    }
+
+    fn fields_mut(
+        self,
+        entries: &mut [AgentThreadEntry],
+    ) -> Option<(&mut MessageContent, &mut Option<acp_v2::Meta>)> {
+        match (self, entries.get_mut(self.entry_index())?) {
+            (Self::User { .. }, AgentThreadEntry::UserMessage(message)) => {
+                Some((&mut message.content, &mut message.meta))
+            }
+            (Self::Assistant { chunk_index, .. }, AgentThreadEntry::AssistantMessage(message)) => {
+                match message.chunks.get_mut(chunk_index)? {
+                    AssistantMessageChunk::Message { block, meta, .. }
+                    | AssistantMessageChunk::Thought { block, meta, .. } => Some((block, meta)),
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn is_streaming_target(self, target: &StreamingTextTarget) -> bool {
+        matches!(
+            self,
+            Self::Assistant { entry_index, chunk_index }
+                if entry_index == target.entry_index && chunk_index == target.chunk_index
+        )
     }
 }
 
@@ -1527,16 +1605,49 @@ fn elicitation_status_for_response(
     }
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug)]
 pub struct MessageContent {
     source_blocks: Vec<acp_v2::ContentBlock>,
+    source_version: MessageContentVersion,
     blocks: Vec<RenderedMessageBlock>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MessageContentVersion(u64);
+
+impl MessageContentVersion {
+    fn next() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_VERSION: AtomicU64 = AtomicU64::new(0);
+        Self(NEXT_VERSION.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+impl Default for MessageContent {
+    fn default() -> Self {
+        Self {
+            source_blocks: Vec::new(),
+            source_version: MessageContentVersion::next(),
+            blocks: Vec::new(),
+        }
+    }
+}
+
+impl PartialEq for MessageContent {
+    fn eq(&self, other: &Self) -> bool {
+        self.source_blocks == other.source_blocks && self.blocks == other.blocks
+    }
 }
 
 #[derive(Debug, PartialEq)]
 struct RenderedMessageBlock {
     render: RenderBlock,
     source_index: Option<usize>,
+}
+
+enum DesiredMessageBlock {
+    Markdown(String),
+    Source(usize),
 }
 
 impl MessageContent {
@@ -1554,6 +1665,12 @@ impl MessageContent {
     /// Original content blocks, including text not yet revealed by streaming.
     pub fn source_blocks(&self) -> &[acp_v2::ContentBlock] {
         &self.source_blocks
+    }
+
+    /// Lets readers retain local UI state without caching another copy of the source.
+    /// Also distinguishes different content owners; independent of protocol message IDs.
+    pub fn source_version(&self) -> MessageContentVersion {
+        self.source_version
     }
 
     fn shrink_source_capacity(&mut self) {
@@ -1600,6 +1717,7 @@ impl MessageContent {
     ) {
         self.append_rendered(&block, language_registry, path_style, cx);
         self.source_blocks.push(block);
+        self.source_version = MessageContentVersion::next();
     }
 
     fn append_rendered(
@@ -1609,30 +1727,51 @@ impl MessageContent {
         path_style: PathStyle,
         cx: &mut App,
     ) {
+        if let Some(text) = Self::inline_text(block, path_style, false, self.blocks.is_empty()) {
+            self.append_text(&text, language_registry, cx);
+        } else {
+            let render = ContentBlock::render_from_source(block, language_registry, cx);
+            let source_index = match render {
+                RenderBlock::EmbeddedResource { .. }
+                | RenderBlock::Unsupported { .. }
+                | RenderBlock::Image { .. } => Some(self.source_blocks.len()),
+                _ => None,
+            };
+            self.blocks.push(RenderedMessageBlock {
+                render,
+                source_index,
+            });
+        }
+    }
+
+    fn inline_text(
+        block: &acp_v2::ContentBlock,
+        path_style: PathStyle,
+        prompt: bool,
+        leading: bool,
+    ) -> Option<Cow<'_, str>> {
         match block {
-            acp_v2::ContentBlock::Text(text) => self.append_text(&text.text, language_registry, cx),
+            acp_v2::ContentBlock::Text(text) => Some(Cow::Borrowed(&text.text)),
             acp_v2::ContentBlock::ResourceLink(resource) => {
                 let mut text = ContentBlock::resource_link_md(&resource.uri, path_style);
-                if self.blocks.is_empty() {
-                    // Legacy leading links separated the next chunk. Include that separator
-                    // now because streamed text can append directly to the Markdown entity.
+                if leading {
+                    // A leading link separates the next streamed text chunk.
                     text.push('\n');
                 }
-                self.append_text(&text, language_registry, cx);
+                Some(Cow::Owned(text))
             }
-            _ => {
-                let render = ContentBlock::render_from_source(block, language_registry, cx);
-                let source_index = match render {
-                    RenderBlock::EmbeddedResource { .. } | RenderBlock::Unsupported { .. } => {
-                        Some(self.source_blocks.len())
-                    }
-                    _ => None,
-                };
-                self.blocks.push(RenderedMessageBlock {
-                    render,
-                    source_index,
-                });
+            acp_v2::ContentBlock::Resource(resource)
+                if prompt
+                    && matches!(
+                        resource.resource,
+                        acp_v2::EmbeddedResourceResource::TextResourceContents(_)
+                    ) =>
+            {
+                Some(Cow::Owned(ContentBlock::embedded_resource_string_contents(
+                    resource, path_style,
+                )))
             }
+            _ => None,
         }
     }
 
@@ -1655,6 +1794,7 @@ impl MessageContent {
     fn append_deferred_text(&mut self, text: acp_v2::TextContent) -> usize {
         let index = self.source_blocks.len();
         self.source_blocks.push(acp_v2::ContentBlock::Text(text));
+        self.source_version = MessageContentVersion::next();
         index
     }
 
@@ -1665,21 +1805,180 @@ impl MessageContent {
         path_style: PathStyle,
         cx: &mut App,
     ) {
-        // Prompt text resources are mentions, not output previews. Keep their text
-        // inline while retaining the original payloads in the source blocks.
-        match &block {
-            acp_v2::ContentBlock::Resource(resource)
-                if matches!(
-                    resource.resource,
-                    acp_v2::EmbeddedResourceResource::TextResourceContents(_)
-                ) =>
-            {
-                let text = ContentBlock::embedded_resource_string_contents(resource, path_style);
-                self.append_text(&text, language_registry, cx);
-            }
-            _ => self.append_rendered(&block, language_registry, path_style, cx),
+        if let Some(text) = Self::inline_text(&block, path_style, true, self.blocks.is_empty()) {
+            self.append_text(&text, language_registry, cx);
+        } else {
+            self.append_rendered(&block, language_registry, path_style, cx);
         }
         self.source_blocks.push(block);
+        self.source_version = MessageContentVersion::next();
+    }
+
+    fn replace(
+        &mut self,
+        blocks: Vec<acp_v2::ContentBlock>,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        cx: &mut App,
+    ) {
+        self.replace_blocks(blocks, language_registry, path_style, false, cx);
+    }
+
+    fn replace_prompt(
+        &mut self,
+        blocks: Vec<acp_v2::ContentBlock>,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        cx: &mut App,
+    ) {
+        self.replace_blocks(blocks, language_registry, path_style, true, cx);
+    }
+
+    fn replace_blocks(
+        &mut self,
+        blocks: Vec<acp_v2::ContentBlock>,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        prompt: bool,
+        cx: &mut App,
+    ) {
+        if self.source_blocks != blocks {
+            self.source_version = MessageContentVersion::next();
+        }
+        let mut desired = Vec::<DesiredMessageBlock>::new();
+        for (source_index, block) in blocks.iter().enumerate() {
+            if let Some(text) = Self::inline_text(block, path_style, prompt, desired.is_empty()) {
+                if text.is_empty() {
+                    continue;
+                }
+                if let Some(DesiredMessageBlock::Markdown(previous)) = desired.last_mut() {
+                    previous.push_str(&text);
+                } else {
+                    desired.push(DesiredMessageBlock::Markdown(text.into_owned()));
+                }
+            } else {
+                desired.push(DesiredMessageBlock::Source(source_index));
+            }
+        }
+
+        let previous_blocks = std::mem::take(&mut self.blocks);
+        let previous_sources = std::mem::replace(&mut self.source_blocks, blocks);
+        self.blocks = desired
+            .into_iter()
+            .enumerate()
+            .map(|(render_index, desired)| {
+                let previous = previous_blocks.get(render_index);
+                match desired {
+                    DesiredMessageBlock::Markdown(text) => {
+                        let markdown = match previous.map(|block| &block.render) {
+                            Some(RenderBlock::Markdown { markdown }) => {
+                                update_markdown_in_place(markdown, &text, cx);
+                                markdown.clone()
+                            }
+                            _ => ContentBlock::create_markdown(text, language_registry, cx),
+                        };
+                        RenderedMessageBlock {
+                            render: RenderBlock::Markdown { markdown },
+                            source_index: None,
+                        }
+                    }
+                    DesiredMessageBlock::Source(source_index) => {
+                        let source = &self.source_blocks[source_index];
+                        let previous_source = previous
+                            .and_then(|block| block.source_index)
+                            .and_then(|index| previous_sources.get(index));
+                        let render = previous
+                            .and_then(|block| {
+                                Self::reuse_render(&block.render, previous_source, source, cx)
+                            })
+                            .unwrap_or_else(|| {
+                                ContentBlock::render_from_source(source, language_registry, cx)
+                            });
+                        RenderedMessageBlock {
+                            render,
+                            source_index: Some(source_index),
+                        }
+                    }
+                }
+            })
+            .collect();
+    }
+
+    fn reuse_render(
+        previous: &RenderBlock,
+        previous_source: Option<&acp_v2::ContentBlock>,
+        source: &acp_v2::ContentBlock,
+        cx: &mut App,
+    ) -> Option<RenderBlock> {
+        if previous_source == Some(source) {
+            return Some(previous.clone());
+        }
+        match (previous, source) {
+            (RenderBlock::Image { .. }, _)
+                if Self::image_data(previous_source?) == Self::image_data(source)
+                    && Self::image_data(source).is_some() =>
+            {
+                Some(previous.clone())
+            }
+            (
+                RenderBlock::EmbeddedResource {
+                    markdown: Some(markdown),
+                },
+                acp_v2::ContentBlock::Resource(resource),
+            ) if matches!(
+                &resource.resource,
+                acp_v2::EmbeddedResourceResource::TextResourceContents(_)
+            ) =>
+            {
+                let acp_v2::EmbeddedResourceResource::TextResourceContents(text) =
+                    &resource.resource
+                else {
+                    return None;
+                };
+                update_markdown_in_place(markdown, &ContentBlock::text_resource_markdown(text), cx);
+                Some(previous.clone())
+            }
+            (
+                RenderBlock::EmbeddedResource { markdown: None },
+                acp_v2::ContentBlock::Resource(resource),
+            ) if matches!(
+                &resource.resource,
+                acp_v2::EmbeddedResourceResource::BlobResourceContents(_)
+            ) && Self::image_data(source).is_none() =>
+            {
+                Some(previous.clone())
+            }
+            (RenderBlock::Unsupported { .. }, acp_v2::ContentBlock::Image(_))
+                if matches!(previous_source, Some(acp_v2::ContentBlock::Image(_)))
+                    && Self::image_data(previous_source?) == Self::image_data(source) =>
+            {
+                Some(previous.clone())
+            }
+            (RenderBlock::Unsupported { .. }, acp_v2::ContentBlock::Audio(_))
+                if matches!(previous_source, Some(acp_v2::ContentBlock::Audio(_))) =>
+            {
+                Some(previous.clone())
+            }
+            (RenderBlock::Unsupported { .. }, acp_v2::ContentBlock::Other(_))
+                if matches!(previous_source, Some(acp_v2::ContentBlock::Other(_))) =>
+            {
+                Some(previous.clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn image_data(block: &acp_v2::ContentBlock) -> Option<(&str, &str)> {
+        match block {
+            acp_v2::ContentBlock::Image(image) => Some((&image.data, image.mime_type.as_ref())),
+            acp_v2::ContentBlock::Resource(resource) => match &resource.resource {
+                acp_v2::EmbeddedResourceResource::BlobResourceContents(blob) => {
+                    Some((&blob.blob, blob.mime_type.as_ref()?.as_ref()))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
     }
 }
 
@@ -3084,14 +3383,14 @@ impl AcpThread {
                         _ => None,
                     })
                     .is_some_and(|message| {
+                        let MessageIdentity::Legacy(protocol_id) = &mut message.identity else {
+                            return false;
+                        };
                         let already_in_user_message = message.is_optimistic
                             && message.content.source_blocks().contains(&content)
-                            && can_merge_message_chunks(
-                                message.protocol_id.as_ref(),
-                                message_id.as_ref(),
-                            );
-                        if already_in_user_message && message.protocol_id.is_none() {
-                            message.protocol_id = message_id.clone();
+                            && can_merge_message_chunks(protocol_id.as_ref(), message_id.as_ref());
+                        if already_in_user_message && protocol_id.is_none() {
+                            *protocol_id = message_id.clone();
                         }
                         already_in_user_message
                     });
@@ -3193,6 +3492,270 @@ impl AcpThread {
         Ok(())
     }
 
+    pub fn upsert_user_message(
+        &mut self,
+        update: acp_v2::UserMessage,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.update_keyed_message(
+            MessageKind::User,
+            update.message_id,
+            update.content,
+            update.meta,
+            cx,
+        )
+    }
+
+    pub fn upsert_assistant_message(
+        &mut self,
+        update: acp_v2::AgentMessage,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.update_keyed_message(
+            MessageKind::Assistant,
+            update.message_id,
+            update.content,
+            update.meta,
+            cx,
+        )
+    }
+
+    pub fn upsert_thought(
+        &mut self,
+        update: acp_v2::AgentThought,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.update_keyed_message(
+            MessageKind::Thought,
+            update.message_id,
+            update.content,
+            update.meta,
+            cx,
+        )
+    }
+
+    fn update_keyed_message(
+        &mut self,
+        kind: MessageKind,
+        id: acp_v2::MessageId,
+        content: MaybeUndefined<Vec<acp_v2::ContentBlock>>,
+        meta: MaybeUndefined<acp_v2::Meta>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let previous_entry_count = self.entries.len();
+        let location = self.keyed_message_location(kind, id, cx)?;
+        if !content.is_undefined()
+            && self
+                .streaming_text_buffer
+                .as_ref()
+                .is_some_and(|buffer| location.is_streaming_target(&buffer.target))
+        {
+            // Pending text belongs to the superseded snapshot, even when the
+            // replacement reuses its Markdown entity.
+            self.streaming_text_buffer.take();
+        }
+
+        let language_registry = self.project.read(cx).languages().clone();
+        let path_style = self.project.read(cx).path_style(cx);
+        let (message_content, message_meta) = location
+            .fields_mut(&mut self.entries)
+            .context("message disappeared during update")?;
+        let replacement = match content {
+            MaybeUndefined::Undefined => None,
+            MaybeUndefined::Null => Some(Vec::new()),
+            MaybeUndefined::Value(content) => Some(content),
+        };
+        if let Some(replacement) = replacement {
+            if kind == MessageKind::User {
+                message_content.replace_prompt(replacement, &language_registry, path_style, cx);
+            } else {
+                message_content.replace(replacement, &language_registry, path_style, cx);
+            }
+        }
+        match meta {
+            MaybeUndefined::Undefined => {}
+            MaybeUndefined::Null => *message_meta = None,
+            MaybeUndefined::Value(meta) => *message_meta = Some(meta),
+        }
+        self.emit_message_update(location, previous_entry_count, cx);
+        Ok(())
+    }
+
+    pub fn append_message_chunk(
+        &mut self,
+        kind: MessageKind,
+        chunk: acp_v2::ContentChunk,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        // Chunk-envelope metadata does not patch the message's metadata.
+        let acp_v2::ContentChunk {
+            message_id,
+            content,
+            ..
+        } = chunk;
+        let previous_entry_count = self.entries.len();
+        let location = self.keyed_message_location(kind, message_id, cx)?;
+        let content = match content {
+            acp_v2::ContentBlock::Text(text) => {
+                let (content, _) = location
+                    .fields_mut(&mut self.entries)
+                    .context("message disappeared during append")?;
+                if let MessageLocation::Assistant {
+                    entry_index,
+                    chunk_index,
+                } = location
+                    && let Some(markdown) = content.trailing_text().cloned()
+                {
+                    let text_len = text.text.len();
+                    let source_index = content.append_deferred_text(text);
+                    self.buffer_streaming_text(
+                        StreamingTextTarget {
+                            entry_index,
+                            chunk_index,
+                            markdown,
+                        },
+                        source_index,
+                        text_len,
+                        cx,
+                    );
+                    self.emit_message_update(location, previous_entry_count, cx);
+                    return Ok(());
+                }
+                acp_v2::ContentBlock::Text(text)
+            }
+            content => content,
+        };
+
+        if self
+            .streaming_text_buffer
+            .as_ref()
+            .is_some_and(|buffer| location.is_streaming_target(&buffer.target))
+        {
+            self.flush_streaming_text(cx);
+        }
+        let language_registry = self.project.read(cx).languages().clone();
+        let path_style = self.project.read(cx).path_style(cx);
+        let (message_content, _) = location
+            .fields_mut(&mut self.entries)
+            .context("message disappeared during append")?;
+        if kind == MessageKind::User {
+            message_content.append_prompt(content, &language_registry, path_style, cx);
+        } else {
+            message_content.append(content, &language_registry, path_style, cx);
+        }
+        self.emit_message_update(location, previous_entry_count, cx);
+        Ok(())
+    }
+
+    fn keyed_message_location(
+        &mut self,
+        kind: MessageKind,
+        id: acp_v2::MessageId,
+        cx: &mut Context<Self>,
+    ) -> Result<MessageLocation> {
+        // Scan the authoritative records so rewind and refusal need no secondary
+        // index maintenance. Most chunks target the last record.
+        let identity = MessageIdentity::Keyed(id);
+        for (entry_index, entry) in self.entries.iter().enumerate().rev() {
+            let found = match entry {
+                AgentThreadEntry::UserMessage(message) if message.identity == identity => {
+                    Some((MessageKind::User, MessageLocation::User { entry_index }))
+                }
+                AgentThreadEntry::AssistantMessage(message) => message
+                    .chunks
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find(|(_, chunk)| chunk.identity() == &identity)
+                    .map(|(chunk_index, chunk)| {
+                        (
+                            chunk.kind(),
+                            MessageLocation::Assistant {
+                                entry_index,
+                                chunk_index,
+                            },
+                        )
+                    }),
+                _ => None,
+            };
+            if let Some((existing_kind, location)) = found {
+                anyhow::ensure!(
+                    existing_kind == kind,
+                    "message {identity:?} changed kind from {existing_kind:?} to {kind:?}"
+                );
+                return Ok(location);
+            }
+        }
+
+        self.flush_streaming_text(cx);
+        let entry_index = self.entries.len();
+        match kind {
+            MessageKind::User => {
+                self.entries
+                    .push(AgentThreadEntry::UserMessage(UserMessage {
+                        identity,
+                        meta: None,
+                        client_id: None,
+                        is_optimistic: false,
+                        content: MessageContent::default(),
+                        checkpoint: None,
+                        indented: false,
+                    }));
+                Ok(MessageLocation::User { entry_index })
+            }
+            MessageKind::Assistant | MessageKind::Thought => {
+                let chunk = if kind == MessageKind::Thought {
+                    AssistantMessageChunk::Thought {
+                        identity,
+                        meta: None,
+                        block: MessageContent::default(),
+                    }
+                } else {
+                    AssistantMessageChunk::Message {
+                        identity,
+                        meta: None,
+                        block: MessageContent::default(),
+                    }
+                };
+                if let Some(AgentThreadEntry::AssistantMessage(message)) = self.entries.last_mut()
+                    && !message.indented
+                    && !message.is_subagent_output
+                {
+                    let chunk_index = message.chunks.len();
+                    message.chunks.push(chunk);
+                    Ok(MessageLocation::Assistant {
+                        entry_index: entry_index - 1,
+                        chunk_index,
+                    })
+                } else {
+                    self.entries
+                        .push(AgentThreadEntry::AssistantMessage(AssistantMessage {
+                            chunks: vec![chunk],
+                            indented: false,
+                            is_subagent_output: false,
+                        }));
+                    Ok(MessageLocation::Assistant {
+                        entry_index,
+                        chunk_index: 0,
+                    })
+                }
+            }
+        }
+    }
+
+    fn emit_message_update(
+        &self,
+        location: MessageLocation,
+        previous_entry_count: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if self.entries.len() > previous_entry_count {
+            cx.emit(AcpThreadEvent::NewEntry);
+        } else {
+            cx.emit(AcpThreadEvent::EntryUpdated(location.entry_index()));
+        }
+    }
+
     pub fn push_user_content_block(
         &mut self,
         client_id: Option<ClientUserMessageId>,
@@ -3244,7 +3807,7 @@ impl AcpThread {
 
         if let Some(last_entry) = self.entries.last_mut()
             && let AgentThreadEntry::UserMessage(UserMessage {
-                protocol_id: existing_protocol_id,
+                identity: MessageIdentity::Legacy(existing_protocol_id),
                 client_id: existing_client_id,
                 content,
                 is_optimistic: existing_is_optimistic,
@@ -3273,7 +3836,8 @@ impl AcpThread {
             content.append_prompt(chunk, &language_registry, path_style, cx);
             self.push_entry(
                 AgentThreadEntry::UserMessage(UserMessage {
-                    protocol_id,
+                    identity: MessageIdentity::Legacy(protocol_id),
+                    meta: None,
                     client_id: incoming_client_id,
                     is_optimistic,
                     content,
@@ -3348,15 +3912,17 @@ impl AcpThread {
             match (chunks.last_mut(), is_thought) {
                 (
                     Some(AssistantMessageChunk::Message {
-                        id: existing_id,
+                        identity: MessageIdentity::Legacy(existing_id),
                         block,
+                        ..
                     }),
                     false,
                 )
                 | (
                     Some(AssistantMessageChunk::Thought {
-                        id: existing_id,
+                        identity: MessageIdentity::Legacy(existing_id),
                         block,
+                        ..
                     }),
                     true,
                 ) if can_merge_message_chunks(existing_id.as_ref(), message_id.as_ref()) => {
@@ -3369,12 +3935,14 @@ impl AcpThread {
                     let block = MessageContent::new(chunk, &language_registry, path_style, cx);
                     if is_thought {
                         chunks.push(AssistantMessageChunk::Thought {
-                            id: message_id,
+                            identity: MessageIdentity::Legacy(message_id),
+                            meta: None,
                             block,
                         })
                     } else {
                         chunks.push(AssistantMessageChunk::Message {
-                            id: message_id,
+                            identity: MessageIdentity::Legacy(message_id),
+                            meta: None,
                             block,
                         })
                     }
@@ -3384,12 +3952,14 @@ impl AcpThread {
             let block = MessageContent::new(chunk, &language_registry, path_style, cx);
             let chunk = if is_thought {
                 AssistantMessageChunk::Thought {
-                    id: message_id,
+                    identity: MessageIdentity::Legacy(message_id),
+                    meta: None,
                     block,
                 }
             } else {
                 AssistantMessageChunk::Message {
-                    id: message_id,
+                    identity: MessageIdentity::Legacy(message_id),
+                    meta: None,
                     block,
                 }
             };
@@ -3423,15 +3993,17 @@ impl AcpThread {
             match (chunk, is_thought) {
                 (
                     AssistantMessageChunk::Message {
-                        id: existing_id,
+                        identity: MessageIdentity::Legacy(existing_id),
                         block,
+                        ..
                     },
                     false,
                 )
                 | (
                     AssistantMessageChunk::Thought {
-                        id: existing_id,
+                        identity: MessageIdentity::Legacy(existing_id),
                         block,
+                        ..
                     },
                     true,
                 ) if can_merge_message_chunks(existing_id.as_ref(), message_id) => {
@@ -4281,7 +4853,8 @@ impl AcpThread {
                 this.update(cx, |this, cx| {
                     this.push_entry(
                         AgentThreadEntry::UserMessage(UserMessage {
-                            protocol_id: None,
+                            identity: MessageIdentity::Legacy(None),
+                            meta: None,
                             client_id: client_id.clone(),
                             is_optimistic: true,
                             content: block,
@@ -5686,6 +6259,270 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_message_content_replaces_mixed_blocks_in_place(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let path_style = PathStyle::local();
+            let image = message_test_image();
+            let initial = vec!["before".into(), image.clone(), "after".into()];
+            let mut content = MessageContent::default();
+            for block in &initial {
+                content.append(block.clone(), &languages, path_style, cx);
+            }
+            let original = content.blocks().collect::<Vec<_>>();
+            let before = original[0].markdown().expect("first text").clone();
+            let decoded_image = original[1].image().expect("image").0.clone();
+            let after = original[2].markdown().expect("last text").clone();
+
+            content.replace(initial.clone(), &languages, path_style, cx);
+            assert_eq!(content.source_blocks(), initial);
+            assert_eq!(
+                content.blocks().nth(0).and_then(|block| block.markdown()),
+                Some(&before)
+            );
+            assert!(Arc::ptr_eq(
+                content
+                    .blocks()
+                    .nth(1)
+                    .and_then(|block| block.image())
+                    .expect("image")
+                    .0,
+                &decoded_image
+            ));
+            assert_eq!(
+                content.blocks().nth(2).and_then(|block| block.markdown()),
+                Some(&after)
+            );
+
+            let modified_image = match image {
+                acp_v2::ContentBlock::Image(image) => acp_v2::ContentBlock::Image(
+                    image
+                        .uri("file:///renamed.png".to_string())
+                        .meta(acp_v1::Meta::from_iter([("updated".into(), json!(true))])),
+                ),
+                _ => panic!("image fixture"),
+            };
+            let replacement = vec![
+                acp_v2::ContentBlock::Text(
+                    acp_v2::TextContent::new("new ")
+                        .meta(acp_v1::Meta::from_iter([("part".into(), json!(1))])),
+                ),
+                "text".into(),
+                modified_image,
+                "changed".into(),
+            ];
+            content.replace(replacement.clone(), &languages, path_style, cx);
+            assert_eq!(content.source_blocks(), replacement);
+            assert_eq!(content.to_markdown(cx), "new text\n\n`Image`\n\nchanged");
+            assert_eq!(before.read(cx).source(), "new text");
+            assert_eq!(after.read(cx).source(), "changed");
+            assert_eq!(
+                content.blocks().nth(0).and_then(|block| block.markdown()),
+                Some(&before)
+            );
+            assert_eq!(
+                content.blocks().nth(2).and_then(|block| block.markdown()),
+                Some(&after)
+            );
+            assert!(Arc::ptr_eq(
+                content
+                    .blocks()
+                    .nth(1)
+                    .and_then(|block| block.image())
+                    .expect("image")
+                    .0,
+                &decoded_image
+            ));
+
+            content.replace(Vec::new(), &languages, path_style, cx);
+            assert!(content.source_blocks().is_empty());
+            assert_eq!(content.blocks().len(), 0);
+            content.append("again".into(), &languages, path_style, cx);
+            assert_eq!(content.to_markdown(cx), "again");
+        });
+    }
+
+    #[gpui::test]
+    fn test_message_content_snapshot_overrides_deferred_source(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let mut content =
+                MessageContent::new("visible".into(), &languages, PathStyle::local(), cx);
+            let markdown = content.markdowns().next().expect("markdown").clone();
+            content.append_deferred_text(acp_v2::TextContent::new("hidden"));
+            assert_eq!(markdown.read(cx).source(), "visible");
+            content.replace(vec!["snapshot".into()], &languages, PathStyle::local(), cx);
+            assert_eq!(content.source_blocks(), &["snapshot".into()]);
+            assert_eq!(content.to_markdown(cx), "snapshot");
+            assert_eq!(content.markdowns().next(), Some(&markdown));
+        });
+    }
+
+    #[gpui::test]
+    fn test_message_content_source_versions_track_source_not_rendering(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let path_style = PathStyle::local();
+            let mut content = MessageContent::default();
+            let other_content = MessageContent::default();
+            assert_eq!(content, other_content);
+            assert_ne!(content.source_version(), other_content.source_version());
+
+            let empty_version = content.source_version();
+            content.append("first".into(), &languages, path_style, cx);
+            assert_ne!(content.source_version(), empty_version);
+            let appended_version = content.source_version();
+            content.append_deferred_text(acp_v2::TextContent::new(" hidden"));
+            assert_ne!(content.source_version(), appended_version);
+            let deferred_version = content.source_version();
+            let snapshot = content.source_blocks().to_vec();
+            content.replace(snapshot, &languages, path_style, cx);
+            assert_eq!(content.to_markdown(cx), "first hidden");
+            assert_eq!(content.source_version(), deferred_version);
+            content.shrink_source_capacity();
+            assert_eq!(content.source_version(), deferred_version);
+
+            content.replace_prompt(Vec::new(), &languages, path_style, cx);
+            assert_ne!(content.source_version(), deferred_version);
+            let cleared_version = content.source_version();
+            content.append_prompt("".into(), &languages, path_style, cx);
+            assert_ne!(content.source_version(), cleared_version);
+            assert_eq!(content.source_blocks(), &["".into()]);
+        });
+    }
+
+    #[gpui::test]
+    fn test_message_content_snapshot_keeps_image_fallback_until_payload_changes(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let image = acp_v2::ImageContent::new("invalid-base64", "image/png");
+            let mut content = MessageContent::new(
+                acp_v2::ContentBlock::Image(image.clone()),
+                &languages,
+                PathStyle::local(),
+                cx,
+            );
+            let fallback = content.markdowns().next().expect("image fallback").clone();
+            let updated = acp_v2::ContentBlock::Image(image.meta(acp_v2::Meta::from_iter([(
+                "caption".into(),
+                json!("updated"),
+            )])));
+            content.replace(vec![updated.clone()], &languages, PathStyle::local(), cx);
+            assert_eq!(content.source_blocks(), &[updated]);
+            assert_eq!(content.markdowns().next(), Some(&fallback));
+            assert_eq!(
+                content.to_markdown(cx),
+                "Image content could not be displayed."
+            );
+
+            content.replace(
+                vec![message_test_image()],
+                &languages,
+                PathStyle::local(),
+                cx,
+            );
+            assert!(content.blocks().next().expect("image").image().is_some());
+            assert_eq!(content.markdowns().count(), 0);
+        });
+    }
+
+    #[gpui::test]
+    fn test_message_content_snapshot_preserves_unknown_source(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let unknown = acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
+                "_future",
+                std::collections::BTreeMap::from([
+                    ("payload".to_string(), json!({"nested": [1, 2]})),
+                    ("_meta".to_string(), json!({"source": "agent"})),
+                ]),
+            ));
+            let blocks = vec![
+                acp_v2::ContentBlock::Text(
+                    acp_v2::TextContent::new("before")
+                        .annotations(acp_v2::Annotations::new().priority(0.5)),
+                ),
+                unknown.clone(),
+                "after".into(),
+            ];
+            let mut content = MessageContent::default();
+            content.replace(blocks.clone(), &languages, PathStyle::local(), cx);
+            assert_eq!(content.source_blocks(), blocks);
+            assert_eq!(content.blocks().len(), 3);
+            let fallback = content.blocks().nth(1).expect("unknown block");
+            assert_eq!(fallback.unsupported_content(), Some(&unknown));
+            assert!(std::ptr::eq(
+                fallback.source.expect("source"),
+                &content.source_blocks()[1]
+            ));
+            assert_eq!(
+                content.to_markdown(cx),
+                "before\n\nUnknown content type is not supported.\n\nafter"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_message_content_snapshot_prompt_and_link_parity(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let path_style = PathStyle::local();
+            let resource = acp_v2::ContentBlock::Resource(acp_v2::EmbeddedResource::new(
+                acp_v2::EmbeddedResourceResource::TextResourceContents(
+                    acp_v2::TextResourceContents::new(
+                        "private contents",
+                        "https://example.com/file",
+                    ),
+                ),
+            ));
+            let link = acp_v2::ContentBlock::ResourceLink(acp_v2::ResourceLink::new(
+                "link",
+                "https://example.com/link",
+            ));
+            for prompt in [false, true] {
+                let blocks = vec![
+                    link.clone(),
+                    "read ".into(),
+                    resource.clone(),
+                    " next".into(),
+                ];
+                let mut appended = MessageContent::default();
+                for block in &blocks {
+                    if prompt {
+                        appended.append_prompt(block.clone(), &languages, path_style, cx);
+                    } else {
+                        appended.append(block.clone(), &languages, path_style, cx);
+                    }
+                }
+                let mut replaced = MessageContent::default();
+                if prompt {
+                    replaced.replace_prompt(blocks.clone(), &languages, path_style, cx);
+                } else {
+                    replaced.replace(blocks.clone(), &languages, path_style, cx);
+                }
+                assert_eq!(replaced.source_blocks(), blocks);
+                assert_eq!(replaced.to_markdown(cx), appended.to_markdown(cx));
+                assert_eq!(replaced.blocks().len(), appended.blocks().len());
+                if prompt {
+                    assert_eq!(replaced.blocks().len(), 1);
+                    assert!(!replaced.to_markdown(cx).contains("private contents"));
+                } else {
+                    assert_eq!(replaced.blocks().len(), 3);
+                    assert!(replaced.to_markdown(cx).contains("private contents"));
+                }
+            }
+        });
+    }
+
+    #[gpui::test]
     fn test_message_content_preserves_mixed_order(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
@@ -6904,7 +7741,7 @@ mod tests {
         thread.update(cx, |thread, cx| {
             assert_eq!(thread.entries.len(), 1);
             if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[0] {
-                assert_eq!(user_msg.protocol_id, None);
+                assert_eq!(user_msg.identity, MessageIdentity::Legacy(None));
                 assert_eq!(user_msg.client_id, None);
                 assert_eq!(user_msg.content.to_markdown(cx), "Hello, ");
             } else {
@@ -6921,7 +7758,7 @@ mod tests {
         thread.update(cx, |thread, cx| {
             assert_eq!(thread.entries.len(), 1);
             if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[0] {
-                assert_eq!(user_msg.protocol_id, None);
+                assert_eq!(user_msg.identity, MessageIdentity::Legacy(None));
                 assert_eq!(user_msg.client_id, Some(message_1_id));
                 assert_eq!(user_msg.content.to_markdown(cx), "Hello, world!");
             } else {
@@ -6946,13 +7783,739 @@ mod tests {
         thread.update(cx, |thread, cx| {
             assert_eq!(thread.entries.len(), 3);
             if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[2] {
-                assert_eq!(user_msg.protocol_id, None);
+                assert_eq!(user_msg.identity, MessageIdentity::Legacy(None));
                 assert_eq!(user_msg.client_id, Some(message_2_id));
                 assert_eq!(user_msg.content.to_markdown(cx), "New user message");
             } else {
                 panic!("Expected UserMessage at index 2");
             }
         });
+    }
+
+    fn only_keyed_message(
+        thread: &AcpThread,
+    ) -> (&MessageIdentity, &MessageContent, &Option<acp_v2::Meta>) {
+        let [entry] = thread.entries() else {
+            panic!("expected one message entry");
+        };
+        match entry {
+            AgentThreadEntry::UserMessage(message) => {
+                (&message.identity, &message.content, &message.meta)
+            }
+            AgentThreadEntry::AssistantMessage(message) => {
+                let [chunk] = message.chunks.as_slice() else {
+                    panic!("expected one assistant chunk");
+                };
+                match chunk {
+                    AssistantMessageChunk::Message {
+                        identity,
+                        block,
+                        meta,
+                    }
+                    | AssistantMessageChunk::Thought {
+                        identity,
+                        block,
+                        meta,
+                    } => (identity, block, meta),
+                }
+            }
+            _ => panic!("expected a message"),
+        }
+    }
+
+    #[gpui::test]
+    async fn test_keyed_messages_keep_first_seen_order_across_interleaved_updates(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let updates = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&thread, {
+                let updates = updates.clone();
+                move |_, event, _| match event {
+                    AcpThreadEvent::NewEntry => updates.borrow_mut().push(None),
+                    AcpThreadEvent::EntryUpdated(index) => updates.borrow_mut().push(Some(*index)),
+                    _ => {}
+                }
+            })
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_user_message(
+                    acp_v2::UserMessage::new("user").content(vec!["question".into()]),
+                    cx,
+                )
+                .expect("user");
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new("old answer".into(), "answer"),
+                    cx,
+                )
+                .expect("answer chunk");
+            thread
+                .upsert_tool_call(acp_v1::ToolCall::new("tool", "Read file"), cx)
+                .expect("tool");
+            thread
+                .upsert_thought(
+                    acp_v2::AgentThought::new("thought").content(vec!["thinking".into()]),
+                    cx,
+                )
+                .expect("thought");
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("later").content(vec!["later answer".into()]),
+                    cx,
+                )
+                .expect("later answer");
+        });
+        cx.run_until_parked();
+        assert_eq!(&*updates.borrow(), &[None, None, None, None, Some(3)]);
+        updates.borrow_mut().clear();
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("answer")
+                        .content(vec!["new ".into(), "answer".into()]),
+                    cx,
+                )
+                .expect("replace historical answer");
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" tail".into(), "answer"),
+                    cx,
+                )
+                .expect("append to replacement");
+            thread
+                .upsert_user_message(
+                    acp_v2::UserMessage::new("user").content(None::<Vec<acp_v2::ContentBlock>>),
+                    cx,
+                )
+                .expect("clear historical user");
+            thread
+                .append_message_chunk(
+                    MessageKind::User,
+                    acp_v2::ContentChunk::new("new question".into(), "user"),
+                    cx,
+                )
+                .expect("append after clear");
+            thread
+                .upsert_thought(
+                    acp_v2::AgentThought::new("thought").content(vec!["revised thought".into()]),
+                    cx,
+                )
+                .expect("replace thought");
+            thread.flush_streaming_text(cx);
+
+            let [
+                AgentThreadEntry::UserMessage(user),
+                AgentThreadEntry::AssistantMessage(answer),
+                AgentThreadEntry::ToolCall(tool),
+                AgentThreadEntry::AssistantMessage(later),
+            ] = thread.entries()
+            else {
+                panic!("updates must retain first-seen rows");
+            };
+            assert_eq!(user.identity, MessageIdentity::Keyed("user".into()));
+            assert_eq!(user.content.source_blocks(), &["new question".into()]);
+            assert_eq!(tool.id, acp_v1::ToolCallId::new("tool"));
+            let [
+                AssistantMessageChunk::Message {
+                    identity, block, ..
+                },
+            ] = answer.chunks.as_slice()
+            else {
+                panic!("one original answer chunk");
+            };
+            assert_eq!(identity, &MessageIdentity::Keyed("answer".into()));
+            assert_eq!(
+                block.source_blocks(),
+                &["new ".into(), "answer".into(), " tail".into()]
+            );
+            assert_eq!(block.to_markdown(cx), "new answer tail");
+            let [
+                AssistantMessageChunk::Thought {
+                    identity, block, ..
+                },
+                AssistantMessageChunk::Message {
+                    identity: later_id,
+                    block: later_block,
+                    ..
+                },
+            ] = later.chunks.as_slice()
+            else {
+                panic!("thought and later answer must retain their chunk positions");
+            };
+            assert_eq!(identity, &MessageIdentity::Keyed("thought".into()));
+            assert_eq!(block.to_markdown(cx), "revised thought");
+            assert_eq!(later_id, &MessageIdentity::Keyed("later".into()));
+            assert_eq!(later_block.to_markdown(cx), "later answer");
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            &*updates.borrow(),
+            &[Some(1), Some(1), Some(0), Some(0), Some(3)]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_keyed_message_patches_keep_metadata_scopes_and_tristate_fields(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        for kind in [
+            MessageKind::User,
+            MessageKind::Assistant,
+            MessageKind::Thought,
+        ] {
+            let thread = new_test_thread(cx).await;
+            let original = json!([{"type": "text", "text": "original", "_meta": {"block": true}}]);
+            let replacement = json!([{"type": "text", "text": "replacement"}]);
+            for (patch, expected_content, expected_meta) in [
+                (json!({"messageId": "patch"}), json!([]), json!(null)),
+                (
+                    json!({"messageId": "patch", "content": original, "_meta": {"message": true}}),
+                    original.clone(),
+                    json!({"message": true}),
+                ),
+                (
+                    json!({"messageId": "patch"}),
+                    original.clone(),
+                    json!({"message": true}),
+                ),
+                (
+                    json!({"messageId": "patch", "_meta": null}),
+                    original.clone(),
+                    json!(null),
+                ),
+                (
+                    json!({"messageId": "patch", "_meta": {}}),
+                    original.clone(),
+                    json!({}),
+                ),
+                (
+                    json!({"messageId": "patch", "content": replacement}),
+                    replacement.clone(),
+                    json!({}),
+                ),
+                (
+                    json!({"messageId": "patch", "content": null}),
+                    json!([]),
+                    json!({}),
+                ),
+                (
+                    json!({"messageId": "patch", "_meta": null}),
+                    json!([]),
+                    json!(null),
+                ),
+                (
+                    json!({"messageId": "patch", "content": original, "_meta": {"restored": true}}),
+                    original.clone(),
+                    json!({"restored": true}),
+                ),
+                (
+                    json!({"messageId": "patch", "content": []}),
+                    json!([]),
+                    json!({"restored": true}),
+                ),
+            ] {
+                thread.update(cx, |thread, cx| {
+                    match kind {
+                        MessageKind::User => thread.upsert_user_message(
+                            serde_json::from_value(patch).expect("user patch"),
+                            cx,
+                        ),
+                        MessageKind::Assistant => thread.upsert_assistant_message(
+                            serde_json::from_value(patch).expect("assistant patch"),
+                            cx,
+                        ),
+                        MessageKind::Thought => thread.upsert_thought(
+                            serde_json::from_value(patch).expect("thought patch"),
+                            cx,
+                        ),
+                    }
+                    .expect("apply patch");
+                    let (identity, content, meta) = only_keyed_message(thread);
+                    assert_eq!(identity, &MessageIdentity::Keyed("patch".into()));
+                    assert_eq!(
+                        serde_json::to_value(content.source_blocks()).expect("source JSON"),
+                        expected_content,
+                        "{kind:?}",
+                    );
+                    assert_eq!(
+                        serde_json::to_value(meta).expect("metadata JSON"),
+                        expected_meta,
+                        "{kind:?}",
+                    );
+                });
+            }
+            thread.update(cx, |thread, cx| {
+                let block = acp_v2::ContentBlock::Text(
+                    acp_v2::TextContent::new("chunk")
+                        .meta(acp_v2::Meta::from_iter([("block".into(), json!(true))])),
+                );
+                thread
+                    .append_message_chunk(
+                        kind,
+                        acp_v2::ContentChunk::new(block.clone(), "patch")
+                            .meta(acp_v2::Meta::from_iter([("envelope".into(), json!(true))])),
+                        cx,
+                    )
+                    .expect("append scoped metadata");
+                let (_, content, meta) = only_keyed_message(thread);
+                assert_eq!(content.source_blocks(), &[block]);
+                assert_eq!(
+                    meta,
+                    &Some(acp_v2::Meta::from_iter([("restored".into(), json!(true))]))
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_keyed_snapshots_supersede_only_their_own_buffered_text(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let original_markdown = thread.update(cx, |thread, cx| {
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("answer").content(vec!["visible".into()]),
+                    cx,
+                )
+                .expect("answer");
+            for text in ["", "é🦀 pending"] {
+                thread
+                    .append_message_chunk(
+                        MessageKind::Assistant,
+                        acp_v2::ContentChunk::new(text.into(), "answer"),
+                        cx,
+                    )
+                    .expect("buffer text");
+            }
+            only_keyed_message(thread)
+                .1
+                .markdowns()
+                .next()
+                .expect("markdown")
+                .clone()
+        });
+        cx.run_until_parked();
+
+        thread.update(cx, |thread, cx| {
+            let pending_bytes = thread
+                .streaming_text_buffer
+                .as_ref()
+                .expect("buffer")
+                .cursor
+                .pending_bytes;
+            assert_eq!(pending_bytes, "é🦀 pending".len());
+            assert_eq!(original_markdown.read(cx).source(), "visible");
+            let content = only_keyed_message(thread).1;
+            let source_version = content.source_version();
+            let snapshot = content.source_blocks().to_vec();
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("answer")
+                        .meta(acp_v2::Meta::from_iter([("message".into(), json!(true))])),
+                    cx,
+                )
+                .expect("metadata update");
+            let buffer = thread
+                .streaming_text_buffer
+                .as_ref()
+                .expect("metadata preserves buffer");
+            assert_eq!(buffer.cursor.pending_bytes, pending_bytes);
+            assert_eq!(buffer.target.markdown, original_markdown);
+            assert_eq!(
+                only_keyed_message(thread).1.source_version(),
+                source_version
+            );
+            thread
+                .upsert_assistant_message(acp_v2::AgentMessage::new("answer").content(snapshot), cx)
+                .expect("snapshot identical to source, but ahead of display");
+            assert!(thread.streaming_text_buffer.is_none());
+            assert_eq!(original_markdown.read(cx).source(), "visibleé🦀 pending");
+            assert_eq!(
+                only_keyed_message(thread).1.source_version(),
+                source_version
+            );
+            assert_eq!(
+                only_keyed_message(thread).1.markdowns().next(),
+                Some(&original_markdown)
+            );
+
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" superseded".into(), "answer"),
+                    cx,
+                )
+                .expect("buffer superseded text");
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("answer").content(vec!["replacement".into()]),
+                    cx,
+                )
+                .expect("replace buffered source");
+            assert!(thread.streaming_text_buffer.is_none());
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(
+            original_markdown.read_with(cx, |markdown, _| markdown.source().to_string()),
+            "replacement"
+        );
+
+        let current_markdown = thread.update(cx, |thread, cx| {
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" discarded on clear".into(), "answer"),
+                    cx,
+                )
+                .expect("buffer before clear");
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("answer").content(None::<Vec<acp_v2::ContentBlock>>),
+                    cx,
+                )
+                .expect("clear buffered message");
+            assert!(thread.streaming_text_buffer.is_none());
+            assert!(only_keyed_message(thread).1.source_blocks().is_empty());
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new("fresh".into(), "answer"),
+                    cx,
+                )
+                .expect("append after clear");
+            let current = only_keyed_message(thread)
+                .1
+                .markdowns()
+                .next()
+                .expect("fresh markdown")
+                .clone();
+            assert_ne!(current, original_markdown);
+
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("other").content(vec!["other".into()]),
+                    cx,
+                )
+                .expect("second keyed record");
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" pending".into(), "other"),
+                    cx,
+                )
+                .expect("other buffer");
+            let other_markdown = thread
+                .streaming_text_buffer
+                .as_ref()
+                .expect("other buffer")
+                .target
+                .markdown
+                .clone();
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("answer").content(vec!["fresh replacement".into()]),
+                    cx,
+                )
+                .expect("replace a different record");
+            let buffer = thread
+                .streaming_text_buffer
+                .as_ref()
+                .expect("unrelated buffer survives");
+            assert_eq!(buffer.target.markdown, other_markdown);
+            assert_eq!(buffer.cursor.pending_bytes, " pending".len());
+            assert_eq!(other_markdown.read(cx).source(), "other");
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" tail".into(), "answer"),
+                    cx,
+                )
+                .expect("switch to historical target");
+            assert_eq!(other_markdown.read(cx).source(), "other pending");
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(
+                        acp_v2::ContentBlock::ResourceLink(acp_v2::ResourceLink::new(
+                            "link",
+                            "https://example.com",
+                        )),
+                        "answer",
+                    ),
+                    cx,
+                )
+                .expect("flush before non-text append");
+            assert!(thread.streaming_text_buffer.is_none());
+            assert_eq!(
+                current.read(cx).source(),
+                "fresh replacement tail[@https://example.com/](https://example.com/)"
+            );
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" final".into(), "answer"),
+                    cx,
+                )
+                .expect("buffer before cancellation");
+            thread.cancel(cx).detach();
+            assert!(thread.streaming_text_buffer.is_none());
+            current
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(
+            original_markdown.read_with(cx, |markdown, _| markdown.source().to_string()),
+            "replacement"
+        );
+        assert_eq!(
+            current_markdown.read_with(cx, |markdown, _| markdown.source().to_string()),
+            "fresh replacement tail[@https://example.com/](https://example.com/) final",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_keyed_kind_conflicts_are_atomic_and_legacy_ids_stay_separate(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("shared").content(vec!["keyed".into()]),
+                    cx,
+                )
+                .expect("keyed message");
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" buffered".into(), "shared"),
+                    cx,
+                )
+                .expect("pending keyed text");
+        });
+        let updates = Rc::new(RefCell::new(0));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&thread, {
+                let updates = updates.clone();
+                move |_, event, _| {
+                    if matches!(
+                        event,
+                        AcpThreadEvent::NewEntry | AcpThreadEvent::EntryUpdated(_)
+                    ) {
+                        *updates.borrow_mut() += 1;
+                    }
+                }
+            })
+        });
+        thread.update(cx, |thread, cx| {
+            let version = only_keyed_message(thread).1.source_version();
+            assert!(
+                thread
+                    .upsert_user_message(
+                        acp_v2::UserMessage::new("shared").content(vec!["wrong role".into()]),
+                        cx,
+                    )
+                    .is_err()
+            );
+            assert!(
+                thread
+                    .upsert_thought(
+                        acp_v2::AgentThought::new("shared")
+                            .meta(acp_v2::Meta::from_iter([("wrong".into(), json!(true))])),
+                        cx,
+                    )
+                    .is_err()
+            );
+            for kind in [MessageKind::User, MessageKind::Thought] {
+                assert!(
+                    thread
+                        .append_message_chunk(
+                            kind,
+                            acp_v2::ContentChunk::new("wrong chunk".into(), "shared"),
+                            cx,
+                        )
+                        .is_err()
+                );
+            }
+            let (_, content, meta) = only_keyed_message(thread);
+            assert_eq!(content.source_version(), version);
+            assert_eq!(
+                content.source_blocks(),
+                &["keyed".into(), " buffered".into()]
+            );
+            assert_eq!(content.to_markdown(cx), "keyed");
+            assert_eq!(meta, &None);
+            assert_eq!(
+                thread
+                    .streaming_text_buffer
+                    .as_ref()
+                    .expect("buffer survives")
+                    .cursor
+                    .pending_bytes,
+                " buffered".len()
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(*updates.borrow(), 0);
+
+        thread.update(cx, |thread, cx| {
+            for chunk in [
+                acp_v1::ContentChunk::new("legacy ".into()),
+                acp_v1::ContentChunk::new("tail".into()).message_id("shared"),
+            ] {
+                thread
+                    .handle_session_update(acp_v1::SessionUpdate::AgentMessageChunk(chunk), cx)
+                    .expect("legacy chunk");
+            }
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" again".into(), "shared"),
+                    cx,
+                )
+                .expect("keyed append does not target legacy tail");
+            thread.flush_streaming_text(cx);
+            let [AgentThreadEntry::AssistantMessage(message)] = thread.entries() else {
+                panic!("one assistant row");
+            };
+            let [
+                AssistantMessageChunk::Message {
+                    identity, block, ..
+                },
+                AssistantMessageChunk::Message {
+                    identity: legacy_id,
+                    block: legacy_block,
+                    ..
+                },
+            ] = message.chunks.as_slice()
+            else {
+                panic!("separate keyed and legacy chunks");
+            };
+            assert_eq!(identity, &MessageIdentity::Keyed("shared".into()));
+            assert_eq!(block.to_markdown(cx), "keyed buffered again");
+            assert_eq!(legacy_id, &MessageIdentity::Legacy(Some("shared".into())));
+            assert_eq!(legacy_block.to_markdown(cx), "legacy tail");
+
+            thread
+                .upsert_user_message(
+                    acp_v2::UserMessage::new("user").content(vec!["keyed user".into()]),
+                    cx,
+                )
+                .expect("keyed user");
+            for chunk in [
+                acp_v1::ContentChunk::new("legacy ".into()),
+                acp_v1::ContentChunk::new("user".into()).message_id("user"),
+            ] {
+                thread
+                    .handle_session_update(acp_v1::SessionUpdate::UserMessageChunk(chunk), cx)
+                    .expect("legacy user chunk");
+            }
+            let [
+                AgentThreadEntry::AssistantMessage(_),
+                AgentThreadEntry::UserMessage(keyed),
+                AgentThreadEntry::UserMessage(legacy),
+            ] = thread.entries()
+            else {
+                panic!("legacy user chunks must not merge into keyed user");
+            };
+            assert_eq!(keyed.identity, MessageIdentity::Keyed("user".into()));
+            assert_eq!(keyed.content.to_markdown(cx), "keyed user");
+            assert_eq!(
+                legacy.identity,
+                MessageIdentity::Legacy(Some("user".into()))
+            );
+            assert_eq!(legacy.content.to_markdown(cx), "legacy user");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_keyed_messages_can_reuse_removed_ids_after_rewind(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let client_id = ClientUserMessageId::new();
+        let old_markdown = thread.update(cx, |thread, cx| {
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("kept").content(vec!["kept".into()]),
+                    cx,
+                )
+                .expect("retained prefix");
+            thread.push_user_content_block(Some(client_id.clone()), "prompt".into(), cx);
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("reuse").content(vec!["old".into()]),
+                    cx,
+                )
+                .expect("old keyed answer");
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" pending".into(), "reuse"),
+                    cx,
+                )
+                .expect("buffered old answer");
+            thread
+                .streaming_text_buffer
+                .as_ref()
+                .expect("buffer")
+                .target
+                .markdown
+                .clone()
+        });
+        let rewind = thread.update(cx, |thread, cx| {
+            let rewind = thread.rewind(client_id, cx);
+            thread
+                .append_message_chunk(
+                    MessageKind::Assistant,
+                    acp_v2::ContentChunk::new(" late".into(), "reuse"),
+                    cx,
+                )
+                .expect("update before rewind settles");
+            rewind
+        });
+        rewind.await.expect("rewind");
+        thread.update(cx, |thread, cx| {
+            assert_eq!(thread.entries().len(), 1);
+            assert!(thread.streaming_text_buffer.is_none());
+            assert_eq!(old_markdown.read(cx).source(), "old pending late");
+            thread
+                .upsert_user_message(
+                    acp_v2::UserMessage::new("reuse").content(vec!["fresh user".into()]),
+                    cx,
+                )
+                .expect("removed ID may identify a new kind");
+            let [
+                AgentThreadEntry::AssistantMessage(_),
+                AgentThreadEntry::UserMessage(message),
+            ] = thread.entries()
+            else {
+                panic!("prefix plus fresh record");
+            };
+            assert_eq!(message.identity, MessageIdentity::Keyed("reuse".into()));
+            assert_eq!(message.content.to_markdown(cx), "fresh user");
+            assert_eq!(message.meta, None);
+            assert_eq!(test_message_content(thread, 0).to_markdown(cx), "kept");
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(
+            old_markdown.read_with(cx, |markdown, _| markdown.source().to_string()),
+            "old pending late"
+        );
     }
 
     #[gpui::test]
@@ -7022,12 +8585,8 @@ mod tests {
             };
             assert_eq!(first_message.content.to_markdown(cx), "First message");
             assert_eq!(
-                first_message
-                    .protocol_id
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .as_deref(),
-                Some("msg_user_1")
+                first_message.identity,
+                MessageIdentity::Legacy(Some("msg_user_1".into()))
             );
 
             let AgentThreadEntry::UserMessage(second_message) = &thread.entries[1] else {
@@ -7035,12 +8594,8 @@ mod tests {
             };
             assert_eq!(second_message.content.to_markdown(cx), "Second message");
             assert_eq!(
-                second_message
-                    .protocol_id
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .as_deref(),
-                Some("msg_user_2")
+                second_message.identity,
+                MessageIdentity::Legacy(Some("msg_user_2".into()))
             );
 
             let AgentThreadEntry::UserMessage(third_message) = &thread.entries[2] else {
@@ -7048,12 +8603,8 @@ mod tests {
             };
             assert_eq!(third_message.content.to_markdown(cx), "EchoEcho");
             assert_eq!(
-                third_message
-                    .protocol_id
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .as_deref(),
-                Some("msg_user_3")
+                third_message.identity,
+                MessageIdentity::Legacy(Some("msg_user_3".into()))
             );
         });
     }
@@ -7102,7 +8653,7 @@ mod tests {
             };
             assert!(optimistic_message.is_optimistic);
             assert_eq!(optimistic_message.content.to_markdown(cx), "Typed prompt");
-            assert!(optimistic_message.protocol_id.is_none());
+            assert_eq!(optimistic_message.identity, MessageIdentity::Legacy(None));
             assert!(optimistic_message.client_id.is_none());
 
             let AgentThreadEntry::UserMessage(agent_message) = &thread.entries[1] else {
@@ -7111,12 +8662,8 @@ mod tests {
             assert!(!agent_message.is_optimistic);
             assert_eq!(agent_message.content.to_markdown(cx), "Agent user chunk");
             assert_eq!(
-                agent_message
-                    .protocol_id
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .as_deref(),
-                Some("agent_user_chunk")
+                agent_message.identity,
+                MessageIdentity::Legacy(Some("agent_user_chunk".into()))
             );
         });
     }
@@ -7196,40 +8743,52 @@ mod tests {
             };
             assert_eq!(message.chunks.len(), 4);
 
-            let AssistantMessageChunk::Thought { id, block } = &message.chunks[0] else {
+            let AssistantMessageChunk::Thought {
+                identity, block, ..
+            } = &message.chunks[0]
+            else {
                 panic!("expected first chunk to be a thought")
             };
             assert_eq!(block.to_markdown(cx), "Thinking hard");
             assert_eq!(
-                id.as_ref().map(ToString::to_string).as_deref(),
-                Some("msg_thought_1")
+                identity,
+                &MessageIdentity::Legacy(Some("msg_thought_1".into()))
             );
 
-            let AssistantMessageChunk::Thought { id, block } = &message.chunks[1] else {
+            let AssistantMessageChunk::Thought {
+                identity, block, ..
+            } = &message.chunks[1]
+            else {
                 panic!("expected second chunk to be a thought")
             };
             assert_eq!(block.to_markdown(cx), "A separate thought");
             assert_eq!(
-                id.as_ref().map(ToString::to_string).as_deref(),
-                Some("msg_thought_2")
+                identity,
+                &MessageIdentity::Legacy(Some("msg_thought_2".into()))
             );
 
-            let AssistantMessageChunk::Message { id, block } = &message.chunks[2] else {
+            let AssistantMessageChunk::Message {
+                identity, block, ..
+            } = &message.chunks[2]
+            else {
                 panic!("expected third chunk to be a message")
             };
             assert_eq!(block.to_markdown(cx), "Answer done");
             assert_eq!(
-                id.as_ref().map(ToString::to_string).as_deref(),
-                Some("msg_agent_1")
+                identity,
+                &MessageIdentity::Legacy(Some("msg_agent_1".into()))
             );
 
-            let AssistantMessageChunk::Message { id, block } = &message.chunks[3] else {
+            let AssistantMessageChunk::Message {
+                identity, block, ..
+            } = &message.chunks[3]
+            else {
                 panic!("expected fourth chunk to be a message")
             };
             assert_eq!(block.to_markdown(cx), "Follow-up");
             assert_eq!(
-                id.as_ref().map(ToString::to_string).as_deref(),
-                Some("msg_agent_2")
+                identity,
+                &MessageIdentity::Legacy(Some("msg_agent_2".into()))
             );
         });
     }
@@ -7422,7 +8981,7 @@ mod tests {
             let Some(AgentThreadEntry::UserMessage(message)) = thread.entries.first() else {
                 panic!("expected optimistic user message");
             };
-            assert_eq!(message.protocol_id, None);
+            assert_eq!(message.identity, MessageIdentity::Legacy(None));
             assert_eq!(message.client_id, None);
             assert!(message.is_optimistic);
         });
@@ -11815,7 +13374,8 @@ mod tests {
             );
             thread.push_entry(
                 AgentThreadEntry::UserMessage(UserMessage {
-                    protocol_id: None,
+                    identity: MessageIdentity::Legacy(None),
+                    meta: None,
                     client_id: Some(ClientUserMessageId::new()),
                     is_optimistic: true,
                     content,
@@ -12188,7 +13748,7 @@ mod tests {
             let AgentThreadEntry::UserMessage(message) = &thread.entries[0] else {
                 panic!("expected first entry to be a user message")
             };
-            assert_eq!(message.protocol_id, None);
+            assert_eq!(message.identity, MessageIdentity::Legacy(None));
             assert_eq!(message.client_id, None);
             assert!(message.is_optimistic);
         });
