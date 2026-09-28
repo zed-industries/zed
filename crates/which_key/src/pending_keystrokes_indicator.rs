@@ -1,5 +1,5 @@
 use gpui::{
-    Action as _, Anchor, Animation, AnimationExt, App, Context, HoverListenerMode,
+    Action as _, Anchor, Animation, AnimationExt, App, Context, HoverListenerMode, InputPreference,
     KeybindingKeystroke, KeystrokeEvent, Render, ScrollHandle, Subscription, Task, Window,
     anchored, deferred,
 };
@@ -231,7 +231,7 @@ impl PendingKeystrokesIndicator {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if event.character_input_preferred
+        if event.input_preference == InputPreference::CharacterInput
             || !window.has_pending_keystrokes()
             || !Self::enabled(cx)
             || !Self::popover_enabled(cx)
