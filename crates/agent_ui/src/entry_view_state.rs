@@ -740,6 +740,8 @@ fn create_terminal(
             cx,
         );
 
+        view.set_content_top_padding(gpui::rems(0.5), cx);
+
         view.set_embedded_mode(Some(1000), cx);
         view
     })
