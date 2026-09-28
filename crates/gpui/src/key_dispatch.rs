@@ -634,10 +634,10 @@ mod tests {
 
     use crate::{
         Action, ActionRegistry, App, Bounds, Context, DispatchEventResult, DispatchPhase,
-        DispatchTree, Entity, FocusHandle, InputHandler, IntoElement, KeyBinding, KeyContext,
-        KeyDownEvent, Keymap, Modifiers, Pixels, PlatformInput, PlatformWindow, Point, Render,
-        Subscription, TestAppContext, UTF16Selection, Unbind, VisualContext, VisualTestContext,
-        Window,
+        DispatchTree, Entity, FocusHandle, InputHandler, InputPreference, IntoElement, KeyBinding,
+        KeyContext, KeyDownEvent, Keymap, Modifiers, Pixels, PlatformInput, PlatformWindow, Point,
+        Render, Subscription, TestAppContext, UTF16Selection, Unbind, VisualContext,
+        VisualTestContext, Window,
     };
 
     actions!(dispatch_test, [TestAction, SecondaryTestAction]);
@@ -1619,7 +1619,7 @@ mod tests {
     }
 
     #[crate::test]
-    fn test_keystroke_character_input_preference(cx: &mut TestAppContext) {
+    fn test_keystroke_input_preference(cx: &mut TestAppContext) {
         let (test, cx) = setup_altgr_test(cx);
         let intercepted_preferences = Rc::new(RefCell::new(Vec::new()));
         let observed_preferences = Rc::new(RefCell::new(Vec::new()));
@@ -1629,7 +1629,7 @@ mod tests {
                 move |event, _, _| {
                     intercepted_preferences
                         .borrow_mut()
-                        .push(event.character_input_preferred);
+                        .push(event.input_preference);
                 }
             })
         });
@@ -1639,14 +1639,17 @@ mod tests {
                 move |event, _, _| {
                     observed_preferences
                         .borrow_mut()
-                        .push(event.character_input_preferred);
+                        .push(event.input_preference);
                 }
             })
         });
 
-        for (prefer_character_input, accepts_text_input) in
-            [(true, true), (false, true), (true, false)]
-        {
+        for (prefer_character_input, accepts_text_input, input_preference) in [
+            (true, true, InputPreference::CharacterInput),
+            (false, true, InputPreference::KeyBindings),
+            (true, false, InputPreference::KeyBindings),
+            (false, false, InputPreference::KeyBindings),
+        ] {
             test.update(cx, |test, _| {
                 test.accepts_text_input.set(accepts_text_input);
                 test.action_count.set(0);
@@ -1654,34 +1657,39 @@ mod tests {
             intercepted_preferences.borrow_mut().clear();
             observed_preferences.borrow_mut().clear();
             let result = dispatch_altgr_key_down(cx, prefer_character_input);
-            let character_input_preferred = prefer_character_input && accepts_text_input;
-            assert_eq!(result.propagate, character_input_preferred);
+            assert_eq!(
+                result.propagate,
+                input_preference == InputPreference::CharacterInput
+            );
             assert_eq!(
                 intercepted_preferences.borrow().as_slice(),
-                &[character_input_preferred]
+                &[input_preference]
             );
             assert_eq!(
                 observed_preferences.borrow().as_slice(),
-                &[character_input_preferred]
+                &[input_preference]
             );
             test.read_with(cx, |test, _| {
                 assert_eq!(
                     test.action_count.get(),
-                    usize::from(!character_input_preferred)
+                    usize::from(input_preference == InputPreference::KeyBindings)
                 );
             });
         }
     }
 
     #[crate::test]
-    fn test_character_input_preference_rechecked_after_interception(cx: &mut TestAppContext) {
+    fn test_input_preference_rechecked_after_interception(cx: &mut TestAppContext) {
         let (test, cx) = setup_altgr_test(cx);
         let accepts_text_input = test.read_with(cx, |test, _| test.accepts_text_input.clone());
         let _interceptor = cx.update(|_, cx| {
             cx.intercept_keystrokes({
                 let accepts_text_input = accepts_text_input.clone();
                 move |event, _, _| {
-                    assert_eq!(event.character_input_preferred, accepts_text_input.get());
+                    assert_eq!(
+                        event.input_preference == InputPreference::CharacterInput,
+                        accepts_text_input.get()
+                    );
                     accepts_text_input.set(!accepts_text_input.get());
                 }
             })
@@ -1693,12 +1701,15 @@ mod tests {
                 move |event, _, _| {
                     observed_preferences
                         .borrow_mut()
-                        .push(event.character_input_preferred);
+                        .push(event.input_preference);
                 }
             })
         });
 
-        for initially_accepts_text_input in [true, false] {
+        for (initially_accepts_text_input, observed_preference) in [
+            (true, InputPreference::KeyBindings),
+            (false, InputPreference::CharacterInput),
+        ] {
             accepts_text_input.set(initially_accepts_text_input);
             test.update(cx, |test, _| test.action_count.set(0));
             observed_preferences.borrow_mut().clear();
@@ -1706,7 +1717,7 @@ mod tests {
             assert_eq!(result.propagate, !initially_accepts_text_input);
             assert_eq!(
                 observed_preferences.borrow().as_slice(),
-                &[!initially_accepts_text_input]
+                &[observed_preference]
             );
             test.read_with(cx, |test, _| {
                 assert_eq!(
@@ -1725,7 +1736,7 @@ mod tests {
             cx.intercept_keystrokes({
                 let intercepted = intercepted.clone();
                 move |event, _, cx| {
-                    assert!(event.character_input_preferred);
+                    assert_eq!(event.input_preference, InputPreference::CharacterInput);
                     intercepted.set(true);
                     cx.stop_propagation();
                 }
