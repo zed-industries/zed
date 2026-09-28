@@ -22,7 +22,7 @@ use std::{cell::RefCell, fmt};
 
 use gpui::{
     BenchAppContext, Context, Window,
-    private::rand::rngs::StdRng,
+    private::rand::{Rng as _, SeedableRng as _, rngs::StdRng},
     randomized_element_tree::{
         ChangeLocality, RandomizedElementTree, RandomizedElementTreeBounds,
         RandomizedElementTreeConfig, RandomizedElementTreeMutation,
@@ -38,10 +38,23 @@ struct TreeFamily {
 }
 
 impl TreeFamily {
+    /// Draws this family's tree for the seed `rng` started from. Every family consumes
+    /// its RNG the same way, so drawing from `rng` directly would give each family the
+    /// same relative draw at a given seed (overlapping families the same tree); mixing in
+    /// the family's name gives each family its own stream for the same seed.
     fn sample(&self, rng: &mut StdRng) -> TreeInput {
+        // FNV-1a, which unlike `DefaultHasher` is fixed across Rust releases, so a seed
+        // names the same tree on every toolchain.
+        let name_hash = self
+            .name
+            .bytes()
+            .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+                (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+            });
+        let mut family_rng = StdRng::seed_from_u64(rng.random::<u64>() ^ name_hash);
         TreeInput {
             family: self.name,
-            config: self.bounds.sample(rng),
+            config: self.bounds.sample(&mut family_rng),
         }
     }
 }
