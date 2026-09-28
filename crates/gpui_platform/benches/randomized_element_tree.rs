@@ -18,7 +18,11 @@
 //! The tree's own work counters are asserted after each measured loop: a faster frame that
 //! stopped rendering the changed element is not an improvement.
 
-use std::{cell::RefCell, fmt};
+use std::{
+    cell::RefCell,
+    fmt,
+    time::{Duration, Instant},
+};
 
 use gpui::{
     BenchAppContext, Context, Window,
@@ -155,11 +159,12 @@ fn families() -> Vec<TreeFamily> {
 /// the frames did render something: a frame that skipped the changed element would be
 /// fast and wrong.
 fn measure(
+    group: &str,
     input: &TreeInput,
     cx: &mut BenchAppContext,
     mut mutate: impl FnMut(&mut RandomizedElementTree, &mut Context<RandomizedElementTree>),
 ) -> usize {
-    measure_in_window(input, cx, |tree, _, cx| mutate(tree, cx)).frames
+    measure_in_window(group, input, cx, |tree, _, cx| mutate(tree, cx)).frames
 }
 
 /// What a measured loop did: frames measured, and the entity renders the frames showed.
@@ -169,6 +174,7 @@ struct Measured {
 }
 
 fn measure_in_window(
+    group: &str,
     input: &TreeInput,
     cx: &mut BenchAppContext,
     mut mutate: impl FnMut(&mut RandomizedElementTree, &mut Window, &mut Context<RandomizedElementTree>),
@@ -203,7 +209,22 @@ fn measure_in_window(
     let mut frames = 0;
     let mut frames_that_rendered = 0;
     let mut entity_renders = 0;
+    let mut summary = SeedTotals::default();
+    let mut previous_iteration: Option<(Instant, Option<bench_metrics::AllocationStats>)> = None;
     cx.bench_renderer(tree, |tree, window, cx| {
+        // From one iteration's start to the next is one whole iteration, the frame
+        // included, as Criterion times it; the reads add well under a microsecond.
+        let now = Instant::now();
+        let stats = bench_metrics::allocation_stats();
+        if let Some((started, started_stats)) = previous_iteration {
+            summary.elapsed += now - started;
+            summary.iterations += 1;
+            if let Some((start, end)) = started_stats.zip(stats) {
+                summary.allocations += end.allocations - start.allocations;
+            }
+        }
+        previous_iteration = Some((now, stats));
+
         let previous = tree.work_counters();
         entity_renders += previous.entity_render_count();
         if previous.root_render_count() + previous.entity_render_count() >= 1
@@ -219,6 +240,7 @@ fn measure_in_window(
         frames_that_rendered * 2 >= frames,
         "the notified root or entity re-rendered in {frames_that_rendered} of {frames} frames"
     );
+    record_for_summary(group, input, summary);
     Measured {
         frames,
         entity_renders,
@@ -252,16 +274,103 @@ fn describe_once(
     }
 }
 
+/// One seed's measured iterations, summed over every routine call Criterion makes for it.
+#[derive(Clone, Copy, Default)]
+struct SeedTotals {
+    elapsed: Duration,
+    iterations: u64,
+    allocations: u64,
+}
+
+/// Totals per group and family, each holding one entry per tree (seed), in run order.
+type SummaryTotals = Vec<(
+    String,
+    &'static str,
+    Vec<(RandomizedElementTreeConfig, SeedTotals)>,
+)>;
+
+thread_local! {
+    static SUMMARY: RefCell<SummaryTotals> = const { RefCell::new(Vec::new()) };
+}
+
+fn record_for_summary(group: &str, input: &TreeInput, totals: SeedTotals) {
+    SUMMARY.with(|summary| {
+        let mut summary = summary.borrow_mut();
+        let index = match summary.iter().position(|(existing_group, family, _)| {
+            existing_group == group && *family == input.family
+        }) {
+            Some(index) => index,
+            None => {
+                summary.push((group.to_owned(), input.family, Vec::new()));
+                summary.len() - 1
+            }
+        };
+        let seeds = &mut summary[index].2;
+        match seeds.iter_mut().find(|(config, _)| *config == input.config) {
+            Some((_, seed)) => {
+                seed.elapsed += totals.elapsed;
+                seed.iterations += totals.iterations;
+                seed.allocations += totals.allocations;
+            }
+            None => seeds.push((input.config, totals)),
+        }
+    });
+}
+
+fn geometric_mean(values: impl IntoIterator<Item = f64>) -> f64 {
+    let (log_sum, count) = values
+        .into_iter()
+        .fold((0.0, 0_u32), |(sum, count), value| {
+            (sum + value.max(f64::MIN_POSITIVE).ln(), count + 1)
+        });
+    (log_sum / f64::from(count.max(1))).exp()
+}
+
+/// Prints one line per group and family: the geometric mean across its seeds of the time
+/// and allocations per iteration, so a family reads as one number while each seed stays
+/// its own reproducible benchmark. Registered as the last target so it runs after every
+/// group; prints nothing when a filter matched no randomized tree benchmark.
+fn family_summary(_: &mut criterion::Criterion<gpui::BenchMeasurement>) {
+    let summary = SUMMARY.with(|summary| summary.take());
+    if summary.is_empty() {
+        return;
+    }
+    eprintln!(
+        "\nRandomizedTree family summary (geometric mean across seeds; includes Criterion warm-up)"
+    );
+    eprintln!(
+        "  {:<34} {:<15} {:>5} {:>14} {:>14}",
+        "group", "family", "seeds", "time/iter", "allocs/iter"
+    );
+    for (group, family, seeds) in summary {
+        let per_iteration = |value: fn(&SeedTotals) -> f64| {
+            geometric_mean(
+                seeds
+                    .iter()
+                    .filter(|(_, totals)| totals.iterations > 0)
+                    .map(|(_, totals)| value(totals) / totals.iterations as f64),
+            )
+        };
+        let time = per_iteration(|totals| totals.elapsed.as_secs_f64());
+        let allocations = per_iteration(|totals| totals.allocations as f64);
+        eprintln!(
+            "  {group:<34} {family:<15} {:>5} {:>11.1} µs {allocations:>14.0}",
+            seeds.len(),
+            time * 1e6
+        );
+    }
+}
+
 /// A frame that rebuilds everything: `Window::refresh`, the fallback GPUI uses whenever
 /// it cannot tell what changed (window activation, theme or settings changes via
 /// `refresh_windows`, an inspector toggle). Nothing in the tree changes, so this is the
 /// pure cost of the known-good path, and the renderer's worst case: every view and element
 /// rendered again, none reused. Its difference between two GPUI revisions is the price of
 /// a full refresh on the newer one.
-#[gpui::bench(inputs = families(), input_name = "tree", iterations = 6, group = "RandomizedTree/full refresh", fps = 120)]
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "RandomizedTree/full refresh", fps = 120)]
 fn full_refresh(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = &family.sample(&mut rng);
-    let measured = measure_in_window(input, cx, |_, window, _| window.refresh());
+    let measured = measure_in_window("full refresh", input, cx, |_, window, _| window.refresh());
     assert!(measured.frames > 0);
     // A full refresh renders every entity; a renderer that replayed them would render none.
     if input.config.entity_density() >= 0.25 {
@@ -275,20 +384,20 @@ fn full_refresh(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) 
 /// A frame in which the root is notified but nothing in the tree changed. On a renderer
 /// that rebuilds every frame this is the whole tree's cost; on one that retains output
 /// it is the floor for a frame that has to do nothing.
-#[gpui::bench(inputs = families(), input_name = "tree", iterations = 6, group = "RandomizedTree/unchanged", fps = 120)]
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "RandomizedTree/unchanged", fps = 120)]
 fn unchanged(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = &family.sample(&mut rng);
-    let frames = measure(input, cx, |_, cx| cx.notify());
+    let frames = measure("unchanged", input, cx, |_, cx| cx.notify());
     assert!(frames > 0);
 }
 
 /// One descendant's background color changes each frame: the smallest possible change,
 /// confined to one element and, when it has one, its owning entity.
-#[gpui::bench(inputs = families(), input_name = "tree", iterations = 6, group = "RandomizedTree/leaf style", fps = 120)]
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "RandomizedTree/leaf style", fps = 120)]
 fn leaf_style(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = &family.sample(&mut rng);
     let mut recolored = 0usize;
-    let frames = measure(input, cx, |tree, cx| {
+    let frames = measure("leaf style", input, cx, |tree, cx| {
         if let RandomizedElementTreeMutation::ChildColor { .. } =
             tree.apply_mutation(RandomizedElementTreeMutationKind::ChildColor, cx)
         {
@@ -304,20 +413,20 @@ fn leaf_style(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
 
 /// A descendant's width and height change each frame, so its siblings and ancestors
 /// re-lay out even where their own content did not change.
-#[gpui::bench(inputs = families(), input_name = "tree", iterations = 6, group = "RandomizedTree/leaf bounds", fps = 120)]
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "RandomizedTree/leaf bounds", fps = 120)]
 fn leaf_bounds(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = &family.sample(&mut rng);
-    let frames = measure(input, cx, |tree, cx| {
+    let frames = measure("leaf bounds", input, cx, |tree, cx| {
         tree.apply_mutation(RandomizedElementTreeMutationKind::ChildBounds, cx);
     });
     assert!(frames > 0);
 }
 
 /// The root's width and height change each frame: every element's layout is stale.
-#[gpui::bench(inputs = families(), input_name = "tree", iterations = 6, group = "RandomizedTree/root layout", fps = 120)]
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "RandomizedTree/root layout", fps = 120)]
 fn root_layout(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = &family.sample(&mut rng);
-    let frames = measure(input, cx, |tree, cx| {
+    let frames = measure("root layout", input, cx, |tree, cx| {
         tree.apply_mutation(RandomizedElementTreeMutationKind::RootBounds, cx);
     });
     assert!(frames > 0);
@@ -325,13 +434,13 @@ fn root_layout(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
 
 /// One element is inserted or removed per frame, alternating so the tree keeps its size
 /// to within one element over the whole loop. Removal takes a leaf, never a subtree.
-#[gpui::bench(inputs = families(), input_name = "tree", iterations = 6, group = "RandomizedTree/insert-remove", fps = 120)]
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "RandomizedTree/insert-remove", fps = 120)]
 fn insert_remove(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = &family.sample(&mut rng);
     let mut insert = true;
     let mut inserted = 0usize;
     let mut removed = 0usize;
-    let frames = measure(input, cx, |tree, cx| {
+    let frames = measure("insert-remove", input, cx, |tree, cx| {
         let kind = if insert {
             RandomizedElementTreeMutationKind::Insert
         } else {
@@ -357,11 +466,11 @@ fn insert_remove(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext)
 
 /// A descendant moves among its siblings each frame; the set of elements is unchanged
 /// but their order, and therefore every sibling's position, is not.
-#[gpui::bench(inputs = families(), input_name = "tree", iterations = 6, group = "RandomizedTree/reorder", fps = 120)]
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "RandomizedTree/reorder", fps = 120)]
 fn reorder(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = &family.sample(&mut rng);
     let mut reordered = 0usize;
-    let frames = measure(input, cx, |tree, cx| {
+    let frames = measure("reorder", input, cx, |tree, cx| {
         if let RandomizedElementTreeMutation::Reordered { .. } =
             tree.apply_mutation(RandomizedElementTreeMutationKind::Reorder, cx)
         {
@@ -385,12 +494,18 @@ struct ChangingShareInput {
     locality: ChangeLocality,
 }
 
-impl fmt::Display for ChangingShareInput {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let locality = match self.locality {
+impl ChangingShareInput {
+    fn locality_name(&self) -> &'static str {
+        match self.locality {
             ChangeLocality::Localized => "local",
             ChangeLocality::Spread => "spread",
-        };
+        }
+    }
+}
+
+impl fmt::Display for ChangingShareInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let locality = self.locality_name();
         write!(
             formatter,
             "{}-f{}-{locality}",
@@ -430,9 +545,8 @@ fn changing_share_inputs() -> Vec<ChangingShareInput> {
         .collect()
 }
 
-// Three seeds rather than six: every family is multiplied by seven shares, and fewer
-// seeds keep the group to a few minutes.
-#[gpui::bench(inputs = changing_share_inputs(), input_name = "tree", iterations = 3, group = "RandomizedTree/changing share", fps = 120)]
+// One seed rather than two: every family is multiplied by seven shares.
+#[gpui::bench(inputs = changing_share_inputs(), input_name = "tree", iterations = 1, group = "RandomizedTree/changing share", fps = 120)]
 fn changing_share(input: &ChangingShareInput, mut rng: StdRng, cx: &mut BenchAppContext) {
     let tree = &input.family.sample(&mut rng);
     let element_count = tree.config.element_count();
@@ -445,7 +559,12 @@ fn changing_share(input: &ChangingShareInput, mut rng: StdRng, cx: &mut BenchApp
         recolored: 0,
         notified: 0,
     };
-    let frames = measure(tree, cx, |tree, cx| {
+    let group = format!(
+        "changing share f{}-{}",
+        input.share_percent,
+        input.locality_name()
+    );
+    let frames = measure(&group, tree, cx, |tree, cx| {
         if per_frame == 0 {
             cx.notify();
         } else {
@@ -459,15 +578,24 @@ fn changing_share(input: &ChangingShareInput, mut rng: StdRng, cx: &mut BenchApp
     }
 }
 
+// Frames take 0.4 to 2.5 ms, so a 1 s measurement is already hundreds to thousands of
+// frames; Criterion's 3 s warm-up and 5 s measurement per id would make the suite take
+// most of an hour. Pass `ITERATIONS=6`, `--warm-up-time` or `--measurement-time` for a
+// closer comparison.
 gpui::bench_group!(
-    benches,
-    full_refresh,
+    name = benches;
+    config = criterion::Criterion::default()
+        .warm_up_time(Duration::from_millis(500))
+        .measurement_time(Duration::from_secs(1))
+        .sample_size(20);
+    targets = full_refresh,
     unchanged,
     leaf_style,
     leaf_bounds,
     root_layout,
     insert_remove,
     reorder,
-    changing_share
+    changing_share,
+    family_summary
 );
 gpui::bench_main!(benches);
