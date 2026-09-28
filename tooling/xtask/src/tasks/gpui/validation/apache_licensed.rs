@@ -84,7 +84,7 @@ fn is_symlinked_license(license_file: &Path) -> bool {
             .is_ok_and(|target| target.file_name() == Some(APACHE_LICENSE_FILE.as_ref()))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use anyhow::Result;
 
