@@ -7,8 +7,9 @@ use std::{
 
 #[cfg(target_os = "linux")]
 use gpui::{
-    AnyWindowHandle, App, AppContext as _, Context, Entity, QuitMode, Render, Subscription, Window,
-    WindowOptions, div, prelude::*,
+    AnyWindowHandle, App, AppContext as _, AsyncApp, Context, DisplayEnvironment, DisplayMode,
+    Entity, QuitMode, Render, Subscription, TitlebarOptions, Window, WindowOptions, div,
+    prelude::*,
 };
 
 #[cfg(target_os = "linux")]
@@ -48,7 +49,7 @@ impl Render for TodoWindow {
             .flex_col()
             .gap_2()
             .p_4()
-            .child("Headless / Wayland todos")
+            .child("Switchable display todos")
             .child("Use the terminal: create <message>, ls, close, open, quit")
             .when(rows.is_empty(), |view| {
                 view.child("No todos yet. Type `create buy milk` in the terminal.")
@@ -81,7 +82,14 @@ fn open_window(todos: &Entity<Todos>, cx: &mut App) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let handle = cx.open_window(WindowOptions::default(), |_, cx| {
+    let options = WindowOptions {
+        titlebar: Some(TitlebarOptions {
+            title: Some("Switchable display todos".into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let handle = cx.open_window(options, |_, cx| {
         cx.new(|cx| TodoWindow {
             todos: todos.clone(),
             _todos_subscription: cx.observe(todos, |_, _, cx| cx.notify()),
@@ -91,42 +99,88 @@ fn open_window(todos: &Entity<Todos>, cx: &mut App) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Builds the environment for `open`: the given `NAME=value` pairs, or this process's
+/// environment when none are given.
+#[cfg(target_os = "linux")]
+fn display_environment(arguments: &str) -> anyhow::Result<DisplayEnvironment> {
+    if arguments.trim().is_empty() {
+        return Ok(DisplayEnvironment::from_process_environment());
+    }
+    let mut environment = DisplayEnvironment::default();
+    for assignment in arguments.split_whitespace() {
+        let (name, value) = assignment
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("expected NAME=value, got {assignment:?}"))?;
+        let value = Some(value.into());
+        match name {
+            "WAYLAND_DISPLAY" => environment.wayland_display = value,
+            "DISPLAY" => environment.x11_display = value,
+            "XDG_RUNTIME_DIR" => environment.xdg_runtime_dir = value,
+            _ => anyhow::bail!("unknown display variable {name}"),
+        }
+    }
+    Ok(environment)
+}
+
 #[cfg(target_os = "linux")]
 fn handle_command(
-    command: String,
+    command: &str,
     todos: &Entity<Todos>,
     cx: &mut App,
-) -> anyhow::Result<Option<bool>> {
-    if command == "ls" {
-        print_todos(todos, cx);
-    } else if let Some(message) = command.strip_prefix("create ") {
-        let todo = cx.new(|_| Todo {
-            message: message.to_owned(),
-        });
-        todos.update(cx, |todos, cx| {
-            todos.items.push(todo);
-            println!("todo added, total {}", todos.items.len());
-            cx.notify();
-        });
-    } else if matches!(command.as_str(), "open" | "windowed") {
-        return Ok(Some(false));
-    } else if matches!(command.as_str(), "close" | "headless") {
-        let window = todos.update(cx, |todos, _| todos.window.take());
-        if let Some(window) = window {
-            window.update(cx, |_, window, _| window.remove_window())?;
+) -> anyhow::Result<Option<DisplayMode>> {
+    let (name, arguments) = command.split_once(' ').unwrap_or((command, ""));
+    match name {
+        "ls" => print_todos(todos, cx),
+        "create" => {
+            let todo = cx.new(|_| Todo {
+                message: arguments.to_owned(),
+            });
+            todos.update(cx, |todos, cx| {
+                todos.items.push(todo);
+                println!("todo added, total {}", todos.items.len());
+                cx.notify();
+            });
         }
-        return Ok(Some(true));
-    } else if command == "quit" {
-        cx.quit();
-    } else if !command.is_empty() {
-        println!("commands: ls | create <message> | open (windowed) | close (headless) | quit");
+        "open" => return Ok(Some(DisplayMode::Windowed(display_environment(arguments)?))),
+        "close" => {
+            let window = todos.update(cx, |todos, _| todos.window.take());
+            if let Some(window) = window {
+                window.update(cx, |_, window, _| window.remove_window())?;
+            }
+            return Ok(Some(DisplayMode::Headless));
+        }
+        "quit" => cx.quit(),
+        "" => {}
+        _ => println!("{USAGE}"),
     }
     Ok(None)
 }
 
 #[cfg(target_os = "linux")]
+const USAGE: &str = "commands: ls | create <message> | open [DISPLAY=… WAYLAND_DISPLAY=… XDG_RUNTIME_DIR=…] | close | quit";
+
+#[cfg(target_os = "linux")]
+async fn run_command(
+    command: String,
+    todos: &Entity<Todos>,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    let Some(mode) = cx.update(|cx| handle_command(&command, todos, cx))? else {
+        return Ok(());
+    };
+    let windowed = matches!(mode, DisplayMode::Windowed(_));
+    cx.update(|cx| cx.set_display_mode(mode)).await?;
+    if windowed {
+        cx.update(|cx| open_window(todos, cx))?;
+    }
+    let compositor = cx.update(|cx| cx.compositor_name());
+    println!("mode: {compositor}");
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 fn main() {
-    gpui_platform::switchable_wayland()
+    gpui_platform::switchable()
         .with_quit_mode(QuitMode::Explicit)
         .run(|cx| {
             let todos = cx.new(|_| Todos {
@@ -164,7 +218,7 @@ fn main() {
                 }
             });
 
-            println!("commands: ls | create <message> | open (windowed) | close (headless) | quit");
+            println!("{USAGE}");
             cx.spawn(async move |cx| {
                 let _window_closed_subscription = window_closed_subscription;
                 loop {
@@ -172,25 +226,17 @@ fn main() {
                         .timer(Duration::from_millis(25))
                         .await;
                     while let Ok(command) = command_receiver.try_recv() {
-                        if let Some(headless) =
-                            cx.update(|cx| handle_command(command, &todos, cx))?
-                        {
-                            let transition = cx.update(|cx| cx.set_headless(headless));
-                            transition.await?;
-                            if !headless {
-                                cx.update(|cx| open_window(&todos, cx))?;
-                            }
+                        if let Err(error) = run_command(command, &todos, cx).await {
+                            println!("error: {error:#}");
                         }
                     }
                 }
-                #[allow(unreachable_code)]
-                anyhow::Ok(())
             })
-            .detach_and_log_err(cx);
+            .detach();
         });
 }
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
-    eprintln!("the headless_wayland example is only supported on Linux");
+    eprintln!("the switchable_display example is only supported on Linux");
 }

@@ -97,12 +97,12 @@ use crate::linux::{
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
 };
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, ExternalDragPayload,
-    FileDragPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput,
-    PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta, ScrollWheelEvent, SharedString,
-    Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, px, size,
+    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayEnvironment, DisplayId,
+    ExternalDragPayload, FileDragPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent,
+    KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
+    PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta, ScrollWheelEvent,
+    SharedString, Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -842,6 +842,29 @@ impl Drop for WaylandClient {
 
 const WL_DATA_DEVICE_MANAGER_VERSION: u32 = 3;
 
+/// Connects to the socket that `WAYLAND_DISPLAY` names, as `Connection::connect_to_env` does.
+fn connect_to_wayland_display(environment: &DisplayEnvironment) -> anyhow::Result<Connection> {
+    let display = environment
+        .wayland_display
+        .as_ref()
+        .filter(|display| !display.is_empty())
+        .context("WAYLAND_DISPLAY is not set")?;
+    let display = PathBuf::from(display);
+    let socket_path = if display.is_absolute() {
+        display
+    } else {
+        let runtime_directory = environment
+            .xdg_runtime_dir
+            .as_ref()
+            .filter(|directory| !directory.is_empty())
+            .context("XDG_RUNTIME_DIR is not set")?;
+        PathBuf::from(runtime_directory).join(display)
+    };
+    let stream = std::os::unix::net::UnixStream::connect(&socket_path)
+        .with_context(|| format!("failed to connect to {}", socket_path.display()))?;
+    Ok(Connection::from_socket(stream)?)
+}
+
 fn wl_seat_version(version: u32) -> anyhow::Result<u32> {
     // We rely on the wl_pointer.frame event
     const WL_SEAT_MIN_VERSION: u32 = 5;
@@ -885,7 +908,7 @@ impl WaylandClient {
         let handle = event_loop.handle();
         LinuxCommon::register_sources(&common, &handle, main_receiver, power_receiver)
             .expect("failed to register Linux event sources");
-        let client = Self::attach(handle, common, startup_activation_token)
+        let client = Self::attach(handle, common, None, startup_activation_token)
             .expect("failed to initialize Wayland client");
         client.0.borrow_mut().event_loop = Some(event_loop);
         client
@@ -893,15 +916,20 @@ impl WaylandClient {
 
     /// Connects to the Wayland compositor and registers its event sources on `handle`.
     ///
-    /// Dropping the client removes those sources, leaving the loop and `common` usable without
-    /// Wayland.
+    /// Connects to the compositor that `environment` names, or to the one this process's
+    /// environment names when `None`. Dropping the client removes its sources, leaving the loop
+    /// and `common` usable without Wayland.
     pub(crate) fn attach(
         handle: LoopHandle<'static, ()>,
         common: Rc<RefCell<LinuxCommon>>,
+        environment: Option<&DisplayEnvironment>,
         startup_activation_token: Option<String>,
     ) -> anyhow::Result<Self> {
-        let conn =
-            Connection::connect_to_env().context("failed to connect to Wayland compositor")?;
+        let conn = match environment {
+            Some(environment) => connect_to_wayland_display(environment),
+            None => Connection::connect_to_env().map_err(anyhow::Error::from),
+        }
+        .context("failed to connect to Wayland compositor")?;
         let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn)
             .context("failed to initialize Wayland registry")?;
         let qh = event_queue.handle();

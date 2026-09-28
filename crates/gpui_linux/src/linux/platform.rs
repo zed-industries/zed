@@ -33,10 +33,10 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 use crate::linux::{LinuxDispatcher, PriorityQueueCalloopReceiver};
 use gpui::{
     Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
-    DisplayId, ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
-    WindowButtonLayout, WindowParams,
+    DisplayId, DisplayMode, ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, Result, RunnableVariant, Task, ThermalState,
+    WindowAppearance, WindowButtonLayout, WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use gpui::{Pixels, Point, px};
@@ -102,7 +102,7 @@ pub(crate) trait LinuxClient {
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn run(&self);
-    fn set_headless(&self, _headless: bool) -> Task<anyhow::Result<()>> {
+    fn set_display_mode(&self, _mode: DisplayMode) -> Task<anyhow::Result<()>> {
         Task::ready(Err(anyhow!(
             "this Linux client cannot switch display backends"
         )))
@@ -159,6 +159,11 @@ pub(crate) struct LinuxCommon {
     )]
     power_sender: Sender<SystemPowerEvent>,
     power_listener_started: bool,
+    /// Runs after each foreground runnable registered by [`LinuxCommon::register_sources`].
+    ///
+    /// X11 uses this to handle events that a runnable's requests read into xcb's queue, where
+    /// they would not wake the event loop.
+    pub(crate) after_runnable: Option<Rc<dyn Fn()>>,
 }
 
 impl LinuxCommon {
@@ -198,6 +203,7 @@ impl LinuxCommon {
             ),
             power_sender,
             power_listener_started: false,
+            after_runnable: None,
         };
 
         (common, main_receiver, power_receiver)
@@ -223,7 +229,7 @@ impl LinuxCommon {
     /// Registers the foreground executor and power listener on a loop shared with display clients.
     ///
     /// Foreground runnables run as idle callbacks, after the loop has dispatched all pending events.
-    #[cfg(feature = "wayland")]
+    #[cfg(any(feature = "wayland", feature = "x11"))]
     pub(crate) fn register_sources(
         common: &Rc<std::cell::RefCell<Self>>,
         loop_handle: &calloop::LoopHandle<'static, ()>,
@@ -233,14 +239,21 @@ impl LinuxCommon {
         loop_handle
             .insert_source(main_receiver, {
                 let loop_handle = loop_handle.clone();
+                let common = common.clone();
                 move |event, _, _| {
                     if let calloop::channel::Event::Msg(runnable) = event {
-                        loop_handle.insert_idle(|_| {
+                        let common = common.clone();
+                        loop_handle.insert_idle(move |_| {
                             let location = runnable.metadata().location;
                             let spawned = runnable.metadata().spawned;
                             gpui::profiler::update_running_task(spawned, location);
                             runnable.run();
                             gpui::profiler::save_task_timing();
+
+                            let after_runnable = common.borrow().after_runnable.clone();
+                            if let Some(after_runnable) = after_runnable {
+                                after_runnable();
+                            }
                         });
                     }
                 }
@@ -380,8 +393,8 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         self.inner.with_common(|common| common.signal.stop());
     }
 
-    fn set_headless(&self, headless: bool) -> Task<anyhow::Result<()>> {
-        self.inner.set_headless(headless)
+    fn set_display_mode(&self, mode: DisplayMode) -> Task<anyhow::Result<()>> {
+        self.inner.set_display_mode(mode)
     }
 
     fn compositor_name(&self) -> &'static str {

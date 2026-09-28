@@ -2,5 +2,5 @@
 mod linux;
 
 pub use linux::current_platform;
-#[cfg(feature = "wayland")]
-pub use linux::switchable_wayland_platform;
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub use linux::switchable_platform;

@@ -6,7 +6,7 @@ use calloop::{
 };
 use collections::HashMap;
 use core::str;
-use gpui::{Capslock, profiler};
+use gpui::Capslock;
 use gpui_util::ResultExt as _;
 use http_client::Url;
 use log::Level;
@@ -180,8 +180,13 @@ struct ScrollAxisState {
 }
 
 pub struct X11ClientState {
-    pub(crate) loop_handle: LoopHandle<'static, X11Client>,
-    pub(crate) event_loop: Option<calloop::EventLoop<'static, X11Client>>,
+    /// A weak pointer to this state, for event-loop callbacks registered by its methods.
+    this: X11ClientStatePtr,
+    pub(crate) loop_handle: LoopHandle<'static, ()>,
+    /// The loop this client created for itself, until `run` takes it; `None` after `attach`.
+    pub(crate) event_loop: Option<calloop::EventLoop<'static, ()>>,
+    /// Long-lived sources this client registered on the loop, removed by `detach`.
+    registrations: Vec<RegistrationToken>,
 
     pub(crate) last_click: Instant,
     pub(crate) last_mouse_button: Option<MouseButton>,
@@ -229,7 +234,7 @@ pub struct X11ClientState {
 
     pub(crate) supports_xinput_gestures: bool,
 
-    pub(crate) common: LinuxCommon,
+    pub(crate) common: Rc<RefCell<LinuxCommon>>,
     pub(crate) clipboard: Clipboard,
     pub(crate) clipboard_item: Option<ClipboardItem>,
     pub(crate) xdnd_state: Xdnd,
@@ -317,53 +322,34 @@ impl X11ClientStatePtr {
 pub(crate) struct X11Client(pub(crate) Rc<RefCell<X11ClientState>>);
 
 impl X11Client {
+    /// Creates the process's X11 client with its own event loop.
     pub(crate) fn new() -> anyhow::Result<Self> {
         let event_loop = EventLoop::try_new()?;
-
         let (common, main_receiver, power_receiver) = LinuxCommon::new(event_loop.get_signal());
-
+        let common = Rc::new(RefCell::new(common));
         let handle = event_loop.handle();
+        LinuxCommon::register_sources(&common, &handle, main_receiver, power_receiver)?;
+        let client = Self::attach(handle, common, None)?;
+        client.0.borrow_mut().event_loop = Some(event_loop);
+        Ok(client)
+    }
 
-        handle
-            .insert_source(main_receiver, {
-                let handle = handle.clone();
-                move |event, _, _: &mut X11Client| {
-                    if let calloop::channel::Event::Msg(runnable) = event {
-                        // Insert the runnables as idle callbacks, so we make sure that user-input and X11
-                        // events have higher priority and runnables are only worked off after the event
-                        // callbacks.
-                        handle.insert_idle(|client| {
-                            let location = runnable.metadata().location;
-                            let spawned = runnable.metadata().spawned;
-                            profiler::update_running_task(spawned, location);
-                            runnable.run();
-                            profiler::save_task_timing();
-
-                            let xcb_connection = client.0.borrow().xcb_connection.clone();
-                            client.process_x11_events(&xcb_connection).log_err();
-                        });
-                    }
-                }
-            })
-            .map_err(|err| {
-                anyhow!("Failed to initialize event loop handling of foreground tasks: {err:?}")
-            })?;
-
-        handle
-            .insert_source(power_receiver, |event, _, client: &mut X11Client| {
-                if let calloop::channel::Event::Msg(event) = event {
-                    client
-                        .0
-                        .borrow_mut()
-                        .common
-                        .handle_system_power_event(event);
-                }
-            })
-            .map_err(|err| {
-                anyhow!("Failed to initialize event loop handling of sleep/wake events: {err:?}")
-            })?;
-
-        let (xcb_connection, x_root_index) = XCBConnection::connect(None)?;
+    /// Connects to the X server named by `display`, or by `DISPLAY` when `None`, and registers
+    /// its event sources on `handle`.
+    ///
+    /// Call [`X11Client::detach`] to remove those sources, leaving the loop and `common` usable
+    /// without X11.
+    pub(crate) fn attach(
+        handle: LoopHandle<'static, ()>,
+        common: Rc<RefCell<LinuxCommon>>,
+        display: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let display_name = display
+            .map(std::ffi::CString::new)
+            .transpose()
+            .context("X display name contains a NUL byte")?;
+        let (xcb_connection, x_root_index) = XCBConnection::connect(display_name.as_deref())
+            .with_context(|| format!("failed to connect to X server {display:?}"))?;
         xcb_connection.prefetch_extension_information(xkb::X11_EXTENSION_NAME)?;
         xcb_connection.prefetch_extension_information(randr::X11_EXTENSION_NAME)?;
         xcb_connection.prefetch_extension_information(render::X11_EXTENSION_NAME)?;
@@ -377,7 +363,7 @@ impl X11Client {
             || "XInput XiQueryVersion failed",
             xcb_connection.xinput_xi_query_version(2, 4),
         )?;
-        assert!(
+        anyhow::ensure!(
             xinput_version.major_version >= 2,
             "XInput version >= 2 required."
         );
@@ -414,7 +400,7 @@ impl X11Client {
             xcb_connection
                 .xkb_use_extension(XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION),
         )?;
-        assert!(xkb.supported);
+        anyhow::ensure!(xkb.supported, "X server does not support XKB");
 
         let events = xkb::EventType::STATE_NOTIFY
             | xkb::EventType::MAP_NOTIFY
@@ -466,7 +452,7 @@ impl X11Client {
             .reply()
             .context("Failed to initialize cursor theme handler")?;
 
-        let clipboard = Clipboard::new().context("Failed to initialize clipboard")?;
+        let clipboard = Clipboard::new(display).context("Failed to initialize clipboard")?;
 
         let screen = &xcb_connection.setup().roots[x_root_index];
         let compositor_gpu = detect_compositor_gpu(&xcb_connection, screen);
@@ -480,10 +466,82 @@ impl X11Client {
             None
         };
 
+        let background_executor = common.borrow().background_executor.clone();
+        let client = X11Client(Rc::new_cyclic(|this| {
+            RefCell::new(X11ClientState {
+                this: X11ClientStatePtr(this.clone()),
+                registrations: Vec::new(),
+                modifiers: Modifiers::default(),
+                capslock: Capslock::default(),
+                last_modifiers_changed_event: Modifiers::default(),
+                last_capslock_changed_event: Capslock::default(),
+                event_loop: None,
+                loop_handle: handle.clone(),
+                common,
+                last_click: Instant::now(),
+                last_mouse_button: None,
+                last_location: Point::new(px(0.0), px(0.0)),
+                current_count: 0,
+                pinch_scale: 1.0,
+                gpu_context: Rc::new(RefCell::new(None)),
+                compositor_gpu,
+                scale_factor,
+
+                xkb_context,
+                xcb_connection,
+                xkb_device_id,
+                client_side_decorations_supported,
+                x_root_index,
+                resource_database,
+                atoms,
+                windows: HashMap::default(),
+                mouse_focused_window: None,
+                keyboard_focused_window: None,
+                xkb: xkb_state,
+                keyboard_layout,
+                ximc,
+                xim_handler,
+
+                compose_state,
+                pre_edit_text: None,
+                pre_key_char_down: None,
+                composing: false,
+
+                cursor_handle,
+                cursor_styles: HashMap::default(),
+                cursor_cache: HashMap::default(),
+                cursor_hidden_window: None,
+                invisible_cursor_cache: None,
+
+                pointer_device_states,
+
+                supports_xinput_gestures,
+
+                clipboard,
+                clipboard_item: None,
+                xdnd_state: Xdnd::default(),
+            })
+        }));
+        if let Err(error) = client.register_sources(&handle, background_executor) {
+            client.detach();
+            return Err(error);
+        }
+        let xcb_connection = client.0.borrow().xcb_connection.clone();
+        xcb_flush(&xcb_connection);
+        Ok(client)
+    }
+
+    fn register_sources(
+        &self,
+        handle: &LoopHandle<'static, ()>,
+        background_executor: gpui::BackgroundExecutor,
+    ) -> anyhow::Result<()> {
+        let this = self.0.borrow().this.clone();
+        let xcb_connection = self.0.borrow().xcb_connection.clone();
+
         // Safety: Safe if xcb::Connection always returns a valid fd
         let fd = unsafe { FdWrapper::new(Rc::clone(&xcb_connection)) };
-
-        handle
+        let token = handle
             .insert_source(
                 Generic::new_with_error::<EventHandlerError>(
                     fd,
@@ -491,93 +549,100 @@ impl X11Client {
                     calloop::Mode::Level,
                 ),
                 {
+                    let this = this.clone();
                     let xcb_connection = xcb_connection.clone();
-                    move |_readiness, _, client| {
-                        client.process_x11_events(&xcb_connection)?;
+                    move |_readiness, _, _| {
+                        if let Some(client) = this.get_client() {
+                            client.process_x11_events(&xcb_connection)?;
+                        }
                         Ok(calloop::PostAction::Continue)
                     }
                 },
             )
             .map_err(|err| anyhow!("Failed to initialize X11 event source: {err:?}"))?;
+        self.0.borrow_mut().registrations.push(token);
 
-        handle
-            .insert_source(XDPEventSource::new(&common.background_executor), {
-                move |event, _, client| match event {
-                    XDPEvent::WindowAppearance(appearance) => {
-                        client.with_common(|common| common.appearance = appearance);
-                        for window in client.0.borrow_mut().windows.values_mut() {
-                            window.window.set_appearance(appearance);
+        let token = handle
+            .insert_source(XDPEventSource::new(&background_executor), {
+                let this = this.clone();
+                move |event, _, _| {
+                    let Some(client) = this.get_client() else {
+                        return;
+                    };
+                    match event {
+                        XDPEvent::WindowAppearance(appearance) => {
+                            client.with_common(|common| common.appearance = appearance);
+                            for window in client.0.borrow_mut().windows.values_mut() {
+                                window.window.set_appearance(appearance);
+                            }
                         }
-                    }
-                    XDPEvent::ButtonLayout(layout_str) => {
-                        let layout = WindowButtonLayout::parse(&layout_str)
-                            .log_err()
-                            .unwrap_or_else(WindowButtonLayout::linux_default);
-                        client.with_common(|common| common.button_layout = layout);
-                        for window in client.0.borrow_mut().windows.values_mut() {
-                            window.window.set_button_layout();
+                        XDPEvent::ButtonLayout(layout_str) => {
+                            let layout = WindowButtonLayout::parse(&layout_str)
+                                .log_err()
+                                .unwrap_or_else(WindowButtonLayout::linux_default);
+                            client.with_common(|common| common.button_layout = layout);
+                            for window in client.0.borrow_mut().windows.values_mut() {
+                                window.window.set_button_layout();
+                            }
                         }
-                    }
-                    XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {
-                        // noop, X11 manages this for us.
+                        XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {
+                            // noop, X11 manages this for us.
+                        }
                     }
                 }
             })
             .map_err(|err| anyhow!("Failed to initialize XDP event source: {err:?}"))?;
+        self.0.borrow_mut().registrations.push(token);
 
-        xcb_flush(&xcb_connection);
+        // Runnables' requests can read events into xcb's queue, where they don't wake the loop.
+        let common = self.0.borrow().common.clone();
+        common.borrow_mut().after_runnable = Some(Rc::new(move || {
+            if let Some(client) = this.get_client() {
+                client.process_x11_events(&xcb_connection).log_err();
+            }
+        }));
+        Ok(())
+    }
 
-        Ok(X11Client(Rc::new(RefCell::new(X11ClientState {
-            modifiers: Modifiers::default(),
-            capslock: Capslock::default(),
-            last_modifiers_changed_event: Modifiers::default(),
-            last_capslock_changed_event: Capslock::default(),
-            event_loop: Some(event_loop),
-            loop_handle: handle,
-            common,
-            last_click: Instant::now(),
-            last_mouse_button: None,
-            last_location: Point::new(px(0.0), px(0.0)),
-            current_count: 0,
-            pinch_scale: 1.0,
-            gpu_context: Rc::new(RefCell::new(None)),
-            compositor_gpu,
-            scale_factor,
+    /// Removes this client's event-loop sources and forgets its windows.
+    ///
+    /// The X connection closes once the last window state holding it is dropped.
+    pub(crate) fn detach(&self) {
+        let mut state = self.0.borrow_mut();
+        state.common.borrow_mut().after_runnable = None;
+        for token in std::mem::take(&mut state.registrations) {
+            state.loop_handle.remove(token);
+        }
+        let refresh_tokens = state
+            .windows
+            .values_mut()
+            .filter_map(|window| match window.refresh_state.take() {
+                Some(RefreshState::PeriodicRefresh {
+                    event_loop_token, ..
+                }) => Some(event_loop_token),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for token in refresh_tokens {
+            state.loop_handle.remove(token);
+        }
+        let windows = std::mem::take(&mut state.windows);
+        drop(state);
+        drop(windows);
+    }
 
-            xkb_context,
-            xcb_connection,
-            xkb_device_id,
-            client_side_decorations_supported,
-            x_root_index,
-            resource_database,
-            atoms,
-            windows: HashMap::default(),
-            mouse_focused_window: None,
-            keyboard_focused_window: None,
-            xkb: xkb_state,
-            keyboard_layout,
-            ximc,
-            xim_handler,
+    /// Whether any window is open and not yet destroyed.
+    pub(crate) fn has_windows(&self) -> bool {
+        self.0
+            .borrow()
+            .windows
+            .values()
+            .any(|window| !window.window.state.borrow().destroyed)
+    }
 
-            compose_state,
-            pre_edit_text: None,
-            pre_key_char_down: None,
-            composing: false,
-
-            cursor_handle,
-            cursor_styles: HashMap::default(),
-            cursor_cache: HashMap::default(),
-            cursor_hidden_window: None,
-            invisible_cursor_cache: None,
-
-            pointer_device_states,
-
-            supports_xinput_gestures,
-
-            clipboard,
-            clipboard_item: None,
-            xdnd_state: Xdnd::default(),
-        }))))
+    /// Whether a destroyed window has not yet finished closing.
+    pub(crate) fn has_window_resources(&self) -> bool {
+        !self.0.borrow().windows.is_empty()
     }
 
     pub fn process_x11_events(
@@ -1541,11 +1606,17 @@ impl X11Client {
         let layout_name = keymap.layout_get_name(layout_idx);
         if layout_name != state.keyboard_layout.name() {
             state.keyboard_layout = LinuxKeyboardLayout::new(layout_name.to_string().into());
-            if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take() {
+            let callback = state
+                .common
+                .borrow_mut()
+                .callbacks
+                .keyboard_layout_change
+                .take();
+            if let Some(mut callback) = callback {
                 drop(state);
                 callback();
                 state = self.0.borrow_mut();
-                state.common.callbacks.keyboard_layout_change = Some(callback);
+                state.common.borrow_mut().callbacks.keyboard_layout_change = Some(callback);
             }
         }
     }
@@ -1557,7 +1628,8 @@ impl LinuxClient for X11Client {
     }
 
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
-        f(&mut self.0.borrow_mut().common)
+        let common = self.0.borrow().common.clone();
+        f(&mut common.borrow_mut())
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
@@ -1614,7 +1686,8 @@ impl LinuxClient for X11Client {
         &self,
     ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Rc<dyn gpui::ScreenCaptureSource>>>>
     {
-        gpui::scap_screen_capture::scap_screen_sources(&self.0.borrow().common.foreground_executor)
+        let foreground_executor = self.0.borrow().common.borrow().foreground_executor.clone();
+        gpui::scap_screen_capture::scap_screen_sources(&foreground_executor)
     }
 
     fn open_window(
@@ -1637,7 +1710,7 @@ impl LinuxClient for X11Client {
         let x_root_index = state.x_root_index;
         let atoms = state.atoms;
         let scale_factor = state.scale_factor;
-        let appearance = state.common.appearance;
+        let appearance = state.common.borrow().appearance;
         let compositor_gpu = state.compositor_gpu.take();
         let supports_xinput_gestures = state.supports_xinput_gestures;
         let is_bgr = state
@@ -1647,7 +1720,7 @@ impl LinuxClient for X11Client {
         let window = X11Window::new(
             handle,
             X11ClientStatePtr(Rc::downgrade(&self.0)),
-            state.common.foreground_executor.clone(),
+            state.common.borrow().foreground_executor.clone(),
             state.gpu_context.clone(),
             compositor_gpu,
             params,
@@ -1823,7 +1896,7 @@ impl LinuxClient for X11Client {
             return;
         };
 
-        event_loop.run(None, &mut self.clone(), |_| {}).log_err();
+        event_loop.run(None, &mut (), |_| {}).log_err();
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
@@ -2002,7 +2075,11 @@ impl X11ClientState {
     ) -> RegistrationToken {
         self.loop_handle
             .insert_source(calloop::timer::Timer::immediate(), {
-                move |mut instant, (), client| {
+                let this = self.this.clone();
+                move |mut instant, (), _| {
+                    let Some(client) = this.get_client() else {
+                        return calloop::timer::TimeoutAction::Drop;
+                    };
                     let xcb_connection = {
                         let mut state = client.0.borrow_mut();
                         let xcb_connection = state.xcb_connection.clone();

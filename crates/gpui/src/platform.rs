@@ -159,27 +159,58 @@ pub fn guess_compositor() -> &'static str {
     if std::env::var_os("ZED_HEADLESS").is_some() {
         return "Headless";
     }
+    DisplayEnvironment::from_process_environment().guess_compositor()
+}
 
-    #[cfg(feature = "wayland")]
-    let wayland_display = std::env::var_os("WAYLAND_DISPLAY");
-    #[cfg(not(feature = "wayland"))]
-    let wayland_display: Option<std::ffi::OsString> = None;
+/// The variables that locate a display server, as seen by some process.
+///
+/// A long-running process can outlive the graphical session it was started in, so a platform
+/// that attaches to a display server later can be given a fresher environment than its own.
+/// Only Linux platforms read these.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DisplayEnvironment {
+    /// `WAYLAND_DISPLAY`: a socket name relative to `xdg_runtime_dir`, or an absolute path.
+    pub wayland_display: Option<OsString>,
+    /// `DISPLAY`: the X11 display name.
+    pub x11_display: Option<OsString>,
+    /// `XDG_RUNTIME_DIR`: the directory containing Wayland sockets.
+    pub xdg_runtime_dir: Option<OsString>,
+}
 
-    #[cfg(feature = "x11")]
-    let x11_display = std::env::var_os("DISPLAY");
-    #[cfg(not(feature = "x11"))]
-    let x11_display: Option<std::ffi::OsString> = None;
-
-    let use_wayland = wayland_display.is_some_and(|display| !display.is_empty());
-    let use_x11 = x11_display.is_some_and(|display| !display.is_empty());
-
-    if use_wayland {
-        "Wayland"
-    } else if use_x11 {
-        "X11"
-    } else {
-        "Headless"
+impl DisplayEnvironment {
+    /// Reads the display variables from this process's environment.
+    pub fn from_process_environment() -> Self {
+        Self {
+            wayland_display: std::env::var_os("WAYLAND_DISPLAY"),
+            x11_display: std::env::var_os("DISPLAY"),
+            xdg_runtime_dir: std::env::var_os("XDG_RUNTIME_DIR"),
+        }
     }
+
+    /// Returns the compositor this environment selects: Wayland, then X11, then headless.
+    ///
+    /// Does not attempt to connect to the compositor.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    pub fn guess_compositor(&self) -> &'static str {
+        let is_set =
+            |value: &Option<OsString>| value.as_ref().is_some_and(|value| !value.is_empty());
+        if cfg!(feature = "wayland") && is_set(&self.wayland_display) {
+            "Wayland"
+        } else if cfg!(feature = "x11") && is_set(&self.x11_display) {
+            "X11"
+        } else {
+            "Headless"
+        }
+    }
+}
+
+/// Whether a platform is connected to a display server.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DisplayMode {
+    /// No display server: no displays, windows, or GPU.
+    Headless,
+    /// Connected to the display server that the environment selects.
+    Windowed(DisplayEnvironment),
 }
 
 #[expect(missing_docs)]
@@ -190,8 +221,8 @@ pub trait Platform: 'static {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);
     fn quit(&self);
-    /// Switches a capable platform between graphical and headless services.
-    fn set_headless(&self, _headless: bool) -> Task<anyhow::Result<()>> {
+    /// Connects a capable platform to, or disconnects it from, a display server.
+    fn set_display_mode(&self, _mode: DisplayMode) -> Task<anyhow::Result<()>> {
         Task::ready(Err(anyhow::anyhow!(
             "this platform cannot switch between headless and windowed modes"
         )))

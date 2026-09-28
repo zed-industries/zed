@@ -266,6 +266,5 @@ name = "view_example"
 path = "examples/view_example/view_example_main.rs"
 
 [[example]]
-name = "headless_wayland"
-path = "examples/headless_wayland.rs"
-required-features = ["wayland"]
+name = "switchable_display"
+path = "examples/switchable_display.rs"

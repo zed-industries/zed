@@ -124,6 +124,8 @@ struct XContext {
 }
 
 struct Inner {
+    /// The X display every clipboard connection uses, or `DISPLAY` when `None`.
+    display: Option<String>,
     /// The context for the thread which serves clipboard read
     /// requests coming to us.
     server: XContext,
@@ -140,10 +142,10 @@ struct Inner {
 }
 
 impl XContext {
-    fn new() -> Result<Self> {
+    fn new(display: Option<&str>) -> Result<Self> {
         // create a new connection to an X11 server
         let (conn, screen_num): (RustConnection, _) =
-            RustConnection::connect(None).map_err(|_| {
+            RustConnection::connect(display).map_err(|_| {
                 Error::unknown("X11 server connection timed out because it was unreachable")
             })?;
         let screen = conn
@@ -208,14 +210,15 @@ enum ReadSelNotifyResult {
 }
 
 impl Inner {
-    fn new() -> Result<Self> {
-        let server = XContext::new()?;
+    fn new(display: Option<&str>) -> Result<Self> {
+        let server = XContext::new(display)?;
         let atoms = Atoms::new(&server.conn)
             .map_err(into_unknown)?
             .reply()
             .map_err(into_unknown)?;
 
         Ok(Self {
+            display: display.map(str::to_owned),
             server,
             atoms,
             clipboard: Selection::default(),
@@ -297,7 +300,7 @@ impl Inner {
             }
             return Err(Error::ContentNotAvailable);
         }
-        let reader = XContext::new()?;
+        let reader = XContext::new(self.display.as_deref())?;
 
         let highest_precedence_format =
             match self.read_single(&reader, selection, self.atoms.TARGETS) {
@@ -950,7 +953,8 @@ pub(crate) struct Clipboard {
 }
 
 impl Clipboard {
-    pub(crate) fn new() -> Result<Self> {
+    /// Returns the process's clipboard, connecting it to `display` if it doesn't exist yet.
+    pub(crate) fn new(display: Option<&str>) -> Result<Self> {
         let mut global_cb = CLIPBOARD.lock();
         if let Some(global_cb) = &*global_cb {
             return Ok(Self {
@@ -958,7 +962,7 @@ impl Clipboard {
             });
         }
         // At this point we know that the clipboard does not exist.
-        let ctx = Arc::new(Inner::new()?);
+        let ctx = Arc::new(Inner::new(display)?);
         let join_handle = std::thread::Builder::new()
             .name("Clipboard".to_owned())
             .spawn({

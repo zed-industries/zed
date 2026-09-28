@@ -24,10 +24,13 @@ pub fn headless() -> gpui::Application {
     gpui::Application::with_platform(current_platform(true))
 }
 
-/// Returns a Linux app that starts headless and can attach to Wayland later.
-#[cfg(all(any(target_os = "linux", target_os = "freebsd"), feature = "wayland"))]
-pub fn switchable_wayland() -> gpui::Application {
-    gpui::Application::with_platform(gpui_linux::switchable_wayland_platform())
+/// Returns a Linux app that starts headless and can attach to Wayland or X11 later.
+#[cfg(all(
+    any(target_os = "linux", target_os = "freebsd"),
+    any(feature = "wayland", feature = "x11")
+))]
+pub fn switchable() -> gpui::Application {
+    gpui::Application::with_platform(gpui_linux::switchable_platform())
 }
 
 #[cfg(target_family = "wasm")]

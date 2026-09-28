@@ -1112,9 +1112,26 @@ impl App {
         self.platform.quit();
     }
 
-    /// Switches a capable platform between graphical and headless services.
+    /// Connects a capable platform to, or disconnects it from, a display server.
+    ///
+    /// Disconnecting fails while windows are open. See [`App::set_display_mode`].
     pub fn set_headless(&self, headless: bool) -> Task<anyhow::Result<()>> {
-        self.platform.set_headless(headless)
+        self.set_display_mode(if headless {
+            crate::DisplayMode::Headless
+        } else {
+            crate::DisplayMode::Windowed(crate::DisplayEnvironment::from_process_environment())
+        })
+    }
+
+    /// Connects a capable platform to, or disconnects it from, a display server.
+    ///
+    /// The returned task resolves once the transition has been applied. It fails if the
+    /// platform cannot switch modes, if windows are open when switching to
+    /// [`DisplayMode::Headless`], or if the display server cannot be reached. Requesting the
+    /// current mode succeeds without reconnecting. While headless, the platform reports no
+    /// displays and cannot open windows.
+    pub fn set_display_mode(&self, mode: crate::DisplayMode) -> Task<anyhow::Result<()>> {
+        self.platform.set_display_mode(mode)
     }
 
     /// Returns the current policy for hiding the cursor in response to
