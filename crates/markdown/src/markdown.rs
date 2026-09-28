@@ -1991,6 +1991,40 @@ impl MarkdownElement {
         builder.push_image_child(image_element);
     }
 
+    /// Renders an image that neither the `data:` decoder nor the resolver could turn into
+    /// an `ImageSource` as a link to its destination, labelled with the alt text, instead of
+    /// dropping to bare alt text. Returns whether a link was opened that the matching
+    /// `MarkdownTagEnd::Image` must close.
+    fn push_unresolved_image_link(
+        &self,
+        builder: &mut MarkdownElementBuilder,
+        range: &Range<usize>,
+        dest_url: &SharedString,
+        has_alt_text: bool,
+        cx: &App,
+    ) -> bool {
+        // Inside `[![alt](img)](target)` the alt text already renders as the enclosing
+        // link's text and clicking it opens `target`. A `data:` URL that failed to decode
+        // is not worth linking to either.
+        if builder.link_depth > 0 || dest_url.starts_with("data:") {
+            return false;
+        }
+
+        builder.link_depth += 1;
+        builder.push_link(dest_url.clone(), range.clone());
+        let style = self
+            .style
+            .link_callback
+            .as_ref()
+            .and_then(|callback| callback(dest_url, cx))
+            .unwrap_or_else(|| self.style.link.clone());
+        builder.push_text_style(style);
+        if !has_alt_text {
+            builder.push_text(dest_url, range.clone());
+        }
+        true
+    }
+
     fn push_markdown_paragraph(
         &self,
         builder: &mut MarkdownElementBuilder,
@@ -2625,6 +2659,7 @@ impl Element for MarkdownElement {
         let mut code_block_ids = HashSet::default();
 
         let mut current_img_block_range: Option<Range<usize>> = None;
+        let mut unresolved_image_link_open = false;
         let mut handled_html_block = false;
         let mut rendered_mermaid_block = false;
         let mut rendered_metadata_block = false;
@@ -2705,6 +2740,14 @@ impl Element for MarkdownElement {
                                     alt_text,
                                     None,
                                     None,
+                                );
+                            } else {
+                                unresolved_image_link_open = self.push_unresolved_image_link(
+                                    &mut builder,
+                                    range,
+                                    dest_url,
+                                    alt_text.is_some(),
+                                    cx,
                                 );
                             }
                         }
@@ -3077,6 +3120,11 @@ impl Element for MarkdownElement {
                 MarkdownEvent::End(tag) => match tag {
                     MarkdownTagEnd::Image => {
                         current_img_block_range.take();
+                        if unresolved_image_link_open {
+                            unresolved_image_link_open = false;
+                            builder.link_depth = builder.link_depth.saturating_sub(1);
+                            builder.pop_text_style();
+                        }
                     }
                     MarkdownTagEnd::Paragraph => {
                         self.pop_markdown_paragraph(&mut builder);
@@ -6976,6 +7024,109 @@ mod tests {
         // A source index past the end of the link range returns None
         let past_end = rendered.links[0].source_range.end;
         assert!(rendered.link_for_source_index(past_end).is_none());
+    }
+
+    #[gpui::test]
+    fn test_unresolved_image_renders_alt_text_as_link(cx: &mut TestAppContext) {
+        let source = "see ![shot](file:///tmp/missing.png) here";
+        let rendered = render_markdown_with_image_resolver(
+            source,
+            MarkdownOptions::default(),
+            |_, _| None,
+            cx,
+        );
+
+        assert_eq!(rendered.links.len(), 1);
+        assert_eq!(rendered.links[0].destination_url, "file:///tmp/missing.png");
+
+        let text: String = rendered
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect();
+        assert_eq!(text, "see shot here");
+
+        let alt_index = source.find("shot").unwrap();
+        assert_eq!(
+            rendered
+                .link_for_source_index(alt_index)
+                .map(|link| link.destination_url.as_ref()),
+            Some("file:///tmp/missing.png")
+        );
+        assert!(rendered.link_for_source_index(0).is_none());
+    }
+
+    #[gpui::test]
+    fn test_unresolved_image_without_alt_text_is_labelled_with_destination(
+        cx: &mut TestAppContext,
+    ) {
+        let rendered = render_markdown_with_image_resolver(
+            "![](file:///tmp/missing.png)",
+            MarkdownOptions::default(),
+            |_, _| None,
+            cx,
+        );
+
+        assert_eq!(rendered.links.len(), 1);
+        assert_eq!(rendered.links[0].destination_url, "file:///tmp/missing.png");
+
+        let text: String = rendered
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect();
+        assert_eq!(text, "file:///tmp/missing.png");
+    }
+
+    #[gpui::test]
+    fn test_unresolved_image_inside_link_keeps_enclosing_link(cx: &mut TestAppContext) {
+        let rendered = render_markdown_with_image_resolver(
+            "[![shot](file:///tmp/missing.png)](https://example.com)",
+            MarkdownOptions::default(),
+            |_, _| None,
+            cx,
+        );
+
+        assert_eq!(rendered.links.len(), 1);
+        assert_eq!(rendered.links[0].destination_url, "https://example.com");
+
+        let text: String = rendered
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect();
+        assert_eq!(text, "shot");
+    }
+
+    #[gpui::test]
+    fn test_undecodable_data_image_keeps_plain_alt_text(cx: &mut TestAppContext) {
+        let rendered = render_markdown_with_image_resolver(
+            "![shot](data:image/png;base64,not-an-image)",
+            MarkdownOptions::default(),
+            |_, _| None,
+            cx,
+        );
+
+        assert!(rendered.links.is_empty());
+        let text: String = rendered
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect();
+        assert_eq!(text, "shot");
+    }
+
+    #[gpui::test]
+    fn test_resolved_image_does_not_render_a_link(cx: &mut TestAppContext) {
+        let image = test_image(cx);
+        let rendered = render_markdown_with_image_resolver(
+            "![shot](file:///tmp/present.png)",
+            MarkdownOptions::default(),
+            move |_, _| Some(ImageSource::Render(image.clone())),
+            cx,
+        );
+
+        assert!(rendered.links.is_empty());
     }
 
     #[gpui::test]
