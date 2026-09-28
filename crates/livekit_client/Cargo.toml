@@ -30,7 +30,7 @@ gpui = { workspace = true, features = ["screen-capture", "x11", "wayland"] }
 gpui_tokio.workspace = true
 http_client_tls.workspace = true
 image.workspace = true
-livekit_api.workspace = true
+livekit_api = { workspace = true, optional = true }
 log.workspace = true
 nanoid.workspace = true
 parking_lot.workspace = true
@@ -42,6 +42,9 @@ settings.workspace = true
 smallvec.workspace = true
 ui.workspace = true
 util.workspace = true
+
+[target.'cfg(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd"))'.dependencies]
+livekit_api.workspace = true
 
 [target.'cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))'.dependencies]
 libwebrtc.workspace = true
