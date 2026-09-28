@@ -296,13 +296,25 @@ impl Conversation {
         let thread_state = thread.read(cx);
         let session_id = thread_state.session_id().clone();
         for entry in thread_state.entries() {
-            if let AgentThreadEntry::ToolCall(tool_call) = entry
-                && matches!(
-                    tool_call.status,
-                    ToolCallStatus::WaitingForConfirmation { .. }
-                )
-            {
-                self.add_permission_request(&session_id, &tool_call.id);
+            match entry {
+                AgentThreadEntry::ToolCall(tool_call)
+                    if matches!(
+                        tool_call.status,
+                        ToolCallStatus::WaitingForConfirmation { .. }
+                    ) =>
+                {
+                    self.add_permission_request(&session_id, &tool_call.id);
+                }
+                AgentThreadEntry::Elicitation(elicitation_id)
+                    if thread_state.elicitation(elicitation_id).is_some_and(
+                        |(_, elicitation)| {
+                            matches!(elicitation.status, ElicitationStatus::Pending { .. })
+                        },
+                    ) =>
+                {
+                    self.add_elicitation_request(&session_id, elicitation_id);
+                }
+                _ => {}
             }
         }
 
@@ -323,10 +335,7 @@ impl Conversation {
                         }
                     }
                     AcpThreadEvent::ElicitationRequested(id) => {
-                        this.elicitation_requests
-                            .entry(session_id.clone())
-                            .or_default()
-                            .push(id.clone());
+                        this.add_elicitation_request(&session_id, id);
                     }
                     AcpThreadEvent::ElicitationResponded(id) => {
                         if let Some(elicitations) = this.elicitation_requests.get_mut(&session_id) {
@@ -373,6 +382,48 @@ impl Conversation {
             .or_default();
         if !requests.contains(tool_call_id) {
             requests.push(tool_call_id.clone());
+        }
+    }
+
+    fn add_elicitation_request(
+        &mut self,
+        session_id: &acp::SessionId,
+        elicitation_id: &ElicitationEntryId,
+    ) {
+        let requests = self
+            .elicitation_requests
+            .entry(session_id.clone())
+            .or_default();
+        if !requests.contains(elicitation_id) {
+            requests.push(elicitation_id.clone());
+        }
+    }
+
+    /// Whether the given thread is blocked on an elicitation (e.g. a question
+    /// from the agent). For a root thread, pending elicitations in any of its
+    /// subagents also count, matching how permission requests are surfaced.
+    pub fn has_pending_elicitation(&self, session_id: &acp::SessionId, cx: &App) -> bool {
+        let Some(thread) = self.threads.get(session_id) else {
+            return false;
+        };
+        let is_pending = |session_id: &acp::SessionId, ids: &Vec<ElicitationEntryId>| {
+            self.threads.get(session_id).is_some_and(|thread| {
+                let thread = thread.read(cx);
+                ids.iter().any(|id| {
+                    thread.elicitation(id).is_some_and(|(_, elicitation)| {
+                        matches!(elicitation.status, ElicitationStatus::Pending { .. })
+                    })
+                })
+            })
+        };
+        if thread.read(cx).parent_session_id().is_some() {
+            self.elicitation_requests
+                .get(session_id)
+                .is_some_and(|ids| is_pending(session_id, ids))
+        } else {
+            self.elicitation_requests
+                .iter()
+                .any(|(session_id, ids)| is_pending(session_id, ids))
         }
     }
 
@@ -691,17 +742,19 @@ impl ConversationView {
             .pending_tool_call(&session_id, cx)
     }
 
-    pub fn root_thread_has_pending_tool_call(&self, cx: &App) -> bool {
+    /// Whether the root thread (or one of its subagents) is blocked until the
+    /// user responds, either to a tool permission request or to an elicitation.
+    pub fn root_thread_is_waiting_on_user(&self, cx: &App) -> bool {
         let Some(root_thread) = self.root_thread_view() else {
             return false;
         };
         let root_session_id = root_thread.read(cx).thread.read(cx).session_id().clone();
         self.as_connected().is_some_and(|connected| {
-            connected
-                .conversation
-                .read(cx)
+            let conversation = connected.conversation.read(cx);
+            conversation
                 .pending_tool_call(&root_session_id, cx)
                 .is_some()
+                || conversation.has_pending_elicitation(&root_session_id, cx)
         })
     }
 
