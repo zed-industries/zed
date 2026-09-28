@@ -1,3 +1,4 @@
+use crate::view_tree::ViewNodeId;
 use crate::{
     AnyElement, AnyEntity, AnyWeakEntity, App, AvailableSpace, Bounds, ContentMask, Context,
     Element, ElementId, Entity, EntityId, GlobalElementId, InspectorElementId, IntoElement,
@@ -251,6 +252,7 @@ pub struct ViewElement<V: View> {
     view: Option<V>,
     entity_id: Option<EntityId>,
     cached_style: Option<StyleRefinement>,
+    node: Option<ViewNodeId>,
     #[cfg(debug_assertions)]
     source: &'static core::panic::Location<'static>,
 }
@@ -263,6 +265,7 @@ impl<V: View> ViewElement<V> {
         ViewElement {
             entity_id,
             cached_style: None,
+            node: None,
             view: Some(view),
             #[cfg(debug_assertions)]
             source: core::panic::Location::caller(),
@@ -323,21 +326,24 @@ impl<V: View> Element for ViewElement<V> {
 
     fn request_layout(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        global_id: Option<&GlobalElementId>,
         _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         if let Some(entity_id) = self.entity_id {
             // Stateful path: create a reactive boundary.
+            self.node = global_id.map(|global_id| window.view_tree.visit(global_id, entity_id));
             let view = &mut self.view;
-            request_layout_view(
-                entity_id,
-                self.cached_style.as_ref(),
-                window,
-                cx,
-                &mut |window, cx| view.take().unwrap().render(window, cx).into_any_element(),
-            )
+            window.with_view_node(self.node, |window| {
+                request_layout_view(
+                    entity_id,
+                    self.cached_style.as_ref(),
+                    window,
+                    cx,
+                    &mut |window, cx| view.take().unwrap().render(window, cx).into_any_element(),
+                )
+            })
         } else {
             // Stateless path: isolate subtree via type name (no entity identity).
             request_layout_component(type_name::<V>(), window, cx, &mut |window, cx| {
@@ -361,21 +367,32 @@ impl<V: View> Element for ViewElement<V> {
     ) -> Option<AnyElement> {
         if let Some(entity_id) = self.entity_id {
             // Stateful path.
-            prepaint_view(
-                entity_id,
-                global_id,
-                bounds,
-                element,
-                window,
-                cx,
-                &mut |window, cx| {
-                    self.view
-                        .take()
-                        .unwrap()
-                        .render(window, cx)
-                        .into_any_element()
-                },
-            )
+            let node = self.node;
+            let prepaint_start = window.prepaint_index();
+            let element = window.with_view_node(node, |window| {
+                prepaint_view(
+                    entity_id,
+                    node,
+                    global_id,
+                    bounds,
+                    element,
+                    window,
+                    cx,
+                    &mut |window, cx| {
+                        self.view
+                            .take()
+                            .unwrap()
+                            .render(window, cx)
+                            .into_any_element()
+                    },
+                )
+            });
+            let prepaint_end = window.prepaint_index();
+            if let Some(node) = node.and_then(|node| window.view_tree.node_mut(node)) {
+                node.bounds = Some(bounds);
+                node.prepaint_range = Some(prepaint_start..prepaint_end);
+            }
+            element
         } else {
             // Stateless path: just prepaint the element.
             prepaint_component(type_name::<V>(), element, window, cx)
@@ -394,6 +411,7 @@ impl<V: View> Element for ViewElement<V> {
     ) {
         if let Some(entity_id) = self.entity_id {
             // Stateful path.
+            let paint_start = window.paint_index();
             paint_view(
                 entity_id,
                 self.cached_style.is_some(),
@@ -402,6 +420,10 @@ impl<V: View> Element for ViewElement<V> {
                 window,
                 cx,
             );
+            let paint_end = window.paint_index();
+            if let Some(node) = self.node.and_then(|node| window.view_tree.node_mut(node)) {
+                node.paint_range = Some(paint_start..paint_end);
+            }
         } else {
             // Stateless path: just paint the element.
             paint_component(std::any::type_name::<V>(), element, window, cx);
@@ -461,6 +483,7 @@ fn request_layout_component(
 #[inline(never)]
 fn prepaint_view(
     entity_id: EntityId,
+    node: Option<ViewNodeId>,
     global_id: Option<&GlobalElementId>,
     bounds: Bounds<Pixels>,
     element: &mut Option<AnyElement>,
@@ -490,6 +513,9 @@ fn prepaint_view(
                 {
                     let prepaint_start = window.prepaint_index();
                     window.reuse_prepaint(element_state.prepaint_range.clone());
+                    if let Some(node) = node {
+                        window.view_tree.retain_descendants(node);
+                    }
                     cx.entities
                         .extend_accessed(&element_state.accessed_entities);
                     let prepaint_end = window.prepaint_index();

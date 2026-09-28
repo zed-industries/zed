@@ -65,6 +65,7 @@ pub mod test;
 mod text_system;
 mod util;
 mod view;
+mod view_tree;
 mod window;
 
 #[cfg(any(test, feature = "test-support"))]

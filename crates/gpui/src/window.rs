@@ -27,6 +27,7 @@ use crate::{
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
 use crate::interactive::TouchEvent;
+use crate::view_tree::{ViewNodeId, ViewTree};
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
 #[cfg(target_os = "macos")]
@@ -963,6 +964,7 @@ pub(crate) struct TooltipRequest {
 
 pub(crate) struct DeferredDraw {
     current_view: EntityId,
+    current_view_node: Option<ViewNodeId>,
     priority: usize,
     parent_node: DispatchNodeId,
     element_id_stack: SmallVec<[ElementId; 32]>,
@@ -1177,6 +1179,7 @@ pub struct Window {
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
+    pub(crate) view_tree: ViewTree,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: f32,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
@@ -2037,6 +2040,7 @@ impl Window {
             element_id_stack: SmallVec::default(),
             text_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
+            view_tree: ViewTree::default(),
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
             element_opacity: 1.0,
@@ -3297,7 +3301,9 @@ impl Window {
             }
         }
         if !cx.mode.skip_drawing() {
+            self.view_tree.begin_frame();
             self.draw_roots(cx);
+            self.view_tree.finish_frame();
             #[cfg(feature = "profiler")]
             {
                 let viewport_size = self.viewport_size;
@@ -3717,7 +3723,15 @@ impl Window {
             traversal_order.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
 
             for deferred_draw_ix in traversal_order {
-                let (element, parent_node, current_view, rem_size, absolute_offset, prepaint_range) = {
+                let (
+                    element,
+                    parent_node,
+                    current_view,
+                    current_view_node,
+                    rem_size,
+                    absolute_offset,
+                    prepaint_range,
+                ) = {
                     let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
                     self.element_id_stack
                         .clone_from(&deferred_draw.element_id_stack);
@@ -3727,6 +3741,7 @@ impl Window {
                         deferred_draw.element.take(),
                         deferred_draw.parent_node,
                         deferred_draw.current_view,
+                        deferred_draw.current_view_node,
                         deferred_draw.rem_size,
                         deferred_draw.absolute_offset,
                         deferred_draw.prepaint_range.clone(),
@@ -3737,9 +3752,11 @@ impl Window {
                 let prepaint_start = self.prepaint_index();
                 if let Some(mut element) = element {
                     self.with_rendered_view(current_view, |window| {
-                        window.with_rem_size(Some(rem_size), |window| {
-                            window.with_absolute_element_offset(absolute_offset, |window| {
-                                element.prepaint(window, cx);
+                        window.with_view_node(current_view_node, |window| {
+                            window.with_rem_size(Some(rem_size), |window| {
+                                window.with_absolute_element_offset(absolute_offset, |window| {
+                                    element.prepaint(window, cx);
+                                });
                             });
                         });
                     });
@@ -3852,6 +3869,7 @@ impl Window {
                 .iter()
                 .map(|deferred_draw| DeferredDraw {
                     current_view: deferred_draw.current_view,
+                    current_view_node: deferred_draw.current_view_node,
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
@@ -4334,6 +4352,7 @@ impl Window {
         let parent_node = self.next_frame.dispatch_tree.active_node_id().unwrap();
         self.next_frame.deferred_draws.push(DeferredDraw {
             current_view: self.current_view(),
+            current_view_node: self.view_tree.current(),
             parent_node,
             element_id_stack: self.element_id_stack.clone(),
             text_style_stack: self.text_style_stack.clone(),
@@ -5169,6 +5188,22 @@ impl Window {
     pub fn current_view(&self) -> EntityId {
         self.invalidator.debug_assert_paint_or_prepaint();
         self.rendered_entity_stack.last().copied().unwrap()
+    }
+
+    /// Runs `f` with `node` as the view node that views laid out inside `f` mount under.
+    #[inline]
+    pub(crate) fn with_view_node<R>(
+        &mut self,
+        node: Option<ViewNodeId>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let Some(node) = node else {
+            return f(self);
+        };
+        self.view_tree.push(node);
+        let result = f(self);
+        self.view_tree.pop();
+        result
     }
 
     #[inline]
