@@ -48,7 +48,7 @@ fn duplicate_publish_names<'a>(
     let mut duplicates = Vec::new();
     for (published_name, mut crates) in crates_by_published_name {
         crates.sort_unstable();
-        for (crate_name, other) in crates.into_iter().tuple_windows() {
+        for &[crate_name, other] in crates.array_windows() {
             duplicates.push(DuplicatePublishName {
                 crate_name: crate_name.to_owned(),
                 other: other.to_owned(),
