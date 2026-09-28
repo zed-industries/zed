@@ -1,8 +1,4 @@
-use std::sync::Arc;
-
-use agent_skills::GLOBAL_SKILLS_DIR_DISPLAY;
 use auto_update::{AutoUpdater, release_notes_url};
-use client::zed_urls;
 use db::kvp::Dismissable;
 use editor::{Editor, MultiBuffer};
 use gpui::{
@@ -10,12 +6,11 @@ use gpui::{
     prelude::*,
 };
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
-use prompt_store::rules_to_skills_migration;
 use release_channel::{AppVersion, ReleaseChannel};
 use semver::Version;
 use serde::Deserialize;
 use smol::io::AsyncReadExt;
-use ui::{AnnouncementToast, ListBulletItem, SkillsIllustration, prelude::*};
+use ui::{AnnouncementToast, ListBulletItem, prelude::*};
 use util::{ResultExt as _, maybe};
 use workspace::{
     Workspace,
@@ -187,47 +182,15 @@ fn view_release_notes_locally(
     .detach();
 }
 
-#[derive(Clone, Copy)]
-enum AnnouncementKind {
-    Delta,
-    Skills,
-}
-
-impl AnnouncementKind {
-    fn track_primary_action(self) {
-        match self {
-            Self::Delta => telemetry::event!("Delta Announcement Main Click"),
-            Self::Skills => telemetry::event!("Skills Announcement Main Click"),
-        }
-    }
-
-    fn track_secondary_action(self) {
-        match self {
-            Self::Delta => telemetry::event!("Delta Announcement Secondary Click"),
-            Self::Skills => telemetry::event!("Skills Announcement Secondary Click"),
-        }
-    }
-
-    fn track_dismiss(self) {
-        match self {
-            Self::Delta => telemetry::event!("Delta Announcement Dismiss"),
-            Self::Skills => telemetry::event!("Skills Announcement Dismiss"),
-        }
-    }
-}
-
 #[derive(Clone)]
 struct AnnouncementContent {
-    kind: AnnouncementKind,
     heading: SharedString,
     description: SharedString,
     bullet_items: Vec<SharedString>,
     primary_action_label: SharedString,
     secondary_action_label: SharedString,
-    primary_action_url: Option<SharedString>,
-    primary_action_callback: Option<Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>>,
-    secondary_action_url: Option<SharedString>,
-    on_dismiss: Option<Arc<dyn Fn(&mut App) + Send + Sync>>,
+    primary_action_url: SharedString,
+    secondary_action_url: SharedString,
 }
 
 struct DeltaAnnouncement;
@@ -236,78 +199,29 @@ impl Dismissable for DeltaAnnouncement {
     const KEY: &'static str = "delta_announcement_dismissed";
 }
 
-struct SkillsAnnouncement;
-
-impl Dismissable for SkillsAnnouncement {
-    const KEY: &'static str = "skills_announcement_dismissed";
-}
-
 fn announcement_for_version(
     version: &Version,
     force_announcement: bool,
     cx: &App,
 ) -> Option<AnnouncementContent> {
     let version_with_delta = Version::new(1, 22, 0);
-    if *version >= version_with_delta {
-        if !force_announcement && DeltaAnnouncement::dismissed(cx) {
-            return None;
-        }
-
-        return Some(AnnouncementContent {
-            kind: AnnouncementKind::Delta,
-            heading: "Introducing Delta".into(),
-            description: "A new place to build software with coding agents.".into(),
-            bullet_items: vec![
-                "Delegate work across projects".into(),
-                "Keep decisions, feedback, and code changes together".into(),
-                "Continue work with your team from anywhere".into(),
-            ],
-            primary_action_label: "Try Delta".into(),
-            secondary_action_label: "Learn More".into(),
-            primary_action_url: Some("https://delta.dev".into()),
-            primary_action_callback: None,
-            secondary_action_url: Some("https://delta.dev".into()),
-            on_dismiss: Some(Arc::new(|cx| DeltaAnnouncement::set_dismissed(true, cx))),
-        });
+    if *version < version_with_delta || (!force_announcement && DeltaAnnouncement::dismissed(cx)) {
+        return None;
     }
 
-    let version_with_skills = Version::new(1, 4, 0);
-    if *version >= version_with_skills && (force_announcement || !SkillsAnnouncement::dismissed(cx))
-    {
-        // Only mention the Rules → Skills migration if the user actually
-        // had Rules that got migrated. New users (and existing users who
-        // never created a Rule) would otherwise be confused by a bullet
-        // referring to "your rules" that don't exist.
-        let migrated_anything =
-            rules_to_skills_migration::migration_result().is_some_and(|result| !result.is_empty());
-
-        let mut bullet_items: Vec<SharedString> = Vec::with_capacity(3);
-        bullet_items
-            .push(format!("Skills live in {GLOBAL_SKILLS_DIR_DISPLAY}/<name>/SKILL.md").into());
-        bullet_items.push("Type / to manually invoke a skill".into());
-        if migrated_anything {
-            bullet_items.push(
-                "The Rules Library is making way for skills: your default rules are now in a global AGENTS.md, and your other rules have been converted to skills".into(),
-            );
-        }
-
-        Some(AnnouncementContent {
-            kind: AnnouncementKind::Skills,
-            heading: "Introducing Skills Support".into(),
-            description: "Extend the agent with focused instructions and domain knowledge.".into(),
-            bullet_items,
-            primary_action_label: "Try Now".into(),
-            secondary_action_label: "Read Documentation".into(),
-            primary_action_url: None,
-            primary_action_callback: Some(Arc::new(move |window, cx| {
-                window.dispatch_action(Box::new(zed_actions::assistant::FocusAgent), cx);
-            })),
-            on_dismiss: Some(Arc::new(|cx| SkillsAnnouncement::set_dismissed(true, cx))),
-            secondary_action_url: Some(zed_urls::skills_docs(cx).into()),
-        })
-    } else {
-        None
-    }
+    Some(AnnouncementContent {
+        heading: "Introducing Delta".into(),
+        description: "A new place to build software with coding agents.".into(),
+        bullet_items: vec![
+            "Delegate work across projects".into(),
+            "Keep decisions, feedback, and code changes together".into(),
+            "Continue work with your team from anywhere".into(),
+        ],
+        primary_action_label: "Try Delta".into(),
+        secondary_action_label: "Learn More".into(),
+        primary_action_url: "https://delta.dev".into(),
+        secondary_action_url: "https://delta.dev".into(),
+    })
 }
 
 struct AnnouncementToastNotification {
@@ -325,9 +239,7 @@ impl AnnouncementToastNotification {
 
     fn dismiss(&mut self, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
-        if let Some(on_dismiss) = &self.content.on_dismiss {
-            on_dismiss(cx);
-        }
+        DeltaAnnouncement::set_dismissed(true, cx);
     }
 }
 
@@ -343,14 +255,7 @@ impl Notification for AnnouncementToastNotification {}
 
 impl Render for AnnouncementToastNotification {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let toast = match self.content.kind {
-            AnnouncementKind::Delta => AnnouncementToast::new(),
-            AnnouncementKind::Skills => {
-                AnnouncementToast::new().illustration(SkillsIllustration::new())
-            }
-        };
-
-        toast
+        AnnouncementToast::new()
             .heading(self.content.heading.clone())
             .description(self.content.description.clone())
             .bullet_items(
@@ -362,36 +267,23 @@ impl Render for AnnouncementToastNotification {
             .primary_action_label(self.content.primary_action_label.clone())
             .secondary_action_label(self.content.secondary_action_label.clone())
             .primary_on_click(cx.listener({
-                let kind = self.content.kind;
                 let url = self.content.primary_action_url.clone();
-                let callback = self.content.primary_action_callback.clone();
-                move |this, _, window, cx| {
-                    kind.track_primary_action();
-                    if let Some(callback) = &callback {
-                        callback(window, cx);
-                    }
-                    if let Some(url) = &url {
-                        cx.open_url(url);
-                    }
+                move |this, _, _window, cx| {
+                    telemetry::event!("Delta Announcement Main Click");
+                    cx.open_url(&url);
                     this.dismiss(cx);
                 }
             }))
             .secondary_on_click(cx.listener({
-                let kind = self.content.kind;
                 let url = self.content.secondary_action_url.clone();
                 move |_, _, _window, cx| {
-                    kind.track_secondary_action();
-                    if let Some(url) = &url {
-                        cx.open_url(url);
-                    }
+                    telemetry::event!("Delta Announcement Secondary Click");
+                    cx.open_url(&url);
                 }
             }))
-            .dismiss_on_click(cx.listener({
-                let kind = self.content.kind;
-                move |this, _, _window, cx| {
-                    kind.track_dismiss();
-                    this.dismiss(cx);
-                }
+            .dismiss_on_click(cx.listener(|this, _, _window, cx| {
+                telemetry::event!("Delta Announcement Dismiss");
+                this.dismiss(cx);
             }))
     }
 }

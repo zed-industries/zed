@@ -14,7 +14,6 @@ test = false
 doctest = false
 
 [dependencies]
-agent_skills.workspace = true
 anyhow.workspace = true
 auto_update.workspace = true
 client.workspace = true
@@ -22,7 +21,6 @@ db.workspace = true
 editor.workspace = true
 gpui.workspace = true
 markdown_preview.workspace = true
-prompt_store.workspace = true
 release_channel.workspace = true
 semver.workspace = true
 serde.workspace = true
