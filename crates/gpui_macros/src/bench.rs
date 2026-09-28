@@ -1,6 +1,9 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Expr, ItemFn, LitStr, parse::Parser, spanned::Spanned};
+use syn::{
+    Expr, FnArg, ItemFn, LitInt, LitStr, Token, Type, parse::Parser, punctuated::Punctuated,
+    spanned::Spanned,
+};
 
 pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
     let mut fps: Option<u64> = None;
@@ -8,9 +11,40 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
     let mut input_name: Option<LitStr> = None;
     let mut group_name: Option<LitStr> = None;
     let mut sample_size: Option<usize> = None;
+    let mut explicit_seeds: Option<Vec<u64>> = None;
+    let mut iterations: Option<u64> = None;
     if !args.is_empty() {
         let parser = syn::meta::parser(|meta| {
-            if meta.path.is_ident("fps") {
+            if meta.path.is_ident("seed") || meta.path.is_ident("seeds") {
+                if explicit_seeds.is_some() {
+                    return Err(meta
+                        .error("#[gpui::bench] accepts one of `seed = N` or `seeds(...)`, once"));
+                }
+                let seeds = if meta.path.is_ident("seed") {
+                    vec![meta.value()?.parse::<LitInt>()?]
+                } else {
+                    let content;
+                    syn::parenthesized!(content in meta.input);
+                    Punctuated::<LitInt, Token![,]>::parse_terminated(&content)?
+                        .into_iter()
+                        .collect()
+                };
+                explicit_seeds = Some(
+                    seeds
+                        .iter()
+                        .map(|seed| seed.base10_parse::<u64>())
+                        .collect::<syn::Result<_>>()?,
+                );
+                Ok(())
+            } else if meta.path.is_ident("iterations") {
+                let value: LitInt = meta.value()?.parse()?;
+                let value = value.base10_parse::<u64>()?;
+                if value == 0 {
+                    return Err(meta.error("#[gpui::bench] `iterations` must be greater than zero"));
+                }
+                iterations = Some(value);
+                Ok(())
+            } else if meta.path.is_ident("fps") {
                 let value: syn::LitInt = meta.value()?.parse()?;
                 let value = value.base10_parse::<u64>()?;
                 if value == 0 {
@@ -39,7 +73,7 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
                 Ok(())
             } else {
                 Err(meta.error(
-                    "#[gpui::bench] only accepts `fps = N`, `inputs = EXPR`, `input_name = \"...\"`, `group = \"...\"`, and `sample_size = N`",
+                    "#[gpui::bench] only accepts `fps = N`, `inputs = EXPR`, `input_name = \"...\"`, `group = \"...\"`, `sample_size = N`, `seed = N`, `seeds(...)`, and `iterations = N`",
                 ))
             }
         });
@@ -71,6 +105,105 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
     let inner_fn_name = format_ident!("__gpui_bench_{}", outer_fn_name);
     inner_fn.sig.ident = inner_fn_name.clone();
 
+    // A `StdRng` parameter may appear anywhere; the others are, in order, the input
+    // (when `inputs` is given) and the benchmark context.
+    let expected_signature = if inputs.is_some() {
+        "`(input: &Input, cx: &mut BenchAppContext)`"
+    } else {
+        "`(cx: &mut BenchAppContext)`"
+    };
+    let mut call_arguments = Vec::new();
+    let mut takes_rng = false;
+    let mut positional_count = 0;
+    for argument in &inner_fn.sig.inputs {
+        let FnArg::Typed(argument) = argument else {
+            return error_to_stream(syn::Error::new(
+                argument.span(),
+                "#[gpui::bench] functions cannot take `self`",
+            ));
+        };
+        if is_std_rng(&argument.ty) {
+            if takes_rng {
+                return error_to_stream(syn::Error::new(
+                    argument.span(),
+                    "#[gpui::bench] provides one `StdRng`",
+                ));
+            }
+            takes_rng = true;
+            call_arguments.push(quote! { rng });
+            continue;
+        }
+        if let Type::Reference(reference) = &*argument.ty
+            && is_std_rng(&reference.elem)
+        {
+            return error_to_stream(syn::Error::new(
+                argument.span(),
+                "#[gpui::bench] provides `StdRng` by value; take `rng: StdRng`",
+            ));
+        }
+        call_arguments.push(match (inputs.is_some(), positional_count) {
+            (true, 0) => quote! { input },
+            (true, 1) | (false, 0) => quote! { &mut cx },
+            _ => {
+                return error_to_stream(syn::Error::new(
+                    argument.span(),
+                    format!(
+                        "#[gpui::bench] expected {expected_signature}, optionally with a `StdRng`"
+                    ),
+                ));
+            }
+        });
+        positional_count += 1;
+    }
+    if positional_count != if inputs.is_some() { 2 } else { 1 } {
+        return error_to_stream(syn::Error::new(
+            inner_fn.sig.inputs.span(),
+            format!("#[gpui::bench] expected {expected_signature}, optionally with a `StdRng`"),
+        ));
+    }
+    if !takes_rng && (explicit_seeds.is_some() || iterations.is_some()) {
+        return error_to_stream(syn::Error::new(
+            inner_fn.sig.span(),
+            "#[gpui::bench] `seed`, `seeds`, and `iterations` require a `StdRng` parameter",
+        ));
+    }
+
+    // Criterion calls the routine several times (warm-up, then each sample), so the
+    // context and the RNG are rebuilt on every call: each one measures the same seed.
+    let rng = takes_rng
+        .then(|| quote! { let rng = gpui::private::rand::SeedableRng::seed_from_u64(seed); });
+    let routine = quote! {
+        #rng
+        let mut cx = gpui::BenchAppContext::new_with_platform_and_report(
+            gpui::bench_platform(
+                Some(Box::new(|| {
+                    gpui_platform::current_headless_renderer()
+                })),
+                gpui_platform::current_platform(true).text_system(),
+            ),
+            Some(stringify!(#outer_fn_name)),
+            bencher,
+            report.clone(),
+        );
+        #inner_fn_name(#(#call_arguments),*);
+        cx.teardown();
+    };
+    // Each seed is its own benchmark, named after it, so a baseline recorded under
+    // `SEED=n` compares against the same tree next time.
+    let for_each_seed = |run: proc_macro2::TokenStream| {
+        if takes_rng {
+            let iterations = iterations.unwrap_or(1);
+            let explicit_seeds = explicit_seeds.clone().unwrap_or_default();
+            quote! {
+                for seed in gpui::calculate_seeds(#iterations, &[#(#explicit_seeds),*]).0 {
+                    #run
+                }
+            }
+        } else {
+            run
+        }
+    };
+
     let benchmark = if let Some(inputs) = inputs {
         let input_name = match input_name {
             Some(input_name) => quote! { #input_name },
@@ -82,33 +215,30 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
         };
         let sample_size =
             sample_size.map(|sample_size| quote! { group.sample_size(#sample_size); });
+        let parameter = if takes_rng {
+            quote! { format!("{}/seed-{}", input, seed) }
+        } else {
+            quote! { input.to_string() }
+        };
+        let run = for_each_seed(quote! {
+            // One report per benchmark: per-iteration metrics differ across
+            // inputs and seeds, so blending them would make the summary meaningless.
+            let report = #report_expr;
+            let parameter = #parameter;
+            let report_name = format!("{}/{}/{}", #group_name, #input_name, parameter);
+            group.bench_with_input(criterion::BenchmarkId::new(#input_name, &parameter), &input, {
+                let report = report.clone();
+                move |bencher, input| {
+                    #routine
+                }
+            });
+            report.print(&report_name);
+        });
         quote! {
             let mut group = criterion.benchmark_group(#group_name);
             #sample_size
             for input in #inputs {
-                // One report per input: per-iteration metrics differ across
-                // inputs, so blending them would make the summary meaningless.
-                let report = #report_expr;
-                let report_name = format!("{}/{}/{}", #group_name, #input_name, input);
-                group.bench_with_input(criterion::BenchmarkId::new(#input_name, &input), &input, {
-                    let report = report.clone();
-                    move |bencher, input| {
-                        let mut cx = gpui::BenchAppContext::new_with_platform_and_report(
-                            gpui::bench_platform(
-                                Some(Box::new(|| {
-                                    gpui_platform::current_headless_renderer()
-                                })),
-                                gpui_platform::current_platform(true).text_system(),
-                            ),
-                            Some(stringify!(#outer_fn_name)),
-                            bencher,
-                            report.clone(),
-                        );
-                        #inner_fn_name(input, &mut cx);
-                        cx.teardown();
-                    }
-                });
-                report.print(&report_name);
+                #run
             }
             group.finish();
         }
@@ -131,28 +261,22 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
                 "#[gpui::bench] `sample_size` requires `inputs`",
             ));
         }
-        quote! {
+        let name = if takes_rng {
+            quote! { format!("{}/seed-{}", stringify!(#outer_fn_name), seed) }
+        } else {
+            quote! { stringify!(#outer_fn_name).to_string() }
+        };
+        for_each_seed(quote! {
             let report = #report_expr;
-            criterion.bench_function(stringify!(#outer_fn_name), {
+            let name = #name;
+            criterion.bench_function(&name, {
                 let report = report.clone();
                 move |bencher| {
-                    let mut cx = gpui::BenchAppContext::new_with_platform_and_report(
-                        gpui::bench_platform(
-                            Some(Box::new(|| {
-                                gpui_platform::current_headless_renderer()
-                            })),
-                            gpui_platform::current_platform(true).text_system(),
-                        ),
-                        Some(stringify!(#outer_fn_name)),
-                        bencher,
-                        report.clone(),
-                    );
-                    #inner_fn_name(&mut cx);
-                    cx.teardown();
+                    #routine
                 }
             });
-            report.print(stringify!(#outer_fn_name));
-        }
+            report.print(&name);
+        })
     };
 
     TokenStream::from(quote! {
@@ -163,6 +287,16 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
         }
 
     })
+}
+
+fn is_std_rng(ty: &Type) -> bool {
+    let Type::Path(path) = ty else {
+        return false;
+    };
+    path.path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "StdRng")
 }
 
 fn error_to_stream(error: syn::Error) -> TokenStream {

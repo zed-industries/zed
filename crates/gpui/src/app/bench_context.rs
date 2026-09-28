@@ -10,7 +10,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-pub use bench_metrics::{BenchMeasurement, MetricReport};
+pub use bench_metrics::{BenchMeasurement, CountingAllocator, MetricReport};
 use hdrhistogram::Histogram;
 
 use crate::{
