@@ -6,7 +6,9 @@ use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::Result;
 use collections::HashMap;
 use futures::{FutureExt, future::Shared};
-use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Subscription, Task};
+use gpui::{
+    App, AppContext, Context, Entity, EventEmitter, SharedString, Subscription, Task, TaskExt,
+};
 
 use project::{AgentServerStore, AgentServersUpdated, Project};
 use watch::Receiver;
@@ -166,6 +168,7 @@ impl AgentConnectionStore {
             let entry = entry.downgrade();
             async move |this, cx| match connect_task.await {
                 Ok(connected_state) => {
+                    let session_sync_connection = connected_state.connection.clone();
                     this.update(cx, move |this, cx| {
                         if this.entries.get(&key) != entry.upgrade().as_ref() {
                             return;
@@ -179,6 +182,16 @@ impl AgentConnectionStore {
                                 }
                             })
                             .ok();
+
+                        if !key.is_native() {
+                            crate::thread_import::sync_project_sessions(
+                                session_sync_connection.agent_id(),
+                                session_sync_connection,
+                                this.project.clone(),
+                                cx,
+                            )
+                            .detach_and_log_err(cx);
+                        }
                         cx.notify();
                     })
                     .ok();

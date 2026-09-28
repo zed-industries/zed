@@ -1,6 +1,6 @@
-use std::time::Duration;
+use std::{rc::Rc, time::Duration};
 
-use acp_thread::AgentSessionListRequest;
+use acp_thread::{AgentConnection, AgentSessionListRequest};
 use agent::ThreadStore;
 use agent_client_protocol::schema::v1 as acp;
 use chrono::Utc;
@@ -16,7 +16,7 @@ use gpui::{
 };
 use itertools::Itertools as _;
 use notifications::status_toast::StatusToast;
-use project::{AgentId, AgentRegistryStore, AgentServerStore};
+use project::{AgentId, AgentRegistryStore, AgentServerStore, Project};
 use release_channel::ReleaseChannel;
 use remote::{RemoteConnectionIdentity, RemoteConnectionOptions, remote_connection_identity};
 use ui::{
@@ -842,6 +842,90 @@ struct SessionByAgent {
     sessions: Vec<acp_thread::AgentSessionInfo>,
 }
 
+pub(crate) fn sync_project_sessions(
+    agent_id: AgentId,
+    connection: Rc<dyn AgentConnection>,
+    project: Entity<Project>,
+    cx: &mut App,
+) -> Task<anyhow::Result<()>> {
+    let Some(list) = connection.session_list(cx) else {
+        return Task::ready(Ok(()));
+    };
+
+    let (worktree_paths, remote_connection) = {
+        let project = project.read(cx);
+        (
+            project.worktree_paths(cx),
+            project.remote_connection_options(cx),
+        )
+    };
+    cx.spawn(async move |cx| {
+        let sessions =
+            collect_all_sessions(agent_id, remote_connection, list, cx).await?;
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let existing_sessions = store
+                .read(cx)
+                .entries()
+                .filter_map(|metadata| {
+                    metadata.session_id.as_ref().map(|session_id| {
+                        agent_session_key(
+                            &metadata.agent_id,
+                            session_id,
+                            metadata.remote_connection.as_ref(),
+                        )
+                    })
+                })
+                .collect();
+            let metadata =
+                collect_project_threads(sessions, worktree_paths, existing_sessions);
+            if !metadata.is_empty() {
+                store.update(cx, |store, cx| store.save_all(metadata, cx));
+            }
+        })?;
+        Ok(())
+    })
+}
+
+fn collect_project_threads(
+    sessions_for_agent: SessionByAgent,
+    worktree_paths: WorktreePaths,
+    mut existing_sessions: HashSet<AgentSessionKey>,
+) -> Vec<ThreadMetadata> {
+    let folder_paths = worktree_paths.folder_path_list();
+    let mut threads = Vec::new();
+
+    for session in sessions_for_agent.sessions {
+        if session.work_dirs.as_ref() != Some(folder_paths) {
+            continue;
+        }
+        if !existing_sessions.insert(agent_session_key(
+            &sessions_for_agent.agent_id,
+            &session.session_id,
+            sessions_for_agent.remote_connection.as_ref(),
+        )) {
+            continue;
+        }
+
+        threads.push(ThreadMetadata {
+            thread_id: ThreadId::new(),
+            session_id: Some(session.session_id),
+            agent_id: sessions_for_agent.agent_id.clone(),
+            title: session.title,
+            title_override: None,
+            updated_at: session.updated_at.unwrap_or_else(Utc::now),
+            created_at: session.created_at,
+            interacted_at: None,
+            worktree_paths: worktree_paths.clone(),
+            remote_connection: sessions_for_agent.remote_connection.clone(),
+            archived: false,
+        });
+    }
+
+    threads
+}
+
 type AgentSessionKey = (
     AgentId,
     acp::SessionId,
@@ -1047,6 +1131,42 @@ mod tests {
             created_at,
             meta: None,
         }
+    }
+
+    #[test]
+    fn test_collect_project_threads_only_includes_matching_project() {
+        let project_paths = PathList::new(&[Path::new("/project")]);
+        let worktree_paths = WorktreePaths::from_folder_paths(&project_paths);
+        let sessions = SessionByAgent {
+            agent_id: AgentId::new("agent-a"),
+            remote_connection: None,
+            sessions: vec![
+                make_session(
+                    "matching",
+                    Some("Matching"),
+                    Some(project_paths.clone()),
+                    None,
+                    None,
+                ),
+                make_session(
+                    "other",
+                    Some("Other"),
+                    Some(PathList::new(&[Path::new("/other")])),
+                    None,
+                    None,
+                ),
+            ],
+        };
+
+        let result =
+            collect_project_threads(sessions, worktree_paths, HashSet::default());
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].session_id.as_ref().unwrap().0.as_ref(),
+            "matching"
+        );
+        assert!(!result[0].archived);
     }
 
     #[test]
