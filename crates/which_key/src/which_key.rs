@@ -14,6 +14,15 @@ use which_key_modal::WhichKeyModal;
 use which_key_settings::WhichKeySettings;
 use workspace::Workspace;
 
+gpui::actions!(
+    which_key,
+    [
+        /// Shows the bindings that can complete the pending key sequence. Must be bound to a
+        /// single keystroke.
+        ShowPendingBindings
+    ]
+);
+
 pub(crate) struct PendingBinding {
     pub(crate) remaining_keystrokes: Vec<KeybindingKeystroke>,
     pub(crate) action_name: SharedString,
