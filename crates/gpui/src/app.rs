@@ -2318,9 +2318,7 @@ impl App {
     /// Register a callback to be invoked when a keystroke is received by the application
     /// in any window. Note that this fires _before_ all other action and event mechanisms have resolved
     /// unlike [`App::observe_keystrokes`] which fires after. This means that `cx.stop_propagation` calls
-    /// within interceptors will prevent action dispatch.
-    /// Interceptors implementing shortcuts should respect [`KeystrokeEvent::character_input_preferred`],
-    /// while interceptors capturing raw keystrokes can consume these events too.
+    /// within interceptors will prevent action dispatch
     pub fn intercept_keystrokes(
         &mut self,
         mut f: impl FnMut(&KeystrokeEvent, &mut Window, &mut App) + 'static,
@@ -3205,10 +3203,13 @@ pub struct KeystrokeEvent {
     /// The keystroke that occurred
     pub keystroke: Keystroke,
 
-    /// Whether character input takes priority over key bindings for this dispatch.
-    /// This combines the platform's character-input preference (e.g. AltGr on Windows)
-    /// with whether the current input handler accepts text. Interceptors still receive
-    /// these events and may consume them.
+    /// Whether this keystroke should type text instead of triggering key bindings.
+    /// It's true when the platform prefers text for the key (e.g. AltGr on Windows)
+    /// and the focused input accepts text. Interceptors still receive these keystrokes
+    /// and can consume them.
+    ///
+    /// If the keystroke is part of a multi-stroke binding, it still waits as pending input
+    /// even when this is `true`.
     pub character_input_preferred: bool,
 
     /// The action that was resolved for the keystroke, if any

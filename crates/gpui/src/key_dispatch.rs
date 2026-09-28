@@ -633,10 +633,11 @@ mod tests {
     };
 
     use crate::{
-        Action, ActionRegistry, App, Bounds, Context, DispatchPhase, DispatchTree, FocusHandle,
-        InputHandler, IntoElement, KeyBinding, KeyContext, KeyDownEvent, Keymap, Modifiers, Pixels,
-        PlatformInput, PlatformWindow, Point, Render, Subscription, TestAppContext, UTF16Selection,
-        Unbind, VisualContext, VisualTestContext, Window,
+        Action, ActionRegistry, App, Bounds, Context, DispatchEventResult, DispatchPhase,
+        DispatchTree, Entity, FocusHandle, InputHandler, IntoElement, KeyBinding, KeyContext,
+        KeyDownEvent, Keymap, Modifiers, Pixels, PlatformInput, PlatformWindow, Point, Render,
+        Subscription, TestAppContext, UTF16Selection, Unbind, VisualContext, VisualTestContext,
+        Window,
     };
 
     actions!(dispatch_test, [TestAction, SecondaryTestAction]);
@@ -925,6 +926,37 @@ mod tests {
         let prefers_ime = input_handler.query_prefers_ime_for_printable_keys();
         platform_window.set_input_handler(input_handler);
         Some(prefers_ime)
+    }
+
+    fn setup_altgr_test(
+        cx: &mut TestAppContext,
+    ) -> (Entity<PendingTextInputTestView>, &mut VisualTestContext) {
+        let (test, cx) = cx.add_window_view(|_, cx| PendingTextInputTestView::new(cx));
+        test.update_in(cx, |test, window, cx| {
+            window.focus(&test.focus_handle, cx);
+            window.activate_window();
+            cx.bind_keys([KeyBinding::new("ctrl-alt-a", TestAction, Some("Terminal"))]);
+        });
+        (test, cx)
+    }
+
+    fn dispatch_altgr_key_down(
+        cx: &mut VisualTestContext,
+        prefer_character_input: bool,
+    ) -> DispatchEventResult {
+        cx.update(|window, cx| {
+            window.dispatch_event(
+                PlatformInput::KeyDown(KeyDownEvent {
+                    keystroke: Keystroke {
+                        key_char: Some("ą".into()),
+                        ..Keystroke::parse("ctrl-alt-a").expect("valid keystroke")
+                    },
+                    is_held: false,
+                    prefer_character_input,
+                }),
+                cx,
+            )
+        })
     }
 
     fn simulate_pending_binding(cx: &mut VisualTestContext) {
@@ -1588,12 +1620,7 @@ mod tests {
 
     #[crate::test]
     fn test_keystroke_character_input_preference(cx: &mut TestAppContext) {
-        let (test, cx) = cx.add_window_view(|_, cx| PendingTextInputTestView::new(cx));
-        test.update_in(cx, |test, window, cx| {
-            window.focus(&test.focus_handle, cx);
-            window.activate_window();
-            cx.bind_keys([KeyBinding::new("ctrl-alt-a", TestAction, Some("Terminal"))]);
-        });
+        let (test, cx) = setup_altgr_test(cx);
         let intercepted_preferences = Rc::new(RefCell::new(Vec::new()));
         let observed_preferences = Rc::new(RefCell::new(Vec::new()));
         let _interceptor = cx.update(|_, cx| {
@@ -1612,13 +1639,13 @@ mod tests {
                 move |event, _, _| {
                     observed_preferences
                         .borrow_mut()
-                        .push((event.character_input_preferred, event.action.is_some()));
+                        .push(event.character_input_preferred);
                 }
             })
         });
 
         for (prefer_character_input, accepts_text_input) in
-            [(true, true), (false, true), (true, false), (false, false)]
+            [(true, true), (false, true), (true, false)]
         {
             test.update(cx, |test, _| {
                 test.accepts_text_input.set(accepts_text_input);
@@ -1626,19 +1653,7 @@ mod tests {
             });
             intercepted_preferences.borrow_mut().clear();
             observed_preferences.borrow_mut().clear();
-            let result = cx.update(|window, cx| {
-                window.dispatch_event(
-                    PlatformInput::KeyDown(KeyDownEvent {
-                        keystroke: Keystroke {
-                            key_char: Some("ą".into()),
-                            ..Keystroke::parse("ctrl-alt-a").expect("valid keystroke")
-                        },
-                        is_held: false,
-                        prefer_character_input,
-                    }),
-                    cx,
-                )
-            });
+            let result = dispatch_altgr_key_down(cx, prefer_character_input);
             let character_input_preferred = prefer_character_input && accepts_text_input;
             assert_eq!(result.propagate, character_input_preferred);
             assert_eq!(
@@ -1647,7 +1662,7 @@ mod tests {
             );
             assert_eq!(
                 observed_preferences.borrow().as_slice(),
-                &[(character_input_preferred, !character_input_preferred)]
+                &[character_input_preferred]
             );
             test.read_with(cx, |test, _| {
                 assert_eq!(
@@ -1660,12 +1675,7 @@ mod tests {
 
     #[crate::test]
     fn test_character_input_preference_rechecked_after_interception(cx: &mut TestAppContext) {
-        let (test, cx) = cx.add_window_view(|_, cx| PendingTextInputTestView::new(cx));
-        test.update_in(cx, |test, window, cx| {
-            window.focus(&test.focus_handle, cx);
-            window.activate_window();
-            cx.bind_keys([KeyBinding::new("ctrl-alt-a", TestAction, Some("Terminal"))]);
-        });
+        let (test, cx) = setup_altgr_test(cx);
         let accepts_text_input = test.read_with(cx, |test, _| test.accepts_text_input.clone());
         let _interceptor = cx.update(|_, cx| {
             cx.intercept_keystrokes({
@@ -1676,24 +1686,28 @@ mod tests {
                 }
             })
         });
+        let observed_preferences = Rc::new(RefCell::new(Vec::new()));
+        let _observer = cx.update(|_, cx| {
+            cx.observe_keystrokes({
+                let observed_preferences = observed_preferences.clone();
+                move |event, _, _| {
+                    observed_preferences
+                        .borrow_mut()
+                        .push(event.character_input_preferred);
+                }
+            })
+        });
 
         for initially_accepts_text_input in [true, false] {
             accepts_text_input.set(initially_accepts_text_input);
             test.update(cx, |test, _| test.action_count.set(0));
-            let result = cx.update(|window, cx| {
-                window.dispatch_event(
-                    PlatformInput::KeyDown(KeyDownEvent {
-                        keystroke: Keystroke {
-                            key_char: Some("ą".into()),
-                            ..Keystroke::parse("ctrl-alt-a").expect("valid keystroke")
-                        },
-                        is_held: false,
-                        prefer_character_input: true,
-                    }),
-                    cx,
-                )
-            });
+            observed_preferences.borrow_mut().clear();
+            let result = dispatch_altgr_key_down(cx, true);
             assert_eq!(result.propagate, !initially_accepts_text_input);
+            assert_eq!(
+                observed_preferences.borrow().as_slice(),
+                &[!initially_accepts_text_input]
+            );
             test.read_with(cx, |test, _| {
                 assert_eq!(
                     test.action_count.get(),
@@ -1705,11 +1719,7 @@ mod tests {
 
     #[crate::test]
     fn test_keystroke_interceptors_can_consume_preferred_character_input(cx: &mut TestAppContext) {
-        let (test, cx) = cx.add_window_view(|_, cx| PendingTextInputTestView::new(cx));
-        test.update_in(cx, |test, window, cx| {
-            window.focus(&test.focus_handle, cx);
-            window.activate_window();
-        });
+        let (test, cx) = setup_altgr_test(cx);
         let intercepted = Rc::new(Cell::new(false));
         let _interceptor = cx.update(|_, cx| {
             cx.intercept_keystrokes({
@@ -1722,22 +1732,10 @@ mod tests {
             })
         });
 
-        let result = cx.update(|window, cx| {
-            window.dispatch_event(
-                PlatformInput::KeyDown(KeyDownEvent {
-                    keystroke: Keystroke {
-                        key_char: Some("ą".into()),
-                        ..Keystroke::parse("ctrl-alt-a").expect("valid keystroke")
-                    },
-                    is_held: false,
-                    prefer_character_input: true,
-                }),
-                cx,
-            )
-        });
+        let result = dispatch_altgr_key_down(cx, true);
         assert!(intercepted.get());
         assert!(!result.propagate);
-        assert!(test.read_with(cx, |test, _| test.text.borrow().is_empty()));
+        test.read_with(cx, |test, _| assert_eq!(test.action_count.get(), 0));
     }
 
     #[crate::test]

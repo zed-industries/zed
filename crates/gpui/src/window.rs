@@ -5803,18 +5803,21 @@ impl Window {
         }
     }
 
+    // If modifiers are not excessive (e.g. AltGr), and the input handler is accepting text input,
+    // we prefer the text input over bindings.
     fn character_input_preferred(&mut self, event: &dyn Any, cx: &mut App) -> bool {
-        event
+        let prefer_character_input = event
             .downcast_ref::<KeyDownEvent>()
-            .filter(|key_down_event| key_down_event.prefer_character_input)
-            .and_then(|_| self.platform_window.take_input_handler())
-            .is_some_and(|mut input_handler| {
-                let accepts = input_handler.accepts_text_input(self, cx);
-                self.platform_window.set_input_handler(input_handler);
-                // If modifiers are not excessive (e.g. AltGr), and the input handler is accepting text input,
-                // we prefer the text input over bindings.
-                accepts
-            })
+            .is_some_and(|key_down_event| key_down_event.prefer_character_input);
+        if !prefer_character_input {
+            return false;
+        }
+        let Some(mut input_handler) = self.platform_window.take_input_handler() else {
+            return false;
+        };
+        let accepts_text_input = input_handler.accepts_text_input(self, cx);
+        self.platform_window.set_input_handler(input_handler);
+        accepts_text_input
     }
 
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
