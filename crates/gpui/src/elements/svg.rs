@@ -189,14 +189,6 @@ impl Element for Svg {
     }
 }
 
-impl IntoElement for Svg {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Styled for Svg {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.interactivity.base_style

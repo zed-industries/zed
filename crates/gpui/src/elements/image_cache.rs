@@ -86,14 +86,6 @@ impl Styled for ImageCacheElement {
     }
 }
 
-impl IntoElement for ImageCacheElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for ImageCacheElement {
     type RequestLayoutState = SmallVec<[LayoutId; 4]>;
     type PrepaintState = ();

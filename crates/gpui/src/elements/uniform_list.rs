@@ -567,14 +567,6 @@ impl Element for UniformList {
     }
 }
 
-impl IntoElement for UniformList {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 /// A decoration for a [`UniformList`]. This can be used for various things,
 /// such as rendering indent guides, or other visual effects.
 pub trait UniformListDecoration {

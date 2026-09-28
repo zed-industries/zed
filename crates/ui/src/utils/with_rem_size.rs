@@ -104,11 +104,3 @@ impl Element for WithRemSize {
         })
     }
 }
-
-impl IntoElement for WithRemSize {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}

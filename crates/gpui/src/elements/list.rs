@@ -1621,14 +1621,6 @@ impl Element for List {
     }
 }
 
-impl IntoElement for List {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Styled for List {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.style

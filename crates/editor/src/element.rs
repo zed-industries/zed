@@ -10178,14 +10178,6 @@ impl ScrollbarLayoutInformation {
     }
 }
 
-impl IntoElement for EditorElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 pub struct EditorLayout {
     position_map: Rc<PositionMap>,
     hitbox: Hitbox,

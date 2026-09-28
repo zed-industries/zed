@@ -1347,14 +1347,6 @@ mod element {
         }
     }
 
-    impl IntoElement for PaneAxisElement {
-        type Element = Self;
-
-        fn into_element(self) -> Self::Element {
-            self
-        }
-    }
-
     impl Element for PaneAxisElement {
         type RequestLayoutState = ();
         type PrepaintState = PaneAxisLayout;

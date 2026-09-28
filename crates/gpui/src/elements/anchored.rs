@@ -230,14 +230,6 @@ impl Element for Anchored {
     }
 }
 
-impl IntoElement for Anchored {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 /// Which algorithm to use when fitting the anchored element to be inside the window.
 #[derive(Copy, Clone, PartialEq)]
 pub enum AnchoredFitMode {
