@@ -974,7 +974,7 @@ fn log_acp_thread_event(
             let entries = acp_thread.read(cx).entries();
             if let Some(acp_thread::AgentThreadEntry::ToolCall(tool_call)) = entries.get(*index) {
                 if let Some(name) = &tool_call.tool_name {
-                    match &tool_call.status {
+                    match tool_call.status() {
                         acp_thread::ToolCallStatus::Completed => {
                             eprintln!("[tool] {name} ✓");
                         }
