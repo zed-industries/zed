@@ -8,9 +8,12 @@ use block2::RcBlock;
 use cocoa::{
     appkit::{
         NSAppearanceNameVibrantDark, NSAppearanceNameVibrantLight, NSApplication,
-        NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular, NSControl as _,
-        NSEventModifierFlags, NSMenu, NSMenuItem, NSVisualEffectState, NSVisualEffectView,
-        NSWindow,
+        NSApplicationActivationPolicy,
+        NSApplicationActivationPolicy::{
+            NSApplicationActivationPolicyAccessory, NSApplicationActivationPolicyRegular,
+        },
+        NSControl as _, NSEventModifierFlags, NSMenu, NSMenuItem, NSVisualEffectState,
+        NSVisualEffectView, NSWindow,
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
@@ -29,11 +32,11 @@ use ctor::ctor;
 use dispatch2::DispatchQueue;
 use futures::channel::oneshot;
 use gpui::{
-    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
-    ForegroundExecutor, KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions,
-    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, SystemMenuType, Task, ThermalState, WindowAppearance, WindowKind,
-    WindowParams, popup::PopupNotSupportedError,
+    Action, ActivationPolicy, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem,
+    CursorStyle, ForegroundExecutor, KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task, ThermalState,
+    WindowAppearance, WindowKind, WindowParams, popup::PopupNotSupportedError,
 };
 use gpui_util::{ResultExt, new_std_command};
 use itertools::Itertools;
@@ -182,6 +185,8 @@ pub(crate) struct MacPlatformState {
     text_system: Arc<dyn PlatformTextSystem>,
     renderer_context: renderer::Context,
     headless: bool,
+    activation_policy: ActivationPolicy,
+    application_created: bool,
     general_pasteboard: Pasteboard,
     find_pasteboard: Pasteboard,
     reopen: Option<Box<dyn FnMut()>>,
@@ -203,6 +208,13 @@ pub(crate) struct MacPlatformState {
     /// Mirrors `[NSCursor setHiddenUntilMouseMoves:]` state, which AppKit doesn't expose.
     cursor_visible: Arc<AtomicBool>,
     system_notifications: crate::system_notifications::SystemNotificationState,
+}
+
+fn native_activation_policy(policy: ActivationPolicy) -> NSApplicationActivationPolicy {
+    match policy {
+        ActivationPolicy::Regular => NSApplicationActivationPolicyRegular,
+        ActivationPolicy::Accessory => NSApplicationActivationPolicyAccessory,
+    }
 }
 
 impl MacPlatform {
@@ -228,6 +240,8 @@ impl MacPlatform {
 
         let state = Mutex::new(MacPlatformState {
             headless,
+            activation_policy: ActivationPolicy::Regular,
+            application_created: false,
             text_system,
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher),
@@ -538,6 +552,18 @@ impl Platform for MacPlatform {
 
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
+            // An accessory app must not register in the Dock during launch, so its
+            // policy has to precede the run loop. `Regular` is applied in
+            // `did_finish_launching` instead: setting it this early leaves the menu
+            // bar of an unbundled app launched from a terminal unclickable.
+            let policy = {
+                let mut state = self.0.lock();
+                state.application_created = true;
+                state.activation_policy
+            };
+            if policy == ActivationPolicy::Accessory {
+                app.setActivationPolicy_(native_activation_policy(policy));
+            }
             let app_delegate: id = msg_send![APP_DELEGATE_CLASS, new];
             app.setDelegate_(app_delegate);
 
@@ -552,6 +578,7 @@ impl Platform for MacPlatform {
             (*app).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
             (*NSWindow::delegate(app)).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
         }
+        self.0.lock().application_created = false;
     }
 
     fn quit(&self) {
@@ -626,6 +653,19 @@ impl Platform for MacPlatform {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
             app.activateIgnoringOtherApps_(ignoring_other_apps.to_objc());
+        }
+    }
+
+    fn set_activation_policy(&self, policy: ActivationPolicy) {
+        let mut state = self.0.lock();
+        state.activation_policy = policy;
+        let should_apply = state.application_created && !state.headless;
+        drop(state);
+        if should_apply {
+            unsafe {
+                let app: id = msg_send![APP_CLASS, sharedApplication];
+                app.setActivationPolicy_(native_activation_policy(policy));
+            }
         }
     }
 
@@ -1317,7 +1357,8 @@ extern "C" fn will_finish_launching(_this: &mut Object, _: Sel, _: id) {
 extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let app: id = msg_send![APP_CLASS, sharedApplication];
-        app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
+        let policy = get_mac_platform(this).0.lock().activation_policy;
+        app.setActivationPolicy_(native_activation_policy(policy));
 
         let notification_center: *mut Object =
             msg_send![class!(NSNotificationCenter), defaultCenter];
