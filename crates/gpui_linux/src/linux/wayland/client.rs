@@ -1352,6 +1352,7 @@ impl LinuxClient for WaylandClient {
                 data_source.offer(FILE_LIST_MIME_TYPE.to_string());
             }
             data_device.set_selection(Some(&data_source), serial.as_raw());
+            state.clipboard.selection_requested();
         }
     }
 

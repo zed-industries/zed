@@ -10,9 +10,9 @@ use strum::IntoEnumIterator;
 use wayland_client::{Connection, protocol::wl_data_offer::WlDataOffer};
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
 
+use gpui_util::ResultExt as _;
 use http_client::Url;
 use smallvec::SmallVec;
-use util::ResultExt as _;
 
 use crate::linux::{
     WaylandClientStatePtr,
@@ -28,6 +28,28 @@ pub(crate) const FILE_LIST_MIME_TYPE: &str = "text/uri-list";
 /// Text mime types that we'll accept from other programs.
 pub(crate) const ALLOWED_TEXT_MIME_TYPES: [&str; 2] = ["text/plain;charset=utf-8", "UTF8_STRING"];
 
+#[derive(Default)]
+struct ClipboardOwnership {
+    is_self_owner: bool,
+}
+
+impl ClipboardOwnership {
+    fn selection_requested(&mut self) {
+        self.is_self_owner = true;
+    }
+
+    fn external_offer_received(&mut self) {
+        self.is_self_owner = false;
+    }
+}
+
+fn read_file_or_text<T>(
+    read_uri_list: impl FnOnce() -> Option<T>,
+    read_text: impl FnOnce() -> Option<T>,
+) -> Option<T> {
+    read_uri_list().or_else(read_text)
+}
+
 pub(crate) struct Clipboard {
     connection: Connection,
     loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
@@ -40,7 +62,7 @@ pub(crate) struct Clipboard {
     // send a wl_data_device.selection event back to the client that called set_selection, so we
     // track ownership ourselves to avoid needing current_offer to be populated for same-process
     // cross-window reads.
-    is_self_owner: bool,
+    ownership: ClipboardOwnership,
 
     // External clipboard
     cached_read: Option<ClipboardItem>,
@@ -184,7 +206,7 @@ impl Clipboard {
 
             contents: None,
             primary_contents: None,
-            is_self_owner: false,
+            ownership: ClipboardOwnership::default(),
 
             cached_read: None,
             current_offer: None,
@@ -195,7 +217,10 @@ impl Clipboard {
 
     pub fn set(&mut self, item: ClipboardItem) {
         self.contents = Some(item);
-        self.is_self_owner = true;
+    }
+
+    pub fn selection_requested(&mut self) {
+        self.ownership.selection_requested();
     }
 
     pub fn set_primary(&mut self, item: ClipboardItem) {
@@ -205,7 +230,7 @@ impl Clipboard {
     pub fn set_offer(&mut self, data_offer: Option<DataOffer<WlDataOffer>>) {
         self.cached_read = None;
         self.current_offer = data_offer;
-        self.is_self_owner = false;
+        self.ownership.external_offer_received();
     }
 
     pub fn set_primary_offer(&mut self, data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>) {
@@ -254,7 +279,7 @@ impl Clipboard {
         // When we are the clipboard owner, return our contents directly. Most Wayland compositors
         // do not send a wl_data_device.selection event back to the client that called
         // set_selection, so current_offer is not updated on self-write.
-        if self.is_self_owner {
+        if self.ownership.is_self_owner {
             return self.contents.clone();
         }
 
@@ -267,10 +292,11 @@ impl Clipboard {
             return self.contents.clone();
         }
 
-        let item = offer
-            .read_text(&self.connection)
-            .or_else(|| offer.read_uri_list(&self.connection))
-            .or_else(|| offer.read_image(&self.connection))?;
+        let item = read_file_or_text(
+            || offer.read_uri_list(&self.connection),
+            || offer.read_text(&self.connection),
+        )
+        .or_else(|| offer.read_image(&self.connection))?;
 
         self.cached_read = Some(item.clone());
         Some(item)
@@ -321,5 +347,43 @@ impl Clipboard {
                 },
             )
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selection_request_claims_ownership() {
+        let mut ownership = ClipboardOwnership::default();
+
+        assert!(!ownership.is_self_owner);
+        ownership.selection_requested();
+        assert!(ownership.is_self_owner);
+    }
+
+    #[test]
+    fn external_offer_clears_selection_ownership() {
+        let mut ownership = ClipboardOwnership::default();
+        ownership.selection_requested();
+
+        ownership.external_offer_received();
+
+        assert!(!ownership.is_self_owner);
+    }
+
+    #[test]
+    fn uri_list_takes_precedence_over_text() {
+        let result = read_file_or_text(|| Some("uri-list"), || Some("text"));
+
+        assert_eq!(result, Some("uri-list"));
+    }
+
+    #[test]
+    fn text_is_used_when_uri_list_is_unavailable() {
+        let result = read_file_or_text(|| None, || Some("text"));
+
+        assert_eq!(result, Some("text"));
     }
 }

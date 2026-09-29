@@ -2442,6 +2442,70 @@ async fn test_paste_external_paths(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_new_external_paths_replace_internal_clipboard(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    set_auto_open_settings(
+        cx,
+        ProjectPanelAutoOpenSettings {
+            on_drop: Some(false),
+            ..Default::default()
+        },
+    );
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "copied_in_zed.txt": "internal",
+            "destination": {}
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/external"),
+        json!({
+            "copied_afterwards.txt": "external"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/copied_in_zed.txt", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.copy(&Default::default(), window, cx);
+    });
+
+    cx.write_to_clipboard(ClipboardItem {
+        entries: vec![GpuiClipboardEntry::ExternalPaths(ExternalPaths(smallvec![
+            PathBuf::from(path!("/external/copied_afterwards.txt"))
+        ]))],
+    });
+
+    select_path(&panel, "root/destination", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.paste(&Default::default(), window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    assert!(
+        fs.is_file(Path::new("/root/destination/copied_afterwards.txt"))
+            .await
+    );
+    assert!(
+        !fs.is_file(Path::new("/root/destination/copied_in_zed.txt"))
+            .await
+    );
+}
+
+#[gpui::test]
 async fn test_copy_and_cut_write_to_system_clipboard(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
