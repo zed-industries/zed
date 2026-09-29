@@ -82,9 +82,6 @@ pub(crate) fn run_tests() -> Workflow {
         should_run_tests
             .and_not_in_merge_queue()
             .then(check_workspace_binaries()),
-        should_run_tests
-            .and_not_in_merge_queue()
-            .then(build_visual_tests_binary()),
         should_run_tests.and_not_in_merge_queue().then(check_wasm()),
         should_run_tests.and_always().then(check_dependencies()), // could be more specific here?
         should_check_docs
@@ -732,22 +729,6 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool, harden: bo
             .add_step(steps::show_sccache_stats(platform))
             .add_step(steps::cleanup_cargo_config(platform)),
     }
-}
-
-fn build_visual_tests_binary() -> NamedJob {
-    pub fn cargo_build_visual_tests() -> Step<Run> {
-        named::bash("cargo build -p zed --bin zed_visual_test_runner --features visual-tests")
-    }
-
-    named::job(
-        Job::default()
-            .runs_on(runners::MAC_SMALL)
-            .add_step(steps::checkout_repo())
-            .add_step(steps::setup_cargo_config(Platform::Mac))
-            .add_step(steps::cache_rust_dependencies_namespace())
-            .add_step(cargo_build_visual_tests())
-            .add_step(steps::cleanup_cargo_config(Platform::Mac)),
-    )
 }
 
 pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
