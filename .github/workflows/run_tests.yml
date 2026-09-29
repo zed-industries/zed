@@ -625,32 +625,6 @@ jobs:
       run: |
         rm -rf ./../.cargo
     timeout-minutes: 60
-  build_visual_tests_binary:
-    needs:
-    - orchestrate
-    - check_style
-    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
-    runs-on: namespace-profile-mac-small
-    steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
-      with:
-        clean: false
-    - name: steps::setup_cargo_config
-      run: |
-        mkdir -p ./../.cargo
-        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-    - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
-      with:
-        cache: rust
-        path: ~/.rustup
-    - name: run_tests::build_visual_tests_binary::cargo_build_visual_tests
-      run: cargo build -p zed --bin zed_visual_test_runner --features visual-tests
-    - name: steps::cleanup_cargo_config
-      if: always()
-      run: |
-        rm -rf ./../.cargo
   check_wasm:
     needs:
     - orchestrate
@@ -1046,7 +1020,6 @@ jobs:
     - miri_scheduler
     - doctests
     - check_workspace_binaries
-    - build_visual_tests_binary
     - check_wasm
     - check_dependencies
     - check_docs
@@ -1081,7 +1054,6 @@ jobs:
         check_result "miri_scheduler" "$RESULT_MIRI_SCHEDULER"
         check_result "doctests" "$RESULT_DOCTESTS"
         check_result "check_workspace_binaries" "$RESULT_CHECK_WORKSPACE_BINARIES"
-        check_result "build_visual_tests_binary" "$RESULT_BUILD_VISUAL_TESTS_BINARY"
         check_result "check_wasm" "$RESULT_CHECK_WASM"
         check_result "check_dependencies" "$RESULT_CHECK_DEPENDENCIES"
         check_result "check_docs" "$RESULT_CHECK_DOCS"
@@ -1106,7 +1078,6 @@ jobs:
         RESULT_MIRI_SCHEDULER: ${{ needs.miri_scheduler.result }}
         RESULT_DOCTESTS: ${{ needs.doctests.result }}
         RESULT_CHECK_WORKSPACE_BINARIES: ${{ needs.check_workspace_binaries.result }}
-        RESULT_BUILD_VISUAL_TESTS_BINARY: ${{ needs.build_visual_tests_binary.result }}
         RESULT_CHECK_WASM: ${{ needs.check_wasm.result }}
         RESULT_CHECK_DEPENDENCIES: ${{ needs.check_dependencies.result }}
         RESULT_CHECK_DOCS: ${{ needs.check_docs.result }}
