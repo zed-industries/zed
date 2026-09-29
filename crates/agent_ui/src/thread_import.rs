@@ -1596,6 +1596,47 @@ mod tests {
     }
 
     #[test]
+    fn test_collect_keeps_same_session_id_for_different_work_dirs() {
+        let existing = HashSet::default();
+        let local_paths = PathList::new(&[Path::new("/local")]);
+        let remote_paths = PathList::new(&[Path::new("/remote")]);
+        let remote_connection =
+            RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
+                host: "example.com".into(),
+                ..Default::default()
+            });
+
+        let sessions_by_agent = vec![
+            SessionByAgent {
+                agent_id: AgentId::new("agent-a"),
+                remote_connection: None,
+                sessions: vec![make_session(
+                    "shared-session",
+                    Some("Local"),
+                    Some(local_paths),
+                    None,
+                    None,
+                )],
+            },
+            SessionByAgent {
+                agent_id: AgentId::new("agent-a"),
+                remote_connection: Some(remote_connection),
+                sessions: vec![make_session(
+                    "shared-session",
+                    Some("Remote"),
+                    Some(remote_paths),
+                    None,
+                    None,
+                )],
+            },
+        ];
+
+        let result = collect_importable_threads(sessions_by_agent, existing);
+
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
     fn test_collect_all_existing_returns_empty() {
         let paths = PathList::new(&[Path::new("/project")]);
         let agent_id = AgentId::new("agent-a");
