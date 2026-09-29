@@ -5088,8 +5088,10 @@ impl Panel for AgentPanel {
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
         let became_active = active && !self.is_active;
         self.is_active = active;
-        if became_active {
+        if active {
             self.ensure_thread_initialized(window, cx);
+        }
+        if became_active {
             self.refresh_selected_agent_sessions(cx);
         }
     }
