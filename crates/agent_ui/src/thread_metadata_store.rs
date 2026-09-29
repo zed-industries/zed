@@ -2035,21 +2035,11 @@ mod tests {
     async fn test_entry_by_session_falls_back_after_duplicate_delete(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let mut first = make_metadata(
-            "shared-session",
-            "First",
-            Utc::now(),
-            PathList::default(),
-        );
+        let mut first = make_metadata("shared-session", "First", Utc::now(), PathList::default());
         first.agent_id = AgentId::new("agent-a");
         let first_thread_id = first.thread_id;
 
-        let mut second = make_metadata(
-            "shared-session",
-            "Second",
-            Utc::now(),
-            PathList::default(),
-        );
+        let mut second = make_metadata("shared-session", "Second", Utc::now(), PathList::default());
         second.agent_id = AgentId::new("agent-b");
         let second_thread_id = second.thread_id;
         let session_id = second.session_id.clone().unwrap();

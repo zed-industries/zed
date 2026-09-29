@@ -1682,10 +1682,15 @@ impl AgentPanel {
         // Share links / clipboard imports enter with only a session id. If
         // this machine already has a metadata row for the session, route
         // through the normal thread-id path.
+        let remote_connection = self.project.read(cx).remote_connection_options(cx);
         let existing_thread_id = ThreadMetadataStore::try_global(cx).and_then(|store| {
             store
                 .read(cx)
-                .entry_by_session(&session_id)
+                .entry_by_session_with_context(
+                    &session_id,
+                    &agent::ZED_AGENT_ID,
+                    remote_connection.as_ref(),
+                )
                 .map(|m| m.thread_id)
         });
         if let Some(thread_id) = existing_thread_id {

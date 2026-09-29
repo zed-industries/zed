@@ -71,6 +71,7 @@ pub struct ActiveAcpConnection {
 pub struct AgentConnectionStore {
     project: Entity<Project>,
     entries: HashMap<Agent, Entity<AgentConnectionEntry>>,
+    session_watch_tasks: HashMap<Agent, Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -81,6 +82,7 @@ impl AgentConnectionStore {
         Self {
             project,
             entries: HashMap::default(),
+            session_watch_tasks: HashMap::default(),
             _subscriptions: vec![subscription],
         }
     }
@@ -146,6 +148,7 @@ impl AgentConnectionStore {
         }
 
         self.entries.remove(&key);
+        self.session_watch_tasks.remove(&key);
         self.request_connection(key, server, cx)
     }
 
@@ -193,11 +196,18 @@ impl AgentConnectionStore {
                         if !key.is_native() {
                             crate::thread_import::sync_project_sessions(
                                 session_sync_connection.agent_id(),
-                                session_sync_connection,
+                                session_sync_connection.clone(),
                                 this.project.clone(),
                                 cx,
                             )
                             .detach_and_log_err(cx);
+                            let watch_task = crate::thread_import::watch_project_sessions(
+                                session_sync_connection.agent_id(),
+                                session_sync_connection,
+                                this.project.clone(),
+                                cx,
+                            );
+                            this.session_watch_tasks.insert(key.clone(), watch_task);
                         }
                         cx.notify();
                     })
@@ -218,6 +228,7 @@ impl AgentConnectionStore {
                             })
                             .ok();
                         this.entries.remove(&key);
+                        this.session_watch_tasks.remove(&key);
                         cx.notify();
                     })
                     .ok();
@@ -248,6 +259,7 @@ impl AgentConnectionStore {
                             })
                             .ok();
                         this.entries.remove(&key);
+                        this.session_watch_tasks.remove(&key);
                         cx.notify();
                     })
                     .ok();
@@ -298,6 +310,8 @@ impl AgentConnectionStore {
             #[cfg(any(test, feature = "test-support"))]
             Agent::Stub => true,
         });
+        self.session_watch_tasks
+            .retain(|key, _| self.entries.contains_key(key));
         cx.notify();
     }
 
