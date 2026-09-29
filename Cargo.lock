@@ -16651,6 +16651,7 @@ dependencies = [
  "serde_yaml_ng",
  "settings",
  "shell_command_parser",
+ "shellexpand",
  "strum 0.28.0",
  "telemetry",
  "theme",
