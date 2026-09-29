@@ -48,8 +48,10 @@ fn group_bindings(bindings: Vec<PendingBinding>) -> Vec<PendingBindingRow> {
     let mut seen_sequences = HashSet::new();
     let mut groups: HashMap<Option<KeybindingKeystroke>, Vec<PendingBinding>> = HashMap::new();
     for binding in bindings {
-        // Candidates are in precedence order, so the first binding for a sequence is the one
-        // that dispatch runs.
+        // Candidates come in precedence order, so the first binding for a sequence is the one
+        // dispatch tries first. Dispatch only moves on to the next binding when nothing on the
+        // focus path handles the first action. Like GPUI's shortcut display, the popup treats the
+        // later bindings as shadowed and shows only the first.
         if !seen_sequences.insert(binding.remaining_keystrokes.clone()) {
             continue;
         }
@@ -61,8 +63,9 @@ fn group_bindings(bindings: Vec<PendingBinding>) -> Vec<PendingBindingRow> {
 
     let mut result = Vec::new();
     for (first_keystroke, bindings) in groups {
-        // A group row hides what the next keystroke runs, so a binding that completes on it
-        // always gets its own row, and only the longer bindings are collapsed.
+        // A group row would hide what the next keystroke runs, so a binding that completes on it
+        // gets its own row and only the longer bindings collapse. Sorting moves the group row
+        // down with the other groups, away from that row.
         let (completing_bindings, longer_bindings): (Vec<_>, Vec<_>) = bindings
             .into_iter()
             .partition(|binding| binding.remaining_keystrokes.len() <= 1);
@@ -553,7 +556,7 @@ mod tests {
     #[gpui::test]
     fn test_group_bindings_always_shows_completing_bindings(cx: &mut App) {
         ui::KeyBinding::set_vim_mode(cx, false);
-        // A custom keymap can keep Open Keymap on cmd-k cmd-s and add longer chords after it.
+        // A user keymap can extend the default cmd-k cmd-s binding with longer chords.
         let rows = prepare_pending_bindings(
             vec![
                 binding_after_first_keystroke("cmd-k cmd-s", "zed::OpenKeymap"),
@@ -591,7 +594,8 @@ mod tests {
 
     #[test]
     fn test_group_bindings_keeps_first_binding_per_sequence() {
-        // Bindings on the same keys need not be adjacent once a longer chord sits between them.
+        // A longer chord can sit between two bindings for the same keys, so duplicates aren't
+        // always adjacent.
         let rows = group_bindings(vec![
             binding("a", "zed: open keymap"),
             binding("a b", "zed: open settings"),
@@ -637,7 +641,7 @@ mod tests {
             zed_actions::OpenSettings.name()
         );
 
-        // The longer chord sits between the two cmd-k cmd-s candidates.
+        // The longer chord comes between the two cmd-k cmd-s bindings, so they aren't adjacent.
         let candidates = keymap.possible_next_bindings_for_input(&input[..1], &contexts);
         assert_eq!(
             candidates
