@@ -18,6 +18,11 @@ use markdown::Markdown;
 use multi_buffer::{Anchor, Event as MultiBufferEvent, MultiBufferOffset, MultiBufferSnapshot};
 use project::search::SearchQuery;
 use search::{SearchOption, SearchOptions, SearchSource};
+
+use super::UserMessageContentSegment;
+use super::sticky_user_message_preview::{
+    StickyUserMessageSearchHighlights, sticky_user_message_search_highlights,
+};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
 use ui::{IconButtonShape, Tooltip, prelude::*};
@@ -283,6 +288,40 @@ impl ThreadSearchBar {
 
     fn current_query(&self, cx: &App) -> String {
         self.query_editor.read(cx).text(cx)
+    }
+
+    /// Search matches for a user message, mapped onto the segments of its
+    /// sticky header preview so the header can highlight in step with the
+    /// thread search.
+    pub(super) fn sticky_user_message_search_highlights(
+        &self,
+        entry_ix: usize,
+        segments: &[UserMessageContentSegment],
+        cx: &App,
+    ) -> Option<StickyUserMessageSearchHighlights> {
+        if !self.is_active || self.matches.iter().all(|mat| mat.entry_ix != entry_ix) {
+            return None;
+        }
+
+        let (query, _) = self.build_query(cx);
+        let query = query?;
+        // The preview renders only this message, so the globally active match
+        // is rebased onto the matches within it.
+        let active_match_index = self.active_match.and_then(|active_match_index| {
+            let active_match = self.matches.get(active_match_index)?;
+            (active_match.entry_ix == entry_ix).then(|| {
+                self.matches[..active_match_index]
+                    .iter()
+                    .filter(|mat| mat.entry_ix == entry_ix)
+                    .count()
+            })
+        });
+
+        sticky_user_message_search_highlights(
+            segments,
+            |text| query.search_str(text),
+            active_match_index,
+        )
     }
 
     fn build_query(&self, cx: &App) -> (Option<Arc<SearchQuery>>, Option<SharedString>) {
