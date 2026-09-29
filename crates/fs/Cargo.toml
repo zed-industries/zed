@@ -10,7 +10,7 @@ workspace = true
 
 [lib]
 path = "src/fs.rs"
-test = false
+doctest = false
 
 [[test]]
 name = "integration"

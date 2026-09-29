@@ -34,6 +34,7 @@ async-trait.workspace = true
 clock.workspace = true
 chardetng.workspace = true
 collections.workspace = true
+diffy.workspace = true
 ec4rs.workspace = true
 encoding_rs.workspace = true
 fs.workspace = true
@@ -79,7 +80,6 @@ util.workspace = true
 watch.workspace = true
 zlog.workspace = true
 ztracing.workspace = true
-diffy = "0.4.2"
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }

@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/zlog.rs"
+doctest = false
 
 [features]
 default = []

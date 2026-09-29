@@ -30,7 +30,7 @@ use gpui::{
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind,
-    WindowParams, point, px, size,
+    WindowParams, WindowVisibility, point, px, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -56,8 +56,9 @@ use objc2::{
 };
 use objc2_app_kit::{
     NSAlert, NSAlertStyle, NSBeep, NSButton as Objc2NSButton, NSDraggingImageComponent,
-    NSDraggingImageComponentIconKey, NSDraggingItem, NSPasteboardWriting, NSView as Objc2NSView,
-    NSWindow as Objc2NSWindow, NSWindowButton as Objc2NSWindowButton, NSWorkspace,
+    NSDraggingImageComponentIconKey, NSDraggingItem, NSPasteboardWriting, NSTrackingArea,
+    NSTrackingAreaOptions, NSView as Objc2NSView, NSWindow as Objc2NSWindow,
+    NSWindowButton as Objc2NSWindowButton, NSWorkspace,
 };
 use objc2_foundation::{NSPoint as Objc2NSPoint, NSRect as Objc2NSRect, NSURL};
 use parking_lot::Mutex;
@@ -100,14 +101,6 @@ const NSNormalWindowLevel: NSInteger = 0;
 const NSFloatingWindowLevel: NSInteger = 3;
 #[allow(non_upper_case_globals)]
 const NSPopUpWindowLevel: NSInteger = 101;
-#[allow(non_upper_case_globals)]
-const NSTrackingMouseEnteredAndExited: NSUInteger = 0x01;
-#[allow(non_upper_case_globals)]
-const NSTrackingMouseMoved: NSUInteger = 0x02;
-#[allow(non_upper_case_globals)]
-const NSTrackingActiveAlways: NSUInteger = 0x80;
-#[allow(non_upper_case_globals)]
-const NSTrackingInVisibleRect: NSUInteger = 0x200;
 #[allow(non_upper_case_globals)]
 const NSWindowAnimationBehaviorUtilityWindow: NSInteger = 4;
 #[allow(non_upper_case_globals)]
@@ -463,6 +456,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
             window_will_exit_fullscreen as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
+            sel!(windowDidFailToExitFullScreen:),
+            window_did_fail_to_exit_fullscreen as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
             sel!(windowDidExitFullScreen:),
             window_did_exit_fullscreen as extern "C" fn(&Object, Sel, id),
         );
@@ -555,6 +552,7 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
     }
 }
 
+#[derive(Clone, Copy)]
 struct TrafficLightFrames {
     titlebar: Objc2NSRect,
     close: Objc2NSRect,
@@ -671,6 +669,10 @@ struct MacWindowState {
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
+    visibility_callback: Option<Box<dyn FnMut(WindowVisibility)>>,
+    // `None` until a callback is registered, so notifications during
+    // construction are not queued for delivery to a callback registered later.
+    last_visibility: Option<WindowVisibility>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
@@ -682,6 +684,7 @@ struct MacWindowState {
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
     traffic_light_frames: Option<TrafficLightFrames>,
+    pre_fullscreen_traffic_light_frames: Option<TrafficLightFrames>,
     transparent_titlebar: bool,
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
@@ -695,6 +698,7 @@ struct MacWindowState {
     // windows draw their own titlebar and move the window via `start_window_move`.
     app_owns_titlebar_drag: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
+    is_exiting_fullscreen: bool,
     simple_fullscreen_state: Option<SimpleFullscreenState>,
     move_tab_to_new_window_callback: Option<Box<dyn FnMut()>>,
     merge_all_windows_callback: Option<Box<dyn FnMut()>>,
@@ -711,7 +715,7 @@ struct MacWindowState {
 impl MacWindowState {
     fn move_traffic_light(&mut self) {
         if let Some(traffic_light_position) = self.traffic_light_position {
-            if self.is_fullscreen() {
+            if self.is_fullscreen() && !self.is_exiting_fullscreen {
                 self.restore_traffic_light();
                 return;
             }
@@ -1104,6 +1108,8 @@ impl MacWindow {
                 request_frame_callback: None,
                 event_callback: None,
                 activate_callback: None,
+                visibility_callback: None,
+                last_visibility: None,
                 resize_callback: None,
                 moved_callback: None,
                 should_close_callback: None,
@@ -1117,6 +1123,7 @@ impl MacWindow {
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
                 traffic_light_frames: None,
+                pre_fullscreen_traffic_light_frames: None,
                 transparent_titlebar: titlebar
                     .as_ref()
                     .is_none_or(|titlebar| titlebar.appears_transparent),
@@ -1127,6 +1134,7 @@ impl MacWindow {
                 first_mouse: false,
                 app_owns_titlebar_drag,
                 fullscreen_restore_bounds: Bounds::default(),
+                is_exiting_fullscreen: false,
                 simple_fullscreen_state: None,
                 move_tab_to_new_window_callback: None,
                 merge_all_windows_callback: None,
@@ -1192,15 +1200,21 @@ impl MacWindow {
             let main_window: id = msg_send![app, mainWindow];
             let mut sheet_parent = None;
 
+            // SAFETY: This is the live GPUIView (an NSView subclass) added to the
+            // content view above, and window creation runs on the main thread.
+            let tracking_view = &*native_view.cast::<Objc2NSView>();
+
             match kind {
                 WindowKind::Normal | WindowKind::Floating => {
                     if kind == WindowKind::Floating {
                         // Let the window float keep above normal windows.
                         native_window.setLevel_(NSFloatingWindowLevel);
+                        native_window.setAcceptsMouseMovedEvents_(YES);
                     } else {
                         native_window.setLevel_(NSNormalWindowLevel);
+                        native_window.setAcceptsMouseMovedEvents_(NO);
+                        add_mouse_tracking_area(tracking_view);
                     }
-                    native_window.setAcceptsMouseMovedEvents_(YES);
 
                     if let Some(tabbing_identifier) = tabbing_identifier {
                         let tabbing_id = ns_string(tabbing_identifier.as_str());
@@ -1212,19 +1226,7 @@ impl MacWindow {
                 // `AnchoredPopup` is rejected in `MacPlatform::open_window`, grouped here only
                 // for exhaustiveness.
                 WindowKind::PopUp | WindowKind::AnchoredPopup(_) => {
-                    // Use a tracking area to allow receiving MouseMoved events even when
-                    // the window or application aren't active, which is often the case
-                    // e.g. for notification windows.
-                    let tracking_area: id = msg_send![class!(NSTrackingArea), alloc];
-                    let _: () = msg_send![
-                        tracking_area,
-                        initWithRect: NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.))
-                        options: NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved | NSTrackingActiveAlways | NSTrackingInVisibleRect
-                        owner: native_view
-                        userInfo: nil
-                    ];
-                    let _: () =
-                        msg_send![native_view, addTrackingArea: tracking_area.autorelease()];
+                    add_mouse_tracking_area(tracking_view);
 
                     native_window.setLevel_(NSPopUpWindowLevel);
                     let _: () = msg_send![
@@ -1373,6 +1375,15 @@ impl MacWindow {
 impl Drop for MacWindow {
     fn drop(&mut self) {
         let mut this = self.0.lock();
+        // `accesskit_macos::SubclassingAdapter::for_window` strong-retains the
+        // window's content view, and that content view keeps the `GPUIView` it
+        // hosts alive. Together with the `Arc<Mutex<MacWindowState>>` parked in
+        // both views' `windowState` ivar, that forms
+        // `MacWindowState -> adapter -> content view -> GPUIView -> MacWindowState`,
+        // a cycle the delegate/`frame_source` teardown below cannot break. Drop
+        // the adapter here so the native view, its `CAMetalLayer` and the
+        // renderer's command queue are actually released with the window.
+        drop(this.accesskit_adapter.take());
         this.renderer.destroy();
         let window = this.native_window;
         let sheet_parent = this.sheet_parent.take();
@@ -1381,6 +1392,9 @@ impl Drop for MacWindow {
             this.native_window.setDelegate_(nil);
         }
         this.input_handler.take();
+        // A delivery task queued by `report_visibility` may still run after the
+        // GPUI window is gone; without a callback it has nothing to notify.
+        this.visibility_callback.take();
         this.foreground_executor
             .spawn(async move {
                 unsafe {
@@ -1807,6 +1821,10 @@ impl PlatformWindow for MacWindow {
         unsafe { self.0.lock().native_window.isKeyWindow() == YES }
     }
 
+    fn visibility(&self) -> WindowVisibility {
+        visibility(&self.0.lock())
+    }
+
     // is_hovered is unused on macOS. See Window::is_window_hovered.
     fn is_hovered(&self) -> bool {
         false
@@ -2003,6 +2021,12 @@ impl PlatformWindow for MacWindow {
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.as_ref().lock().activate_callback = Some(callback);
+    }
+
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        let mut state = self.0.lock();
+        state.last_visibility = Some(visibility(&state));
+        state.visibility_callback = Some(callback);
     }
 
     fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
@@ -2461,6 +2485,28 @@ extern "C" fn dealloc_view(this: &Object, _: Sel) {
     }
 }
 
+fn add_mouse_tracking_area(native_view: &Objc2NSView) {
+    let options = NSTrackingAreaOptions::MouseEnteredAndExited
+        | NSTrackingAreaOptions::MouseMoved
+        // Track even when another application is active so visible
+        // windows can respond to hover without being focused.
+        | NSTrackingAreaOptions::ActiveAlways
+        | NSTrackingAreaOptions::InVisibleRect;
+
+    // SAFETY: NSView provides the tracking-event callbacks, and the owner is
+    // the same view that retains the tracking area. No user info is supplied.
+    let tracking_area = unsafe {
+        NSTrackingArea::initWithRect_options_owner_userInfo(
+            NSTrackingArea::alloc(),
+            Objc2NSRect::ZERO,
+            options,
+            Some(native_view),
+            None,
+        )
+    };
+    native_view.addTrackingArea(&tracking_area);
+}
+
 extern "C" fn reset_cursor_rects(this: &Object, _: Sel) {
     // SAFETY: AppKit invokes cursor-rect updates on the main thread for GPUIView instances,
     // whose WINDOW_STATE_IVAR is initialized when the view is created. The cursor registered
@@ -2887,9 +2933,55 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     }
 }
 
+fn visibility(state: &MacWindowState) -> WindowVisibility {
+    let is_visible = unsafe {
+        state
+            .native_window
+            .occlusionState()
+            .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+    };
+    if is_visible {
+        WindowVisibility::Visible
+    } else {
+        WindowVisibility::Hidden
+    }
+}
+
+fn report_visibility(window_state: &Arc<Mutex<MacWindowState>>) {
+    let state = window_state.lock();
+    if state.last_visibility.is_none() {
+        return;
+    }
+    let executor = state.foreground_executor.clone();
+    drop(state);
+
+    // AppKit can notify while GPUI is updating a window. Deliver observers
+    // after that update completes, as activation notifications do. The state
+    // is read at delivery rather than captured here so a burst of
+    // notifications collapses to the final value.
+    executor
+        .spawn({
+            let window_state = window_state.clone();
+            async move {
+                let mut state = window_state.lock();
+                let visibility = visibility(&state);
+                if state.last_visibility == Some(visibility) {
+                    return;
+                }
+                state.last_visibility = Some(visibility);
+                if let Some(mut callback) = state.visibility_callback.take() {
+                    drop(state);
+                    callback(visibility);
+                    window_state.lock().visibility_callback = Some(callback);
+                }
+            }
+        })
+        .detach();
+}
+
 extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let lock = &mut *window_state.lock();
+    let mut lock = window_state.lock();
     unsafe {
         if lock
             .native_window
@@ -2902,6 +2994,10 @@ extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
             lock.stop_display_link();
         }
     }
+    drop(lock);
+    // The only visibility source: AppKit posts this for covering, minimizing,
+    // hiding, Space switches, and display sleep alike.
+    report_visibility(&window_state);
 }
 
 extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
@@ -2913,6 +3009,8 @@ extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
     lock.fullscreen_restore_bounds = lock.bounds();
+    lock.is_exiting_fullscreen = false;
+    lock.pre_fullscreen_traffic_light_frames = lock.traffic_light_frames;
     lock.restore_traffic_light();
 
     let min_version = NSOperatingSystemVersion::new(15, 3, 0);
@@ -2926,7 +3024,8 @@ extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
 
 extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let lock = window_state.as_ref().lock();
+    let mut lock = window_state.as_ref().lock();
+    lock.is_exiting_fullscreen = true;
 
     let min_version = NSOperatingSystemVersion::new(15, 3, 0);
 
@@ -2935,13 +3034,27 @@ extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
             lock.native_window.setTitlebarAppearsTransparent_(YES);
         }
     }
+
+    lock.move_traffic_light();
+}
+
+extern "C" fn window_did_fail_to_exit_fullscreen(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+    lock.is_exiting_fullscreen = false;
+    lock.restore_traffic_light();
 }
 
 extern "C" fn window_did_exit_fullscreen(this: &Object, _: Sel, _: id) {
     // SAFETY: This method is registered only on GPUI window classes, which initialize
     // WINDOW_STATE_IVAR with an Arc<Mutex<MacWindowState>> during window creation.
     let window_state = unsafe { get_window_state(this) };
-    window_state.as_ref().lock().move_traffic_light();
+    let mut lock = window_state.as_ref().lock();
+    lock.is_exiting_fullscreen = false;
+    // Moving the buttons during the transition captures their fullscreen frames.
+    // Keep using the native windowed frames when restoring them on the next entry.
+    lock.traffic_light_frames = lock.pre_fullscreen_traffic_light_frames.take();
+    lock.move_traffic_light();
 }
 
 pub(crate) fn is_macos_version_at_least(version: NSOperatingSystemVersion) -> bool {
@@ -3534,6 +3647,18 @@ extern "C" fn dragging_session_ended(
     send_file_drop_event(window_state, FileDropEvent::Ended);
 }
 
+fn synthetic_drag_button_is_pressed(button: Option<MouseButton>, pressed: NSUInteger) -> bool {
+    let bit = match button {
+        Some(MouseButton::Left) => 0,
+        Some(MouseButton::Right) => 1,
+        Some(MouseButton::Middle) => 2,
+        Some(MouseButton::Navigate(gpui::NavigationDirection::Back)) => 3,
+        Some(MouseButton::Navigate(gpui::NavigationDirection::Forward)) => 4,
+        None => return false,
+    };
+    pressed & (1 << bit) != 0
+}
+
 async fn synthetic_drag(
     window_state: Weak<Mutex<MacWindowState>>,
     drag_id: usize,
@@ -3542,17 +3667,24 @@ async fn synthetic_drag(
 ) {
     loop {
         executor.timer(Duration::from_millis(16)).await;
-        if let Some(window_state) = window_state.upgrade() {
-            let mut lock = window_state.lock();
-            if lock.synthetic_drag_counter == drag_id {
-                if let Some(mut callback) = lock.event_callback.take() {
-                    drop(lock);
-                    callback(PlatformInput::MouseMove(event.clone()));
-                    window_state.lock().event_callback = Some(callback);
-                }
-            } else {
-                break;
-            }
+        let Some(window_state) = window_state.upgrade() else {
+            break;
+        };
+        let mut lock = window_state.lock();
+        if lock.synthetic_drag_counter != drag_id {
+            break;
+        }
+        // Native menu tracking can consume mouse-up, leaving stale drag events replaying.
+        // Check whether the original mouse button is still physically pressed before replaying.
+        let pressed: NSUInteger = unsafe { msg_send![class!(NSEvent), pressedMouseButtons] };
+        if !synthetic_drag_button_is_pressed(event.pressed_button, pressed) {
+            lock.synthetic_drag_counter += 1;
+            break;
+        }
+        if let Some(mut callback) = lock.event_callback.take() {
+            drop(lock);
+            callback(PlatformInput::MouseMove(event.clone()));
+            window_state.lock().event_callback = Some(callback);
         }
     }
 }

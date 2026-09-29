@@ -14,7 +14,7 @@ use gpui::{
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, Scene, Size, TextInputConfiguration, TextInputStateChange, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
-    WindowInsets, WindowParams, px,
+    WindowInsets, WindowParams, WindowVisibility, px,
 };
 use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 use wasm_bindgen::prelude::*;
@@ -24,6 +24,7 @@ pub(crate) struct WebWindowCallbacks {
     pub(crate) request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     pub(crate) input: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
     pub(crate) active_status_change: Option<Box<dyn FnMut(bool)>>,
+    pub(crate) visibility_change: Option<Box<dyn FnMut(WindowVisibility)>>,
     pub(crate) hover_status_change: Option<Box<dyn FnMut(bool)>>,
     pub(crate) resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     pub(crate) visual_viewport_changed: Option<Box<dyn FnMut()>>,
@@ -43,6 +44,7 @@ pub(crate) struct WebWindowMutableState {
     pub(crate) input_handler: Option<PlatformInputHandler>,
     pub(crate) is_fullscreen: bool,
     pub(crate) is_active: bool,
+    pub(crate) visibility: WindowVisibility,
     pub(crate) is_hovered: bool,
     pub(crate) mouse_position: Point<Pixels>,
     pub(crate) modifiers: Modifiers,
@@ -193,7 +195,8 @@ impl WebWindow {
             title: String::new(),
             input_handler: None,
             is_fullscreen: false,
-            is_active: true,
+            is_active: document_is_active(&browser_window),
+            visibility: document_visibility(&browser_window),
             is_hovered: false,
             mouse_position: Point::default(),
             modifiers: Modifiers::default(),
@@ -414,6 +417,16 @@ impl WebWindowInner {
         );
     }
 
+    pub(crate) fn refresh_active_status(&self) {
+        let active = document_is_active(&self.browser_window);
+        if std::mem::replace(&mut self.state.borrow_mut().is_active, active) != active {
+            self.with_callback(
+                |callbacks| &mut callbacks.active_status_change,
+                |callback| callback(active),
+            );
+        }
+    }
+
     /// Invokes a registered callback with take/call/restore semantics.
     ///
     /// The callback is removed from the slot for the duration of the call, so
@@ -514,27 +527,18 @@ impl WebWindowInner {
             document.as_ref(),
             "visibilitychange",
             move |_event: JsValue| {
-                let is_visible = this
-                    .browser_window
-                    .document()
-                    .map(|doc| {
-                        let state_str: String =
-                            js_sys::Reflect::get(&doc, &"visibilityState".into())
-                                .ok()
-                                .and_then(|v| v.as_string())
-                                .unwrap_or_default();
-                        state_str == "visible"
-                    })
-                    .unwrap_or(true);
-
-                {
+                let visibility = document_visibility(&this.browser_window);
+                let visibility_changed = {
                     let mut state = this.state.borrow_mut();
-                    state.is_active = is_visible;
+                    std::mem::replace(&mut state.visibility, visibility) != visibility
+                };
+                this.refresh_active_status();
+                if visibility_changed {
+                    this.with_callback(
+                        |callbacks| &mut callbacks.visibility_change,
+                        |callback| callback(visibility),
+                    );
                 }
-                this.with_callback(
-                    |callbacks| &mut callbacks.active_status_change,
-                    |callback| callback(is_visible),
-                );
             },
         ))
     }
@@ -637,6 +641,30 @@ fn current_appearance(browser_window: &web_sys::Window) -> WindowAppearance {
     } else {
         WindowAppearance::Light
     }
+}
+
+/// The Page Visibility API: `hidden` when the tab is in the background or the
+/// browser window is minimized. A missing document reads as visible.
+fn document_visibility(browser_window: &web_sys::Window) -> WindowVisibility {
+    let is_visible = browser_window
+        .document()
+        .and_then(|document| js_sys::Reflect::get(&document, &"visibilityState".into()).ok())
+        .and_then(|value| value.as_string())
+        .is_none_or(|state| state == "visible");
+
+    if is_visible {
+        WindowVisibility::Visible
+    } else {
+        WindowVisibility::Hidden
+    }
+}
+
+fn document_is_active(browser_window: &web_sys::Window) -> bool {
+    document_visibility(browser_window).is_visible()
+        && browser_window
+            .document()
+            .and_then(|document| document.has_focus().ok())
+            .unwrap_or(true)
 }
 
 struct MqlHandle {
@@ -851,6 +879,10 @@ impl PlatformWindow for WebWindow {
         self.inner.state.borrow().is_active
     }
 
+    fn visibility(&self) -> WindowVisibility {
+        self.inner.state.borrow().visibility
+    }
+
     fn is_hovered(&self) -> bool {
         self.inner.state.borrow().is_hovered
     }
@@ -920,6 +952,10 @@ impl PlatformWindow for WebWindow {
         self.inner.callbacks.borrow_mut().active_status_change = Some(callback);
     }
 
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        self.inner.callbacks.borrow_mut().visibility_change = Some(callback);
+    }
+
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.inner.callbacks.borrow_mut().hover_status_change = Some(callback);
     }
@@ -979,7 +1015,7 @@ impl PlatformWindow for WebWindow {
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
-        Some(self.inner.state.borrow().renderer.gpu_specs())
+        self.inner.state.borrow().renderer.gpu_specs()
     }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}

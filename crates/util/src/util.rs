@@ -45,7 +45,6 @@ pub use path::PathExt;
 pub use path::normalize_path;
 pub use path::rel_path;
 
-pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use util_macros::{line_endings, path, uri};
 
@@ -713,7 +712,7 @@ pub fn dev_repo_root() -> Option<&'static std::path::Path> {
 /// detail). Hidden from the public API.
 #[doc(hidden)]
 pub mod __rust_embed {
-    pub use rust_embed::{EmbeddedFile, Filenames, Metadata, RustEmbed, utils};
+    pub use rust_embed::{EmbeddedFile, Filenames, Metadata, RustEmbed, flate, utils};
 }
 
 /// Backs the dev arm of [`fs_embed!`]'s `iter`: every file under the root-relative

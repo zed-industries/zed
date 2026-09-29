@@ -4366,6 +4366,15 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                                 ..Diagnostic::default()
                             },
                         ),
+                        DiagnosticEntry::new(
+                            Unclipped(PointUtf16::new(3, 0))..Unclipped(PointUtf16::new(3, 0)),
+                            Diagnostic {
+                                severity: DiagnosticSeverity::ERROR,
+                                message: "syntax error on empty line".into(),
+                                source_kind: DiagnosticSourceKind::Pushed,
+                                ..Diagnostic::default()
+                            },
+                        ),
                     ],
                     cx,
                 )
@@ -4391,6 +4400,13 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                 ("\nlet three = 3;\n", None)
             ]
         );
+
+        let snapshot = buffer.snapshot();
+        let diagnostics = snapshot
+            .diagnostics_in_range::<_, Point>(Point::new(3, 0)..Point::new(3, 0), false)
+            .collect::<Vec<_>>();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].range, Point::new(3, 0)..Point::new(3, 0));
     });
 }
 
@@ -20493,10 +20509,10 @@ async fn test_read_only_files_setting(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.read_only_files = Some(vec![
-                    "**/generated/**".to_string(),
+                settings.project.worktree.read_only_files = Some(SplicingVec::from(vec![
                     "**/*.gen.rs".to_string(),
-                ]);
+                    "**/generated/**".to_string(),
+                ]));
             });
         });
     });
@@ -20562,6 +20578,56 @@ async fn test_read_only_files_setting(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_read_only_files_splice_project_settings(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.read_only_files = Some(SplicingVec::from(vec![
+                    SplicingVec::REST.to_string(),
+                    "**/*.lock".to_string(),
+                ]));
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".zed": {
+                "settings.json": r#"{"read_only_files": ["**/generated/**", "..."]}"#,
+            },
+            "generated": {"schema.rs": ""},
+            "src": {"main.rs": ""},
+            "yarn.lock": "",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    cx.executor().run_until_parked();
+
+    for (relative_path, expected_read_only) in [
+        ("generated/schema.rs", true),
+        ("src/main.rs", false),
+        ("yarn.lock", true),
+    ] {
+        let full_path = Path::new(path!("/root")).join(relative_path);
+        let result = project
+            .update(cx, |project, cx| project.open_local_buffer(&full_path, cx))
+            .await;
+        match result {
+            Ok(buffer) => assert_eq!(
+                buffer.read_with(cx, |buffer, _| buffer.read_only()),
+                expected_read_only,
+                "{relative_path}"
+            ),
+            Err(error) => panic!("could not open {relative_path}: {error}"),
+        }
+    }
+}
+
+#[gpui::test]
 async fn test_read_only_files_empty_setting(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -20569,7 +20635,7 @@ async fn test_read_only_files_empty_setting(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.read_only_files = Some(vec![]);
+                settings.project.worktree.read_only_files = Some(SplicingVec::from(vec![]));
             });
         });
     });
@@ -20661,10 +20727,10 @@ async fn test_read_only_files_with_lock_files(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.read_only_files = Some(vec![
+                settings.project.worktree.read_only_files = Some(SplicingVec::from(vec![
                     "**/*.lock".to_string(),
                     "**/package-lock.json".to_string(),
-                ]);
+                ]));
             });
         });
     });

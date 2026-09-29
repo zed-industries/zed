@@ -1,12 +1,10 @@
 use crate::{
-    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
-    DispatchEventResult, GpuSpecs, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TextInputConfiguration,
-    TextInputStateChange, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowInsets, WindowParams,
+    AnyWindowHandle, Bounds, DevicePixels, DispatchEventResult, GpuSpecs, HeadlessAtlas, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PromptButton, RequestFrameOptions, Scene, Size, TestPlatform,
+    TextInputConfiguration, TextInputStateChange, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowInsets, WindowParams, WindowVisibility,
 };
-use collections::HashMap;
 use gpui_util::ResultExt as _;
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -34,6 +32,8 @@ pub(crate) struct TestWindowState {
     hit_test_window_control_callback: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
     input_callback: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
+    visibility: WindowVisibility,
+    visibility_callback: Option<Box<dyn FnMut(WindowVisibility)>>,
     hover_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     visual_viewport: Option<Bounds<Pixels>>,
@@ -89,7 +89,7 @@ impl TestWindow {
     ) -> Self {
         let sprite_atlas: Arc<dyn PlatformAtlas> = match &renderer {
             Some(r) => r.sprite_atlas(),
-            None => Arc::new(TestAtlas::new()),
+            None => Arc::new(HeadlessAtlas::default()),
         };
         Self(Rc::new(Mutex::new(TestWindowState {
             bounds: params.bounds,
@@ -105,6 +105,8 @@ impl TestWindow {
             hit_test_window_control_callback: None,
             input_callback: None,
             active_status_change_callback: None,
+            visibility: WindowVisibility::Visible,
+            visibility_callback: None,
             hover_status_change_callback: None,
             resize_callback: None,
             visual_viewport: None,
@@ -151,6 +153,18 @@ impl TestWindow {
 
     pub fn frame_scheduled(&self) -> bool {
         self.0.lock().frame_scheduled
+    }
+
+    pub fn simulate_visibility_change(&self, visibility: WindowVisibility) {
+        let callback = {
+            let mut state = self.0.lock();
+            state.visibility = visibility;
+            state.visibility_callback.take()
+        };
+        if let Some(mut callback) = callback {
+            callback(visibility);
+            self.0.lock().visibility_callback = Some(callback);
+        }
     }
 
     pub fn simulate_visual_viewport_change(&self, bounds: Bounds<Pixels>) {
@@ -394,6 +408,10 @@ impl PlatformWindow for TestWindow {
         false
     }
 
+    fn visibility(&self) -> WindowVisibility {
+        self.0.lock().visibility
+    }
+
     fn is_hovered(&self) -> bool {
         false
     }
@@ -444,12 +462,16 @@ impl PlatformWindow for TestWindow {
     }
 
     fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
-        // Recording invocations (rather than delivering a frame) lets tests
-        // assert the wake protocol without coupling to frame timing; tests
-        // deliver frames explicitly via `simulate_frame_request`.
+        // Tests can inspect wakes without delivering a frame synchronously.
         let frame_wake_count = self.0.lock().frame_wake_count.clone();
+        #[cfg(feature = "bench-support")]
+        let window = Rc::downgrade(&self.0);
         Some(Rc::new(move || {
             frame_wake_count.set(frame_wake_count.get() + 1);
+            #[cfg(feature = "bench-support")]
+            if let Some(window) = window.upgrade() {
+                TestWindow(window).schedule_frame();
+            }
         }))
     }
 
@@ -470,6 +492,10 @@ impl PlatformWindow for TestWindow {
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.lock().active_status_change_callback = Some(callback)
+    }
+
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        self.0.lock().visibility_callback = Some(callback);
     }
 
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
@@ -561,74 +587,5 @@ impl PlatformWindow for TestWindow {
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         None
-    }
-}
-
-pub(crate) struct TestAtlasState {
-    next_id: u32,
-    tiles: HashMap<AtlasKey, AtlasTile>,
-}
-
-pub(crate) struct TestAtlas(Mutex<TestAtlasState>);
-
-impl TestAtlas {
-    pub fn new() -> Self {
-        TestAtlas(Mutex::new(TestAtlasState {
-            next_id: 0,
-            tiles: HashMap::default(),
-        }))
-    }
-}
-
-impl PlatformAtlas for TestAtlas {
-    fn get_or_insert_with<'a>(
-        &self,
-        key: &crate::AtlasKey,
-        build: &mut dyn FnMut() -> anyhow::Result<
-            Option<(Size<crate::DevicePixels>, std::borrow::Cow<'a, [u8]>)>,
-        >,
-    ) -> anyhow::Result<Option<crate::AtlasTile>> {
-        let mut state = self.0.lock();
-        if let Some(&tile) = state.tiles.get(key) {
-            return Ok(Some(tile));
-        }
-        drop(state);
-
-        let Some((size, _)) = build()? else {
-            return Ok(None);
-        };
-
-        let mut state = self.0.lock();
-        state.next_id += 1;
-        let texture_id = state.next_id;
-        state.next_id += 1;
-        let tile_id = state.next_id;
-
-        state.tiles.insert(
-            key.clone(),
-            crate::AtlasTile {
-                texture_id: AtlasTextureId {
-                    index: texture_id,
-                    kind: crate::AtlasTextureKind::Monochrome,
-                },
-                tile_id: TileId(tile_id),
-                padding: 0,
-                bounds: crate::Bounds {
-                    origin: Point::default(),
-                    size,
-                },
-            },
-        );
-
-        Ok(Some(state.tiles[key]))
-    }
-
-    fn remove(&self, key: &AtlasKey) {
-        let mut state = self.0.lock();
-        state.tiles.remove(key);
-    }
-
-    fn contains(&self, key: &AtlasKey) -> bool {
-        self.0.lock().tiles.contains_key(key)
     }
 }
