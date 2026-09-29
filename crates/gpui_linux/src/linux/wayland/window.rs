@@ -110,7 +110,9 @@ pub struct WaylandWindowState {
     outputs: HashMap<ObjectId, Output>,
     display: Option<(ObjectId, Output)>,
     globals: Globals,
-    renderer: WgpuRenderer,
+    /// Taken when the window is dropped. Its GPU objects use the Wayland connection, so they
+    /// mustn't outlive the window, which a display mode switch relies on.
+    renderer: Option<WgpuRenderer>,
     bounds: Bounds<Pixels>,
     scale: f32,
     input_handler: Option<PlatformInputHandler>,
@@ -123,8 +125,6 @@ pub struct WaylandWindowState {
     tiling: Tiling,
     window_bounds: Bounds<Pixels>,
     client: WaylandClientStatePtr,
-    /// Held for as long as this window's GPU resources may still use the Wayland connection.
-    _connection_lease: Rc<()>,
     handle: AnyWindowHandle,
     active: bool,
     hovered: bool,
@@ -555,7 +555,6 @@ impl WaylandWindowState {
         appearance: WindowAppearance,
         viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
-        connection_lease: Rc<()>,
         globals: Globals,
         gpu_context: gpui_wgpu::GpuContext,
         compositor_gpu: Option<CompositorGpuHint>,
@@ -612,7 +611,7 @@ impl WaylandWindowState {
             globals,
             outputs: HashMap::default(),
             display: None,
-            renderer,
+            renderer: Some(renderer),
             bounds: options.bounds,
             scale: 1.0,
             input_handler: None,
@@ -626,7 +625,6 @@ impl WaylandWindowState {
             in_progress_configure: None,
             resize_throttle: false,
             client,
-            _connection_lease: connection_lease,
             appearance,
             handle,
             active: false,
@@ -653,7 +651,9 @@ impl WaylandWindowState {
             .as_ref()
             .and_then(|(_, output)| output.subpixel)
             .is_some_and(|s| s == Subpixel::HorizontalBgr);
-        self.renderer.set_subpixel_layout(is_bgr);
+        if let Some(renderer) = &mut self.renderer {
+            renderer.set_subpixel_layout(is_bgr);
+        }
     }
 
     pub fn primary_output_scale(&mut self) -> i32 {
@@ -771,7 +771,7 @@ impl Drop for WaylandWindow {
 
         let client = state.client.clone();
 
-        state.renderer.destroy();
+        state.renderer.take();
 
         // Destroy blur first, this has no dependencies.
         if let Some(blur) = &state.blur {
@@ -825,7 +825,6 @@ impl WaylandWindow {
         gpu_context: gpui_wgpu::GpuContext,
         compositor_gpu: Option<CompositorGpuHint>,
         client: WaylandClientStatePtr,
-        connection_lease: Rc<()>,
         params: WindowParams,
         appearance: WindowAppearance,
         parent: Option<WaylandWindowStatePtr>,
@@ -860,7 +859,6 @@ impl WaylandWindow {
                 appearance,
                 viewport,
                 client,
-                connection_lease,
                 globals,
                 gpu_context,
                 compositor_gpu,
@@ -1489,7 +1487,9 @@ impl WaylandWindowStatePtr {
                 state.scale = scale;
             }
             let device_bounds = state.bounds.to_device_pixels(state.scale);
-            state.renderer.update_drawable_size(device_bounds.size);
+            if let Some(renderer) = &mut state.renderer {
+                renderer.update_drawable_size(device_bounds.size);
+            }
             (state.bounds.size, state.scale)
         };
 
@@ -1946,8 +1946,12 @@ impl PlatformWindow for WaylandWindow {
 
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
+        let state = &mut *state;
+        let Some(renderer) = &mut state.renderer else {
+            return;
+        };
 
-        if state.renderer.device_lost() {
+        if renderer.device_lost() {
             let raw_window = RawWindow {
                 window: state.surface.id().as_ptr().cast::<std::ffi::c_void>(),
                 display: state
@@ -1958,7 +1962,7 @@ impl PlatformWindow for WaylandWindow {
                     .display_ptr()
                     .cast::<std::ffi::c_void>(),
             };
-            match state.renderer.recover(&raw_window) {
+            match renderer.recover(&raw_window) {
                 Ok(()) => {}
                 Err(err) => {
                     log::warn!("GPU recovery failed, will retry on next frame: {err}");
@@ -1975,7 +1979,7 @@ impl PlatformWindow for WaylandWindow {
             let callback = state.surface.frame(&state.globals.qh, state.surface.id());
             state.pending_frame_callback = Some(callback);
         }
-        if state.renderer.draw(scene) {
+        if renderer.draw(scene) {
             state.presentation = PresentationState::Presented;
             self.0.frame_loop.set(FrameLoop::AwaitingCallback);
         } else {
@@ -1983,7 +1987,7 @@ impl PlatformWindow for WaylandWindow {
             self.0.frame_loop.set(FrameLoop::PresentationFailed);
         }
 
-        if state.renderer.needs_redraw() {
+        if renderer.needs_redraw() {
             state.redraw_requested = true;
         }
     }
@@ -1993,8 +1997,12 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
-        let state = self.borrow();
-        state.renderer.sprite_atlas().clone()
+        self.borrow()
+            .renderer
+            .as_ref()
+            .expect("the renderer is only taken when the window is dropped")
+            .sprite_atlas()
+            .clone()
     }
 
     fn show_window_menu(&self, position: Point<Pixels>) {
@@ -2144,7 +2152,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
-        self.borrow().renderer.gpu_specs()
+        self.borrow().renderer.as_ref()?.gpu_specs()
     }
 
     fn play_system_bell(&self) {
@@ -2217,7 +2225,9 @@ impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
 fn update_window(mut state: RefMut<WaylandWindowState>) {
     let opaque = !state.is_transparent();
 
-    state.renderer.update_transparency(!opaque);
+    if let Some(renderer) = &mut state.renderer {
+        renderer.update_transparency(!opaque);
+    }
     let opaque_area = state.window_bounds.map(|v| f32::from(v) as i32);
     opaque_area.inset(f32::from(state.inset()) as i32);
 

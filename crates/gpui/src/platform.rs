@@ -159,32 +159,45 @@ pub fn guess_compositor() -> &'static str {
     if std::env::var_os("ZED_HEADLESS").is_some() {
         return "Headless";
     }
-    DisplayEnvironment::from_process_environment().guess_compositor()
+    GraphicalEnvironment::detect().guess_compositor()
 }
 
-/// The variables that locate a display server, as seen by some process.
+/// The graphical session to connect to: the variables that locate its display server, as some
+/// process sees them.
 ///
 /// A long-running process can outlive the graphical session it was started in, so a platform
 /// that attaches to a display server later can be given a fresher environment than its own.
+/// While connected, programs the platform launches (for example to open a URL) get these
+/// variables instead of the ones this process started with.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct DisplayEnvironment {
+pub struct GraphicalEnvironment {
     /// `WAYLAND_DISPLAY`: a socket name relative to `xdg_runtime_dir`, or an absolute path.
     pub wayland_display: Option<OsString>,
     /// `DISPLAY`: the X11 display name.
     pub x11_display: Option<OsString>,
     /// `XDG_RUNTIME_DIR`: the directory containing Wayland sockets.
     pub xdg_runtime_dir: Option<OsString>,
+    /// `XDG_ACTIVATION_TOKEN`: lets the first window take focus on Wayland.
+    ///
+    /// A platform takes this process's token from its environment when it's created, and uses
+    /// it if it starts windowed. Pass one here to switch to windowed mode later, for example
+    /// the token of the process that asked for a window.
+    pub activation_token: Option<String>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-impl DisplayEnvironment {
+impl GraphicalEnvironment {
     /// Reads the display variables from this process's environment.
-    pub fn from_process_environment() -> Self {
+    ///
+    /// This only reads environment variables: whether they name a reachable display server is
+    /// checked when a platform connects. Leaves `activation_token` unset: see its documentation.
+    pub fn detect() -> Self {
         Self {
             wayland_display: std::env::var_os("WAYLAND_DISPLAY"),
             x11_display: std::env::var_os("DISPLAY"),
             xdg_runtime_dir: std::env::var_os("XDG_RUNTIME_DIR"),
+            activation_token: None,
         }
     }
 
@@ -204,14 +217,18 @@ impl DisplayEnvironment {
     }
 }
 
-/// Whether a platform is connected to a display server.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DisplayMode {
-    /// No display server or GPU. Windows lay out and handle input but draw nothing.
-    Headless,
-    /// Connected to the display server that the environment selects.
-    Windowed(DisplayEnvironment),
+bitflags::bitflags! {
+    /// The display modes a platform may start in or switch to.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct DisplayModes: u8 {
+        /// Connected to a Wayland compositor.
+        const WAYLAND = 1 << 0;
+        /// Connected to an X server.
+        const X11 = 1 << 1;
+        /// No display server. Windows lay out and handle input but draw nothing.
+        const HEADLESS = 1 << 2;
+    }
 }
 
 #[expect(missing_docs)]
@@ -222,9 +239,16 @@ pub trait Platform: 'static {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);
     fn quit(&self);
-    /// Connects a capable platform to, or disconnects it from, a display server.
+    /// Disconnects a capable platform from its display server. See [`App::set_headless`].
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    fn set_display_mode(&self, _mode: DisplayMode) -> Task<anyhow::Result<()>> {
+    fn set_headless(&self) -> Task<anyhow::Result<()>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "this platform cannot switch between headless and windowed modes"
+        )))
+    }
+    /// Connects a capable platform to a display server. See [`App::set_windowed`].
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn set_windowed(&self, _environment: GraphicalEnvironment) -> Task<anyhow::Result<()>> {
         Task::ready(Err(anyhow::anyhow!(
             "this platform cannot switch between headless and windowed modes"
         )))
@@ -395,6 +419,11 @@ pub trait Platform: 'static {
 
     fn compositor_name(&self) -> &'static str {
         ""
+    }
+    /// Whether a platform that can switch display modes is headless. See [`App::is_headless`].
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn is_headless(&self) -> bool {
+        false
     }
     fn app_path(&self) -> Result<PathBuf>;
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;

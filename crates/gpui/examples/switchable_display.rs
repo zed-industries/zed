@@ -7,9 +7,8 @@ use std::{
 
 #[cfg(target_os = "linux")]
 use gpui::{
-    AnyWindowHandle, App, AppContext as _, AsyncApp, Context, DisplayEnvironment, DisplayMode,
-    Entity, QuitMode, Render, Subscription, TitlebarOptions, Window, WindowOptions, div,
-    prelude::*,
+    AnyWindowHandle, App, AppContext as _, AsyncApp, Context, Entity, GraphicalEnvironment,
+    QuitMode, Render, Subscription, TitlebarOptions, Window, WindowOptions, div, prelude::*,
 };
 
 #[cfg(target_os = "linux")]
@@ -102,24 +101,31 @@ fn open_window(todos: &Entity<Todos>, cx: &mut App) -> anyhow::Result<()> {
 /// Builds the environment for `open`: the given `NAME=value` pairs, or this process's
 /// environment when none are given.
 #[cfg(target_os = "linux")]
-fn display_environment(arguments: &str) -> anyhow::Result<DisplayEnvironment> {
+fn display_environment(arguments: &str) -> anyhow::Result<GraphicalEnvironment> {
     if arguments.trim().is_empty() {
-        return Ok(DisplayEnvironment::from_process_environment());
+        return Ok(GraphicalEnvironment::detect());
     }
-    let mut environment = DisplayEnvironment::default();
+    let mut environment = GraphicalEnvironment::default();
     for assignment in arguments.split_whitespace() {
         let (name, value) = assignment
             .split_once('=')
             .ok_or_else(|| anyhow::anyhow!("expected NAME=value, got {assignment:?}"))?;
-        let value = Some(value.into());
         match name {
-            "WAYLAND_DISPLAY" => environment.wayland_display = value,
-            "DISPLAY" => environment.x11_display = value,
-            "XDG_RUNTIME_DIR" => environment.xdg_runtime_dir = value,
+            "WAYLAND_DISPLAY" => environment.wayland_display = Some(value.into()),
+            "DISPLAY" => environment.x11_display = Some(value.into()),
+            "XDG_RUNTIME_DIR" => environment.xdg_runtime_dir = Some(value.into()),
+            "XDG_ACTIVATION_TOKEN" => environment.activation_token = Some(value.into()),
             _ => anyhow::bail!("unknown display variable {name}"),
         }
     }
     Ok(environment)
+}
+
+/// A display mode switch that a command asked for.
+#[cfg(target_os = "linux")]
+enum Switch {
+    Headless,
+    Windowed(GraphicalEnvironment),
 }
 
 #[cfg(target_os = "linux")]
@@ -127,7 +133,7 @@ fn handle_command(
     command: &str,
     todos: &Entity<Todos>,
     cx: &mut App,
-) -> anyhow::Result<Option<DisplayMode>> {
+) -> anyhow::Result<Option<Switch>> {
     let (name, arguments) = command.split_once(' ').unwrap_or((command, ""));
     match name {
         "ls" => print_todos(todos, cx),
@@ -141,13 +147,13 @@ fn handle_command(
                 cx.notify();
             });
         }
-        "open" => return Ok(Some(DisplayMode::Windowed(display_environment(arguments)?))),
+        "open" => return Ok(Some(Switch::Windowed(display_environment(arguments)?))),
         "close" => {
             let window = todos.update(cx, |todos, _| todos.window.take());
             if let Some(window) = window {
                 window.update(cx, |_, window, _| window.remove_window())?;
             }
-            return Ok(Some(DisplayMode::Headless));
+            return Ok(Some(Switch::Headless));
         }
         "quit" => cx.quit(),
         "" => {}
@@ -157,7 +163,7 @@ fn handle_command(
 }
 
 #[cfg(target_os = "linux")]
-const USAGE: &str = "commands: ls | create <message> | open [DISPLAY=… WAYLAND_DISPLAY=… XDG_RUNTIME_DIR=…] | close | quit";
+const USAGE: &str = "commands: ls | create <message> | open [DISPLAY=… WAYLAND_DISPLAY=… XDG_RUNTIME_DIR=… XDG_ACTIVATION_TOKEN=…] | close | quit";
 
 #[cfg(target_os = "linux")]
 async fn run_command(
@@ -165,13 +171,20 @@ async fn run_command(
     todos: &Entity<Todos>,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<()> {
-    let Some(mode) = cx.update(|cx| handle_command(&command, todos, cx))? else {
-        return Ok(());
-    };
-    let windowed = matches!(mode, DisplayMode::Windowed(_));
-    cx.update(|cx| cx.set_display_mode(mode)).await?;
-    if windowed {
-        cx.update(|cx| open_window(todos, cx))?;
+    match cx.update(|cx| handle_command(&command, todos, cx))? {
+        None => return Ok(()),
+        Some(Switch::Headless) => {
+            if !cx.update(|cx| cx.is_headless()) {
+                cx.update(|cx| cx.set_headless()).await?;
+            }
+        }
+        Some(Switch::Windowed(environment)) => {
+            // Switching fails while windowed, so `open` then just opens the window.
+            if cx.update(|cx| cx.is_headless()) {
+                cx.update(|cx| cx.set_windowed(environment)).await?;
+            }
+            cx.update(|cx| open_window(todos, cx))?;
+        }
     }
     let compositor = cx.update(|cx| cx.compositor_name());
     println!("mode: {compositor}");
@@ -180,63 +193,60 @@ async fn run_command(
 
 #[cfg(target_os = "linux")]
 fn main() {
-    gpui_platform::linux(
-        gpui_platform::LinuxDisplayModes::all(),
-        DisplayMode::Headless,
-    )
-    .with_quit_mode(QuitMode::Explicit)
-    .run(|cx| {
-        let todos = cx.new(|_| Todos {
-            items: Vec::new(),
-            window: None,
-        });
-        let window_closed_subscription = cx.on_window_closed({
-            let todos = todos.clone();
-            move |cx, window_id| {
-                todos.update(cx, |todos, _| {
-                    if todos
-                        .window
-                        .as_ref()
-                        .is_some_and(|window| window.window_id() == window_id)
-                    {
-                        todos.window = None;
-                    }
-                });
-            }
-        });
-        let (command_sender, command_receiver) = mpsc::channel();
-        std::thread::spawn(move || {
-            for line in io::stdin().lock().lines() {
-                match line {
-                    Ok(line) => {
-                        if command_sender.send(line).is_err() {
+    gpui_platform::linux(gpui::DisplayModes::all(), None)
+        .with_quit_mode(QuitMode::Explicit)
+        .run(|cx| {
+            let todos = cx.new(|_| Todos {
+                items: Vec::new(),
+                window: None,
+            });
+            let window_closed_subscription = cx.on_window_closed({
+                let todos = todos.clone();
+                move |cx, window_id| {
+                    todos.update(cx, |todos, _| {
+                        if todos
+                            .window
+                            .as_ref()
+                            .is_some_and(|window| window.window_id() == window_id)
+                        {
+                            todos.window = None;
+                        }
+                    });
+                }
+            });
+            let (command_sender, command_receiver) = mpsc::channel();
+            std::thread::spawn(move || {
+                for line in io::stdin().lock().lines() {
+                    match line {
+                        Ok(line) => {
+                            if command_sender.send(line).is_err() {
+                                break;
+                            }
+                        }
+                        Err(error) => {
+                            eprintln!("stdin error: {error}");
                             break;
                         }
                     }
-                    Err(error) => {
-                        eprintln!("stdin error: {error}");
-                        break;
-                    }
                 }
-            }
-        });
+            });
 
-        println!("{USAGE}");
-        cx.spawn(async move |cx| {
-            let _window_closed_subscription = window_closed_subscription;
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(25))
-                    .await;
-                while let Ok(command) = command_receiver.try_recv() {
-                    if let Err(error) = run_command(command, &todos, cx).await {
-                        println!("error: {error:#}");
+            println!("{USAGE}");
+            cx.spawn(async move |cx| {
+                let _window_closed_subscription = window_closed_subscription;
+                loop {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(25))
+                        .await;
+                    while let Ok(command) = command_receiver.try_recv() {
+                        if let Err(error) = run_command(command, &todos, cx).await {
+                            println!("error: {error:#}");
+                        }
                     }
                 }
-            }
-        })
-        .detach();
-    });
+            })
+            .detach();
+        });
 }
 
 #[cfg(not(target_os = "linux"))]

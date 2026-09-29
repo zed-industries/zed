@@ -15,8 +15,7 @@ mod x11;
 mod xdg_desktop_portal;
 
 pub use dispatcher::*;
-pub use display_connection::LinuxDisplayModes;
-pub(crate) use display_connection::{Backend, DisplayConnection};
+pub(crate) use display_connection::{Backend, DisplayConnection, select_backend};
 pub(crate) use headless::*;
 pub(crate) use keyboard::*;
 pub(crate) use platform::*;
@@ -29,7 +28,7 @@ pub(crate) use x11::*;
 
 use std::rc::Rc;
 
-use gpui::{DisplayEnvironment, DisplayMode};
+use gpui::{DisplayModes, GraphicalEnvironment};
 
 /// Returns the default platform implementation for the current OS.
 ///
@@ -38,21 +37,22 @@ use gpui::{DisplayEnvironment, DisplayMode};
 /// stays headless.
 pub fn current_platform(headless: bool) -> Rc<dyn gpui::Platform> {
     if headless || std::env::var_os("ZED_HEADLESS").is_some() {
-        linux_platform(LinuxDisplayModes::HEADLESS, DisplayMode::Headless)
+        linux_platform(DisplayModes::HEADLESS, None)
     } else {
-        linux_platform(
-            LinuxDisplayModes::all(),
-            DisplayMode::Windowed(DisplayEnvironment::from_process_environment()),
-        )
+        linux_platform(DisplayModes::all(), Some(GraphicalEnvironment::detect()))
     }
 }
 
-/// Returns a platform that starts in `initial` mode and may switch among `modes`.
+/// Returns a platform that may switch among `allowed_modes`. It starts connected to the display
+/// server `graphical_environment` names, or headless when that's `None` or names none.
 ///
 /// # Panics
 ///
-/// Panics if `modes` doesn't allow `initial`, or if the display server `initial` selects can't be
+/// Panics if `allowed_modes` doesn't allow the starting mode, or if the display server can't be
 /// reached.
-pub fn linux_platform(modes: LinuxDisplayModes, initial: DisplayMode) -> Rc<dyn gpui::Platform> {
-    Rc::new(LinuxPlatform::new(modes, initial))
+pub fn linux_platform(
+    allowed_modes: DisplayModes,
+    graphical_environment: Option<GraphicalEnvironment>,
+) -> Rc<dyn gpui::Platform> {
+    Rc::new(LinuxPlatform::new(allowed_modes, graphical_environment))
 }

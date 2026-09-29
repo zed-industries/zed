@@ -1089,49 +1089,78 @@ impl Drop for Clipboard {
         if Arc::strong_count(&self.inner) == MIN_OWNERS {
             // If the are the only owners of the clipboard are ourselves and
             // the global object, then we should destroy the global object,
-            // and send the data to the clipboard manager
-
-            if let Err(e) = self.inner.ask_clipboard_manager_to_request_our_data() {
-                log::error!(
-                    "Could not hand the clipboard data over to the clipboard manager: {}",
-                    e
-                );
-            }
-            let global_cb = global_cb.take();
-            if let Err(e) = self
-                .inner
-                .server
-                .conn
-                .destroy_window(self.inner.server.win_id)
-            {
-                log::error!("Failed to destroy the clipboard window. Error: {}", e);
+            // and send the data to the clipboard manager.
+            //
+            // The handover waits for the clipboard manager, so it runs on its own thread rather
+            // than blocking this one, which can be the UI thread switching display modes. A
+            // clipboard created meanwhile is independent of this one.
+            let Some(global_cb) = global_cb.take() else {
                 return;
-            }
-            if let Err(e) = self.inner.server.conn.flush() {
-                log::error!("Failed to flush the clipboard window. Error: {}", e);
-                return;
-            }
-            if let Some(global_cb) = global_cb
-                && let Err(e) = global_cb.server_handle.join()
+            };
+            let inner = Arc::clone(&self.inner);
+            match std::thread::Builder::new()
+                .name("Clipboard handover".to_owned())
+                .spawn(move || shut_down(inner, global_cb))
             {
-                // Let's try extracting the error message
-                let message;
-                if let Some(msg) = e.downcast_ref::<&'static str>() {
-                    message = Some((*msg).to_string());
-                } else if let Some(msg) = e.downcast_ref::<String>() {
-                    message = Some(msg.clone());
-                } else {
-                    message = None;
-                }
-                if let Some(message) = message {
+                Ok(handover) => HANDOVERS.lock().push(handover),
+                Err(error) => {
                     log::error!(
-                        "The clipboard server thread panicked. Panic message: '{}'",
-                        message,
-                    );
-                } else {
-                    log::error!("The clipboard server thread panicked.");
+                        "Failed to hand the clipboard over to the clipboard manager: {error}"
+                    )
                 }
             }
+        }
+    }
+}
+
+/// Threads handing a dropped clipboard's data to the clipboard manager.
+static HANDOVERS: Mutex<Vec<JoinHandle<()>>> = parking_lot::const_mutex(Vec::new());
+
+/// Waits for dropped clipboards to finish handing their data to the clipboard manager.
+///
+/// Called before the process exits, which would otherwise lose data still being handed over.
+pub(crate) fn wait_for_clipboard_handovers() {
+    let handovers = std::mem::take(&mut *HANDOVERS.lock());
+    for handover in handovers {
+        if handover.join().is_err() {
+            log::error!("The clipboard handover thread panicked.");
+        }
+    }
+}
+
+/// Hands the clipboard's data to the clipboard manager, then stops serving it.
+fn shut_down(inner: Arc<Inner>, global_cb: GlobalClipboard) {
+    if let Err(e) = inner.ask_clipboard_manager_to_request_our_data() {
+        log::error!(
+            "Could not hand the clipboard data over to the clipboard manager: {}",
+            e
+        );
+    }
+    if let Err(e) = inner.server.conn.destroy_window(inner.server.win_id) {
+        log::error!("Failed to destroy the clipboard window. Error: {}", e);
+        return;
+    }
+    if let Err(e) = inner.server.conn.flush() {
+        log::error!("Failed to flush the clipboard window. Error: {}", e);
+        return;
+    }
+    if let Err(e) = global_cb.server_handle.join() {
+        // Let's try extracting the error message
+        let message;
+        if let Some(msg) = e.downcast_ref::<&'static str>() {
+            message = Some((*msg).to_string());
+        } else if let Some(msg) = e.downcast_ref::<String>() {
+            message = Some(msg.clone());
+        } else {
+            message = None;
+        }
+        if let Some(message) = message {
+            log::error!(
+                "The clipboard server thread panicked. Panic message: '{}'",
+                message,
+            );
+        } else {
+            log::error!("The clipboard server thread panicked.");
         }
     }
 }

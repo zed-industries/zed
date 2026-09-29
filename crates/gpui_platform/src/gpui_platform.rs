@@ -24,20 +24,24 @@ pub fn headless() -> gpui::Application {
     gpui::Application::with_platform(current_platform(true))
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub use gpui_linux::LinuxDisplayModes;
-
-/// Returns a Linux app that starts in `initial` mode and may switch among `modes`.
+/// Returns a Linux app that may switch among `allowed_modes`. It starts connected to the display
+/// server `graphical_environment` names, or headless when that's `None` or names none.
 ///
-/// See [`gpui::App::set_display_mode`].
+/// See [`gpui::App::set_headless`] and [`gpui::App::set_windowed`].
 ///
 /// # Panics
 ///
-/// Panics if `modes` doesn't allow `initial`, or if the display server `initial` selects can't be
+/// Panics if `allowed_modes` doesn't allow the starting mode, or if the display server can't be
 /// reached.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub fn linux(modes: LinuxDisplayModes, initial: gpui::DisplayMode) -> gpui::Application {
-    gpui::Application::with_platform(gpui_linux::linux_platform(modes, initial))
+pub fn linux(
+    allowed_modes: gpui::DisplayModes,
+    graphical_environment: Option<gpui::GraphicalEnvironment>,
+) -> gpui::Application {
+    gpui::Application::with_platform(gpui_linux::linux_platform(
+        allowed_modes,
+        graphical_environment,
+    ))
 }
 
 #[cfg(target_family = "wasm")]

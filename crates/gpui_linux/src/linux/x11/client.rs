@@ -6,7 +6,7 @@ use calloop::{
 };
 use collections::HashMap;
 use core::str;
-use gpui::Capslock;
+use gpui::{Capslock, GraphicalEnvironment};
 use gpui_util::ResultExt as _;
 use http_client::Url;
 use log::Level;
@@ -49,9 +49,10 @@ use super::{
 };
 
 use crate::linux::{
-    DEFAULT_CURSOR_ICON_NAME, capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state,
-    is_within_click_distance, keystroke_from_xkb, keystroke_underlying_dead_key,
-    log_cursor_icon_warning, modifiers_from_xkb, new_xkb_context, open_uri_internal,
+    DEFAULT_CURSOR_ICON_NAME, LaunchEnvironment, capslock_from_xkb, cursor_style_to_icon_names,
+    get_xkb_compose_state, is_within_click_distance, keystroke_from_xkb,
+    keystroke_underlying_dead_key, log_cursor_icon_warning, modifiers_from_xkb, new_xkb_context,
+    open_uri_internal,
     platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
     reveal_path_internal,
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
@@ -182,8 +183,10 @@ pub struct X11ClientState {
     /// A weak pointer to this state, for event-loop callbacks registered by its methods.
     this: X11ClientStatePtr,
     pub(crate) loop_handle: LoopHandle<'static, ()>,
-    /// Long-lived sources this client registered on the loop, removed by `detach`.
+    /// Long-lived sources this client registered on the loop, removed when its
+    /// [`X11Connection`] drops.
     registrations: Vec<RegistrationToken>,
+    launch_environment: LaunchEnvironment,
 
     pub(crate) last_click: Instant,
     pub(crate) last_mouse_button: Option<MouseButton>,
@@ -241,8 +244,8 @@ pub struct X11ClientState {
 pub struct X11ClientStatePtr(pub Weak<RefCell<X11ClientState>>);
 
 impl X11ClientStatePtr {
-    pub fn get_client(&self) -> Option<X11Connection> {
-        self.0.upgrade().map(X11Connection)
+    pub fn get_client(&self) -> Option<X11Client> {
+        self.0.upgrade().map(X11Client)
     }
 
     pub fn drop_window(&self, x_window: u32) {
@@ -315,25 +318,67 @@ impl X11ClientStatePtr {
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct X11Connection(pub(crate) Rc<RefCell<X11ClientState>>);
+/// A connection to an X server.
+///
+/// Not `Clone`: dropping it removes the connection's event-loop sources and forgets its windows.
+/// The X connection itself closes once the last [`X11Client`] handle is gone.
+pub(crate) struct X11Connection(X11Client);
+
+impl std::ops::Deref for X11Connection {
+    type Target = X11Client;
+
+    fn deref(&self) -> &X11Client {
+        &self.0
+    }
+}
+
+impl Drop for X11Connection {
+    fn drop(&mut self) {
+        let mut state = self.0.0.borrow_mut();
+        state.common.borrow_mut().after_runnable = None;
+        for token in std::mem::take(&mut state.registrations) {
+            state.loop_handle.remove(token);
+        }
+        let refresh_tokens = state
+            .windows
+            .values_mut()
+            .filter_map(|window| match window.refresh_state.take() {
+                Some(RefreshState::PeriodicRefresh {
+                    event_loop_token, ..
+                }) => Some(event_loop_token),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for token in refresh_tokens {
+            state.loop_handle.remove(token);
+        }
+        let windows = std::mem::take(&mut state.windows);
+        drop(state);
+        drop(windows);
+    }
+}
 
 impl X11Connection {
-    /// Connects to the X server named by `display`, or by `DISPLAY` when `None`, and registers
-    /// its event sources on `handle`.
+    /// Connects to the X server `environment` names and registers its event sources on
+    /// `handle`.
     ///
-    /// Call [`X11Connection::detach`] to remove those sources, leaving the loop and `common` usable
+    /// Dropping the connection removes those sources, leaving the loop and `common` usable
     /// without X11.
     pub(crate) fn attach(
         handle: LoopHandle<'static, ()>,
         common: Rc<RefCell<LinuxCommon>>,
-        display: Option<&str>,
+        environment: &GraphicalEnvironment,
     ) -> anyhow::Result<Self> {
-        let display_name = display
-            .map(std::ffi::CString::new)
-            .transpose()
-            .context("X display name contains a NUL byte")?;
-        let (xcb_connection, x_root_index) = XCBConnection::connect(display_name.as_deref())
+        let display = environment
+            .x11_display
+            .as_ref()
+            .filter(|display| !display.is_empty())
+            .context("DISPLAY is not set")?
+            .to_str()
+            .context("DISPLAY is not valid UTF-8")?;
+        let display_name =
+            std::ffi::CString::new(display).context("X display name contains a NUL byte")?;
+        let (xcb_connection, x_root_index) = XCBConnection::connect(Some(&display_name))
             .with_context(|| format!("failed to connect to X server {display:?}"))?;
         xcb_connection.prefetch_extension_information(xkb::X11_EXTENSION_NAME)?;
         xcb_connection.prefetch_extension_information(randr::X11_EXTENSION_NAME)?;
@@ -437,7 +482,7 @@ impl X11Connection {
             .reply()
             .context("Failed to initialize cursor theme handler")?;
 
-        let clipboard = Clipboard::new(display).context("Failed to initialize clipboard")?;
+        let clipboard = Clipboard::new(Some(display)).context("Failed to initialize clipboard")?;
 
         let screen = &xcb_connection.setup().roots[x_root_index];
         let compositor_gpu = detect_compositor_gpu(&xcb_connection, screen);
@@ -452,10 +497,11 @@ impl X11Connection {
         };
 
         let background_executor = common.borrow().background_executor.clone();
-        let client = X11Connection(Rc::new_cyclic(|this| {
+        let connection = X11Connection(X11Client(Rc::new_cyclic(|this| {
             RefCell::new(X11ClientState {
                 this: X11ClientStatePtr(this.clone()),
                 registrations: Vec::new(),
+                launch_environment: LaunchEnvironment::new(environment),
                 modifiers: Modifiers::default(),
                 capslock: Capslock::default(),
                 last_modifiers_changed_event: Modifiers::default(),
@@ -505,16 +551,19 @@ impl X11Connection {
                 clipboard_item: None,
                 xdnd_state: Xdnd::default(),
             })
-        }));
-        if let Err(error) = client.register_sources(&handle, background_executor) {
-            client.detach();
-            return Err(error);
-        }
-        let xcb_connection = client.0.borrow().xcb_connection.clone();
+        })));
+        // From here on, `Drop` removes whatever was registered if a later step fails.
+        connection.register_sources(&handle, background_executor)?;
+        let xcb_connection = connection.0.0.borrow().xcb_connection.clone();
         xcb_flush(&xcb_connection);
-        Ok(client)
+        Ok(connection)
     }
+}
 
+#[derive(Clone)]
+pub(crate) struct X11Client(pub(crate) Rc<RefCell<X11ClientState>>);
+
+impl X11Client {
     fn register_sources(
         &self,
         handle: &LoopHandle<'static, ()>,
@@ -588,45 +637,12 @@ impl X11Connection {
         Ok(())
     }
 
-    /// Removes this client's event-loop sources and forgets its windows.
-    ///
-    /// The X connection closes once the last window state holding it is dropped.
-    pub(crate) fn detach(&self) {
-        let mut state = self.0.borrow_mut();
-        state.common.borrow_mut().after_runnable = None;
-        for token in std::mem::take(&mut state.registrations) {
-            state.loop_handle.remove(token);
-        }
-        let refresh_tokens = state
-            .windows
-            .values_mut()
-            .filter_map(|window| match window.refresh_state.take() {
-                Some(RefreshState::PeriodicRefresh {
-                    event_loop_token, ..
-                }) => Some(event_loop_token),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        for token in refresh_tokens {
-            state.loop_handle.remove(token);
-        }
-        let windows = std::mem::take(&mut state.windows);
-        drop(state);
-        drop(windows);
-    }
-
-    /// Whether any window is open and not yet destroyed.
     pub(crate) fn has_windows(&self) -> bool {
-        self.0
-            .borrow()
-            .windows
-            .values()
-            .any(|window| !window.window.state.borrow().destroyed)
+        !self.0.borrow().windows.is_empty()
     }
 
-    /// Whether a destroyed window has not yet finished closing.
-    pub(crate) fn has_window_resources(&self) -> bool {
-        !self.0.borrow().windows.is_empty()
+    pub(crate) fn launch_environment(&self) -> LaunchEnvironment {
+        self.0.borrow().launch_environment.clone()
     }
 
     pub fn process_x11_events(
@@ -1606,7 +1622,7 @@ impl X11Connection {
     }
 }
 
-impl X11Connection {
+impl X11Client {
     pub(crate) fn compositor_name(&self) -> &'static str {
         "X11"
     }
@@ -1785,20 +1801,20 @@ impl X11Connection {
     }
 
     pub(crate) fn open_uri(&self, uri: &str) {
-        #[cfg(any(feature = "wayland", feature = "x11"))]
         open_uri_internal(
             self.with_common(|c| c.background_executor.clone()),
             uri,
             None,
+            self.launch_environment(),
         );
     }
 
     pub(crate) fn reveal_path(&self, path: PathBuf) {
-        #[cfg(any(feature = "x11", feature = "wayland"))]
         reveal_path_internal(
             self.with_common(|c| c.background_executor.clone()),
             path,
             None,
+            self.launch_environment(),
         );
     }
 

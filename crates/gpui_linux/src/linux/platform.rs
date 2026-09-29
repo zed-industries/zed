@@ -32,12 +32,12 @@ use gpui_util::{ResultExt as _, new_std_command};
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::linux::{
-    Backend, DisplayConnection, HeadlessConnection, LinuxDispatcher, LinuxDisplayModes,
-    PriorityQueueCalloopReceiver,
+    Backend, DisplayConnection, HeadlessConnection, LinuxDispatcher, PriorityQueueCalloopReceiver,
+    select_backend,
 };
 use gpui::{
     Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
-    DisplayEnvironment, DisplayMode, ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu,
+    DisplayModes, ForegroundExecutor, GraphicalEnvironment, Keymap, Menu, MenuItem, OwnedMenu,
     PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
     PlatformTextSystem, PlatformWindow, Result, RunnableVariant, Task, ThermalState,
     WindowAppearance, WindowButtonLayout, WindowParams,
@@ -207,7 +207,7 @@ impl LinuxCommon {
                 let common = common.clone();
                 move |event, _, _| {
                     if let calloop::channel::Event::Msg(event) = event {
-                        common.borrow_mut().handle_system_power_event(event);
+                        LinuxCommon::handle_system_power_event(&common, event);
                     }
                 }
             })
@@ -215,13 +215,27 @@ impl LinuxCommon {
         Ok(())
     }
 
-    pub(crate) fn handle_system_power_event(&mut self, event: SystemPowerEvent) {
-        let callback = match event {
-            SystemPowerEvent::Sleep => &mut self.callbacks.system_sleep,
-            SystemPowerEvent::Wake => &mut self.callbacks.system_wake,
-        };
-        if let Some(callback) = callback.as_mut() {
+    /// Runs the app's sleep or wake callback, without `common` borrowed, since the callback
+    /// can call back into the platform.
+    fn handle_system_power_event(common: &RefCell<Self>, event: SystemPowerEvent) {
+        fn slot(
+            callbacks: &mut PlatformHandlers,
+            event: SystemPowerEvent,
+        ) -> &mut Option<Box<dyn FnMut()>> {
+            match event {
+                SystemPowerEvent::Sleep => &mut callbacks.system_sleep,
+                SystemPowerEvent::Wake => &mut callbacks.system_wake,
+            }
+        }
+        let callback = slot(&mut common.borrow_mut().callbacks, event).take();
+        if let Some(mut callback) = callback {
             callback();
+            let mut common = common.borrow_mut();
+            let slot = slot(&mut common.callbacks, event);
+            // The callback may have replaced itself.
+            if slot.is_none() {
+                *slot = Some(callback);
+            }
         }
     }
 }
@@ -265,26 +279,52 @@ pub(crate) struct LinuxPlatform {
     event_loop: RefCell<Option<EventLoop<'static, ()>>>,
     loop_handle: LoopHandle<'static, ()>,
     connection: RefCell<DisplayConnection>,
-    modes: LinuxDisplayModes,
-    /// A `set_display_mode` request waiting for the event loop to apply it.
-    pending_mode: RefCell<Option<DisplayMode>>,
+    allowed_modes: DisplayModes,
+    /// A requested switch waiting for the event loop to apply it.
+    pending_mode: RefCell<Option<TargetMode>>,
     transition_waiter: RefCell<Option<oneshot::Sender<anyhow::Result<()>>>>,
+}
+
+/// A display mode to switch to.
+#[derive(Clone)]
+enum TargetMode {
+    Headless,
+    Windowed(GraphicalEnvironment),
+}
+
+/// What a Wayland connection made at startup may use from this process's environment.
+///
+/// Both are taken from the environment when the platform is created, before it starts any
+/// threads, and are only meaningful for the connection made then.
+#[derive(Default)]
+struct StartupEnvironment {
     #[cfg(feature = "wayland")]
-    startup_activation_token: RefCell<Option<String>>,
+    activation_token: Option<String>,
+    /// The socket `WAYLAND_SOCKET` names: a connection to the compositor that the process which
+    /// started us already opened.
+    #[cfg(feature = "wayland")]
+    wayland_socket: Option<std::os::unix::net::UnixStream>,
 }
 
 impl LinuxPlatform {
-    /// Creates the platform and connects it in `initial` mode.
+    /// Creates the platform, connected to the display server `graphical_environment` names, or
+    /// headless.
     ///
     /// # Panics
     ///
-    /// Panics if `modes` doesn't allow `initial`, or if the display server `initial` selects can't
-    /// be reached, because platform construction is infallible. A windowed `initial` whose
-    /// environment names no allowed display server starts headless when `modes` allows it.
-    pub(crate) fn new(modes: LinuxDisplayModes, initial: DisplayMode) -> Self {
-        #[cfg(feature = "wayland")]
-        let startup_activation_token =
-            crate::linux::take_startup_activation_token_from_environment();
+    /// Panics if `allowed_modes` doesn't allow the starting mode, or if the display server can't
+    /// be reached, because platform construction is infallible. An environment that names no
+    /// allowed display server starts headless when `allowed_modes` allows it.
+    pub(crate) fn new(
+        allowed_modes: DisplayModes,
+        graphical_environment: Option<GraphicalEnvironment>,
+    ) -> Self {
+        let startup = StartupEnvironment {
+            #[cfg(feature = "wayland")]
+            activation_token: crate::linux::take_startup_activation_token_from_environment(),
+            #[cfg(feature = "wayland")]
+            wayland_socket: crate::linux::take_wayland_socket_from_environment(),
+        };
         let event_loop = EventLoop::try_new().expect("failed to create Linux event loop");
         let (common, main_receiver, power_receiver) = LinuxCommon::new(event_loop.get_signal());
         let common = Rc::new(RefCell::new(common));
@@ -296,30 +336,26 @@ impl LinuxPlatform {
             event_loop: RefCell::new(Some(event_loop)),
             loop_handle,
             connection: RefCell::new(DisplayConnection::Headless(HeadlessConnection::new())),
-            modes,
+            allowed_modes,
             pending_mode: RefCell::new(None),
             transition_waiter: RefCell::new(None),
-            #[cfg(feature = "wayland")]
-            startup_activation_token: RefCell::new(startup_activation_token),
         };
 
-        match initial {
-            DisplayMode::Headless => assert!(
-                modes.contains(LinuxDisplayModes::HEADLESS),
-                "{modes:?} does not allow starting headless"
+        let backend = graphical_environment.as_ref().and_then(|environment| {
+            Some((select_backend(allowed_modes, environment)?, environment))
+        });
+        match backend {
+            Some((backend, environment)) => {
+                let connection = platform
+                    .connect(backend, environment, startup)
+                    .unwrap_or_else(|error| panic!("{error:#}"));
+                platform.replace_connection(connection);
+            }
+            None => assert!(
+                allowed_modes.contains(DisplayModes::HEADLESS),
+                "{allowed_modes:?} does not allow starting headless, and no allowed display \
+                 server was given"
             ),
-            DisplayMode::Windowed(environment) => match modes.select_backend(&environment) {
-                Some(backend) => {
-                    let connection = platform
-                        .connect(backend, &environment)
-                        .unwrap_or_else(|error| panic!("{error:#}"));
-                    *platform.connection.borrow_mut() = connection;
-                }
-                None => assert!(
-                    modes.contains(LinuxDisplayModes::HEADLESS),
-                    "the environment names no display server that {modes:?} allows"
-                ),
-            },
         }
         platform
     }
@@ -328,51 +364,59 @@ impl LinuxPlatform {
         function(&mut self.common.borrow_mut())
     }
 
+    /// Connects to the display server `backend` in `environment`.
+    ///
+    /// `startup` is only given for the connection made when the platform is created.
     #[cfg_attr(
-        not(any(feature = "wayland", feature = "x11")),
+        not(feature = "wayland"),
         allow(
             unused_variables,
-            reason = "`Backend` has no variants without a display backend"
+            reason = "only Wayland uses the startup environment, and without a display backend \
+                      `Backend` has no variants"
         )
     )]
     fn connect(
         &self,
         backend: Backend,
-        environment: &DisplayEnvironment,
+        environment: &GraphicalEnvironment,
+        startup: StartupEnvironment,
     ) -> anyhow::Result<DisplayConnection> {
         let loop_handle = self.loop_handle.clone();
         let common = self.common.clone();
         match backend {
             #[cfg(feature = "wayland")]
             Backend::Wayland => {
-                let startup_activation_token = self.startup_activation_token.borrow().clone();
-                let connection = crate::linux::WaylandConnection::attach(
-                    loop_handle,
-                    common,
-                    environment,
-                    startup_activation_token,
-                )?;
-                self.startup_activation_token.borrow_mut().take();
-                Ok(DisplayConnection::Wayland(connection))
+                let activation_token = environment
+                    .activation_token
+                    .clone()
+                    .or(startup.activation_token);
+                Ok(DisplayConnection::Wayland(
+                    crate::linux::WaylandConnection::attach(
+                        loop_handle,
+                        common,
+                        environment,
+                        startup.wayland_socket,
+                        activation_token,
+                    )?,
+                ))
             }
             #[cfg(feature = "x11")]
-            Backend::X11 => {
-                let display = environment
-                    .x11_display
-                    .as_ref()
-                    .context("DISPLAY is not set")?
-                    .to_str()
-                    .context("DISPLAY is not valid UTF-8")?;
-                Ok(DisplayConnection::X11(crate::linux::X11Connection::attach(
-                    loop_handle,
-                    common,
-                    Some(display),
-                )?))
-            }
+            Backend::X11 => Ok(DisplayConnection::X11(crate::linux::X11Connection::attach(
+                loop_handle,
+                common,
+                environment,
+            )?)),
         }
     }
 
-    /// Applies a pending `set_display_mode` request.
+    /// Installs `connection`, then drops the previous one outside the borrow, since dropping a
+    /// connection can call back into the platform.
+    fn replace_connection(&self, connection: DisplayConnection) {
+        let previous = std::mem::replace(&mut *self.connection.borrow_mut(), connection);
+        drop(previous);
+    }
+
+    /// Applies a pending switch.
     ///
     /// Runs between event-loop iterations, so no event source is mid-dispatch when the
     /// connection's sources are added or removed.
@@ -380,35 +424,92 @@ impl LinuxPlatform {
         let Some(mode) = self.pending_mode.borrow().clone() else {
             return;
         };
-        // `set_display_mode` rejects open windows, but one can be opened before this runs.
+        // `request_mode` rejects open windows, but one can be opened before this runs.
         let result = if self.connection.borrow().has_windows() {
             Err(anyhow!("a window was opened while switching display modes"))
-        } else if self.connection.borrow().has_window_resources() {
-            // A closed window is still releasing resources bound to the connection, from a task
-            // that runs on this loop. Try again on a later iteration.
-            return;
         } else {
             match mode {
-                DisplayMode::Headless => {
-                    let previous = std::mem::replace(
-                        &mut *self.connection.borrow_mut(),
-                        DisplayConnection::Headless(HeadlessConnection::new()),
-                    );
-                    drop(previous);
+                TargetMode::Headless => {
+                    self.replace_connection(DisplayConnection::Headless(HeadlessConnection::new()));
                     Ok(())
                 }
-                DisplayMode::Windowed(environment) => self
-                    .modes
-                    .select_backend(&environment)
-                    .context("the environment names no allowed Wayland or X11 display server")
-                    .and_then(|backend| self.connect(backend, &environment))
-                    .map(|connection| *self.connection.borrow_mut() = connection),
+                TargetMode::Windowed(environment) => {
+                    select_backend(self.allowed_modes, &environment)
+                        .context("the environment names no allowed Wayland or X11 display server")
+                        .and_then(|backend| {
+                            self.connect(backend, &environment, StartupEnvironment::default())
+                        })
+                        .map(|connection| self.replace_connection(connection))
+                }
             }
         };
         self.pending_mode.borrow_mut().take();
         if let Some(waiter) = self.transition_waiter.borrow_mut().take() {
             waiter.send(result).ok();
         }
+    }
+
+    /// Validates a requested switch, then leaves it for the event loop to apply.
+    fn request_mode(&self, mode: TargetMode) -> Task<anyhow::Result<()>> {
+        if self.pending_mode.borrow().is_some() {
+            return Task::ready(Err(anyhow!(
+                "a display mode transition is already in progress"
+            )));
+        }
+        let is_headless = self.connection.borrow().is_headless();
+        match &mode {
+            TargetMode::Headless if !self.allowed_modes.contains(DisplayModes::HEADLESS) => {
+                return Task::ready(Err(anyhow!(
+                    "{:?} does not allow headless mode",
+                    self.allowed_modes
+                )));
+            }
+            TargetMode::Headless if is_headless => {
+                return Task::ready(Err(anyhow!("already headless")));
+            }
+            TargetMode::Headless => {}
+            TargetMode::Windowed(_) if !is_headless => {
+                return Task::ready(Err(anyhow!(
+                    "already windowed ({}); switch to headless mode first",
+                    self.connection.borrow().compositor_name()
+                )));
+            }
+            TargetMode::Windowed(environment) => {
+                if select_backend(self.allowed_modes, environment).is_none() {
+                    return Task::ready(Err(anyhow!(
+                        "the environment names no display server that {:?} allows",
+                        self.allowed_modes
+                    )));
+                }
+            }
+        }
+        // A window belongs to the connection that opened it, so it can't survive a switch.
+        if self.connection.borrow().has_windows() {
+            return Task::ready(Err(anyhow!(
+                "cannot switch display modes while windows are open"
+            )));
+        }
+
+        let (sender, receiver) = oneshot::channel();
+        self.transition_waiter.borrow_mut().replace(sender);
+        *self.pending_mode.borrow_mut() = Some(mode);
+        // The wakeup persists until the loop next polls, so a request made before `run` starts is
+        // applied after its first iteration.
+        self.common.borrow().signal.wakeup();
+        self.common.borrow().foreground_executor.spawn(async move {
+            receiver
+                .await
+                .map_err(|_| anyhow!("display mode transition was canceled"))
+                .and_then(|result| result)
+        })
+    }
+}
+
+impl Drop for LinuxPlatform {
+    fn drop(&mut self) {
+        self.replace_connection(DisplayConnection::Headless(HeadlessConnection::new()));
+        #[cfg(feature = "x11")]
+        crate::linux::wait_for_clipboard_handovers();
     }
 }
 
@@ -486,54 +587,28 @@ impl Platform for LinuxPlatform {
         if let Some(mut fun) = quit {
             fun();
         }
+        #[cfg(feature = "x11")]
+        crate::linux::wait_for_clipboard_handovers();
     }
 
     fn quit(&self) {
         self.with_common(|common| common.signal.stop());
     }
 
-    fn set_display_mode(&self, mode: DisplayMode) -> Task<anyhow::Result<()>> {
-        if self.pending_mode.borrow().is_some() {
-            return Task::ready(Err(anyhow!(
-                "a display mode transition is already in progress"
-            )));
-        }
-        let is_headless = self.connection.borrow().is_headless();
-        match &mode {
-            DisplayMode::Headless if !self.modes.contains(LinuxDisplayModes::HEADLESS) => {
-                return Task::ready(Err(anyhow!(
-                    "{:?} does not allow headless mode",
-                    self.modes
-                )));
-            }
-            DisplayMode::Headless if is_headless => return Task::ready(Ok(())),
-            // Stays on the current display server, even if the environment names another one.
-            DisplayMode::Windowed(_) if !is_headless => return Task::ready(Ok(())),
-            DisplayMode::Headless | DisplayMode::Windowed(_) => {}
-        }
-        // A window belongs to the connection that opened it, so it can't survive a switch.
-        if self.connection.borrow().has_windows() {
-            return Task::ready(Err(anyhow!(
-                "cannot switch display modes while windows are open"
-            )));
-        }
+    fn set_headless(&self) -> Task<anyhow::Result<()>> {
+        self.request_mode(TargetMode::Headless)
+    }
 
-        let (sender, receiver) = oneshot::channel();
-        self.transition_waiter.borrow_mut().replace(sender);
-        *self.pending_mode.borrow_mut() = Some(mode);
-        // The wakeup persists until the loop next polls, so a request made before `run` starts is
-        // applied after its first iteration.
-        self.common.borrow().signal.wakeup();
-        self.common.borrow().foreground_executor.spawn(async move {
-            receiver
-                .await
-                .map_err(|_| anyhow!("display mode transition was canceled"))
-                .and_then(|result| result)
-        })
+    fn set_windowed(&self, environment: GraphicalEnvironment) -> Task<anyhow::Result<()>> {
+        self.request_mode(TargetMode::Windowed(environment))
     }
 
     fn compositor_name(&self) -> &'static str {
         self.connection.borrow().compositor_name()
+    }
+
+    fn is_headless(&self) -> bool {
+        self.connection.borrow().is_headless()
     }
 
     fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<std::ffi::OsString>) {
@@ -782,17 +857,21 @@ impl Platform for LinuxPlatform {
 
     fn open_with_system(&self, path: &Path) {
         let path = path.to_owned();
+        #[cfg(any(feature = "wayland", feature = "x11"))]
+        let launch_environment = self.connection.borrow().launch_environment();
         self.background_executor()
             .spawn(async move {
+                let mut command = new_std_command("xdg-open");
+                command.arg(path);
+                #[cfg(any(feature = "wayland", feature = "x11"))]
+                if let Some(launch_environment) = launch_environment {
+                    launch_environment.apply(&mut command);
+                }
                 #[allow(
                     clippy::disallowed_methods,
                     reason = "running on a background thread, so blocking is fine"
                 )]
-                new_std_command("xdg-open")
-                    .arg(path)
-                    .status()
-                    .context("invoking xdg-open")
-                    .log_err();
+                command.status().context("invoking xdg-open").log_err();
             })
             .detach();
     }
@@ -1006,41 +1085,82 @@ impl Platform for LinuxPlatform {
     fn add_recent_document(&self, _path: &Path) {}
 }
 
+/// The display variables of the session a connection belongs to, given to the programs the
+/// platform launches.
+///
+/// This process's own variables can name a different session, or none, when it attached to
+/// a display server after starting.
+#[cfg(any(feature = "wayland", feature = "x11"))]
+#[derive(Clone, Debug)]
+pub(crate) struct LaunchEnvironment {
+    variables: [(&'static str, Option<OsString>); 3],
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+impl LaunchEnvironment {
+    pub(crate) fn new(environment: &GraphicalEnvironment) -> Self {
+        Self {
+            variables: [
+                ("WAYLAND_DISPLAY", environment.wayland_display.clone()),
+                ("DISPLAY", environment.x11_display.clone()),
+                ("XDG_RUNTIME_DIR", environment.xdg_runtime_dir.clone()),
+            ],
+        }
+    }
+
+    pub(crate) fn apply(&self, command: &mut std::process::Command) {
+        for (name, value) in &self.variables {
+            match value {
+                Some(value) => command.env(name, value),
+                None => command.env_remove(name),
+            };
+        }
+    }
+}
+
+/// Opens `target` with the first of the desktop's launchers that succeeds. Returns whether one
+/// did.
+#[cfg(any(feature = "wayland", feature = "x11"))]
+async fn run_open_commands(
+    target: &std::ffi::OsStr,
+    activation_token: Option<&str>,
+    launch_environment: &LaunchEnvironment,
+) -> bool {
+    for mut command in open::commands(target) {
+        launch_environment.apply(&mut command);
+        if let Some(token) = activation_token {
+            command.env("XDG_ACTIVATION_TOKEN", token);
+        }
+        let program = format!("{:?}", command.get_program());
+        match smol::process::Command::from(command).spawn() {
+            Ok(mut child) => match child.status().await {
+                Ok(status) if status.success() => return true,
+                Ok(status) => log::error!("Command {} exited with status: {}", program, status),
+                Err(error) => log::error!("Failed to get status from {}: {}", program, error),
+            },
+            Err(error) => log::error!("Failed to open with {}: {}", program, error),
+        }
+    }
+    false
+}
+
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(super) fn open_uri_internal(
     executor: BackgroundExecutor,
     uri: &str,
     activation_token: Option<String>,
+    launch_environment: LaunchEnvironment,
 ) {
     if let Some(uri) = ashpd::Uri::parse(uri).log_err() {
         executor
             .spawn(async move {
-                let mut xdg_open_failed = false;
-                for mut command in open::commands(uri.to_string()) {
-                    if let Some(token) = activation_token.as_ref() {
-                        command.env("XDG_ACTIVATION_TOKEN", token);
-                    }
-                    let program = format!("{:?}", command.get_program());
-                    match smol::process::Command::from(command).spawn() {
-                        Ok(mut cmd) => match cmd.status().await {
-                            Ok(status) if status.success() => return,
-                            Ok(status) => {
-                                log::error!("Command {} exited with status: {}", program, status);
-                                xdg_open_failed = true;
-                            }
-                            Err(e) => {
-                                log::error!("Failed to get status from {}: {}", program, e);
-                                xdg_open_failed = true;
-                            }
-                        },
-                        Err(e) => {
-                            log::error!("Failed to open with {}: {}", program, e);
-                            xdg_open_failed = true;
-                        }
-                    }
-                }
-
-                if xdg_open_failed {
+                let opened = run_open_commands(
+                    uri.as_str().as_ref(),
+                    activation_token.as_deref(),
+                    &launch_environment,
+                )
+                .await;
+                if !opened {
                     match ashpd::desktop::open_uri::OpenFileRequest::default()
                         .activation_token(activation_token.map(ashpd::ActivationToken::from))
                         .send_uri(&uri)
@@ -1064,23 +1184,30 @@ pub(super) fn reveal_path_internal(
     executor: BackgroundExecutor,
     path: PathBuf,
     activation_token: Option<String>,
+    launch_environment: LaunchEnvironment,
 ) {
     executor
         .spawn(async move {
             if let Some(dir) = File::open(path.clone()).log_err() {
                 match ashpd::desktop::open_uri::OpenDirectoryRequest::default()
-                    .activation_token(activation_token.map(ashpd::ActivationToken::from))
+                    .activation_token(activation_token.clone().map(ashpd::ActivationToken::from))
                     .send(&dir.as_fd())
                     .await
                 {
                     Ok(_) => return,
                     Err(e) => log::error!("Failed to open with dbus: {}", e),
                 }
-                if path.is_dir() {
-                    open::that_detached(path).log_err();
+                let directory = if path.is_dir() {
+                    path.as_path()
                 } else {
-                    open::that_detached(path.parent().unwrap_or(Path::new(""))).log_err();
-                }
+                    path.parent().unwrap_or(Path::new(""))
+                };
+                run_open_commands(
+                    directory.as_os_str(),
+                    activation_token.as_deref(),
+                    &launch_environment,
+                )
+                .await;
             }
         })
         .detach();
@@ -1815,7 +1942,7 @@ mod display_mode_tests {
     fn failed_wayland_attach_preserves_headless_app_and_allows_retry() {
         run_scenario(
             "failed_wayland_attach_preserves_headless_app_and_allows_retry",
-            LinuxDisplayModes::all(),
+            DisplayModes::all(),
             |cx| {
                 Box::pin(async move {
                     let entity = cx.new(|_| 1usize);
@@ -1831,7 +1958,8 @@ mod display_mode_tests {
                         }
                     });
 
-                    let first_attach = cx.update(|cx| cx.set_headless(false));
+                    let first_attach =
+                        cx.update(|cx| cx.set_windowed(GraphicalEnvironment::detect()));
                     assert_error_contains(
                         first_attach.await,
                         "failed to connect to Wayland compositor",
@@ -1843,7 +1971,8 @@ mod display_mode_tests {
                     queued_task.await;
                     assert!(queued_task_ran.get());
 
-                    let second_attach = cx.update(|cx| cx.set_headless(false));
+                    let second_attach =
+                        cx.update(|cx| cx.set_windowed(GraphicalEnvironment::detect()));
                     assert_error_contains(
                         second_attach.await,
                         "failed to connect to Wayland compositor",
@@ -1860,7 +1989,7 @@ mod display_mode_tests {
     fn headless_windows_block_switching_to_a_display_server() {
         run_scenario(
             "headless_windows_block_switching_to_a_display_server",
-            LinuxDisplayModes::all(),
+            DisplayModes::all(),
             |cx| {
                 Box::pin(async move {
                     let window = cx
@@ -1868,12 +1997,12 @@ mod display_mode_tests {
                             cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| Blank))
                         })
                         .expect("headless mode opens headless windows");
-                    let attach = cx.update(|cx| cx.set_headless(false));
+                    let attach = cx.update(|cx| cx.set_windowed(GraphicalEnvironment::detect()));
                     assert_error_contains(attach.await, "while windows are open");
 
                     cx.update(|cx| window.update(cx, |_, window, _| window.remove_window()))
                         .expect("close the headless window");
-                    let attach = cx.update(|cx| cx.set_headless(false));
+                    let attach = cx.update(|cx| cx.set_windowed(GraphicalEnvironment::detect()));
                     assert_error_contains(attach.await, "failed to connect to Wayland compositor");
                 })
             },
@@ -1884,12 +2013,16 @@ mod display_mode_tests {
     fn display_modes_limit_switching() {
         run_scenario(
             "display_modes_limit_switching",
-            LinuxDisplayModes::HEADLESS,
+            DisplayModes::HEADLESS,
             |cx| {
                 Box::pin(async move {
-                    let attach = cx.update(|cx| cx.set_headless(false));
-                    assert_error_contains(attach.await, "no allowed Wayland or X11 display server");
+                    let attach = cx.update(|cx| cx.set_windowed(GraphicalEnvironment::detect()));
+                    assert_error_contains(attach.await, "names no display server that");
                     assert_eq!(cx.update(|cx| cx.compositor_name()), "headless");
+                    assert!(cx.update(|cx| cx.is_headless()));
+
+                    let detach = cx.update(|cx| cx.set_headless());
+                    assert_error_contains(detach.await, "already headless");
                 })
             },
         );
@@ -1909,9 +2042,9 @@ mod display_mode_tests {
 
     /// Runs `scenario` on a headless platform in a child process, where `WAYLAND_DISPLAY` names a
     /// socket that doesn't exist.
-    fn run_scenario(name: &str, modes: LinuxDisplayModes, scenario: Scenario) {
+    fn run_scenario(name: &str, modes: DisplayModes, scenario: Scenario) {
         if std::env::var(SCENARIO_ENV).as_deref() == Ok(name) {
-            let platform = Rc::new(LinuxPlatform::new(modes, DisplayMode::Headless));
+            let platform = Rc::new(LinuxPlatform::new(modes, None));
             let completed = Rc::new(Cell::new(false));
             Application::with_platform(platform)
                 .with_quit_mode(QuitMode::Explicit)
@@ -1930,7 +2063,11 @@ mod display_mode_tests {
             return;
         }
 
-        let test_name = format!("{}::{name}", module_path!());
+        // Test names don't include the crate's name.
+        let module = module_path!()
+            .split_once("::")
+            .map_or(module_path!(), |(_, module)| module);
+        let test_name = format!("{module}::{name}");
         #[allow(
             clippy::disallowed_methods,
             reason = "the test thread has nothing else to do while the child runs"
@@ -1942,10 +2079,10 @@ mod display_mode_tests {
             .env_remove("DISPLAY")
             .output()
             .expect("run the scenario in a child process");
+        let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            output.status.success(),
-            "scenario failed\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
+            output.status.success() && stdout.contains("1 passed"),
+            "scenario failed\nstdout:\n{stdout}\nstderr:\n{}",
             String::from_utf8_lossy(&output.stderr),
         );
     }

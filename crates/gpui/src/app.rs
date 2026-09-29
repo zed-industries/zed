@@ -1115,27 +1115,36 @@ impl App {
         self.platform.quit();
     }
 
-    /// Connects a capable platform to, or disconnects it from, a display server.
+    /// Disconnects a capable platform from its display server. Windows opened afterwards lay
+    /// out and handle input but draw nothing.
     ///
-    /// Disconnecting fails while windows are open. See [`App::set_display_mode`].
+    /// The returned task resolves once the switch has been applied. It fails if already headless,
+    /// if the platform doesn't allow headless mode, or if any window is open, since a window
+    /// belongs to the display server that opened it.
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    pub fn set_headless(&self, headless: bool) -> Task<anyhow::Result<()>> {
-        self.set_display_mode(if headless {
-            crate::DisplayMode::Headless
-        } else {
-            crate::DisplayMode::Windowed(crate::DisplayEnvironment::from_process_environment())
-        })
+    pub fn set_headless(&self) -> Task<anyhow::Result<()>> {
+        self.platform.set_headless()
     }
 
-    /// Connects a capable platform to, or disconnects it from, a display server.
+    /// Connects a capable platform to the display server that `environment` names.
     ///
-    /// The returned task resolves once the transition has been applied. It fails if the
-    /// platform cannot switch to `mode`, if any window is open (a window belongs to the mode
-    /// that opened it), or if the display server cannot be reached. Requesting the current mode
-    /// succeeds without reconnecting.
+    /// The returned task resolves once the switch has been applied. It fails if already
+    /// windowed (switching to another display server means going headless first), if the platform
+    /// doesn't allow that display server, if any window is open, or if the display server can't
+    /// be reached.
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    pub fn set_display_mode(&self, mode: crate::DisplayMode) -> Task<anyhow::Result<()>> {
-        self.platform.set_display_mode(mode)
+    pub fn set_windowed(
+        &self,
+        environment: crate::GraphicalEnvironment,
+    ) -> Task<anyhow::Result<()>> {
+        self.platform.set_windowed(environment)
+    }
+
+    /// Whether the platform has no display server: it started headless, or switched with
+    /// [`App::set_headless`]. Always `false` on platforms that can't switch display modes.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    pub fn is_headless(&self) -> bool {
+        self.platform.is_headless()
     }
 
     /// Returns the current policy for hiding the cursor in response to

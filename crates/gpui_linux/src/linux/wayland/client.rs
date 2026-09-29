@@ -1,7 +1,10 @@
 use std::{
     cell::{RefCell, RefMut},
     hash::Hash,
-    os::fd::{AsRawFd, BorrowedFd},
+    os::{
+        fd::{AsRawFd, BorrowedFd, FromRawFd as _, RawFd},
+        unix::net::UnixStream,
+    },
     path::PathBuf,
     rc::{Rc, Weak},
     time::{Duration, Instant},
@@ -82,10 +85,11 @@ use super::{
 };
 
 use crate::linux::{
-    DOUBLE_CLICK_INTERVAL, LinuxCommon, LinuxKeyboardLayout, PIPE_READ_TIMEOUT, SCROLL_LINES,
-    capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state, is_within_click_distance,
-    keystroke_from_xkb, keystroke_underlying_dead_key, modifiers_from_xkb, new_xkb_context,
-    open_uri_internal, read_fd_with_timeout, reveal_path_internal,
+    DOUBLE_CLICK_INTERVAL, LaunchEnvironment, LinuxCommon, LinuxKeyboardLayout, PIPE_READ_TIMEOUT,
+    SCROLL_LINES, capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state,
+    is_within_click_distance, keystroke_from_xkb, keystroke_underlying_dead_key,
+    modifiers_from_xkb, new_xkb_context, open_uri_internal, read_fd_with_timeout,
+    reveal_path_internal,
     wayland::{
         clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
         cursor::Cursor,
@@ -96,8 +100,8 @@ use crate::linux::{
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
 };
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayEnvironment,
-    ExternalDragPayload, FileDragPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent,
+    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, ExternalDragPayload,
+    FileDragPaths, FileDropEvent, ForegroundExecutor, GraphicalEnvironment, KeyDownEvent,
     KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
     PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta, ScrollWheelEvent,
@@ -196,9 +200,40 @@ pub(crate) fn take_startup_activation_token_from_environment() -> Option<String>
     let token = std::env::var(XDG_ACTIVATION_TOKEN_ENV_VAR)
         .ok()
         .filter(|token| !token.is_empty());
-    // SAFETY: Both callers take this token before LinuxCommon starts worker threads.
+    // Per the xdg-activation spec, so that programs we launch don't inherit the token.
+    // SAFETY: `LinuxPlatform::new` calls this before it starts any threads.
     unsafe { std::env::remove_var(XDG_ACTIVATION_TOKEN_ENV_VAR) };
     token
+}
+
+/// Takes the Wayland connection that `WAYLAND_SOCKET` hands to this process, as libwayland does.
+pub(crate) fn take_wayland_socket_from_environment() -> Option<UnixStream> {
+    const WAYLAND_SOCKET_ENV_VAR: &str = "WAYLAND_SOCKET";
+    let value = std::env::var_os(WAYLAND_SOCKET_ENV_VAR)?;
+    // Removed so that programs we launch don't inherit it, as libwayland does.
+    // SAFETY: `LinuxPlatform::new` calls this before it starts any threads.
+    unsafe { std::env::remove_var(WAYLAND_SOCKET_ENV_VAR) };
+    let Some(fd) = value
+        .to_str()
+        .and_then(|value| value.parse::<RawFd>().ok())
+        .filter(|fd| *fd >= 0)
+    else {
+        log::error!("ignoring WAYLAND_SOCKET={value:?}, which is not a file descriptor");
+        return None;
+    };
+    // SAFETY: the process that started us passes this descriptor for us to own. It is inherited
+    // across exec, so mark it close-on-exec to keep it from programs we launch.
+    unsafe {
+        let flags = libc::fcntl(fd, libc::F_GETFD);
+        if flags == -1 || libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) == -1 {
+            log::error!(
+                "ignoring WAYLAND_SOCKET={fd}: {}",
+                std::io::Error::last_os_error()
+            );
+            return None;
+        }
+        Some(UnixStream::from_raw_fd(fd))
+    }
 }
 
 #[derive(Clone)]
@@ -366,11 +401,9 @@ pub(crate) struct WaylandClientState {
     cursor: Cursor,
     pending_activation: Option<PendingActivation>,
     startup_activation_token: Option<String>,
+    launch_environment: LaunchEnvironment,
     /// Long-lived sources this client registered on the loop, removed when it drops.
     registrations: Vec<RegistrationToken>,
-    /// Cloned into every window state. A window's GPU resources are bound to this connection
-    /// and are released only when its state drops, which can be after the window is closed.
-    connection_lease: Rc<()>,
     pub common: Rc<RefCell<LinuxCommon>>,
     ime_enabled: Option<bool>,
 }
@@ -839,8 +872,8 @@ impl Drop for WaylandConnection {
 
 const WL_DATA_DEVICE_MANAGER_VERSION: u32 = 3;
 
-/// Connects to the socket that `WAYLAND_DISPLAY` names, as `Connection::connect_to_env` does.
-fn connect_to_wayland_display(environment: &DisplayEnvironment) -> anyhow::Result<Connection> {
+/// Returns the path of the socket that `WAYLAND_DISPLAY` names, as libwayland resolves it.
+fn wayland_socket_path(environment: &GraphicalEnvironment) -> anyhow::Result<PathBuf> {
     let display = environment
         .wayland_display
         .as_ref()
@@ -857,9 +890,7 @@ fn connect_to_wayland_display(environment: &DisplayEnvironment) -> anyhow::Resul
             .context("XDG_RUNTIME_DIR is not set")?;
         PathBuf::from(runtime_directory).join(display)
     };
-    let stream = std::os::unix::net::UnixStream::connect(&socket_path)
-        .with_context(|| format!("failed to connect to {}", socket_path.display()))?;
-    Ok(Connection::from_socket(stream)?)
+    Ok(socket_path)
 }
 
 fn wl_seat_version(version: u32) -> anyhow::Result<u32> {
@@ -894,24 +925,32 @@ fn wl_output_version(version: u32) -> anyhow::Result<u32> {
 }
 
 impl WaylandConnection {
-    /// Connects to the Wayland compositor `environment` names and registers its event sources on
-    /// `handle`.
+    /// Connects to the Wayland compositor `environment` names, or through `inherited_socket` when
+    /// given, and registers its event sources on `handle`.
     ///
-    /// The process's own environment gets libwayland's full lookup, which also honours
-    /// `WAYLAND_SOCKET`. Dropping the connection removes its sources, leaving the loop and
-    /// `common` usable without Wayland.
+    /// Dropping the connection removes its sources, leaving the loop and `common` usable without
+    /// Wayland.
     pub(crate) fn attach(
         handle: LoopHandle<'static, ()>,
         common: Rc<RefCell<LinuxCommon>>,
-        environment: &DisplayEnvironment,
-        startup_activation_token: Option<String>,
+        environment: &GraphicalEnvironment,
+        inherited_socket: Option<UnixStream>,
+        activation_token: Option<String>,
     ) -> anyhow::Result<Self> {
-        let conn = if *environment == DisplayEnvironment::from_process_environment() {
-            Connection::connect_to_env().map_err(anyhow::Error::from)
-        } else {
-            connect_to_wayland_display(environment)
-        }
-        .context("failed to connect to Wayland compositor")?;
+        let stream = match inherited_socket {
+            Some(stream) => stream,
+            None => {
+                let socket_path = wayland_socket_path(environment)?;
+                UnixStream::connect(&socket_path).with_context(|| {
+                    format!(
+                        "failed to connect to Wayland compositor at {}",
+                        socket_path.display()
+                    )
+                })?
+            }
+        };
+        let conn =
+            Connection::from_socket(stream).context("failed to connect to Wayland compositor")?;
         let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn)
             .context("failed to initialize Wayland registry")?;
         let qh = event_queue.handle();
@@ -1049,9 +1088,9 @@ impl WaylandConnection {
             primary_data_offer: None,
             cursor,
             pending_activation: None,
-            startup_activation_token,
+            startup_activation_token: activation_token,
+            launch_environment: LaunchEnvironment::new(environment),
             registrations: Vec::new(),
-            connection_lease: Rc::new(()),
             ime_enabled: None,
         }));
 
@@ -1137,9 +1176,8 @@ impl WaylandConnection {
         !self.0.borrow().windows.is_empty()
     }
 
-    /// Whether a closed window's state, and the GPU resources it holds, is still alive.
-    pub(crate) fn has_window_resources(&self) -> bool {
-        Rc::strong_count(&self.0.borrow().connection_lease) > 1
+    pub(crate) fn launch_environment(&self) -> LaunchEnvironment {
+        self.0.borrow().launch_environment.clone()
     }
 }
 
@@ -1240,7 +1278,6 @@ impl WaylandConnection {
             state.gpu_context.clone(),
             compositor_gpu,
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
-            state.connection_lease.clone(),
             params,
             appearance,
             parent,
@@ -1318,7 +1355,7 @@ impl WaylandConnection {
             token.commit();
         } else {
             let executor = state.common.borrow().background_executor.clone();
-            open_uri_internal(executor, uri, None);
+            open_uri_internal(executor, uri, None, state.launch_environment.clone());
         }
     }
 
@@ -1336,7 +1373,7 @@ impl WaylandConnection {
             token.commit();
         } else {
             let executor = state.common.borrow().background_executor.clone();
-            reveal_path_internal(executor, path, None);
+            reveal_path_internal(executor, path, None, state.launch_environment.clone());
         }
     }
 
@@ -1789,10 +1826,13 @@ impl Dispatch<xdg_activation_token_v1::XdgActivationTokenV1, ()> for WaylandClie
 
         if let xdg_activation_token_v1::Event::Done { token } = event {
             let executor = state.common.borrow().background_executor.clone();
+            let launch_environment = state.launch_environment.clone();
             match state.pending_activation.take() {
-                Some(PendingActivation::Uri(uri)) => open_uri_internal(executor, &uri, Some(token)),
+                Some(PendingActivation::Uri(uri)) => {
+                    open_uri_internal(executor, &uri, Some(token), launch_environment)
+                }
                 Some(PendingActivation::Path(path)) => {
-                    reveal_path_internal(executor, path, Some(token))
+                    reveal_path_internal(executor, path, Some(token), launch_environment)
                 }
                 Some(PendingActivation::Window(window)) => {
                     let Some(window) = get_window(&mut state, &window) else {

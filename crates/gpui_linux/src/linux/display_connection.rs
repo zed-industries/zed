@@ -1,8 +1,8 @@
 use std::{path::PathBuf, rc::Rc};
 
 use gpui::{
-    AnyWindowHandle, ClipboardItem, CursorStyle, DisplayEnvironment, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformWindow, WindowParams,
+    AnyWindowHandle, ClipboardItem, CursorStyle, DisplayModes, GraphicalEnvironment,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformWindow, WindowParams,
 };
 
 #[cfg(feature = "wayland")]
@@ -11,42 +11,34 @@ use super::WaylandConnection;
 use super::X11Connection;
 use super::{HeadlessConnection, LinuxKeyboardLayout};
 
-bitflags::bitflags! {
-    /// The display modes a Linux app may start in or switch to.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub struct LinuxDisplayModes: u8 {
-        /// Connected to a Wayland compositor.
-        const WAYLAND = 1 << 0;
-        /// Connected to an X server.
-        const X11 = 1 << 1;
-        /// No display server. Windows are headless: they lay out and handle input but draw
-        /// nothing.
-        const HEADLESS = 1 << 2;
+/// Returns the display server `environment` selects among the windowed modes in `modes`:
+/// Wayland, then X11.
+#[cfg_attr(
+    not(any(feature = "wayland", feature = "x11")),
+    allow(
+        unused_variables,
+        reason = "no windowed modes without a display backend"
+    )
+)]
+pub(crate) fn select_backend(
+    modes: DisplayModes,
+    environment: &GraphicalEnvironment,
+) -> Option<Backend> {
+    let is_set =
+        |value: &Option<std::ffi::OsString>| value.as_ref().is_some_and(|value| !value.is_empty());
+    #[cfg(feature = "wayland")]
+    if modes.contains(DisplayModes::WAYLAND) && is_set(&environment.wayland_display) {
+        return Some(Backend::Wayland);
     }
-}
-
-impl LinuxDisplayModes {
-    /// Returns the display server `environment` selects among the allowed windowed modes:
-    /// Wayland, then X11.
-    pub(crate) fn select_backend(self, environment: &DisplayEnvironment) -> Option<Backend> {
-        let is_set = |value: &Option<std::ffi::OsString>| {
-            value.as_ref().is_some_and(|value| !value.is_empty())
-        };
-        #[cfg(feature = "wayland")]
-        if self.contains(Self::WAYLAND) && is_set(&environment.wayland_display) {
-            return Some(Backend::Wayland);
-        }
-        #[cfg(feature = "x11")]
-        if self.contains(Self::X11) && is_set(&environment.x11_display) {
-            return Some(Backend::X11);
-        }
-        let _ = (is_set, environment);
-        None
+    #[cfg(feature = "x11")]
+    if modes.contains(DisplayModes::X11) && is_set(&environment.x11_display) {
+        return Some(Backend::X11);
     }
+    None
 }
 
 /// A display server that [`DisplayConnection`] can connect to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub(crate) enum Backend {
     #[cfg(feature = "wayland")]
     Wayland,
@@ -55,23 +47,28 @@ pub(crate) enum Backend {
 }
 
 /// The display server a `LinuxPlatform` is connected to.
+///
+/// Every connection follows the same lifecycle, so that switching display modes acquires and
+/// releases the same things at the same points:
+///
+/// - **Attach** (`attach` on the Wayland or X11 connection): connect, create the connection's
+///   state, then register its event sources on the platform's loop. If a step fails, dropping
+///   the partial connection undoes the earlier ones.
+/// - **Detach** (drop): the platform refuses to switch while a window is open. A closed window
+///   has already released everything bound to the connection, including its GPU objects, so
+///   nothing waits. The platform takes the connection out of its `RefCell` before dropping it,
+///   because dropping can call back into the platform. Dropping removes the event sources, stops
+///   the desktop portal listener, hands the clipboard to a clipboard manager (X11, on a
+///   background thread) and closes the connection.
+///
+/// Nothing tied to a display server outlives its connection. What does, in `LinuxCommon`, is
+/// session-independent: the executors, the text system, callbacks and the power listener.
 pub(crate) enum DisplayConnection {
     Headless(HeadlessConnection),
     #[cfg(feature = "wayland")]
     Wayland(WaylandConnection),
     #[cfg(feature = "x11")]
     X11(X11Connection),
-}
-
-impl Drop for DisplayConnection {
-    fn drop(&mut self) {
-        // `WaylandConnection` removes its event-loop sources when dropped; `X11Connection` is a
-        // shared handle, so its sources are removed explicitly.
-        #[cfg(feature = "x11")]
-        if let DisplayConnection::X11(connection) = self {
-            connection.detach();
-        }
-    }
 }
 
 /// Evaluates `$connected` with `$connection` bound to the Wayland or X11 connection, or
@@ -112,9 +109,10 @@ impl DisplayConnection {
         dispatch!(self, connection => connection.has_windows(), headless(connection) => connection.has_windows())
     }
 
-    /// Whether a closed native window is still releasing resources bound to the connection.
-    pub(crate) fn has_window_resources(&self) -> bool {
-        dispatch!(self, connection => connection.has_window_resources(), headless => false)
+    /// The display variables for programs launched while connected, or `None` while headless.
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    pub(crate) fn launch_environment(&self) -> Option<super::LaunchEnvironment> {
+        dispatch!(self, connection => Some(connection.launch_environment()), headless => None)
     }
 
     pub(crate) fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
