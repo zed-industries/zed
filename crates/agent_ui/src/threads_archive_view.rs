@@ -7,7 +7,7 @@ use crate::agent_connection_store::AgentConnectionStore;
 use crate::thread_metadata_store::{
     ThreadId, ThreadMetadata, ThreadMetadataStore, worktree_info_from_thread_paths,
 };
-use crate::{Agent, ArchiveSelectedThread, DEFAULT_THREAD_TITLE, RemoveSelectedThread};
+use crate::{Agent, AgentPanel, ArchiveSelectedThread, DEFAULT_THREAD_TITLE, RemoveSelectedThread};
 
 use agent::ThreadStore;
 use agent_client_protocol::schema::v1 as acp;
@@ -30,6 +30,7 @@ use picker::{
 };
 use platform_title_bar::apply_title_bar_insets;
 use project::{AgentId, AgentServerStore};
+use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 use settings::Settings as _;
 use theme::ActiveTheme;
 use ui::{
@@ -736,6 +737,7 @@ impl ThreadsArchiveView {
                                         thread_id,
                                         session_id.clone(),
                                         agent.clone(),
+                                        thread.remote_connection.clone(),
                                         cx,
                                     );
                                     cx.stop_propagation();
@@ -806,6 +808,7 @@ impl ThreadsArchiveView {
             thread.thread_id,
             thread.session_id.clone(),
             thread.agent_id.clone(),
+            thread.remote_connection.clone(),
             cx,
         );
     }
@@ -815,27 +818,30 @@ impl ThreadsArchiveView {
         thread_id: ThreadId,
         session_id: Option<acp::SessionId>,
         agent: AgentId,
+        remote_connection: Option<RemoteConnectionOptions>,
         cx: &mut Context<Self>,
     ) {
         ThreadMetadataStore::global(cx).update(cx, |store, cx| store.delete(thread_id, cx));
 
-        let agent = Agent::from(agent);
-
-        let Some(agent_connection_store) = self.agent_connection_store.upgrade() else {
-            return;
-        };
-        let fs = <dyn Fs>::global(cx);
-
-        let task = agent_connection_store.update(cx, |store, cx| {
-            store
-                .request_connection(agent.clone(), agent.server(fs, ThreadStore::global(cx)), cx)
-                .read(cx)
-                .wait_for_connection()
+        let connection_store = self.connection_store_for_remote(remote_connection.as_ref(), cx);
+        let connection_task = connection_store.map(|connection_store| {
+            let agent = Agent::from(agent);
+            let fs = <dyn Fs>::global(cx);
+            connection_store.update(cx, |store, cx| {
+                store
+                    .request_connection(agent.clone(), agent.server(fs, ThreadStore::global(cx)), cx)
+                    .read(cx)
+                    .wait_for_connection()
+            })
         });
+
         cx.spawn(async move |_this, cx| {
             crate::thread_worktree_archive::cleanup_thread_archived_worktrees(thread_id, cx).await;
 
-            let state = task.await?;
+            let Some(connection_task) = connection_task else {
+                return Ok(());
+            };
+            let state = connection_task.await?;
             let task = cx.update(|cx| {
                 if let Some(session_id) = &session_id {
                     if let Some(list) = state
@@ -854,6 +860,34 @@ impl ThreadsArchiveView {
             task.await
         })
         .detach_and_log_err(cx);
+    }
+
+    fn connection_store_for_remote(
+        &self,
+        remote_connection: Option<&RemoteConnectionOptions>,
+        cx: &App,
+    ) -> Option<Entity<AgentConnectionStore>> {
+        let matches = |store: &Entity<AgentConnectionStore>| {
+            let project = store.read(cx).project().read(cx);
+            same_remote_connection_identity(
+                project.remote_connection_options(cx).as_ref(),
+                remote_connection,
+            )
+        };
+
+        if let Some(store) = self.agent_connection_store.upgrade()
+            && matches(&store)
+        {
+            return Some(store);
+        }
+
+        let workspace = self.workspace.upgrade()?;
+        let multi_workspace = workspace.read(cx).multi_workspace()?.upgrade()?;
+        multi_workspace.read(cx).workspaces().find_map(|workspace| {
+            let panel = workspace.read(cx).panel::<AgentPanel>(cx)?;
+            let store = panel.read(cx).connection_store().clone();
+            matches(&store).then_some(store)
+        })
     }
 
     fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
