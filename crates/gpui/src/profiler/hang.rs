@@ -18,7 +18,9 @@ use serde::Serialize;
 #[cfg(not(target_family = "wasm"))]
 mod monitor;
 #[cfg(not(target_family = "wasm"))]
-pub use monitor::{HangMonitor, HangMonitorPoll, HangMonitorPollReason};
+pub(crate) use monitor::{HANG_MONITOR_FLUSH_TIMEOUT, HangMonitor};
+#[cfg(not(target_family = "wasm"))]
+pub use monitor::{HangMonitorConfig, HangMonitorError, HangMonitorPoll, HangMonitorPollReason};
 
 /// Version of the power/visibility-aware measurement rules.
 pub const MEASUREMENT_VERSION: u32 = 2;
@@ -682,6 +684,55 @@ mod tests {
             receiver.recv_timeout(Duration::from_secs(10)),
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected),
         );
+    }
+
+    #[gpui::test]
+    fn app_flushes_its_hang_monitor_on_shutdown(cx: &mut TestAppContext) {
+        use super::{HangMonitorConfig, HangMonitorPollReason};
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        cx.update(|cx| {
+            cx.start_hang_monitor(
+                HangMonitorConfig {
+                    threshold: HANG_THRESHOLD,
+                    frame_budget: FRAME_BUDGET,
+                    // Longer than the test, so only shutdown can poll.
+                    interval: Duration::from_secs(3600),
+                },
+                move |poll| {
+                    sender.send(poll.reason).ok();
+                },
+            )
+            .expect("start hang monitor");
+        });
+        assert!(receiver.try_recv().is_err());
+
+        cx.update(|cx| cx.shutdown());
+        assert_eq!(receiver.try_recv().ok(), Some(HangMonitorPollReason::Flush));
+    }
+
+    #[gpui::test]
+    fn starting_the_hang_monitor_twice_is_rejected(cx: &mut TestAppContext) {
+        use super::{HangMonitorConfig, HangMonitorError};
+
+        let config = HangMonitorConfig {
+            threshold: HANG_THRESHOLD,
+            frame_budget: FRAME_BUDGET,
+            interval: Duration::from_secs(3600),
+        };
+        cx.update(|cx| {
+            cx.start_hang_monitor(config, |_| {})
+                .expect("start hang monitor");
+            let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                cx.start_hang_monitor(config, |_| {})
+            }));
+            // Debug builds also assert, so misuse is caught during development.
+            if cfg!(debug_assertions) {
+                assert!(second.is_err());
+            } else {
+                assert!(matches!(second, Ok(Err(HangMonitorError::AlreadyStarted))));
+            }
+        });
     }
 
     #[test]

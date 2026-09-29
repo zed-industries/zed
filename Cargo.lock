@@ -7999,6 +7999,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hang_telemetry"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "hdrhistogram",
+ "log",
+ "serde_json",
+ "telemetry_events",
+]
+
+[[package]]
 name = "harfrust"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15180,17 +15191,6 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "semver",
-]
-
-[[package]]
-name = "reliability"
-version = "0.1.0"
-dependencies = [
- "gpui",
- "hdrhistogram",
- "log",
- "serde_json",
- "telemetry_events",
 ]
 
 [[package]]
@@ -22844,6 +22844,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "gpui_tokio",
+ "hang_telemetry",
  "http_client",
  "image",
  "image_viewer",
@@ -22891,7 +22892,6 @@ dependencies = [
  "rayon",
  "recent_projects",
  "release_channel",
- "reliability",
  "remote",
  "remote_server",
  "repl",

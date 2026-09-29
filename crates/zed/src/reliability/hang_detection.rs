@@ -2,9 +2,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use ::reliability::HangReporting;
 use client::Client;
 use gpui::{AppContext, TasksIncluded, profiler};
+use hang_telemetry::HangTelemetry;
 use ui::App;
 
 use crate::STARTUP_TIME;
@@ -25,7 +25,7 @@ gpui::actions!(
 );
 
 pub(crate) fn start(client: Arc<Client>, cx: &mut App) {
-    let hang_time = ::reliability::hang_threshold();
+    let hang_time = hang_telemetry::hang_threshold();
 
     if cfg!(debug_assertions) {
         log::warn!("debug build, only reporting hangs longer then {hang_time:?}");
@@ -66,25 +66,17 @@ pub(crate) fn start(client: Arc<Client>, cx: &mut App) {
     });
 }
 
-fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &App) {
+fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &mut App) {
     let foreground_thread = thread::current().id();
     let monitor_interval = Duration::from_secs(1);
     let started = Instant::now();
     let startup = *STARTUP_TIME.get().unwrap_or(&started);
-    let hang_reporting = HangReporting::start(
-        cx.foreground_journal(),
-        startup,
-        telemetry::send_event,
-        None,
-    );
-    match hang_reporting {
-        Ok(hang_reporting) => {
-            cx.on_app_quit(move |_| {
-                hang_reporting.flush();
-                client.telemetry().flush_events()
-            })
-            .detach();
-        }
+    // GPUI flushes the monitor's final batch before quit observers run, so
+    // this flush delivers it.
+    match HangTelemetry::new(startup, telemetry::send_event).start(cx) {
+        Ok(()) => cx
+            .on_app_quit(move |_| client.telemetry().flush_events())
+            .detach(),
         Err(error) => log::error!("failed to start hang reporting: {error}"),
     }
 
