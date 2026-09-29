@@ -111,10 +111,66 @@ pub(crate) const DRAFT_PROMPT_PERSIST_DEBOUNCE: Duration = Duration::from_millis
 
 pub(crate) mod elicitation;
 mod message_queue;
+mod sticky_user_message_preview;
 mod thread_search_bar;
 mod thread_view;
 pub use message_queue::*;
 pub use thread_view::*;
+
+/// A single renderable piece of a user message, used to build condensed
+/// one-line previews of a message outside of its full markdown rendering.
+///
+/// Mentions are kept separate from surrounding text so they can be drawn as
+/// chips (with their icon) rather than flattened into raw URIs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum UserMessageContentSegment {
+    Text(String),
+    Mention { uri: MentionUri, label: String },
+}
+
+/// Converts a single content block of a user message into a preview segment.
+///
+/// Returns `None` for block kinds that have no meaningful inline
+/// representation. Blocks whose URI fails to parse degrade to plain text
+/// rather than being dropped, so no part of the message silently disappears
+/// from the preview.
+pub(crate) fn parse_content_block(
+    block: &acp_v2::ContentBlock,
+    path_style: PathStyle,
+) -> Option<UserMessageContentSegment> {
+    let mention = |uri: MentionUri| UserMessageContentSegment::Mention {
+        label: format!("@{}", uri.name()),
+        uri,
+    };
+
+    match block {
+        acp_v2::ContentBlock::Text(text_content) => {
+            Some(UserMessageContentSegment::Text(text_content.text.clone()))
+        }
+        acp_v2::ContentBlock::ResourceLink(link) => Some(
+            MentionUri::parse(&link.uri, path_style)
+                .map(mention)
+                .unwrap_or_else(|_| UserMessageContentSegment::Text(format!("@{}", link.name))),
+        ),
+        acp_v2::ContentBlock::Resource(acp_v2::EmbeddedResource {
+            resource: acp_v2::EmbeddedResourceResource::TextResourceContents(resource),
+            ..
+        }) => Some(
+            MentionUri::parse(&resource.uri, path_style)
+                .map(mention)
+                .unwrap_or_else(|_| UserMessageContentSegment::Text(resource.uri.clone())),
+        ),
+        acp_v2::ContentBlock::Image(acp_v2::ImageContent { uri, .. }) => Some(match uri {
+            Some(uri) => MentionUri::parse(uri, path_style)
+                .map(mention)
+                .unwrap_or_else(|_| UserMessageContentSegment::Text(uri.clone())),
+            None => mention(MentionUri::PastedImage {
+                name: "Image".to_string(),
+            }),
+        }),
+        _ => None,
+    }
+}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ThreadFeedback {
