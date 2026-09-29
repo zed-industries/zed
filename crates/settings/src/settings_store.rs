@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result};
-use collections::{BTreeMap, HashMap, btree_map, hash_map};
+use collections::{BTreeMap, HashMap, TypeIdHashMap, btree_map, hash_map};
 use fs::Fs;
 use futures::{
     FutureExt, StreamExt,
@@ -13,7 +13,7 @@ use gpui::{
 use paths::{local_settings_file_relative_path, task_file_name};
 use schemars::{JsonSchema, json_schema};
 use serde_json::Value;
-use settings_content::{ActionName, ParseStatus};
+use settings_content::{CommandAliasTarget, ParseStatus};
 use std::{
     any::{Any, TypeId, type_name},
     fmt::Debug,
@@ -32,12 +32,12 @@ use util::{
 use crate::editorconfig_store::EditorconfigStore;
 
 use crate::{
-    ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
+    ActiveSettingsProfileName, FileTypeMap, FontFamilyName, IconThemeName, LanguageSettingsContent,
     LanguageToSettingsMap, LspSettings, LspSettingsMap, SemanticTokenRules, ThemeName,
     UserSettingsContentExt, VsCodeSettings, WorktreeId,
     settings_content::{
-        ExtensionsSettingsContent, ProfileBase, ProjectSettingsContent, RootUserSettings,
-        SettingsContent, UserSettingsContent, merge_from::MergeFrom,
+        ExtendingSet, ExtensionsSettingsContent, ProfileBase, ProjectSettingsContent,
+        RootUserSettings, SettingsContent, UserSettingsContent, merge_from::MergeFrom,
     },
 };
 
@@ -58,11 +58,11 @@ pub trait SettingsKey: 'static + Send + Sync {
 ///
 /// Settings can be loaded from a combination of multiple JSON files.
 pub trait Settings: 'static + Send + Sync + Sized {
-    /// The name of the keys in the [`FileContent`](Self::FileContent) that should
+    /// The name of the keys in the [`SettingsContent`] that should
     /// always be written to a settings file, even if their value matches the default
     /// value.
     ///
-    /// This is useful for tagged [`FileContent`](Self::FileContent)s where the tag
+    /// This is useful for tagged [`SettingsContent`]s where the tag
     /// is a "version" field that should always be persisted, even if the current
     /// user settings match the current version of the settings.
     const PRESERVED_KEYS: Option<&'static [&'static str]> = None;
@@ -143,7 +143,7 @@ pub struct SettingsLocation<'a> {
 }
 
 pub struct SettingsStore {
-    setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
+    setting_values: TypeIdHashMap<Box<dyn AnySettingValue>>,
     default_settings: Rc<SettingsContent>,
     user_settings: Option<UserSettingsContent>,
     global_settings: Option<Box<SettingsContent>>,
@@ -228,7 +228,7 @@ impl LocalSettingsPath {
 
     pub fn to_proto(&self) -> String {
         match self {
-            Self::InWorktree(path) => path.to_proto(),
+            Self::InWorktree(path) => path.as_unix_str().to_owned(),
             Self::OutsideWorktree(path) => path.to_string_lossy().to_string(),
         }
     }
@@ -237,7 +237,7 @@ impl LocalSettingsPath {
         if is_outside_worktree {
             Ok(Self::OutsideWorktree(PathBuf::from(path).into()))
         } else {
-            Ok(Self::InWorktree(RelPath::from_proto(path)?))
+            Ok(Self::InWorktree(RelPath::from_unix_str(path)?.into()))
         }
     }
 }
@@ -286,8 +286,16 @@ pub struct SettingsJsonSchemaParams<'a> {
 
 impl SettingsStore {
     pub fn new(cx: &mut App, default_settings: &str) -> Self {
-        let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
+        Self::new_with_semantic_tokens(cx, default_settings)
+    }
+
+    pub fn new_with_semantic_tokens(cx: &mut App, default_settings: &str) -> Self {
         let default_settings = Self::parse_default_settings(default_settings).unwrap();
+        Self::from_settings_content(cx, default_settings)
+    }
+
+    fn from_settings_content(cx: &mut App, default_settings: SettingsContent) -> Self {
+        let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
         if !cx.has_global::<DefaultSemanticTokenRules>() {
             cx.set_global::<DefaultSemanticTokenRules>(
                 crate::parse_json_with_comments::<SemanticTokenRules>(
@@ -504,7 +512,11 @@ impl SettingsStore {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut App) -> Self {
-        Self::new(cx, &crate::test_settings())
+        static CACHED_SETTINGS_CONTENT: std::sync::LazyLock<SettingsContent> =
+            std::sync::LazyLock::new(|| {
+                SettingsContent::parse_json_with_comments(crate::test_settings()).unwrap()
+            });
+        Self::from_settings_content(cx, CACHED_SETTINGS_CONTENT.clone())
     }
 
     /// Updates the value of a setting in the user's global configuration.
@@ -547,7 +559,7 @@ impl SettingsStore {
     fn update_settings_file_inner(
         &self,
         fs: Arc<dyn Fs>,
-        update: impl 'static + Send + FnOnce(String, AsyncApp) -> Result<String>,
+        update: Box<dyn Send + FnOnce(String, AsyncApp) -> Result<String>>,
     ) -> oneshot::Receiver<Result<()>> {
         let (tx, rx) = oneshot::channel::<Result<()>>();
         self.setting_file_updates_tx
@@ -614,11 +626,17 @@ impl SettingsStore {
         fs: Arc<dyn Fs>,
         update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
     ) -> oneshot::Receiver<Result<()>> {
-        self.update_settings_file_inner(fs, move |old_text: String, cx: AsyncApp| {
-            cx.read_global(|store: &SettingsStore, cx| {
-                store.new_text_for_update(old_text, |content| update(content, cx))
-            })
-        })
+        let mut update = Some(update);
+        self.update_settings_file_inner(
+            fs,
+            Box::new(move |old_text: String, cx: AsyncApp| {
+                cx.read_global(|store: &SettingsStore, cx| {
+                    store.new_text_for_update_inner(old_text, &mut |content| {
+                        (update.take().expect("called once"))(content, cx)
+                    })
+                })
+            }),
+        )
     }
 
     pub fn import_vscode_settings(
@@ -626,11 +644,14 @@ impl SettingsStore {
         fs: Arc<dyn Fs>,
         vscode_settings: VsCodeSettings,
     ) -> oneshot::Receiver<Result<()>> {
-        self.update_settings_file_inner(fs, move |old_text: String, cx: AsyncApp| {
-            cx.read_global(|store: &SettingsStore, _cx| {
-                store.get_vscode_edits(old_text, &vscode_settings)
-            })
-        })
+        self.update_settings_file_inner(
+            fs,
+            Box::new(move |old_text: String, cx: AsyncApp| {
+                cx.read_global(|store: &SettingsStore, _cx| {
+                    store.get_vscode_edits(old_text, &vscode_settings)
+                })
+            }),
+        )
     }
 
     pub fn get_all_files(&self) -> Vec<SettingsFile> {
@@ -821,7 +842,18 @@ impl SettingsStore {
         old_text: String,
         update: impl FnOnce(&mut SettingsContent),
     ) -> Result<String> {
-        let edits = self.edits_for_update(&old_text, update)?;
+        let mut update = Some(update);
+        self.new_text_for_update_inner(old_text, &mut |content| {
+            (update.take().expect("called once"))(content)
+        })
+    }
+
+    fn new_text_for_update_inner(
+        &self,
+        old_text: String,
+        update: &mut dyn FnMut(&mut SettingsContent),
+    ) -> Result<String> {
+        let edits = self.edits_for_update_inner(&old_text, update)?;
         let mut new_text = old_text;
         for (range, replacement) in edits.into_iter() {
             new_text.replace_range(range, &replacement);
@@ -841,6 +873,17 @@ impl SettingsStore {
         &self,
         text: &str,
         update: impl FnOnce(&mut SettingsContent),
+    ) -> Result<Vec<(Range<usize>, String)>> {
+        let mut update = Some(update);
+        self.edits_for_update_inner(text, &mut |content| {
+            (update.take().expect("called once"))(content)
+        })
+    }
+
+    fn edits_for_update_inner(
+        &self,
+        text: &str,
+        update: &mut dyn FnMut(&mut SettingsContent),
     ) -> Result<Vec<(Range<usize>, String)>> {
         let old_content = if text.trim().is_empty() {
             UserSettingsContent::default()
@@ -1036,7 +1079,7 @@ impl SettingsStore {
                 return Err(InvalidSettingsError::Tasks {
                     message: "Attempted to submit tasks into the settings store".to_string(),
                     path: directory_path
-                        .join(RelPath::unix(task_file_name()).unwrap())
+                        .join(RelPath::from_unix_str(task_file_name()).unwrap())
                         .as_std_path()
                         .to_path_buf(),
                 });
@@ -1046,7 +1089,7 @@ impl SettingsStore {
                     message: "Attempted to submit debugger config into the settings store"
                         .to_string(),
                     path: directory_path
-                        .join(RelPath::unix(task_file_name()).unwrap())
+                        .join(RelPath::from_unix_str(task_file_name()).unwrap())
                         .as_std_path()
                         .to_path_buf(),
                 });
@@ -1073,7 +1116,9 @@ impl SettingsStore {
                     ParseStatus::Success => Ok(()),
                     ParseStatus::Unchanged => Ok(()),
                     ParseStatus::Failed { error } => Err(InvalidSettingsError::LocalSettings {
-                        path: directory_path.join(local_settings_file_relative_path()),
+                        path: directory_path
+                            .join(local_settings_file_relative_path())
+                            .into(),
                         message: error,
                     }),
                 }?;
@@ -1157,10 +1202,10 @@ impl SettingsStore {
     ) -> impl '_ + Iterator<Item = (Arc<RelPath>, &ProjectSettingsContent)> {
         self.local_settings
             .range(
-                (root_id, RelPath::empty().into())
+                (root_id, RelPath::empty_arc())
                     ..(
                         WorktreeId::from_usize(root_id.to_usize() + 1),
-                        RelPath::empty().into(),
+                        RelPath::empty_arc(),
                     ),
             )
             .map(|((_, path), content)| (path.clone(), &content.project))
@@ -1185,6 +1230,17 @@ impl SettingsStore {
                     "type": "object",
                     "errorMessage": "No language with this name is installed.",
                     "properties": params.language_names.iter().map(|name| (name.clone(), language_settings_content_ref.clone())).collect::<serde_json::Map<_, _>>()
+                })
+            });
+
+            let file_type_patterns_ref =
+                generator.subschema_for::<ExtendingSet<String>>().to_value();
+            replace_subschema::<FileTypeMap>(generator, || {
+                json_schema!({
+                    "type": "object",
+                    "errorMessage": "No language with this name is installed.",
+                    "properties": params.language_names.iter().map(|name| (name.clone(), file_type_patterns_ref.clone())).collect::<serde_json::Map<_, _>>(),
+                    "additionalProperties": file_type_patterns_ref.clone()
                 })
             });
         }
@@ -1275,9 +1331,9 @@ impl SettingsStore {
         }
 
         if !params.action_names.is_empty() {
-            replace_subschema::<ActionName>(&mut generator, || {
-                ActionName::build_schema(
-                    params.action_names.iter().copied(),
+            replace_subschema::<CommandAliasTarget>(&mut generator, || {
+                CommandAliasTarget::build_schema(
+                    params.action_names,
                     params.action_documentation,
                     params.deprecations,
                     params.deprecation_messages,
@@ -2177,6 +2233,9 @@ mod tests {
             r#" { "editor.tabSize": 37 } "#.to_owned(),
             r#"{
               "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
               "tab_size": 37
             }
             "#
@@ -2195,6 +2254,9 @@ mod tests {
             r#"{ "editor.tabSize": 42 }"#.to_owned(),
             r#"{
                 "base_keymap": "VSCode",
+                "minimap": {
+                    "show": "always"
+                },
                 "tab_size": 42,
                 "preferred_line_length": 99,
             }
@@ -2215,6 +2277,9 @@ mod tests {
             r#"{}"#.to_owned(),
             r#"{
                 "base_keymap": "VSCode",
+                "minimap": {
+                    "show": "always"
+                },
                 "preferred_line_length": 99,
                 "tab_size": 42
             }
@@ -2241,6 +2306,9 @@ mod tests {
               "base_keymap": "VSCode",
               "tabs": {
                 "git_status": true
+              },
+              "minimap": {
+                "show": "always"
               }
             }
             "#
@@ -2265,7 +2333,10 @@ mod tests {
                 "sort_mode": "mixed",
                 "sort_order": "lower"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2282,6 +2353,9 @@ mod tests {
             r#"{ "editor.fontFamily": "Cascadia Code, 'Consolas', Courier New" }"#.to_owned(),
             r#"{
               "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
               "buffer_font_fallbacks": [
                 "Consolas",
                 "Courier New"
@@ -2305,7 +2379,10 @@ mod tests {
               "terminal": {
                 "bell": "system"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2324,7 +2401,10 @@ mod tests {
               "terminal": {
                 "bell": "off"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2343,7 +2423,10 @@ mod tests {
               "terminal": {
                 "bell": "system"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2362,7 +2445,10 @@ mod tests {
               "terminal": {
                 "bell": "off"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2385,7 +2471,10 @@ mod tests {
               "terminal": {
                 "bell": "off"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2406,8 +2495,224 @@ mod tests {
             .to_owned(),
             r#"{
               "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
               "hover_popover_hiding_delay": 500,
               "hover_popover_sticky": false
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // formatOnSave: true with formatOnSaveMode: modificationsIfAvailable
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSave": true, "editor.formatOnSaveMode": "modificationsIfAvailable" }"#
+                .to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
+              "format_on_save": "modifications_if_available"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // formatOnSave: true with formatOnSaveMode: modifications
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSave": true, "editor.formatOnSaveMode": "modifications" }"#
+                .to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
+              "format_on_save": "modifications"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // formatOnSave: true with formatOnSaveMode: file
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSave": true, "editor.formatOnSaveMode": "file" }"#.to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
+              "format_on_save": "on"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // formatOnSaveMode is ignored when formatOnSave is disabled, as in VS Code
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSave": false, "editor.formatOnSaveMode": "modifications" }"#
+                .to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
+              "format_on_save": "off"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // formatOnSaveMode alone does nothing, as formatOnSave defaults to false in VS Code
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSaveMode": "modifications" }"#.to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // formatOnSaveMode not set, formatOnSave: true
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSave": true }"#.to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
+              "format_on_save": "on"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // formatOnSaveMode not set, formatOnSave: false
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSave": false }"#.to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
+              "format_on_save": "off"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // re-importing a file association that is already present should be
+        // idempotent rather than appending a duplicate extension (#56536)
+        check_vscode_import(
+            &mut store,
+            r#"{
+              "file_types": {
+                "c": ["*.keymap"]
+              }
+            }
+            "#
+            .unindent(),
+            r#"{ "files.associations": { "*.keymap": "c" } }"#.to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
+              "file_types": {
+                "c": ["*.keymap"]
+              }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{
+              "window.title": "${activeEditorShort}${separator}${rootName}${separator}${appName}",
+              "window.titleSeparator": " - "
+            }"#
+            .unindent(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
+              "window_title_separator": " - ",
+              "window_title_format": "${fileName}${separator}${projectName}${separator}${appName}"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{
+              "window.title": "${unsupportedVariable}"
+            }"#
+            .unindent(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2518,7 +2823,7 @@ mod tests {
         store
             .set_user_settings(r#"{"preferred_line_length": 0}"#, cx)
             .unwrap();
-        let local = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
+        let local = (WorktreeId::from_usize(0), RelPath::empty_arc());
         store
             .set_local_settings(
                 local.0,
@@ -2578,27 +2883,21 @@ mod tests {
         store.register_setting::<DefaultLanguageSettings>();
         store.register_setting::<AutoUpdateSetting>();
 
-        let local_1 = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
+        let local_1 = (WorktreeId::from_usize(0), RelPath::empty_arc());
 
         let local_1_child = (
             WorktreeId::from_usize(0),
-            RelPath::new(
-                std::path::Path::new("child1"),
-                util::paths::PathStyle::Posix,
-            )
-            .unwrap()
-            .into_arc(),
+            RelPath::new(std::path::Path::new("child1"), util::paths::PathStyle::Unix)
+                .unwrap()
+                .into_arc(),
         );
 
-        let local_2 = (WorktreeId::from_usize(1), RelPath::empty().into_arc());
+        let local_2 = (WorktreeId::from_usize(1), RelPath::empty_arc());
         let local_2_child = (
             WorktreeId::from_usize(1),
-            RelPath::new(
-                std::path::Path::new("child2"),
-                util::paths::PathStyle::Posix,
-            )
-            .unwrap()
-            .into_arc(),
+            RelPath::new(std::path::Path::new("child2"), util::paths::PathStyle::Unix)
+                .unwrap()
+                .into_arc(),
         );
 
         fn get(content: &SettingsContent) -> Option<&u32> {
@@ -2711,11 +3010,11 @@ mod tests {
         let mut store = SettingsStore::new(cx, &test_settings());
         store.register_setting::<DefaultLanguageSettings>();
 
-        let wt0_root = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
+        let wt0_root = (WorktreeId::from_usize(0), RelPath::empty_arc());
         let wt0_child1 = (WorktreeId::from_usize(0), rel_path("child1").into_arc());
         let wt0_child2 = (WorktreeId::from_usize(0), rel_path("child2").into_arc());
 
-        let wt1_root = (WorktreeId::from_usize(1), RelPath::empty().into_arc());
+        let wt1_root = (WorktreeId::from_usize(1), RelPath::empty_arc());
         let wt1_subdir = (WorktreeId::from_usize(1), rel_path("subdir").into_arc());
 
         fn get(content: &SettingsContent) -> &Option<u32> {
@@ -2833,15 +3132,13 @@ mod tests {
 
     #[test]
     fn test_file_ord() {
-        let wt0_root =
-            SettingsFile::Project((WorktreeId::from_usize(0), RelPath::empty().into_arc()));
+        let wt0_root = SettingsFile::Project((WorktreeId::from_usize(0), RelPath::empty_arc()));
         let wt0_child1 =
             SettingsFile::Project((WorktreeId::from_usize(0), rel_path("child1").into_arc()));
         let wt0_child2 =
             SettingsFile::Project((WorktreeId::from_usize(0), rel_path("child2").into_arc()));
 
-        let wt1_root =
-            SettingsFile::Project((WorktreeId::from_usize(1), RelPath::empty().into_arc()));
+        let wt1_root = SettingsFile::Project((WorktreeId::from_usize(1), RelPath::empty_arc()));
         let wt1_subdir =
             SettingsFile::Project((WorktreeId::from_usize(1), rel_path("subdir").into_arc()));
 
@@ -2980,6 +3277,42 @@ mod tests {
             settings_ref,
             "zed://schemas/settings/lsp/rust-analyzer/settings"
         );
+    }
+
+    #[gpui::test]
+    fn test_file_types_schema_generation(cx: &mut App) {
+        SettingsStore::test(cx);
+
+        let schema = SettingsStore::json_schema(&SettingsJsonSchemaParams {
+            language_names: &["Rust".to_string(), "TypeScript".to_string()],
+            font_names: &["Zed Mono".to_string()],
+            theme_names: &["One Dark".into()],
+            icon_theme_names: &["Zed Icons".into()],
+            lsp_adapter_names: &[],
+            action_names: &[],
+            action_documentation: &HashMap::default(),
+            deprecations: &HashMap::default(),
+            deprecation_messages: &HashMap::default(),
+        });
+
+        let file_type_map = schema
+            .pointer("/$defs/FileTypeMap")
+            .expect("schema should have a FileTypeMap definition");
+        let properties = file_type_map
+            .pointer("/properties")
+            .expect("FileTypeMap should have properties")
+            .as_object()
+            .expect("FileTypeMap properties should be an object");
+
+        let mut language_names = properties.keys().collect::<Vec<_>>();
+        language_names.sort();
+        assert_eq!(language_names, ["Rust", "TypeScript"]);
+
+        let patterns_schema = file_type_map
+            .pointer("/additionalProperties")
+            .expect("FileTypeMap should validate values of unknown language names");
+        assert_eq!(properties.get("Rust"), Some(patterns_schema));
+        assert_eq!(properties.get("TypeScript"), Some(patterns_schema));
     }
 
     #[gpui::test]

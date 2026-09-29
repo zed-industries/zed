@@ -9,7 +9,7 @@ use ui::{Render, prelude::*};
 
 pub struct AgentNotification {
     title: SharedString,
-    caption: SharedString,
+    caption: Option<SharedString>,
     icon: IconName,
     project_name: Option<SharedString>,
 }
@@ -17,13 +17,13 @@ pub struct AgentNotification {
 impl AgentNotification {
     pub fn new(
         title: impl Into<SharedString>,
-        caption: impl Into<SharedString>,
+        caption: Option<SharedString>,
         icon: IconName,
         project_name: Option<impl Into<SharedString>>,
     ) -> Self {
         Self {
             title: title.into(),
-            caption: caption.into(),
+            caption: caption,
             icon,
             project_name: project_name.map(|name| name.into()),
         }
@@ -150,26 +150,27 @@ impl Render for AgentNotification {
                                     .when_some(
                                         self.project_name.clone(),
                                         |description, project_name| {
-                                            description.child(
-                                                h_flex()
-                                                    .gap_1p5()
-                                                    .child(
-                                                        div()
-                                                            .max_w_16()
-                                                            .truncate()
-                                                            .child(project_name),
-                                                    )
-                                                    .child(
-                                                        div().size(px(3.)).rounded_full().bg(cx
-                                                            .theme()
-                                                            .colors()
-                                                            .text
-                                                            .opacity(0.5)),
-                                                    ),
-                                            )
+                                            let has_caption = self.caption.is_some();
+                                            let project = div()
+                                                .truncate()
+                                                .when(has_caption, |this| this.max_w_16())
+                                                .child(project_name);
+                                            let mut row = h_flex().gap_1p5().child(project);
+                                            if has_caption {
+                                                row = row.child(
+                                                    div().size(px(3.)).rounded_full().bg(cx
+                                                        .theme()
+                                                        .colors()
+                                                        .text
+                                                        .opacity(0.5)),
+                                                );
+                                            }
+                                            description.child(row)
                                         },
                                     )
-                                    .child(self.caption.clone())
+                                    .when_some(self.caption.clone(), |description, caption| {
+                                        description.child(caption)
+                                    })
                                     .child(gradient_overflow()),
                             ),
                     ),

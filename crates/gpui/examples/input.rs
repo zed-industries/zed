@@ -1,5 +1,8 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
+#[path = "example_support/fonts.rs"]
+mod example_support;
+
 use std::ops::Range;
 
 use gpui::{
@@ -696,6 +699,9 @@ impl Render for InputExample {
 
 fn run_example() {
     application().run(|cx: &mut App| {
+        if !example_support::load_fonts(cx) {
+            return;
+        }
         let bounds = Bounds::centered(None, size(px(300.0), px(300.0)), cx);
         cx.bind_keys([
             KeyBinding::new("backspace", Backspace, None),

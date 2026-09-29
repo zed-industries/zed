@@ -1,7 +1,34 @@
 #!/usr/bin/env bash
 
-set -e
+set -eu
 
-git pull --ff-only origin main
-git tag -f extension-cli
-git push -f origin extension-cli
+usage() {
+  echo "Usage: $0 <message>"
+  echo ""
+  echo "Triggers the publish_extension_cli workflow on main to build a new"
+  echo "extension CLI binary, bump the 'extension-cli' tag after a successful"
+  echo "build, and open PRs that update the SHA used by the zed and"
+  echo "zed-industries/extensions repositories."
+  echo ""
+  echo "Arguments:"
+  echo "  message    Describes why the extension CLI is being bumped /"
+  echo "             what the changes include. Included in the PR bodies."
+  exit 1
+}
+
+if [[ $# -lt 1 || -z "${1:-}" ]]; then
+  echo "error: a message describing the bump is required" >&2
+  echo "" >&2
+  usage >&2
+fi
+
+which gh > /dev/null 2>&1 || {
+  echo "error: GitHub CLI (gh) is required but not installed." >&2
+  echo "Install it with: brew install gh" >&2
+  exit 1
+}
+
+gh workflow run publish_extension_cli.yml --ref main -f message="$1"
+
+echo "Workflow triggered. Monitor progress at:"
+echo "  https://github.com/zed-industries/zed/actions/workflows/publish_extension_cli.yml"

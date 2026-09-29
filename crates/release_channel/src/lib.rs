@@ -7,15 +7,31 @@ use std::{env, str::FromStr, sync::LazyLock};
 use gpui::{App, Global};
 use semver::Version;
 
+const ZED_DOCS_URL: &str = "https://zed.dev/docs";
+
 /// stable | dev | nightly | preview
 pub static RELEASE_CHANNEL_NAME: LazyLock<String> = LazyLock::new(|| {
     if cfg!(debug_assertions) {
-        env::var("ZED_RELEASE_CHANNEL")
-            .unwrap_or_else(|_| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string())
+        env::var("ZED_RELEASE_CHANNEL").unwrap_or_else(|_| compile_time_release_channel_name())
     } else {
-        include_str!("../../zed/RELEASE_CHANNEL").trim().to_string()
+        compile_time_release_channel_name()
     }
 });
+
+/// When a crate in zed is used as a dependency that uses the `crane` nix
+/// library, it vendors each crate separately and builds it in isolation, which
+/// makes the `include_str!` fail.
+///
+/// The build script checks for `$ZED_RELEASE_CHANNEL` and emits the `cfg`
+#[cfg(__do_not_set_zed_release_channel)]
+fn compile_time_release_channel_name() -> String {
+    env!("ZED_RELEASE_CHANNEL").trim().to_string()
+}
+
+#[cfg(not(__do_not_set_zed_release_channel))]
+fn compile_time_release_channel_name() -> String {
+    include_str!("../../zed/RELEASE_CHANNEL").trim().to_string()
+}
 
 #[doc(hidden)]
 pub static RELEASE_CHANNEL: LazyLock<ReleaseChannel> =
@@ -153,6 +169,14 @@ pub fn init_test(app_version: Version, release_channel: ReleaseChannel, cx: &mut
     cx.set_global(GlobalReleaseChannel(release_channel))
 }
 
+/// Returns the Zed docs URL for the current release channel for the given
+/// `slug`.
+pub fn docs_url(slug: &str, cx: &App) -> String {
+    ReleaseChannel::try_global(cx)
+        .unwrap_or(*RELEASE_CHANNEL)
+        .docs_url(slug)
+}
+
 impl ReleaseChannel {
     /// All release channels.
     pub const ALL: [ReleaseChannel; 4] = [
@@ -219,6 +243,23 @@ impl ReleaseChannel {
             Self::Stable => None,
         }
     }
+
+    /// Returns the Zed docs URL for this [`ReleaseChannel`] for the given
+    /// `slug`.
+    pub fn docs_url(&self, slug: &str) -> String {
+        let channel_path_segment = match self {
+            Self::Dev | Self::Nightly => Some("nightly"),
+            Self::Preview => Some("preview"),
+            Self::Stable => None,
+        };
+
+        match channel_path_segment {
+            Some(channel) if slug.is_empty() => format!("{ZED_DOCS_URL}/{channel}"),
+            Some(channel) => format!("{ZED_DOCS_URL}/{channel}/{slug}"),
+            None if slug.is_empty() => ZED_DOCS_URL.to_string(),
+            None => format!("{ZED_DOCS_URL}/{slug}"),
+        }
+    }
 }
 
 /// Error indicating that release channel string does not match any known release channel names.
@@ -236,5 +277,30 @@ impl FromStr for ReleaseChannel {
             "stable" => ReleaseChannel::Stable,
             _ => return Err(InvalidReleaseChannel),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ReleaseChannel;
+
+    #[test]
+    fn test_docs_url_for_release_channel() {
+        assert_eq!(
+            ReleaseChannel::Dev.docs_url("settings"),
+            "https://zed.dev/docs/nightly/settings"
+        );
+        assert_eq!(
+            ReleaseChannel::Nightly.docs_url("settings"),
+            "https://zed.dev/docs/nightly/settings"
+        );
+        assert_eq!(
+            ReleaseChannel::Preview.docs_url("settings"),
+            "https://zed.dev/docs/preview/settings"
+        );
+        assert_eq!(
+            ReleaseChannel::Stable.docs_url("settings"),
+            "https://zed.dev/docs/settings"
+        );
     }
 }

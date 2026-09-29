@@ -14,7 +14,10 @@ use http_client::Url;
 use smallvec::SmallVec;
 use util::ResultExt as _;
 
-use crate::linux::{WaylandClientStatePtr, platform::read_fd};
+use crate::linux::{
+    WaylandClientStatePtr,
+    platform::{PIPE_READ_TIMEOUT, read_fd_with_timeout},
+};
 use gpui::{ClipboardEntry, ClipboardItem, ExternalPaths, Image, ImageFormat, hash};
 
 /// Text mime types that we'll offer to other programs.
@@ -95,7 +98,7 @@ impl<T: ReceiveData> DataOffer<T> {
 
         connection.flush().unwrap();
 
-        match unsafe { read_fd(fd) } {
+        match read_fd_with_timeout(fd, PIPE_READ_TIMEOUT) {
             Ok(bytes) => Some(bytes),
             Err(err) => {
                 log::error!("error reading clipboard pipe: {err:?}");
@@ -228,12 +231,12 @@ impl Clipboard {
                         .map(|url| url.to_string())
                         .collect::<Vec<_>>()
                         .join("\r\n");
-                    self.send_internal(fd, uri_list.into_bytes());
+                    self.send_bytes(fd, uri_list.into_bytes());
                     return;
                 }
             }
         } else if let Some(text) = contents.text() {
-            self.send_internal(fd, text.as_bytes().to_owned());
+            self.send_bytes(fd, text.as_bytes().to_owned());
         }
     }
 
@@ -243,7 +246,7 @@ impl Clipboard {
             .as_ref()
             .and_then(|contents| contents.text())
         {
-            self.send_internal(fd, text.as_bytes().to_owned());
+            self.send_bytes(fd, text.as_bytes().to_owned());
         }
     }
 
@@ -291,7 +294,7 @@ impl Clipboard {
         Some(item)
     }
 
-    fn send_internal(&self, fd: OwnedFd, bytes: Vec<u8>) {
+    pub fn send_bytes(&self, fd: OwnedFd, bytes: Vec<u8>) {
         let mut written = 0;
         self.loop_handle
             .insert_source(

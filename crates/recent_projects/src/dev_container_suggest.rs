@@ -1,7 +1,8 @@
 use db::kvp::KeyValueStore;
 use dev_container::find_configs_in_snapshot;
-use gpui::{SharedString, Window};
+use gpui::{App, SharedString, Window};
 use project::{Project, WorktreeId};
+use std::path::Path;
 use std::sync::LazyLock;
 use ui::Tooltip;
 use ui::prelude::*;
@@ -16,18 +17,56 @@ const DEV_CONTAINER_SUGGEST_KEY: &str = "dev_container_suggest_dismissed";
 
 fn devcontainer_dir_path() -> &'static RelPath {
     static PATH: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".devcontainer").expect("valid path"));
+        LazyLock::new(|| RelPath::from_unix_str(".devcontainer").expect("valid path"));
     *PATH
 }
 
 fn devcontainer_json_path() -> &'static RelPath {
     static PATH: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".devcontainer.json").expect("valid path"));
+        LazyLock::new(|| RelPath::from_unix_str(".devcontainer.json").expect("valid path"));
     *PATH
 }
 
 fn project_devcontainer_key(project_path: &str) -> String {
     format!("{}_{}", DEV_CONTAINER_SUGGEST_KEY, project_path)
+}
+
+/// Returns the path used to remember the user's "Don't Show Again" choice for a
+/// worktree's dev container suggestion. This is keyed on the repository's common
+/// Git directory rather than the worktree's own path, so that dismissing the
+/// suggestion in one git worktree also suppresses it in sibling worktrees of the
+/// same repository. Falls back to the worktree path when it isn't part of a Git
+/// repository.
+fn dismiss_path_for_worktree(
+    project: &gpui::Entity<Project>,
+    worktree_abs_path: &Path,
+    cx: &App,
+) -> String {
+    let common_dir = project
+        .read(cx)
+        .repositories(cx)
+        .values()
+        .filter_map(|repo| {
+            let repo = repo.read(cx);
+            let work_dir = repo.work_directory_abs_path.clone();
+            // The folder opened in Zed isn't necessarily the repo root; it may be
+            // a subdirectory of it, e.g. opening `~/code/myrepo/backend` when the
+            // repo lives at `~/code/myrepo`. So match any repo whose work directory
+            // contains the folder. Nested repos can produce multiple matches, e.g.
+            // opening `~/code/myrepo/vendor/lib` where `vendor/lib` is a submodule
+            // matches both `myrepo` and the submodule; `max_by_key` then picks the
+            // innermost match (the submodule), which the folder actually belongs to.
+            worktree_abs_path
+                .starts_with(work_dir.as_ref())
+                .then(|| (work_dir.as_os_str().len(), repo.common_dir_abs_path.clone()))
+        })
+        .max_by_key(|(work_dir_len, _)| *work_dir_len)
+        .map(|(_, common_dir)| common_dir);
+
+    match common_dir {
+        Some(common_dir) => common_dir.to_string_lossy().to_string(),
+        None => worktree_abs_path.to_string_lossy().to_string(),
+    }
 }
 
 pub fn suggest_on_worktree_updated(
@@ -38,13 +77,16 @@ pub fn suggest_on_worktree_updated(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let cli_auto_open = workspace.open_in_dev_container();
+    if workspace.open_in_dev_container() {
+        open_dev_container_from_cli(workspace, window, cx);
+        return;
+    }
 
     let devcontainer_updated = updated_entries.iter().any(|(path, _, _)| {
         path.as_ref() == devcontainer_dir_path() || path.as_ref() == devcontainer_json_path()
     });
 
-    if !devcontainer_updated && !cli_auto_open {
+    if !devcontainer_updated {
         return;
     }
 
@@ -58,42 +100,15 @@ pub fn suggest_on_worktree_updated(
         return;
     }
 
-    let has_configs = !find_configs_in_snapshot(worktree).is_empty();
-
-    if cli_auto_open {
-        workspace.set_open_in_dev_container(false);
-        let task = cx.spawn_in(window, async move |workspace, cx| {
-            let scans_complete =
-                workspace.update(cx, |workspace, cx| workspace.worktree_scans_complete(cx))?;
-            scans_complete.await;
-
-            workspace.update_in(cx, |workspace, window, cx| {
-                let has_configs = workspace
-                    .project()
-                    .read(cx)
-                    .worktrees(cx)
-                    .any(|wt| !find_configs_in_snapshot(wt.read(cx)).is_empty());
-                if has_configs {
-                    cx.on_next_frame(window, move |_workspace, window, cx| {
-                        window.dispatch_action(Box::new(zed_actions::OpenDevContainer), cx);
-                    });
-                } else {
-                    log::warn!("--dev-container: no devcontainer configuration found in project");
-                }
-            })
-        });
-        workspace.set_dev_container_task(task);
-        return;
-    }
-
-    if !has_configs {
+    if find_configs_in_snapshot(worktree).is_empty() {
         return;
     }
 
     let abs_path = worktree.abs_path();
     let project_path = abs_path.to_string_lossy().to_string();
     let worktree_name = worktree.root_name_str().to_string();
-    let key_for_dismiss = project_devcontainer_key(&project_path);
+    let dismiss_path = dismiss_path_for_worktree(project, abs_path.as_ref(), cx);
+    let key_for_dismiss = project_devcontainer_key(&dismiss_path);
 
     let already_dismissed = KeyValueStore::global(cx)
         .read_kvp(&key_for_dismiss)
@@ -152,4 +167,33 @@ pub fn suggest_on_worktree_updated(
             })
         });
     });
+}
+
+pub fn open_dev_container_from_cli(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    workspace.set_open_in_dev_container(false);
+    let task = cx.spawn_in(window, async move |workspace, cx| {
+        let scans_complete =
+            workspace.update(cx, |workspace, cx| workspace.worktree_scans_complete(cx))?;
+        scans_complete.await;
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let has_configs = workspace
+                .project()
+                .read(cx)
+                .worktrees(cx)
+                .any(|worktree| !find_configs_in_snapshot(worktree.read(cx)).is_empty());
+            if has_configs {
+                cx.on_next_frame(window, move |_workspace, window, cx| {
+                    window.dispatch_action(Box::new(zed_actions::OpenDevContainer), cx);
+                });
+            } else {
+                log::warn!("--dev-container: no devcontainer configuration found in project");
+            }
+        })
+    });
+    workspace.set_dev_container_task(task);
 }
