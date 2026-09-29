@@ -18,13 +18,16 @@ use language_model::{
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     ProviderSettingsView, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
 };
-use language_models_cloud::{CloudLlmTokenProvider, CloudModelProvider, language_model};
+use language_models_cloud::{
+    CloudCatalog, CloudLlmTokenProvider, CloudModelProvider, language_model,
+};
+use parking_lot::Mutex;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use release_channel::AppVersion;
 
-use settings::SettingsStore;
 pub use settings::ZedDotDevAvailableModel as AvailableModel;
 pub use settings::ZedDotDevAvailableProvider as AvailableProvider;
+use settings::{Settings as _, SettingsStore};
 use std::sync::Arc;
 use std::time::Duration;
 use ui::{TintColor, prelude::*};
@@ -36,53 +39,35 @@ const MODELS_REFRESH_DEBOUNCE: Duration = Duration::from_secs(5 * 60);
 struct ClientTokenProvider {
     client: Arc<Client>,
     llm_api_token: LlmApiToken,
-    user_store: Entity<UserStore>,
+    /// The organization tokens are issued for, mirrored from the
+    /// [`UserStore`] because token requests run off the main thread.
+    organization_id: Mutex<Option<OrganizationId>>,
+}
+
+impl ClientTokenProvider {
+    fn update_organization(&self, user_store: &UserStore) {
+        *self.organization_id.lock() = user_store
+            .current_organization()
+            .map(|organization| organization.id.clone());
+    }
 }
 
 impl CloudLlmTokenProvider for ClientTokenProvider {
-    type AuthContext = Option<OrganizationId>;
-
-    fn auth_context(&self, cx: &impl AppContext) -> Self::AuthContext {
-        self.user_store.read_with(cx, |user_store, _| {
-            user_store
-                .current_organization()
-                .map(|organization| organization.id.clone())
-        })
-    }
-
-    fn cached_token(
-        &self,
-        organization_id: Self::AuthContext,
-    ) -> BoxFuture<'static, Result<String, ClientApiError>> {
+    fn token(&self, force_refresh: bool) -> BoxFuture<'static, Result<String, ClientApiError>> {
         let client = self.client.clone();
         let llm_api_token = self.llm_api_token.clone();
+        let organization_id = self.organization_id.lock().clone();
         Box::pin(async move {
             let organization_id = organization_id.ok_or(ClientApiError::NotSignedIn)?;
-            client
-                .cached_llm_token(&llm_api_token, organization_id)
-                .await
-        })
-    }
-
-    fn refresh_token(
-        &self,
-        organization_id: Self::AuthContext,
-    ) -> BoxFuture<'static, Result<String, ClientApiError>> {
-        let client = self.client.clone();
-        let llm_api_token = self.llm_api_token.clone();
-        Box::pin(async move {
-            let organization_id = organization_id.ok_or(ClientApiError::NotSignedIn)?;
-            client
-                .refresh_llm_token(&llm_api_token, organization_id)
-                .await
-        })
-    }
-
-    fn has_data_retention_consent(&self, cx: &impl AppContext) -> bool {
-        cx.read_global(|settings_store: &SettingsStore, _| {
-            settings_store
-                .get::<TelemetrySettings>(None)
-                .anthropic_retention
+            if force_refresh {
+                client
+                    .refresh_llm_token(&llm_api_token, organization_id)
+                    .await
+            } else {
+                client
+                    .cached_llm_token(&llm_api_token, organization_id)
+                    .await
+            }
         })
     }
 }
@@ -94,6 +79,7 @@ pub struct ZedDotDevSettings {
 
 pub struct CloudLanguageModelProvider {
     state: Entity<State>,
+    client: CloudModelProvider,
     _maintain_client_status: Task<()>,
 }
 
@@ -101,12 +87,12 @@ pub struct State {
     client: Arc<Client>,
     user_store: Entity<UserStore>,
     status: client::Status,
-    provider: Entity<CloudModelProvider<ClientTokenProvider>>,
+    catalog: Entity<CloudCatalog>,
     pending_models_refresh: Option<Task<()>>,
     _user_store_subscription: Subscription,
     _settings_subscription: Subscription,
     _llm_token_subscription: Subscription,
-    _provider_subscription: Subscription,
+    _catalog_subscription: Subscription,
     _cloud_reconnect_task: Task<()>,
 }
 
@@ -115,22 +101,12 @@ impl State {
         client: Arc<Client>,
         user_store: Entity<UserStore>,
         status: client::Status,
+        token_provider: Arc<ClientTokenProvider>,
+        catalog: Entity<CloudCatalog>,
         cx: &mut Context<Self>,
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
-        let token_provider = Arc::new(ClientTokenProvider {
-            client: client.clone(),
-            llm_api_token: global_llm_token(cx),
-            user_store: user_store.clone(),
-        });
-
-        let provider = cx.new(|cx| {
-            CloudModelProvider::new(
-                token_provider.clone(),
-                client.http_client(),
-                Some(AppVersion::global(cx)),
-            )
-        });
+        token_provider.update_organization(user_store.read(cx));
 
         let cloud_reconnect_task = cx.spawn({
             let client = client.clone();
@@ -158,20 +134,26 @@ impl State {
             user_store: user_store.clone(),
             status,
             pending_models_refresh: None,
-            _provider_subscription: cx.observe(&provider, |_, _, cx| cx.notify()),
-            provider,
+            _catalog_subscription: cx.observe(&catalog, |_, _, cx| cx.notify()),
+            catalog,
             _user_store_subscription: cx.subscribe(
                 &user_store,
-                move |this, _user_store, event, cx| match event {
-                    client::user::Event::PrivateUserInfoUpdated => {
-                        let status = *client.status().borrow();
-                        if status.is_signed_out() {
-                            return;
-                        }
+                move |this, user_store, event, cx| {
+                    // Signing in or out changes the organization without
+                    // emitting `OrganizationChanged`, so re-read it on every
+                    // event.
+                    token_provider.update_organization(user_store.read(cx));
+                    match event {
+                        client::user::Event::PrivateUserInfoUpdated => {
+                            let status = *client.status().borrow();
+                            if status.is_signed_out() {
+                                return;
+                            }
 
-                        this.refresh_models(cx);
+                            this.refresh_models(cx);
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 },
             ),
             _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
@@ -206,8 +188,8 @@ impl State {
     }
 
     fn refresh_models(&mut self, cx: &mut Context<Self>) {
-        self.provider.update(cx, |provider, cx| {
-            provider.refresh_models(cx).detach_and_log_err(cx);
+        self.catalog.update(cx, |catalog, cx| {
+            catalog.refresh_models(cx).detach_and_log_err(cx);
         });
     }
 
@@ -235,7 +217,28 @@ impl CloudLanguageModelProvider {
         let mut status_rx = client.status();
         let status = *status_rx.borrow();
 
-        let state = cx.new(|cx| State::new(client.clone(), user_store.clone(), status, cx));
+        let token_provider = Arc::new(ClientTokenProvider {
+            client: client.clone(),
+            llm_api_token: global_llm_token(cx),
+            organization_id: Mutex::new(None),
+        });
+        let cloud_client = CloudModelProvider::new(
+            token_provider.clone(),
+            client.http_client(),
+            Some(AppVersion::global(cx)),
+            cx,
+        );
+        let catalog = cloud_client.catalog().clone();
+        let state = cx.new(|cx| {
+            State::new(
+                client.clone(),
+                user_store.clone(),
+                status,
+                token_provider,
+                catalog,
+                cx,
+            )
+        });
 
         let state_ref = state.downgrade();
         let maintain_client_status = cx.spawn(async move |cx| {
@@ -245,8 +248,8 @@ impl CloudLanguageModelProvider {
                         if this.status != status {
                             this.status = status;
                             if status.is_signed_out() {
-                                this.provider.update(cx, |provider, cx| {
-                                    provider.clear_models();
+                                this.catalog.update(cx, |catalog, cx| {
+                                    catalog.clear_models();
                                     cx.notify();
                                 });
                             }
@@ -261,6 +264,7 @@ impl CloudLanguageModelProvider {
 
         Self {
             state,
+            client: cloud_client,
             _maintain_client_status: maintain_client_status,
         }
     }
@@ -288,21 +292,18 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn default_model(&self, cx: &App) -> Option<LanguageModel> {
-        let state = self.state.read(cx);
-        let provider = state.provider.read(cx);
-        Some(language_model(provider.default_model()?))
+        let catalog = self.state.read(cx).catalog.read(cx);
+        Some(language_model(catalog.default_model()?))
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<LanguageModel> {
-        let state = self.state.read(cx);
-        let provider = state.provider.read(cx);
-        Some(language_model(provider.default_fast_model()?))
+        let catalog = self.state.read(cx).catalog.read(cx);
+        Some(language_model(catalog.default_fast_model()?))
     }
 
     fn recommended_models(&self, cx: &App) -> Vec<LanguageModel> {
-        let state = self.state.read(cx);
-        let provider = state.provider.read(cx);
-        provider
+        let catalog = self.state.read(cx).catalog.read(cx);
+        catalog
             .recommended_models()
             .iter()
             .map(|model| language_model(model))
@@ -310,9 +311,8 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
-        let state = self.state.read(cx);
-        let provider = state.provider.read(cx);
-        provider
+        let catalog = self.state.read(cx).catalog.read(cx);
+        catalog
             .models()
             .iter()
             .map(|model| language_model(model))
@@ -423,6 +423,21 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 }
 
+impl CloudLanguageModelProvider {
+    fn check_data_retention_consent(
+        model: &LanguageModel,
+        cx: &AsyncApp,
+    ) -> Result<(), LanguageModelCompletionError> {
+        let has_consent = cx.update(|cx| TelemetrySettings::get_global(cx).anthropic_retention);
+        if model.requires_data_retention() && !has_consent {
+            return Err(LanguageModelCompletionError::DataRetentionConsentRequired {
+                model_name: model.name.0.to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
 impl LanguageModelClient for CloudLanguageModelProvider {
     fn stream_completion(
         &self,
@@ -431,13 +446,10 @@ impl LanguageModelClient for CloudLanguageModelProvider {
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
     {
-        cx.update(|cx| {
-            self.state
-                .read(cx)
-                .provider
-                .read(cx)
-                .stream_completion(model, request, cx)
-        })
+        if let Err(error) = Self::check_data_retention_consent(model, cx) {
+            return async move { Err(error) }.boxed();
+        }
+        self.client.stream_completion(model, request, cx)
     }
 
     fn count_input_tokens(
@@ -446,13 +458,10 @@ impl LanguageModelClient for CloudLanguageModelProvider {
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
-        cx.update(|cx| {
-            self.state
-                .read(cx)
-                .provider
-                .read(cx)
-                .count_input_tokens(model, request, cx)
-        })
+        if let Err(error) = Self::check_data_retention_consent(model, cx) {
+            return async move { Err(error) }.boxed();
+        }
+        self.client.count_input_tokens(model, request, cx)
     }
 
     fn compact(
@@ -461,13 +470,10 @@ impl LanguageModelClient for CloudLanguageModelProvider {
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
-        cx.update(|cx| {
-            self.state
-                .read(cx)
-                .provider
-                .read(cx)
-                .compact(model, request, cx)
-        })
+        if let Err(error) = Self::check_data_retention_consent(model, cx) {
+            return async move { Err(error) }.boxed();
+        }
+        self.client.compact(model, request, cx)
     }
 }
 
@@ -908,12 +914,12 @@ mod tests {
         let disabled_reason = "This model is temporarily unavailable.";
 
         cx.update(|cx| {
-            let cloud_model_provider = provider.state.read(cx).provider.clone();
-            cloud_model_provider.update(cx, |cloud_model_provider, cx| {
+            let catalog = provider.state.read(cx).catalog.clone();
+            catalog.update(cx, |catalog, cx| {
                 let mut model = test_cloud_model(model_id.clone());
                 model.is_disabled = true;
                 model.disabled_reason = Some(disabled_reason.to_string());
-                cloud_model_provider.update_models(cloud_llm_client::ListModelsResponse {
+                catalog.update_models(cloud_llm_client::ListModelsResponse {
                     models: vec![model],
                     default_model: Some(model_id.clone()),
                     default_fast_model: None,
@@ -934,6 +940,69 @@ mod tests {
             model.is_disabled(),
             Some(language_model::DisabledReason::new(disabled_reason))
         );
+    }
+
+    #[gpui::test]
+    async fn retention_consent_gates_counting_compaction_and_generation(cx: &mut TestAppContext) {
+        let (_client, _user_store, provider) = cx.update(init_test);
+        let model_id = cloud_llm_client::LanguageModelId(Arc::from("claude-fable-5-1"));
+        let mut config = test_cloud_model(model_id);
+        config.supports_server_side_compaction = true;
+        let model = language_models_cloud::language_model(&config);
+        assert!(model.requires_data_retention());
+        cx.update(|cx| {
+            let catalog = provider.state.read(cx).catalog.clone();
+            catalog.update(cx, |catalog, _| {
+                catalog.update_models(cloud_llm_client::ListModelsResponse {
+                    models: vec![config],
+                    default_model: None,
+                    default_fast_model: None,
+                    recommended_models: Vec::new(),
+                })
+            });
+        });
+        let request = LanguageModelRequest::default();
+
+        assert!(matches!(
+            provider
+                .count_input_tokens(&model, request.clone(), &cx.to_async())
+                .await,
+            Err(LanguageModelCompletionError::DataRetentionConsentRequired { .. })
+        ));
+        assert!(matches!(
+            provider
+                .compact(&model, request.clone(), &cx.to_async())
+                .await,
+            Err(LanguageModelCompletionError::DataRetentionConsentRequired { .. })
+        ));
+        assert!(matches!(
+            provider
+                .stream_completion(&model, request.clone(), &cx.to_async())
+                .await,
+            Err(LanguageModelCompletionError::DataRetentionConsentRequired { .. })
+        ));
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .telemetry
+                        .get_or_insert_default()
+                        .anthropic_retention = Some(true);
+                });
+            });
+        });
+        // Past the consent gate, the signed-out provider cannot acquire a
+        // token.
+        assert!(matches!(
+            provider
+                .count_input_tokens(&model, request, &cx.to_async())
+                .await,
+            Err(LanguageModelCompletionError::ProviderRejection {
+                category: language_model::ProviderErrorCategory::Authentication,
+                ..
+            })
+        ));
     }
 
     #[gpui::test]
@@ -959,9 +1028,9 @@ mod tests {
 
         let model_id = cloud_llm_client::LanguageModelId(Arc::from("test-model"));
         cx.update(|cx| {
-            let cloud_model_provider = provider.state.read(cx).provider.clone();
-            cloud_model_provider.update(cx, |cloud_model_provider, cx| {
-                cloud_model_provider.update_models(cloud_llm_client::ListModelsResponse {
+            let catalog = provider.state.read(cx).catalog.clone();
+            catalog.update(cx, |catalog, cx| {
+                catalog.update_models(cloud_llm_client::ListModelsResponse {
                     models: vec![test_cloud_model(model_id.clone())],
                     default_model: Some(model_id.clone()),
                     default_fast_model: None,
