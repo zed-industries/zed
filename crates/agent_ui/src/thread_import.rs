@@ -879,16 +879,19 @@ pub(crate) fn sync_project_sessions(
                 .entries()
                 .filter_map(|metadata| {
                     metadata.session_id.as_ref().map(|session_id| {
-                        agent_session_key(
-                            &metadata.agent_id,
-                            session_id,
-                            metadata.remote_connection.as_ref(),
+                        (
+                            agent_session_key(
+                                &metadata.agent_id,
+                                session_id,
+                                metadata.remote_connection.as_ref(),
+                            ),
+                            metadata.clone(),
                         )
                     })
                 })
                 .collect();
             let metadata =
-                collect_project_threads(sessions, worktree_paths, existing_sessions);
+                reconcile_project_threads(sessions, worktree_paths, existing_sessions);
             if !metadata.is_empty() {
                 store.update(cx, |store, cx| store.save_all(metadata, cx));
             }
@@ -897,10 +900,10 @@ pub(crate) fn sync_project_sessions(
     })
 }
 
-fn collect_project_threads(
+fn reconcile_project_threads(
     sessions_for_agent: SessionByAgent,
     worktree_paths: WorktreePaths,
-    mut existing_sessions: HashSet<AgentSessionKey>,
+    mut existing_sessions: HashMap<AgentSessionKey, ThreadMetadata>,
 ) -> Vec<ThreadMetadata> {
     let folder_paths = worktree_paths.folder_path_list();
     let mut threads = Vec::new();
@@ -909,11 +912,30 @@ fn collect_project_threads(
         if session.work_dirs.as_ref() != Some(folder_paths) {
             continue;
         }
-        if !existing_sessions.insert(agent_session_key(
+
+        let key = agent_session_key(
             &sessions_for_agent.agent_id,
             &session.session_id,
             sessions_for_agent.remote_connection.as_ref(),
-        )) {
+        );
+        if let Some(existing) = existing_sessions.remove(&key) {
+            let mut metadata = existing.clone();
+            if let Some(title) = session.title {
+                metadata.title = Some(title);
+            }
+            if let Some(updated_at) = session.updated_at {
+                metadata.updated_at = updated_at;
+            }
+            if metadata.created_at.is_none() {
+                metadata.created_at = session.created_at;
+            }
+            if !metadata.archived {
+                metadata.worktree_paths = worktree_paths.clone();
+                metadata.remote_connection = sessions_for_agent.remote_connection.clone();
+            }
+            if metadata != existing {
+                threads.push(metadata);
+            }
             continue;
         }
 
@@ -1199,7 +1221,7 @@ mod tests {
         };
 
         let result =
-            collect_project_threads(sessions, worktree_paths, HashSet::default());
+            reconcile_project_threads(sessions, worktree_paths, HashMap::default());
 
         assert_eq!(result.len(), 1);
         assert_eq!(
@@ -1207,6 +1229,57 @@ mod tests {
             "matching"
         );
         assert!(!result[0].archived);
+    }
+
+    #[test]
+    fn test_reconcile_project_threads_preserves_archived_thread() {
+        let project_paths = PathList::new(&[Path::new("/project")]);
+        let worktree_paths = WorktreePaths::from_folder_paths(&project_paths);
+        let agent_id = AgentId::new("agent-a");
+        let session_id = acp::SessionId::new("existing");
+        let existing = ThreadMetadata {
+            thread_id: ThreadId::new(),
+            session_id: Some(session_id.clone()),
+            agent_id: agent_id.clone(),
+            title: Some("Old title".into()),
+            title_override: Some("Pinned title".into()),
+            updated_at: Utc::now() - chrono::Duration::minutes(1),
+            created_at: None,
+            interacted_at: None,
+            worktree_paths: worktree_paths.clone(),
+            remote_connection: None,
+            archived: true,
+        };
+        let thread_id = existing.thread_id;
+        let original_paths = existing.worktree_paths.clone();
+        let key = agent_session_key(&agent_id, &session_id, None);
+        let sessions = SessionByAgent {
+            agent_id,
+            remote_connection: None,
+            sessions: vec![make_session(
+                "existing",
+                Some("New title"),
+                Some(project_paths),
+                Some(Utc::now()),
+                Some(Utc::now()),
+            )],
+        };
+
+        let result = reconcile_project_threads(
+            sessions,
+            worktree_paths,
+            HashMap::from([(key, existing)]),
+        );
+
+        assert_eq!(result.len(), 1);
+        let updated = &result[0];
+        assert_eq!(updated.thread_id, thread_id);
+        assert!(updated.archived);
+        assert_eq!(updated.title.as_deref(), Some("New title"));
+        assert_eq!(updated.title_override.as_deref(), Some("Pinned title"));
+        assert_eq!(updated.worktree_paths, original_paths);
+        assert!(updated.created_at.is_some());
+
     }
 
     #[test]
