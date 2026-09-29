@@ -52,28 +52,18 @@ pub(crate) fn run_tests() -> Workflow {
     let mut jobs = vec![
         orchestrate,
         check_style(),
-        should_run_tests.and_not_in_merge_queue().then(clippy(
-            Platform::Windows,
-            None,
-            runners::WINDOWS_DEFAULT,
-            true,
-        )),
-        should_run_tests.and_always().then(clippy(
-            Platform::Linux,
-            None,
-            runners::LINUX_DEFAULT,
-            true,
-        )),
-        should_run_tests.and_not_in_merge_queue().then(clippy(
-            Platform::Mac,
-            None,
-            runners::MAC_SMALL,
-            true,
-        )),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(clippy(Platform::Windows, None, true)),
+        should_run_tests
+            .and_always()
+            .then(clippy(Platform::Linux, None, true)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(clippy(Platform::Mac, None, true)),
         should_run_tests.and_not_in_merge_queue().then(clippy(
             Platform::Mac,
             Some(Arch::X86_64),
-            runners::MAC_SMALL,
             true,
         )),
         should_run_tests
@@ -631,16 +621,16 @@ fn check_workspace_binaries() -> NamedJob {
     ))
 }
 
-pub(crate) fn clippy(
-    platform: Platform,
-    arch: Option<Arch>,
-    runner: runners::Runner,
-    harden: bool,
-) -> NamedJob {
+pub(crate) fn clippy(platform: Platform, arch: Option<Arch>, harden: bool) -> NamedJob {
     let target = arch.map(|arch| match platform {
         Platform::Mac => platform.target_triple(arch),
         _ => unimplemented!("cross-arch clippy not supported for {platform}/{arch}"),
     });
+    let runner = match platform {
+        Platform::Windows => runners::WINDOWS_DEFAULT,
+        Platform::Linux => runners::LINUX_DEFAULT,
+        Platform::Mac => runners::MAC_SMALL,
+    };
     let mut job = release_job(&[])
         .runs_on(runner)
         .when(harden && platform == Platform::Linux, |this| {
