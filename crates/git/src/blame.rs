@@ -113,11 +113,7 @@ async fn run_git_blame(
             .context("starting git blame process")?
     };
 
-    let shallow_commits = match load_shallow_commits(git).await {
-        Ok(commits) => commits,
-        Err(_) => HashSet::default(),
-    };
-
+    let shallow_commits = load_shallow_commits(git).await.unwrap_or_default();
     let stdin = child.stdin.take();
     let stdout = child
         .stdout
