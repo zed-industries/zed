@@ -25,6 +25,29 @@ pub use system_window_tabs::{
     DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, ShowNextWindowTab, ShowPreviousWindowTab,
 };
 
+/// With client-side decorations, the title bar is pulled over the window frame's
+/// border to avoid a transparent gap in the rounded corners, and a border in the
+/// title bar's own color insets its content back by the same amount. Headers that
+/// render window controls in place of the title bar use this to apply the same
+/// insets as padding, so the controls stay on the same pixel.
+///
+/// `pad_bottom` should be false when the header already has a bottom border of
+/// its own occupying that space.
+pub fn apply_title_bar_insets<E: Styled + FluentBuilder>(
+    header: E,
+    left_window_controls: bool,
+    right_window_controls: bool,
+    pad_bottom: bool,
+) -> E {
+    let inset = theme::CLIENT_SIDE_DECORATION_BORDER;
+    header
+        .mt(-inset)
+        .pt(inset)
+        .when(pad_bottom, |header| header.pb(inset))
+        .when(left_window_controls, |header| header.pl(inset))
+        .when(right_window_controls, |header| header.pr(inset))
+}
+
 pub struct PlatformTitleBar {
     id: ElementId,
     platform_style: PlatformStyle,
@@ -277,10 +300,10 @@ impl Render for PlatformTitleBar {
                             && !(sidebar.open && sidebar.side == SidebarSide::Left),
                         |el| el.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
                     )
-                    // this border is to avoid a transparent gap in the rounded corners
-                    .mt(px(-1.))
-                    .mb(px(-1.))
-                    .border(px(1.))
+                    // Keep in sync with `apply_title_bar_insets`.
+                    .mt(-theme::CLIENT_SIDE_DECORATION_BORDER)
+                    .mb(-theme::CLIENT_SIDE_DECORATION_BORDER)
+                    .border(theme::CLIENT_SIDE_DECORATION_BORDER)
                     .border_color(titlebar_color),
             })
             .bg(titlebar_color)
