@@ -45,7 +45,7 @@ use objc2_app_kit::{
     NSTrackingAreaOptions, NSView, NSViewLayerContentsRedrawPolicy, NSVisualEffectBlendingMode,
     NSVisualEffectMaterial, NSVisualEffectState, NSWindow, NSWindowAnimationBehavior,
     NSWindowButton, NSWindowCollectionBehavior, NSWindowOcclusionState, NSWindowOrderingMode,
-    NSWindowStyleMask, NSWindowTitleVisibility, NSWorkspace,
+    NSWindowStyleMask, NSWindowTabbingMode, NSWindowTitleVisibility, NSWorkspace,
 };
 use objc2_core_graphics::CGColor;
 use objc2_foundation::{
@@ -1200,6 +1200,13 @@ impl MacWindow {
                         let _: () = msg_send![native_window, setTabbingIdentifier: tabbing_id];
                     } else {
                         let _: () = msg_send![native_window, setTabbingIdentifier:ptr::null_mut::<AnyObject>()];
+                        // Automatic tabbing stays on for the app once any window opts in, and
+                        // a nil identifier falls back to a shared class-based one, so windows
+                        // without an identifier would otherwise tab with each other.
+                        let _: () = msg_send![
+                            native_window,
+                            setTabbingMode: NSWindowTabbingMode::Disallowed
+                        ];
                     }
                 }
                 // `AnchoredPopup` is rejected in `MacPlatform::open_window`, grouped here only
@@ -1483,9 +1490,11 @@ impl PlatformWindow for MacWindow {
             if let Some(tabbing_identifier) = tabbing_identifier {
                 let tabbing_id = ns_string(tabbing_identifier.as_str());
                 let _: () = msg_send![native_window, setTabbingIdentifier: tabbing_id];
+                let _: () = msg_send![native_window, setTabbingMode: NSWindowTabbingMode::Automatic];
             } else {
                 let _: () =
                     msg_send![native_window, setTabbingIdentifier:ptr::null_mut::<AnyObject>()];
+                let _: () = msg_send![native_window, setTabbingMode: NSWindowTabbingMode::Disallowed];
             }
         }
     }
