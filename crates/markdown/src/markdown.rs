@@ -5155,14 +5155,6 @@ mod tests {
         rendered_text: Rc<RefCell<Option<RenderedText>>>,
     }
 
-    impl IntoElement for CapturingMarkdownElement {
-        type Element = Self;
-
-        fn into_element(self) -> Self::Element {
-            self
-        }
-    }
-
     impl Element for CapturingMarkdownElement {
         type RequestLayoutState = RenderedMarkdown;
         type PrepaintState = Hitbox;
