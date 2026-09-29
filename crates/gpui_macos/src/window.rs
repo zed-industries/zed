@@ -105,6 +105,10 @@ const NSPopUpWindowLevel: NSInteger = 101;
 const NSWindowAnimationBehaviorUtilityWindow: NSInteger = 4;
 #[allow(non_upper_case_globals)]
 const NSViewLayerContentsRedrawDuringViewResize: NSInteger = 2;
+#[allow(non_upper_case_globals)]
+const NSWindowTabbingModeAutomatic: NSInteger = 0;
+#[allow(non_upper_case_globals)]
+const NSWindowTabbingModeDisallowed: NSInteger = 2;
 // https://developer.apple.com/documentation/appkit/nsdragoperation
 type NSDragOperation = NSUInteger;
 #[allow(non_upper_case_globals)]
@@ -1223,6 +1227,13 @@ impl MacWindow {
                         let _: () = msg_send![native_window, setTabbingIdentifier: tabbing_id];
                     } else {
                         let _: () = msg_send![native_window, setTabbingIdentifier:nil];
+                        // Automatic tabbing stays on for the app once any window opts in, and
+                        // a nil identifier falls back to a shared class-based one, so windows
+                        // without an identifier would otherwise tab with each other.
+                        let _: () = msg_send![
+                            native_window,
+                            setTabbingMode: NSWindowTabbingModeDisallowed
+                        ];
                     }
                 }
                 // `AnchoredPopup` is rejected in `MacPlatform::open_window`, grouped here only
@@ -1506,8 +1517,10 @@ impl PlatformWindow for MacWindow {
             if let Some(tabbing_identifier) = tabbing_identifier {
                 let tabbing_id = ns_string(tabbing_identifier.as_str());
                 let _: () = msg_send![native_window, setTabbingIdentifier: tabbing_id];
+                let _: () = msg_send![native_window, setTabbingMode: NSWindowTabbingModeAutomatic];
             } else {
                 let _: () = msg_send![native_window, setTabbingIdentifier:nil];
+                let _: () = msg_send![native_window, setTabbingMode: NSWindowTabbingModeDisallowed];
             }
         }
     }

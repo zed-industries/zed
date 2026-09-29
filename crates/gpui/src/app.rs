@@ -540,6 +540,12 @@ impl SystemWindowTabController {
 
     /// Update the last active of a window.
     pub fn update_last_active(cx: &mut App, id: WindowId) {
+        // `global_mut` notifies every observer of the controller, so avoid it on each
+        // window activation when the window is not tabbed at all.
+        if cx.global::<SystemWindowTabController>().tabs(id).is_none() {
+            return;
+        }
+
         let mut controller = cx.global_mut::<SystemWindowTabController>();
         for windows in controller.tab_groups.values_mut() {
             for tab in windows.iter_mut() {
@@ -616,7 +622,8 @@ impl SystemWindowTabController {
                 tabs.push(tab);
             }
         } else {
-            let new_group_id = controller.tab_groups.len();
+            // Not `len()`: after a group is removed, `len()` can equal a live key.
+            let new_group_id = controller.tab_groups.keys().max().map_or(0, |key| key + 1);
             controller.tab_groups.insert(new_group_id, tabs);
         }
     }
@@ -627,19 +634,50 @@ impl SystemWindowTabController {
     /// calling it once per window with the full merged list creates duplicate
     /// groups. `tabs()` then returns whichever group the map yields first, which
     /// may still be a single window.
-    pub fn sync_tabs(cx: &mut App, tabs: Vec<SystemWindowTab>) {
+    ///
+    /// Returns whether the groups changed. Nothing is updated, and observers are not
+    /// notified, when these windows already form one group.
+    pub fn sync_tabs(cx: &mut App, mut tabs: Vec<SystemWindowTab>) -> bool {
         if tabs.is_empty() {
-            return;
+            return false;
+        }
+
+        let ids: FxHashSet<_> = tabs.iter().map(|tab| tab.id).collect();
+        let controller = cx.global::<SystemWindowTabController>();
+        let groups_containing_tabs = controller
+            .tab_groups
+            .values()
+            .filter(|group| group.iter().any(|tab| ids.contains(&tab.id)))
+            .collect::<Vec<_>>();
+        let already_grouped = groups_containing_tabs.len() == 1
+            && groups_containing_tabs[0].len() == ids.len()
+            && groups_containing_tabs[0]
+                .iter()
+                .all(|tab| ids.contains(&tab.id));
+        if already_grouped {
+            return false;
         }
 
         let mut controller = cx.global_mut::<SystemWindowTabController>();
-        let ids: FxHashSet<_> = tabs.iter().map(|tab| tab.id).collect();
+        // Tabs from the platform are freshly created, so keep the known activation
+        // times; tab group navigation picks the most recently active tab.
+        for tab in &mut tabs {
+            if let Some(existing) = controller
+                .tab_groups
+                .values()
+                .flatten()
+                .find(|existing| existing.id == tab.id)
+            {
+                tab.last_active_at = existing.last_active_at;
+            }
+        }
         controller.tab_groups.retain(|_, group| {
             group.retain(|tab| !ids.contains(&tab.id));
             !group.is_empty()
         });
         let new_group_id = controller.tab_groups.keys().max().map_or(0, |key| key + 1);
         controller.tab_groups.insert(new_group_id, tabs);
+        true
     }
 
     /// Remove a tab from a tab group.

@@ -75,6 +75,9 @@ impl SystemWindowTabs {
                 return;
             }
             was_use_system_window_tabs = use_system_window_tabs;
+            // Set directly rather than relying on the per-window loop below, which
+            // does nothing when no windows are open.
+            cx.set_allows_automatic_window_tabbing(use_system_window_tabs);
 
             let tabbing_identifier = if use_system_window_tabs {
                 Some(String::from("zed"))
@@ -403,22 +406,16 @@ impl Render for SystemWindowTabs {
         let inactive_background_color = cx.theme().colors().tab_bar_background;
         let entity = cx.entity();
 
-        let window_id = window.window_handle().window_id();
-        // Prefer the live AppKit tab group. The controller is often still a single
-        // window per group until a deferred merge update runs.
-        let native_tabs = window.tabbed_windows().filter(|tabs| tabs.len() > 1);
-        let fallback_tab = SystemWindowTab::new(
-            SharedString::from(window.window_title()),
-            window.window_handle(),
-        );
         let controller = cx.global::<SystemWindowTabController>();
         let visible = controller.is_visible();
-        let tabs = native_tabs.unwrap_or_else(|| {
-            controller
-                .tabs(window_id)
-                .cloned()
-                .unwrap_or_else(|| vec![fallback_tab])
-        });
+        let current_window_tab = vec![SystemWindowTab::new(
+            SharedString::from(window.window_title()),
+            window.window_handle(),
+        )];
+        let tabs = controller
+            .tabs(window.window_handle().window_id())
+            .unwrap_or(&current_window_tab)
+            .clone();
 
         let tab_items = tabs
             .iter()
@@ -437,12 +434,8 @@ impl Render for SystemWindowTabs {
             .collect::<Vec<_>>();
 
         let number_of_tabs = tab_items.len().max(1);
-        // The native tab bar view is hidden on purpose, and `isTabBarVisible` stays
-        // false after a merge, which used to hide this custom bar too.
-        let show_system_tabs = use_system_window_tabs && number_of_tabs > 1;
-        if !show_system_tabs
-            && ((!window.tab_bar_visible() && !visible)
-                || (!use_system_window_tabs && number_of_tabs == 1))
+        if (!window.tab_bar_visible() && !visible)
+            || (!use_system_window_tabs && number_of_tabs == 1)
         {
             return h_flex().into_any_element();
         }
