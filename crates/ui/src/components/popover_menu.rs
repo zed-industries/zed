@@ -502,6 +502,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         }
     }
 }
+
 #[cfg(test)]
 mod tests {
     use gpui::{EventEmitter, FocusHandle, Focusable, TestAppContext, VisualTestContext};

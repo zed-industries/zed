@@ -19,12 +19,12 @@ use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, BackGestureEvent, Bounds, ClickEvent,
     DispatchPhase, Display, Element, ElementId, Entity, EntityId, ExternalDragPayload,
     ExternalDragPayloadSource, FileDropEvent, FocusHandle, Global, GlobalElementId, Hitbox,
-    HitboxBehavior, HitboxId, InspectorElementId, IsZero, KeyContext, KeyDownEvent,
-    KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, LongPressEvent,
-    ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
-    MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement,
-    PinchEvent, Pixels, Point, Render, ScrollEvent, SharedString, Size, Style, StyleRefinement,
-    Styled, Task, TooltipId, TouchPhase, Visibility, Window, WindowControlArea, point, px, size,
+    HitboxBehavior, HitboxId, InspectorElementId, IsZero, KeyContext, KeyDownEvent, KeyUpEvent,
+    KeyboardButton, KeyboardClickEvent, LayoutId, LongPressEvent, ModifiersChangedEvent,
+    MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement, PinchEvent, Pixels,
+    Point, Render, ScrollEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
+    TooltipId, TouchPhase, Visibility, Window, WindowControlArea, point, px, size,
 };
 use collections::HashMap;
 use gpui_util::ResultExt;
@@ -4536,8 +4536,9 @@ impl ScrollHandle {
 mod tests {
     use super::*;
     use crate::{
-        AnyWindowHandle, AppContext as _, Context, GestureTuning, InputEvent, Keystroke,
-        MouseMoveEvent, TestAppContext, TouchEvent, TouchId, canvas, util::FluentBuilder as _,
+        AnyWindowHandle, AppContext as _, Context, GestureTuning, InputEvent, IntoElement,
+        Keystroke, MouseMoveEvent, TestAppContext, TouchEvent, TouchId, canvas,
+        util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
 

@@ -1,9 +1,9 @@
 use crate::{
     AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength, Element, ElementId,
     Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId, InteractiveElement,
-    Interactivity, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
-    SharedString, SharedUri, StyleRefinement, Styled, Task, Window, decode_gif_image,
-    decode_static_image, decode_webp_image, px,
+    Interactivity, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource, SharedString,
+    SharedUri, StyleRefinement, Styled, Task, Window, decode_gif_image, decode_static_image,
+    decode_webp_image, px,
 };
 use anyhow::Result;
 
@@ -728,7 +728,7 @@ impl From<image::ImageError> for ImageCacheError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ParentElement as _, TestAppContext, canvas, div, point, px, size};
+    use crate::{IntoElement, ParentElement as _, TestAppContext, canvas, div, point, px, size};
     use image::{Frame, ImageBuffer, Rgba};
     use smallvec::SmallVec;
 
