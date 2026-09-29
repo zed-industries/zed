@@ -980,8 +980,6 @@ pub(crate) struct DeferredDraw {
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
-    pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
-    accessed_element_states: Vec<(GlobalElementId, TypeId)>,
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
@@ -1008,7 +1006,6 @@ pub(crate) struct PrepaintStateIndex {
     tooltips_index: usize,
     deferred_draws_index: usize,
     dispatch_tree_index: usize,
-    accessed_element_states_index: usize,
     line_layout_index: LineLayoutIndex,
 }
 
@@ -1020,7 +1017,6 @@ pub(crate) struct PaintIndex {
     mouse_listeners_index: usize,
     input_handlers_index: usize,
     cursor_styles_index: usize,
-    accessed_element_states_index: usize,
     tab_handle_index: usize,
     line_layout_index: LineLayoutIndex,
 }
@@ -1036,8 +1032,6 @@ impl Frame {
         Frame {
             focus: None,
             window_active: false,
-            element_states: FxHashMap::default(),
-            accessed_element_states: Vec::new(),
             mouse_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
@@ -1063,8 +1057,6 @@ impl Frame {
     }
 
     pub(crate) fn clear(&mut self) {
-        self.element_states.clear();
-        self.accessed_element_states.clear();
         self.mouse_listeners.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
@@ -1135,15 +1127,7 @@ impl Frame {
             .unwrap_or_default()
     }
 
-    pub(crate) fn finish(&mut self, prev_frame: &mut Self) {
-        for element_state_key in &self.accessed_element_states {
-            if let Some((element_state_key, element_state)) =
-                prev_frame.element_states.remove_entry(element_state_key)
-            {
-                self.element_states.insert(element_state_key, element_state);
-            }
-        }
-
+    pub(crate) fn finish(&mut self) {
         self.scene.finish();
     }
 }
@@ -3349,7 +3333,7 @@ impl Window {
 
         self.layout_engine.as_mut().unwrap().clear();
         self.text_system().finish_frame();
-        self.next_frame.finish(&mut self.rendered_frame);
+        self.next_frame.finish();
 
         self.invalidator.set_phase(DrawPhase::Focus);
         let previous_focus_path = self.rendered_frame.focus_path();
@@ -3798,10 +3782,12 @@ impl Window {
             let content_mask = deferred_draw.content_mask;
             if let Some(element) = deferred_draw.element.as_mut() {
                 self.with_rendered_view(deferred_draw.current_view, |window| {
-                    window.with_content_mask(content_mask, |window| {
-                        window.with_rem_size(Some(deferred_draw.rem_size), |window| {
-                            element.paint(window, cx);
-                        });
+                    window.with_view_node(deferred_draw.current_view_node, |window| {
+                        window.with_content_mask(content_mask, |window| {
+                            window.with_rem_size(Some(deferred_draw.rem_size), |window| {
+                                element.paint(window, cx);
+                            });
+                        })
                     })
                 })
             } else {
@@ -3827,7 +3813,6 @@ impl Window {
             tooltips_index: self.next_frame.tooltip_requests.len(),
             deferred_draws_index: self.next_frame.deferred_draws.len(),
             dispatch_tree_index: self.next_frame.dispatch_tree.len(),
-            accessed_element_states_index: self.next_frame.accessed_element_states.len(),
             line_layout_index: self.text_system.layout_index(),
         }
     }
@@ -3843,12 +3828,6 @@ impl Window {
                 [range.start.tooltips_index..range.end.tooltips_index]
                 .iter_mut()
                 .map(|request| request.take()),
-        );
-        self.next_frame.accessed_element_states.extend(
-            self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
-                ..range.end.accessed_element_states_index]
-                .iter()
-                .map(|(id, type_id)| (id.clone(), *type_id)),
         );
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
@@ -3892,7 +3871,6 @@ impl Window {
             mouse_listeners_index: self.next_frame.mouse_listeners.len(),
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
-            accessed_element_states_index: self.next_frame.accessed_element_states.len(),
             tab_handle_index: self.next_frame.tab_stops.paint_index(),
             line_layout_index: self.text_system.layout_index(),
         }
@@ -3924,12 +3902,6 @@ impl Window {
                 [range.start.mouse_listeners_index..range.end.mouse_listeners_index]
                 .iter_mut()
                 .map(|listener| listener.take()),
-        );
-        self.next_frame.accessed_element_states.extend(
-            self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
-                ..range.end.accessed_element_states_index]
-                .iter()
-                .map(|(id, type_id)| (id.clone(), *type_id)),
         );
         self.next_frame.tab_stops.replay(
             &self.rendered_frame.tab_stops.insertion_history
@@ -4087,9 +4059,6 @@ impl Window {
             self.next_frame
                 .dispatch_tree
                 .truncate(index.dispatch_tree_index);
-            self.next_frame
-                .accessed_element_states
-                .truncate(index.accessed_element_states_index);
             self.text_system.truncate_layouts(index.line_layout_index);
         }
         result
@@ -4228,7 +4197,9 @@ impl Window {
     {
         self.invalidator.debug_assert_paint_or_prepaint();
 
-        let (key, state) = self.take_element_state(global_id, TypeId::of::<S>());
+        let node = self.view_tree.current();
+        let key = (global_id.clone(), TypeId::of::<S>());
+        let state = self.view_tree.take_element_state(node, &key);
 
         if let Some(any) = state {
             let ElementStateBox {
@@ -4264,7 +4235,8 @@ impl Window {
             );
             let (result, state) = f(Some(state), self);
             state_box.replace(state);
-            self.insert_element_state(
+            self.view_tree.put_element_state(
+                node,
                 key,
                 ElementStateBox {
                     inner: state_box,
@@ -4275,7 +4247,8 @@ impl Window {
             result
         } else {
             let (result, state) = f(None, self);
-            self.insert_element_state(
+            self.view_tree.put_element_state(
+                node,
                 key,
                 ElementStateBox {
                     inner: Box::new(Some(state)),
@@ -7161,31 +7134,6 @@ impl Window {
             pressed_button: None,
         });
         let _ = self.dispatch_event(event, cx);
-    }
-
-    #[inline(never)]
-    fn take_element_state(
-        &mut self,
-        global_id: &GlobalElementId,
-        state_type: TypeId,
-    ) -> ((GlobalElementId, TypeId), Option<ElementStateBox>) {
-        let key = (global_id.clone(), state_type);
-        self.next_frame.accessed_element_states.push(key.clone());
-        let state = self
-            .next_frame
-            .element_states
-            .remove(&key)
-            .or_else(|| self.rendered_frame.element_states.remove(&key));
-        (key, state)
-    }
-
-    #[inline(never)]
-    fn insert_element_state(
-        &mut self,
-        key: (GlobalElementId, TypeId),
-        state: ElementStateBox,
-    ) -> Option<ElementStateBox> {
-        self.next_frame.element_states.insert(key, state)
     }
 
     #[inline(never)]

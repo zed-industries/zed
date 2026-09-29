@@ -412,14 +412,16 @@ impl<V: View> Element for ViewElement<V> {
         if let Some(entity_id) = self.entity_id {
             // Stateful path.
             let paint_start = window.paint_index();
-            paint_view(
-                entity_id,
-                self.cached_style.is_some(),
-                global_id,
-                element,
-                window,
-                cx,
-            );
+            window.with_view_node(self.node, |window| {
+                paint_view(
+                    entity_id,
+                    self.cached_style.is_some(),
+                    global_id,
+                    element,
+                    window,
+                    cx,
+                )
+            });
             let paint_end = window.paint_index();
             if let Some(node) = self.node.and_then(|node| window.view_tree.node_mut(node)) {
                 node.paint_range = Some(paint_start..paint_end);
@@ -514,7 +516,7 @@ fn prepaint_view(
                     let prepaint_start = window.prepaint_index();
                     window.reuse_prepaint(element_state.prepaint_range.clone());
                     if let Some(node) = node {
-                        window.view_tree.retain_descendants(node);
+                        window.view_tree.reuse_output(node);
                     }
                     cx.entities
                         .extend_accessed(&element_state.accessed_entities);

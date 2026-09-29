@@ -30,9 +30,17 @@ native window composition (zed-industries/zed#62379).
 - Each node records its bounds and the ranges its prepaint and paint output
   occupy in the frame. The frame itself stays flat: hit testing, dispatch,
   input handlers and the scene are unchanged.
+- Each node **owns the element state** of the elements drawn inside it (not
+  inside a nested view). A state is dropped when its node unmounts, or at the
+  end of a frame that drew the node without accessing it. A node whose output
+  was reused keeps all of its states, since reusing output accesses none of
+  them. Elements a test draws outside every view keep their state in the tree
+  too, through the frame after the one that last accessed it.
 
-Nothing reads the tree yet. It costs one `GlobalElementId` lookup and a few
-index snapshots per view per frame; a paired `editor_render` run could not
+Element state is the tree's first reader. Keeping it on nodes replaced the
+frame's flat state map and the list of accessed keys that reused output had
+to copy forward. The tree costs one `GlobalElementId` lookup and a few index
+snapshots per view per frame; a paired `editor_render` run could not
 resolve a difference from `main` on a loaded machine (every fixture moved
 between −10% and +4%, in both directions).
 
@@ -168,7 +176,7 @@ Independent of the tree, on `main`:
 On the tree, each step landing with something that uses it:
 
 - [x] Mount and unmount views as a tree, indexing the flat frame.
-- [ ] Move element state onto nodes, so a node's state lives and dies with it.
+- [x] Move element state onto nodes, so a node's state lives and dies with it.
 - [ ] Attached roots: read back a root's output by identity, with a change
   stamp and hit regions.
 - [ ] Composition surfaces fed by nodes (#62379).

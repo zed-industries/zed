@@ -1,11 +1,16 @@
 use crate::{
     Bounds, EntityId, GlobalElementId, Pixels,
-    window::{PaintIndex, PrepaintStateIndex},
+    window::{ElementStateBox, PaintIndex, PrepaintStateIndex},
 };
 use collections::FxHashMap;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
-use std::ops::Range;
+use std::{any::TypeId, ops::Range};
+
+pub(crate) type ElementStateKey = (GlobalElementId, TypeId);
+
+/// Element states by key, each stamped with the frame that last accessed it.
+type ElementStates = FxHashMap<ElementStateKey, (u64, ElementStateBox)>;
 
 slotmap::new_key_type! {
     /// Identifies one mount of a view in a window's [`ViewTree`].
@@ -33,7 +38,14 @@ pub(crate) struct ViewNode {
     /// Where this node's paint output sits in the frame, with the same caveat as
     /// `prepaint_range`.
     pub(crate) paint_range: Option<Range<PaintIndex>>,
+    /// The state of the elements drawn inside this view (but not inside a view nested in
+    /// it), which lives as long as the node: a state is dropped when the node unmounts, or
+    /// at the end of a frame that drew the node without accessing the state.
+    element_states: ElementStates,
     visited_frame: u64,
+    /// Whether this frame reused the node's output from the last frame instead of drawing
+    /// it, so its element states were not accessed and must be kept anyway.
+    output_reused: bool,
 }
 
 /// The entity-backed views mounted in a window, as a tree.
@@ -51,6 +63,9 @@ pub(crate) struct ViewTree {
     // Children lists are rebuilt from this at the end of the frame, so a node's children
     // are in the order they were first visited.
     visit_order: Vec<ViewNodeId>,
+    /// The state of elements drawn outside every view, which only happens when a test
+    /// draws elements directly.
+    detached_element_states: ElementStates,
     frame: u64,
 }
 
@@ -71,9 +86,16 @@ impl ViewTree {
             let visited = node.visited_frame == frame;
             if !visited {
                 nodes_by_global_id.remove(&node.global_id);
+            } else if !node.output_reused {
+                node.element_states
+                    .retain(|_, (accessed_frame, _)| *accessed_frame == frame);
             }
             visited
         });
+        // Elements drawn directly by a test are drawn between frames, so their state is
+        // kept through the frame after the one it was last accessed in.
+        self.detached_element_states
+            .retain(|_, (accessed_frame, _)| *accessed_frame + 1 >= frame);
 
         for node_id in &self.visit_order {
             if let Some(node) = self.nodes.get_mut(*node_id) {
@@ -100,6 +122,7 @@ impl ViewTree {
         {
             if node.visited_frame != frame {
                 node.visited_frame = frame;
+                node.output_reused = false;
                 node.parent = parent;
                 node.bounds = None;
                 node.prepaint_range = None;
@@ -117,22 +140,24 @@ impl ViewTree {
             bounds: None,
             prepaint_range: None,
             paint_range: None,
+            element_states: ElementStates::default(),
             visited_frame: frame,
+            output_reused: false,
         });
         self.nodes_by_global_id.insert(global_id.clone(), node_id);
         self.visit_order.push(node_id);
         node_id
     }
 
-    /// Keeps the descendants of `node_id` mounted, for a node whose output from the last
-    /// frame was reused without drawing its descendants again.
-    pub(crate) fn retain_descendants(&mut self, node_id: ViewNodeId) {
+    /// Marks `node_id`'s output from the last frame as reused, which keeps its descendants
+    /// mounted and every element state in the subtree alive without it being accessed.
+    pub(crate) fn reuse_output(&mut self, node_id: ViewNodeId) {
         let frame = self.frame;
-        let mut pending: SmallVec<[ViewNodeId; 8]> = self
-            .nodes
-            .get(node_id)
-            .map(|node| node.children.iter().rev().copied().collect())
-            .unwrap_or_default();
+        let Some(node) = self.nodes.get_mut(node_id) else {
+            return;
+        };
+        node.output_reused = true;
+        let mut pending: SmallVec<[ViewNodeId; 8]> = node.children.iter().rev().copied().collect();
         while let Some(child_id) = pending.pop() {
             let Some(child) = self.nodes.get_mut(child_id) else {
                 continue;
@@ -141,6 +166,7 @@ impl ViewTree {
                 continue;
             }
             child.visited_frame = frame;
+            child.output_reused = true;
             child.prepaint_range = None;
             child.paint_range = None;
             self.visit_order.push(child_id);
@@ -158,6 +184,44 @@ impl ViewTree {
 
     pub(crate) fn current(&self) -> Option<ViewNodeId> {
         self.stack.last().copied()
+    }
+
+    /// Removes the state stored for `key` in `node` (or outside every view, for `None`),
+    /// for the caller to return with `put_element_state` once it is done with it.
+    pub(crate) fn take_element_state(
+        &mut self,
+        node: Option<ViewNodeId>,
+        key: &ElementStateKey,
+    ) -> Option<ElementStateBox> {
+        self.element_states_mut(node)
+            .remove(key)
+            .map(|(_, state)| state)
+    }
+
+    /// Stores `state` for `key` in `node`, as accessed this frame.
+    pub(crate) fn put_element_state(
+        &mut self,
+        node: Option<ViewNodeId>,
+        key: ElementStateKey,
+        state: ElementStateBox,
+    ) {
+        let frame = self.frame;
+        self.element_states_mut(node).insert(key, (frame, state));
+    }
+
+    fn element_states_mut(&mut self, node: Option<ViewNodeId>) -> &mut ElementStates {
+        match node {
+            Some(node) if self.nodes.contains_key(node) => &mut self.nodes[node].element_states,
+            _ => &mut self.detached_element_states,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn element_state_keys(&self) -> impl Iterator<Item = &ElementStateKey> {
+        self.nodes
+            .values()
+            .flat_map(|node| node.element_states.keys())
+            .chain(self.detached_element_states.keys())
     }
 
     #[cfg_attr(
@@ -199,8 +263,9 @@ mod tests {
     use super::*;
     use crate::{
         Context, Entity, IntoElement, Render, StyleRefinement, TestAppContext, VisualTestContext,
-        Window, deferred, div, prelude::*, px,
+        WeakEntity, Window, deferred, div, prelude::*, px,
     };
+    use std::{cell::RefCell, rc::Rc};
 
     struct Leaf;
 
@@ -420,5 +485,123 @@ mod tests {
 
         let leaf = root.read_with(cx, |root, _| root.children[0].entity_id());
         assert_eq!(nodes_of(leaf, cx).len(), 2);
+    }
+
+    /// Keeps a `use_keyed_state` entity while `keep_state` is set, and reports it.
+    struct Stateful {
+        keep_state: bool,
+        state: Rc<RefCell<Option<WeakEntity<usize>>>>,
+    }
+
+    impl Render for Stateful {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            if self.keep_state {
+                let state = window.use_keyed_state("state", cx, |_, _| 0usize);
+                *self.state.borrow_mut() = Some(state.downgrade());
+            }
+            div().size(px(10.))
+        }
+    }
+
+    struct StatefulRoot {
+        child: Option<Entity<Stateful>>,
+        cached: bool,
+    }
+
+    impl Render for StatefulRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let cached = self.cached;
+            div()
+                .size_full()
+                .when_some(self.child.clone(), |this, child| {
+                    if cached {
+                        this.child(child.cached(StyleRefinement::default().size(px(10.))))
+                    } else {
+                        this.child(child)
+                    }
+                })
+        }
+    }
+
+    fn stateful_window(
+        cached: bool,
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<StatefulRoot>,
+        Rc<RefCell<Option<WeakEntity<usize>>>>,
+        &mut VisualTestContext,
+    ) {
+        let state = Rc::new(RefCell::new(None));
+        let (root, cx) = cx.add_window_view({
+            let state = state.clone();
+            move |_, cx| StatefulRoot {
+                child: Some(cx.new(|_| Stateful {
+                    keep_state: true,
+                    state,
+                })),
+                cached,
+            }
+        });
+        draw(cx);
+        (root, state, cx)
+    }
+
+    fn state_entity(state: &Rc<RefCell<Option<WeakEntity<usize>>>>) -> Option<Entity<usize>> {
+        state.borrow().as_ref().and_then(|state| state.upgrade())
+    }
+
+    #[gpui::test]
+    fn element_state_is_dropped_when_its_view_unmounts(cx: &mut TestAppContext) {
+        let (root, state, cx) = stateful_window(false, cx);
+        let first = state_entity(&state).expect("state created on first draw");
+
+        root.update(cx, |_, cx| cx.notify());
+        draw(cx);
+        assert_eq!(state_entity(&state), Some(first.clone()), "state kept");
+        drop(first);
+
+        root.update(cx, |root, cx| {
+            root.child = None;
+            cx.notify();
+        });
+        draw(cx);
+        assert_eq!(state_entity(&state), None, "state dropped with the node");
+    }
+
+    #[gpui::test]
+    fn element_state_is_dropped_when_a_drawn_view_stops_accessing_it(cx: &mut TestAppContext) {
+        let (root, state, cx) = stateful_window(false, cx);
+        assert!(state_entity(&state).is_some());
+
+        let child = root.read_with(cx, |root, _| root.child.clone().expect("child"));
+        child.update(cx, |child, cx| {
+            child.keep_state = false;
+            cx.notify();
+        });
+        draw(cx);
+        assert_eq!(state_entity(&state), None);
+    }
+
+    #[gpui::test]
+    fn element_state_survives_while_a_cached_view_is_reused(cx: &mut TestAppContext) {
+        let (root, state, cx) = stateful_window(true, cx);
+        let first = state_entity(&state).expect("state created on first draw");
+        let weak = first.downgrade();
+        drop(first);
+
+        for _ in 0..2 {
+            root.update(cx, |_, cx| cx.notify());
+            draw(cx);
+            assert!(weak.upgrade().is_some(), "reused output keeps its state");
+        }
+
+        let child = root.read_with(cx, |root, _| root.child.clone().expect("child"));
+        child.update(cx, |_, cx| cx.notify());
+        draw(cx);
+        assert_eq!(
+            state_entity(&state).map(|state| state.entity_id()),
+            weak.upgrade().map(|state| state.entity_id()),
+            "rendering again finds the same state"
+        );
     }
 }

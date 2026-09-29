@@ -1442,9 +1442,8 @@ mod tests {
                     .map(QuadSnapshot::from)
                     .collect(),
                 element_ids: window
-                    .rendered_frame
-                    .element_states
-                    .keys()
+                    .view_tree
+                    .element_state_keys()
                     .filter_map(|(global_id, _)| {
                         let ElementId::NamedInteger(name, element_id) = global_id.0.last()? else {
                             return None;
