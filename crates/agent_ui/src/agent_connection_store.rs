@@ -100,6 +100,13 @@ impl AgentConnectionStore {
             .unwrap_or(AgentConnectionStatus::Disconnected)
     }
 
+    pub fn connection(&self, key: &Agent, cx: &App) -> Option<Rc<dyn AgentConnection>> {
+        match self.entries.get(key)?.read(cx) {
+            AgentConnectionEntry::Connected(state) => Some(state.connection.clone()),
+            AgentConnectionEntry::Connecting { .. } | AgentConnectionEntry::Error { .. } => None,
+        }
+    }
+
     pub fn agent_version(&self, key: &Agent, cx: &App) -> Option<SharedString> {
         match self.entries.get(key)?.read(cx) {
             AgentConnectionEntry::Connected(state) => state.connection.agent_version(),

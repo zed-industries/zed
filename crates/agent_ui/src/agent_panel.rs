@@ -5086,9 +5086,11 @@ impl Panel for AgentPanel {
     }
 
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let became_active = active && !self.is_active;
         self.is_active = active;
-        if active {
+        if became_active {
             self.ensure_thread_initialized(window, cx);
+            self.refresh_selected_agent_sessions(cx);
         }
     }
 
@@ -5137,6 +5139,27 @@ impl Panel for AgentPanel {
 }
 
 impl AgentPanel {
+    fn refresh_selected_agent_sessions(&self, cx: &mut Context<Self>) {
+        if self.selected_agent.is_native() {
+            return;
+        }
+        let Some(connection) = self
+            .connection_store
+            .read(cx)
+            .connection(&self.selected_agent, cx)
+        else {
+            return;
+        };
+
+        crate::thread_import::sync_project_sessions(
+            connection.agent_id(),
+            connection,
+            self.project.clone(),
+            cx,
+        )
+        .detach_and_log_err(cx);
+    }
+
     fn ensure_thread_initialized(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(self.base_view, BaseView::Uninitialized) {
             if self.pending_terminal_spawn.is_some() {
