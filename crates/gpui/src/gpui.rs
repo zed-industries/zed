@@ -16,6 +16,7 @@ mod bounds_tree;
 mod color;
 /// The default colors used by GPUI.
 pub mod colors;
+mod composition;
 #[cfg(feature = "profiler")]
 mod debug_overlay;
 mod element;
@@ -104,6 +105,7 @@ pub(crate) use arena::*;
 pub use asset_cache::*;
 pub use assets::*;
 pub use color::*;
+pub use composition::*;
 pub use ctor::ctor;
 #[cfg(feature = "profiler")]
 pub use debug_overlay::*;
