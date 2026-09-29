@@ -816,7 +816,7 @@
     "whole_word": false,
     // Whether to match case sensitively.
     "case_sensitive": false,
-    // Whether to include gitignored files in search results.
+    // Whether to include gitignored files and files matching `file_search_exclusions` in search results.
     "include_ignored": false,
     // Whether to interpret the search query as a regular expression.
     "regex": false,
@@ -1787,6 +1787,15 @@
   // that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes
   // precedence over these inclusions.
   "file_scan_inclusions": [".env*"],
+  // Files or globs of files that will be excluded from project search and the agent's text search.
+  // Unlike `file_scan_exclusions`, they are still scanned and shown in the project file tree.
+  // Enabling "Include Ignored" in project search, or `search.include_ignored`, also includes them.
+  "file_search_exclusions": [],
+  // Files or globs of files that will be excluded from the file finder. Recently opened and currently
+  // open files are still suggested. Unlike `file_scan_exclusions`, they are still scanned and shown
+  // in the project file tree. Including ignored files in the file finder, or
+  // `file_finder.include_ignored`, also includes them.
+  "file_finder_exclusions": [],
   // Maximum directory depth to eagerly index outside of git repositories;
   // contents of directories at this depth or deeper are indexed on demand.
   // Repositories rooted shallower than this depth are always indexed fully.

@@ -54,6 +54,7 @@ async fn test_path_inclusion_matcher(cx: &mut gpui::TestAppContext) {
         canonical_path: None,
         is_ignored: true,
         is_hidden: false,
+        exclusions: Default::default(),
         is_always_included: false,
         is_external: false,
         is_private: false,
