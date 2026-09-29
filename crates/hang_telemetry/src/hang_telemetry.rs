@@ -1,18 +1,20 @@
 //! Turns GPUI foreground hang incidents into batched "Hang Incidents" telemetry.
 //!
-//! [`HangTelemetry`] polls a [`HangDetector`] over the app's foreground journal,
-//! serializes each incident, and batches them into periodic telemetry events.
-//! Applications own delivery: they send the returned [`FlexibleEvent`] through
-//! their own telemetry pipeline, so every GPUI app that uses this crate reports
-//! hangs with the same thresholds and wire schema.
+//! [`HangTelemetry`] consumes the polls of GPUI's hang monitor
+//! ([`gpui::App::start_hang_monitor`]), serializes each incident, and batches
+//! incidents into periodic telemetry events. Applications own delivery by
+//! supplying a sink for the resulting [`FlexibleEvent`]s, so every GPUI app
+//! that uses this crate reports hangs with the same thresholds and wire
+//! schema.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use gpui::App;
 use gpui::profiler::hang::{
-    HangDetector, HangTrigger, MEASUREMENT_VERSION, SerializedHangIncident,
+    HangMonitorConfig, HangMonitorError, HangMonitorPoll, HangMonitorPollReason, HangTrigger,
+    MEASUREMENT_VERSION, SerializedHangIncident,
 };
-use gpui::profiler::journal::ForegroundJournal;
 use hdrhistogram::Histogram;
 use serde_json::Value;
 use telemetry_events::FlexibleEvent;
@@ -29,6 +31,8 @@ const MAX_REPORTED_INCIDENTS: usize = 10;
 // A long interval keeps hang telemetry a small fraction of event volume even
 // for pathologically hang-prone sessions; the on-quit flush covers short ones.
 const SEND_INTERVAL: Duration = Duration::from_mins(30);
+
+const MONITOR_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Duration at which a single piece of foreground work counts as a hang.
 pub fn hang_threshold() -> Duration {
@@ -58,64 +62,89 @@ pub fn frame_budget() -> Duration {
     }
 }
 
-/// Detects foreground hangs and batches them into telemetry events.
+/// The monitor configuration every app using this crate reports with.
+pub fn monitor_config() -> HangMonitorConfig {
+    HangMonitorConfig {
+        threshold: hang_threshold(),
+        frame_budget: frame_budget(),
+        interval: MONITOR_INTERVAL,
+    }
+}
+
+/// Serializes and batches hang incidents into "Hang Incidents" events.
 ///
-/// Polling and sending are driven by the caller, typically from a dedicated
-/// OS thread so reporting keeps working while GPUI's executors are stalled.
+/// Every 30 minutes, and when the app quits, the current batch is passed to
+/// the event sink, including empty batches, whose `report_window_seconds`
+/// still counts toward observed time.
 pub struct HangTelemetry {
-    detector: HangDetector,
-    reporter: Reporter,
     startup: Instant,
+    reporter: Reporter,
+    send_event: Box<dyn Fn(FlexibleEvent) + Send>,
+    observe_incidents: Option<Box<dyn FnMut(&[SerializedHangIncident]) + Send>>,
 }
 
 impl HangTelemetry {
-    /// Starts observing `journal` with [`hang_threshold`] and [`frame_budget`].
-    ///
-    /// Incident timestamps are reported relative to `startup`.
-    pub fn new(journal: ForegroundJournal, startup: Instant) -> Self {
+    /// Creates telemetry that reports incident timestamps relative to
+    /// `startup` and delivers events through `send_event`, which is called on
+    /// the monitor thread and must not block.
+    pub fn new(startup: Instant, send_event: impl Fn(FlexibleEvent) + Send + 'static) -> Self {
         Self {
-            detector: HangDetector::new(journal, hang_threshold(), frame_budget()),
-            reporter: Reporter::new(),
             startup,
+            reporter: Reporter::new(),
+            send_event: Box::new(send_event),
+            observe_incidents: None,
         }
     }
 
-    /// Adds incidents sealed since the previous call to the pending batch.
+    /// Also passes each poll's serialized incidents to `observer` on the
+    /// monitor thread, e.g. to attach recent hangs to feedback reports.
+    pub fn with_incident_observer(
+        mut self,
+        observer: impl FnMut(&[SerializedHangIncident]) + Send + 'static,
+    ) -> Self {
+        self.observe_incidents = Some(Box::new(observer));
+        self
+    }
+
+    /// Starts `cx`'s hang monitor with [`monitor_config`], reporting its
+    /// polls through this telemetry.
     ///
-    /// Returns the newly collected incidents so callers can also surface them
-    /// elsewhere, such as in feedback reports.
-    pub fn collect(&mut self) -> Vec<SerializedHangIncident> {
-        let incidents = self.detector.poll();
-        let first_present_at = self.detector.first_present_at();
-        let serialized_incidents = incidents
-            .iter()
-            .map(|incident| {
-                SerializedHangIncident::convert(
-                    self.startup,
-                    incident,
-                    MAX_SERIALIZED_CONTRIBUTORS,
-                    first_present_at,
-                )
-            })
-            .collect::<Vec<_>>();
-        for incident in &serialized_incidents {
-            self.reporter.add(incident.clone());
+    /// # Errors
+    ///
+    /// See [`App::start_hang_monitor`].
+    pub fn start(mut self, cx: &mut App) -> Result<(), HangMonitorError> {
+        cx.start_hang_monitor(monitor_config(), move |poll| self.handle_poll(poll))
+    }
+
+    fn handle_poll(&mut self, poll: HangMonitorPoll) {
+        let flush = poll.reason == HangMonitorPollReason::Flush;
+        let incidents = serialize_incidents(self.startup, poll);
+        if !incidents.is_empty()
+            && let Some(observe_incidents) = self.observe_incidents.as_mut()
+        {
+            observe_incidents(&incidents);
         }
-        serialized_incidents
+        for incident in incidents {
+            self.reporter.add(incident);
+        }
+        if flush || self.reporter.last_send.elapsed() > SEND_INTERVAL {
+            (self.send_event)(self.reporter.take_event().into_flexible_event());
+        }
     }
+}
 
-    /// Takes the pending batch as an event once the send interval has elapsed.
-    pub fn take_event_if_due(&mut self) -> Option<FlexibleEvent> {
-        (self.reporter.last_send.elapsed() > SEND_INTERVAL).then(|| self.take_event())
-    }
-
-    /// Takes the pending batch as an event, even when it has no incidents.
-    ///
-    /// Empty events still matter: summing `report_window_seconds` gives the
-    /// observed time when computing incident rates.
-    pub fn take_event(&mut self) -> FlexibleEvent {
-        self.reporter.take_event().into_flexible_event()
-    }
+fn serialize_incidents(startup: Instant, poll: HangMonitorPoll) -> Vec<SerializedHangIncident> {
+    poll.incidents
+        .iter()
+        .map(|incident| {
+            SerializedHangIncident::convert(
+                startup,
+                incident,
+                MAX_SERIALIZED_CONTRIBUTORS,
+                poll.first_present_at,
+            )
+        })
+        .collect()
 }
 
 struct Reporter {
