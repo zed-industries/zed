@@ -366,6 +366,17 @@ pub struct AgentSettingsContent {
     ///
     /// Default: ""
     pub terminal_init_command: Option<String>,
+    /// Run each Terminal Thread in its own persistent Herdr session.
+    /// Archiving the thread stops and deletes that session.
+    ///
+    /// Default: false
+    pub terminal_herdr_enabled: Option<bool>,
+    /// Regex applied to the workspace path when naming a Herdr session.
+    /// The first capture group is used, or the entire match if there is no group.
+    /// Empty matches fall back to the workspace directory name.
+    ///
+    /// Default: ""
+    pub terminal_herdr_session_name_regex: Option<String>,
     /// How thinking blocks should be displayed by default in the agent panel.
     ///
     /// Default: automatic

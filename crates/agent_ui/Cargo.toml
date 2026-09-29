@@ -83,6 +83,7 @@ picker.workspace = true
 platform_title_bar.workspace = true
 postage.workspace = true
 project.workspace = true
+regex.workspace = true
 prompt_store.workspace = true
 proto.workspace = true
 rand.workspace = true

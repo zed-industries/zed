@@ -242,6 +242,8 @@ pub struct AgentSettings {
     pub expand_edit_card: bool,
     pub expand_terminal_card: bool,
     pub terminal_init_command: Option<String>,
+    pub terminal_herdr_enabled: bool,
+    pub terminal_herdr_session_name_regex: Option<String>,
     pub thinking_display: ThinkingBlockDisplay,
     pub cancel_generation_on_terminal_stop: bool,
     pub use_modifier_to_send: bool,
@@ -838,6 +840,10 @@ impl Settings for AgentSettings {
             terminal_init_command: agent
                 .terminal_init_command
                 .filter(|command| !command.trim().is_empty()),
+            terminal_herdr_enabled: agent.terminal_herdr_enabled.unwrap_or(false),
+            terminal_herdr_session_name_regex: agent
+                .terminal_herdr_session_name_regex
+                .filter(|pattern| !pattern.is_empty()),
             thinking_display: agent.thinking_display.unwrap(),
             cancel_generation_on_terminal_stop: agent.cancel_generation_on_terminal_stop.unwrap(),
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),

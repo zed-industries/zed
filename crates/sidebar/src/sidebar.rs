@@ -788,6 +788,7 @@ pub struct Sidebar {
     /// Threads in the database-backed regeneration path need their own loading
     /// state because they do not have a live `agent::Thread` to report it.
     regenerating_titles: HashSet<ThreadId>,
+    herdr_archiving: HashSet<TerminalId>,
     /// Starting a rename must seed the current title into the title editor,
     /// so this prevents that BufferEdited event from being interpreted as user input.
     suppress_next_rename_edit: bool,
@@ -950,6 +951,7 @@ impl Sidebar {
             hovered_thread_index: None,
             rename_target: None,
             regenerating_titles: HashSet::new(),
+            herdr_archiving: HashSet::new(),
             suppress_next_rename_edit: false,
 
             thread_last_accessed: HashMap::new(),
@@ -5100,6 +5102,122 @@ impl Sidebar {
             return;
         }
 
+        if let Some(session) = &metadata.herdr_session {
+            if !self.herdr_archiving.insert(metadata.terminal_id) {
+                return;
+            }
+            let build_command = |args: &[String]| match workspace {
+                ThreadEntryWorkspace::Open(workspace) => agent_ui::herdr_terminal_thread::command(
+                    workspace.read(cx).project().read(cx),
+                    args,
+                    None,
+                    cx,
+                ),
+                ThreadEntryWorkspace::Closed { .. } if metadata.remote_connection.is_none() => {
+                    let mut command = std::process::Command::new("herdr");
+                    command.args(args);
+                    Ok(command)
+                }
+                ThreadEntryWorkspace::Closed { .. } => Err(anyhow::anyhow!(
+                    "Connect to the remote workspace to archive its Herdr terminal"
+                )),
+            };
+            let stop = build_command(&[
+                "session".to_owned(),
+                "stop".to_owned(),
+                session.name.clone(),
+                "--json".to_owned(),
+            ]);
+            let delete = build_command(&[
+                "session".to_owned(),
+                "delete".to_owned(),
+                session.name.clone(),
+                "--json".to_owned(),
+            ]);
+            let list =
+                build_command(&["session".to_owned(), "list".to_owned(), "--json".to_owned()]);
+            let (stop, delete, list) = match (stop, delete, list) {
+                (Ok(stop), Ok(delete), Ok(list)) => (stop, delete, list),
+                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => {
+                    self.herdr_archiving.remove(&metadata.terminal_id);
+                    if let ThreadEntryWorkspace::Open(workspace) = workspace {
+                        workspace.update(cx, |workspace, cx| workspace.show_error(error, cx));
+                    } else {
+                        log::error!("cannot archive Herdr terminal: {error:#}");
+                    }
+                    return;
+                }
+            };
+            let metadata = metadata.clone();
+            let workspace = workspace.clone();
+            let session_name = session.name.clone();
+            cx.spawn_in(window, async move |this, cx| {
+                let result = cx
+                    .background_spawn(async move {
+                        let stop_result = agent_ui::herdr_terminal_thread::run(stop);
+                        let delete_result = agent_ui::herdr_terminal_thread::run(delete);
+                        match (stop_result, delete_result) {
+                            (stop_result, Ok(_)) => {
+                                if let Err(stop_error) = stop_result {
+                                    log::warn!(
+                                        "Herdr session was deleted after stop failed: {stop_error:#}"
+                                    );
+                                }
+                                Ok(())
+                            }
+                            (stop_result, Err(delete_error)) => {
+                                let sessions = agent_ui::herdr_terminal_thread::run(list)
+                                    .and_then(|value| {
+                                        agent_ui::herdr_terminal_thread::session_names(&value)
+                                    });
+                                if sessions.is_ok_and(|names| !names.contains(&session_name)) {
+                                    Ok(())
+                                } else if let Err(stop_error) = stop_result {
+                                    Err(anyhow::anyhow!(
+                                        "Herdr stop failed: {stop_error:#}; delete failed: {delete_error:#}"
+                                    ))
+                                } else {
+                                    Err(delete_error)
+                                }
+                            }
+                        }
+                    })
+                    .await;
+                match result {
+                    Ok(()) => {
+                        this.update_in(cx, |this, window, cx| {
+                            this.herdr_archiving.remove(&metadata.terminal_id);
+                            this.close_terminal_after_herdr_cleanup(&metadata, &workspace, window, cx)
+                        })?;
+                    }
+                    Err(error) => {
+                        this.update(cx, |this, _cx| {
+                            this.herdr_archiving.remove(&metadata.terminal_id);
+                        })?;
+                        if let ThreadEntryWorkspace::Open(workspace) = &workspace {
+                            workspace
+                                .update(cx, |workspace, cx| workspace.show_error(error, cx));
+                        } else {
+                            log::error!("cannot archive Herdr terminal: {error:#}");
+                        }
+                    }
+                }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+            return;
+        }
+
+        self.close_terminal_after_herdr_cleanup(metadata, workspace, window, cx);
+    }
+
+    fn close_terminal_after_herdr_cleanup(
+        &mut self,
+        metadata: &TerminalThreadMetadata,
+        workspace: &ThreadEntryWorkspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let terminal_id = metadata.terminal_id;
         let is_active = self
             .active_entry
@@ -6626,7 +6744,7 @@ impl Sidebar {
 
         let terminal_item = ThreadItem::new(id, title)
             .base_bg(sidebar_bg)
-            .icon(IconName::Terminal)
+            .icon(terminal.metadata.icon())
             .when_some(icon_char, |this, icon_char| this.icon_char(icon_char))
             .is_remote(is_remote)
             .worktrees(worktrees)

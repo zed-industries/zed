@@ -97,7 +97,7 @@ impl ThreadSwitcherEntry {
         match self {
             Self::Thread(entry) if entry.is_draft => IconName::Circle,
             Self::Thread(entry) => entry.icon,
-            Self::Terminal(_) => IconName::Terminal,
+            Self::Terminal(entry) => entry.metadata.icon(),
         }
     }
 

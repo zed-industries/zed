@@ -9035,6 +9035,45 @@ fn ai_page(cx: &App) -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Persistent Herdr Terminal Threads",
+                description: "Run each Terminal Thread in its own named Herdr session. Closing Zed detaches; archiving the thread stops and deletes the Herdr session.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.terminal_herdr_enabled"),
+                    pick: |settings_content| {
+                        settings_content.agent.as_ref()?.terminal_herdr_enabled.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.agent.get_or_insert_default().terminal_herdr_enabled = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Herdr Session Name Regex",
+                description: "Match the workspace path. The first capture group names the Herdr session; duplicate names receive -1, -2, and so on.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.terminal_herdr_session_name_regex"),
+                    pick: |settings_content| {
+                        settings_content.agent.as_ref()?.terminal_herdr_session_name_regex.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.agent.get_or_insert_default().terminal_herdr_session_name_regex = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    placeholder: Some("/arcadia-worktrees/([^/]+)"),
+                    display_confirm_button: true,
+                    display_clear_button: true,
+                    confirm_on_focus_out: true,
+                    treat_missing_text_as_empty: true,
+                    ..Default::default()
+                })),
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Thinking Display",
                 description: "How thinking blocks should be displayed by default. 'Auto' fully expands during streaming, then auto-collapses when done. 'Preview' auto-expands with a height constraint during streaming. 'Always Expanded' shows full content. 'Always Collapsed' keeps them collapsed.",
                 field: Box::new(SettingField {

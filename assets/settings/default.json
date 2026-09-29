@@ -1375,6 +1375,12 @@
     //
     // Example: "terminal_init_command": "claude"
     "terminal_init_command": "",
+    // Give each Terminal Thread a named Herdr session that survives closing Zed.
+    "terminal_herdr_enabled": false,
+    // First capture group (or full match) of the workspace path. An empty
+    // pattern uses the workspace directory name.
+    // Example: "/arcadia-worktrees/([^/]+)"
+    "terminal_herdr_session_name_regex": "",
     // How thinking blocks should be displayed by default in the agent panel.
     //
     // Default: auto
