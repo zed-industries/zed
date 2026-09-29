@@ -1163,6 +1163,8 @@ impl AgentPanel {
                 .active_conversation_view()
                 .map(|cv| cv.read(cx).agent_key().clone())
                 .unwrap_or_else(|| self.selected_agent.clone());
+            let active_thread_agent_id = active_thread_agent.id();
+            let remote_connection = self.project.read(cx).remote_connection_options(cx);
             self.active_agent_thread(cx)
                 .map(|thread| {
                     let thread = thread.read(cx);
@@ -1188,8 +1190,16 @@ impl AgentPanel {
                     }
                     let conversation_view = self.active_conversation_view()?;
                     let session_id = conversation_view.read(cx).root_session_id.clone()?;
-                    let metadata = ThreadMetadataStore::try_global(cx)
-                        .and_then(|store| store.read(cx).entry_by_session(&session_id).cloned());
+                    let metadata = ThreadMetadataStore::try_global(cx).and_then(|store| {
+                        store
+                            .read(cx)
+                            .entry_by_session_with_context(
+                                &session_id,
+                                &active_thread_agent_id,
+                                remote_connection.as_ref(),
+                            )
+                            .cloned()
+                    });
                     Some(SerializedActiveThread {
                         session_id: Some(session_id.0.to_string()),
                         thread_id: active_thread_id,
@@ -1319,10 +1329,24 @@ impl AgentPanel {
                     }) {
                         Ok(Some((store, reload_task))) => {
                             reload_task.await;
+                            let agent_id = info.agent_type.id();
+                            let remote_connection = workspace
+                                .read_with(cx, |workspace, cx| {
+                                    workspace
+                                        .project()
+                                        .read(cx)
+                                        .remote_connection_options(cx)
+                                })
+                                .ok()
+                                .flatten();
                             let thread_id = store.read_with(cx, |store, _cx| {
                                 let primary = info.thread_id.and_then(|tid| store.entry(tid));
                                 let fallback = info.session_id.as_ref().and_then(|sid| {
-                                    store.entry_by_session(&acp::SessionId::new(sid.clone()))
+                                    store.entry_by_session_with_context(
+                                        &acp::SessionId::new(sid.clone()),
+                                        &agent_id,
+                                        remote_connection.as_ref(),
+                                    )
                                 });
                                 primary
                                     .or(fallback)

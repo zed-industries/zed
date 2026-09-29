@@ -1020,6 +1020,8 @@ impl ConversationView {
     }
 
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let agent_id = self.connection_key.id();
+        let remote_connection = self.project.read(cx).remote_connection_options(cx);
         let (resume_session_id, work_dirs, title) = self
             .root_thread_view()
             .map(|thread_view| {
@@ -1037,7 +1039,11 @@ impl ConversationView {
                     .as_ref()
                     .and_then(|id| {
                         let store = ThreadMetadataStore::try_global(cx)?;
-                        let entry = store.read(cx).entry_by_session(id)?;
+                        let entry = store.read(cx).entry_by_session_with_context(
+                            id,
+                            &agent_id,
+                            remote_connection.as_ref(),
+                        )?;
                         Some((Some(entry.folder_paths().clone()), entry.title()))
                     })
                     .unwrap_or((None, None));

@@ -596,6 +596,26 @@ impl ThreadMetadataStore {
         self.threads.get(thread_id)
     }
 
+    pub fn entry_by_session_with_context(
+        &self,
+        session_id: &acp::SessionId,
+        agent_id: &AgentId,
+        remote_connection: Option<&RemoteConnectionOptions>,
+    ) -> Option<&ThreadMetadata> {
+        self.entry_by_session(session_id)
+            .filter(|metadata| {
+                &metadata.agent_id == agent_id
+                    && metadata.matches_remote_connection(remote_connection)
+            })
+            .or_else(|| {
+                self.threads.values().find(|metadata| {
+                    metadata.session_id.as_ref() == Some(session_id)
+                        && &metadata.agent_id == agent_id
+                        && metadata.matches_remote_connection(remote_connection)
+                })
+            })
+    }
+
     /// Returns all threads.
     pub fn entries(&self) -> impl Iterator<Item = &ThreadMetadata> + '_ {
         self.threads.values()
@@ -2002,6 +2022,64 @@ mod tests {
             assert_eq!(metadata.title.as_deref(), Some("Agent Generated Title"));
             assert_eq!(metadata.title_override.as_deref(), Some("User Title"));
             assert_eq!(metadata.display_title().as_ref(), "User Title");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_entry_by_session_with_context_distinguishes_remote(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let session_id = acp::SessionId::new("shared-session");
+        let agent_id = AgentId::new("agent-a");
+        let mut local = make_metadata(
+            session_id.0.as_ref(),
+            "Local",
+            Utc::now(),
+            PathList::default(),
+        );
+        local.agent_id = agent_id.clone();
+        let local_thread_id = local.thread_id;
+
+        let remote_connection = RemoteConnectionOptions::Wsl(WslConnectionOptions {
+            distro_name: "Ubuntu".to_string(),
+            user: Some("zed".to_string()),
+        });
+        let mut remote = make_metadata(
+            session_id.0.as_ref(),
+            "Remote",
+            Utc::now(),
+            PathList::default(),
+        );
+        remote.agent_id = agent_id.clone();
+        remote.remote_connection = Some(remote_connection.clone());
+        let remote_thread_id = remote.thread_id;
+
+        cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(local, cx);
+                store.save(remote, cx);
+            });
+        });
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+            assert_eq!(
+                store
+                    .entry_by_session_with_context(&session_id, &agent_id, None)
+                    .map(|metadata| metadata.thread_id),
+                Some(local_thread_id)
+            );
+            assert_eq!(
+                store
+                    .entry_by_session_with_context(
+                        &session_id,
+                        &agent_id,
+                        Some(&remote_connection),
+                    )
+                    .map(|metadata| metadata.thread_id),
+                Some(remote_thread_id)
+            );
         });
     }
 
