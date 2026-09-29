@@ -277,18 +277,16 @@ impl Editor {
             // opening it returns `Navigated::Yes`, which suppresses the go-to-definition
             // fallback, so the click appears to do nothing. Same rule as
             // `exclude_link_to_position` above, one level coarser — file rather than position.
-            HoverLink::File(target) => {
-                let current_project_path = buffer
-                    .read(cx)
-                    .file()
-                    .map(|file| ProjectPath::from_file(file.as_ref(), cx));
-                match &target.resolved_path {
-                    ResolvedPath::ProjectPath { project_path, .. } => {
-                        Some(project_path) != current_project_path.as_ref()
-                    }
-                    ResolvedPath::AbsPath { .. } => true,
+            HoverLink::File(target) => match &target.resolved_path {
+                ResolvedPath::ProjectPath { project_path, .. } => {
+                    let current_project_path = buffer
+                        .read(cx)
+                        .file()
+                        .map(|file| ProjectPath::from_file(file.as_ref(), cx));
+                    Some(project_path) != current_project_path.as_ref()
                 }
-            }
+                ResolvedPath::AbsPath { .. } => true,
+            },
             _ => true,
         });
         let definitions = (refresh && self.lsp_data_enabled() && point.as_valid().is_some())
