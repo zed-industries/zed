@@ -993,7 +993,7 @@ impl AgentTerminal {
 
     fn terminal_title(&self, cx: &App) -> SharedString {
         if let Some(session) = &self.herdr_session {
-            return session.name.clone().into();
+            return session.display_title().to_owned().into();
         }
         let title = self.current_terminal_title(cx);
         if title.is_empty() && !self.last_known_terminal_title.is_empty() {
@@ -2149,6 +2149,7 @@ impl AgentPanel {
                                         name: name.clone(),
                                         agent: None,
                                         agent_session: None,
+                                        current_title: None,
                                         initial_command,
                                         initial_command_sent: false,
                                     }),
@@ -2388,6 +2389,11 @@ impl AgentPanel {
                         None
                     };
                     if changed || marked_initial_command {
+                        if changed {
+                            if let Some(terminal) = this.terminals.get_mut(&terminal_id) {
+                                terminal.refresh_title(cx);
+                            }
+                        }
                         this.persist_terminal_metadata(terminal_id, cx);
                         cx.emit(AgentPanelEvent::EntryChanged);
                         cx.notify();
@@ -2745,7 +2751,7 @@ impl AgentPanel {
             title: terminal
                 .herdr_session
                 .as_ref()
-                .map(|session| session.name.clone().into())
+                .map(|session| session.display_title().to_owned().into())
                 .unwrap_or_else(|| terminal.terminal_title(cx)),
             custom_title: terminal.custom_title(cx),
             created_at: terminal.created_at,

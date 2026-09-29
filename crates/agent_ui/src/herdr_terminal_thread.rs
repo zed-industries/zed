@@ -17,6 +17,8 @@ pub struct HerdrTerminalSession {
     pub agent: Option<String>,
     pub agent_session: Option<HerdrAgentSession>,
     #[serde(default)]
+    pub current_title: Option<String>,
+    #[serde(default)]
     pub initial_command: Option<String>,
     #[serde(default)]
     pub initial_command_sent: bool,
@@ -46,6 +48,10 @@ impl HerdrTerminalSession {
             Some("grok") => IconName::AiXAi,
             _ => IconName::Terminal,
         }
+    }
+
+    pub fn display_title(&self) -> &str {
+        self.current_title.as_deref().unwrap_or(&self.name)
     }
 
     pub fn attach_command(&self) -> String {
@@ -82,11 +88,43 @@ impl HerdrTerminalSession {
                     .as_ref()
                     .map(|session: &HerdrAgentSession| session.agent.clone())
             });
-        if self.agent == agent && self.agent_session == agent_session {
+        let current_title = agent.as_ref().and_then(|_| {
+            let title = pane
+                .get("terminal_title_stripped")
+                .and_then(Value::as_str)
+                .or_else(|| pane.get("terminal_title").and_then(Value::as_str))?
+                .trim();
+            let workspace_label =
+                pane.get("workspace_id")
+                    .and_then(Value::as_str)
+                    .and_then(|workspace_id| {
+                        response
+                            .get("workspaces")
+                            .and_then(Value::as_array)?
+                            .iter()
+                            .find(|workspace| {
+                                workspace.get("workspace_id").and_then(Value::as_str)
+                                    == Some(workspace_id)
+                            })
+                            .and_then(|workspace| workspace.get("label"))
+                            .and_then(Value::as_str)
+                    });
+            let title = workspace_label
+                .and_then(|label| title.strip_suffix(&format!(" | {label}")))
+                .unwrap_or(title)
+                .trim();
+            (!title.is_empty() && title != self.name && Some(title) != workspace_label)
+                .then(|| title.to_owned())
+        });
+        if self.agent == agent
+            && self.agent_session == agent_session
+            && self.current_title == current_title
+        {
             return false;
         }
         self.agent = agent;
         self.agent_session = agent_session;
+        self.current_title = current_title;
         true
     }
 
@@ -246,6 +284,7 @@ mod tests {
             name: "project".to_owned(),
             agent: None,
             agent_session: None,
+            current_title: None,
             initial_command: None,
             initial_command_sent: false,
         };
@@ -277,5 +316,41 @@ mod tests {
                 .map(|value| value.value.as_str()),
             Some("second")
         );
+    }
+
+    #[test]
+    fn pane_title_tracks_current_agent_conversation() {
+        let mut session = HerdrTerminalSession {
+            name: "food-photo-apps-2".to_owned(),
+            agent: None,
+            agent_session: None,
+            current_title: None,
+            initial_command: None,
+            initial_command_sent: false,
+        };
+        let snapshot = |title: &str| {
+            serde_json::json!({
+                "result": {"snapshot": {
+                    "focused_pane_id": "w1:p1",
+                    "workspaces": [{"workspace_id": "w1", "label": "food-photo-apps"}],
+                    "panes": [{
+                        "pane_id": "w1:p1",
+                        "workspace_id": "w1",
+                        "agent": "codex",
+                        "terminal_title_stripped": title
+                    }]
+                }}
+            })
+        };
+
+        assert!(session.update_from_snapshot(&snapshot("Respond to greeting | food-photo-apps")));
+        assert_eq!(session.display_title(), "Respond to greeting");
+        assert!(!session.update_from_snapshot(&snapshot("Respond to greeting | food-photo-apps")));
+        assert!(
+            session.update_from_snapshot(&snapshot("Investigate failing tests | food-photo-apps"))
+        );
+        assert_eq!(session.display_title(), "Investigate failing tests");
+        assert!(session.update_from_snapshot(&snapshot("food-photo-apps")));
+        assert_eq!(session.display_title(), "food-photo-apps-2");
     }
 }

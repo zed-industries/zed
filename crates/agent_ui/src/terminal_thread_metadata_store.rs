@@ -72,7 +72,7 @@ impl TerminalThreadMetadata {
             return self
                 .custom_title
                 .clone()
-                .unwrap_or_else(|| session.name.clone().into());
+                .unwrap_or_else(|| session.display_title().to_owned().into());
         }
         compose_terminal_thread_title(
             self.title.as_ref(),
@@ -85,7 +85,7 @@ impl TerminalThreadMetadata {
             return self
                 .custom_title
                 .clone()
-                .unwrap_or_else(|| session.name.clone().into());
+                .unwrap_or_else(|| session.display_title().to_owned().into());
         }
         self.custom_title.clone().unwrap_or_else(|| {
             SharedString::from(terminal_title_without_prefix(self.title.as_ref()).to_string())
@@ -756,6 +756,7 @@ mod tests {
                 kind: "id".to_owned(),
                 value: "session-after-switch".to_owned(),
             }),
+            current_title: Some("Investigate failing tests".to_owned()),
             initial_command: Some("codex".to_owned()),
             initial_command_sent: true,
         });
@@ -767,7 +768,10 @@ mod tests {
         let restored = database.list().expect("load Herdr metadata");
         assert_eq!(restored.len(), 1);
         assert_eq!(restored[0].herdr_session, metadata.herdr_session);
-        assert_eq!(restored[0].display_title().as_ref(), "workspace-2");
+        assert_eq!(
+            restored[0].display_title().as_ref(),
+            "Investigate failing tests"
+        );
         assert_eq!(restored[0].icon(), IconName::AiOpenAi);
     }
 
