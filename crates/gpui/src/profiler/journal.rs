@@ -198,7 +198,8 @@ pub enum IntervalBoundary {
     /// A system suspend interrupted the measurement interval, observed either
     /// through a power notification or through the suspend clock.
     PowerTransition {
-        /// When the foreground received the notification.
+        /// When the foreground noticed the suspend, through a notification or
+        /// the suspend clock.
         ended_at: Instant,
     },
 }
@@ -499,8 +500,10 @@ impl ForegroundJournalWriter {
             return;
         }
         self.power = power;
-        // The notification accounts for this suspend, so the suspend clock
-        // must not report it again.
+        // A suspend that was notified after it happened must not be reported
+        // again by the suspend clock. A notification that precedes its
+        // suspend (macOS posts will-sleep up to 30 s early) leaves the clock
+        // to fire once more after wake, which only seals an empty interval.
         self.suspended_time = (self.read_suspended_time)();
         self.interrupt_measurements(at);
     }
