@@ -124,6 +124,10 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: false
     pub inline_menus: Option<bool>,
+    /// Whether to automatically open the menus in the title bar on hover.
+    ///
+    /// Default: false
+    pub open_menus_on_hover: Option<bool>,
     /// The layout of window control buttons in the title bar (Linux only).
     ///
     /// This can be set to "platform_default" to follow the system configuration, or
