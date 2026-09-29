@@ -2,9 +2,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use ::reliability::HangReporting;
 use client::Client;
 use gpui::{AppContext, TasksIncluded, profiler};
-use ::reliability::HangReporting;
 use ui::App;
 
 use crate::STARTUP_TIME;
