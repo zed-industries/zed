@@ -902,6 +902,15 @@ pub(crate) fn sync_project_sessions(
 
 const RECENT_PROJECT_SESSION_COUNT: usize = 5;
 
+fn primary_work_dir(work_dirs: &PathList) -> Option<&PathBuf> {
+    work_dirs.paths().first()
+}
+
+fn session_matches_project(work_dirs: &PathList, project_paths: &PathList) -> bool {
+    primary_work_dir(work_dirs)
+        .is_some_and(|cwd| project_paths.paths().iter().any(|path| path == cwd))
+}
+
 fn reconcile_project_threads(
     sessions_for_agent: SessionByAgent,
     worktree_paths: WorktreePaths,
@@ -914,7 +923,10 @@ fn reconcile_project_threads(
     let mut threads = Vec::new();
 
     for session in sessions {
-        if session.work_dirs.as_ref() != Some(folder_paths) {
+        let Some(session_work_dirs) = session.work_dirs.as_ref() else {
+            continue;
+        };
+        if !session_matches_project(session_work_dirs, folder_paths) {
             continue;
         }
 
@@ -931,7 +943,9 @@ fn reconcile_project_threads(
                 let local_key =
                     agent_session_key(&sessions_for_agent.agent_id, &session.session_id, None);
                 let metadata = existing_sessions.get(&local_key)?;
-                if metadata.folder_paths() != folder_paths {
+                if primary_work_dir(metadata.folder_paths())
+                    != primary_work_dir(session_work_dirs)
+                {
                     return None;
                 }
                 existing_sessions
@@ -982,7 +996,7 @@ fn reconcile_project_threads(
     threads
 }
 
-type AgentSessionScope = (AgentId, acp::SessionId, Option<PathList>);
+type AgentSessionScope = (AgentId, acp::SessionId, Option<PathBuf>);
 type AgentSessionKey = (
     AgentId,
     acp::SessionId,
@@ -998,7 +1012,10 @@ fn remote_session_scopes(sessions_by_agent: &[SessionByAgent]) -> HashSet<AgentS
                 (
                     sessions.agent_id.clone(),
                     session.session_id.clone(),
-                    session.work_dirs.clone(),
+                    session
+                        .work_dirs
+                        .as_ref()
+                        .and_then(|work_dirs| primary_work_dir(work_dirs).cloned()),
                 )
             })
         })
@@ -1031,7 +1048,10 @@ fn count_importable_threads_by_agent(
                 && remote_sessions.contains(&(
                     sessions_for_agent.agent_id.clone(),
                     session.session_id.clone(),
-                    session.work_dirs.clone(),
+                    session
+                        .work_dirs
+                        .as_ref()
+                        .and_then(|work_dirs| primary_work_dir(work_dirs).cloned()),
                 ))
             {
                 continue;
@@ -1071,7 +1091,10 @@ fn collect_importable_threads(
                 && remote_sessions.contains(&(
                     agent_id.clone(),
                     session.session_id.clone(),
-                    session.work_dirs.clone(),
+                    session
+                        .work_dirs
+                        .as_ref()
+                        .and_then(|work_dirs| primary_work_dir(work_dirs).cloned()),
                 ))
             {
                 continue;
@@ -1260,6 +1283,35 @@ mod tests {
             "matching"
         );
         assert!(!result[0].archived);
+    }
+
+    #[test]
+    fn test_reconcile_project_threads_accepts_additional_directories() {
+        let project_paths = PathList::new(&[Path::new("/project")]);
+        let worktree_paths = WorktreePaths::from_folder_paths(&project_paths);
+        let sessions = SessionByAgent {
+            agent_id: AgentId::new("agent-a"),
+            remote_connection: None,
+            sessions: vec![make_session(
+                "with-additional-dir",
+                Some("Thread"),
+                Some(PathList::new(&[
+                    PathBuf::from("/project"),
+                    PathBuf::from("/shared"),
+                ])),
+                None,
+                None,
+            )],
+        };
+
+        let result =
+            reconcile_project_threads(sessions, worktree_paths, HashMap::default());
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].session_id.as_ref().unwrap().0.as_ref(),
+            "with-additional-dir"
+        );
     }
 
     #[test]
