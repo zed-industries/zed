@@ -205,7 +205,7 @@ impl ActiveEntry {
 
 #[derive(Clone, Debug)]
 struct ActiveThreadInfo {
-    session_id: acp::SessionId,
+    thread_id: ThreadId,
     title: SharedString,
     status: AgentThreadStatus,
     icon: IconName,
@@ -804,7 +804,7 @@ pub struct Sidebar {
     /// Persists live thread statuses across rebuilds so that Running→Completed
     /// transitions can be detected even when the group is collapsed (and
     /// thread entries are not present in the list).
-    live_thread_statuses: HashMap<acp::SessionId, (AgentThreadStatus, ThreadId)>,
+    live_thread_statuses: HashMap<ThreadId, AgentThreadStatus>,
     /// Remembers whether each draft last rendered as empty or with content so
     /// that when a draft that was empty gains content again, we refresh
     /// its interaction time.
@@ -1412,8 +1412,7 @@ impl Sidebar {
         let mut entries = Vec::new();
         let mut notified_threads = previous.notified_threads;
         let mut notified_terminals: HashSet<TerminalId> = HashSet::new();
-        let mut new_live_statuses: HashMap<acp::SessionId, (AgentThreadStatus, ThreadId)> =
-            HashMap::new();
+        let mut new_live_statuses: HashMap<ThreadId, AgentThreadStatus> = HashMap::new();
         let mut current_session_ids: HashSet<acp::SessionId> = HashSet::new();
         let mut current_thread_ids: HashSet<agent_ui::ThreadId> = HashSet::new();
         let mut current_terminal_ids: HashSet<TerminalId> = HashSet::new();
@@ -1755,8 +1754,7 @@ impl Sidebar {
 
                 // Build a lookup from live_infos and compute running/waiting
                 // counts in a single pass.
-                let mut live_info_by_session: HashMap<acp::SessionId, ActiveThreadInfo> =
-                    HashMap::new();
+                let mut live_info_by_thread: HashMap<ThreadId, ActiveThreadInfo> = HashMap::new();
                 for info in live_infos {
                     if info.status == AgentThreadStatus::Running {
                         has_running_threads = true;
@@ -1764,22 +1762,19 @@ impl Sidebar {
                     if info.status == AgentThreadStatus::WaitingForConfirmation {
                         waiting_thread_count += 1;
                     }
-                    live_info_by_session.insert(info.session_id.clone(), info);
+                    live_info_by_thread.insert(info.thread_id, info);
                 }
 
                 // Merge live info into threads and update notification state
                 // in a single pass.
                 for thread in &mut threads {
-                    if let Some(session_id) = thread.metadata.session_id.clone() {
-                        if let Some(info) = live_info_by_session.get(&session_id) {
-                            let status = info.status;
-                            let thread_id = thread.metadata.thread_id;
-                            Arc::make_mut(thread).apply_active_info(info);
-                            new_live_statuses.insert(session_id, (status, thread_id));
-                        }
+                    let thread_id = thread.metadata.thread_id;
+                    if let Some(info) = live_info_by_thread.get(&thread_id) {
+                        let status = info.status;
+                        Arc::make_mut(thread).apply_active_info(info);
+                        new_live_statuses.insert(thread_id, status);
                     }
 
-                    let session_id = &thread.metadata.session_id;
                     let is_active_thread = self.active_entry.as_ref().is_some_and(|entry| {
                         entry.is_active_thread(&thread.metadata.thread_id)
                             && active_workspace
@@ -1789,10 +1784,8 @@ impl Sidebar {
 
                     if thread.status == AgentThreadStatus::Completed
                         && !is_active_thread
-                        && session_id
-                            .as_ref()
-                            .and_then(|sid| old_statuses.get(sid))
-                            .is_some_and(|(s, _)| *s == AgentThreadStatus::Running)
+                        && old_statuses.get(&thread.metadata.thread_id)
+                            == Some(&AgentThreadStatus::Running)
                     {
                         notified_threads.insert(thread.metadata.thread_id);
                     }
@@ -1815,27 +1808,12 @@ impl Sidebar {
                     if info.status == AgentThreadStatus::WaitingForConfirmation {
                         waiting_thread_count += 1;
                     }
-                    // Resolve the thread_id for this session so we can
-                    // track its status and detect transitions even while
-                    // the group is collapsed.
-                    let thread_id = old_statuses
-                        .get(&info.session_id)
-                        .map(|(_, tid)| *tid)
-                        .or_else(|| {
-                            ThreadMetadataStore::global(cx)
-                                .read(cx)
-                                .entry_by_session(&info.session_id)
-                                .map(|m| m.thread_id)
-                        });
-
-                    if let Some(thread_id) = thread_id {
-                        let old_status = old_statuses.get(&info.session_id).map(|(s, _)| *s);
-                        new_live_statuses.insert(info.session_id.clone(), (info.status, thread_id));
-                        if info.status == AgentThreadStatus::Completed
-                            && old_status == Some(AgentThreadStatus::Running)
-                        {
-                            notified_threads.insert(thread_id);
-                        }
+                    let old_status = old_statuses.get(&info.thread_id).copied();
+                    new_live_statuses.insert(info.thread_id, info.status);
+                    if info.status == AgentThreadStatus::Completed
+                        && old_status == Some(AgentThreadStatus::Running)
+                    {
+                        notified_threads.insert(info.thread_id);
                     }
                 }
 
@@ -8119,7 +8097,6 @@ fn all_thread_infos_for_workspace(
             let is_title_generating = thread_view_ref
                 .as_native_thread(cx)
                 .is_some_and(|native_thread| native_thread.read(cx).is_generating_title());
-            let session_id = thread.session_id().clone();
             let is_background = agent_panel.is_retained_thread(&conversation_thread_id);
 
             let status = if has_pending_tool_call {
@@ -8136,7 +8113,7 @@ fn all_thread_infos_for_workspace(
             let diff_stats = thread.action_log().read(cx).diff_stats(cx);
 
             Some(ActiveThreadInfo {
-                session_id,
+                thread_id: conversation_thread_id,
                 title,
                 status,
                 icon,
