@@ -1,14 +1,10 @@
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
 
+use futures::channel::oneshot;
 use scheduler::Instant;
 
 use super::{HangDetector, HangIncident};
-
-/// How long [`crate::App::shutdown`] waits for the final flush. Quit handlers
-/// get [`crate::SHUTDOWN_TIMEOUT`] in total, and the app still has to deliver
-/// what the flush produced.
-pub(crate) const HANG_MONITOR_FLUSH_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// Detection thresholds and polling cadence for
 /// [`crate::App::start_hang_monitor`].
@@ -54,7 +50,7 @@ pub struct HangMonitorPoll {
 }
 
 enum Request {
-    Flush { done: mpsc::Sender<()> },
+    Flush { done: oneshot::Sender<()> },
 }
 
 /// Polls a [`HangDetector`] on a dedicated OS thread.
@@ -107,13 +103,11 @@ impl HangMonitor {
     }
 
     /// Asks the monitor thread to poll now with [`HangMonitorPollReason::Flush`]
-    /// and waits up to `timeout` for the callback to finish. Returns whether
-    /// it finished in time.
-    pub(crate) fn flush(&self, timeout: Duration) -> bool {
-        let (done, finished) = mpsc::channel();
-        if self.requests.send(Request::Flush { done }).is_err() {
-            return false;
-        }
-        finished.recv_timeout(timeout).is_ok()
+    /// without waiting for it. The returned receiver completes once the
+    /// callback has returned. Returns `None` if the thread has exited.
+    pub(crate) fn request_flush(&self) -> Option<oneshot::Receiver<()>> {
+        let (done, finished) = oneshot::channel();
+        self.requests.send(Request::Flush { done }).ok()?;
+        Some(finished)
     }
 }

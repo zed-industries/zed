@@ -18,7 +18,7 @@ use serde::Serialize;
 #[cfg(not(target_family = "wasm"))]
 mod monitor;
 #[cfg(not(target_family = "wasm"))]
-pub(crate) use monitor::{HANG_MONITOR_FLUSH_TIMEOUT, HangMonitor};
+pub(crate) use monitor::HangMonitor;
 #[cfg(not(target_family = "wasm"))]
 pub use monitor::{HangMonitorConfig, HangMonitorError, HangMonitorPoll, HangMonitorPollReason};
 
@@ -673,7 +673,8 @@ mod tests {
         // An interval longer than the test isolates the flush path.
         let (monitor, receiver) = spawn_monitor(journal, Duration::from_secs(3600));
         simulate_blocked_foreground_poll(HANG_THRESHOLD * 2);
-        assert!(monitor.flush(Duration::from_secs(10)));
+        let flushed = monitor.request_flush().expect("monitor thread is running");
+        futures::executor::block_on(flushed).expect("flush completes");
         assert_eq!(
             receiver.try_recv().ok(),
             Some((HangMonitorPollReason::Flush, 1)),

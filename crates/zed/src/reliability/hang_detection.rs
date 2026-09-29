@@ -71,8 +71,9 @@ fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &
     let monitor_interval = Duration::from_secs(1);
     let started = Instant::now();
     let startup = *STARTUP_TIME.get().unwrap_or(&started);
-    // GPUI flushes the monitor's final batch before quit observers run, so
-    // this flush delivers it.
+    // GPUI's final `Flush` poll runs during shutdown, concurrently with this
+    // handler and within `SHUTDOWN_TIMEOUT`, so the last batch may miss this
+    // flush.
     match HangTelemetry::new(startup, telemetry::send_event).start(cx) {
         Ok(()) => cx
             .on_app_quit(move |_| client.telemetry().flush_events())

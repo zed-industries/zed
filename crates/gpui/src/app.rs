@@ -1062,19 +1062,30 @@ impl App {
     /// [`SHUTDOWN_TIMEOUT`] to complete. WebAssembly runs them asynchronously as best-effort cleanup
     /// because its event-loop thread cannot block.
     pub fn shutdown(&mut self) {
-        // Before quit observers run, so the final hang batch reaches the
-        // app's telemetry queue before observers flush it.
+        // Requested first so the final hang poll overlaps with the quit
+        // handlers. It's awaited alongside them, within `SHUTDOWN_TIMEOUT`.
         #[cfg(all(feature = "profiler", not(target_family = "wasm")))]
-        if let Some(hang_monitor) = &self.hang_monitor
-            && !hang_monitor.flush(crate::profiler::hang::HANG_MONITOR_FLUSH_TIMEOUT)
-        {
-            log::warn!("hang monitor did not flush before quitting");
-        }
+        let hang_monitor_flush = self
+            .hang_monitor
+            .as_ref()
+            .and_then(|hang_monitor| hang_monitor.request_flush());
 
-        let mut futures = Vec::new();
+        let mut futures: Vec<LocalBoxFuture<'static, ()>> = Vec::new();
 
         for observer in self.quit_observers.remove(&()) {
             futures.push(observer(self));
+        }
+
+        #[cfg(all(feature = "profiler", not(target_family = "wasm")))]
+        if let Some(flushed) = hang_monitor_flush {
+            futures.push(
+                async move {
+                    if flushed.await.is_err() {
+                        log::warn!("hang monitor exited before flushing");
+                    }
+                }
+                .boxed_local(),
+            );
         }
 
         self.windows.clear();
@@ -2051,8 +2062,9 @@ impl App {
     /// detector over this app's foreground journal every `config.interval`
     /// and passes each poll's incidents, including empty polls, to `on_poll`
     /// on that thread. When the app quits, a final poll with
-    /// [`HangMonitorPollReason::Flush`] runs before quit observers, so
-    /// `on_poll` can deliver batched results.
+    /// [`HangMonitorPollReason::Flush`] runs during shutdown, concurrently
+    /// with quit handlers and within [`SHUTDOWN_TIMEOUT`], so `on_poll` can
+    /// deliver batched results.
     ///
     /// # Errors
     ///
