@@ -592,8 +592,14 @@ impl ThreadMetadataStore {
 
     /// Returns the metadata for a thread identified by its ACP session ID.
     pub fn entry_by_session(&self, session_id: &acp::SessionId) -> Option<&ThreadMetadata> {
-        let thread_id = self.threads_by_session.get(session_id)?;
-        self.threads.get(thread_id)
+        self.threads_by_session
+            .get(session_id)
+            .and_then(|thread_id| self.threads.get(thread_id))
+            .or_else(|| {
+                self.threads
+                    .values()
+                    .find(|metadata| metadata.session_id.as_ref() == Some(session_id))
+            })
     }
 
     pub fn entry_by_session_with_context(
@@ -2022,6 +2028,49 @@ mod tests {
             assert_eq!(metadata.title.as_deref(), Some("Agent Generated Title"));
             assert_eq!(metadata.title_override.as_deref(), Some("User Title"));
             assert_eq!(metadata.display_title().as_ref(), "User Title");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_entry_by_session_falls_back_after_duplicate_delete(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mut first = make_metadata(
+            "shared-session",
+            "First",
+            Utc::now(),
+            PathList::default(),
+        );
+        first.agent_id = AgentId::new("agent-a");
+        let first_thread_id = first.thread_id;
+
+        let mut second = make_metadata(
+            "shared-session",
+            "Second",
+            Utc::now(),
+            PathList::default(),
+        );
+        second.agent_id = AgentId::new("agent-b");
+        let second_thread_id = second.thread_id;
+        let session_id = second.session_id.clone().unwrap();
+
+        cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(first, cx);
+                store.save(second, cx);
+                store.delete(second_thread_id, cx);
+            });
+        });
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            assert_eq!(
+                store
+                    .read(cx)
+                    .entry_by_session(&session_id)
+                    .map(|metadata| metadata.thread_id),
+                Some(first_thread_id)
+            );
         });
     }
 

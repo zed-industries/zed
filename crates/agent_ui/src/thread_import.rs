@@ -923,20 +923,23 @@ fn reconcile_project_threads(
             &session.session_id,
             sessions_for_agent.remote_connection.as_ref(),
         );
-        let mut rebound_remote = false;
-        let existing = existing_sessions.remove(&key).or_else(|| {
-            sessions_for_agent.remote_connection.as_ref()?;
-            let local_key =
-                agent_session_key(&sessions_for_agent.agent_id, &session.session_id, None);
-            let metadata = existing_sessions.get(&local_key)?;
-            if metadata.folder_paths() != folder_paths {
-                return None;
-            }
-            rebound_remote = true;
-            existing_sessions.remove(&local_key)
-        });
+        let existing = existing_sessions
+            .remove(&key)
+            .map(|metadata| (metadata, false))
+            .or_else(|| {
+                sessions_for_agent.remote_connection.as_ref()?;
+                let local_key =
+                    agent_session_key(&sessions_for_agent.agent_id, &session.session_id, None);
+                let metadata = existing_sessions.get(&local_key)?;
+                if metadata.folder_paths() != folder_paths {
+                    return None;
+                }
+                existing_sessions
+                    .remove(&local_key)
+                    .map(|metadata| (metadata, true))
+            });
 
-        if let Some(existing) = existing {
+        if let Some((existing, rebound_remote)) = existing {
             let mut metadata = existing.clone();
             if let Some(title) = session.title {
                 metadata.title = Some(title);
