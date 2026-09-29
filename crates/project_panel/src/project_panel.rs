@@ -4828,6 +4828,7 @@ impl ProjectPanel {
                     this.update_visible_entries_task.autoscroll = false;
                     this.autoscroll(cx);
                 }
+                this.preload_initial_entry_icons(window, cx);
                 cx.notify();
             })
             .ok();
@@ -4839,6 +4840,77 @@ impl ProjectPanel {
                 || self.update_visible_entries_task.focus_filename_editor,
             autoscroll: autoscroll || self.update_visible_entries_task.autoscroll,
         };
+    }
+
+    fn preload_initial_entry_icons(&self, window: &Window, cx: &mut Context<Self>) {
+        if self.state.edit_state.is_some() {
+            return;
+        }
+        {
+            let scroll = self.scroll_handle.0.borrow();
+            if scroll
+                .last_item_size
+                .is_some_and(|size| size.contents.height > Pixels::ZERO)
+                || scroll.base_handle.offset().y != Pixels::ZERO
+                || scroll.deferred_scroll_to_item.is_some()
+            {
+                return;
+            }
+        }
+
+        let Some(workspace) = Workspace::for_window(window, cx)
+            .filter(|workspace| workspace.entity_id() == self.workspace.entity_id())
+        else {
+            return;
+        };
+        let workspace = workspace.read(cx);
+        let panel_id = cx.entity_id();
+        if workspace
+            .zoomed_item()
+            .and_then(|view| view.upgrade())
+            .is_some_and(|view| view.entity_id() != panel_id)
+            || !workspace.all_docks().into_iter().any(|dock| {
+                dock.read(cx)
+                    .visible_panel()
+                    .is_some_and(|panel| panel.panel_id() == panel_id)
+            })
+        {
+            return;
+        }
+
+        let scale_factor = window.scale_factor();
+        if !scale_factor.is_finite() || scale_factor <= 0.0 {
+            return;
+        }
+        let font_size = ThemeSettings::get_global(cx).ui_font_size(cx).as_f32();
+        let minimum_row_height = (1.5 * font_size * scale_factor).floor() / scale_factor;
+        let row_count = (window.viewport_size().height.as_f32() / minimum_row_height).ceil();
+        if minimum_row_height <= 0.0 || !row_count.is_finite() || row_count <= 0.0 {
+            return;
+        }
+        let row_count = (row_count as usize).saturating_add(1);
+        for (worktree_id, entry) in self
+            .state
+            .visible_entries
+            .iter()
+            .flat_map(|worktree| {
+                worktree
+                    .entries
+                    .iter()
+                    .map(move |entry| (worktree.worktree_id, entry))
+            })
+            .take(row_count)
+        {
+            let is_expanded = self
+                .state
+                .expanded_dir_ids
+                .get(&worktree_id)
+                .is_some_and(|entries| entries.binary_search(&entry.id).is_ok());
+            let (chevron, icon) = Self::entry_icons(entry, is_expanded, cx);
+            for path in chevron.into_iter().chain(icon) {
+                Icon::from_path(path).preload(cx);
+            }
+        }
     }
 
     fn expand_entry(
@@ -6875,6 +6947,33 @@ impl ProjectPanel {
             )
     }
 
+    fn entry_icons(
+        entry: &Entry,
+        is_expanded: bool,
+        cx: &App,
+    ) -> (Option<SharedString>, Option<SharedString>) {
+        let settings = ProjectPanelSettings::get_global(cx);
+        match entry.kind {
+            EntryKind::File => {
+                let icon = if settings.file_icons {
+                    FileIcons::get_icon(entry.path.as_std_path(), cx)
+                } else {
+                    None
+                };
+                (None, icon)
+            }
+            _ => {
+                let indicator = FileIcons::get_folder_indicators(
+                    settings.folder_indicator,
+                    is_expanded,
+                    entry.path.as_std_path(),
+                    cx,
+                );
+                (indicator.chevron, indicator.icon)
+            }
+        }
+    }
+
     fn details_for_entry(
         &self,
         entry: &Entry,
@@ -6886,10 +6985,7 @@ impl ProjectPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> EntryDetails {
-        let (show_file_icons, folder_indicator) = {
-            let settings = ProjectPanelSettings::get_global(cx);
-            (settings.file_icons, settings.folder_indicator)
-        };
+        let folder_indicator = ProjectPanelSettings::get_global(cx).folder_indicator;
 
         let expanded_entry_ids = self
             .state
@@ -6899,25 +6995,7 @@ impl ProjectPanel {
             .unwrap_or(&[]);
         let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
 
-        let (chevron, icon) = match entry.kind {
-            EntryKind::File => {
-                let icon = if show_file_icons {
-                    FileIcons::get_icon(entry.path.as_std_path(), cx)
-                } else {
-                    None
-                };
-                (None, icon)
-            }
-            _ => {
-                let indicator = FileIcons::get_folder_indicators(
-                    folder_indicator,
-                    is_expanded,
-                    entry.path.as_std_path(),
-                    cx,
-                );
-                (indicator.chevron, indicator.icon)
-            }
-        };
+        let (chevron, icon) = Self::entry_icons(entry, is_expanded, cx);
 
         let path_style = self.project.read(cx).path_style(cx);
         let (depth, difference) =
@@ -8080,6 +8158,14 @@ impl Panel for ProjectPanel {
                 .root_entry()
                 .is_some_and(|entry| entry.is_dir())
         })
+    }
+
+    fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if active {
+            cx.defer_in(window, |panel, window, cx| {
+                panel.preload_initial_entry_icons(window, cx);
+            });
+        }
     }
 
     fn activation_priority(&self) -> u32 {
