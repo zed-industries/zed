@@ -3218,7 +3218,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.17",
- "tokio-rustls 0.26.4",
+ "tokio-rustls",
  "yawc",
 ]
 
@@ -15307,6 +15307,7 @@ dependencies = [
  "task",
  "telemetry",
  "tempfile",
+ "terminal",
  "theme",
  "theme_settings",
  "thiserror 2.0.17",
