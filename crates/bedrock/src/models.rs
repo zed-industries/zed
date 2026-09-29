@@ -45,6 +45,17 @@ pub struct BedrockModelCacheConfiguration {
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct BedrockThinkingConfig {
+    #[serde(default)]
+    pub adaptive: bool,
+    #[serde(default)]
+    pub has_xhigh: bool,
+    #[serde(default)]
+    pub budget_tokens: Option<u64>,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum ConverseModel {
     // Anthropic Claude 4+ models
@@ -231,6 +242,12 @@ pub enum ConverseModel {
         max_output_tokens: Option<u64>,
         default_temperature: Option<f32>,
         cache_configuration: Option<BedrockModelCacheConfiguration>,
+        #[serde(default)]
+        supports_tool_use: Option<bool>,
+        #[serde(default)]
+        supports_images: Option<bool>,
+        #[serde(default)]
+        thinking: Option<BedrockThinkingConfig>,
     },
 }
 
@@ -514,25 +531,13 @@ impl ConverseModel {
         }
     }
 
-    pub fn default_temperature(&self) -> f32 {
+    pub fn default_temperature(&self) -> Option<f32> {
         match self {
-            Self::ClaudeFable5
-            | Self::ClaudeOpus5
-            | Self::ClaudeOpus4_8
-            | Self::ClaudeOpus4_7
-            | Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeSonnet5
-            | Self::ClaudeSonnet4_6
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeHaiku4_5 => 1.0,
             Self::Custom {
                 default_temperature,
                 ..
-            } => default_temperature.unwrap_or(1.0),
-            _ => 1.0,
+            } => *default_temperature,
+            _ => Some(1.0),
         }
     }
 
@@ -567,6 +572,9 @@ impl ConverseModel {
             Self::GLM5 | Self::GLM4_7 | Self::GLM4_7Flash => true,
             Self::KimiK2Thinking | Self::KimiK2_5 => true,
             Self::DeepSeekR1 | Self::DeepSeekV3_1 | Self::DeepSeekV3_2 => true,
+            Self::Custom {
+                supports_tool_use, ..
+            } => supports_tool_use.unwrap_or(false),
             _ => false,
         }
     }
@@ -589,6 +597,9 @@ impl ConverseModel {
             Self::PixtralLarge => true,
             Self::Qwen3VL235B => true,
             Self::KimiK2_5 => true,
+            Self::Custom {
+                supports_images, ..
+            } => supports_images.unwrap_or(false),
             _ => false,
         }
     }
@@ -616,44 +627,69 @@ impl ConverseModel {
     }
 
     pub fn supports_thinking(&self) -> bool {
-        matches!(
-            self,
+        match self {
             Self::ClaudeFable5
-                | Self::ClaudeOpus5
-                | Self::ClaudeOpus4_8
-                | Self::ClaudeOpus4_7
-                | Self::ClaudeOpus4_6
-                | Self::ClaudeOpus4_5
-                | Self::ClaudeOpus4_1
-                | Self::ClaudeSonnet5
-                | Self::ClaudeSonnet4_6
-                | Self::ClaudeSonnet4_5
-                | Self::ClaudeSonnet4
-                | Self::ClaudeHaiku4_5
-        )
+            | Self::ClaudeOpus5
+            | Self::ClaudeOpus4_8
+            | Self::ClaudeOpus4_7
+            | Self::ClaudeOpus4_6
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_1
+            | Self::ClaudeSonnet5
+            | Self::ClaudeSonnet4_6
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4
+            | Self::ClaudeHaiku4_5 => true,
+            Self::Custom { thinking, .. } => thinking.is_some(),
+            _ => false,
+        }
     }
 
     pub fn supports_adaptive_thinking(&self) -> bool {
-        matches!(
-            self,
+        match self {
             Self::ClaudeFable5
-                | Self::ClaudeOpus5
-                | Self::ClaudeOpus4_8
-                | Self::ClaudeOpus4_7
-                | Self::ClaudeOpus4_6
-                | Self::ClaudeSonnet5
-                | Self::ClaudeSonnet4_6
-        )
+            | Self::ClaudeOpus5
+            | Self::ClaudeOpus4_8
+            | Self::ClaudeOpus4_7
+            | Self::ClaudeOpus4_6
+            | Self::ClaudeSonnet5
+            | Self::ClaudeSonnet4_6 => true,
+            Self::Custom { thinking, .. } => {
+                thinking.as_ref().is_some_and(|thinking| thinking.adaptive)
+            }
+            _ => false,
+        }
     }
 
     pub fn supports_xhigh_adaptive_thinking(&self) -> bool {
-        matches!(
-            self,
-            Self::ClaudeFable5 | Self::ClaudeOpus5 | Self::ClaudeOpus4_8 | Self::ClaudeSonnet5
-        )
+        match self {
+            Self::ClaudeFable5 | Self::ClaudeOpus5 | Self::ClaudeOpus4_8 | Self::ClaudeSonnet5 => {
+                true
+            }
+            Self::Custom { thinking, .. } => thinking
+                .as_ref()
+                .is_some_and(|thinking| thinking.has_xhigh),
+            _ => false,
+        }
     }
 
     pub fn thinking_mode(&self) -> BedrockModelMode {
+        if let Self::Custom {
+            thinking: Some(thinking),
+            ..
+        } = self
+        {
+            return if thinking.adaptive {
+                BedrockModelMode::AdaptiveThinking {
+                    effort: BedrockAdaptiveThinkingEffort::default(),
+                }
+            } else {
+                BedrockModelMode::Thinking {
+                    budget_tokens: Some(thinking.budget_tokens.unwrap_or(4096)),
+                }
+            };
+        }
+
         if self.supports_adaptive_thinking() {
             BedrockModelMode::AdaptiveThinking {
                 effort: BedrockAdaptiveThinkingEffort::default(),
@@ -673,6 +709,10 @@ impl ConverseModel {
         allow_global: bool,
     ) -> anyhow::Result<String> {
         let model_id = self.request_id();
+        // custom models return the name exactly
+        if matches!(self, Self::Custom { .. }) {
+            return Ok(model_id.into());
+        }
 
         let supports_global = matches!(
             self,
@@ -736,8 +776,6 @@ impl ConverseModel {
         };
 
         match (self, region_group) {
-            (Self::Custom { .. }, _) => Ok(model_id.into()),
-
             // Global inference profiles
             (
                 Self::ClaudeFable5
@@ -1390,6 +1428,9 @@ mod tests {
             max_output_tokens: Some(8192),
             default_temperature: Some(0.7),
             cache_configuration: None,
+            supports_tool_use: None,
+            supports_images: None,
+            thinking: None,
         };
 
         assert_eq!(
@@ -1399,6 +1440,75 @@ mod tests {
         assert_eq!(
             custom_model.cross_region_inference_id("eu-west-1", true)?,
             "custom.my-model-v1:0"
+        );
+
+        let prefixed = ConverseModel::Custom {
+            name: "us.anthropic.claude-sonnet-4-7".to_string(),
+            max_tokens: 200_000,
+            display_name: None,
+            max_output_tokens: None,
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use: None,
+            supports_images: None,
+            thinking: None,
+        };
+        assert_eq!(
+            prefixed.cross_region_inference_id("us-east-1", false)?,
+            "us.anthropic.claude-sonnet-4-7"
+        );
+        assert_eq!(
+            prefixed.cross_region_inference_id("eu-west-1", false)?,
+            "us.anthropic.claude-sonnet-4-7"
+        );
+
+        let unprefixed = ConverseModel::Custom {
+            name: "anthropic.claude-sonnet-4-7".to_string(),
+            max_tokens: 200_000,
+            display_name: None,
+            max_output_tokens: None,
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use: None,
+            supports_images: None,
+            thinking: None,
+        };
+        assert_eq!(
+            unprefixed.cross_region_inference_id("us-east-1", false)?,
+            "anthropic.claude-sonnet-4-7"
+        );
+
+        let grok = ConverseModel::Custom {
+            name: "xai.grok-4.6".to_string(),
+            max_tokens: 500_000,
+            display_name: None,
+            max_output_tokens: None,
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use: None,
+            supports_images: None,
+            thinking: None,
+        };
+        assert_eq!(
+            grok.cross_region_inference_id("us-east-1", false)?,
+            "xai.grok-4.6"
+        );
+
+        let arn = ConverseModel::Custom {
+            name: "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc"
+                .to_string(),
+            max_tokens: 200_000,
+            display_name: None,
+            max_output_tokens: None,
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use: None,
+            supports_images: None,
+            thinking: None,
+        };
+        assert_eq!(
+            arn.cross_region_inference_id("us-east-1", false)?,
+            "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc"
         );
         Ok(())
     }
@@ -1552,5 +1662,132 @@ mod tests {
         assert!(ConverseModel::ClaudeFable5.supports_caching());
         assert!(!ConverseModel::Llama4Scout17B.supports_caching());
         assert!(!ConverseModel::NovaPro.supports_caching());
+    }
+
+    fn custom_model(
+        supports_tool_use: Option<bool>,
+        supports_images: Option<bool>,
+        thinking: Option<BedrockThinkingConfig>,
+    ) -> ConverseModel {
+        ConverseModel::Custom {
+            name: "us.anthropic.claude-custom-v1:0".to_string(),
+            max_tokens: 200_000,
+            display_name: Some("Custom Claude".to_string()),
+            max_output_tokens: Some(8192),
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use,
+            supports_images,
+            thinking,
+        }
+    }
+
+    #[test]
+    fn test_custom_model_defaults_disable_optional_capabilities() {
+        let model = custom_model(None, None, None);
+        assert!(!model.supports_tool_use());
+        assert!(!model.supports_images());
+        assert!(!model.supports_thinking());
+        assert!(!model.supports_adaptive_thinking());
+        assert!(!model.supports_xhigh_adaptive_thinking());
+        assert_eq!(model.thinking_mode(), BedrockModelMode::Default);
+        assert_eq!(model.default_temperature(), None);
+        assert_eq!(
+            ConverseModel::ClaudeSonnet4_5.default_temperature(),
+            Some(1.0)
+        );
+    }
+
+    #[test]
+    fn test_custom_model_optional_capabilities() {
+        let model = custom_model(
+            Some(true),
+            Some(true),
+            Some(BedrockThinkingConfig {
+                adaptive: false,
+                has_xhigh: false,
+                budget_tokens: None,
+            }),
+        );
+        assert!(model.supports_tool_use());
+        assert!(model.supports_images());
+        assert!(model.supports_thinking());
+        assert!(!model.supports_adaptive_thinking());
+        assert_eq!(
+            model.thinking_mode(),
+            BedrockModelMode::Thinking {
+                budget_tokens: Some(4096)
+            }
+        );
+    }
+
+    #[test]
+    fn test_custom_model_thinking_budget_tokens() {
+        let model = custom_model(
+            None,
+            None,
+            Some(BedrockThinkingConfig {
+                adaptive: false,
+                has_xhigh: false,
+                budget_tokens: Some(8192),
+            }),
+        );
+        assert!(model.supports_thinking());
+        assert_eq!(
+            model.thinking_mode(),
+            BedrockModelMode::Thinking {
+                budget_tokens: Some(8192)
+            }
+        );
+    }
+
+    #[test]
+    fn test_custom_model_adaptive_thinking() {
+        let model = custom_model(
+            None,
+            None,
+            Some(BedrockThinkingConfig {
+                adaptive: true,
+                has_xhigh: false,
+                budget_tokens: None,
+            }),
+        );
+        assert!(model.supports_thinking());
+        assert!(model.supports_adaptive_thinking());
+        assert!(!model.supports_xhigh_adaptive_thinking());
+        assert_eq!(
+            model.thinking_mode(),
+            BedrockModelMode::AdaptiveThinking {
+                effort: BedrockAdaptiveThinkingEffort::High
+            }
+        );
+
+        let model = custom_model(
+            None,
+            None,
+            Some(BedrockThinkingConfig {
+                adaptive: true,
+                has_xhigh: true,
+                budget_tokens: None,
+            }),
+        );
+        assert!(model.supports_xhigh_adaptive_thinking());
+    }
+
+    #[test]
+    fn test_custom_model_legacy_config_deserializes() {
+        let model: ConverseModel = serde_json::from_value(serde_json::json!({
+            "custom": {
+                "name": "eu.anthropic.claude-new-v1:0",
+                "max_tokens": 200000
+            }
+        }))
+        .expect("legacy custom model config should deserialize");
+
+        assert_eq!(model.id(), "eu.anthropic.claude-new-v1:0");
+        assert!(!model.supports_tool_use());
+        assert!(!model.supports_images());
+        assert!(!model.supports_thinking());
+        assert_eq!(model.thinking_mode(), BedrockModelMode::Default);
     }
 }
