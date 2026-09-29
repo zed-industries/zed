@@ -54,7 +54,9 @@ You can also configure this from the Settings UI under **AI**, via the "Terminal
 
 ## Persistent Herdr Sessions {#persistent-herdr-sessions}
 
-If [Herdr](https://herdr.chefgroep.nl/) is installed on the host that runs the terminal, you can give each Terminal Thread its own named Herdr session:
+If [Herdr](https://herdr.dev/) is installed on the host that runs the terminal, choose **Herdr Terminal Thread** from the new thread menu, or press **⌘⌥N** on macOS. This action always creates a named Herdr session, regardless of which agent type you created last. **Terminal** in the same menu always creates a regular terminal.
+
+To make the default new thread action use Herdr when the last created agent type was a terminal, set:
 
 ```json [settings]
 {
@@ -67,6 +69,8 @@ If [Herdr](https://herdr.chefgroep.nl/) is installed on the host that runs the t
 ```
 
 The first regex capture group from the current workspace path becomes the session name. Without a match, Zed uses the workspace directory name. If that name is in use, Zed appends `-1`, `-2`, and so on. Names are restricted to 64 ASCII bytes of letters, digits, dots, underscores, and hyphens; other characters become hyphens. Zed shortens a long base name to leave room for a numeric suffix.
+
+To start Herdr with its spaces and agents sidebar hidden, put `sidebar_start_collapsed = true` and `sidebar_collapsed_mode = "hidden"` under `[ui]` in the Herdr `config.toml` on the host running Herdr. Herdr remembers subsequent manual sidebar changes for each session.
 
 Zed launches the configured init command in the new Herdr pane once. When Zed closes, the Herdr server retains the process. Reopening the Terminal Thread reconnects to the same Herdr session and does not repeat the init command. The thread title shows its Herdr session name, and its icon follows the agent reported by Herdr. When a Herdr integration reports a native agent session reference, Zed stores the latest value as you switch conversations inside Codex or Claude. Install the Herdr integration for your agent if you also want Herdr to resume that conversation after a cold Herdr server restart.
 

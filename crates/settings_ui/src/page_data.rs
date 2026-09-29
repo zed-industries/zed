@@ -9035,8 +9035,8 @@ fn ai_page(cx: &App) -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Persistent Herdr Terminal Threads",
-                description: "Run each Terminal Thread in its own named Herdr session. Closing Zed detaches; archiving the thread stops and deletes the Herdr session.",
+                title: "Use Herdr for Default Terminal Threads",
+                description: "When a terminal was the last created agent type, use Herdr for new threads. The Terminal and Herdr Terminal Thread menu actions always create their named type. Closing Zed detaches; archiving a Herdr thread stops and deletes its session.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("agent.terminal_herdr_enabled"),

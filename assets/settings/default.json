@@ -1375,7 +1375,8 @@
     //
     // Example: "terminal_init_command": "claude"
     "terminal_init_command": "",
-    // Give each Terminal Thread a named Herdr session that survives closing Zed.
+    // Use Herdr for default Terminal Threads when the last created agent was a terminal.
+    // Explicit Terminal and Herdr Terminal Thread menu actions always create their named type.
     "terminal_herdr_enabled": false,
     // First capture group (or full match) of the workspace path. An empty
     // pattern uses the workspace directory name.

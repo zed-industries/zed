@@ -27,6 +27,7 @@
       "escape": "menu::Cancel",
       "alt-shift-enter": "menu::Restart",
       "cmd-shift-w": "workspace::CloseWindow",
+      "cmd-alt-n": "agent::NewHerdrTerminalThread",
       "shift-escape": "workspace::ToggleZoom",
       "cmd-o": "workspace::Open",
       "cmd-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
