@@ -4299,6 +4299,117 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_stale_send_result_preserves_new_prompt(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        for (responses_are_errors, defer_contents) in [(false, false), (true, false), (true, true)]
+        {
+            let connection = StubAgentConnection::new();
+            let (conversation_view, cx) =
+                setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+            add_to_workspace(conversation_view.clone(), cx);
+            let thread_view = active_thread(&conversation_view, cx);
+            let message_editor = message_editor(&conversation_view, cx);
+
+            let finish_first = connection.defer_next_prompt_response();
+            message_editor.update_in(cx, |editor, window, cx| {
+                editor.set_text("first", window, cx);
+            });
+            thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+            cx.run_until_parked();
+
+            thread_view.update_in(cx, |view, _window, cx| view.cancel_generation(cx));
+            cx.run_until_parked();
+            let finish_second = connection.defer_next_prompt_response();
+            message_editor.update_in(cx, |editor, window, cx| {
+                editor.set_text("second", window, cx);
+            });
+            let finish_contents = if defer_contents {
+                let (sender, receiver) = futures::channel::oneshot::channel();
+                thread_view.update_in(cx, |view, window, cx| {
+                    let contents = cx.spawn(async move |_, _| {
+                        receiver.await?;
+                        anyhow::Ok(Some((vec!["second".into()], Vec::new())))
+                    });
+                    view.send_content(contents, false, window, cx);
+                });
+                Some(sender)
+            } else {
+                thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+                None
+            };
+            cx.run_until_parked();
+
+            thread_view.read_with(cx, |view, cx| {
+                if defer_contents {
+                    assert!(view.is_loading_contents);
+                    assert_eq!(view.thread.read(cx).status(), ThreadStatus::Idle);
+                } else {
+                    assert_eq!(view.thread.read(cx).status(), ThreadStatus::Generating);
+                    assert!(matches!(
+                        view.in_flight_prompt.as_deref(),
+                        Some([acp_v1::ContentBlock::Text(text)]) if text.text == "second"
+                    ));
+                }
+                assert!(view.thread_error.is_none());
+            });
+
+            let first_response = if responses_are_errors {
+                Err(anyhow!("stale prompt failed"))
+            } else {
+                Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
+            };
+            finish_first
+                .send(first_response)
+                .expect("first prompt response should still be pending");
+            cx.run_until_parked();
+            if let Some(finish_contents) = finish_contents {
+                finish_contents
+                    .send(())
+                    .expect("second contents are pending");
+                cx.run_until_parked();
+            }
+
+            thread_view.read_with(cx, |view, cx| {
+                assert_eq!(view.thread.read(cx).status(), ThreadStatus::Generating);
+                assert!(view.turn_fields.turn_started_at.is_some());
+                assert!(matches!(
+                    view.in_flight_prompt.as_deref(),
+                    Some([acp_v1::ContentBlock::Text(text)]) if text.text == "second"
+                ));
+                assert!(view.thread_error.is_none());
+            });
+
+            let second_response = if responses_are_errors {
+                Err(anyhow!("current prompt failed"))
+            } else {
+                Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
+            };
+            finish_second
+                .send(second_response)
+                .expect("second prompt response should be pending");
+            cx.run_until_parked();
+            thread_view.read_with(cx, |view, cx| {
+                assert_eq!(view.thread.read(cx).status(), ThreadStatus::Idle);
+                assert!(view.turn_fields.turn_started_at.is_none());
+                if responses_are_errors {
+                    assert!(matches!(
+                        &view.thread_error,
+                        Some(ThreadError::Other { message, .. }) if message.as_ref() == "current prompt failed"
+                    ));
+                    assert!(matches!(
+                        view.in_flight_prompt.as_deref(),
+                        Some([acp_v1::ContentBlock::Text(text)]) if text.text == "second"
+                    ));
+                } else {
+                    assert!(view.thread_error.is_none());
+                    assert!(view.in_flight_prompt.is_none());
+                }
+            });
+        }
+    }
+
+    #[gpui::test]
     async fn test_queue_resumes_after_stop_and_new_message(cx: &mut TestAppContext) {
         init_test(cx);
 
