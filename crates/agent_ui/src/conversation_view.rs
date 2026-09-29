@@ -4482,6 +4482,57 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_authentication_keeps_receipt_submission_recoverable(cx: &mut TestAppContext) {
+        init_test(cx);
+        let connection = StubAgentConnection::new().with_receipt_submissions(true);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let message_editor = message_editor(&conversation_view, cx);
+        let reject = connection.defer_next_receipt_response();
+
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("retain this prompt", window, cx);
+        });
+        thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+        let submission_id = thread.read_with(cx, |thread, _| {
+            thread.latest_submission_id().expect("submission")
+        });
+        reject
+            .send(Err(anyhow!(acp_v1::Error::auth_required())))
+            .expect("receipt response pending");
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, _| {
+            assert!(matches!(
+                view.thread_error,
+                Some(ThreadError::AuthenticationRequired(_))
+            ));
+        });
+
+        let authenticate = cx
+            .debug_bounds("authenticate-submission")
+            .expect("authentication recovery button");
+        cx.simulate_click(authenticate.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert_eq!(
+            message_editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "retain this prompt",
+        );
+        thread.read_with(cx, |thread, _| {
+            let original = thread.submission(submission_id).expect("retained original");
+            assert_eq!(original.content.as_ref(), &["retain this prompt".into()]);
+            assert!(matches!(
+                original.state,
+                acp_thread::SubmissionState::Failed(_)
+            ));
+            assert!(!thread.is_idle_for_retention());
+        });
+    }
+
+    #[gpui::test]
     async fn test_receipt_recovery_preserves_draft_and_copies_failed_submission(
         cx: &mut TestAppContext,
     ) {

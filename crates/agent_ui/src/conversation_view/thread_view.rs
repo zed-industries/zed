@@ -11798,7 +11798,8 @@ impl ThreadView {
 
                     this.clear_thread_error(cx);
                     if let Some(message) = this.in_flight_prompt(cx) {
-                        if let Some(submission_id) = this.current_submission
+                        if !this.thread.read(cx).uses_reported_activity()
+                            && let Some(submission_id) = this.current_submission
                             && this.thread.read(cx).submission(submission_id).is_some_and(
                                 |record| {
                                     matches!(
@@ -11831,6 +11832,11 @@ impl ThreadView {
                     })
                 }
             }))
+            .map(|button| {
+                div()
+                    .debug_selector(|| "authenticate-submission".into())
+                    .child(button)
+            })
     }
 
     fn current_model_name(&self, cx: &App) -> SharedString {
