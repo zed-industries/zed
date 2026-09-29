@@ -900,15 +900,20 @@ pub(crate) fn sync_project_sessions(
     })
 }
 
+const RECENT_PROJECT_SESSION_COUNT: usize = 5;
+
 fn reconcile_project_threads(
     sessions_for_agent: SessionByAgent,
     worktree_paths: WorktreePaths,
     mut existing_sessions: HashMap<AgentSessionKey, ThreadMetadata>,
 ) -> Vec<ThreadMetadata> {
     let folder_paths = worktree_paths.folder_path_list();
+    let mut sessions = sessions_for_agent.sessions;
+    sessions.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
+    let mut new_session_count = 0;
     let mut threads = Vec::new();
 
-    for session in sessions_for_agent.sessions {
+    for session in sessions {
         if session.work_dirs.as_ref() != Some(folder_paths) {
             continue;
         }
@@ -918,18 +923,33 @@ fn reconcile_project_threads(
             &session.session_id,
             sessions_for_agent.remote_connection.as_ref(),
         );
-        if let Some(existing) = existing_sessions.remove(&key) {
+        let mut rebound_remote = false;
+        let existing = existing_sessions.remove(&key).or_else(|| {
+            sessions_for_agent.remote_connection.as_ref()?;
+            let local_key =
+                agent_session_key(&sessions_for_agent.agent_id, &session.session_id, None);
+            let metadata = existing_sessions.get(&local_key)?;
+            if metadata.folder_paths() != folder_paths {
+                return None;
+            }
+            rebound_remote = true;
+            existing_sessions.remove(&local_key)
+        });
+
+        if let Some(existing) = existing {
             let mut metadata = existing.clone();
             if let Some(title) = session.title {
                 metadata.title = Some(title);
             }
-            if let Some(updated_at) = session.updated_at {
+            if let Some(updated_at) = session.updated_at
+                && updated_at > metadata.updated_at
+            {
                 metadata.updated_at = updated_at;
             }
             if metadata.created_at.is_none() {
                 metadata.created_at = session.created_at;
             }
-            if !metadata.archived {
+            if rebound_remote || !metadata.archived {
                 metadata.worktree_paths = worktree_paths.clone();
                 metadata.remote_connection = sessions_for_agent.remote_connection.clone();
             }
@@ -939,6 +959,8 @@ fn reconcile_project_threads(
             continue;
         }
 
+        let archived = new_session_count >= RECENT_PROJECT_SESSION_COUNT;
+        new_session_count += 1;
         threads.push(ThreadMetadata {
             thread_id: ThreadId::new(),
             session_id: Some(session.session_id),
@@ -950,7 +972,7 @@ fn reconcile_project_threads(
             interacted_at: None,
             worktree_paths: worktree_paths.clone(),
             remote_connection: sessions_for_agent.remote_connection.clone(),
-            archived: false,
+            archived,
         });
     }
 
@@ -1229,6 +1251,88 @@ mod tests {
             "matching"
         );
         assert!(!result[0].archived);
+    }
+
+    #[test]
+    fn test_reconcile_project_threads_rebinds_local_remote_mirror() {
+        let project_paths = PathList::new(&[Path::new("/project")]);
+        let worktree_paths = WorktreePaths::from_folder_paths(&project_paths);
+        let agent_id = AgentId::new("agent-a");
+        let session_id = acp::SessionId::new("shared-session");
+        let existing = ThreadMetadata {
+            thread_id: ThreadId::new(),
+            session_id: Some(session_id.clone()),
+            agent_id: agent_id.clone(),
+            title: Some("Local mirror".into()),
+            title_override: None,
+            updated_at: Utc::now() - chrono::Duration::minutes(1),
+            created_at: None,
+            interacted_at: None,
+            worktree_paths: worktree_paths.clone(),
+            remote_connection: None,
+            archived: true,
+        };
+        let thread_id = existing.thread_id;
+        let remote_connection =
+            RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
+                host: "example.com".into(),
+                ..Default::default()
+            });
+        let sessions = SessionByAgent {
+            agent_id: agent_id.clone(),
+            remote_connection: Some(remote_connection.clone()),
+            sessions: vec![make_session(
+                "shared-session",
+                Some("Remote session"),
+                Some(project_paths),
+                Some(Utc::now()),
+                None,
+            )],
+        };
+
+        let result = reconcile_project_threads(
+            sessions,
+            worktree_paths,
+            HashMap::from([(
+                agent_session_key(&agent_id, &session_id, None),
+                existing,
+            )]),
+        );
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].thread_id, thread_id);
+        assert!(result[0].archived);
+        assert_eq!(result[0].remote_connection, Some(remote_connection));
+        assert_eq!(result[0].display_title(), "Remote session");
+    }
+
+    #[test]
+    fn test_reconcile_project_threads_archives_older_new_sessions() {
+        let project_paths = PathList::new(&[Path::new("/project")]);
+        let worktree_paths = WorktreePaths::from_folder_paths(&project_paths);
+        let now = Utc::now();
+        let sessions = SessionByAgent {
+            agent_id: AgentId::new("agent-a"),
+            remote_connection: None,
+            sessions: (0..7)
+                .map(|index| {
+                    make_session(
+                        &format!("session-{index}"),
+                        Some("Thread"),
+                        Some(project_paths.clone()),
+                        Some(now - chrono::Duration::minutes(index)),
+                        None,
+                    )
+                })
+                .collect(),
+        };
+
+        let result =
+            reconcile_project_threads(sessions, worktree_paths, HashMap::default());
+
+        assert_eq!(result.len(), 7);
+        assert_eq!(result.iter().filter(|thread| !thread.archived).count(), 5);
+        assert_eq!(result.iter().filter(|thread| thread.archived).count(), 2);
     }
 
     #[test]
