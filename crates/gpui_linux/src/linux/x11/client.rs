@@ -1,7 +1,7 @@
 use anyhow::{Context as _, anyhow};
 use ashpd::WindowIdentifier;
 use calloop::{
-    EventLoop, LoopHandle, RegistrationToken,
+    LoopHandle, RegistrationToken,
     generic::{FdWrapper, Generic},
 };
 use collections::HashMap;
@@ -49,10 +49,9 @@ use super::{
 };
 
 use crate::linux::{
-    DEFAULT_CURSOR_ICON_NAME, LinuxClient, capslock_from_xkb, cursor_style_to_icon_names,
-    get_xkb_compose_state, is_within_click_distance, keystroke_from_xkb,
-    keystroke_underlying_dead_key, log_cursor_icon_warning, modifiers_from_xkb, new_xkb_context,
-    open_uri_internal,
+    DEFAULT_CURSOR_ICON_NAME, capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state,
+    is_within_click_distance, keystroke_from_xkb, keystroke_underlying_dead_key,
+    log_cursor_icon_warning, modifiers_from_xkb, new_xkb_context, open_uri_internal,
     platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
     reveal_path_internal,
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
@@ -60,8 +59,8 @@ use crate::linux::{
 use crate::linux::{LinuxCommon, LinuxKeyboardLayout, X11Window, modifiers_from_xinput_info};
 
 use gpui::{
-    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay, PlatformInput,
+    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, FileDropEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay, PlatformInput,
     PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta, Size,
     TouchPhase, WindowButtonLayout, WindowParams, WindowVisibility, point, px,
 };
@@ -183,8 +182,6 @@ pub struct X11ClientState {
     /// A weak pointer to this state, for event-loop callbacks registered by its methods.
     this: X11ClientStatePtr,
     pub(crate) loop_handle: LoopHandle<'static, ()>,
-    /// The loop this client created for itself, until `run` takes it; `None` after `attach`.
-    pub(crate) event_loop: Option<calloop::EventLoop<'static, ()>>,
     /// Long-lived sources this client registered on the loop, removed by `detach`.
     registrations: Vec<RegistrationToken>,
 
@@ -244,8 +241,8 @@ pub struct X11ClientState {
 pub struct X11ClientStatePtr(pub Weak<RefCell<X11ClientState>>);
 
 impl X11ClientStatePtr {
-    pub fn get_client(&self) -> Option<X11Client> {
-        self.0.upgrade().map(X11Client)
+    pub fn get_client(&self) -> Option<X11Connection> {
+        self.0.upgrade().map(X11Connection)
     }
 
     pub fn drop_window(&self, x_window: u32) {
@@ -319,25 +316,13 @@ impl X11ClientStatePtr {
 }
 
 #[derive(Clone)]
-pub(crate) struct X11Client(pub(crate) Rc<RefCell<X11ClientState>>);
+pub(crate) struct X11Connection(pub(crate) Rc<RefCell<X11ClientState>>);
 
-impl X11Client {
-    /// Creates the process's X11 client with its own event loop.
-    pub(crate) fn new() -> anyhow::Result<Self> {
-        let event_loop = EventLoop::try_new()?;
-        let (common, main_receiver, power_receiver) = LinuxCommon::new(event_loop.get_signal());
-        let common = Rc::new(RefCell::new(common));
-        let handle = event_loop.handle();
-        LinuxCommon::register_sources(&common, &handle, main_receiver, power_receiver)?;
-        let client = Self::attach(handle, common, None)?;
-        client.0.borrow_mut().event_loop = Some(event_loop);
-        Ok(client)
-    }
-
+impl X11Connection {
     /// Connects to the X server named by `display`, or by `DISPLAY` when `None`, and registers
     /// its event sources on `handle`.
     ///
-    /// Call [`X11Client::detach`] to remove those sources, leaving the loop and `common` usable
+    /// Call [`X11Connection::detach`] to remove those sources, leaving the loop and `common` usable
     /// without X11.
     pub(crate) fn attach(
         handle: LoopHandle<'static, ()>,
@@ -467,7 +452,7 @@ impl X11Client {
         };
 
         let background_executor = common.borrow().background_executor.clone();
-        let client = X11Client(Rc::new_cyclic(|this| {
+        let client = X11Connection(Rc::new_cyclic(|this| {
             RefCell::new(X11ClientState {
                 this: X11ClientStatePtr(this.clone()),
                 registrations: Vec::new(),
@@ -475,7 +460,6 @@ impl X11Client {
                 capslock: Capslock::default(),
                 last_modifiers_changed_event: Modifiers::default(),
                 last_capslock_changed_event: Capslock::default(),
-                event_loop: None,
                 loop_handle: handle.clone(),
                 common,
                 last_click: Instant::now(),
@@ -1622,22 +1606,22 @@ impl X11Client {
     }
 }
 
-impl LinuxClient for X11Client {
-    fn compositor_name(&self) -> &'static str {
+impl X11Connection {
+    pub(crate) fn compositor_name(&self) -> &'static str {
         "X11"
     }
 
-    fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
+    pub(crate) fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
         let common = self.0.borrow().common.clone();
         f(&mut common.borrow_mut())
     }
 
-    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
+    pub(crate) fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         let state = self.0.borrow();
         Box::new(state.keyboard_layout.clone())
     }
 
-    fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
+    pub(crate) fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         let state = self.0.borrow();
         let setup = state.xcb_connection.setup();
         setup
@@ -1652,7 +1636,7 @@ impl LinuxClient for X11Client {
             .collect()
     }
 
-    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+    pub(crate) fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         let state = self.0.borrow();
         X11Display::new(
             &state.xcb_connection,
@@ -1663,26 +1647,13 @@ impl LinuxClient for X11Client {
         .map(|display| Rc::new(display) as Rc<dyn PlatformDisplay>)
     }
 
-    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        let state = self.0.borrow();
-
-        Some(Rc::new(
-            X11Display::new(
-                &state.xcb_connection,
-                state.scale_factor,
-                u64::from(id) as usize,
-            )
-            .ok()?,
-        ))
-    }
-
     #[cfg(feature = "screen-capture")]
-    fn is_screen_capture_supported(&self) -> bool {
+    pub(crate) fn is_screen_capture_supported(&self) -> bool {
         true
     }
 
     #[cfg(feature = "screen-capture")]
-    fn screen_capture_sources(
+    pub(crate) fn screen_capture_sources(
         &self,
     ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Rc<dyn gpui::ScreenCaptureSource>>>>
     {
@@ -1690,7 +1661,7 @@ impl LinuxClient for X11Client {
         gpui::scap_screen_capture::scap_screen_sources(&foreground_executor)
     }
 
-    fn open_window(
+    pub(crate) fn open_window(
         &self,
         handle: AnyWindowHandle,
         params: WindowParams,
@@ -1759,7 +1730,7 @@ impl LinuxClient for X11Client {
         Ok(Box::new(window))
     }
 
-    fn set_cursor_style(&self, style: CursorStyle) {
+    pub(crate) fn set_cursor_style(&self, style: CursorStyle) {
         let mut state = self.0.borrow_mut();
         let Some(focused_window) = state.mouse_focused_window else {
             return;
@@ -1805,15 +1776,15 @@ impl LinuxClient for X11Client {
         state.xcb_connection.flush().log_err();
     }
 
-    fn hide_cursor_until_mouse_moves(&self) {
+    pub(crate) fn hide_cursor_until_mouse_moves(&self) {
         self.0.borrow_mut().hide_cursor_until_mouse_moves();
     }
 
-    fn is_cursor_visible(&self) -> bool {
+    pub(crate) fn is_cursor_visible(&self) -> bool {
         self.0.borrow().cursor_hidden_window.is_none()
     }
 
-    fn open_uri(&self, uri: &str) {
+    pub(crate) fn open_uri(&self, uri: &str) {
         #[cfg(any(feature = "wayland", feature = "x11"))]
         open_uri_internal(
             self.with_common(|c| c.background_executor.clone()),
@@ -1822,7 +1793,7 @@ impl LinuxClient for X11Client {
         );
     }
 
-    fn reveal_path(&self, path: PathBuf) {
+    pub(crate) fn reveal_path(&self, path: PathBuf) {
         #[cfg(any(feature = "x11", feature = "wayland"))]
         reveal_path_internal(
             self.with_common(|c| c.background_executor.clone()),
@@ -1831,7 +1802,7 @@ impl LinuxClient for X11Client {
         );
     }
 
-    fn write_to_primary(&self, item: gpui::ClipboardItem) {
+    pub(crate) fn write_to_primary(&self, item: gpui::ClipboardItem) {
         let state = self.0.borrow_mut();
         state
             .clipboard
@@ -1844,7 +1815,7 @@ impl LinuxClient for X11Client {
             .log_with_level(log::Level::Debug);
     }
 
-    fn write_to_clipboard(&self, item: gpui::ClipboardItem) {
+    pub(crate) fn write_to_clipboard(&self, item: gpui::ClipboardItem) {
         let mut state = self.0.borrow_mut();
         state
             .clipboard
@@ -1858,7 +1829,7 @@ impl LinuxClient for X11Client {
         state.clipboard_item.replace(item);
     }
 
-    fn read_from_primary(&self) -> Option<gpui::ClipboardItem> {
+    pub(crate) fn read_from_primary(&self) -> Option<gpui::ClipboardItem> {
         let state = self.0.borrow_mut();
         state
             .clipboard
@@ -1867,7 +1838,7 @@ impl LinuxClient for X11Client {
             .log_with_level(log::Level::Debug)
     }
 
-    fn read_from_clipboard(&self) -> Option<gpui::ClipboardItem> {
+    pub(crate) fn read_from_clipboard(&self) -> Option<gpui::ClipboardItem> {
         let state = self.0.borrow_mut();
         // if the last copy was from this app, return our cached item
         // which has metadata attached.
@@ -1884,22 +1855,7 @@ impl LinuxClient for X11Client {
             .log_with_level(log::Level::Debug)
     }
 
-    fn run(&self) {
-        let Some(mut event_loop) = self
-            .0
-            .borrow_mut()
-            .event_loop
-            .take()
-            .context("X11Client::run called but it's already running")
-            .log_err()
-        else {
-            return;
-        };
-
-        event_loop.run(None, &mut (), |_| {}).log_err();
-    }
-
-    fn active_window(&self) -> Option<AnyWindowHandle> {
+    pub(crate) fn active_window(&self) -> Option<AnyWindowHandle> {
         let state = self.0.borrow();
         state.keyboard_focused_window.and_then(|focused_window| {
             state
@@ -1909,7 +1865,7 @@ impl LinuxClient for X11Client {
         })
     }
 
-    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+    pub(crate) fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         let state = self.0.borrow();
         let root = state.xcb_connection.setup().roots[state.x_root_index].root;
 
@@ -1951,7 +1907,9 @@ impl LinuxClient for X11Client {
         Some(handles)
     }
 
-    fn window_identifier(&self) -> impl Future<Output = Option<WindowIdentifier>> + Send + 'static {
+    pub(crate) fn window_identifier(
+        &self,
+    ) -> impl Future<Output = Option<WindowIdentifier>> + Send + 'static {
         let state = self.0.borrow();
         state
             .keyboard_focused_window

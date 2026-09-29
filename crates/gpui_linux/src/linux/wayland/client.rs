@@ -10,7 +10,7 @@ use std::{
 use anyhow::Context as _;
 use ashpd::WindowIdentifier;
 use calloop::{
-    EventLoop, LoopHandle, RegistrationToken,
+    LoopHandle, RegistrationToken,
     ping::Ping,
     timer::{TimeoutAction, Timer},
 };
@@ -82,11 +82,10 @@ use super::{
 };
 
 use crate::linux::{
-    DOUBLE_CLICK_INTERVAL, LinuxClient, LinuxCommon, LinuxKeyboardLayout, PIPE_READ_TIMEOUT,
-    SCROLL_LINES, capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state,
-    is_within_click_distance, keystroke_from_xkb, keystroke_underlying_dead_key,
-    modifiers_from_xkb, new_xkb_context, open_uri_internal, read_fd_with_timeout,
-    reveal_path_internal,
+    DOUBLE_CLICK_INTERVAL, LinuxCommon, LinuxKeyboardLayout, PIPE_READ_TIMEOUT, SCROLL_LINES,
+    capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state, is_within_click_distance,
+    keystroke_from_xkb, keystroke_underlying_dead_key, modifiers_from_xkb, new_xkb_context,
+    open_uri_internal, read_fd_with_timeout, reveal_path_internal,
     wayland::{
         clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
         cursor::Cursor,
@@ -97,7 +96,7 @@ use crate::linux::{
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
 };
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayEnvironment, DisplayId,
+    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayEnvironment,
     ExternalDragPayload, FileDragPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent,
     KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
@@ -367,8 +366,6 @@ pub(crate) struct WaylandClientState {
     cursor: Cursor,
     pending_activation: Option<PendingActivation>,
     startup_activation_token: Option<String>,
-    /// The loop this client created for itself, until `run` takes it; `None` after `attach`.
-    event_loop: Option<EventLoop<'static, ()>>,
     /// Long-lived sources this client registered on the loop, removed when it drops.
     registrations: Vec<RegistrationToken>,
     /// Cloned into every window state. A window's GPU resources are bound to this connection
@@ -807,9 +804,9 @@ impl WaylandClientState {
 /// A connection to the Wayland compositor.
 ///
 /// Not `Clone`: dropping it tears down the connection and its event-loop sources.
-pub struct WaylandClient(Rc<RefCell<WaylandClientState>>);
+pub struct WaylandConnection(Rc<RefCell<WaylandClientState>>);
 
-impl Drop for WaylandClient {
+impl Drop for WaylandConnection {
     fn drop(&mut self) {
         let (loop_handle, registrations) = {
             let mut state = self.0.borrow_mut();
@@ -896,38 +893,23 @@ fn wl_output_version(version: u32) -> anyhow::Result<u32> {
     Ok(version.clamp(WL_OUTPUT_MIN_VERSION, WL_OUTPUT_MAX_VERSION))
 }
 
-impl WaylandClient {
-    /// Creates the process's Wayland client with its own event loop.
+impl WaylandConnection {
+    /// Connects to the Wayland compositor `environment` names and registers its event sources on
+    /// `handle`.
     ///
-    /// Panics when Wayland is unavailable, because platform construction is infallible.
-    pub(crate) fn new() -> Self {
-        let startup_activation_token = take_startup_activation_token_from_environment();
-        let event_loop = EventLoop::try_new().expect("failed to create Wayland event loop");
-        let (common, main_receiver, power_receiver) = LinuxCommon::new(event_loop.get_signal());
-        let common = Rc::new(RefCell::new(common));
-        let handle = event_loop.handle();
-        LinuxCommon::register_sources(&common, &handle, main_receiver, power_receiver)
-            .expect("failed to register Linux event sources");
-        let client = Self::attach(handle, common, None, startup_activation_token)
-            .expect("failed to initialize Wayland client");
-        client.0.borrow_mut().event_loop = Some(event_loop);
-        client
-    }
-
-    /// Connects to the Wayland compositor and registers its event sources on `handle`.
-    ///
-    /// Connects to the compositor that `environment` names, or to the one this process's
-    /// environment names when `None`. Dropping the client removes its sources, leaving the loop
-    /// and `common` usable without Wayland.
+    /// The process's own environment gets libwayland's full lookup, which also honours
+    /// `WAYLAND_SOCKET`. Dropping the connection removes its sources, leaving the loop and
+    /// `common` usable without Wayland.
     pub(crate) fn attach(
         handle: LoopHandle<'static, ()>,
         common: Rc<RefCell<LinuxCommon>>,
-        environment: Option<&DisplayEnvironment>,
+        environment: &DisplayEnvironment,
         startup_activation_token: Option<String>,
     ) -> anyhow::Result<Self> {
-        let conn = match environment {
-            Some(environment) => connect_to_wayland_display(environment),
-            None => Connection::connect_to_env().map_err(anyhow::Error::from),
+        let conn = if *environment == DisplayEnvironment::from_process_environment() {
+            Connection::connect_to_env().map_err(anyhow::Error::from)
+        } else {
+            connect_to_wayland_display(environment)
         }
         .context("failed to connect to Wayland compositor")?;
         let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn)
@@ -1068,7 +1050,6 @@ impl WaylandClient {
             cursor,
             pending_activation: None,
             startup_activation_token,
-            event_loop: None,
             registrations: Vec::new(),
             connection_lease: Rc::new(()),
             ime_enabled: None,
@@ -1162,12 +1143,12 @@ impl WaylandClient {
     }
 }
 
-impl LinuxClient for WaylandClient {
-    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
+impl WaylandConnection {
+    pub(crate) fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         Box::new(self.0.borrow().keyboard_layout.clone())
     }
 
-    fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
+    pub(crate) fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         self.0
             .borrow()
             .outputs
@@ -1182,28 +1163,17 @@ impl LinuxClient for WaylandClient {
             .collect()
     }
 
-    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        self.0
-            .borrow()
-            .outputs
-            .iter()
-            .find_map(|(object_id, output)| {
-                (object_id.protocol_id() as u64 == u64::from(id)).then(|| {
-                    Rc::new(WaylandDisplay {
-                        id: object_id.clone(),
-                        name: output.name.clone(),
-                        bounds: output.bounds.to_pixels(output.scale as f32),
-                    }) as Rc<dyn PlatformDisplay>
-                })
-            })
-    }
-
-    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+    pub(crate) fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         None
     }
 
     #[cfg(feature = "screen-capture")]
-    fn screen_capture_sources(
+    pub(crate) fn is_screen_capture_supported(&self) -> bool {
+        true
+    }
+
+    #[cfg(feature = "screen-capture")]
+    pub(crate) fn screen_capture_sources(
         &self,
     ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Rc<dyn gpui::ScreenCaptureSource>>>>
     {
@@ -1220,7 +1190,7 @@ impl LinuxClient for WaylandClient {
         sources_rx
     }
 
-    fn open_window(
+    pub(crate) fn open_window(
         &self,
         handle: AnyWindowHandle,
         params: WindowParams,
@@ -1286,7 +1256,7 @@ impl LinuxClient for WaylandClient {
         Ok(Box::new(window))
     }
 
-    fn set_cursor_style(&self, style: CursorStyle) {
+    pub(crate) fn set_cursor_style(&self, style: CursorStyle) {
         let mut state = self.0.borrow_mut();
 
         let need_update = state.cursor_style != Some(style)
@@ -1326,15 +1296,15 @@ impl LinuxClient for WaylandClient {
         }
     }
 
-    fn hide_cursor_until_mouse_moves(&self) {
+    pub(crate) fn hide_cursor_until_mouse_moves(&self) {
         self.0.borrow_mut().hide_cursor_until_mouse_moves();
     }
 
-    fn is_cursor_visible(&self) -> bool {
+    pub(crate) fn is_cursor_visible(&self) -> bool {
         self.0.borrow().cursor_hidden_window.is_none()
     }
 
-    fn open_uri(&self, uri: &str) {
+    pub(crate) fn open_uri(&self, uri: &str) {
         let mut state = self.0.borrow_mut();
         if let (Some(activation), Some(window)) = (
             state.globals.activation.clone(),
@@ -1352,7 +1322,7 @@ impl LinuxClient for WaylandClient {
         }
     }
 
-    fn reveal_path(&self, path: PathBuf) {
+    pub(crate) fn reveal_path(&self, path: PathBuf) {
         let mut state = self.0.borrow_mut();
         if let (Some(activation), Some(window)) = (
             state.globals.activation.clone(),
@@ -1370,22 +1340,7 @@ impl LinuxClient for WaylandClient {
         }
     }
 
-    fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
-        f(&mut self.0.borrow().common.borrow_mut())
-    }
-
-    fn run(&self) {
-        let mut event_loop = self
-            .0
-            .borrow_mut()
-            .event_loop
-            .take()
-            .expect("App is already running");
-
-        event_loop.run(None, &mut (), |_| {}).log_err();
-    }
-
-    fn write_to_primary(&self, item: gpui::ClipboardItem) {
+    pub(crate) fn write_to_primary(&self, item: gpui::ClipboardItem) {
         let mut state = self.0.borrow_mut();
         let (Some(primary_selection_manager), Some(primary_selection)) = (
             state.globals.primary_selection_manager.clone(),
@@ -1410,7 +1365,7 @@ impl LinuxClient for WaylandClient {
         }
     }
 
-    fn write_to_clipboard(&self, item: gpui::ClipboardItem) {
+    pub(crate) fn write_to_clipboard(&self, item: gpui::ClipboardItem) {
         let mut state = self.0.borrow_mut();
         let (Some(data_device_manager), Some(data_device)) = (
             state.globals.data_device_manager.clone(),
@@ -1436,15 +1391,15 @@ impl LinuxClient for WaylandClient {
         }
     }
 
-    fn read_from_primary(&self) -> Option<gpui::ClipboardItem> {
+    pub(crate) fn read_from_primary(&self) -> Option<gpui::ClipboardItem> {
         self.0.borrow_mut().clipboard.read_primary()
     }
 
-    fn read_from_clipboard(&self) -> Option<gpui::ClipboardItem> {
+    pub(crate) fn read_from_clipboard(&self) -> Option<gpui::ClipboardItem> {
         self.0.borrow_mut().clipboard.read()
     }
 
-    fn active_window(&self) -> Option<AnyWindowHandle> {
+    pub(crate) fn active_window(&self) -> Option<AnyWindowHandle> {
         self.0
             .borrow_mut()
             .keyboard_focused_window
@@ -1452,15 +1407,17 @@ impl LinuxClient for WaylandClient {
             .map(|window| window.handle())
     }
 
-    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+    pub(crate) fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         None
     }
 
-    fn compositor_name(&self) -> &'static str {
+    pub(crate) fn compositor_name(&self) -> &'static str {
         "Wayland"
     }
 
-    fn window_identifier(&self) -> impl Future<Output = Option<WindowIdentifier>> + Send + 'static {
+    pub(crate) fn window_identifier(
+        &self,
+    ) -> impl Future<Output = Option<WindowIdentifier>> + Send + 'static {
         async fn inner(surface: Option<wl_surface::WlSurface>) -> Option<WindowIdentifier> {
             if let Some(surface) = surface {
                 ashpd::WindowIdentifier::from_wayland(&surface).await

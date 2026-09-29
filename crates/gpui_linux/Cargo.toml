@@ -16,7 +16,6 @@ doctest = false
 default = ["wayland", "x11"]
 test-support = ["gpui/test-support"]
 wayland = [
-    "bitflags",
     "gpui_wgpu",
     "ashpd/wayland",
 
@@ -82,7 +81,7 @@ raw-window-handle.workspace = true
 
 # Used in both windowing options
 ashpd = { workspace = true, optional = true }
-bitflags = { workspace = true, optional = true }
+bitflags.workspace = true
 filedescriptor = { version = "0.8.2", optional = true }
 open = { version = "5.2.0", optional = true }
 xkbcommon = { version = "0.8.0", default-features = false, optional = true }
@@ -134,4 +133,4 @@ x11-clipboard = { version = "0.9.3", optional = true }
 gpui = { workspace = true, features = ["test-support"] }
 
 [package.metadata.cargo-shear]
-ignored = ["bitflags", "scap", "x11-clipboard"]
+ignored = ["scap", "x11-clipboard"]

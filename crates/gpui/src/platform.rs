@@ -166,7 +166,7 @@ pub fn guess_compositor() -> &'static str {
 ///
 /// A long-running process can outlive the graphical session it was started in, so a platform
 /// that attaches to a display server later can be given a fresher environment than its own.
-/// Only Linux platforms read these.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DisplayEnvironment {
     /// `WAYLAND_DISPLAY`: a socket name relative to `xdg_runtime_dir`, or an absolute path.
@@ -177,6 +177,7 @@ pub struct DisplayEnvironment {
     pub xdg_runtime_dir: Option<OsString>,
 }
 
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 impl DisplayEnvironment {
     /// Reads the display variables from this process's environment.
     pub fn from_process_environment() -> Self {
@@ -190,7 +191,6 @@ impl DisplayEnvironment {
     /// Returns the compositor this environment selects: Wayland, then X11, then headless.
     ///
     /// Does not attempt to connect to the compositor.
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     pub fn guess_compositor(&self) -> &'static str {
         let is_set =
             |value: &Option<OsString>| value.as_ref().is_some_and(|value| !value.is_empty());
@@ -205,9 +205,10 @@ impl DisplayEnvironment {
 }
 
 /// Whether a platform is connected to a display server.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DisplayMode {
-    /// No display server: no displays, windows, or GPU.
+    /// No display server or GPU. Windows lay out and handle input but draw nothing.
     Headless,
     /// Connected to the display server that the environment selects.
     Windowed(DisplayEnvironment),
@@ -222,6 +223,7 @@ pub trait Platform: 'static {
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);
     fn quit(&self);
     /// Connects a capable platform to, or disconnects it from, a display server.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn set_display_mode(&self, _mode: DisplayMode) -> Task<anyhow::Result<()>> {
         Task::ready(Err(anyhow::anyhow!(
             "this platform cannot switch between headless and windowed modes"

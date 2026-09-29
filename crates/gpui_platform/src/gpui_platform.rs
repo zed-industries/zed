@@ -24,13 +24,20 @@ pub fn headless() -> gpui::Application {
     gpui::Application::with_platform(current_platform(true))
 }
 
-/// Returns a Linux app that starts headless and can attach to Wayland or X11 later.
-#[cfg(all(
-    any(target_os = "linux", target_os = "freebsd"),
-    any(feature = "wayland", feature = "x11")
-))]
-pub fn switchable() -> gpui::Application {
-    gpui::Application::with_platform(gpui_linux::switchable_platform())
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub use gpui_linux::LinuxDisplayModes;
+
+/// Returns a Linux app that starts in `initial` mode and may switch among `modes`.
+///
+/// See [`gpui::App::set_display_mode`].
+///
+/// # Panics
+///
+/// Panics if `modes` doesn't allow `initial`, or if the display server `initial` selects can't be
+/// reached.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub fn linux(modes: LinuxDisplayModes, initial: gpui::DisplayMode) -> gpui::Application {
+    gpui::Application::with_platform(gpui_linux::linux_platform(modes, initial))
 }
 
 #[cfg(target_family = "wasm")]

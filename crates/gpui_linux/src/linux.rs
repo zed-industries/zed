@@ -1,9 +1,8 @@
 mod dispatcher;
+mod display_connection;
 mod headless;
 mod keyboard;
 mod platform;
-#[cfg(any(feature = "wayland", feature = "x11"))]
-mod switchable;
 mod system_notifications;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 mod text_system;
@@ -16,11 +15,11 @@ mod x11;
 mod xdg_desktop_portal;
 
 pub use dispatcher::*;
+pub use display_connection::LinuxDisplayModes;
+pub(crate) use display_connection::{Backend, DisplayConnection};
 pub(crate) use headless::*;
 pub(crate) use keyboard::*;
 pub(crate) use platform::*;
-#[cfg(any(feature = "wayland", feature = "x11"))]
-pub(crate) use switchable::*;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) use text_system::*;
 #[cfg(feature = "wayland")]
@@ -30,43 +29,30 @@ pub(crate) use x11::*;
 
 use std::rc::Rc;
 
+use gpui::{DisplayEnvironment, DisplayMode};
+
 /// Returns the default platform implementation for the current OS.
+///
+/// A windowed platform connects to the display server the process environment names, or starts
+/// headless when it names none, and can switch between those modes later. A headless platform
+/// stays headless.
 pub fn current_platform(headless: bool) -> Rc<dyn gpui::Platform> {
-    #[cfg(feature = "x11")]
-    use anyhow::Context as _;
-
-    if headless {
-        return Rc::new(LinuxPlatform {
-            inner: HeadlessClient::new(),
-        });
-    }
-
-    match gpui::guess_compositor() {
-        #[cfg(feature = "wayland")]
-        "Wayland" => Rc::new(LinuxPlatform {
-            inner: WaylandClient::new(),
-        }),
-
-        #[cfg(feature = "x11")]
-        "X11" => Rc::new(LinuxPlatform {
-            inner: X11Client::new()
-                .context("Failed to initialize X11 client.")
-                .unwrap(),
-        }),
-
-        "Headless" => Rc::new(LinuxPlatform {
-            inner: HeadlessClient::new(),
-        }),
-        _ => unreachable!(
-            r#"At least one of the "wayland" or "x11" features must be enabled on gpui_linux or gpui_platform."#
-        ),
+    if headless || std::env::var_os("ZED_HEADLESS").is_some() {
+        linux_platform(LinuxDisplayModes::HEADLESS, DisplayMode::Headless)
+    } else {
+        linux_platform(
+            LinuxDisplayModes::all(),
+            DisplayMode::Windowed(DisplayEnvironment::from_process_environment()),
+        )
     }
 }
 
-/// Returns a platform that starts headless and can attach to Wayland or X11 later.
-#[cfg(any(feature = "wayland", feature = "x11"))]
-pub fn switchable_platform() -> Rc<dyn gpui::Platform> {
-    Rc::new(LinuxPlatform {
-        inner: SwitchableClient::new(),
-    })
+/// Returns a platform that starts in `initial` mode and may switch among `modes`.
+///
+/// # Panics
+///
+/// Panics if `modes` doesn't allow `initial`, or if the display server `initial` selects can't be
+/// reached.
+pub fn linux_platform(modes: LinuxDisplayModes, initial: DisplayMode) -> Rc<dyn gpui::Platform> {
+    Rc::new(LinuxPlatform::new(modes, initial))
 }

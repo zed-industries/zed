@@ -180,60 +180,63 @@ async fn run_command(
 
 #[cfg(target_os = "linux")]
 fn main() {
-    gpui_platform::switchable()
-        .with_quit_mode(QuitMode::Explicit)
-        .run(|cx| {
-            let todos = cx.new(|_| Todos {
-                items: Vec::new(),
-                window: None,
-            });
-            let window_closed_subscription = cx.on_window_closed({
-                let todos = todos.clone();
-                move |cx, window_id| {
-                    todos.update(cx, |todos, _| {
-                        if todos
-                            .window
-                            .as_ref()
-                            .is_some_and(|window| window.window_id() == window_id)
-                        {
-                            todos.window = None;
-                        }
-                    });
-                }
-            });
-            let (command_sender, command_receiver) = mpsc::channel();
-            std::thread::spawn(move || {
-                for line in io::stdin().lock().lines() {
-                    match line {
-                        Ok(line) => {
-                            if command_sender.send(line).is_err() {
-                                break;
-                            }
-                        }
-                        Err(error) => {
-                            eprintln!("stdin error: {error}");
+    gpui_platform::linux(
+        gpui_platform::LinuxDisplayModes::all(),
+        DisplayMode::Headless,
+    )
+    .with_quit_mode(QuitMode::Explicit)
+    .run(|cx| {
+        let todos = cx.new(|_| Todos {
+            items: Vec::new(),
+            window: None,
+        });
+        let window_closed_subscription = cx.on_window_closed({
+            let todos = todos.clone();
+            move |cx, window_id| {
+                todos.update(cx, |todos, _| {
+                    if todos
+                        .window
+                        .as_ref()
+                        .is_some_and(|window| window.window_id() == window_id)
+                    {
+                        todos.window = None;
+                    }
+                });
+            }
+        });
+        let (command_sender, command_receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in io::stdin().lock().lines() {
+                match line {
+                    Ok(line) => {
+                        if command_sender.send(line).is_err() {
                             break;
                         }
                     }
-                }
-            });
-
-            println!("{USAGE}");
-            cx.spawn(async move |cx| {
-                let _window_closed_subscription = window_closed_subscription;
-                loop {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(25))
-                        .await;
-                    while let Ok(command) = command_receiver.try_recv() {
-                        if let Err(error) = run_command(command, &todos, cx).await {
-                            println!("error: {error:#}");
-                        }
+                    Err(error) => {
+                        eprintln!("stdin error: {error}");
+                        break;
                     }
                 }
-            })
-            .detach();
+            }
         });
+
+        println!("{USAGE}");
+        cx.spawn(async move |cx| {
+            let _window_closed_subscription = window_closed_subscription;
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(25))
+                    .await;
+                while let Ok(command) = command_receiver.try_recv() {
+                    if let Err(error) = run_command(command, &todos, cx).await {
+                        println!("error: {error:#}");
+                    }
+                }
+            }
+        })
+        .detach();
+    });
 }
 
 #[cfg(not(target_os = "linux"))]
