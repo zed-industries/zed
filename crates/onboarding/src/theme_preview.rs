@@ -315,11 +315,11 @@ impl Component for ThemePreviewTile {
         "Theme Preview Tile"
     }
 
-    fn description() -> Option<&'static str> {
-        Some(Self::DOCS)
+    fn description() -> &'static str {
+        Self::DOCS
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let theme_registry = ThemeRegistry::global(cx);
 
         let one_dark = theme_registry.get("One Dark");
@@ -337,45 +337,43 @@ impl Component for ThemePreviewTile {
         .flatten()
         .collect::<Vec<_>>();
 
-        Some(
-            v_flex()
-                .gap_6()
-                .p_4()
-                .children({
-                    if let Some(one_dark) = one_dark.ok() {
-                        vec![example_group(vec![single_example(
-                            "Default",
-                            div()
-                                .w(px(240.))
-                                .h(px(180.))
-                                .child(ThemePreviewTile::new(one_dark, 0.42))
-                                .into_any_element(),
-                        )])]
-                    } else {
-                        vec![]
-                    }
-                })
-                .child(
-                    example_group(vec![single_example(
-                        "Default Themes",
-                        h_flex()
-                            .gap_4()
-                            .children(
-                                themes_to_preview
-                                    .into_iter()
-                                    .map(|theme| {
-                                        div()
-                                            .w(px(200.))
-                                            .h(px(140.))
-                                            .child(ThemePreviewTile::new(theme, 0.42))
-                                    })
-                                    .collect::<Vec<_>>(),
-                            )
+        v_flex()
+            .gap_6()
+            .p_4()
+            .children({
+                if let Some(one_dark) = one_dark.ok() {
+                    vec![example_group(vec![single_example(
+                        "Default",
+                        div()
+                            .w(px(240.))
+                            .h(px(180.))
+                            .child(ThemePreviewTile::new(one_dark, 0.42))
                             .into_any_element(),
-                    )])
-                    .grow(),
-                )
-                .into_any_element(),
-        )
+                    )])]
+                } else {
+                    vec![]
+                }
+            })
+            .child(
+                example_group(vec![single_example(
+                    "Default Themes",
+                    h_flex()
+                        .gap_4()
+                        .children(
+                            themes_to_preview
+                                .into_iter()
+                                .map(|theme| {
+                                    div()
+                                        .w(px(200.))
+                                        .h(px(140.))
+                                        .child(ThemePreviewTile::new(theme, 0.42))
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                        .into_any_element(),
+                )])
+                .grow(),
+            )
+            .into_any_element()
     }
 }

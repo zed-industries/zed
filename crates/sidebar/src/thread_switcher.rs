@@ -89,7 +89,7 @@ impl ThreadSwitcherEntry {
     fn title(&self) -> SharedString {
         match self {
             Self::Thread(entry) => entry.title.clone(),
-            Self::Terminal(entry) => entry.metadata.title.clone(),
+            Self::Terminal(entry) => entry.metadata.display_title(),
         }
     }
 
@@ -361,7 +361,7 @@ impl Render for ThreadSwitcher {
             .key_context("ThreadSwitcher")
             .track_focus(&self.focus_handle)
             .p_1p5()
-            .w(rems_from_px(440.))
+            .w(rems_from_px(440_f32))
             .elevation_3(cx)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::confirm))

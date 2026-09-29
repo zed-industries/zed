@@ -338,7 +338,7 @@ impl LanguageServerTree {
             .entry(worktree_id)
             .or_default()
             .roots
-            .entry(RelPath::empty().into())
+            .entry(RelPath::empty_arc())
             .or_default()
             .entry(node.disposition.server_name.clone())
             .or_insert_with(|| (node, BTreeSet::new()))

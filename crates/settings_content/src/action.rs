@@ -7,6 +7,94 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings_macros::MergeFrom;
 
+/// The value of an entry in `command_aliases`, either a registered action name
+/// or an arbitrary string, for example, a vim command like `"w"` or `"wq"`.
+///
+/// This is a separate type from `ActionName` on purpose, as `ActionName` is
+/// also used by keymap bindings, which only accept registered action names, and
+/// we don't want to weaken those guarantees and accept any arbitrary string.
+#[derive(Serialize, Deserialize, Default, MergeFrom, Clone, Debug, PartialEq)]
+#[serde(transparent)]
+pub struct CommandAliasTarget(String);
+
+impl CommandAliasTarget {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+
+    /// Build the runtime schema, an `anyOf` whose entries are the same as the
+    /// ones produced by [`ActionName::build_schema`] plus a final fallback for
+    /// arbitrary strings that aren't registered actions.
+    pub fn build_schema(
+        action_names: &[&str],
+        action_documentation: &HashMap<&str, &str>,
+        deprecations: &HashMap<&str, &str>,
+        deprecation_messages: &HashMap<&str, &str>,
+    ) -> Schema {
+        let action_schema = ActionName::build_schema(
+            action_names.iter().copied(),
+            action_documentation,
+            deprecations,
+            deprecation_messages,
+        );
+
+        let mut alternatives = action_schema
+            .to_value()
+            .get("anyOf")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        let mut exclude = action_names
+            .iter()
+            .map(|name| serde_json::json!({ "const": *name }))
+            .collect::<Vec<Value>>();
+
+        // Since we accept any arbitrary string, besides the list of registered
+        // action names, we'll add any string that uses a `::` pattern to the
+        // list of exclusions, ensuring we display a warning in that case,
+        // otherwise the user might be led into thinking they've typed a valid
+        // action name when that's not the case.
+        exclude.push(serde_json::json!({ "pattern": "::" }));
+
+        alternatives.push(serde_json::json!({
+            "type": "string",
+            "not": { "anyOf": exclude }
+        }));
+
+        json_schema!({ "anyOf": alternatives })
+    }
+}
+
+impl Display for CommandAliasTarget {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> Result {
+        write!(formatter, "{}", self.0)
+    }
+}
+
+impl AsRef<str> for CommandAliasTarget {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl JsonSchema for CommandAliasTarget {
+    fn schema_name() -> Cow<'static, str> {
+        "CommandAliasTarget".into()
+    }
+
+    /// Returns `true` as a placeholder.
+    ///
+    /// The real schema, an `anyOf` of every registered action name with action
+    /// documentation and deprecation metadata, as well as any arbitrary string,
+    /// cannot be produced here because `JsonSchema::json_schema` receives no
+    /// runtime context. It is instead built by call sites that do have access
+    /// to the GPUI action registry using [`CommandAliasTarget::build_schema`].
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!(true)
+    }
+}
+
 /// The name of a registered GPUI action, serialized as a plain JSON string, for
 /// example, "editor::Cancel"` or `"workspace::CloseActiveItem"`.
 ///

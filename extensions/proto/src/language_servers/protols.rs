@@ -91,10 +91,7 @@ impl ProtoLs {
             .into_iter()
             .find(|asset| asset.name == release_name)
             .ok_or_else(|| {
-                format!(
-                    "Could not find asset with name {} in Protols release",
-                    &release_name
-                )
+                format!("Could not find asset with name {release_name} in Protols release")
             })?;
 
         zed::download_file(&download_target.download_url, &version_dir, file_type)?;

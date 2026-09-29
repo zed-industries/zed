@@ -1,8 +1,6 @@
 use dispatch2::{DispatchQueue, DispatchQueueGlobalPriority, DispatchTime, GlobalQueueIdentifier};
-use gpui::{
-    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant, TaskTiming,
-    ThreadTaskTimings, add_task_timing,
-};
+use gpui::{ActivityGuard, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant};
+use gpui_util::ResultExt;
 use mach2::{
     kern_return::KERN_SUCCESS,
     mach_time::mach_timebase_info_data_t,
@@ -13,7 +11,6 @@ use mach2::{
         thread_precedence_policy_data_t, thread_time_constraint_policy_data_t,
     },
 };
-use util::ResultExt;
 
 use async_task::Runnable;
 use objc::{
@@ -21,11 +18,9 @@ use objc::{
     runtime::{BOOL, YES},
     sel, sel_impl,
 };
-use std::{
-    ffi::c_void,
-    ptr::NonNull,
-    time::{Duration, Instant},
-};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+use objc2_foundation::{NSActivityOptions, NSObjectProtocol, NSProcessInfo, NSString};
+use std::{ffi::c_void, ptr::NonNull, time::Duration};
 
 pub(crate) struct MacDispatcher;
 
@@ -36,15 +31,6 @@ impl MacDispatcher {
 }
 
 impl PlatformDispatcher for MacDispatcher {
-    fn get_all_timings(&self) -> Vec<ThreadTaskTimings> {
-        let global_timings = GLOBAL_THREAD_TIMINGS.lock();
-        ThreadTaskTimings::convert(&global_timings)
-    }
-
-    fn get_current_thread_timings(&self) -> ThreadTaskTimings {
-        gpui::profiler::get_current_thread_task_timings()
-    }
-
     fn is_main_thread(&self) -> bool {
         let is_main_thread: BOOL = unsafe { msg_send![class!(NSThread), isMainThread] };
         is_main_thread == YES
@@ -91,6 +77,36 @@ impl PlatformDispatcher for MacDispatcher {
             set_audio_thread_priority().log_err();
             f();
         });
+    }
+
+    fn prevent_app_nap(&self, reason: &str) -> ActivityGuard {
+        MacActivity::begin(
+            reason,
+            NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
+        )
+    }
+}
+
+pub(crate) struct MacActivity {
+    activity: Retained<ProtocolObject<dyn NSObjectProtocol>>,
+}
+
+// The activity token returned by NSProcessInfo is thread-safe
+unsafe impl Send for MacActivity {}
+
+impl MacActivity {
+    pub(crate) fn begin(reason: &str, options: NSActivityOptions) -> ActivityGuard {
+        let activity = Self {
+            activity: NSProcessInfo::processInfo()
+                .beginActivityWithOptions_reason(options, &NSString::from_str(reason)),
+        };
+        ActivityGuard::new(move || drop(activity))
+    }
+}
+
+impl Drop for MacActivity {
+    fn drop(&mut self) {
+        unsafe { NSProcessInfo::processInfo().endActivity(&self.activity) };
     }
 }
 
@@ -184,18 +200,8 @@ extern "C" fn trampoline(context: *mut c_void) {
         unsafe { Runnable::<RunnableMeta>::from_raw(NonNull::new_unchecked(context as *mut ())) };
 
     let location = runnable.metadata().location;
-
-    let start = Instant::now();
-    let mut timing = TaskTiming {
-        location,
-        start,
-        end: None,
-    };
-
-    add_task_timing(timing);
-
+    let spawned = runnable.metadata().spawned;
+    gpui::profiler::update_running_task(spawned, location);
     runnable.run();
-
-    timing.end = Some(Instant::now());
-    add_task_timing(timing);
+    gpui::profiler::save_task_timing();
 }

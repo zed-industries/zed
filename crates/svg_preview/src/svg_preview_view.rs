@@ -202,63 +202,62 @@ impl SvgPreviewView {
             })
     }
 
+    pub fn open_preview_in_pane(
+        workspace: &mut Workspace,
+        buffer: Entity<MultiBuffer>,
+        pane: Entity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::activate_or_add_preview(workspace, buffer, pane, true, window, cx);
+    }
+
+    pub fn open_preview_to_the_side_of_pane(
+        workspace: &mut Workspace,
+        buffer: Entity<MultiBuffer>,
+        origin_pane: Entity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let target_pane = workspace.adjacent_pane_of(&origin_pane, window, cx);
+        Self::activate_or_add_preview(workspace, buffer, target_pane, false, window, cx);
+    }
+
+    fn activate_or_add_preview(
+        workspace: &mut Workspace,
+        buffer: Entity<MultiBuffer>,
+        pane: Entity<Pane>,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let existing_view_idx = Self::find_existing_preview_item_idx(pane.read(cx), &buffer, cx);
+        if let Some(existing_view_idx) = existing_view_idx {
+            pane.update(cx, |pane, cx| {
+                pane.activate_item(existing_view_idx, focus, focus, window, cx);
+            });
+        } else {
+            let view =
+                Self::create_svg_view(SvgPreviewMode::Default, workspace, buffer, window, cx);
+            pane.update(cx, |pane, cx| {
+                pane.add_item(Box::new(view), focus, focus, None, window, cx)
+            });
+        }
+        cx.notify();
+    }
+
     pub fn register(workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>) {
         workspace.register_action(move |workspace, _: &OpenPreview, window, cx| {
-            if let Some(buffer) = Self::resolve_active_item_as_svg_buffer(workspace, cx)
-                && Self::is_svg_file(&buffer, cx)
-            {
-                let view = Self::create_svg_view(
-                    SvgPreviewMode::Default,
-                    workspace,
-                    buffer.clone(),
-                    window,
-                    cx,
-                );
-                workspace.active_pane().update(cx, |pane, cx| {
-                    if let Some(existing_view_idx) =
-                        Self::find_existing_preview_item_idx(pane, &buffer, cx)
-                    {
-                        pane.activate_item(existing_view_idx, true, true, window, cx);
-                    } else {
-                        pane.add_item(Box::new(view), true, true, None, window, cx)
-                    }
-                });
-                cx.notify();
+            if let Some(buffer) = Self::resolve_active_item_as_svg_buffer(workspace, cx) {
+                let pane = workspace.active_pane().clone();
+                Self::open_preview_in_pane(workspace, buffer, pane, window, cx);
             }
         });
 
         workspace.register_action(move |workspace, _: &OpenPreviewToTheSide, window, cx| {
-            if let Some(editor) = Self::resolve_active_item_as_svg_buffer(workspace, cx)
-                && Self::is_svg_file(&editor, cx)
-            {
-                let editor_clone = editor.clone();
-                let view = Self::create_svg_view(
-                    SvgPreviewMode::Default,
-                    workspace,
-                    editor_clone,
-                    window,
-                    cx,
-                );
-                let pane = workspace
-                    .find_pane_in_direction(workspace::SplitDirection::Right, cx)
-                    .unwrap_or_else(|| {
-                        workspace.split_pane(
-                            workspace.active_pane().clone(),
-                            workspace::SplitDirection::Right,
-                            window,
-                            cx,
-                        )
-                    });
-                pane.update(cx, |pane, cx| {
-                    if let Some(existing_view_idx) =
-                        Self::find_existing_preview_item_idx(pane, &editor, cx)
-                    {
-                        pane.activate_item(existing_view_idx, true, true, window, cx);
-                    } else {
-                        pane.add_item(Box::new(view), false, false, None, window, cx)
-                    }
-                });
-                cx.notify();
+            if let Some(buffer) = Self::resolve_active_item_as_svg_buffer(workspace, cx) {
+                let pane = workspace.active_pane().clone();
+                Self::open_preview_to_the_side_of_pane(workspace, buffer, pane, window, cx);
             }
         });
 

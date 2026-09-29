@@ -297,6 +297,10 @@ impl RemoteAudioTrack {
     pub fn sid(&self) -> TrackSid {
         self.0.sid()
     }
+
+    pub fn rtc_track_id(&self) -> String {
+        self.0.rtc_track().id()
+    }
 }
 
 impl RemoteVideoTrack {

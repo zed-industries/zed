@@ -114,7 +114,7 @@ impl StreamingParser {
                 if partial.new_text.is_some() && !state.buffer_new_text_until_old_text_done {
                     // new_text appeared after old_text, so old_text is done — emit everything.
                     let start = find_char_boundary(old_text, state.old_text_emitted_len);
-                    let chunk = normalize_done_chunk(old_text[start..].to_string());
+                    let chunk = old_text[start..].to_string();
                     state.old_text_done = true;
                     state.old_text_emitted_len = old_text.len();
                     events.push(EditEvent::OldTextChunk {
@@ -169,8 +169,9 @@ impl StreamingParser {
         let mut events = SmallVec::new();
 
         let safe_end = safe_emit_end(content);
-        if safe_end > self.content_emitted_len {
-            let chunk = content[self.content_emitted_len..safe_end].to_string();
+        let safe_start = find_char_boundary(content, self.content_emitted_len);
+        if safe_end > safe_start {
+            let chunk = content[safe_start..safe_end].to_string();
             self.content_emitted_len = safe_end;
             events.push(WriteEvent::ContentChunk { chunk });
         }
@@ -216,20 +217,20 @@ impl StreamingParser {
                 state.buffer_new_text_until_old_text_done = false;
                 events.push(EditEvent::OldTextChunk {
                     edit_index: index,
-                    chunk: normalize_done_chunk(edit.old_text.clone()),
+                    chunk: edit.old_text.clone(),
                     done: true,
                 });
                 events.push(EditEvent::NewTextChunk {
                     edit_index: index,
-                    chunk: normalize_done_chunk(edit.new_text.clone()),
+                    chunk: edit.new_text.clone(),
                     done: true,
                 });
                 continue;
             }
 
             if !state.old_text_done {
-                let start = state.old_text_emitted_len.min(edit.old_text.len());
-                let chunk = normalize_done_chunk(edit.old_text[start..].to_string());
+                let start = find_char_boundary(&edit.old_text, state.old_text_emitted_len);
+                let chunk = edit.old_text[start..].to_string();
                 state.old_text_done = true;
                 state.old_text_emitted_len = edit.old_text.len();
                 events.push(EditEvent::OldTextChunk {
@@ -240,8 +241,8 @@ impl StreamingParser {
             }
 
             if !state.new_text_done {
-                let start = state.new_text_emitted_len.min(edit.new_text.len());
-                let chunk = normalize_done_chunk(edit.new_text[start..].to_string());
+                let start = find_char_boundary(&edit.new_text, state.new_text_emitted_len);
+                let chunk = edit.new_text[start..].to_string();
                 state.new_text_done = true;
                 state.new_text_emitted_len = edit.new_text.len();
                 events.push(EditEvent::NewTextChunk {
@@ -259,7 +260,7 @@ impl StreamingParser {
     pub fn finalize_content(&mut self, content: &str) -> SmallVec<[WriteEvent; 1]> {
         let mut events = SmallVec::new();
 
-        let start = self.content_emitted_len.min(content.len());
+        let start = find_char_boundary(content, self.content_emitted_len);
         if content.len() > start {
             let chunk = content[start..].to_string();
             self.content_emitted_len = content.len();
@@ -300,12 +301,12 @@ impl StreamingParser {
             state.buffer_new_text_until_old_text_done = false;
             events.push(EditEvent::OldTextChunk {
                 edit_index: previous_index,
-                chunk: normalize_done_chunk(old_text.to_string()),
+                chunk: old_text.to_string(),
                 done: true,
             });
             events.push(EditEvent::NewTextChunk {
                 edit_index: previous_index,
-                chunk: normalize_done_chunk(new_text.to_string()),
+                chunk: new_text.to_string(),
                 done: true,
             });
             return Some(events);
@@ -313,25 +314,25 @@ impl StreamingParser {
 
         if !state.old_text_done {
             let old_text = old_text.unwrap_or_default();
-            let start = state.old_text_emitted_len.min(old_text.len());
+            let start = find_char_boundary(old_text, state.old_text_emitted_len);
             state.old_text_done = true;
             state.old_text_emitted_len = old_text.len();
             events.push(EditEvent::OldTextChunk {
                 edit_index: previous_index,
-                chunk: normalize_done_chunk(old_text[start..].to_string()),
+                chunk: old_text[start..].to_string(),
                 done: true,
             });
         }
 
         if !state.new_text_done {
             let new_text = new_text.unwrap_or_default();
-            let start = state.new_text_emitted_len.min(new_text.len());
+            let start = find_char_boundary(new_text, state.new_text_emitted_len);
             state.new_text_done = true;
             state.new_text_emitted_len = new_text.len();
             state.buffer_new_text_until_old_text_done = false;
             events.push(EditEvent::NewTextChunk {
                 edit_index: previous_index,
-                chunk: normalize_done_chunk(new_text[start..].to_string()),
+                chunk: new_text[start..].to_string(),
                 done: true,
             });
         }
@@ -386,16 +387,47 @@ fn find_char_boundary(text: &str, target: usize) -> usize {
     pos
 }
 
-fn normalize_done_chunk(mut chunk: String) -> String {
-    if chunk.ends_with('\n') {
-        chunk.pop();
-    }
-    chunk
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    fn emitted_len_inside_multibyte_char() -> impl Strategy<Value = (String, String)> {
+        (1usize..8, prop::sample::select(&["。", "—", "é", "🦀"])).prop_map(
+            |(emitted_len, multibyte_char)| {
+                let first = "a".repeat(emitted_len);
+                let second = format!("{}{}", "a".repeat(emitted_len - 1), multibyte_char);
+                (first, second)
+            },
+        )
+    }
+
+    fn boundary_sensitive_text() -> impl Strategy<Value = String> {
+        prop_oneof![
+            emitted_len_inside_multibyte_char().prop_map(|(first, _)| first),
+            emitted_len_inside_multibyte_char().prop_map(|(_, second)| second),
+            prop::sample::select(&[
+                "",
+                "a",
+                "ab",
+                "ab\\",
+                "a。",
+                "a—",
+                "hello,\\",
+                "hello,\n",
+                "hello,\nworld",
+            ])
+            .prop_map(ToString::to_string),
+        ]
+    }
+
+    fn partial_edit() -> impl Strategy<Value = PartialEdit> {
+        (
+            prop::option::of(boundary_sensitive_text()),
+            prop::option::of(boundary_sensitive_text()),
+        )
+            .prop_map(|(old_text, new_text)| PartialEdit { old_text, new_text })
+    }
 
     #[test]
     fn test_first_edit_with_new_text_in_first_chunk_is_held_until_finalize() {
@@ -516,7 +548,7 @@ mod tests {
     }
 
     #[test]
-    fn test_done_chunks_strip_trailing_newline() {
+    fn test_done_chunks_preserve_trailing_newlines() {
         let mut parser = StreamingParser::default();
 
         let events = parser.finalize_edits(&[Edit {
@@ -528,12 +560,12 @@ mod tests {
             &[
                 EditEvent::OldTextChunk {
                     edit_index: 0,
-                    chunk: "before".into(),
+                    chunk: "before\n".into(),
                     done: true,
                 },
                 EditEvent::NewTextChunk {
                     edit_index: 0,
-                    chunk: "after".into(),
+                    chunk: "after\n".into(),
                     done: true,
                 },
             ]
@@ -541,7 +573,7 @@ mod tests {
     }
 
     #[test]
-    fn test_partial_edit_chunks_hold_back_trailing_newline() {
+    fn test_partial_edit_preserves_trailing_newlines() {
         let mut parser = StreamingParser::default();
 
         let events = parser.push_edits(&[PartialEdit {
@@ -559,12 +591,12 @@ mod tests {
             &[
                 EditEvent::OldTextChunk {
                     edit_index: 0,
-                    chunk: "before".into(),
+                    chunk: "before\n".into(),
                     done: true,
                 },
                 EditEvent::NewTextChunk {
                     edit_index: 0,
-                    chunk: "after".into(),
+                    chunk: "after\n".into(),
                     done: true,
                 },
             ]
@@ -759,6 +791,30 @@ mod tests {
             events.as_slice(),
             &[WriteEvent::ContentChunk { chunk: "\n".into() }]
         );
+    }
+
+    proptest! {
+        #[test]
+        fn test_content_finalize_does_not_panic_when_emitted_len_lands_inside_multibyte_char(
+            pair in emitted_len_inside_multibyte_char()
+        ) {
+            let (first, second) = pair;
+            let mut parser = StreamingParser::default();
+
+            parser.push_content(&first);
+            parser.finalize_content(&second);
+        }
+
+        #[test]
+        fn test_push_edits_does_not_panic_on_boundary_sensitive_sequences(
+            partials in prop::collection::vec(prop::collection::vec(partial_edit(), 0..4), 1..12)
+        ) {
+            let mut parser = StreamingParser::default();
+
+            for edits in partials {
+                parser.push_edits(&edits);
+            }
+        }
     }
 
     #[test]

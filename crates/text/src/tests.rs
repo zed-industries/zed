@@ -9,7 +9,7 @@ use std::{
 };
 
 #[cfg(test)]
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }
@@ -28,6 +28,125 @@ fn test_edit() {
     assert_eq!(buffer.text(), "ghiabjlcdef");
     buffer.edit([(4..9, "mno")]);
     assert_eq!(buffer.text(), "ghiamnoef");
+}
+
+#[test]
+fn test_summaries_for_unordered_anchors() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "ab\ncdef");
+    let old_right = buffer.anchor_before(6);
+    let old_left = buffer.anchor_before(2);
+    buffer.edit([(3..3, "é\n")]);
+
+    let snapshot = buffer.snapshot();
+    let anchors = [
+        snapshot.anchor_before(6),
+        snapshot.anchor_before(5),
+        old_right,
+        snapshot.anchor_after(snapshot.len()),
+        old_left,
+        snapshot.anchor_before(0),
+        snapshot.anchor_before(5),
+    ];
+    assert_eq!(
+        anchors
+            .iter()
+            .map(|anchor| snapshot.offset_for_anchor(anchor))
+            .collect::<Vec<_>>(),
+        [6, 5, 9, 10, 2, 0, 5]
+    );
+    assert_eq!(
+        snapshot
+            .summaries_for_anchors_unordered::<Point, _>(anchors)
+            .collect::<Vec<_>>(),
+        anchors
+            .iter()
+            .map(|anchor| snapshot.summary_for_anchor::<Point>(anchor))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        snapshot
+            .summaries_for_anchors_unordered::<usize, _>(anchors)
+            .collect::<Vec<_>>(),
+        [6, 5, 9, 10, 2, 0, 5]
+    );
+
+    let ordered = [old_left, snapshot.anchor_before(5), old_right];
+    assert_eq!(
+        snapshot
+            .summaries_for_anchors_unordered::<Point, _>(ordered)
+            .collect::<Vec<_>>(),
+        snapshot
+            .summaries_for_anchors::<Point, _>(ordered)
+            .collect::<Vec<_>>()
+    );
+
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "abcdefgh");
+    let deleted_anchor = buffer.anchor_before(5);
+    buffer.edit([(3..6, "")]);
+    let snapshot = buffer.snapshot();
+    let anchors = [
+        snapshot.anchor_before(4),
+        deleted_anchor,
+        snapshot.anchor_before(1),
+    ];
+    assert_eq!(
+        snapshot
+            .summaries_for_anchors_unordered::<Point, _>(anchors)
+            .collect::<Vec<_>>(),
+        anchors
+            .iter()
+            .map(|anchor| snapshot.summary_for_anchor::<Point>(anchor))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_summaries_for_unordered_anchors_across_chunks() {
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        "abcdefghij\n".repeat(100),
+    );
+    let deleted_anchor = buffer.anchor_before(6);
+    let old_anchor = buffer.anchor_after(310);
+    buffer.edit([(4..8, ""), (120..120, "é")]);
+
+    let snapshot = buffer.snapshot();
+    let mut anchors = (0..100)
+        .flat_map(|row| {
+            [
+                snapshot.anchor_before(Point::new(row, 1)),
+                snapshot.anchor_after(Point::new(row, 1)),
+            ]
+        })
+        .collect::<Vec<_>>();
+    anchors.extend([
+        deleted_anchor,
+        old_anchor,
+        snapshot.anchor_before(0),
+        snapshot.anchor_after(snapshot.len()),
+        deleted_anchor,
+    ]);
+    anchors.shuffle(&mut StdRng::seed_from_u64(42));
+
+    assert_eq!(
+        snapshot
+            .summaries_for_anchors_unordered::<Point, _>(anchors.iter().copied())
+            .collect::<Vec<_>>(),
+        anchors
+            .iter()
+            .map(|anchor| snapshot.summary_for_anchor::<Point>(anchor))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        snapshot
+            .summaries_for_anchors_unordered::<usize, _>(anchors.iter().copied())
+            .collect::<Vec<_>>(),
+        anchors
+            .iter()
+            .map(|anchor| snapshot.offset_for_anchor(anchor))
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]

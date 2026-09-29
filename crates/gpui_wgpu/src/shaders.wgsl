@@ -93,8 +93,8 @@ struct GammaParams {
 
 @group(0) @binding(0) var<uniform> globals: GlobalParams;
 @group(0) @binding(1) var<uniform> gamma_params: GammaParams;
-@group(1) @binding(1) var t_sprite: texture_2d<f32>;
-@group(1) @binding(2) var s_sprite: sampler;
+@group(2) @binding(0) var t_sprite: texture_2d<f32>;
+@group(2) @binding(1) var s_sprite: sampler;
 
 const M_PI_F: f32 = 3.1415926;
 const GRAYSCALE_FACTORS: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
@@ -526,7 +526,6 @@ struct Quad {
     corner_radii: Corners,
     border_widths: Edges,
 }
-@group(1) @binding(0) var<storage, read> b_quads: array<Quad>;
 
 struct QuadVarying {
     @builtin(position) position: vec4<f32>,
@@ -542,7 +541,7 @@ struct QuadVarying {
 @vertex
 fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> QuadVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-    let quad = b_quads[instance_id];
+    let quad = load_quad(instance_id);
 
     var out = QuadVarying();
     out.position = to_device_position(unit_vertex, quad.bounds);
@@ -569,7 +568,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0);
     }
 
-    let quad = b_quads[input.quad_id];
+    let quad = load_quad(input.quad_id);
 
     let background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
         input.background_solid, input.background_color0, input.background_color1);
@@ -951,12 +950,19 @@ fn fmod(a: f32, b: f32) -> f32 {
 struct Shadow {
     order: u32,
     blur_radius: f32,
+    // The shadow rect for drop shadows; the "hole" rect for inset shadows.
     bounds: Bounds,
     corner_radii: Corners,
     content_mask: Bounds,
     color: Hsla,
+    // Only consulted when `inset == 1u`: the element's own bounds, used as a rounded-rect
+    // clip so the shadow never escapes the element.
+    element_bounds: Bounds,
+    element_corner_radii: Corners,
+    // 0 = drop shadow, 1 = inset shadow.
+    inset: u32,
+    pad: u32, // align to 8 bytes
 }
-@group(1) @binding(0) var<storage, read> b_shadows: array<Shadow>;
 
 struct ShadowVarying {
     @builtin(position) position: vec4<f32>,
@@ -969,19 +975,24 @@ struct ShadowVarying {
 @vertex
 fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> ShadowVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-    var shadow = b_shadows[instance_id];
+    var shadow = load_shadow(instance_id);
 
-    let margin = 3.0 * shadow.blur_radius;
-    // Set the bounds of the shadow and adjust its size based on the shadow's
-    // spread radius to achieve the spreading effect
-    shadow.bounds.origin -= vec2<f32>(margin);
-    shadow.bounds.size += 2.0 * vec2<f32>(margin);
+    var geometry: Bounds;
+    if (shadow.inset != 0u) {
+        geometry = shadow.element_bounds;
+    } else {
+        // Leave room for the gaussian tail outside the shadow rect.
+        let margin = 3.0 * shadow.blur_radius;
+        geometry = shadow.bounds;
+        geometry.origin -= vec2<f32>(margin);
+        geometry.size += 2.0 * vec2<f32>(margin);
+    }
 
     var out = ShadowVarying();
-    out.position = to_device_position(unit_vertex, shadow.bounds);
+    out.position = to_device_position(unit_vertex, geometry);
     out.color = hsla_to_rgba(shadow.color);
     out.shadow_id = instance_id;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, shadow.bounds, shadow.content_mask);
+    out.clip_distances = distance_from_clip_rect(unit_vertex, geometry, shadow.content_mask);
     return out;
 }
 
@@ -992,28 +1003,43 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0);
     }
 
-    let shadow = b_shadows[input.shadow_id];
+    let shadow = load_shadow(input.shadow_id);
     let half_size = shadow.bounds.size / 2.0;
     let center = shadow.bounds.origin + half_size;
     let center_to_point = input.position.xy - center;
 
     let corner_radius = pick_corner_radius(center_to_point, shadow.corner_radii);
 
-    // The signal is only non-zero in a limited range, so don't waste samples
-    let low = center_to_point.y - half_size.y;
-    let high = center_to_point.y + half_size.y;
-    let start = clamp(-3.0 * shadow.blur_radius, low, high);
-    let end = clamp(3.0 * shadow.blur_radius, low, high);
+    var alpha: f32;
+    if (shadow.blur_radius == 0.0) {
+        let distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
+        alpha = saturate(0.5 - distance);
+    } else {
+        // The signal is only non-zero in a limited range, so don't waste samples
+        let low = center_to_point.y - half_size.y;
+        let high = center_to_point.y + half_size.y;
+        let start = clamp(-3.0 * shadow.blur_radius, low, high);
+        let end = clamp(3.0 * shadow.blur_radius, low, high);
 
-    // Accumulate samples (we can get away with surprisingly few samples)
-    let step = (end - start) / 4.0;
-    var y = start + step * 0.5;
-    var alpha = 0.0;
-    for (var i = 0; i < 4; i += 1) {
-        let blur = blur_along_x(center_to_point.x, center_to_point.y - y,
-            shadow.blur_radius, corner_radius, half_size);
-        alpha +=  blur * gaussian(y, shadow.blur_radius) * step;
-        y += step;
+        // Accumulate samples (we can get away with surprisingly few samples)
+        let step = (end - start) / 4.0;
+        var y = start + step * 0.5;
+        alpha = 0.0;
+        for (var i = 0; i < 4; i += 1) {
+            let blur = blur_along_x(center_to_point.x, center_to_point.y - y,
+                shadow.blur_radius, corner_radius, half_size);
+            alpha +=  blur * gaussian(y, shadow.blur_radius) * step;
+            y += step;
+        }
+    }
+
+    if (shadow.inset != 0u) {
+        // The inset shadow is the complement of the (blurred) hole rect, clipped to the element.
+        // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
+        alpha = 1.0 - alpha;
+        let element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
+                                        shadow.element_corner_radii);
+        alpha *= saturate(0.5 - element_distance);
     }
 
     return blend_color(input.color, alpha);
@@ -1028,7 +1054,7 @@ struct PathRasterizationVertex {
     bounds: Bounds,
 }
 
-@group(1) @binding(0) var<storage, read> b_path_vertices: array<PathRasterizationVertex>;
+
 
 struct PathRasterizationVarying {
     @builtin(position) position: vec4<f32>,
@@ -1040,7 +1066,7 @@ struct PathRasterizationVarying {
 
 @vertex
 fn vs_path_rasterization(@builtin(vertex_index) vertex_id: u32) -> PathRasterizationVarying {
-    let v = b_path_vertices[vertex_id];
+    let v = load_path_vertex(vertex_id);
 
     var out = PathRasterizationVarying();
     out.position = to_device_position_impl(v.xy_position);
@@ -1058,7 +1084,7 @@ fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f
         return vec4<f32>(0.0);
     }
 
-    let v = b_path_vertices[input.vertex_id];
+    let v = load_path_vertex(input.vertex_id);
     let background = v.color;
     let bounds = v.bounds;
 
@@ -1088,7 +1114,7 @@ fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f
 struct PathSprite {
     bounds: Bounds,
 }
-@group(1) @binding(0) var<storage, read> b_path_sprites: array<PathSprite>;
+
 
 struct PathVarying {
     @builtin(position) position: vec4<f32>,
@@ -1098,7 +1124,7 @@ struct PathVarying {
 @vertex
 fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> PathVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-    let sprite = b_path_sprites[instance_id];
+    let sprite = load_path_sprite(instance_id);
     // Don't apply content mask because it was already accounted for when rasterizing the path.
     let device_position = to_device_position(unit_vertex, sprite.bounds);
     // For screen-space intermediate texture, convert screen position to texture coordinates
@@ -1129,7 +1155,7 @@ struct Underline {
     thickness: f32,
     wavy: u32,
 }
-@group(1) @binding(0) var<storage, read> b_underlines: array<Underline>;
+
 
 struct UnderlineVarying {
     @builtin(position) position: vec4<f32>,
@@ -1142,7 +1168,7 @@ struct UnderlineVarying {
 @vertex
 fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> UnderlineVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-    let underline = b_underlines[instance_id];
+    let underline = load_underline(instance_id);
 
     var out = UnderlineVarying();
     out.position = to_device_position(unit_vertex, underline.bounds);
@@ -1162,8 +1188,8 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0);
     }
 
-    let underline = b_underlines[input.underline_id];
-    if ((underline.wavy & 0xFFu) == 0u)
+    let underline = load_underline(input.underline_id);
+    if (underline.wavy == 0u)
     {
         return blend_color(input.color, input.color.a);
     }
@@ -1195,7 +1221,7 @@ struct MonochromeSprite {
     tile: AtlasTile,
     transformation: TransformationMatrix,
 }
-@group(1) @binding(0) var<storage, read> b_mono_sprites: array<MonochromeSprite>;
+
 
 struct MonoSpriteVarying {
     @builtin(position) position: vec4<f32>,
@@ -1207,7 +1233,7 @@ struct MonoSpriteVarying {
 @vertex
 fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> MonoSpriteVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-    let sprite = b_mono_sprites[instance_id];
+    let sprite = load_mono_sprite(instance_id);
 
     var out = MonoSpriteVarying();
     out.position = to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
@@ -1243,7 +1269,7 @@ struct PolychromeSprite {
     corner_radii: Corners,
     tile: AtlasTile,
 }
-@group(1) @binding(0) var<storage, read> b_poly_sprites: array<PolychromeSprite>;
+
 
 struct PolySpriteVarying {
     @builtin(position) position: vec4<f32>,
@@ -1255,7 +1281,7 @@ struct PolySpriteVarying {
 @vertex
 fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> PolySpriteVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-    let sprite = b_poly_sprites[instance_id];
+    let sprite = load_poly_sprite(instance_id);
 
     var out = PolySpriteVarying();
     out.position = to_device_position(unit_vertex, sprite.bounds);
@@ -1273,11 +1299,11 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0);
     }
 
-    let sprite = b_poly_sprites[input.sprite_id];
+    let sprite = load_poly_sprite(input.sprite_id);
     let distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
 
     var color = sample;
-    if ((sprite.grayscale & 0xFFu) != 0u) {
+    if (sprite.grayscale != 0u) {
         let grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
         color = vec4<f32>(vec3<f32>(grayscale), sample.a);
     }

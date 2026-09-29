@@ -17,6 +17,7 @@ cargo_toml.workspace = true
 clap = { workspace = true, features = ["derive"] }
 compliance = { workspace = true, features = ["octo-client"] }
 gh-workflow.workspace = true
+guppy = "0.18"
 indoc.workspace = true
 indexmap.workspace = true
 itertools.workspace = true
@@ -25,6 +26,11 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml = "0.9.34"
 strum.workspace = true
+thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 toml.workspace = true
 toml_edit.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
