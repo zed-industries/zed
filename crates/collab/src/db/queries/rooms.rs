@@ -680,8 +680,7 @@ impl Database {
                             size: None,
                             is_fifo: db_entry.is_fifo,
                             is_unloaded: db_entry.is_unloaded,
-                            // todo(collab): Get this field from database
-                            exclusions: 0,
+                            exclusions: db_entry.exclusions as u32,
                         });
                     }
                 }
