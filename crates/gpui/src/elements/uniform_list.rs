@@ -34,7 +34,7 @@ where
     let render_range = move |range: Range<usize>, window: &mut Window, cx: &mut App| {
         f(range, window, cx)
             .into_iter()
-            .map(|component| component.into_any_element())
+            .map(|component| super::list::ComponentScope::wrap(component.into_any_element()))
             .collect()
     };
 

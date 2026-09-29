@@ -253,6 +253,9 @@ pub struct ViewElement<V: View> {
     entity_id: Option<EntityId>,
     cached_style: Option<StyleRefinement>,
     node: Option<ViewNodeId>,
+    /// For a stateless component, the element id its subtree is scoped by, chosen when
+    /// it is laid out.
+    component_id: Option<ElementId>,
     #[cfg(debug_assertions)]
     source: &'static core::panic::Location<'static>,
 }
@@ -266,6 +269,7 @@ impl<V: View> ViewElement<V> {
             entity_id,
             cached_style: None,
             node: None,
+            component_id: None,
             view: Some(view),
             #[cfg(debug_assertions)]
             source: core::panic::Location::caller(),
@@ -345,8 +349,10 @@ impl<V: View> Element for ViewElement<V> {
                 )
             })
         } else {
-            // Stateless path: isolate subtree via type name (no entity identity).
-            request_layout_component(type_name::<V>(), window, cx, &mut |window, cx| {
+            // Stateless path: isolate subtree via type name and position (no entity identity).
+            let component_id = window.next_component_id(type_name::<V>());
+            self.component_id = Some(component_id.clone());
+            request_layout_component(component_id, window, cx, &mut |window, cx| {
                 self.view
                     .take()
                     .unwrap()
@@ -395,7 +401,7 @@ impl<V: View> Element for ViewElement<V> {
             element
         } else {
             // Stateless path: just prepaint the element.
-            prepaint_component(type_name::<V>(), element, window, cx)
+            prepaint_component(self.component_id.clone(), element, window, cx)
         }
     }
 
@@ -428,7 +434,7 @@ impl<V: View> Element for ViewElement<V> {
             }
         } else {
             // Stateless path: just paint the element.
-            paint_component(std::any::type_name::<V>(), element, window, cx);
+            paint_component(self.component_id.clone(), element, window, cx);
         }
     }
 }
@@ -470,12 +476,12 @@ fn request_layout_view(
 
 #[inline(never)]
 fn request_layout_component(
-    name: &'static str,
+    component_id: ElementId,
     window: &mut Window,
     cx: &mut App,
     render: &mut dyn FnMut(&mut Window, &mut App) -> AnyElement,
 ) -> (LayoutId, Option<AnyElement>) {
-    window.with_id(ElementId::from(name), |window| {
+    window.with_id(component_id, |window| {
         let mut element = render(window, cx);
         let layout_id = element.request_layout(window, cx);
         (layout_id, Some(element))
@@ -558,12 +564,12 @@ fn prepaint_view(
 
 #[inline(never)]
 fn prepaint_component(
-    name: &'static str,
+    component_id: Option<ElementId>,
     element: &mut Option<AnyElement>,
     window: &mut Window,
     cx: &mut App,
 ) -> Option<AnyElement> {
-    window.with_id(ElementId::from(name), |window| {
+    window.with_id(component_id.unwrap(), |window| {
         element.as_mut().unwrap().prepaint(window, cx);
     });
     Some(element.take().unwrap())
@@ -610,12 +616,12 @@ fn paint_view(
 
 #[inline(never)]
 fn paint_component(
-    name: &'static str,
+    component_id: Option<ElementId>,
     element: &mut Option<AnyElement>,
     window: &mut Window,
     cx: &mut App,
 ) {
-    window.with_id(ElementId::Name(name.into()), |window| {
+    window.with_id(component_id.unwrap(), |window| {
         element.as_mut().unwrap().paint(window, cx);
     });
 }

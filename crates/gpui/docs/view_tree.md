@@ -100,8 +100,19 @@ ownership already fixed on `main` (#63934).
 
 One real problem surfaced: `RenderOnce` state is scoped by type name only, so
 two sibling components of one type collide, and `ui` components thread
-explicit ids to dodge it. A `(type, nth at this path)` scope fixes it and does
-not need the tree.
+explicit ids to dodge it. A `(type, nth)` scope fixes it and does not need the
+tree. The count has to be per element-id scope instance, not per path per
+frame: `list` renders an item to measure it and again to draw it, and which
+items render before a given one changes as it scrolls, so a per-frame count
+drifts and resets the state of everything inside the item. Pushing an element
+id opens a fresh count, and `list` and `uniform_list` open one per item
+without changing the id path. The first component of a type keeps the plain
+type-name id, so only true siblings change paths.
+
+The count is also fresh in each phase an id is pushed in, so a component that
+an element renders lazily during prepaint (rather than at layout) can collide
+with a sibling of the same type rendered at layout under the same id. No
+element in GPUI does that without an id of its own.
 
 ### Damage regions need correspondence between frames
 
@@ -171,7 +182,7 @@ Independent of the tree, on `main`:
 - [ ] Draw-order replay in the bounds tree.
 - [ ] Per-element Taffy retention with write diffing.
 - [ ] Carried text measurements; recolor without reshaping.
-- [ ] `(type, nth)` scope for `RenderOnce` state.
+- [x] `(type, nth)` scope for `RenderOnce` state.
 
 On the tree, each step landing with something that uses it:
 

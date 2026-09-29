@@ -328,7 +328,7 @@ impl<E: Element> Drawable<E> {
                 );
 
                 if global_id.is_some() {
-                    window.element_id_stack.pop();
+                    window.pop_element_id();
                 }
 
                 self.phase = ElementDrawPhase::RequestLayout {
@@ -359,7 +359,7 @@ impl<E: Element> Drawable<E> {
                 ..
             } => {
                 if let Some(element_id) = self.element.id() {
-                    window.element_id_stack.push(element_id);
+                    window.push_element_id(element_id);
                     debug_assert_eq!(&*global_id.as_ref().unwrap().0, &*window.element_id_stack);
                 }
 
@@ -440,7 +440,7 @@ impl<E: Element> Drawable<E> {
                 }
 
                 if global_id.is_some() {
-                    window.element_id_stack.pop();
+                    window.pop_element_id();
                 }
 
                 self.phase = ElementDrawPhase::Prepaint {
@@ -472,7 +472,7 @@ impl<E: Element> Drawable<E> {
                 ..
             } => {
                 if let Some(element_id) = self.element.id() {
-                    window.element_id_stack.push(element_id);
+                    window.push_element_id(element_id);
                     debug_assert_eq!(&*global_id.as_ref().unwrap().0, &*window.element_id_stack);
                 }
 
@@ -488,7 +488,7 @@ impl<E: Element> Drawable<E> {
                 );
 
                 if global_id.is_some() {
-                    window.element_id_stack.pop();
+                    window.pop_element_id();
                 }
 
                 self.phase = ElementDrawPhase::Painted;
@@ -795,7 +795,7 @@ impl Element for Empty {
 
 #[inline(never)]
 fn prepare_element_id(element_id: ElementId, window: &mut Window) -> GlobalElementId {
-    window.element_id_stack.push(element_id);
+    window.push_element_id(element_id);
     GlobalElementId(Arc::from(&*window.element_id_stack))
 }
 

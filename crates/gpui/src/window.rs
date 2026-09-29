@@ -1161,6 +1161,10 @@ pub struct Window {
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
+    /// How many components of each type have been rendered in each open component scope
+    /// (`scope`, `type name`, `count`), innermost scope last. See `next_component_id`.
+    component_counts: Vec<(u32, &'static str, u64)>,
+    component_scope: u32,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) view_tree: ViewTree,
@@ -2022,6 +2026,8 @@ impl Window {
             layout_engine: Some(TaffyLayoutEngine::new()),
             root: None,
             element_id_stack: SmallVec::default(),
+            component_counts: Vec::new(),
+            component_scope: 0,
             text_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
             view_tree: ViewTree::default(),
@@ -2961,10 +2967,83 @@ impl Window {
         element_id: impl Into<ElementId>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        self.element_id_stack.push(element_id.into());
+        self.push_element_id(element_id.into());
         let result = f(self);
-        self.element_id_stack.pop();
+        self.pop_element_id();
         result
+    }
+
+    /// Pushes an element id, which opens a component scope: see `next_component_id`.
+    #[inline]
+    pub(crate) fn push_element_id(&mut self, element_id: ElementId) {
+        self.element_id_stack.push(element_id);
+        self.component_scope += 1;
+    }
+
+    #[inline]
+    pub(crate) fn pop_element_id(&mut self) {
+        self.element_id_stack.pop();
+        self.close_component_scope();
+    }
+
+    /// Runs `f` in a new component scope without adding to the element id path, so the
+    /// components `f` renders are counted from zero. Lists wrap each item in one: an item
+    /// may be rendered several times a frame (to measure it, then to draw it), and the
+    /// items rendered before it vary with scrolling.
+    pub(crate) fn with_component_scope<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.component_scope += 1;
+        let result = f(self);
+        self.close_component_scope();
+        result
+    }
+
+    fn close_component_scope(&mut self) {
+        self.component_scope = self.component_scope.saturating_sub(1);
+        while self
+            .component_counts
+            .last()
+            .is_some_and(|(scope, _, _)| *scope > self.component_scope)
+        {
+            self.component_counts.pop();
+        }
+    }
+
+    /// Forgets every component count, for a traversal that restarts the element id
+    /// stack: a frame, a deferred draw, or a test drawing elements directly.
+    pub(crate) fn reset_component_scopes(&mut self) {
+        self.component_counts.clear();
+        self.component_scope = 0;
+    }
+
+    /// The element id a stateless component of type `type_name` scopes its subtree with:
+    /// its type name for the first such component in the innermost component scope, and
+    /// the type name with its position among them for the rest. Two sibling components of
+    /// one type therefore keep separate element state, while a component's id stays the
+    /// same as long as the components of its type before it in the scope do.
+    pub(crate) fn next_component_id(&mut self, type_name: &'static str) -> ElementId {
+        let scope = self.component_scope;
+        let existing = self
+            .component_counts
+            .iter_mut()
+            .rev()
+            .take_while(|(entry_scope, _, _)| *entry_scope == scope)
+            .find(|(_, name, _)| *name == type_name);
+        let index = match existing {
+            Some((_, _, count)) => {
+                let index = *count;
+                *count += 1;
+                index
+            }
+            None => {
+                self.component_counts.push((scope, type_name, 1));
+                0
+            }
+        };
+        if index == 0 {
+            ElementId::Name(type_name.into())
+        } else {
+            ElementId::NamedInteger(type_name.into(), index)
+        }
     }
 
     /// Executes the provided function with the specified rem size.
@@ -3286,6 +3365,7 @@ impl Window {
         }
         if !cx.mode.skip_drawing() {
             self.view_tree.begin_frame();
+            self.reset_component_scopes();
             self.draw_roots(cx);
             self.view_tree.finish_frame();
             #[cfg(feature = "profiler")]
@@ -3731,6 +3811,7 @@ impl Window {
                         deferred_draw.prepaint_range.clone(),
                     )
                 };
+                self.reset_component_scopes();
                 self.next_frame.dispatch_tree.set_active_node(parent_node);
 
                 let prepaint_start = self.prepaint_index();
@@ -3774,6 +3855,7 @@ impl Window {
             let mut deferred_draw = &mut deferred_draws[deferred_draw_ix];
             self.element_id_stack
                 .clone_from(&deferred_draw.element_id_stack);
+            self.reset_component_scopes();
             self.next_frame
                 .dispatch_tree
                 .set_active_node(deferred_draw.parent_node);
@@ -4137,10 +4219,7 @@ impl Window {
         element_id: impl Into<ElementId>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        self.element_id_stack.push(element_id.into());
-        let result = f(self);
-        self.element_id_stack.pop();
-        result
+        self.with_id(element_id, f)
     }
 
     /// Use a piece of state that exists as long this element is being rendered in consecutive frames.

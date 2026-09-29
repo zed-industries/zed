@@ -262,8 +262,8 @@ impl ViewTree {
 mod tests {
     use super::*;
     use crate::{
-        Context, Entity, IntoElement, Render, StyleRefinement, TestAppContext, VisualTestContext,
-        WeakEntity, Window, deferred, div, prelude::*, px,
+        App, Context, Entity, IntoElement, Render, RenderOnce, StyleRefinement, TestAppContext,
+        VisualTestContext, WeakEntity, Window, deferred, div, prelude::*, px,
     };
     use std::{cell::RefCell, rc::Rc};
 
@@ -602,6 +602,109 @@ mod tests {
             state_entity(&state).map(|state| state.entity_id()),
             weak.upgrade().map(|state| state.entity_id()),
             "rendering again finds the same state"
+        );
+    }
+
+    /// Records the `use_keyed_state` entity it gets, under `label`.
+    #[derive(IntoElement)]
+    struct StateProbe {
+        label: usize,
+        seen: Rc<RefCell<Vec<(usize, EntityId)>>>,
+    }
+
+    impl RenderOnce for StateProbe {
+        fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+            let state = window.use_keyed_state("state", cx, |_, _| 0usize);
+            self.seen.borrow_mut().push((self.label, state.entity_id()));
+            div().size(px(10.))
+        }
+    }
+
+    fn seen_for(seen: &Rc<RefCell<Vec<(usize, EntityId)>>>, label: usize) -> Vec<EntityId> {
+        seen.borrow()
+            .iter()
+            .filter(|(seen_label, _)| *seen_label == label)
+            .map(|(_, entity)| *entity)
+            .collect()
+    }
+
+    #[gpui::test]
+    fn sibling_components_of_one_type_keep_separate_state(cx: &mut TestAppContext) {
+        struct Siblings(Rc<RefCell<Vec<(usize, EntityId)>>>);
+        impl Render for Siblings {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().children((0..2).map(|label| StateProbe {
+                    label,
+                    seen: self.0.clone(),
+                }))
+            }
+        }
+
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let (root, cx) = cx.add_window_view({
+            let seen = seen.clone();
+            move |_, _| Siblings(seen)
+        });
+        root.update(cx, |_, cx| cx.notify());
+        draw(cx);
+
+        let first = seen_for(&seen, 0);
+        let second = seen_for(&seen, 1);
+        assert!(first.len() >= 2, "rendered in more than one frame");
+        assert!(
+            first.iter().all(|entity| *entity == first[0]),
+            "state is kept"
+        );
+        assert!(
+            second.iter().all(|entity| *entity == second[0]),
+            "state is kept"
+        );
+        assert_ne!(first[0], second[0], "siblings do not share state");
+    }
+
+    #[gpui::test]
+    fn component_list_items_keep_state_while_scrolling(cx: &mut TestAppContext) {
+        struct Items {
+            state: crate::ListState,
+            seen: Rc<RefCell<Vec<(usize, EntityId)>>>,
+        }
+        impl Render for Items {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let seen = self.seen.clone();
+                crate::list(self.state.clone(), move |index, _, _| {
+                    StateProbe {
+                        label: index,
+                        seen: seen.clone(),
+                    }
+                    .into_any_element()
+                })
+                .size_full()
+            }
+        }
+
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let state = crate::ListState::new(20, crate::ListAlignment::Top, px(100.));
+        let (root, cx) = cx.add_window_view({
+            let seen = seen.clone();
+            let state = state.clone();
+            move |_, _| Items { state, seen }
+        });
+        cx.simulate_resize(crate::size(px(100.), px(50.)));
+        draw(cx);
+        let before = seen_for(&seen, 3);
+        assert!(!before.is_empty(), "item 3 is visible");
+
+        state.scroll_to(crate::ListOffset {
+            item_ix: 2,
+            offset_in_item: px(0.),
+        });
+        root.update(cx, |_, cx| cx.notify());
+        draw(cx);
+        let after = seen_for(&seen, 3);
+        assert!(after.len() > before.len(), "item 3 is still visible");
+        assert!(
+            after.iter().all(|entity| *entity == before[0]),
+            "item 3 kept its state when fewer items rendered before it"
         );
     }
 }

@@ -25,11 +25,83 @@ pub fn list(
     state: ListState,
     render_item: impl FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static,
 ) -> List {
+    let mut render_item = render_item;
     List {
         state,
-        render_item: Box::new(render_item),
+        render_item: Box::new(move |index, window, cx| {
+            ComponentScope::wrap(render_item(index, window, cx))
+        }),
         style: StyleRefinement::default(),
         sizing_behavior: ListSizingBehavior::default(),
+    }
+}
+
+/// Draws its child in a component scope of its own (see `Window::with_component_scope`),
+/// without adding to the element id path. Lists wrap each item in one.
+pub(crate) struct ComponentScope {
+    child: AnyElement,
+}
+
+impl ComponentScope {
+    pub(crate) fn wrap(child: AnyElement) -> AnyElement {
+        ComponentScope { child }.into_any_element()
+    }
+}
+
+impl IntoElement for ComponentScope {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for ComponentScope {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<crate::ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (crate::LayoutId, ()) {
+        let layout_id = window.with_component_scope(|window| self.child.request_layout(window, cx));
+        (layout_id, ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        window.with_component_scope(|window| self.child.prepaint(window, cx));
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut (),
+        _prepaint: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        window.with_component_scope(|window| self.child.paint(window, cx));
     }
 }
 
