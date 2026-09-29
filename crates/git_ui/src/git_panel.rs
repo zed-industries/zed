@@ -39,8 +39,8 @@ use git::repository::{
 use git::stash::GitStash;
 use git::status::{DiffStat, StageStatus};
 use git::{
-    AddToGitInfoExclude, AddToGitignore, Amend, Commit, RestoreFile, Signoff, SkipHooks,
-    ToggleStaged, repository::RepoPath, status::FileStatus,
+    Amend, Commit, RestoreFile, Signoff, SkipHooks, ToggleStaged, repository::RepoPath,
+    status::FileStatus,
 };
 use git::{
     ExpandCommitEditor, GitHostingProviderRegistry, GitRemote, RestoreTrackedFiles, StageAll,
