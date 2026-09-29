@@ -7692,6 +7692,7 @@ dependencies = [
  "parking_lot",
  "pathfinder_geometry",
  "raw-window-handle",
+ "scheduler",
  "semver",
  "smallvec",
  "strum 0.28.0",
@@ -7828,6 +7829,7 @@ dependencies = [
  "parking_lot",
  "rand 0.9.4",
  "raw-window-handle",
+ "scheduler",
  "smallvec",
  "uuid",
  "windows 0.62.2",
@@ -8954,6 +8956,7 @@ dependencies = [
  "collections",
  "gpui",
  "hdrhistogram",
+ "log",
  "telemetry",
 ]
 

@@ -3116,6 +3116,7 @@ extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
 }
 
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
+    let signal_at = scheduler::Instant::now();
     let window_state = unsafe { get_window_state(this) };
     let lock = window_state.lock();
     let is_active = unsafe { lock.native_window.isKeyWindow() == YES };
@@ -3169,7 +3170,10 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
                 lock.renderer.set_presents_with_transaction(true);
                 lock.stop_display_link();
                 drop(lock);
-                callback(Default::default());
+                callback(RequestFrameOptions {
+                    signal_at: Some(signal_at),
+                    ..Default::default()
+                });
 
                 let mut lock = window_state.lock();
                 lock.request_frame_callback = Some(callback);
@@ -3284,13 +3288,17 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
 }
 
 extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
+    let signal_at = scheduler::Instant::now();
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
     if let Some(mut callback) = lock.request_frame_callback.take() {
         lock.renderer.set_presents_with_transaction(true);
         lock.stop_display_link();
         drop(lock);
-        callback(Default::default());
+        callback(RequestFrameOptions {
+            signal_at: Some(signal_at),
+            ..Default::default()
+        });
 
         let mut lock = window_state.lock();
         lock.request_frame_callback = Some(callback);
@@ -3305,8 +3313,15 @@ extern "C" fn step(view: *mut c_void) {
     let mut lock = window_state.lock();
 
     if let Some(mut callback) = lock.request_frame_callback.take() {
+        let signal_at = lock
+            .frame_source
+            .as_ref()
+            .and_then(WindowFrameSource::take_signal);
         drop(lock);
-        callback(Default::default());
+        callback(RequestFrameOptions {
+            signal_at,
+            ..Default::default()
+        });
         window_state.lock().request_frame_callback = Some(callback);
     }
 }

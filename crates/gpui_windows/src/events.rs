@@ -1364,6 +1364,7 @@ impl WindowsWindowInner {
         request_frame(RequestFrameOptions {
             require_presentation: false,
             force_render,
+            signal_at: self.state.frame_signal.take(),
         });
 
         self.state.callbacks.request_frame.set(Some(request_frame));

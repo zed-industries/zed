@@ -55,11 +55,13 @@ use core_graphics::display::CGDirectDisplayID;
 use dispatch2::{
     _dispatch_source_type_data_add, DispatchObject, DispatchQueue, DispatchRetained, DispatchSource,
 };
+use gpui::PlatformFrameSignal;
 use gpui_util::ResultExt;
+use scheduler::Instant;
 use std::{
     collections::{BTreeMap, btree_map},
     ffi::c_void,
-    sync::{Mutex, MutexGuard, PoisonError},
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
 static REGISTRY: Mutex<Registry> = Mutex::new(Registry::new());
@@ -81,7 +83,13 @@ impl Registry {
 struct DisplayEntry {
     link: sys::DisplayLink,
     running: bool,
-    subscribers: Vec<(SubscriberId, DispatchRetained<DispatchSource>)>,
+    subscribers: Vec<Subscriber>,
+}
+
+struct Subscriber {
+    id: SubscriberId,
+    frame_requests: DispatchRetained<DispatchSource>,
+    signal: Arc<PlatformFrameSignal>,
 }
 
 // SAFETY: Both fields wrapping raw pointers are refcounted handles to
@@ -124,11 +132,13 @@ unsafe extern "C" fn display_link_output_callback(
     _flags_out: *mut i64,
     display_id: *mut c_void,
 ) -> i32 {
+    let signal_at = Instant::now();
     let display_id = display_id as usize as CGDirectDisplayID;
     let registry = lock_registry();
     if let Some(entry) = registry.displays.get(&display_id) {
-        for (_, frame_requests) in &entry.subscribers {
-            frame_requests.merge_data(1);
+        for subscriber in &entry.subscribers {
+            subscriber.signal.record(signal_at);
+            subscriber.frame_requests.merge_data(1);
         }
     }
     0
@@ -137,6 +147,7 @@ unsafe extern "C" fn display_link_output_callback(
 fn subscribe(
     display_id: CGDirectDisplayID,
     frame_requests: DispatchRetained<DispatchSource>,
+    signal: Arc<PlatformFrameSignal>,
 ) -> Result<SubscriberId> {
     debug_assert_main_thread();
 
@@ -175,7 +186,11 @@ fn subscribe(
                 anyhow::bail!("display link registry entry vanished for display {display_id}");
             }
         };
-        entry.subscribers.push((subscriber_id, frame_requests));
+        entry.subscribers.push(Subscriber {
+            id: subscriber_id,
+            frame_requests,
+            signal,
+        });
         let link_to_start = if entry.running {
             None
         } else {
@@ -192,7 +207,14 @@ fn subscribe(
             let mut registry = lock_registry();
             if let Some(entry) = registry.displays.get_mut(&display_id) {
                 entry.running = false;
-                entry.subscribers.retain(|(id, _)| *id != subscriber_id);
+                entry.subscribers.retain(|subscriber| {
+                    if subscriber.id == subscriber_id {
+                        subscriber.signal.take();
+                        false
+                    } else {
+                        true
+                    }
+                });
             }
             return Err(error);
         }
@@ -209,7 +231,14 @@ fn unsubscribe(display_id: CGDirectDisplayID, subscriber_id: SubscriberId) {
         let Some(entry) = registry.displays.get_mut(&display_id) else {
             return;
         };
-        entry.subscribers.retain(|(id, _)| *id != subscriber_id);
+        entry.subscribers.retain(|subscriber| {
+            if subscriber.id == subscriber_id {
+                subscriber.signal.take();
+                false
+            } else {
+                true
+            }
+        });
         if entry.subscribers.is_empty() && entry.running {
             entry.running = false;
             Some(entry.link.clone())
@@ -231,6 +260,7 @@ fn unsubscribe(display_id: CGDirectDisplayID, subscriber_id: SubscriberId) {
 pub struct WindowFrameSource {
     frame_requests: DispatchRetained<DispatchSource>,
     registration: Option<(CGDirectDisplayID, SubscriberId)>,
+    signal: Arc<PlatformFrameSignal>,
 }
 
 impl WindowFrameSource {
@@ -252,20 +282,27 @@ impl WindowFrameSource {
         Self {
             frame_requests,
             registration: None,
+            signal: Arc::new(PlatformFrameSignal::new()),
         }
     }
 
     pub fn start(&mut self, display_id: CGDirectDisplayID) -> Result<()> {
         self.stop();
-        let subscriber_id = subscribe(display_id, self.frame_requests.clone())?;
+        let subscriber_id =
+            subscribe(display_id, self.frame_requests.clone(), self.signal.clone())?;
         self.registration = Some((display_id, subscriber_id));
         Ok(())
+    }
+
+    pub fn take_signal(&self) -> Option<Instant> {
+        self.signal.take()
     }
 
     pub fn stop(&mut self) {
         if let Some((display_id, subscriber_id)) = self.registration.take() {
             unsubscribe(display_id, subscriber_id);
         }
+        self.signal.take();
     }
 }
 

@@ -736,6 +736,7 @@ impl X11Client {
                     window.refresh(RequestFrameOptions {
                         require_presentation: true,
                         force_render: false,
+                        signal_at: None,
                     });
                 }
             }
@@ -2012,6 +2013,7 @@ impl X11ClientState {
                             window.refresh(RequestFrameOptions {
                                 require_presentation: false,
                                 force_render: false,
+                                signal_at: Some(instant),
                             });
                         }
                         xcb_connection

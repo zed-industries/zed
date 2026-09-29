@@ -388,6 +388,7 @@ impl WebWindow {
                     callback(RequestFrameOptions {
                         require_presentation: true,
                         force_render: true,
+                        signal_at: None,
                     })
                 },
             );
@@ -459,6 +460,7 @@ impl WebWindowInner {
                     callback(RequestFrameOptions {
                         require_presentation: false,
                         force_render: false,
+                        signal_at: None,
                     })
                 },
             );

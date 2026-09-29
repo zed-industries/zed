@@ -805,6 +805,55 @@ pub struct RequestFrameOptions {
     pub require_presentation: bool,
     /// Force refresh of all rendering states when true.
     pub force_render: bool,
+    /// When the platform first offered this frame, before main-thread dispatch.
+    ///
+    /// `None` leaves platform-wait attribution unsupported for this request.
+    /// Coalesced requests carry their earliest opportunity, not their delivery time.
+    pub signal_at: Option<Instant>,
+}
+
+/// Preserves the earliest frame opportunity across coalesced platform notifications.
+///
+/// Producers may record from a platform thread without waiting for the UI thread.
+/// The consumer drains notifications on the UI thread; GPUI retains skipped
+/// opportunities until drawing so its own throttling remains attributable to GPUI.
+pub struct PlatformFrameSignal {
+    origin: Instant,
+    earliest_nanoseconds: std::sync::atomic::AtomicU64,
+}
+
+impl Default for PlatformFrameSignal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PlatformFrameSignal {
+    /// Creates an empty signal accumulator.
+    pub fn new() -> Self {
+        Self {
+            origin: Instant::now(),
+            earliest_nanoseconds: std::sync::atomic::AtomicU64::new(u64::MAX),
+        }
+    }
+
+    /// Records an opportunity, retaining the earliest undrained timestamp.
+    pub fn record(&self, at: Instant) {
+        let nanoseconds = at
+            .saturating_duration_since(self.origin)
+            .as_nanos()
+            .min(u128::from(u64::MAX - 1)) as u64;
+        self.earliest_nanoseconds
+            .fetch_min(nanoseconds, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Drains the earliest opportunity, leaving the accumulator empty.
+    pub fn take(&self) -> Option<Instant> {
+        let nanoseconds = self
+            .earliest_nanoseconds
+            .swap(u64::MAX, std::sync::atomic::Ordering::Relaxed);
+        (nanoseconds != u64::MAX).then(|| self.origin + Duration::from_nanos(nanoseconds))
+    }
 }
 
 /// The application's lifecycle phase, as owned and reported by a mobile OS.
@@ -3271,6 +3320,26 @@ mod atlas_tests {
         assert!(!state.contains(&other_key));
         assert_eq!(state.backend.removed_tiles, vec![tile]);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod frame_signal_tests {
+    use super::*;
+
+    #[test]
+    fn coalesced_signals_retain_the_earliest_until_drained() {
+        let signal = PlatformFrameSignal::new();
+        let first = Instant::now();
+        assert_eq!(signal.take(), None);
+        signal.record(first + Duration::from_millis(16));
+        signal.record(first);
+        signal.record(first + Duration::from_millis(32));
+        assert_eq!(signal.take(), Some(first));
+        assert_eq!(signal.take(), None);
+        let next = first + Duration::from_millis(48);
+        signal.record(next);
+        assert_eq!(signal.take(), Some(next));
     }
 }
 

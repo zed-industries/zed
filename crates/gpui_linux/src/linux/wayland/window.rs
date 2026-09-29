@@ -4,6 +4,7 @@ use std::{
     ptr::NonNull,
     rc::Rc,
     sync::Arc,
+    time::Instant,
 };
 
 use calloop::ping::Ping;
@@ -543,6 +544,7 @@ pub struct WaylandWindowStatePtr {
     callbacks: Rc<RefCell<Callbacks>>,
     frame_loop: Rc<Cell<FrameLoop>>,
     frame_ping: Ping,
+    scheduled_frame_at: Rc<Cell<Option<Instant>>>,
 }
 
 impl WaylandWindowState {
@@ -864,6 +866,7 @@ impl WaylandWindow {
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             frame_loop: Rc::new(Cell::new(FrameLoop::Unconfigured)),
             frame_ping,
+            scheduled_frame_at: Rc::new(Cell::new(None)),
         });
 
         // Kick things off
@@ -921,7 +924,7 @@ impl WaylandWindowStatePtr {
         state.children.values().any(|&blocking| blocking)
     }
 
-    pub fn frame(&self) {
+    pub fn frame(&self, signal_at: Option<Instant>) {
         self.frame_loop.set(FrameLoop::Ticking);
         let mut state = self.state.borrow_mut();
         state.resize_throttle = false;
@@ -939,6 +942,7 @@ impl WaylandWindowStatePtr {
         request_frame_callback(RequestFrameOptions {
             force_render,
             require_presentation,
+            signal_at,
         });
         self.update_ime_enabled();
         drop(callbacks);
@@ -990,24 +994,24 @@ impl WaylandWindowStatePtr {
         self.frame_loop.set(FrameLoop::Parked);
     }
 
-    pub fn frame_callback_fired(&self) {
+    pub fn frame_callback_fired(&self, signal_at: Instant) {
         // Another wl_surface commit may have carried this callback while a retry
         // timer owned the render-loop wakeup.
         self.state.borrow_mut().pending_frame_callback = None;
         if self.frame_loop.get() == FrameLoop::AwaitingCallback {
-            self.frame();
+            self.frame(Some(signal_at));
         }
     }
 
     pub fn scheduled_frame_fired(&self) {
         if self.frame_loop.get() == FrameLoop::Scheduled {
-            self.frame();
+            self.frame(self.scheduled_frame_at.take());
         }
     }
 
-    pub fn retry_timer_fired(&self) {
+    pub fn retry_timer_fired(&self, signal_at: Instant) {
         if self.frame_loop.get() == FrameLoop::RetryScheduled {
-            self.frame();
+            self.frame(Some(signal_at));
         }
     }
 
@@ -1019,6 +1023,7 @@ impl WaylandWindowStatePtr {
         match self.frame_loop.get() {
             FrameLoop::Parked => {
                 self.frame_loop.set(FrameLoop::Scheduled);
+                self.scheduled_frame_at.set(Some(Instant::now()));
                 self.frame_ping.ping();
             }
             FrameLoop::Ticking => {
@@ -1140,7 +1145,7 @@ impl WaylandWindowStatePtr {
             let initial_configure = self.frame_loop.get() == FrameLoop::Unconfigured;
             drop(state);
             if initial_configure {
-                self.frame();
+                self.frame(None);
             } else {
                 self.request_redraw();
             }

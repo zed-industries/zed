@@ -18,4 +18,5 @@ chrono.workspace = true
 collections.workspace = true
 gpui = { workspace = true, features = ["profiler"] }
 hdrhistogram.workspace = true
+log.workspace = true
 telemetry.workspace = true

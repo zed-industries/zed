@@ -854,6 +854,8 @@ pub enum FrameEvent {
 pub struct FrameDurationSnapshot {
     /// Histogram of durations from the first invalidation through presentation, in nanoseconds.
     pub dirty_to_present_histogram: Histogram<u64>,
+    /// Histogram of first eligible platform signal through presentation, in nanoseconds.
+    pub signal_to_present_histogram: Histogram<u64>,
     /// Histogram of `Window::draw` durations, in nanoseconds.
     pub draw_duration_histogram: Histogram<u64>,
     /// Histogram of intervals between consecutively presented frames while the
@@ -897,6 +899,7 @@ pub struct WindowProfiler {
     active_activities: SmallVec<[WindowActivity; 4]>,
     active_actions: SmallVec<[(&'static str, Instant); 2]>,
     dirty_to_present_histogram: Histogram<u64>,
+    signal_to_present_histogram: Histogram<u64>,
     draw_duration_histogram: Histogram<u64>,
     present_interval_histogram: Histogram<u64>,
     first_input_at: Option<Instant>,
@@ -907,10 +910,17 @@ pub struct WindowProfiler {
     last_present_at: Option<Instant>,
     animating_at_last_present: bool,
     pending_frame: Option<FrameTiming>,
+    first_frame_signal: Option<Instant>,
+    first_signal_since_present: Option<Instant>,
+    platform_wait_threshold: Duration,
 }
 
 #[cfg(feature = "profiler")]
 impl WindowProfiler {
+    // Refresh rates below 30 Hz cannot be distinguished from withheld callbacks
+    // here; cap the estimate rather than allowing a stall to excuse itself.
+    pub(crate) const MAX_REFRESH_INTERVAL: Duration = Duration::from_micros(33_334);
+
     /// Creates a profiler for a window.
     pub fn new(window_id: WindowId) -> anyhow::Result<Self> {
         let profiler = Self {
@@ -919,6 +929,9 @@ impl WindowProfiler {
             active_actions: SmallVec::new(),
             dirty_to_present_histogram: Histogram::new(3).map_err(|error| {
                 anyhow::anyhow!("Failed to create dirty-to-present histogram: {error}")
+            })?,
+            signal_to_present_histogram: Histogram::new(3).map_err(|error| {
+                anyhow::anyhow!("Failed to create signal-to-present histogram: {error}")
             })?,
             draw_duration_histogram: Histogram::new(3).map_err(|error| {
                 anyhow::anyhow!("Failed to create draw duration histogram: {error}")
@@ -938,6 +951,9 @@ impl WindowProfiler {
             last_present_at: None,
             animating_at_last_present: false,
             pending_frame: None,
+            first_frame_signal: None,
+            first_signal_since_present: None,
+            platform_wait_threshold: Duration::from_micros(66_668),
         };
         journal::record_frame_pending(window_id, Instant::now());
         Ok(profiler)
@@ -1058,6 +1074,22 @@ impl WindowProfiler {
         draw_duration
     }
 
+    /// Associates the drawn frame with its first eligible platform opportunities.
+    ///
+    /// Signals precede callback dispatch. External invalidations clamp coalesced
+    /// signals to dirty time; animation demand may legitimately precede invalidation.
+    pub(crate) fn record_frame_signals(
+        &mut self,
+        first_signal: Option<Instant>,
+        first_signal_since_present: Option<Instant>,
+        refresh_interval: Duration,
+    ) {
+        self.first_frame_signal = first_signal;
+        self.first_signal_since_present = first_signal_since_present;
+        self.platform_wait_threshold =
+            Duration::from_millis(50).max(refresh_interval.min(Self::MAX_REFRESH_INTERVAL) * 4);
+    }
+
     /// Records that a frame was presented.
     ///
     /// `next_frame_scheduled` marks the animation state for the interval ending
@@ -1090,6 +1122,7 @@ impl WindowProfiler {
     pub fn frame_duration_snapshot(&self) -> FrameDurationSnapshot {
         FrameDurationSnapshot {
             dirty_to_present_histogram: self.dirty_to_present_histogram.clone(),
+            signal_to_present_histogram: self.signal_to_present_histogram.clone(),
             draw_duration_histogram: self.draw_duration_histogram.clone(),
             present_interval_histogram: self.present_interval_histogram.clone(),
         }
@@ -1102,8 +1135,18 @@ impl WindowProfiler {
         window_active: bool,
         next_frame_scheduled: bool,
     ) {
+        let first_signal = self.first_frame_signal.take();
+        let first_signal_since_present = self.first_signal_since_present.take();
+        let wait_threshold = self.platform_wait_threshold;
+        let platform_wait_is_short = |started_at: Instant, signal: Option<Instant>| {
+            signal
+                .is_none_or(|signal| signal.saturating_duration_since(started_at) <= wait_threshold)
+        };
         if let Some(first_input_at) = self.first_input_at.take()
             && journal::frame_sample_is_valid(self.window_id, first_input_at)
+            // Input dispatch can itself block before it invalidates. Use the
+            // raw opportunity rather than one clamped to that late invalidation.
+            && platform_wait_is_short(first_input_at, first_signal_since_present)
         {
             let latency_nanos = present_end.duration_since(first_input_at).as_nanos() as u64;
             self.input_latency_histogram.record(latency_nanos).ok();
@@ -1125,10 +1168,18 @@ impl WindowProfiler {
                     .filter(|at| journal::frame_sample_is_valid(self.window_id, *at));
                 frame
             });
+        let eligible_signal = frame.and(first_signal);
+        let frame = frame.map(|mut frame| {
+            frame.dirty_at = frame
+                .dirty_at
+                .filter(|at| platform_wait_is_short(*at, first_signal));
+            frame
+        });
         let animation_interval =
             if frame.is_some() && self.animating_at_last_present && window_active {
                 self.last_present_at
                     .filter(|at| journal::frame_sample_is_valid(self.window_id, *at))
+                    .filter(|at| platform_wait_is_short(*at, first_signal_since_present))
                     .map(|last_present_at| present_end.duration_since(last_present_at))
             } else {
                 None
@@ -1144,6 +1195,15 @@ impl WindowProfiler {
         let Some(frame) = frame else {
             return;
         };
+
+        if let Some(signal) = eligible_signal
+            && journal::frame_sample_is_valid(self.window_id, signal)
+            && let Err(error) = self
+                .signal_to_present_histogram
+                .record(present_end.saturating_duration_since(signal).as_nanos() as u64)
+        {
+            log::error!("failed to record signal-to-present frame timing: {error}");
+        }
 
         if let Some(dirty_at) = frame.dirty_at
             && let Err(error) = self
@@ -1499,6 +1559,96 @@ mod tests {
         let histogram = snapshot.dirty_to_present_histogram;
         assert_eq!(histogram.len(), 1);
         assert!(histogram.max() >= Duration::from_millis(10).as_nanos() as u64);
+    }
+
+    #[test]
+    fn frame_signals_bound_platform_waits() {
+        for (signal_delay, refresh_interval, expected_samples, expected_signal_latency) in [
+            (1, FRAME, 1, 500),
+            (16, FRAME, 1, 484),
+            (65, FRAME, 1, 436),
+            (66, FRAME, 0, 435),
+            (51, Duration::from_millis(8), 1, 450),
+            (52, Duration::from_millis(8), 0, 449),
+            (100, Duration::from_millis(30), 1, 401),
+            (500, FRAME, 0, 0),
+            (500, Duration::from_secs(1), 0, 0),
+        ] {
+            let mut profiler = WindowProfiler::new(WindowId::from(80)).expect("valid histograms");
+            let start = Instant::now();
+            let dirty_at = start + Duration::from_millis(1);
+            let signal = start + Duration::from_millis(signal_delay);
+            let present = dirty_at + Duration::from_millis(500);
+            profiler.record_frame_signals(Some(signal), Some(signal), refresh_interval);
+            profiler.record_draw_timing(FrameTiming {
+                window_id: profiler.window_id,
+                dirty_at: Some(dirty_at),
+                invalidations: 1,
+                draw_start: present - Duration::from_millis(2),
+                draw_end: present,
+            });
+            profiler.record_present_at(present, present, true, false);
+            let snapshot = profiler.frame_duration_snapshot();
+            assert_eq!(snapshot.dirty_to_present_histogram.len(), expected_samples);
+            assert_eq!(snapshot.draw_duration_histogram.len(), 1);
+            assert_eq!(snapshot.signal_to_present_histogram.len(), 1);
+            if expected_signal_latency > 0 {
+                assert!(
+                    snapshot.signal_to_present_histogram.max()
+                        >= Duration::from_millis(expected_signal_latency).as_nanos() as u64
+                );
+                assert!(snapshot.signal_to_present_histogram.max() < 502_000_000);
+            }
+        }
+    }
+
+    #[test]
+    fn input_dispatch_delay_is_not_platform_wait() {
+        let mut profiler = WindowProfiler::new(WindowId::from(82)).expect("valid histograms");
+        let input_at = Instant::now();
+        let dirty_at = input_at + Duration::from_millis(500);
+        let present = dirty_at + Duration::from_millis(10);
+        profiler.first_input_at = Some(input_at);
+        profiler.pending_input_count = 1;
+        profiler.record_frame_signals(Some(dirty_at), Some(input_at + FRAME), FRAME);
+        profiler.record_draw_timing(FrameTiming {
+            window_id: profiler.window_id,
+            dirty_at: Some(dirty_at),
+            invalidations: 1,
+            draw_start: present - Duration::from_millis(2),
+            draw_end: present,
+        });
+        profiler.record_present_at(present, present, true, false);
+        assert_eq!(profiler.input_latency_histogram.len(), 1);
+        assert!(profiler.input_latency_histogram.max() >= 510_000_000);
+        assert_eq!(profiler.dirty_to_present_histogram.len(), 1);
+        assert!(profiler.signal_to_present_histogram.max() >= 10_000_000);
+        assert!(profiler.signal_to_present_histogram.max() < 11_000_000);
+    }
+
+    #[test]
+    fn animation_wait_uses_first_signal_after_previous_present() {
+        for (signal_delay, expected_intervals) in [(16, 1), (500, 0)] {
+            let mut profiler = WindowProfiler::new(WindowId::from(81)).expect("valid histograms");
+            let start = Instant::now();
+            draw_and_present(&mut profiler, start, true, true);
+
+            // Animation dirties inside the frame callback, after any platform wait.
+            let signal = start + Duration::from_millis(signal_delay);
+            let present = start + Duration::from_millis(502);
+            profiler.record_frame_signals(Some(signal), Some(signal), FRAME);
+            record_test_draw(&mut profiler, present);
+            profiler.record_present_at(present, present, true, true);
+            let snapshot = profiler.frame_duration_snapshot();
+            assert_eq!(snapshot.dirty_to_present_histogram.len(), 2);
+            assert_eq!(
+                snapshot.present_interval_histogram.len(),
+                expected_intervals
+            );
+            if expected_intervals > 0 {
+                assert!(snapshot.present_interval_histogram.max() >= 502_000_000);
+            }
+        }
     }
 
     #[cfg(feature = "profiler")]
