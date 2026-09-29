@@ -4425,7 +4425,7 @@ impl BufferSnapshot {
                 // (including the root). Accept the end boundary only at the buffer's end,
                 // so mid-buffer behavior is unchanged.
                 let contains_offset = child_range.contains(&offset)
-                    || (offset == text.len() && child_range.end == offset);
+                    || (child_range.end == offset && offset == text.len());
                 if !contains_offset {
                     break;
                 }
