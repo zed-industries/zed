@@ -113,33 +113,10 @@ async fn run_git_blame(
             .context("starting git blame process")?
     };
 
-    let shallow_file_content = {
-        let shallow_file_path = git
-            .build_command(&[
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-path",
-                "shallow",
-            ])
-            .kill_on_drop(true)
-            .output()
-            .await
-            .context("resolving shallow file path")?;
-
-        if shallow_file_path.status.success()
-            && let Ok(path) = str::from_utf8(&shallow_file_path.stdout).map(str::trim)
-            && let Ok(Some(content)) = read_shallow_file(&std::path::Path::new(path)).await
-        {
-            std::borrow::Cow::Owned(content)
-        } else {
-            std::borrow::Cow::Borrowed("")
-        }
+    let shallow_commits = match load_shallow_commits(git).await {
+        Ok(commits) => commits,
+        Err(_) => HashSet::default(),
     };
-
-    let shallow_boundaries_hash = shallow_file_content
-        .lines()
-        .map(str::trim)
-        .map(str::as_bytes);
 
     let stdin = child.stdin.take();
     let stdout = child
@@ -179,11 +156,7 @@ async fn run_git_blame(
             }
 
             let line = line_buffer.trim_end_matches(&['\r', '\n'][..]);
-            parser.push_line(line, |oid| {
-                shallow_boundaries_hash
-                    .clone()
-                    .any(|sha| sha == oid.as_bytes())
-            })?;
+            parser.push_line(line, |oid| shallow_commits.contains(oid))?;
             lines_read += 1;
 
             if lines_read % BLAME_PARSE_YIELD_INTERVAL == 0 {
@@ -224,6 +197,44 @@ async fn run_git_blame(
     Ok(entries)
 }
 
+async fn load_shallow_commits(git: &GitBinary) -> Result<HashSet<Oid>> {
+    let output = git
+        .build_command(&[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "shallow",
+        ])
+        .kill_on_drop(true)
+        .output()
+        .await
+        .context("resolving shallow file path")?;
+
+    anyhow::ensure!(
+        output.status.success(),
+        "git rev-parse --git-path shallow failed: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+
+    let path = std::str::from_utf8(&output.stdout)
+        .context("shallow file path is not valid UTF-8")?
+        .trim();
+
+    let Some(contents) = read_shallow_file(std::path::Path::new(path)).await? else {
+        return Ok(HashSet::default());
+    };
+
+    contents
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            line.parse::<Oid>()
+                .with_context(|| format!("parsing shallow commit {line:?}"))
+        })
+        .collect()
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct BlameEntry {
     pub sha: Oid,
@@ -247,8 +258,8 @@ pub struct BlameEntry {
     pub previous: Option<String>,
     pub filename: String,
 
-    /// Whether this entry is a boundary entry. Not like git blame's `boundary` marker,
-    /// This `boundary` is `shallow boundary`
+    /// Git also marks root commits as `boundary`; this is only set when the commit is
+    /// listed in the shallow file, because only then is earlier history actually missing.
     #[serde(default)]
     pub boundary: bool,
 }
@@ -385,7 +396,11 @@ impl GitBlameParser {
         }
     }
 
-    fn push_line(&mut self, line: &str, check_shallow: impl FnOnce(&Oid) -> bool) -> Result<()> {
+    fn push_line(
+        &mut self,
+        line: &str,
+        is_shallow_commit: impl FnOnce(&Oid) -> bool,
+    ) -> Result<()> {
         let mut done = false;
 
         match &mut self.current_entry {
@@ -421,7 +436,7 @@ impl GitBlameParser {
             }
             Some(entry) => {
                 if line == "boundary" {
-                    entry.boundary = check_shallow(&entry.sha);
+                    entry.boundary = is_shallow_commit(&entry.sha);
                     return Ok(());
                 }
                 let Some((key, value)) = line.split_once(' ') else {
@@ -528,15 +543,23 @@ fn unquote_git_path(value: &str) -> String {
 mod tests {
     use std::path::PathBuf;
 
-    use crate::blame::GitBlameParser;
+    use collections::HashSet;
+
+    use crate::{Oid, blame::GitBlameParser};
 
     use super::{BlameEntry, unquote_git_path};
 
-    fn parse_git_blame(output: &str) -> anyhow::Result<Vec<BlameEntry>> {
+    const NOT_COMMITTED_BOUNDARY_SHA: &str = "e6d34e8fb494fe2b576d16037c61ba9d10722ba3";
+
+    fn parse_git_blame(output: &str, shallow_commits: &[&str]) -> anyhow::Result<Vec<BlameEntry>> {
+        let shallow_commits = shallow_commits
+            .iter()
+            .map(|sha| sha.parse::<Oid>())
+            .collect::<anyhow::Result<HashSet<_>>>()?;
         let mut parser = GitBlameParser::new();
 
         for line in output.lines() {
-            parser.push_line(line, |_| true)?;
+            parser.push_line(line, |oid| shallow_commits.contains(oid))?;
         }
 
         Ok(parser.entries)
@@ -583,28 +606,28 @@ mod tests {
     #[test]
     fn test_parse_git_blame_not_committed() {
         let output = read_test_data("blame_incremental_not_committed");
-        let entries = parse_git_blame(&output).unwrap();
+        let entries = parse_git_blame(&output, &[NOT_COMMITTED_BOUNDARY_SHA]).unwrap();
         assert_eq_golden(&entries, "blame_incremental_not_committed");
     }
 
     #[test]
     fn test_parse_git_blame_simple() {
         let output = read_test_data("blame_incremental_simple");
-        let entries = parse_git_blame(&output).unwrap();
+        let entries = parse_git_blame(&output, &[]).unwrap();
         assert_eq_golden(&entries, "blame_incremental_simple");
     }
 
     #[test]
     fn test_parse_git_blame_complex() {
         let output = read_test_data("blame_incremental_complex");
-        let entries = parse_git_blame(&output).unwrap();
+        let entries = parse_git_blame(&output, &[]).unwrap();
         assert_eq_golden(&entries, "blame_incremental_complex");
     }
 
     #[test]
     fn test_parse_git_blame_boundary() {
         let output = read_test_data("blame_incremental_not_committed");
-        let entries = parse_git_blame(&output).unwrap();
+        let entries = parse_git_blame(&output, &[NOT_COMMITTED_BOUNDARY_SHA]).unwrap();
         let boundary_flags = entries
             .iter()
             .map(|entry| (entry.sha.to_string(), entry.boundary))
@@ -651,7 +674,7 @@ summary Joe's cool commit
 previous 486c2409237a2c627230589e567024a96751d475 "\303\274rlich \"file\".txt"
 filename "\303\274rlich \"file\".txt"
 "#;
-        let entries = parse_git_blame(output).unwrap();
+        let entries = parse_git_blame(output, &[]).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].filename, "ürlich \"file\".txt");
         assert_eq!(
