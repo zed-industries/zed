@@ -1519,6 +1519,7 @@ impl AgentPanel {
                 | project::Event::WorktreeOrderChanged
                 | project::Event::WorktreePathsChanged { .. } => {
                     this.ensure_native_agent_connection(cx);
+                    this.refresh_selected_agent_sessions(cx);
                     this.update_thread_work_dirs(cx);
                     this.persist_all_terminal_metadata(cx);
                     cx.notify();
