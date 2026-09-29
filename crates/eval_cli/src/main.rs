@@ -959,7 +959,7 @@ fn log_acp_thread_event(
             let entries = acp_thread.read(cx).entries();
             if let Some(acp_thread::AgentThreadEntry::AssistantMessage(message)) = entries.last() {
                 for chunk in &message.chunks {
-                    if let acp_thread::AssistantMessageChunk::Message { id: _, block } = chunk {
+                    if let acp_thread::AssistantMessageChunk::Message { block, .. } = chunk {
                         for markdown in block.markdowns() {
                             let text = markdown.read(cx).source().to_string();
                             if !text.is_empty() {
@@ -974,7 +974,7 @@ fn log_acp_thread_event(
             let entries = acp_thread.read(cx).entries();
             if let Some(acp_thread::AgentThreadEntry::ToolCall(tool_call)) = entries.get(*index) {
                 if let Some(name) = &tool_call.tool_name {
-                    match &tool_call.status {
+                    match tool_call.status() {
                         acp_thread::ToolCallStatus::Completed => {
                             eprintln!("[tool] {name} ✓");
                         }
