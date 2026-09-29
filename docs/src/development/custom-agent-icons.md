@@ -79,14 +79,17 @@ paths (such as `./` or `../`) are not supported to avoid ambiguous resolution
 against the settings directory, project root, current working directory, or agent
 executable.
 
-The Settings UI should expose an optional **Icon Path** field. Saving the form
-must preserve the value when editing an existing custom agent. A non-absolute
-value should produce an inline validation error.
+The Settings UI exposes an optional **Icon** field with an **Upload** button to
+browse and select a local monochrome `.svg` icon. Uploading validates the SVG and
+copies a persistent copy to Zed's `external_agents/icons/` directory, saving the
+persisted path in `settings.json` so the icon remains intact even if the original
+file is deleted or moved. Saving the form also automatically copies any manually
+entered path to `external_agents/icons/`.
 
 These names refer to the same value at different layers:
 
 - `icon` is the public `settings.json` property.
-- **Icon Path** is the Settings UI field label.
+- **Icon** is the Settings UI field label.
 - `icon_path` may be used as an internal Rust variable name, but is not a
   serialized setting.
 
