@@ -10,6 +10,8 @@ workspace = true
 
 [lib]
 path = "src/auto_update_ui.rs"
+test = false
+doctest = false
 
 [dependencies]
 agent_skills.workspace = true
@@ -20,7 +22,6 @@ db.workspace = true
 editor.workspace = true
 gpui.workspace = true
 markdown_preview.workspace = true
-notifications.workspace = true
 prompt_store.workspace = true
 release_channel.workspace = true
 semver.workspace = true

@@ -23,13 +23,11 @@ use language::{
     },
 };
 use project::{DisableAiSettings, Project};
-use regex::Regex;
-use settings::{Settings, SettingsStore, update_settings_file};
-use std::{
-    rc::Rc,
-    sync::{Arc, LazyLock},
-    time::Duration,
+use settings::{
+    Settings, SettingsContent, SettingsStore, SplicingVec, find_value_range_in_json_text,
+    update_settings_file,
 };
+use std::{ops::Range, rc::Rc, sync::Arc, time::Duration};
 use ui::{
     Clickable, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconButtonShape,
     Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
@@ -117,10 +115,13 @@ impl Render for EditPredictionButton {
                                         workspace.show_toast(
                                             Toast::new(
                                                 NotificationId::unique::<CopilotErrorToast>(),
-                                                format!("Copilot can't be started: {}", e),
+                                                format!(
+                                                    "Copilot Edit Predictions can't be started: {}",
+                                                    e
+                                                ),
                                             )
                                             .on_click(
-                                                "Reinstall Copilot",
+                                                "Reinstall Copilot Edit Predictions",
                                                 move |window, cx| {
                                                     copilot_ui::reinstall_and_sign_in(
                                                         copilot.clone(),
@@ -135,7 +136,11 @@ impl Render for EditPredictionButton {
                                 }
                             }))
                             .tooltip(|_window, cx| {
-                                Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx)
+                                Tooltip::for_action(
+                                    "GitHub Copilot Edit Predictions",
+                                    &ToggleMenu,
+                                    cx,
+                                )
                             }),
                     );
                 }
@@ -177,7 +182,13 @@ impl Render for EditPredictionButton {
                             IconButton::new("copilot-icon", icon)
                                 .tab_index(0isize)
                                 .aria_label("GitHub Copilot"),
-                            |_window, cx| Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx),
+                            |_window, cx| {
+                                Tooltip::for_action(
+                                    "GitHub Copilot Edit Predictions",
+                                    &ToggleMenu,
+                                    cx,
+                                )
+                            },
                         )
                         .with_handle(self.popover_menu_handle.clone()),
                 )
@@ -546,7 +557,6 @@ impl EditPredictionButton {
         cx.observe_global::<EditPredictionStore>(move |_, cx| cx.notify())
             .detach();
 
-        edit_prediction::ollama::ensure_authenticated(cx);
         let mercury_api_token_task = edit_prediction::mercury::load_mercury_api_token(cx);
         let open_ai_compatible_api_token_task =
             edit_prediction::open_ai_compatible::load_open_ai_compatible_api_token(cx);
@@ -662,21 +672,27 @@ impl EditPredictionButton {
         let project = self.project.clone();
         ContextMenu::build(window, cx, |menu, _, cx| {
             let menu = menu
-                .entry("Sign In to Copilot", None, move |window, cx| {
-                    telemetry::event!(
-                        "Edit Prediction Menu Action",
-                        action = "sign_in",
-                        provider = "copilot",
-                    );
-                    if let Some(copilot) = EditPredictionStore::try_global(cx).and_then(|store| {
-                        store.update(cx, |this, cx| {
-                            this.start_copilot_for_project(&project.upgrade()?, cx)
-                        })
-                    }) {
-                        copilot_ui::initiate_sign_in(copilot, window, cx);
-                    }
-                })
-                .entry("Disable Copilot", None, {
+                .entry(
+                    "Sign In to Copilot Edit Predictions",
+                    None,
+                    move |window, cx| {
+                        telemetry::event!(
+                            "Edit Prediction Menu Action",
+                            action = "sign_in",
+                            provider = "copilot",
+                        );
+                        if let Some(copilot) =
+                            EditPredictionStore::try_global(cx).and_then(|store| {
+                                store.update(cx, |this, cx| {
+                                    this.start_copilot_for_project(&project.upgrade()?, cx)
+                                })
+                            })
+                        {
+                            copilot_ui::initiate_sign_in(copilot, window, cx);
+                        }
+                    },
+                )
+                .entry("Disable Copilot Edit Predictions", None, {
                     let fs = fs.clone();
                     move |_window, cx| {
                         telemetry::event!(
@@ -804,7 +820,12 @@ impl EditPredictionButton {
                     ContextMenuEntry::new("Subtle")
                         .toggleable(IconPosition::Start, subtle_mode)
                         .documentation_aside(DocumentationSide::Left, move |_| {
-                            Label::new("Display predictions inline only when holding a modifier key (alt by default).").into_any_element()
+                            Label::new(concat!(
+                                "Display predictions inline only when holding a modifier key (",
+                                ui::alt_key_name!(),
+                                " by default)."
+                            ))
+                            .into_any_element()
                         })
                         .handler({
                             let fs = fs.clone();
@@ -1057,7 +1078,11 @@ impl EditPredictionButton {
                     "Go to Copilot Settings",
                     OpenBrowser { url: settings_url }.boxed_clone(),
                 )
-                .action("Sign Out", copilot::SignOut.boxed_clone());
+                .entry("Sign Out", None, |window, cx| {
+                    if let Some(auth) = copilot::GlobalCopilotAuth::try_global(cx) {
+                        copilot_ui::initiate_sign_out(auth.0.clone(), window, cx);
+                    }
+                });
             menu
         })
     }
@@ -1102,7 +1127,7 @@ impl EditPredictionButton {
 
                         v_flex()
                             .max_w_64()
-                            .h(rems_from_px(148.))
+                            .h(rems_from_px(148_f32))
                             .child(render_zeta_tab_animation(cx))
                             .child(Label::new("Edit Prediction"))
                             .child(
@@ -1375,6 +1400,25 @@ impl StatusItemView for EditPredictionButton {
     }
 }
 
+fn initialize_disabled_globs_setting(file: &mut SettingsContent) {
+    file.project
+        .all_languages
+        .edit_predictions
+        .get_or_insert_with(Default::default)
+        .disabled_globs
+        .get_or_insert_with(|| SplicingVec::from(vec![SplicingVec::REST.to_string()]));
+}
+
+fn disabled_globs_content_range(text: &str) -> Option<Range<usize>> {
+    let array_range = find_value_range_in_json_text(text, &["edit_predictions", "disabled_globs"])?;
+    let content = text
+        .get(array_range.clone())?
+        .strip_prefix('[')?
+        .strip_suffix(']')?;
+    let start = array_range.start + 1 + (content.len() - content.trim_start().len());
+    Some(start..start + content.trim().len())
+}
+
 async fn open_disabled_globs_setting_in_editor(
     workspace: WeakEntity<Workspace>,
     cx: &mut AsyncWindowContext,
@@ -1396,16 +1440,8 @@ async fn open_disabled_globs_setting_in_editor(
 
             let settings = cx.global::<SettingsStore>();
 
-            // Ensure that we always have "edit_predictions { "disabled_globs": [] }"
             let Some(edits) = settings
-                .edits_for_update(&text, |file| {
-                    file.project
-                        .all_languages
-                        .edit_predictions
-                        .get_or_insert_with(Default::default)
-                        .disabled_globs
-                        .get_or_insert_with(Vec::new);
-                })
+                .edits_for_update(&text, initialize_disabled_globs_setting)
                 .log_err()
             else {
                 return;
@@ -1422,16 +1458,7 @@ async fn open_disabled_globs_setting_in_editor(
 
             let text = item.buffer().read(cx).snapshot(cx).text();
 
-            static DISABLED_GLOBS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-                Regex::new(r#""disabled_globs":\s*\[\s*(?P<content>(?:.|\n)*?)\s*\]"#).unwrap()
-            });
-            // Only capture [...]
-            let range = DISABLED_GLOBS_REGEX.captures(&text).and_then(|captures| {
-                captures
-                    .name("content")
-                    .map(|inner_match| inner_match.start()..inner_match.end())
-            });
-            if let Some(range) = range {
+            if let Some(range) = disabled_globs_content_range(&text) {
                 let range = MultiBufferOffset(range.start)..MultiBufferOffset(range.end);
                 item.change_selections(
                     SelectionEffects::scroll(Autoscroll::newest()),
@@ -1474,7 +1501,11 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
         providers.push(EditPredictionProvider::Codestral);
     }
 
-    if edit_prediction::ollama::is_available(cx) {
+    if all_language_settings(None, cx)
+        .edit_predictions
+        .ollama
+        .is_some()
+    {
         providers.push(EditPredictionProvider::Ollama);
     }
 
@@ -1655,7 +1686,118 @@ fn copilot_settings_url(enterprise_uri: Option<&str>) -> Arc<str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Context as _;
     use gpui::TestAppContext;
+    use settings::RootUserSettings;
+
+    #[test]
+    fn test_disabled_globs_selection_and_replacement() -> Result<()> {
+        for contents in [
+            r#""[.][.][.]""#,
+            r#""**/[ab]/**", "...""#,
+            r#""escaped\"]", "backslash\\", "...""#,
+            r#""escaped\\]", "line\nbreak]", "unicode\u005d""#,
+            "\n    \"é[ab]\",\n    \"...\"\n  ",
+            "// Ignore filenames containing a \" character\n    \"**/private/**\"\n",
+            "/* Ignore \" and ] */\n    \"**/private/**\"\n",
+            "\"**/private/**\", // Keep \" and ]\n    \"...\"\n",
+            r#""**/build/**", "...""#,
+            "",
+            "\n  ",
+        ] {
+            let mut text = format!(
+                r#"// "disabled_globs": ["commented/**"]
+{{"languages":{{"Rust":{{"disabled_globs":["nested/**"]}}}},
+/* "disabled_globs": ["commented/**"] */
+"edit_predictions":{{"disabled_globs":[{contents}],"mode":"subtle"}}}}"#
+            );
+            let mut expected = SettingsContent::parse_json_with_comments(&text)?;
+            let range = disabled_globs_content_range(&text).context("disabled globs selection")?;
+            assert_eq!(text.get(range.clone()), Some(contents.trim()));
+
+            text.replace_range(range, r#""**/replacement/**", "...""#);
+            expected
+                .project
+                .all_languages
+                .edit_predictions
+                .as_mut()
+                .context("edit prediction settings")?
+                .disabled_globs = Some(SplicingVec::from(vec![
+                "**/replacement/**".to_string(),
+                SplicingVec::REST.to_string(),
+            ]));
+            assert_eq!(SettingsContent::parse_json_with_comments(&text)?, expected);
+        }
+        Ok(())
+    }
+
+    #[gpui::test]
+    fn test_initialize_disabled_globs_setting(cx: &mut App) {
+        let store = SettingsStore::new(cx, &settings::default_settings());
+
+        let cases: &[(&str, &[&str])] = &[
+            ("", &[SplicingVec::REST]),
+            (r#"{}"#, &[SplicingVec::REST]),
+            (r#"{"edit_predictions":{}}"#, &[SplicingVec::REST]),
+            (
+                r#"{"edit_predictions":{"mode":"subtle"}}"#,
+                &[SplicingVec::REST],
+            ),
+            (r#"{"edit_predictions":{"disabled_globs":[]}}"#, &[]),
+            (
+                r#"{"edit_predictions":{"disabled_globs":["**/build/**"]}}"#,
+                &["**/build/**"],
+            ),
+            (
+                r#"{"edit_predictions":{"disabled_globs":["...","**/build/**"]}}"#,
+                &[SplicingVec::REST, "**/build/**"],
+            ),
+            (
+                r#"{"edit_predictions":{"disabled_globs":["[.][.][.]"]}}"#,
+                &["[.][.][.]"],
+            ),
+        ];
+        for &(content, expected_globs) in cases {
+            let original = if content.is_empty() { "{}" } else { content };
+            let mut expected_content = SettingsContent::parse_json_with_comments(original)
+                .expect("settings content parses");
+            let original_globs = &mut expected_content
+                .project
+                .all_languages
+                .edit_predictions
+                .get_or_insert_with(Default::default)
+                .disabled_globs;
+            let already_configured = original_globs.is_some();
+            *original_globs = Some(SplicingVec::from(
+                expected_globs
+                    .iter()
+                    .map(|glob| glob.to_string())
+                    .collect::<Vec<_>>(),
+            ));
+
+            let edits = store
+                .edits_for_update(content, initialize_disabled_globs_setting)
+                .expect("settings edits are generated");
+            assert_eq!(edits.is_empty(), already_configured, "{content}");
+            let mut updated = content.to_string();
+            for (range, replacement) in edits {
+                updated.replace_range(range, &replacement);
+            }
+            assert_eq!(
+                SettingsContent::parse_json_with_comments(&updated)
+                    .expect("updated settings parse"),
+                expected_content,
+                "{content}",
+            );
+            assert!(
+                store
+                    .edits_for_update(&updated, initialize_disabled_globs_setting)
+                    .expect("repeated settings edits are generated")
+                    .is_empty(),
+                "{content}",
+            );
+        }
+    }
 
     #[gpui::test]
     async fn test_copilot_settings_url_with_enterprise_uri(cx: &mut TestAppContext) {

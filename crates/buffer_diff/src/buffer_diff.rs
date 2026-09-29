@@ -25,6 +25,63 @@ pub struct BufferDiff {
     diff_snapshot: Option<BufferDiffSnapshot>,
     secondary_diff: Option<Entity<BufferDiff>>,
     buffer_snapshot: text::BufferSnapshot,
+    operations: Option<Arc<dyn DiffOperations>>,
+}
+
+pub trait DiffOperations {
+    fn supports_staging(&self) -> bool;
+    fn supports_unstaging(&self) -> bool;
+    fn supports_restore(&self) -> bool;
+    fn stage(
+        &self,
+        _diff: Entity<BufferDiff>,
+        _buffer: Option<Entity<language::Buffer>>,
+        _buffer_ranges: Vec<Range<Anchor>>,
+        _cx: &mut App,
+    ) {
+    }
+    fn unstage(
+        &self,
+        _diff: Entity<BufferDiff>,
+        _buffer: Option<Entity<language::Buffer>>,
+        _buffer_ranges: Vec<Range<Anchor>>,
+        _cx: &mut App,
+    ) {
+    }
+}
+
+pub struct RestoreDiffOperations;
+
+impl DiffOperations for RestoreDiffOperations {
+    fn supports_staging(&self) -> bool {
+        false
+    }
+
+    fn supports_unstaging(&self) -> bool {
+        false
+    }
+
+    fn supports_restore(&self) -> bool {
+        true
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+struct TestDiffOperations;
+
+#[cfg(any(test, feature = "test-support"))]
+impl DiffOperations for TestDiffOperations {
+    fn supports_staging(&self) -> bool {
+        true
+    }
+
+    fn supports_unstaging(&self) -> bool {
+        true
+    }
+
+    fn supports_restore(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Clone)]
@@ -1351,6 +1408,10 @@ fn compare_hunks(
     let mut last_unchanged_new_hunk_end: Option<text::Anchor> = None;
     let mut has_changes = false;
     let mut extended_end_candidate: Option<text::Anchor> = None;
+    let base_text_changed = old_base_text.remote_id() != new_base_text.remote_id()
+        || new_base_text
+            .version()
+            .changed_since(old_base_text.version());
 
     loop {
         match (new_cursor.item(), old_cursor.item()) {
@@ -1380,7 +1441,12 @@ fn compare_hunks(
                         new_cursor.next();
                     }
                     Ordering::Equal => {
-                        if new_hunk != old_hunk {
+                        let base_text_differs = base_text_changed
+                            && !old_base_text
+                                .chars_for_range(old_hunk.diff_base_byte_range.clone())
+                                .eq(new_base_text
+                                    .chars_for_range(new_hunk.diff_base_byte_range.clone()));
+                        if new_hunk != old_hunk || base_text_differs {
                             has_changes = true;
                             extended_end_candidate = None;
                             start.get_or_insert(new_hunk.buffer_range.start);
@@ -1571,6 +1637,7 @@ impl BufferDiff {
             diff_snapshot: None,
             buffer_snapshot: buffer.clone(),
             secondary_diff: None,
+            operations: None,
         }
     }
 
@@ -1585,6 +1652,7 @@ impl BufferDiff {
             diff_snapshot: None,
             buffer_snapshot: buffer.clone(),
             secondary_diff: None,
+            operations: None,
         }
     }
 
@@ -1622,6 +1690,7 @@ impl BufferDiff {
             diff_snapshot: Some(diff_snapshot),
             buffer_snapshot: buffer.clone(),
             secondary_diff: None,
+            operations: None,
         }
     }
 
@@ -1632,6 +1701,7 @@ impl BufferDiff {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = BufferDiff::new(buffer, None, None, cx);
+        this.set_operations(Arc::new(TestDiffOperations));
         let mut base_text = base_text.to_owned();
         text::LineEnding::normalize(&mut base_text);
         let base_text_buffer = cx.new(|cx| {
@@ -1653,6 +1723,14 @@ impl BufferDiff {
 
     pub fn set_secondary_diff(&mut self, diff: Entity<BufferDiff>) {
         self.secondary_diff = Some(diff);
+    }
+
+    pub fn set_operations(&mut self, operations: Arc<dyn DiffOperations>) {
+        self.operations = Some(operations);
+    }
+
+    pub fn operations(&self) -> Option<Arc<dyn DiffOperations>> {
+        self.operations.clone()
     }
 
     pub fn secondary_diff(&self) -> Option<Entity<BufferDiff>> {

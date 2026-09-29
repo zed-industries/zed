@@ -19,7 +19,7 @@ use language::language_settings::{AllLanguageSettings, CopilotSettings};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16, ToPointUtf16,
     language_settings::{EditPredictionProvider, all_language_settings},
-    point_from_lsp, point_to_lsp,
+    point_to_lsp, range_from_lsp,
 };
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
@@ -46,20 +46,11 @@ use workspace::AppState;
 pub use crate::copilot_edit_prediction_delegate::CopilotEditPredictionDelegate;
 
 actions!(
-    copilot,
+    copilot_edit_predictions,
     [
-        /// Requests a code completion suggestion from Copilot.
-        Suggest,
-        /// Cycles to the next Copilot suggestion.
-        NextSuggestion,
-        /// Cycles to the previous Copilot suggestion.
-        PreviousSuggestion,
-        /// Reinstalls the Copilot language server.
+        /// Reinstalls the Copilot Edit Predictions language server.
+        #[action(deprecated_aliases = ["copilot::Reinstall"])]
         Reinstall,
-        /// Signs in to GitHub Copilot.
-        SignIn,
-        /// Signs out of GitHub Copilot.
-        SignOut
     ]
 );
 
@@ -842,10 +833,7 @@ impl Copilot {
                     anyhow::Ok(())
                 })
             }
-            CopilotServer::Disabled => cx.background_spawn(async {
-                clear_copilot_config_dir().await;
-                anyhow::Ok(())
-            }),
+            CopilotServer::Disabled => cx.background_spawn(async { anyhow::Ok(()) }),
             _ => Task::ready(Err(anyhow!("copilot hasn't started yet"))),
         }
     }
@@ -1080,14 +1068,9 @@ impl Copilot {
                                 .edits
                                 .into_iter()
                                 .map(|completion| {
-                                    let start = snapshot.clip_point_utf16(
-                                        point_from_lsp(completion.range.start),
-                                        Bias::Left,
-                                    );
-                                    let end = snapshot.clip_point_utf16(
-                                        point_from_lsp(completion.range.end),
-                                        Bias::Left,
-                                    );
+                                    let range = range_from_lsp(completion.range);
+                                    let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                                    let end = snapshot.clip_point_utf16(range.end, Bias::Left);
                                     CopilotEditPrediction {
                                         buffer: buffer_entity.clone(),
                                         range: snapshot.anchor_before(start)
@@ -1136,14 +1119,9 @@ impl Copilot {
                                 .items
                                 .into_iter()
                                 .map(|item| {
-                                    let start = snapshot.clip_point_utf16(
-                                        point_from_lsp(item.range.start),
-                                        Bias::Left,
-                                    );
-                                    let end = snapshot.clip_point_utf16(
-                                        point_from_lsp(item.range.end),
-                                        Bias::Left,
-                                    );
+                                    let range = range_from_lsp(item.range);
+                                    let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                                    let end = snapshot.clip_point_utf16(range.end, Bias::Left);
                                     CopilotEditPrediction {
                                         buffer: buffer_entity.clone(),
                                         range: snapshot.anchor_before(start)
@@ -1265,7 +1243,6 @@ impl Copilot {
                 | request::SignInStatus::AlreadySignedIn { .. } => {
                     server.sign_in_status = SignInStatus::Authorized;
                     cx.emit(Event::CopilotAuthSignedIn);
-                    notify_copilot_chat_auth_changed(cx);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         if let Some(buffer) = buffer.upgrade() {
                             self.register_buffer(&buffer, cx);
@@ -1285,7 +1262,6 @@ impl Copilot {
                         };
                     }
                     cx.emit(Event::CopilotAuthSignedOut);
-                    notify_copilot_chat_auth_changed(cx);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         self.unregister_buffer(&buffer);
                     }
@@ -1297,40 +1273,15 @@ impl Copilot {
     }
 
     fn update_action_visibilities(&self, cx: &mut App) {
-        let signed_in_actions = [
-            TypeId::of::<Suggest>(),
-            TypeId::of::<NextSuggestion>(),
-            TypeId::of::<PreviousSuggestion>(),
-            TypeId::of::<Reinstall>(),
-        ];
-        let auth_actions = [TypeId::of::<SignOut>()];
-        let no_auth_actions = [TypeId::of::<SignIn>()];
-        let status = self.status();
+        let signed_in_actions = [TypeId::of::<Reinstall>()];
 
         let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
         let filter = CommandPaletteFilter::global_mut(cx);
 
         if is_ai_disabled {
             filter.hide_action_types(&signed_in_actions);
-            filter.hide_action_types(&auth_actions);
-            filter.hide_action_types(&no_auth_actions);
         } else {
-            match status {
-                Status::Disabled => {
-                    filter.hide_action_types(&signed_in_actions);
-                    filter.hide_action_types(&auth_actions);
-                    filter.hide_action_types(&no_auth_actions);
-                }
-                Status::Authorized => {
-                    filter.hide_action_types(&no_auth_actions);
-                    filter.show_action_types(signed_in_actions.iter().chain(&auth_actions));
-                }
-                _ => {
-                    filter.hide_action_types(&signed_in_actions);
-                    filter.hide_action_types(&auth_actions);
-                    filter.show_action_types(&no_auth_actions);
-                }
-            }
+            filter.show_action_types(&signed_in_actions);
         }
     }
 }
@@ -1389,21 +1340,8 @@ fn notify_did_change_config_to_server(
     Ok(())
 }
 
-/// Notify Copilot Chat after the Copilot LSP reports an auth state change.
-/// This replaces watching the SDK's token files, which is unreliable for
-/// SQLite backed auth because writes may go through WAL files.
-fn notify_copilot_chat_auth_changed(cx: &mut Context<Copilot>) {
-    if let Some(copilot_chat) = copilot_chat::CopilotChat::global(cx) {
-        copilot_chat.update(cx, |chat, cx| chat.reload_auth(cx));
-    }
-}
-
 async fn clear_copilot_dir() {
     remove_matching(paths::copilot_dir(), |_| true).await
-}
-
-async fn clear_copilot_config_dir() {
-    remove_matching(copilot_chat::copilot_chat_config_dir(), |_| true).await
 }
 
 async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::Result<PathBuf> {

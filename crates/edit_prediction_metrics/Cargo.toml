@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/edit_prediction_metrics.rs"
+doctest = false
 
 [features]
 tree-sitter = ["dep:tree-sitter"]
@@ -24,4 +25,3 @@ zeta_prompt.workspace = true
 
 [dev-dependencies]
 indoc.workspace = true
-pretty_assertions.workspace = true

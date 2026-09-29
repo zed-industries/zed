@@ -609,7 +609,7 @@ pub fn execute_run(
     );
 
     write_pid_file(&pid_file, pid)
-        .with_context(|| format!("failed to write pid file: {:?}", &pid_file))?;
+        .with_context(|| format!("failed to write pid file: {pid_file:?}"))?;
 
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
 
@@ -677,7 +677,7 @@ pub fn execute_run(
         json_schema_store::init(cx);
 
         let project = cx.new(|cx| {
-            let fs = Arc::new(RealFs::new(None, cx.background_executor().clone()));
+            let fs = RealFs::new(None, cx.background_executor().clone());
             let node_settings_rx = initialize_settings(session.clone(), fs.clone(), cx);
 
             let proxy_url = read_proxy_settings(cx);

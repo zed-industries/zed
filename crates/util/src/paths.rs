@@ -1,4 +1,4 @@
-use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
+use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,7 @@ use path::rel_path::RelPathBuf;
 pub use path::PathStyle;
 
 /// Returns the path to the user's home directory.
+#[cfg(not(target_family = "wasm"))]
 pub fn home_dir() -> &'static PathBuf {
     static HOME_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     HOME_DIR.get_or_init(|| {
@@ -257,6 +258,10 @@ impl SanitizedPath {
 
         #[cfg(target_os = "windows")]
         {
+            let path = match path.to_str().and_then(|s| s.strip_prefix(r"\\?\UNC\")) {
+                Some(rest) => PathBuf::from(format!(r"\\{rest}")).into(),
+                None => path,
+            };
             let simplified = dunce::simplified(path.as_ref());
             if simplified == path.as_ref() {
                 // safe because `Path` and `SanitizedPath` have the same repr and Drop impl
@@ -767,6 +772,44 @@ impl PathMatcher {
                     .build()
             })
             .collect::<Result<Vec<_>, _>>()?;
+        Self::from_globs(globs, path_style)
+    }
+
+    /// Skips invalid globs, reporting each error to `on_error`.
+    /// If the combined set cannot be built, reports the error and matches nothing.
+    pub fn new_lenient(
+        globs: impl IntoIterator<Item = impl AsRef<str>>,
+        path_style: PathStyle,
+        mut on_error: impl FnMut(globset::Error),
+    ) -> Self {
+        let globs = globs
+            .into_iter()
+            .filter_map(|pattern| {
+                match GlobBuilder::new(pattern.as_ref())
+                    .backslash_escape(path_style.is_posix())
+                    .build()
+                {
+                    Ok(glob) => Some(glob),
+                    Err(error) => {
+                        on_error(error);
+                        None
+                    }
+                }
+            })
+            .collect();
+        match Self::from_globs(globs, path_style) {
+            Ok(matcher) => matcher,
+            Err(error) => {
+                on_error(error);
+                Self {
+                    path_style,
+                    ..Self::default()
+                }
+            }
+        }
+    }
+
+    fn from_globs(globs: Vec<Glob>, path_style: PathStyle) -> Result<Self, globset::Error> {
         let sources = globs
             .iter()
             .filter_map(|glob| {
@@ -1467,10 +1510,69 @@ impl UrlExt for url::Url {
 
 #[cfg(test)]
 mod tests {
-    use path::rel_path::rel_path;
-
     use super::*;
     use util_macros::perf;
+
+    #[test]
+    fn test_lenient_path_matcher() {
+        for path_style in [PathStyle::Unix, PathStyle::Windows] {
+            let patterns = ["**/.git", "[", "target/**", "{"];
+            let mut errors = Vec::new();
+            let matcher =
+                PathMatcher::new_lenient(patterns, path_style, |error| errors.push(error));
+            let expected = PathMatcher::new(["**/.git", "target/**"], path_style).unwrap();
+            assert_eq!(matcher, expected);
+            assert_eq!(errors.len(), 2);
+            assert_eq!(errors[0].glob(), Some("["));
+            assert_eq!(errors[1].glob(), Some("{"));
+            for path in ["nested/.git", "src/file.rs", "target/file.rs"] {
+                let path = RelPath::from_unix_str(path).unwrap();
+                assert_eq!(matcher.is_match(path), expected.is_match(path));
+            }
+            if path_style == PathStyle::local() {
+                assert!(matcher.is_match(RelPath::from_unix_str("nested/.git").unwrap()));
+                assert!(matcher.is_match(RelPath::from_unix_str("target/file.rs").unwrap()));
+            }
+            assert!(PathMatcher::new(patterns, path_style).is_err());
+
+            let mut errors = Vec::new();
+            let matcher =
+                PathMatcher::new_lenient(["[", "{"], path_style, |error| errors.push(error));
+            assert_eq!(errors.len(), 2);
+            assert_eq!(matcher.path_style, path_style);
+            assert_eq!(matcher.sources().count(), 0);
+            assert!(!matcher.is_match(RelPath::from_unix_str("file.rs").unwrap()));
+            assert!(!matcher.is_match_std_path("file.rs"));
+
+            let matcher = PathMatcher::new_lenient([] as [&str; 0], path_style, |_| {
+                panic!("empty patterns are valid")
+            });
+            assert_eq!(matcher.path_style, path_style);
+            assert_eq!(matcher.sources().count(), 0);
+            assert!(!matcher.is_match(RelPath::from_unix_str("file.rs").unwrap()));
+        }
+    }
+
+    #[test]
+    fn test_lenient_path_matcher_preserves_escaping() {
+        for path_style in [PathStyle::Unix, PathStyle::Windows] {
+            let patterns = [r"directory\file.rs", r"literal\*", r"literal\[name]"];
+            let strict = PathMatcher::new(patterns, path_style).unwrap();
+            let lenient = PathMatcher::new_lenient(patterns, path_style, |_| {
+                panic!("valid patterns are preserved")
+            });
+            assert_eq!(lenient, strict);
+            for path in [
+                "directory/file.rs",
+                "literal*",
+                "literal/file.rs",
+                "literal[name]",
+            ] {
+                let path = RelPath::from_unix_str(path).unwrap();
+                assert_eq!(lenient.is_match(path), strict.is_match(path));
+            }
+        }
+    }
 
     #[test]
     fn test_parse_str_treats_paren_suffix_as_position() {
@@ -1480,34 +1582,6 @@ mod tests {
         let parsed = PathWithPosition::parse_str("/root/Test (3)");
         assert_eq!(parsed.path, PathBuf::from("/root/Test "));
         assert_eq!(parsed.row, Some(3));
-    }
-
-    #[test]
-    fn test_join_path_uses_path_style_separator() {
-        let posix_path = PathStyle::Unix
-            .join_path(Path::new("/home/user/dev"), "worktrees")
-            .unwrap();
-        let windows_path = PathStyle::Windows
-            .join_path(Path::new("C:\\Users\\user\\dev"), "worktrees")
-            .unwrap();
-
-        assert_eq!(posix_path, PathBuf::from("/home/user/dev/worktrees"));
-        assert_eq!(
-            windows_path.to_string_lossy(),
-            "C:\\Users\\user\\dev\\worktrees"
-        );
-    }
-
-    #[test]
-    fn test_normalize_uses_path_style_separator() {
-        assert_eq!(
-            PathStyle::Unix.normalize("/home/user/dev/../worktrees/./zed"),
-            "/home/user/worktrees/zed"
-        );
-        assert_eq!(
-            PathStyle::Windows.normalize("C:\\Users\\user\\dev\\worktrees"),
-            "C:\\Users\\user\\dev\\worktrees"
-        );
     }
 
     fn rel_path_entry(path: &'static str, is_file: bool) -> (&'static RelPath, bool) {
@@ -2672,6 +2746,14 @@ mod tests {
     }
 
     #[perf]
+    #[cfg(target_os = "windows")]
+    fn test_sanitized_path_verbatim_unc() {
+        let path: Arc<Path> = PathBuf::from("\\\\?\\UNC\\server\\share\\file.txt").into();
+        let sanitized_path = SanitizedPath::from_arc(path);
+        assert_eq!(sanitized_path.to_string(), "\\\\server\\share\\file.txt");
+    }
+
+    #[perf]
     fn test_compare_numeric_segments() {
         // Helper function to create peekable iterators and test
         fn compare(a: &str, b: &str) -> Ordering {
@@ -3066,89 +3148,6 @@ mod tests {
         let base = Path::new("/a/b/c/long.app.tar.gz");
         let suffix = Path::new("app.tar.gz");
         assert_eq!(strip_path_suffix(base, suffix), None);
-    }
-
-    #[test]
-    fn test_strip_prefix() {
-        let expected = [
-            (
-                PathStyle::Unix,
-                "/a/b/c",
-                "/a/b",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Unix,
-                "/a/b/c",
-                "/a/b/",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Unix,
-                "/a/b/c",
-                "/",
-                Some(rel_path("a/b/c").into_arc()),
-            ),
-            (PathStyle::Unix, "/a/b/c", "", None),
-            (PathStyle::Unix, "/a/b//c", "/a/b/", None),
-            (PathStyle::Unix, "/a/bc", "/a/b", None),
-            (
-                PathStyle::Unix,
-                "/a/b/c",
-                "/a/b/c",
-                Some(rel_path("").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b\\c",
-                "C:\\a\\b",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b\\c",
-                "C:\\a\\b\\",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b\\c",
-                "C:\\",
-                Some(rel_path("a/b/c").into_arc()),
-            ),
-            (PathStyle::Windows, "C:\\a\\b\\c", "", None),
-            (PathStyle::Windows, "C:\\a\\b\\\\c", "C:\\a\\b\\", None),
-            (PathStyle::Windows, "C:\\a\\bc", "C:\\a\\b", None),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b/c",
-                "C:\\a\\b",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b/c",
-                "C:\\a\\b\\",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b/c",
-                "C:\\a\\b/",
-                Some(rel_path("c").into_arc()),
-            ),
-        ];
-        let actual = expected.clone().map(|(style, child, parent, _)| {
-            (
-                style,
-                child,
-                parent,
-                style
-                    .strip_prefix(child.as_ref(), parent.as_ref())
-                    .map(|rel_path| rel_path.into_arc()),
-            )
-        });
-        pretty_assertions::assert_eq!(actual, expected);
     }
 
     #[cfg(target_os = "windows")]

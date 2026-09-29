@@ -123,7 +123,7 @@
     ] @function.method))
 
 (new_expression
-  constructor: (identifier) @type)
+  constructor: (identifier) @type.class)
 
 (nested_type_identifier
   module: (identifier) @type)

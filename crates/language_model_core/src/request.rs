@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::role::Role;
 use crate::{
-    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, SharedString,
+    LanguageModelProviderId, LanguageModelToolUse, LanguageModelToolUseId,
+    LanguageModelToolUseInput, SharedString,
 };
 
 /// Dimensions of a `LanguageModelImage`
@@ -89,6 +90,14 @@ impl LanguageModelToolResult {
     /// Returns true when there are no content parts, or every part is empty.
     pub fn is_content_empty(&self) -> bool {
         self.content.iter().all(|part| part.is_empty())
+    }
+
+    /// Returns an iterator over all the images presents in the content parts.
+    pub fn images(&self) -> impl Iterator<Item = &LanguageModelImage> {
+        self.content.iter().filter_map(|part| match part {
+            LanguageModelToolResultContent::Image(image) => Some(image),
+            _ => None,
+        })
     }
 }
 
@@ -262,19 +271,58 @@ pub enum MessageContent {
     Image(LanguageModelImage),
     ToolUse(LanguageModelToolUse),
     ToolResult(LanguageModelToolResult),
-    Compaction(CompactionContent),
+    Compaction(CompactedContext),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
-pub enum CompactionContent {
-    Pending,
+pub enum CompactedContext {
     Summary {
-        content: Option<Arc<str>>,
+        content: Arc<str>,
+        /// Opaque state the producing backend needs round-tripped alongside
+        /// the summary (e.g. Anthropic's `encrypted_content`). `None` when the
+        /// summary stands alone.
+        #[serde(default)]
+        provider_state: Option<ProviderCompactionState>,
     },
-    Encrypted {
-        id: Option<Arc<str>>,
-        encrypted_content: Arc<str>,
-    },
+    ProviderState(ProviderCompactionState),
+}
+
+/// Opaque context produced by a provider's native compaction mechanism.
+///
+/// Only the provider identified by `provider_id` may interpret `payload`.
+/// `format` lets that provider evolve its representation without exposing it
+/// through the shared language model API.
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
+pub struct ProviderCompactionState {
+    provider_id: LanguageModelProviderId,
+    format: SharedString,
+    payload: Arc<str>,
+}
+
+impl ProviderCompactionState {
+    pub fn new(
+        provider_id: LanguageModelProviderId,
+        format: impl Into<SharedString>,
+        payload: impl Into<Arc<str>>,
+    ) -> Self {
+        Self {
+            provider_id,
+            format: format.into(),
+            payload: payload.into(),
+        }
+    }
+
+    pub fn provider_id(&self) -> &LanguageModelProviderId {
+        &self.provider_id
+    }
+
+    pub fn format(&self) -> &str {
+        &self.format
+    }
+
+    pub fn payload(&self) -> &str {
+        &self.payload
+    }
 }
 
 impl MessageContent {
@@ -421,6 +469,11 @@ pub enum CompletionIntent {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct LanguageModelRequest {
     pub thread_id: Option<String>,
+    /// Provider cache affinity, independent of conversation and transport session identity.
+    ///
+    /// Supporting providers fall back to `thread_id` when absent for legacy callers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<String>,
     pub prompt_id: Option<String>,
     pub intent: Option<CompletionIntent>,
     pub messages: Vec<LanguageModelRequestMessage>,
@@ -433,9 +486,23 @@ pub struct LanguageModelRequest {
     pub speed: Option<Speed>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact_at_tokens: Option<u64>,
+    /// An output-token ceiling, including reasoning tokens where the provider counts them.
+    ///
+    /// Providers must forward this limit (clamped to a known model maximum), or reject
+    /// capped requests when unsupported. `None` preserves the provider's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
 }
 
 impl LanguageModelRequest {
+    /// Combines the request's output limit with the model's output limit.
+    pub fn effective_max_output_tokens(&self, model_maximum: Option<u64>) -> Option<u64> {
+        match (self.max_output_tokens, model_maximum) {
+            (Some(request), Some(model)) => Some(request.min(model)),
+            (request, model) => request.or(model),
+        }
+    }
+
     pub fn contains_custom_tool_input(&self) -> bool {
         self.tools
             .iter()
@@ -482,6 +549,56 @@ pub struct LanguageModelResponseMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_prompt_cache_key_serialization() -> serde_json::Result<()> {
+        let request = LanguageModelRequest {
+            thread_id: Some("thread".into()),
+            ..Default::default()
+        };
+        let mut serialized = serde_json::to_value(&request)?;
+        assert!(serialized.get("prompt_cache_key").is_none());
+        assert_eq!(
+            serde_json::from_value::<LanguageModelRequest>(serialized.clone())?,
+            request
+        );
+
+        serialized["prompt_cache_key"] = serde_json::json!("cache-affinity");
+        let explicit: LanguageModelRequest = serde_json::from_value(serialized.clone())?;
+        assert_eq!(explicit.prompt_cache_key.as_deref(), Some("cache-affinity"));
+        assert_eq!(explicit.thread_id, request.thread_id);
+        assert_eq!(serde_json::to_value(explicit)?, serialized);
+
+        serialized["prompt_cache_key"] = serde_json::Value::Null;
+        assert_eq!(
+            serde_json::from_value::<LanguageModelRequest>(serialized)?,
+            request
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn request_output_limit_serialization() -> serde_json::Result<()> {
+        let request = LanguageModelRequest::default();
+        let mut serialized = serde_json::to_value(&request)?;
+        assert!(serialized.get("max_output_tokens").is_none());
+        assert_eq!(
+            serde_json::from_value::<LanguageModelRequest>(serialized.clone())?,
+            request
+        );
+
+        serialized["max_output_tokens"] = serde_json::json!(1024);
+        let capped: LanguageModelRequest = serde_json::from_value(serialized.clone())?;
+        assert_eq!(capped.max_output_tokens, Some(1024));
+        assert_eq!(serde_json::to_value(capped)?, serialized);
+
+        serialized["max_output_tokens"] = serde_json::Value::Null;
+        assert_eq!(
+            serde_json::from_value::<LanguageModelRequest>(serialized)?,
+            request
+        );
+        Ok(())
+    }
 
     #[test]
     fn test_language_model_tool_result_content_deserialization() {

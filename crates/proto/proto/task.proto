@@ -64,6 +64,6 @@ message GetTerminalShell {
   optional uint64 worktree_id = 2;
 }
 
-message TerminalShell {
+message GetTerminalShellResponse {
   Shell shell = 1;
 }

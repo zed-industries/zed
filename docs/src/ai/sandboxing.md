@@ -23,6 +23,10 @@ sandbox?](#trust) for more details.
 Sandboxing applies only to Zed Agent. It does not sandbox Zed itself, language servers, extensions, tasks, your normal
 terminal tabs, [External Agents](./external-agents.md), or [Terminal Threads](./terminal-threads.md).
 
+> **Note**: Under some conditions, sandboxes on Windows are weaker than those on
+> Linux and MacOS, and may not prevent all escape attempts. See
+> [Windows](#windows) for more detail.
+
 ## Sandboxed Tools {#sandboxed-tools}
 
 Zed Agent sandboxing currently applies to the `terminal` and `fetch` tools.
@@ -74,8 +78,9 @@ could allow privilege escalation - for example, allow an agent to write to a
 file that it should only have read access to.
 
 Sandboxing also only applies the restrictions that the user requested. If an
-agent requests write access to your home directory, sandboxing will (and
-should!) do nothing to prevent an agent adding a malicious key to `$HOME/.ssh`.
+agent requests write access to your home directory, sandboxing will not (and
+should not!) do anything to prevent an agent adding a malicious key to
+`$HOME/.ssh`.
 
 Be careful with what you grant the agent. At any point in time, you can view the
 state of the sandbox by hovering the padlock icon in the top right of the
@@ -227,6 +232,12 @@ after host-specific network access is approved.
 If Bubblewrap is unavailable or cannot create a sandbox in the current environment, Zed may run the command without the OS
 sandbox and show a warning in the tool output.
 
+> **Warning**: On Linux and WSL, restrictions on filesystem objects are
+> determined at _sandbox creation time_. Among other things, this means that an
+> agent given access to a non-Git-repo directory `/foo` could create
+> `/foo/.git`. See [How much can I trust the sandbox?](#trust) for more
+> information on the implications of this.
+
 #### Installing Bubblewrap {#installing-bubblewrap}
 
 Zed needs a runnable, non-setuid `bwrap` binary on your `$PATH`. Installing
@@ -279,6 +290,14 @@ sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
 
 On Windows, Zed Agent sandboxing is supported only when the agent action runs inside WSL.
 
+> **Warning**: Due to limitations in WSL's implementation, it is possible that a
+> terminal command may write outside sandbox grants when the user has given
+> write access to any path that resides on the NTFS drive. This includes the
+> current-project grant for projects stored on NTFS. Zed will show a warning
+> when this happens. In practice, we believe this is difficult to exploit, but
+> security cannot be guaranteed. See [below](#why-ntfs-compromise) for a more
+> technical explanation.
+
 Zed uses the Linux Bubblewrap sandbox inside WSL because WSL provides the Linux process and filesystem primitives that
 Bubblewrap needs. Native Windows processes do not currently have the same sandbox integration in Zed, so a native Windows
 command cannot be confined by Zed Agent's OS sandbox in the same way.
@@ -295,6 +314,73 @@ behavior of running in your native shell. It selects the shell using the usual p
 Git Bash) when one is installed, otherwise PowerShell, and finally `cmd.exe`. Because the command then runs against native
 Windows paths instead of WSL's Linux filesystem, path conventions change accordingly (for example `C:\...` or `/c/...`
 rather than WSL's `/mnt/c/...`), so a command written for the sandboxed WSL shell may behave differently.
+
+#### Why do NTFS objects compromise the sandbox? {#why-ntfs-compromise}
+
+In general, the security of the filesystem sandbox relies on two things
+matching:
+
+- The path that the user was presented when they approved
+- The filesystem object to which access was granted
+
+If a user believes they granted access to `/foo/hello`, but they actually granted
+access to `/bar/world`, then the sandbox has failed.
+
+On Linux, this "filesystem object" is called an **inode**.
+
+But `/foo/hello` doesn't refer to an inode. Loosely, it refers to a location
+where an inode might exist. It may refer to one inode at one point in time,
+and another inode later.
+
+And because of symlinks, it's possible for an agent with write access to `/foo`
+to change `/foo/bar` to point to `/secret`, even if they have no write access to
+`/secret`. If this happens, even though the agent has access to `/foo`, we
+cannot also grant access to `/foo/bar`, since that would grant access to
+`/secret`.
+
+This means that we must only refer to paths which are:
+
+- canonical (i.e. contain no symlinks)
+- absolute
+- unchanged since we validated the above
+
+On non-WSL-Linux, we can do this by simply opening the path to get a "file
+descriptor", which identifies the **inode** directly, so holding the file
+descriptor allows us to "pin" the correct inode. This also works just fine on
+WSL when the path in question refers to an object in the Linux filesystem.
+
+However, WSL allows accessing files stored in the Windows drive. For example,
+the file `C:\foo\bar.txt` can be accessed from Linux at `/mnt/c/foo/bar.txt`,
+using a mechanism similar to a network drive. Unfortunately, inode pinning is
+not guaranteed to work for these. While we can still pin the inode for
+`/mnt/c/foo/bar.txt`, this doesn't pin the underlying Windows filesystem object,
+and so it's possible for this to change during the lifetime of a sandbox, which
+could potentially allow writes outside the confines of the sandbox.
+
+#### How big a risk is this in practice? {#how-big-a-risk}
+
+**In our testing, we have not been able to exploit this issue to escape the
+sandbox.**
+
+In practice, the mapping tends to be quite stable. This is because the inode
+that gets generated in the Linux filesystem is derived from the _file reference_
+(very loosely, a "Windows inode"), which has similar stability to a Linux inode.
+The standard "rename a subcomponent" attack seems to produce a different inode
+number, and so the in-sandbox check would fail-closed.
+
+But, crucially, _it is not guaranteed_. This is the behaviour we observed in
+testing, but could not find documentation guaranteeing this behaviour in all
+circumstances, for all Windows/WSL versions past and present, regardless of
+configuration options.
+
+Zed's sandbox has been designed with the aim of being totally unbreakable, even
+in the presence of a motivated attacker with full control over the files in your
+project running as a standard user. It does _not_ assume a
+mostly-benevolent-but-sometimes-careless agent.
+
+Given this, we cannot give the same guarantees about sandbox security as we do
+for more standard cases. However, even with this weakened guarantee, the sandbox
+still helps keep you much safer than without it, so it's worth keeping enabled.
 
 ## Choosing What to Approve {#choosing-what-to-approve}
 

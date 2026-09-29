@@ -1,15 +1,16 @@
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use client::Client;
 use gpui::{AppContext, TasksIncluded, profiler};
-use parking_lot::Mutex;
+use hang_telemetry::HangTelemetry;
 use ui::App;
+
+use crate::STARTUP_TIME;
 
 mod logging;
 mod task_traces;
-mod telemetry;
 
 gpui::actions!(
     dev,
@@ -24,17 +25,7 @@ gpui::actions!(
 );
 
 pub(crate) fn start(client: Arc<Client>, cx: &mut App) {
-    let hang_time = if cfg!(debug_assertions) {
-        if cfg!(windows) {
-            // yes windows debug builds are horribly slow
-            Duration::from_secs(30)
-        } else {
-            Duration::from_secs(5)
-        }
-    } else {
-        // will be lowered over time or turned into a setting
-        Duration::from_millis(100)
-    };
+    let hang_time = hang_telemetry::hang_threshold();
 
     if cfg!(debug_assertions) {
         log::warn!("debug build, only reporting hangs longer then {hang_time:?}");
@@ -78,13 +69,22 @@ pub(crate) fn start(client: Arc<Client>, cx: &mut App) {
 fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &App) {
     let foreground_thread = thread::current().id();
     let monitor_interval = Duration::from_secs(1);
-    let telemetry = Arc::new(Mutex::new(telemetry::Reporter::new(foreground_thread)));
+    let started = Instant::now();
+    let startup = *STARTUP_TIME.get().unwrap_or(&started);
+    let hang_telemetry = Arc::new(spin::Mutex::new(HangTelemetry::new(
+        cx.foreground_journal(),
+        startup,
+    )));
     let mut log = logging::Reporter::new(monitor_interval, report_longer_then, foreground_thread);
 
-    let telemetry2 = Arc::clone(&telemetry);
     cx.on_app_quit({
+        let hang_telemetry = Arc::clone(&hang_telemetry);
         move |_| {
-            telemetry2.lock().send();
+            let mut hang_telemetry = hang_telemetry.lock();
+            hang_telemetry.collect();
+            let event = hang_telemetry.take_event();
+            drop(hang_telemetry);
+            telemetry::send_event(event);
             client.telemetry().flush_events()
         }
     })
@@ -100,15 +100,16 @@ fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &
             thread::sleep(Duration::from_millis(200));
             loop {
                 thread::sleep(monitor_interval);
-                // TODO(yara) the telemetry should not include still running tasks while the
-                // reports being logged should.
                 let task_stats = profiler::take_all_stats(TasksIncluded::CompletedAndRunning);
                 let action_stats = profiler::take_action_stats();
 
-                {
-                    let mut telemetry = telemetry.lock();
-                    telemetry.update(&task_stats, &action_stats);
-                    telemetry.send_periodically();
+                let event = {
+                    let mut hang_telemetry = hang_telemetry.lock();
+                    hang_telemetry.collect();
+                    hang_telemetry.take_event_if_due()
+                };
+                if let Some(event) = event {
+                    telemetry::send_event(event);
                 }
 
                 let should_write_trace = log.check_and_report(&task_stats, &action_stats);
