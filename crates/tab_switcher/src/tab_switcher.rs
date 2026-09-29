@@ -143,7 +143,7 @@ impl TabSwitcher {
         let original_items: Vec<_> = workspace
             .panes()
             .iter()
-            .map(|p| (p.clone(), p.read(cx).active_item_index()))
+            .filter_map(|pane| Some((pane.clone(), pane.read(cx).active_item()?.item_id())))
             .collect();
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate = TabSwitcherDelegate::new(
@@ -276,7 +276,7 @@ pub struct TabSwitcherDelegate {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     matches: Vec<TabMatch>,
-    original_items: Vec<(Entity<Pane>, usize)>,
+    original_items: Vec<(Entity<Pane>, EntityId)>,
     is_all_panes: bool,
     open_in_active_pane: bool,
     restored_items: bool,
@@ -367,7 +367,7 @@ impl TabSwitcherDelegate {
         open_in_active_pane: bool,
         window: &mut Window,
         cx: &mut Context<TabSwitcher>,
-        original_items: Vec<(Entity<Pane>, usize)>,
+        original_items: Vec<(Entity<Pane>, EntityId)>,
     ) -> Self {
         Self::subscribe_to_updates(&workspace, window, cx);
         Self {
@@ -561,6 +561,20 @@ impl TabSwitcherDelegate {
             self.compute_selected_index(selected_item_id, window, cx)
         } else {
             0
+        }
+    }
+
+    fn restore_original_items(&self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        for (pane, item_id) in &self.original_items {
+            pane.update(cx, |pane, cx| {
+                if pane.active_item().map(|item| item.item_id()) == Some(*item_id) {
+                    return;
+                }
+                // The original item may have been closed from within the switcher.
+                if let Some(index) = pane.index_for_item_id(*item_id) {
+                    pane.activate_item_without_history(index, window, cx);
+                }
+            })
         }
     }
 
@@ -781,7 +795,7 @@ impl PickerDelegate for TabSwitcherDelegate {
                 .pane
                 .update(cx, |pane, cx| {
                     if let Some(index) = pane.index_for_item(selected_match.item.as_ref()) {
-                        pane.activate_item(index, false, false, window, cx);
+                        pane.activate_item_without_history(index, window, cx);
                     }
                 })
                 .ok();
@@ -814,11 +828,7 @@ impl PickerDelegate for TabSwitcherDelegate {
         };
 
         self.restored_items = true;
-        for (pane, index) in self.original_items.iter() {
-            pane.update(cx, |this, cx| {
-                this.activate_item(*index, false, false, window, cx);
-            })
-        }
+        self.restore_original_items(window, cx);
 
         if self.open_in_active_pane {
             self.confirm_open_in_active_pane(selected_match, window, cx);
@@ -836,11 +846,7 @@ impl PickerDelegate for TabSwitcherDelegate {
 
     fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<TabSwitcherDelegate>>) {
         if !self.restored_items {
-            for (pane, index) in self.original_items.iter() {
-                pane.update(cx, |this, cx| {
-                    this.activate_item(*index, false, false, window, cx);
-                })
-            }
+            self.restore_original_items(window, cx);
         }
 
         self.tab_switcher

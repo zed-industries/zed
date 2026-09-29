@@ -6115,18 +6115,22 @@ impl Workspace {
             pane::Event::ActivateItem {
                 local,
                 focus_changed,
+                record_history,
             } => {
                 window.invalidate_character_coordinates();
 
-                pane.update(cx, |pane, _| {
-                    pane.track_alternate_file_items();
-                });
+                if *record_history {
+                    pane.update(cx, |pane, _| {
+                        pane.track_alternate_file_items();
+                    });
+                }
                 if *local {
                     self.unfollow_in_pane(pane, window, cx);
                 }
-                serialize_workspace = *focus_changed || pane != self.active_pane();
+                serialize_workspace =
+                    *record_history && (*focus_changed || pane != self.active_pane());
                 if pane == self.active_pane() {
-                    self.active_item_path_changed(*focus_changed, window, cx);
+                    self.update_active_item_path(*focus_changed, *record_history, window, cx);
                     self.update_active_view_for_followers(window, cx);
                 } else if *local {
                     self.set_active_pane(pane, window, cx);
@@ -6615,6 +6619,16 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.update_active_item_path(focus_changed, true, window, cx);
+    }
+
+    fn update_active_item_path(
+        &mut self,
+        focus_changed: bool,
+        record_history: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         cx.emit(Event::ActiveItemChanged);
         let active_entry = self.active_project_path(cx);
         let active_project_path_changed =
@@ -6639,7 +6653,9 @@ impl Workspace {
             });
         }
 
-        if active_project_path_changed {
+        // Leaving `last_active_project_path` untouched means the next recorded
+        // activation is compared against the last path the user actually chose.
+        if record_history && active_project_path_changed {
             match active_entry.as_ref() {
                 None => self.last_active_project_path = None,
                 Some(path) if self.remember_navigation_history_path(path, cx) => {

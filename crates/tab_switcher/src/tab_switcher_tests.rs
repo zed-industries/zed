@@ -141,11 +141,206 @@ async fn test_open_item_on_modifiers_release(cx: &mut gpui::TestAppContext) {
     });
 
     cx.simulate_modifiers_change(Modifiers::none());
+    assert_active_file(&workspace, "1.txt", cx);
+    assert_tab_switcher_is_closed(workspace, cx);
+}
+
+#[gpui::test]
+async fn test_cycling_preserves_recency_order_on_confirm(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+    let (workspace, cx) = init_workspace_with_four_files(&app_state, cx).await;
+    let [tab_1, tab_2, tab_3, tab_4] = open_four_buffers_with_first_active(&workspace, cx).await;
+    assert_eq!(
+        activation_order(&workspace, cx),
+        vec![
+            tab_1.item_id(),
+            tab_4.item_id(),
+            tab_3.item_id(),
+            tab_2.item_id()
+        ]
+    );
+
+    cx.simulate_modifiers_change(Modifiers::control());
+    let tab_switcher = open_tab_switcher(false, &workspace, cx);
+    cx.dispatch_action(Toggle { select_last: false });
+    cx.dispatch_action(Toggle { select_last: false });
+    tab_switcher.update(cx, |tab_switcher, _| {
+        assert_match_selection(tab_switcher, 3, tab_2.boxed_clone());
+    });
+    cx.simulate_modifiers_change(Modifiers::none());
+    assert_tab_switcher_is_closed(workspace.clone(), cx);
+
+    assert_eq!(
+        activation_order(&workspace, cx),
+        vec![
+            tab_2.item_id(),
+            tab_1.item_id(),
+            tab_4.item_id(),
+            tab_3.item_id()
+        ]
+    );
+    assert_eq!(
+        recent_file_names(&workspace, cx),
+        ["2.txt", "1.txt", "4.txt", "3.txt"]
+    );
+    assert_eq!(
+        persisted_recent_file_names(&workspace, cx),
+        ["2.txt", "1.txt", "4.txt", "3.txt"]
+    );
+
+    cx.dispatch_action(workspace::pane::AlternateFile);
+    assert_active_file(&workspace, "1.txt", cx);
+}
+
+#[gpui::test]
+async fn test_cycling_preserves_recency_order_on_dismiss(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+    let (workspace, cx) = init_workspace_with_four_files(&app_state, cx).await;
+    let [tab_1, tab_2, tab_3, tab_4] = open_four_buffers_with_first_active(&workspace, cx).await;
+    let recent_files_before = recent_file_names(&workspace, cx);
+
+    let tab_switcher = open_tab_switcher(false, &workspace, cx);
+    cx.dispatch_action(Toggle { select_last: false });
+    cx.dispatch_action(Toggle { select_last: false });
+    tab_switcher.update(cx, |tab_switcher, _| {
+        assert_match_selection(tab_switcher, 3, tab_2.boxed_clone());
+    });
+    cx.dispatch_action(menu::Cancel);
+    assert_tab_switcher_is_closed(workspace.clone(), cx);
+
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
         assert_eq!(active_editor.read(cx).title(cx), "1.txt");
     });
-    assert_tab_switcher_is_closed(workspace, cx);
+    assert_eq!(
+        activation_order(&workspace, cx),
+        vec![
+            tab_1.item_id(),
+            tab_4.item_id(),
+            tab_3.item_id(),
+            tab_2.item_id()
+        ]
+    );
+    assert_eq!(recent_file_names(&workspace, cx), recent_files_before);
+    assert_eq!(
+        persisted_recent_file_names(&workspace, cx),
+        ["1.txt", "4.txt", "3.txt", "2.txt"]
+    );
+
+    cx.dispatch_action(workspace::pane::AlternateFile);
+    assert_active_file(&workspace, "4.txt", cx);
+}
+
+#[gpui::test]
+async fn test_dismiss_after_closing_tab_restores_original_item(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+    let (workspace, cx) = init_workspace_with_four_files(&app_state, cx).await;
+    let tab_1 = open_buffer("1.txt", &workspace, cx).await;
+    open_buffer("2.txt", &workspace, cx).await;
+    open_buffer("3.txt", &workspace, cx).await;
+    open_buffer("4.txt", &workspace, cx).await;
+    open_buffer("3.txt", &workspace, cx).await;
+
+    // Closing a tab to the left of the original one shifts its index.
+    let tab_switcher = open_tab_switcher(false, &workspace, cx);
+    cx.dispatch_action(Toggle { select_last: false });
+    cx.dispatch_action(Toggle { select_last: false });
+    tab_switcher.update(cx, |tab_switcher, _| {
+        assert_match_selection(tab_switcher, 3, tab_1.boxed_clone());
+    });
+    cx.dispatch_action(CloseSelectedItem);
+    cx.dispatch_action(menu::Cancel);
+    assert_tab_switcher_is_closed(workspace.clone(), cx);
+
+    assert_active_file(&workspace, "3.txt", cx);
+}
+
+async fn init_workspace_with_four_files<'a>(
+    app_state: &Arc<AppState>,
+    cx: &'a mut gpui::TestAppContext,
+) -> (Entity<Workspace>, &'a mut VisualTestContext) {
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "1.txt": "First file",
+                "2.txt": "Second file",
+                "3.txt": "Third file",
+                "4.txt": "Fourth file",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    (workspace, cx)
+}
+
+async fn open_four_buffers_with_first_active(
+    workspace: &Entity<Workspace>,
+    cx: &mut VisualTestContext,
+) -> [Box<dyn ItemHandle>; 4] {
+    open_buffer("1.txt", workspace, cx).await;
+    let tab_2 = open_buffer("2.txt", workspace, cx).await;
+    let tab_3 = open_buffer("3.txt", workspace, cx).await;
+    let tab_4 = open_buffer("4.txt", workspace, cx).await;
+    let tab_1 = open_buffer("1.txt", workspace, cx).await;
+    [tab_1, tab_2, tab_3, tab_4]
+}
+
+fn activation_order(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> Vec<EntityId> {
+    workspace.read_with(cx, |workspace, cx| {
+        let mut history = workspace
+            .active_pane()
+            .read(cx)
+            .activation_history()
+            .iter()
+            .map(|entry| (entry.timestamp, entry.entity_id))
+            .collect::<Vec<_>>();
+        history.sort_by_key(|(timestamp, _)| std::cmp::Reverse(*timestamp));
+        history
+            .into_iter()
+            .map(|(_, entity_id)| entity_id)
+            .collect()
+    })
+}
+
+fn assert_active_file(workspace: &Entity<Workspace>, file_name: &str, cx: &mut VisualTestContext) {
+    cx.read(|cx| {
+        let active_editor = workspace
+            .read(cx)
+            .active_item_as::<Editor>(cx)
+            .expect("active item should be an editor");
+        assert_eq!(active_editor.read(cx).title(cx), file_name);
+    });
+}
+
+/// Clears the in-memory navigation stacks so that only the active item and the
+/// persisted history remain in `recent_navigation_history`.
+fn persisted_recent_file_names(
+    workspace: &Entity<Workspace>,
+    cx: &mut VisualTestContext,
+) -> Vec<String> {
+    workspace.update(cx, |workspace, cx| {
+        for pane in workspace.panes() {
+            pane.update(cx, |pane, cx| pane.nav_history_mut().clear(cx));
+        }
+    });
+    recent_file_names(workspace, cx)
+}
+
+fn recent_file_names(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> Vec<String> {
+    workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .recent_navigation_history(None, cx)
+            .into_iter()
+            .map(|(project_path, _)| project_path.path.as_unix_str().to_string())
+            .collect()
+    })
 }
 
 #[gpui::test]

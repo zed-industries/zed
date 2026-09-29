@@ -329,6 +329,7 @@ pub enum Event {
     ActivateItem {
         local: bool,
         focus_changed: bool,
+        record_history: bool,
     },
     Remove {
         focus_on_pane: Option<Entity<Pane>>,
@@ -1432,7 +1433,7 @@ impl Pane {
         self.index_for_item_id(item.item_id())
     }
 
-    fn index_for_item_id(&self, item_id: EntityId) -> Option<usize> {
+    pub fn index_for_item_id(&self, item_id: EntityId) -> Option<usize> {
         self.items.iter().position(|i| i.item_id() == item_id)
     }
 
@@ -1480,6 +1481,33 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.activate_item_internal(index, activate_pane, focus_item, true, window, cx);
+    }
+
+    /// Shows the item at `index` without recording it as used, so that transiently
+    /// displaying items (e.g. while cycling through the tab switcher) doesn't reorder
+    /// the activation, navigation, alternate file, or recently opened history.
+    pub fn activate_item_without_history(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let previous_mode = self.nav_history.mode();
+        self.nav_history.set_mode(NavigationMode::Disabled);
+        self.activate_item_internal(index, false, false, false, window, cx);
+        self.nav_history.set_mode(previous_mode);
+    }
+
+    fn activate_item_internal(
+        &mut self,
+        index: usize,
+        activate_pane: bool,
+        focus_item: bool,
+        record_history: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         use NavigationMode::{GoingBack, GoingForward};
         if index < self.items.len() {
             let prev_active_item_ix = mem::replace(&mut self.active_item_index, index);
@@ -1489,7 +1517,9 @@ impl Pane {
             {
                 prev_item.deactivated(window, cx);
             }
-            self.update_history(index);
+            if record_history {
+                self.update_history(index);
+            }
             self.update_toolbar(window, cx);
             self.update_status_bar(window, cx);
 
@@ -1500,6 +1530,7 @@ impl Pane {
             cx.emit(Event::ActivateItem {
                 local: activate_pane,
                 focus_changed: focus_item,
+                record_history,
             });
 
             self.update_active_tab(index);
