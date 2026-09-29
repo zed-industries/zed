@@ -6,9 +6,11 @@ use gpui::{
     prelude::*,
 };
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
+use project::DisableAiSettings;
 use release_channel::{AppVersion, ReleaseChannel};
 use semver::Version;
 use serde::Deserialize;
+use settings::Settings as _;
 use smol::io::AsyncReadExt;
 use ui::{AnnouncementToast, ListBulletItem, prelude::*};
 use util::{ResultExt as _, maybe};
@@ -42,7 +44,7 @@ pub fn init(cx: &mut App) {
             ReleaseChannel::Nightly | ReleaseChannel::Dev
         ) {
             workspace.register_action(|_workspace, _: &ShowUpdateNotification, _window, cx| {
-                show_update_notification(true, cx);
+                show_update_notification(cx);
             });
         }
     })
@@ -199,13 +201,12 @@ impl Dismissable for DeltaAnnouncement {
     const KEY: &'static str = "delta_announcement_dismissed";
 }
 
-fn announcement_for_version(
-    version: &Version,
-    force_announcement: bool,
-    cx: &App,
-) -> Option<AnnouncementContent> {
+fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementContent> {
     let version_with_delta = Version::new(1, 22, 0);
-    if *version < version_with_delta || (!force_announcement && DeltaAnnouncement::dismissed(cx)) {
+    if *version < version_with_delta
+        || DisableAiSettings::get_global(cx).disable_ai
+        || DeltaAnnouncement::dismissed(cx)
+    {
         return None;
     }
 
@@ -290,7 +291,7 @@ impl Render for AnnouncementToastNotification {
 
 struct UpdateNotification;
 
-fn show_update_notification(force_announcement: bool, cx: &mut App) {
+fn show_update_notification(cx: &mut App) {
     let Some(updater) = AutoUpdater::get(cx) else {
         return;
     };
@@ -300,7 +301,7 @@ fn show_update_notification(force_announcement: bool, cx: &mut App) {
     version.build = semver::BuildMetadata::EMPTY;
     let app_name = ReleaseChannel::global(cx).display_name();
 
-    if let Some(content) = announcement_for_version(&version, force_announcement, cx) {
+    if let Some(content) = announcement_for_version(&version, cx) {
         show_app_notification(
             NotificationId::unique::<UpdateNotification>(),
             cx,
@@ -348,7 +349,7 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
 
         if should_show_notification {
             cx.update(|cx| {
-                show_update_notification(false, cx);
+                show_update_notification(cx);
                 updater.update(cx, |updater, cx| {
                     updater
                         .set_should_show_update_notification(false, cx)
