@@ -4421,10 +4421,10 @@ impl BufferSnapshot {
             let mut range = None;
             loop {
                 let child_range = cursor.node().byte_range();
+                let contains_offset = child_range.contains(&offset)
                 // `Range::contains` is end-exclusive, which rejects every node at EOF
                 // (including the root). Accept the end boundary only at the buffer's end,
                 // so mid-buffer behavior is unchanged.
-                let contains_offset = child_range.contains(&offset)
                     || (child_range.end == offset && offset == text.len());
                 if !contains_offset {
                     break;
