@@ -39,6 +39,18 @@ impl FeatureFlag for DiffReviewFeatureFlag {
 }
 register_feature_flag!(DiffReviewFeatureFlag);
 
+pub struct McpRegistryFeatureFlag;
+
+impl FeatureFlag for McpRegistryFeatureFlag {
+    const NAME: &'static str = "mcp-registry";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+register_feature_flag!(McpRegistryFeatureFlag);
+
 /// Gates the `create_thread` and `list_agents_and_models` tools, which let
 /// the agent spawn independent sibling threads that show up in the agent
 /// panel sidebar.

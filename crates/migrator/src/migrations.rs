@@ -359,12 +359,6 @@ pub(crate) mod m_2026_05_04 {
     pub(crate) use settings::SETTINGS_PATTERNS;
 }
 
-pub(crate) mod m_2026_07_21 {
-    mod settings;
-
-    pub(crate) use settings::remove_mcp_registry_source;
-}
-
 pub(crate) mod m_2026_08_17 {
     mod settings;
 

@@ -1833,11 +1833,17 @@ impl SettingsWindow {
 
         use feature_flags::FeatureFlagAppExt as _;
         let mut last_is_staff = cx.is_staff();
+        let mut last_mcp_registry_enabled = cx.has_flag::<feature_flags::McpRegistryFeatureFlag>();
         cx.observe_global_in::<feature_flags::FeatureFlagStore>(window, move |this, window, cx| {
             let is_staff = cx.is_staff();
             if is_staff != last_is_staff {
                 last_is_staff = is_staff;
                 this.rebuild_pages(window, cx);
+            }
+            let mcp_registry_enabled = cx.has_flag::<feature_flags::McpRegistryFeatureFlag>();
+            if mcp_registry_enabled != last_mcp_registry_enabled {
+                last_mcp_registry_enabled = mcp_registry_enabled;
+                cx.notify();
             }
         })
         .detach();

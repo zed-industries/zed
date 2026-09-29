@@ -483,6 +483,10 @@ impl Transport for HttpTransport {
         self.send_message(message, None).await
     }
 
+    fn supports_concurrent_sends(&self) -> bool {
+        true
+    }
+
     async fn send_cancellable(
         &self,
         message: String,
@@ -603,7 +607,6 @@ impl Drop for HttpTransport {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use futures::FutureExt as _;
     use gpui::TestAppContext;
     use parking_lot::Mutex as SyncMutex;
     use std::{
@@ -620,6 +623,24 @@ mod tests {
             _buffer: &mut [u8],
         ) -> std::task::Poll<std::io::Result<usize>> {
             std::task::Poll::Pending
+        }
+    }
+
+    struct TrackedPendingReader(Arc<AtomicUsize>);
+
+    impl futures::AsyncRead for TrackedPendingReader {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            _buffer: &mut [u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            std::task::Poll::Pending
+        }
+    }
+
+    impl Drop for TrackedPendingReader {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
         }
     }
 
@@ -1262,6 +1283,189 @@ mod tests {
             serde_json::json!({"recovered": true})
         );
         assert_eq!(request_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[gpui::test]
+    async fn test_requests_wait_for_initialized_notification(cx: &mut TestAppContext) {
+        let (initialized_sender, initialized_receiver) = oneshot::channel::<()>();
+        let initialized_receiver = Arc::new(SyncMutex::new(Some(initialized_receiver)));
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let http_client = make_fake_http_client({
+            let request_count = request_count.clone();
+            move |mut request| {
+                let initialized_receiver = initialized_receiver.clone();
+                let request_count = request_count.clone();
+                Box::pin(async move {
+                    let mut body = String::new();
+                    futures::AsyncReadExt::read_to_string(request.body_mut(), &mut body).await?;
+                    let message: Value = serde_json::from_str(&body)?;
+                    if message["method"] == "notifications/initialized" {
+                        let receiver = initialized_receiver
+                            .lock()
+                            .take()
+                            .expect("initialized notification should only be sent once");
+                        receiver.await?;
+                        Ok(Response::builder().status(202).body(AsyncBody::empty())?)
+                    } else {
+                        request_count.fetch_add(1, Ordering::SeqCst);
+                        json_response(200, r#"{"jsonrpc":"2.0","id":0,"result":{"tools":[]}}"#)
+                    }
+                })
+            }
+        });
+        let transport = Arc::new(HttpTransport::new(
+            http_client,
+            "https://mcp.example.com/mcp".to_owned(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        ));
+        let client = Arc::new(
+            crate::client::Client::new(
+                crate::client::ContextServerId("test-server".into()),
+                "test-server".into(),
+                transport,
+                Some(Duration::from_secs(60)),
+                cx.to_async(),
+            )
+            .expect("client should be created"),
+        );
+        client
+            .notify("notifications/initialized", ())
+            .expect("initialized notification should enqueue");
+        let request = cx.spawn({
+            let client = client.clone();
+            move |_| async move { client.request::<Value>("tools/list", ()).await }
+        });
+        cx.executor().run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 0);
+        initialized_sender
+            .send(())
+            .expect("notification should still be pending");
+        cx.executor().run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        assert!(
+            request
+                .now_or_never()
+                .expect("request should complete")
+                .is_ok()
+        );
+        client.stop();
+    }
+
+    #[gpui::test]
+    async fn test_pending_sse_requests_do_not_block_requests_or_notifications(
+        cx: &mut TestAppContext,
+    ) {
+        let seen = Arc::new(SyncMutex::new(Vec::<Value>::new()));
+        let dropped_readers = Arc::new(AtomicUsize::new(0));
+        let http_client = make_fake_http_client({
+            let seen = seen.clone();
+            let dropped_readers = dropped_readers.clone();
+            move |mut request| {
+                let seen = seen.clone();
+                let dropped_readers = dropped_readers.clone();
+                Box::pin(async move {
+                    let mut body = String::new();
+                    futures::AsyncReadExt::read_to_string(request.body_mut(), &mut body).await?;
+                    let message: Value = serde_json::from_str(&body)?;
+                    seen.lock().push(message.clone());
+                    match message.get("id").and_then(Value::as_i64) {
+                        Some(0 | 1) => Ok(Response::builder()
+                            .status(200)
+                            .header("Content-Type", EVENT_STREAM_MIME_TYPE)
+                            .body(AsyncBody::from_reader(TrackedPendingReader(
+                                dropped_readers,
+                            )))?),
+                        Some(2) => json_response(
+                            200,
+                            r#"{"jsonrpc":"2.0","id":2,"result":{"complete":true}}"#,
+                        ),
+                        _ => Ok(Response::builder().status(202).body(AsyncBody::empty())?),
+                    }
+                })
+            }
+        });
+        let transport = Arc::new(HttpTransport::new(
+            http_client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        ));
+        let client = Arc::new(
+            crate::client::Client::new(
+                crate::client::ContextServerId("test-server".into()),
+                "test-server".into(),
+                transport,
+                Some(Duration::from_secs(60)),
+                cx.to_async(),
+            )
+            .expect("client should be created"),
+        );
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+        let first = cx.spawn({
+            let client = client.clone();
+            move |_| async move {
+                client
+                    .request_with::<Value>("tools/call", (), Some(cancel_rx), None)
+                    .await
+            }
+        });
+        cx.executor().run_until_parked();
+        let mut second = cx.spawn({
+            let client = client.clone();
+            move |_| async move { client.request::<Value>("tools/call", ()).await }
+        });
+        cx.executor().run_until_parked();
+        assert_eq!(seen.lock().len(), 2);
+
+        client
+            .notify("notifications/roots/list_changed", ())
+            .expect("notification should enqueue");
+        let third = cx.spawn({
+            let client = client.clone();
+            move |_| async move { client.request::<Value>("tools/call", ()).await }
+        });
+        cx.executor().run_until_parked();
+        assert_eq!(
+            third
+                .now_or_never()
+                .expect("third request should complete while both SSE bodies are pending")
+                .expect("third response should succeed"),
+            serde_json::json!({"complete": true})
+        );
+        assert!(
+            seen.lock()
+                .iter()
+                .any(|message| { message["method"] == "notifications/roots/list_changed" })
+        );
+        assert_eq!(dropped_readers.load(Ordering::SeqCst), 0);
+
+        cancel_tx
+            .send(())
+            .expect("cancellation should be delivered");
+        cx.executor().run_until_parked();
+        assert_eq!(
+            first
+                .now_or_never()
+                .expect("cancellation should complete promptly")
+                .expect_err("first request should be canceled")
+                .to_string(),
+            crate::client::RequestCanceled.to_string()
+        );
+        assert_eq!(dropped_readers.load(Ordering::SeqCst), 1);
+        assert!((&mut second).now_or_never().is_none());
+
+        client.stop();
+        cx.executor().run_until_parked();
+        assert_eq!(
+            second
+                .now_or_never()
+                .expect("stop should fail the outstanding request")
+                .expect_err("second request should fail")
+                .to_string(),
+            "Context server stopped"
+        );
+        assert_eq!(dropped_readers.load(Ordering::SeqCst), 2);
     }
 
     #[gpui::test]

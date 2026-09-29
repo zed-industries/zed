@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
-use futures::{FutureExt, StreamExt, channel::oneshot, future, select};
+use futures::{FutureExt, StreamExt, channel::oneshot, future, select, stream::FuturesUnordered};
 use futures_lite::future::yield_now;
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, Task};
 use parking_lot::Mutex;
@@ -22,7 +22,10 @@ use util::{ResultExt, TryFutureExt};
 
 use crate::{
     transport::{StdioTransport, Transport, TransportShutdownReason},
-    types::{CancelledParams, ClientNotification, Notification as _, notifications::Cancelled},
+    types::{
+        CancelledParams, ClientNotification, Notification as _,
+        notifications::{Cancelled, Initialized},
+    },
 };
 
 const JSON_RPC_VERSION: &str = "2.0";
@@ -74,12 +77,10 @@ pub(crate) struct Client {
     name: Arc<str>,
     subscription_set: Arc<Mutex<NotificationSubscriptionSet>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
-    #[allow(clippy::type_complexity)]
-    #[allow(dead_code)]
-    io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
+    io_tasks: Mutex<Option<[Task<Option<()>>; 3]>>,
     shutdown_rx: Mutex<Option<(barrier::Receiver, barrier::Receiver)>>,
     executor: BackgroundExecutor,
-    transport: Arc<dyn Transport>,
+    transport: Mutex<Option<Arc<dyn Transport>>>,
     request_timeout: Option<Duration>,
     /// Single-slot side channel for the last transport-level error. When the
     /// output task encounters a send failure it stashes the error here and
@@ -252,10 +253,6 @@ impl Client {
             let transport = transport.clone();
             async move |_| Self::handle_err(transport).log_err().await
         });
-        let input_task = cx.spawn(async move |_| {
-            let (input, err) = futures::join!(receive_input_task, receive_err_task);
-            input.or(err)
-        });
 
         let last_transport_error: Arc<Mutex<Option<anyhow::Error>>> = Arc::new(Mutex::new(None));
         let effective_request_timeout = request_timeout.unwrap_or(DEFAULT_REQUEST_TIMEOUT);
@@ -288,12 +285,30 @@ impl Client {
             outbound_tx,
             priority_outbound_tx,
             executor: cx.background_executor().clone(),
-            io_tasks: Mutex::new(Some((input_task, output_task))),
+            io_tasks: Mutex::new(Some([receive_input_task, receive_err_task, output_task])),
             shutdown_rx: Mutex::new(Some((input_done_rx, output_done_rx))),
-            transport,
+            transport: Mutex::new(Some(transport)),
             request_timeout,
             last_transport_error,
         })
+    }
+
+    pub(crate) fn stop(&self) {
+        let handlers = self.response_handlers.lock().take();
+        self.outbound_tx.close();
+        self.priority_outbound_tx.close();
+        // Cancel the readers directly, even if callers retain this client. Deferring their
+        // cancellation through another task lets them consume a replacement client's responses.
+        drop(self.io_tasks.lock().take());
+        // Releasing a stdio transport also terminates its process.
+        drop(self.transport.lock().take());
+
+        if let Some(handlers) = handlers {
+            let error: Arc<str> = "Context server stopped".into();
+            for handler in handlers.into_values() {
+                handler(Err(error.clone()));
+            }
+        }
     }
 
     /// Handles input from the server's stdout.
@@ -385,10 +400,27 @@ impl Client {
                 response_handlers.lock().take();
             }
         });
+        let concurrent = transport.supports_concurrent_sends();
+        let mut pending_sends: FuturesUnordered<
+            future::BoxFuture<'static, Option<(Option<RequestId>, Result<()>)>>,
+        > = FuturesUnordered::new();
         loop {
             let mut priority_recv = pin!(priority_outbound_rx.recv().fuse());
             let mut outbound_recv = pin!(outbound_rx.recv().fuse());
+            let completed_send = if pending_sends.is_empty() {
+                future::Either::Left(future::pending())
+            } else {
+                future::Either::Right(pending_sends.next())
+            };
+            let mut completed_send = pin!(completed_send.fuse());
             let next_outbound = futures::select_biased! {
+                completed = completed_send => {
+                    if let Some(Some((request_id, Err(err)))) = completed {
+                        Self::fail_output_send(err, request_id, &response_handlers, &last_transport_error);
+                        return Ok(());
+                    }
+                    continue;
+                },
                 outbound = priority_recv => outbound,
                 outbound = outbound_recv => outbound,
             };
@@ -404,47 +436,73 @@ impl Client {
             if let Some(started) = outbound.started.take() {
                 started.store(true, SeqCst);
             }
-            let request_id = serde_json::from_str::<Value>(&outbound.message)
-                .ok()
+            let message = serde_json::from_str::<Value>(&outbound.message).ok();
+            let is_initialized = message
+                .as_ref()
+                .and_then(|message| message.get("method"))
+                .and_then(Value::as_str)
+                == Some(Initialized::METHOD);
+            let request_id = message
                 .and_then(|message| message.get("id").cloned())
                 .and_then(|id| serde_json::from_value(id).ok());
             log::trace!("outgoing message: {}", outbound.message);
-            let send_result = if is_request {
-                transport
-                    .send_cancellable(outbound.message, outbound.cancel_rx, outbound.issued_tx)
-                    .await
-            } else {
-                let mut send = pin!(
-                    transport
-                        .send_cancellable(outbound.message, outbound.cancel_rx, outbound.issued_tx)
-                        .fuse()
-                );
-                let mut timer = pin!(executor.timer(notification_timeout).fuse());
-                select! {
-                    result = send => result,
-                    _ = timer => {
-                        log::error!("context server notification transport exceeded {notification_timeout:?}");
-                        continue;
-                    }
+            let send = {
+                let transport = transport.clone();
+                let executor = executor.clone();
+                async move {
+                    let send = transport.send_cancellable(
+                        outbound.message,
+                        outbound.cancel_rx,
+                        outbound.issued_tx,
+                    );
+                    let result = if is_request {
+                        Some(send.await)
+                    } else {
+                        let mut send = pin!(send.fuse());
+                        let mut timer = pin!(executor.timer(notification_timeout).fuse());
+                        select! {
+                            result = send => Some(result),
+                            _ = timer => {
+                                log::error!("context server notification transport exceeded {notification_timeout:?}");
+                                if is_initialized {
+                                    Some(Err(anyhow!("Context server initialized notification timeout")))
+                                } else {
+                                    None
+                                }
+                            }
+                        }
+                    };
+                    result.map(|result| (request_id, result))
                 }
             };
-            if let Err(err) = send_result {
-                log::debug!("transport send failed: {:#}", err);
-                let error_message: Arc<str> = format!("{err:#}").into();
-                *last_transport_error.lock() = Some(err);
-                if let Some(mut handlers) = response_handlers.lock().take() {
-                    let initiating_handler =
-                        request_id.and_then(|request_id| handlers.remove(&request_id));
-                    for handler in handlers.into_values() {
-                        handler(Err(error_message.clone()));
-                    }
-                    drop(initiating_handler);
-                }
+            // The server must accept the initialized notification before later HTTP requests arrive.
+            if concurrent && !is_initialized {
+                pending_sends.push(send.boxed());
+            } else if let Some((request_id, Err(err))) = send.await {
+                Self::fail_output_send(err, request_id, &response_handlers, &last_transport_error);
                 return Ok(());
             }
         }
         drop(output_done_tx);
         Ok(())
+    }
+
+    fn fail_output_send(
+        err: anyhow::Error,
+        request_id: Option<RequestId>,
+        response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
+        last_transport_error: &Mutex<Option<anyhow::Error>>,
+    ) {
+        log::debug!("transport send failed: {:#}", err);
+        let error_message: Arc<str> = format!("{err:#}").into();
+        *last_transport_error.lock() = Some(err);
+        if let Some(mut handlers) = response_handlers.lock().take() {
+            let initiating_handler = request_id.and_then(|request_id| handlers.remove(&request_id));
+            for handler in handlers.into_values() {
+                handler(Err(error_message.clone()));
+            }
+            drop(initiating_handler);
+        }
     }
 
     /// A future that resolves once the transport's output loop has terminated
@@ -458,7 +516,7 @@ impl Client {
         &self,
     ) -> Option<future::BoxFuture<'static, TransportShutdownReason>> {
         let (mut input_done, mut output_done) = self.shutdown_rx.lock().take()?;
-        let transport = self.transport.clone();
+        let transport = self.transport.lock().clone()?;
         Some(
             async move {
                 let mut input_done = pin!(input_done.recv().fuse());
@@ -697,7 +755,9 @@ impl Client {
     /// so it can stamp subsequent requests (e.g. HTTP's `MCP-Protocol-Version`
     /// header required from 2025-06-18 onward).
     pub(crate) fn set_protocol_version(&self, version: &str) {
-        self.transport.set_protocol_version(version);
+        if let Some(transport) = self.transport.lock().as_ref() {
+            transport.set_protocol_version(version);
+        }
     }
 
     #[must_use]
@@ -1022,6 +1082,65 @@ mod tests {
         assert_eq!(
             client.response_handlers.lock().as_ref().map(HashMap::len),
             Some(0)
+        );
+    }
+
+    #[gpui::test]
+    async fn stopping_client_cancels_io_and_fails_pending_requests(cx: &mut TestAppContext) {
+        let transport = Arc::new(RecordingTransport::blocking_once());
+        let client = Arc::new(
+            Client::new(
+                ContextServerId("test-server".into()),
+                "test-server".into(),
+                transport.clone(),
+                Some(Duration::from_secs(60)),
+                cx.to_async(),
+            )
+            .expect("client should be created"),
+        );
+        let blocking_request = cx.spawn({
+            let client = client.clone();
+            move |_| async move { client.request::<Value>("tools/list", ()).await }
+        });
+        cx.executor().run_until_parked();
+
+        let queued_request = cx.spawn({
+            let client = client.clone();
+            move |_| async move { client.request::<Value>("tools/list", ()).await }
+        });
+        cx.executor().run_until_parked();
+        assert_eq!(transport.sent_messages().len(), 1);
+
+        client.stop();
+        client.stop();
+        transport.send_incoming(serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/tools/list_changed"
+        }));
+        cx.executor().run_until_parked();
+
+        for request in [blocking_request, queued_request] {
+            let error = request
+                .now_or_never()
+                .expect("stopping should fail requests without waiting for their timeout")
+                .expect_err("a stopped client's request should fail");
+            assert_eq!(error.to_string(), "Context server stopped");
+        }
+        assert!(client.io_tasks.lock().is_none());
+        assert!(client.response_handlers.lock().is_none());
+        assert_eq!(transport.incoming_rx.len(), 1);
+        assert_eq!(transport.sent_messages().len(), 1);
+        assert!(
+            client
+                .notify("notifications/tools/list_changed", ())
+                .is_err()
+        );
+        assert!(client.request::<Value>("tools/list", ()).await.is_err());
+        let weak_transport = Arc::downgrade(&transport);
+        drop(transport);
+        assert!(
+            weak_transport.upgrade().is_none(),
+            "retaining a stopped client must not keep its transport alive"
         );
     }
 

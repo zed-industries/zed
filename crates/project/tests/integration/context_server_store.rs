@@ -1,6 +1,7 @@
 use anyhow::Result;
 use context_server::test::create_fake_transport;
 use context_server::{ContextServer, ContextServerId};
+use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, McpRegistryFeatureFlag};
 use gpui::{AppContext, AsyncApp, Entity, Subscription, Task, TestAppContext, UpdateGlobal as _};
 use http_client::{FakeHttpClient, Response};
 use project::context_server_store::registry::ContextServerDescriptorRegistry;
@@ -10,7 +11,7 @@ use project::worktree_store::WorktreeStore;
 use project::{
     DisableAiSettings, FakeFs, Project,
     context_server_store::registry::ContextServerDescriptor,
-    mcp_registry_store::{McpRegistryStore, ServerResponse},
+    mcp_registry_store::{McpRegistryInstallationSource, McpRegistryStore, ServerResponse},
     project_settings::ProjectSettings,
 };
 use serde_json::json;
@@ -640,6 +641,7 @@ async fn test_local_registry_package_with_remote_flag_resolves_secrets_locally(
     let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
     let store = project.read_with(cx, |project, _| project.context_server_store());
     cx.update(|cx| {
+        cx.update_flags(false, vec![McpRegistryFeatureFlag::NAME.to_owned()]);
         let registry_store = McpRegistryStore::init_test_global(cx, Vec::new());
         registry_store.update(cx, |registry_store, cx| {
             registry_store.set_cached_servers(vec![registry_server], cx);
@@ -650,6 +652,10 @@ async fn test_local_registry_package_with_remote_flag_resolves_secrets_locally(
         enabled: true,
         remote: true,
         registry: settings::McpRegistryServerSettings {
+            source: Some(McpRegistryInstallationSource::Package {
+                registry_type: "npm".to_owned(),
+                identifier: "@example/secret-package".to_owned(),
+            }),
             credential_id: Some("0f8fad5b-d9cb-469f-a165-70867728950e".to_owned()),
             inputs: Default::default(),
         },
@@ -669,6 +675,159 @@ async fn test_local_registry_package_with_remote_flag_resolves_secrets_locally(
 }
 
 #[gpui::test]
+async fn test_registry_servers_require_the_flag_and_stop_when_it_is_disabled(
+    cx: &mut TestAppContext,
+) {
+    let registry_id = ContextServerId("io.example/flagged-server".into());
+    let custom_id = ContextServerId("custom-server".into());
+    let registry_server: ServerResponse = serde_json::from_value(json!({
+        "server": {
+            "name": registry_id.0,
+            "version": "1.0.0",
+            "remotes": [{
+                "type": "streamable-http",
+                "url": "https://example.com/mcp"
+            }]
+        }
+    }))
+    .expect("registry server should parse");
+    let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+    cx.update(|cx| {
+        cx.update_flags(true, vec![]);
+        let registry_store = McpRegistryStore::init_test_global(cx, Vec::new());
+        registry_store.update(cx, |registry_store, cx| {
+            registry_store.set_cached_servers(vec![registry_server], cx);
+        });
+    });
+
+    let created_servers = Rc::new(RefCell::new(Vec::new()));
+    let executor = cx.executor();
+    store.update(cx, |store, _| {
+        let created_servers = created_servers.clone();
+        store.set_context_server_factory(Box::new(move |id, _| {
+            created_servers.borrow_mut().push(id.clone());
+            Arc::new(ContextServer::new(
+                id.clone(),
+                Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
+            ))
+        }));
+    });
+    set_context_server_configuration(
+        vec![
+            (
+                registry_id.0.clone(),
+                settings::ContextServerSettingsContent::Registry {
+                    enabled: true,
+                    remote: false,
+                    registry: settings::McpRegistryServerSettings {
+                        source: Some(McpRegistryInstallationSource::Remote {
+                            url: "https://example.com/mcp".to_owned(),
+                        }),
+                        ..Default::default()
+                    },
+                },
+            ),
+            (
+                custom_id.0.clone(),
+                settings::ContextServerSettingsContent::Stdio {
+                    enabled: true,
+                    remote: false,
+                    command: ContextServerCommand {
+                        path: "somebinary".into(),
+                        args: Vec::new(),
+                        env: None,
+                        timeout: None,
+                    },
+                },
+            ),
+        ],
+        cx,
+    );
+    cx.run_until_parked();
+
+    let error = ContextServerStore::test_create_context_server(
+        store.downgrade(),
+        registry_id.0.clone(),
+        Arc::new(ContextServerConfiguration::Http {
+            url: "https://example.com/mcp".parse().expect("URL should parse"),
+            headers: Default::default(),
+            timeout: None,
+            oauth: None,
+        }),
+        &mut cx.to_async(),
+    )
+    .await
+    .expect_err("a previously resolved registry configuration must not bypass the flag");
+    assert!(error.to_string().contains("disabled"));
+    assert_visible_configuration_error(&store, &registry_id, "not enabled", cx);
+    assert_eq!(*created_servers.borrow(), vec![custom_id.clone()]);
+    store.read_with(cx, |store, cx| {
+        assert!(!store.is_server_enabled(&registry_id, cx));
+        assert!(!store.configured_server_ids().contains(&registry_id));
+        assert!(store.configuration_for_agent(&registry_id).is_none());
+        assert_eq!(
+            store.status_for_server(&custom_id),
+            Some(ContextServerStatus::Running)
+        );
+    });
+
+    cx.update(|cx| cx.update_flags(true, vec![McpRegistryFeatureFlag::NAME.to_owned()]));
+    cx.run_until_parked();
+    let running_registry_server = store.read_with(cx, |store, _| {
+        assert!(store.configuration_for_agent(&registry_id).is_some());
+        store
+            .get_running_server(&registry_id)
+            .expect("explicit opt-in should start the configured registry server")
+    });
+
+    cx.update(|cx| cx.update_flags(true, vec![]));
+    cx.run_until_parked();
+    assert_visible_configuration_error(&store, &registry_id, "not enabled", cx);
+    assert!(running_registry_server.client().is_none());
+    store.read_with(cx, |store, cx| {
+        assert!(store.get_running_server(&registry_id).is_none());
+        assert!(store.configuration_for_agent(&registry_id).is_none());
+        assert!(!store.is_server_enabled(&registry_id, cx));
+        assert!(!store.configured_server_ids().contains(&registry_id));
+        assert_eq!(
+            store.status_for_server(&custom_id),
+            Some(ContextServerStatus::Running)
+        );
+    });
+
+    store.update(cx, |store, cx| {
+        store.start_server(running_registry_server, cx);
+    });
+    cx.run_until_parked();
+    assert_visible_configuration_error(&store, &registry_id, "not enabled", cx);
+    assert_eq!(
+        created_servers
+            .borrow()
+            .iter()
+            .filter(|id| **id == registry_id)
+            .count(),
+        1,
+        "an explicit restart must not bypass the flag"
+    );
+
+    cx.update(|cx| cx.update_flags(true, vec![McpRegistryFeatureFlag::NAME.to_owned()]));
+    cx.run_until_parked();
+    store.read_with(cx, |store, _| {
+        assert!(store.get_running_server(&registry_id).is_some());
+    });
+    assert_eq!(
+        created_servers
+            .borrow()
+            .iter()
+            .filter(|id| **id == custom_id)
+            .count(),
+        1,
+        "flag changes must not restart non-registry servers"
+    );
+}
+
+#[gpui::test]
 async fn test_user_registry_server_is_not_reported_as_project_local(cx: &mut TestAppContext) {
     const SERVER_ID: &str = "io.example/user-registry-server";
 
@@ -683,6 +842,7 @@ async fn test_user_registry_server_is_not_reported_as_project_local(cx: &mut Tes
                 enabled: false,
                 remote: false,
                 registry: settings::McpRegistryServerSettings {
+                    source: None,
                     credential_id: None,
                     inputs: Default::default(),
                 },
@@ -1699,8 +1859,10 @@ async fn test_http_server_reinitializes_expired_session(cx: &mut TestAppContext)
             .client()
             .expect("running server should have a client")
     });
+    // A caller can retain the expired client while the store starts its replacement.
+    let expired_client = client.clone();
     let expired_request = cx.executor().spawn(async move {
-        client
+        expired_client
             .request::<context_server::types::requests::ListTools>(())
             .await
     });
@@ -1723,6 +1885,13 @@ async fn test_http_server_reinitializes_expired_session(cx: &mut TestAppContext)
             Some(ContextServerStatus::Running),
         );
     });
+    assert!(
+        client
+            .request::<context_server::types::requests::ListTools>(())
+            .await
+            .is_err(),
+        "the expired client must stay shut down after the server restarts"
+    );
     let client = store.read_with(cx, |store, _| {
         store
             .get_running_server(&server_id)

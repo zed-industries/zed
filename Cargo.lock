@@ -481,6 +481,7 @@ dependencies = [
  "command_palette_hooks",
  "component",
  "context_server",
+ "credentials_provider",
  "db",
  "editor",
  "eval_utils",
@@ -558,6 +559,7 @@ dependencies = [
  "watch",
  "workspace",
  "zed_actions",
+ "zed_credentials_provider",
 ]
 
 [[package]]
@@ -14111,6 +14113,7 @@ dependencies = [
  "encoding_rs",
  "extension",
  "fancy-regex",
+ "feature_flags",
  "fs",
  "futures 0.3.34",
  "fuzzy",
@@ -15269,6 +15272,7 @@ dependencies = [
  "env_logger 0.11.8",
  "extension",
  "extension_host",
+ "feature_flags",
  "fs",
  "futures 0.3.34",
  "git",

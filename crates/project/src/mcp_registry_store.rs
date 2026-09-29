@@ -2,15 +2,17 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use collections::{HashMap, HashSet};
+use feature_flags::{FeatureFlagAppExt as _, FeatureFlagStore, McpRegistryFeatureFlag};
 use fs::Fs;
-use futures::{AsyncReadExt, StreamExt as _, channel::oneshot, stream};
+use futures::{AsyncReadExt, FutureExt as _, StreamExt as _, channel::oneshot, stream};
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, FutureExt as _, Global,
-    SharedString, Subscription, Task, TaskExt as _,
+    SharedString, Subscription, Task,
 };
 use http_client::{AsyncBody, HttpClient, StatusCode};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+pub use settings::McpRegistryInstallationSource;
 use settings::{Settings as _, SettingsFile, SettingsStore};
 use sha2::{Digest as _, Sha256};
 use url::Url;
@@ -36,9 +38,12 @@ pub async fn read_server_secrets(
     credential_id: &str,
     cx: &AsyncApp,
 ) -> Result<HashMap<String, Vec<String>>> {
+    ensure_registry_enabled(cx.update(|cx| cx.has_flag::<McpRegistryFeatureFlag>()))?;
     let key = registry_inputs_credential_key(credential_id)?;
     let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
-    let Some((username, payload)) = credentials_provider.read_credentials(&key, cx).await? else {
+    let Some((username, payload)) =
+        run_with_registry_enabled(cx, credentials_provider.read_credentials(&key, cx)).await?
+    else {
         return Ok(HashMap::default());
     };
 
@@ -63,6 +68,7 @@ pub async fn write_server_secrets(
     inputs: &HashMap<String, Vec<String>>,
     cx: &AsyncApp,
 ) -> Result<()> {
+    ensure_registry_enabled(cx.update(|cx| cx.has_flag::<McpRegistryFeatureFlag>()))?;
     let key = registry_inputs_credential_key(credential_id)?;
     let payload = serde_json::to_vec(&StoredRegistryInputs {
         version: REGISTRY_INPUTS_CREDENTIAL_VERSION,
@@ -70,15 +76,60 @@ pub async fn write_server_secrets(
     })
     .context("serializing MCP Registry inputs")?;
     let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
-    credentials_provider
-        .write_credentials(&key, REGISTRY_INPUTS_CREDENTIAL_USERNAME, &payload, cx)
-        .await
+    run_with_registry_enabled(
+        cx,
+        credentials_provider.write_credentials(
+            &key,
+            REGISTRY_INPUTS_CREDENTIAL_USERNAME,
+            &payload,
+            cx,
+        ),
+    )
+    .await
 }
 
 pub async fn delete_server_secrets(credential_id: &str, cx: &AsyncApp) -> Result<()> {
+    ensure_registry_enabled(cx.update(|cx| cx.has_flag::<McpRegistryFeatureFlag>()))?;
     let key = registry_inputs_credential_key(credential_id)?;
     let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
-    credentials_provider.delete_credentials(&key, cx).await
+    run_with_registry_enabled(cx, credentials_provider.delete_credentials(&key, cx)).await
+}
+
+fn ensure_registry_enabled(enabled: bool) -> Result<()> {
+    if !enabled {
+        bail!("MCP Registry feature is not enabled");
+    }
+    Ok(())
+}
+
+pub(crate) async fn run_with_registry_enabled<T>(
+    cx: &AsyncApp,
+    operation: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    let (disabled_sender, disabled_receiver) = oneshot::channel();
+    let _subscription = cx.update(|cx| {
+        ensure_registry_enabled(cx.has_flag::<McpRegistryFeatureFlag>())?;
+        let mut disabled_sender = Some(disabled_sender);
+        anyhow::Ok(
+            cx.observe_flag::<McpRegistryFeatureFlag, _>(move |enabled, _cx| {
+                if enabled == feature_flags::PresenceFlag::Off
+                    && let Some(sender) = disabled_sender.take()
+                    && sender.send(()).is_err()
+                {
+                    log::trace!("MCP Registry operation was already canceled");
+                }
+            }),
+        )
+    })?;
+    // The caller may retain the task after opt-out, so dropping store-owned tasks is not enough.
+    let mut disabled = std::pin::pin!(disabled_receiver.fuse());
+    let mut operation = std::pin::pin!(operation.fuse());
+    let result = futures::select_biased! {
+        _ = disabled => bail!("MCP Registry feature is not enabled"),
+        result = operation => result,
+    };
+    ensure_registry_enabled(cx.update(|cx| cx.has_flag::<McpRegistryFeatureFlag>()))?;
+    result
 }
 
 pub fn registry_credential_is_referenced(credential_id: &str, cx: &App) -> bool {
@@ -169,18 +220,6 @@ pub struct ServerResponse {
     pub metadata: ServerMetadata,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum McpRegistryInstallationSource {
-    Package {
-        registry_type: String,
-        identifier: String,
-    },
-    Remote {
-        url: String,
-    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -329,6 +368,31 @@ fn is_exact_package_version(version: &str) -> bool {
     semver::Version::parse(version).is_ok()
 }
 
+fn is_bare_npm_package_name(identifier: &str) -> bool {
+    fn valid_segment(segment: &str) -> bool {
+        let mut bytes = segment.bytes();
+        bytes
+            .next()
+            .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+            && bytes.all(|byte| {
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b'-' | b'_' | b'.' | b'~')
+            })
+    }
+
+    if identifier.len() > 214 || matches!(identifier, "node_modules" | "favicon.ico") {
+        return false;
+    }
+    if let Some(scoped) = identifier.strip_prefix('@') {
+        scoped
+            .split_once('/')
+            .is_some_and(|(scope, name)| valid_segment(scope) && valid_segment(name))
+    } else {
+        valid_segment(identifier)
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ServerMetadata {
     #[serde(rename = "io.modelcontextprotocol.registry/official", default)]
@@ -444,7 +508,7 @@ pub struct Package {
 impl Package {
     pub fn is_supported_installation(&self) -> bool {
         self.registry_type == "npm"
-            && !self.identifier.is_empty()
+            && is_bare_npm_package_name(&self.identifier)
             && self.file_sha256.is_none()
             && self
                 .version
@@ -812,44 +876,46 @@ fn argument_contains_secret_input(argument: &Argument) -> bool {
 
 fn argument_overrides_npm_policy(argument: &Argument) -> bool {
     match argument {
-        Argument::Named(argument) => is_npm_policy_argument(&argument.name),
-        Argument::Positional(argument) => argument
-            .input
-            .input
-            .value
-            .as_deref()
-            .or(argument.input.input.default.as_deref())
-            .is_some_and(is_npm_policy_argument),
-        Argument::Unknown(_) => false,
+        Argument::Named(argument) => {
+            !is_allowed_npm_runtime_argument(&argument.name) || !is_standalone_flag(&argument.input)
+        }
+        Argument::Positional(_) | Argument::Unknown(_) => true,
     }
 }
 
-fn is_npm_policy_argument(argument: &str) -> bool {
-    let key = argument
-        .trim_start_matches('-')
-        .split('=')
-        .next()
-        .unwrap_or_default()
-        .to_ascii_lowercase()
-        .replace('_', "-");
-    let key = key.strip_prefix("no-").unwrap_or(&key);
-    const PROTECTED_KEYS: &[&str] = &[
-        "registry",
-        "userconfig",
-        "globalconfig",
-        "before",
-        "min-release-age",
-        "min-release-age-exclude",
-        "min-release-age-exclude-scopes",
-    ];
+fn is_allowed_npm_runtime_argument(argument: &str) -> bool {
+    matches!(argument, "--yes" | "-y" | "--quiet" | "--silent")
+}
 
-    key.is_empty()
-        || PROTECTED_KEYS
-            .iter()
-            .any(|protected_key| protected_key.starts_with(&key))
-        || key.rsplit_once(':').is_some_and(|(_, scoped_key)| {
-            !scoped_key.is_empty() && "registry".starts_with(scoped_key)
-        })
+pub(crate) fn validate_npm_runtime_arguments(arguments: &[String]) -> Result<()> {
+    if let Some(argument) = arguments
+        .iter()
+        .find(|argument| !is_allowed_npm_runtime_argument(argument))
+    {
+        bail!("MCP Registry npm runtime argument `{argument}` is not allowed");
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_npm_environment(environment: &HashMap<String, String>) -> Result<()> {
+    if let Some(name) = environment
+        .keys()
+        .find(|name| is_npm_bootstrap_environment_variable(name))
+    {
+        bail!("MCP Registry environment variable `{name}` affects npm bootstrap policy");
+    }
+    Ok(())
+}
+
+pub(crate) fn registry_npm_package_name(package_spec: &str) -> Result<&str> {
+    let (name, version) = package_spec
+        .rsplit_once("@0.0.0 - ")
+        .context("invalid MCP Registry npm package specification")?;
+    anyhow::ensure!(
+        is_bare_npm_package_name(name) && is_exact_package_version(version),
+        "invalid MCP Registry npm package specification"
+    );
+    Ok(name)
 }
 
 fn is_npm_bootstrap_environment_variable(name: &str) -> bool {
@@ -1073,18 +1139,8 @@ pub fn resolve_server_configuration(
                 settings_inputs,
                 secret_inputs,
             )?;
-            if let Some(argument) = runtime_arguments
-                .iter()
-                .find(|argument| is_npm_policy_argument(argument))
-            {
-                bail!("MCP Registry npm runtime argument `{argument}` overrides npm policy");
-            }
-            if let Some(name) = environment
-                .keys()
-                .find(|name| is_npm_bootstrap_environment_variable(name))
-            {
-                bail!("MCP Registry environment variable `{name}` affects npm bootstrap policy");
-            }
+            validate_npm_runtime_arguments(&runtime_arguments)?;
+            validate_npm_environment(&environment)?;
 
             Ok(ResolvedMcpRegistryServer::Npm {
                 package_spec: node_runtime::npm_package_spec_with_version_ceiling(&format!(
@@ -1394,7 +1450,7 @@ pub struct McpRegistryStore {
     registry_api_base_url: String,
     servers: Vec<ServerResponse>,
     cached_servers: HashMap<String, ServerResponse>,
-    installation_source_hints: HashMap<String, McpRegistryInstallationSource>,
+    // Caller-owned settings writes must finish or roll back before another operation, even after opt-out.
     pending_server_operations: HashSet<String>,
     installed_server_names: HashSet<String>,
     refreshed_server_names: HashSet<String>,
@@ -1406,7 +1462,7 @@ pub struct McpRegistryStore {
     list_generation: u64,
     installed_refresh_generation: u64,
     cache_loaded: bool,
-    cache_load_waiters: Vec<oneshot::Sender<()>>,
+    cache_load_waiters: Vec<oneshot::Sender<std::result::Result<(), SharedString>>>,
     pending_list_fetch: Option<Task<()>>,
     pending_installed_refresh: Option<Task<()>>,
     pending_installed_refresh_names: HashSet<String>,
@@ -1416,6 +1472,9 @@ pub struct McpRegistryStore {
     pending_cache_write: Option<Task<()>>,
     pending_cache_snapshot: Option<CachedServersFile>,
     _settings_subscription: Option<Subscription>,
+    _flag_subscription: Option<Subscription>,
+    pending_cache_load: Option<Task<()>>,
+    enabled: bool,
 }
 
 impl McpRegistryStore {
@@ -1428,6 +1487,7 @@ impl McpRegistryStore {
             return store;
         }
 
+        cx.default_global::<FeatureFlagStore>();
         let store =
             cx.new(|cx| Self::new(fs, http_client, REGISTRY_API_BASE_URL.to_owned(), true, cx));
         cx.set_global(GlobalMcpRegistryStore(store.clone()));
@@ -1446,13 +1506,13 @@ impl McpRegistryStore {
     #[cfg(any(test, feature = "test-support"))]
     pub fn init_test_global(cx: &mut App, servers: Vec<ServerResponse>) -> Entity<Self> {
         let fs: Arc<dyn Fs> = fs::FakeFs::new(cx.background_executor().clone());
+        let enabled = cx.has_flag::<McpRegistryFeatureFlag>();
         let store = cx.new(|_cx| Self {
             fs,
             http_client: http_client::FakeHttpClient::with_404_response(),
             registry_api_base_url: REGISTRY_API_BASE_URL.to_owned(),
             servers,
             cached_servers: HashMap::default(),
-            installation_source_hints: HashMap::default(),
             pending_server_operations: HashSet::default(),
             installed_server_names: HashSet::default(),
             refreshed_server_names: HashSet::default(),
@@ -1473,6 +1533,9 @@ impl McpRegistryStore {
             pending_cache_write: None,
             pending_cache_snapshot: None,
             _settings_subscription: None,
+            _flag_subscription: None,
+            pending_cache_load: None,
+            enabled,
         });
         cx.set_global(GlobalMcpRegistryStore(store.clone()));
         store
@@ -1503,6 +1566,9 @@ impl McpRegistryStore {
     }
 
     pub fn begin_server_operation(&mut self, name: &str, cx: &mut Context<Self>) -> bool {
+        if !cx.has_flag::<McpRegistryFeatureFlag>() {
+            return false;
+        }
         let inserted = self.pending_server_operations.insert(name.to_owned());
         if inserted {
             cx.notify();
@@ -1533,6 +1599,9 @@ impl McpRegistryStore {
     }
 
     pub fn search(&mut self, query: Option<String>, cx: &mut Context<Self>) {
+        if !cx.has_flag::<McpRegistryFeatureFlag>() {
+            return;
+        }
         self.list_generation = self.list_generation.wrapping_add(1);
         self.pending_list_fetch.take();
         self.query = normalize_query(query);
@@ -1544,6 +1613,9 @@ impl McpRegistryStore {
     }
 
     pub fn load_more(&mut self, cx: &mut Context<Self>) {
+        if !cx.has_flag::<McpRegistryFeatureFlag>() {
+            return;
+        }
         if self.is_fetching {
             return;
         }
@@ -1560,18 +1632,24 @@ impl McpRegistryStore {
         cursor: Option<String>,
         cx: &App,
     ) -> Task<Result<ServerListResponse>> {
+        if !cx.has_flag::<McpRegistryFeatureFlag>() {
+            return Task::ready(Err(anyhow!("MCP Registry feature is not enabled")));
+        }
         let http_client = self.http_client.clone();
         let registry_api_base_url = self.registry_api_base_url.clone();
         let executor = cx.background_executor().clone();
         let query = normalize_query(query);
-        cx.background_spawn(async move {
-            fetch_server_list(
-                http_client,
-                &registry_api_base_url,
-                query.as_deref(),
-                cursor.as_deref(),
-                REGISTRY_PAGE_LIMIT,
-                &executor,
+        cx.spawn(async move |cx| {
+            run_with_registry_enabled(
+                cx,
+                fetch_server_list(
+                    http_client,
+                    &registry_api_base_url,
+                    query.as_deref(),
+                    cursor.as_deref(),
+                    REGISTRY_PAGE_LIMIT,
+                    &executor,
+                ),
             )
             .await
         })
@@ -1582,6 +1660,9 @@ impl McpRegistryStore {
         name: &str,
         cx: &mut Context<Self>,
     ) -> Task<Result<ServerResponse>> {
+        if !cx.has_flag::<McpRegistryFeatureFlag>() {
+            return Task::ready(Err(anyhow!("MCP Registry feature is not enabled")));
+        }
         if let Some(server) = self.cached_server(name).cloned() {
             self.refresh_server_in_background(name, cx);
             return Task::ready(Ok(server));
@@ -1594,7 +1675,8 @@ impl McpRegistryStore {
             return cx.spawn(async move |this, cx| {
                 receiver
                     .await
-                    .context("waiting for the MCP Registry cache to load")?;
+                    .context("waiting for the MCP Registry cache to load")?
+                    .map_err(|error| anyhow!(error))?;
                 let details_task = this.update(cx, |this, cx| this.server_details(&name, cx))?;
                 details_task.await
             });
@@ -1622,10 +1704,21 @@ impl McpRegistryStore {
         let executor = cx.background_executor().clone();
         let name = name.to_owned();
         cx.spawn(async move |this, cx| {
-            let result =
-                fetch_server_response(http_client, &registry_api_base_url, &name, true, &executor)
-                    .await;
+            let result = run_with_registry_enabled(cx, async {
+                anyhow::Ok(
+                    fetch_server_response(
+                        http_client,
+                        &registry_api_base_url,
+                        &name,
+                        true,
+                        &executor,
+                    )
+                    .await,
+                )
+            })
+            .await?;
             this.update(cx, |this, cx| {
+                ensure_registry_enabled(cx.has_flag::<McpRegistryFeatureFlag>())?;
                 if !this.is_current_server_generation(&name, generation) {
                     return this.cached_server(&name).cloned().map_or(result, Ok);
                 }
@@ -1644,41 +1737,42 @@ impl McpRegistryStore {
     pub fn server_installation(
         &mut self,
         name: &str,
+        source: Option<McpRegistryInstallationSource>,
         cx: &mut Context<Self>,
     ) -> Task<Result<(ServerResponse, McpRegistryInstallationSource)>> {
+        if !cx.has_flag::<McpRegistryFeatureFlag>() {
+            return Task::ready(Err(anyhow!("MCP Registry feature is not enabled")));
+        }
+        let Some(source) = source else {
+            return Task::ready(Err(anyhow!(
+                "MCP Registry server `{name}` has no approved installation source. Reinstall it from the registry to select a source."
+            )));
+        };
         let details_task = self.server_details(name, cx);
         let name = name.to_owned();
-        cx.spawn(async move |this, cx| {
+        cx.spawn(async move |_this, cx| {
             let server = details_task.await?;
+            ensure_registry_enabled(cx.update(|cx| cx.has_flag::<McpRegistryFeatureFlag>()))?;
             if server.name() != name {
                 bail!("MCP Registry returned details for an unexpected server");
             }
-
-            let source =
-                this.update(cx, |this, cx| this.select_installation_source(&server, cx))??;
+            if !server
+                .installation_options()
+                .iter()
+                .any(|option| option.source == source)
+            {
+                bail!(
+                    "The approved installation source for MCP Registry server `{name}` is no longer available. Reinstall it from the registry to approve a different source."
+                );
+            }
             Ok((server, source))
         })
     }
 
     pub fn remember_server(&mut self, server: ServerResponse, cx: &mut Context<Self>) {
-        self.remember_server_inner(server, None, cx);
-    }
-
-    pub fn remember_server_installation(
-        &mut self,
-        server: ServerResponse,
-        source: McpRegistryInstallationSource,
-        cx: &mut Context<Self>,
-    ) {
-        self.remember_server_inner(server, Some(source), cx);
-    }
-
-    fn remember_server_inner(
-        &mut self,
-        server: ServerResponse,
-        source: Option<McpRegistryInstallationSource>,
-        cx: &mut Context<Self>,
-    ) {
+        if !cx.has_flag::<McpRegistryFeatureFlag>() {
+            return;
+        }
         let name = server.name().to_owned();
         if name.is_empty() {
             log::warn!("not caching an MCP Registry server with an empty name");
@@ -1689,49 +1783,15 @@ impl McpRegistryStore {
         self.next_server_generation(&name);
         self.refreshed_server_names.insert(name.clone());
         self.cached_servers.insert(name.clone(), server.clone());
-        if let Some(source) = source {
-            self.installation_source_hints.insert(name.clone(), source);
-        }
         self.complete_installed_refresh_waiters(&name, Ok(server));
         self.persist_cached_servers(cx);
         cx.notify();
     }
 
-    fn select_installation_source(
-        &mut self,
-        server: &ServerResponse,
-        cx: &mut Context<Self>,
-    ) -> Result<McpRegistryInstallationSource> {
-        let name = server.name();
-        let options = server.installation_options();
-        let source = self
-            .installation_source_hints
-            .get(name)
-            .filter(|source| options.iter().any(|option| &option.source == *source))
-            .cloned()
-            .or_else(|| {
-                options
-                    .iter()
-                    .min_by_key(|option| &option.source)
-                    .map(|option| option.source.clone())
-            });
-
-        let Some(source) = source else {
-            if self.installation_source_hints.remove(name).is_some() {
-                self.persist_cached_servers(cx);
-            }
-            bail!("MCP Registry server `{name}` does not offer a supported installation source");
-        };
-
-        if self.installation_source_hints.get(name) != Some(&source) {
-            self.installation_source_hints
-                .insert(name.to_owned(), source.clone());
-            self.persist_cached_servers(cx);
-        }
-        Ok(source)
-    }
-
     pub fn refresh_installed(&mut self, cx: &mut Context<Self>) {
+        if !cx.has_flag::<McpRegistryFeatureFlag>() {
+            return;
+        }
         let installed_server_names = installed_registry_server_names(cx);
         if !self.cache_loaded {
             self.installed_server_names = installed_server_names;
@@ -1747,8 +1807,17 @@ impl McpRegistryStore {
         load_cache: bool,
         cx: &mut Context<Self>,
     ) -> Self {
-        let installed_server_names = installed_registry_server_names(cx);
+        cx.default_global::<FeatureFlagStore>();
+        let enabled = cx.has_flag::<McpRegistryFeatureFlag>();
+        let installed_server_names = if enabled {
+            installed_registry_server_names(cx)
+        } else {
+            HashSet::default()
+        };
         let settings_subscription = cx.observe_global::<SettingsStore>(|this, cx| {
+            if !cx.has_flag::<McpRegistryFeatureFlag>() {
+                return;
+            }
             let installed_server_names = installed_registry_server_names(cx);
             if installed_server_names == this.installed_server_names {
                 return;
@@ -1761,13 +1830,25 @@ impl McpRegistryStore {
             }
         });
 
+        let flag_subscription = cx.observe_global::<FeatureFlagStore>(|this, cx| {
+            let enabled = cx.has_flag::<McpRegistryFeatureFlag>();
+            if enabled != this.enabled {
+                this.enabled = enabled;
+                if enabled {
+                    this.cache_loaded = false;
+                    this.load_cached_servers(this.fs.clone(), cx);
+                } else {
+                    this.disable(cx);
+                }
+            }
+        });
+
         let mut store = Self {
             fs: fs.clone(),
             http_client,
             registry_api_base_url,
             servers: Vec::new(),
             cached_servers: HashMap::default(),
-            installation_source_hints: HashMap::default(),
             pending_server_operations: HashSet::default(),
             installed_server_names,
             refreshed_server_names: HashSet::default(),
@@ -1778,7 +1859,7 @@ impl McpRegistryStore {
             fetch_error: None,
             list_generation: 0,
             installed_refresh_generation: 0,
-            cache_loaded: !load_cache,
+            cache_loaded: !load_cache || !enabled,
             cache_load_waiters: Vec::new(),
             pending_list_fetch: None,
             pending_installed_refresh: None,
@@ -1788,15 +1869,66 @@ impl McpRegistryStore {
             pending_cache_write: None,
             pending_cache_snapshot: None,
             _settings_subscription: Some(settings_subscription),
+            _flag_subscription: Some(flag_subscription),
+            pending_cache_load: None,
+            enabled,
         };
 
-        if load_cache {
+        if load_cache && enabled {
             store.load_cached_servers(fs, cx);
+        } else if enabled {
+            store.refresh_installed(cx);
         }
         store
     }
 
+    fn disable(&mut self, cx: &mut Context<Self>) {
+        self.list_generation = self.list_generation.wrapping_add(1);
+        self.installed_refresh_generation = self.installed_refresh_generation.wrapping_add(1);
+        self.pending_list_fetch.take();
+        self.pending_installed_refresh.take();
+        self.pending_cache_load.take();
+        self.pending_server_refreshes.clear();
+        self.pending_cache_write.take();
+        self.pending_cache_snapshot = None;
+        for generation in self.server_generations.values_mut() {
+            *generation = generation.wrapping_add(1);
+        }
+        self.pending_installed_refresh_names.clear();
+        self.installed_server_names.clear();
+        self.refreshed_server_names.clear();
+        self.servers.clear();
+        self.cached_servers.clear();
+        self.next_cursor = None;
+        self.is_fetching = false;
+        self.fetch_error = None;
+        self.cache_loaded = true;
+        for waiter in self.cache_load_waiters.drain(..) {
+            if waiter
+                .send(Err("MCP Registry feature is not enabled".into()))
+                .is_err()
+            {
+                log::debug!("MCP Registry cache waiter was canceled");
+            }
+        }
+        let names = self
+            .installed_refresh_waiters
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for name in names {
+            self.complete_installed_refresh_waiters(
+                &name,
+                Err("MCP Registry feature is not enabled".into()),
+            );
+        }
+        cx.notify();
+    }
+
     fn fetch_page(&mut self, cursor: Option<String>, cx: &mut Context<Self>) {
+        if !cx.has_flag::<McpRegistryFeatureFlag>() {
+            return;
+        }
         let generation = self.list_generation;
         let query = self.query.clone();
         let http_client = self.http_client.clone();
@@ -1819,7 +1951,7 @@ impl McpRegistryStore {
             .await;
 
             this.update(cx, |this, cx| {
-                if this.list_generation != generation {
+                if !cx.has_flag::<McpRegistryFeatureFlag>() || this.list_generation != generation {
                     return;
                 }
 
@@ -1860,7 +1992,10 @@ impl McpRegistryStore {
     }
 
     fn load_cached_servers(&mut self, fs: Arc<dyn Fs>, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
+        if !cx.has_flag::<McpRegistryFeatureFlag>() {
+            return;
+        }
+        self.pending_cache_load = Some(cx.spawn(async move |this, cx| {
             let cache_path = registry_cache_path();
             let cached_file = if fs.is_file(&cache_path).await {
                 fs.load_bytes(&cache_path)
@@ -1875,6 +2010,10 @@ impl McpRegistryStore {
             };
 
             this.update(cx, |this, cx| {
+                if !cx.has_flag::<McpRegistryFeatureFlag>() {
+                    return;
+                }
+                this.pending_cache_load = None;
                 match cached_file {
                     Ok(cached_file) => {
                         let mut published_cache = false;
@@ -1883,11 +2022,6 @@ impl McpRegistryStore {
                             if !name.is_empty() && !this.cached_servers.contains_key(&name) {
                                 this.cached_servers.insert(name, server);
                                 published_cache = true;
-                            }
-                        }
-                        for (name, source) in cached_file.source_hints {
-                            if this.cached_servers.contains_key(&name) {
-                                this.installation_source_hints.entry(name).or_insert(source);
                             }
                         }
                         if published_cache {
@@ -1903,15 +2037,13 @@ impl McpRegistryStore {
                 let installed_server_names = installed_registry_server_names(cx);
                 this.refresh_installed_names(installed_server_names, false, cx);
                 for waiter in this.cache_load_waiters.drain(..) {
-                    if waiter.send(()).is_err() {
+                    if waiter.send(Ok(())).is_err() {
                         log::debug!("MCP Registry cache waiter was canceled");
                     }
                 }
-            })?;
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+            })
+            .log_err();
+        }));
     }
 
     fn refresh_installed_names(
@@ -1920,6 +2052,9 @@ impl McpRegistryStore {
         force: bool,
         cx: &mut Context<Self>,
     ) {
+        if !cx.has_flag::<McpRegistryFeatureFlag>() {
+            return;
+        }
         if self.pending_installed_refresh.is_some()
             && installed_server_names == self.installed_server_names
         {
@@ -2007,7 +2142,9 @@ impl McpRegistryStore {
             while let Some((name, server_generation, result)) = responses.next().await {
                 let Some(is_current) = this
                     .update(cx, |this, cx| {
-                        if this.installed_refresh_generation != generation {
+                        if !cx.has_flag::<McpRegistryFeatureFlag>()
+                            || this.installed_refresh_generation != generation
+                        {
                             return false;
                         }
 
@@ -2024,7 +2161,9 @@ impl McpRegistryStore {
             }
 
             this.update(cx, |this, cx| {
-                if this.installed_refresh_generation != generation {
+                if !cx.has_flag::<McpRegistryFeatureFlag>()
+                    || this.installed_refresh_generation != generation
+                {
                     return;
                 }
                 this.pending_installed_refresh = None;
@@ -2111,6 +2250,9 @@ impl McpRegistryStore {
     }
 
     fn refresh_server_in_background(&mut self, name: &str, cx: &mut Context<Self>) {
+        if !cx.has_flag::<McpRegistryFeatureFlag>() {
+            return;
+        }
         if self.refreshed_server_names.contains(name)
             || self.pending_server_refreshes.contains_key(name)
             || (self.installed_server_names.contains(name)
@@ -2137,7 +2279,9 @@ impl McpRegistryStore {
             .await;
             this.update(cx, |this, cx| {
                 this.pending_server_refreshes.remove(&task_name);
-                if !this.is_current_server_generation(&task_name, generation) {
+                if !cx.has_flag::<McpRegistryFeatureFlag>()
+                    || !this.is_current_server_generation(&task_name, generation)
+                {
                     return;
                 }
                 match result {
@@ -2169,18 +2313,12 @@ impl McpRegistryStore {
     }
 
     fn persist_cached_servers(&mut self, cx: &mut Context<Self>) {
+        if !cx.has_flag::<McpRegistryFeatureFlag>() {
+            return;
+        }
         let mut servers = self.cached_servers.values().cloned().collect::<Vec<_>>();
         servers.sort_unstable_by(|left, right| left.name().cmp(right.name()));
-        let source_hints = self
-            .installation_source_hints
-            .iter()
-            .filter(|(name, _source)| self.cached_servers.contains_key(*name))
-            .map(|(name, source)| (name.clone(), source.clone()))
-            .collect();
-        let snapshot = CachedServersFile {
-            servers,
-            source_hints,
-        };
+        let snapshot = CachedServersFile { servers };
 
         if self.pending_cache_write.is_some() {
             self.pending_cache_snapshot = Some(snapshot);
@@ -2200,6 +2338,10 @@ impl McpRegistryStore {
 
             this.update(cx, |this, cx| {
                 this.pending_cache_write = None;
+                if !cx.has_flag::<McpRegistryFeatureFlag>() {
+                    this.pending_cache_snapshot = None;
+                    return;
+                }
                 if let Some(snapshot) = this.pending_cache_snapshot.take() {
                     this.start_cache_write(snapshot, cx);
                 }
@@ -2213,8 +2355,6 @@ impl McpRegistryStore {
 struct CachedServersFile {
     #[serde(default)]
     servers: Vec<ServerResponse>,
-    #[serde(default)]
-    source_hints: HashMap<String, McpRegistryInstallationSource>,
 }
 
 fn installed_registry_server_names(cx: &App) -> HashSet<String> {
@@ -2464,6 +2604,308 @@ mod tests {
         });
     }
 
+    fn enable_registry(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.update_flags(false, vec!["mcp-registry".to_owned()]));
+    }
+
+    #[gpui::test]
+    async fn disabled_registry_ignores_installed_settings_and_public_requests(
+        cx: &mut TestAppContext,
+    ) {
+        initialize_project_settings(cx);
+        set_installed_registry_servers(cx, &["io.example/server"]);
+        cx.update(|cx| {
+            assert!(!cx.has_flag::<McpRegistryFeatureFlag>());
+            cx.set_staff(true);
+            assert!(!cx.has_flag::<McpRegistryFeatureFlag>());
+        });
+        let (http_client, _response_senders, request_count) = controlled_http_client(4);
+        let cached_server = test_server("io.example/server", "1.0.0", "Cached");
+        let fs = fs::FakeFs::new(cx.executor());
+        let cache_path = registry_cache_path();
+        fs.create_dir(cache_path.parent().expect("cache has parent"))
+            .await
+            .expect("cache directory should be created");
+        let cache_bytes = serde_json::to_vec(&CachedServersFile {
+            servers: vec![cached_server],
+        })
+        .expect("cache should serialize");
+        fs.insert_file(cache_path.clone(), cache_bytes.clone())
+            .await;
+
+        let store = cx.update(|cx| McpRegistryStore::init_global(cx, fs.clone(), http_client));
+        store.update(cx, |store, cx| {
+            store.search(None, cx);
+            store.load_more(cx);
+            store.refresh_installed(cx);
+            assert!(!store.begin_server_operation("io.example/server", cx));
+        });
+        let (details, installation, page) = store.update(cx, |store, cx| {
+            (
+                store.server_details("io.example/server", cx),
+                store.server_installation("io.example/server", None, cx),
+                store.fetch_server_list_page(None, None, cx),
+            )
+        });
+        for result in [
+            details.await.map(|_| ()),
+            installation.await.map(|_| ()),
+            page.await.map(|_| ()),
+        ] {
+            assert!(
+                result
+                    .expect_err("registry should be disabled for staff by default")
+                    .to_string()
+                    .contains("MCP Registry feature is not enabled")
+            );
+        }
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            fs.load_bytes(&cache_path)
+                .await
+                .expect("disabled registry must not replace cache"),
+            cache_bytes
+        );
+        store.read_with(cx, |store, _| {
+            assert!(store.cached_server("io.example/server").is_none());
+            assert!(store.servers().is_empty());
+            assert!(!store.is_fetching());
+        });
+    }
+
+    #[gpui::test]
+    async fn registry_flag_transitions_cancel_in_flight_details(cx: &mut TestAppContext) {
+        initialize_project_settings(cx);
+        let (http_client, mut response_senders, request_count) = controlled_http_client(1);
+        let fs: Arc<dyn Fs> = fs::FakeFs::new(cx.executor());
+        let store = cx.update(|cx| McpRegistryStore::init_global(cx, fs, http_client));
+        cx.executor().allow_parking();
+
+        enable_registry(cx);
+        cx.run_until_parked();
+        let details = store.update(cx, |store, cx| {
+            store.server_details("io.example/server", cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+
+        cx.update(|cx| cx.update_flags(false, Vec::new()));
+        enable_registry(cx);
+        cx.run_until_parked();
+        let response_sender = response_senders
+            .pop_front()
+            .expect("detail response sender should exist");
+        assert!(
+            response_sender.is_canceled(),
+            "opt-out must cancel the HTTP request"
+        );
+        assert!(
+            details
+                .now_or_never()
+                .expect("opt-out must finish without a response or timeout")
+                .expect_err("re-enabling must not revive old details")
+                .to_string()
+                .contains("MCP Registry feature is not enabled")
+        );
+        store.read_with(cx, |store, _| {
+            assert!(store.cached_server("io.example/server").is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn disabling_registry_unblocks_installed_refresh_waiters(cx: &mut TestAppContext) {
+        enable_registry(cx);
+        initialize_project_settings(cx);
+        set_installed_registry_servers(cx, &["io.example/server"]);
+        let (http_client, _response_senders, request_count) = controlled_http_client(1);
+        let fs: Arc<dyn Fs> = fs::FakeFs::new(cx.executor());
+        let store = cx.new(|cx| {
+            McpRegistryStore::new(
+                fs,
+                http_client,
+                "https://registry.example.test/v0.1".to_owned(),
+                false,
+                cx,
+            )
+        });
+        cx.executor().allow_parking();
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+
+        let details = store.update(cx, |store, cx| {
+            store.server_details("io.example/server", cx)
+        });
+        cx.update(|cx| cx.update_flags(false, Vec::new()));
+        cx.run_until_parked();
+        assert!(
+            details
+                .await
+                .expect_err("disabling registry must unblock waiters")
+                .to_string()
+                .contains("MCP Registry feature is not enabled")
+        );
+        store.read_with(cx, |store, _| assert!(store.cached_servers.is_empty()));
+    }
+
+    #[gpui::test]
+    fn registry_operation_lock_survives_opt_out(cx: &mut TestAppContext) {
+        enable_registry(cx);
+        initialize_project_settings(cx);
+        let fs: Arc<dyn Fs> = fs::FakeFs::new(cx.executor());
+        let store = cx.new(|cx| {
+            McpRegistryStore::new(
+                fs,
+                http_client::FakeHttpClient::with_404_response(),
+                "https://registry.example.test/v0.1".to_owned(),
+                false,
+                cx,
+            )
+        });
+        let name = "io.example/pending-removal";
+        assert!(store.update(cx, |store, cx| store.begin_server_operation(name, cx)));
+        cx.update(|cx| cx.update_flags(false, Vec::new()));
+        cx.run_until_parked();
+        enable_registry(cx);
+        cx.run_until_parked();
+        store.update(cx, |store, cx| {
+            assert!(store.is_server_operation_pending(name));
+            assert!(!store.begin_server_operation(name, cx));
+            store.finish_server_operation(name, cx);
+            assert!(store.begin_server_operation(name, cx));
+            store.finish_server_operation(name, cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn disabled_registry_does_not_access_credentials(cx: &mut TestAppContext) {
+        let secret_access = cx.update(|cx| {
+            cx.spawn(async move |cx| {
+                let inputs = HashMap::default();
+                (
+                    read_server_secrets("io.example/server", cx).await,
+                    write_server_secrets("io.example/server", &inputs, cx).await,
+                    delete_server_secrets("io.example/server", cx).await,
+                )
+            })
+        });
+        let (read, write, delete) = secret_access.await;
+        for result in [read.map(|_| ()), write, delete] {
+            assert!(
+                result
+                    .expect_err("registry credentials must be inaccessible while disabled")
+                    .to_string()
+                    .contains("MCP Registry feature is not enabled")
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn disabling_registry_rejects_in_flight_list_pages(cx: &mut TestAppContext) {
+        enable_registry(cx);
+        initialize_project_settings(cx);
+        let (http_client, mut response_senders, request_count) = controlled_http_client(1);
+        let fs: Arc<dyn Fs> = fs::FakeFs::new(cx.executor());
+        let store = cx.new(|cx| {
+            McpRegistryStore::new(
+                fs,
+                http_client,
+                "https://registry.example.test/v0.1".to_owned(),
+                false,
+                cx,
+            )
+        });
+        let page = store.update(cx, |store, cx| store.fetch_server_list_page(None, None, cx));
+        cx.executor().allow_parking();
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        cx.update(|cx| cx.update_flags(false, Vec::new()));
+        cx.run_until_parked();
+        let response_sender = response_senders
+            .pop_front()
+            .expect("list response sender should exist");
+        assert!(
+            response_sender.is_canceled(),
+            "opt-out must cancel the HTTP request"
+        );
+        assert!(
+            page.now_or_never()
+                .expect("opt-out must finish without a response or timeout")
+                .expect_err("list request must fail after disable")
+                .to_string()
+                .contains("MCP Registry feature is not enabled")
+        );
+    }
+
+    #[gpui::test]
+    async fn disabling_registry_before_first_poll_prevents_requests(cx: &mut TestAppContext) {
+        enable_registry(cx);
+        initialize_project_settings(cx);
+        let (http_client, _response_senders, request_count) = controlled_http_client(0);
+        let fs: Arc<dyn Fs> = fs::FakeFs::new(cx.executor());
+        let store = cx.new(|cx| {
+            McpRegistryStore::new(
+                fs,
+                http_client,
+                "https://registry.example.test/v0.1".to_owned(),
+                false,
+                cx,
+            )
+        });
+        let (page, details) = store.update(cx, |store, cx| {
+            (
+                store.fetch_server_list_page(None, None, cx),
+                store.server_details("io.example/server", cx),
+            )
+        });
+        cx.update(|cx| cx.update_flags(false, Vec::new()));
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 0);
+        assert!(
+            page.now_or_never()
+                .expect("list request should finish")
+                .is_err()
+        );
+        assert!(
+            details
+                .now_or_never()
+                .expect("details request should finish")
+                .is_err()
+        );
+    }
+
+    #[gpui::test]
+    async fn registry_opt_out_cancels_work_before_the_next_stage(cx: &mut TestAppContext) {
+        enable_registry(cx);
+        initialize_project_settings(cx);
+        let (stage_sender, stage_receiver) = oneshot::channel::<()>();
+        let continued = Arc::new(AtomicUsize::new(0));
+        let operation = cx.update(|cx| {
+            let continued = continued.clone();
+            cx.spawn(async move |cx| {
+                run_with_registry_enabled(cx, async {
+                    stage_receiver.await?;
+                    continued.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                })
+                .await
+            })
+        });
+        cx.run_until_parked();
+        cx.update(|cx| cx.update_flags(false, Vec::new()));
+        enable_registry(cx);
+        cx.run_until_parked();
+
+        assert!(stage_sender.is_canceled());
+        assert_eq!(continued.load(Ordering::SeqCst), 0);
+        assert!(
+            operation
+                .now_or_never()
+                .expect("opt-out must cancel the caller-owned operation")
+                .is_err()
+        );
+    }
+
     fn set_installed_registry_servers(cx: &mut TestAppContext, server_names: &[&str]) {
         cx.update(|cx| {
             let mut project_settings = ProjectSettings::get_global(cx).clone();
@@ -2474,6 +2916,7 @@ mod tests {
                         enabled: true,
                         remote: false,
                         registry: settings::McpRegistryServerSettings {
+                            source: None,
                             credential_id: None,
                             inputs: HashMap::default(),
                         },
@@ -2830,6 +3273,82 @@ mod tests {
     }
 
     #[test]
+    fn accepts_only_bare_npm_package_names() {
+        for identifier in [
+            "server",
+            "server-core",
+            "server.name_2~beta",
+            "@example/server",
+            "@modelcontextprotocol/server-filesystem",
+        ] {
+            assert!(is_bare_npm_package_name(identifier), "{identifier}");
+        }
+        for identifier in [
+            "",
+            "@example",
+            "@example/",
+            "@example/server/extra",
+            "https://example.invalid/server.tgz#@0.0.0 - 1.2.3",
+            "https://example.invalid/server.tgz",
+            "file:../server",
+            "../server",
+            "./server",
+            "/server",
+            "alias@npm:server",
+            "@example/alias@npm:server",
+            "server@1.2.3",
+            "@example/server@1.2.3",
+            "server\\path",
+            "Server",
+            ".server",
+            "_server",
+            "node_modules",
+            "favicon.ico",
+        ] {
+            assert!(!is_bare_npm_package_name(identifier), "{identifier}");
+        }
+        assert!(!is_bare_npm_package_name(&"a".repeat(215)));
+    }
+
+    #[test]
+    fn unsafe_npm_identifiers_are_not_offered_or_resolved() {
+        let identifiers = [
+            "https://example.invalid/server.tgz#@0.0.0 - 1.2.3",
+            "alias@npm:server",
+            "../server",
+            "server@1.2.3",
+        ];
+        for identifier in identifiers {
+            let server: ServerResponse = serde_json::from_value(serde_json::json!({
+                "server": {
+                    "packages": [{
+                        "registryType": "npm",
+                        "identifier": identifier,
+                        "version": "1.2.3",
+                        "transport": {"type": "stdio"}
+                    }]
+                }
+            }))
+            .expect("server should parse");
+            assert!(server.installation_options().is_empty(), "{identifier}");
+            let source = McpRegistryInstallationSource::Package {
+                registry_type: "npm".to_owned(),
+                identifier: identifier.to_owned(),
+            };
+            assert!(
+                resolve_server_configuration(
+                    &server,
+                    &source,
+                    &HashMap::default(),
+                    &HashMap::default()
+                )
+                .is_err(),
+                "{identifier}"
+            );
+        }
+    }
+
+    #[test]
     fn installation_options_only_include_supported_sources() {
         let server: ServerResponse = serde_json::from_value(serde_json::json!({
             "server": {
@@ -2842,16 +3361,7 @@ mod tests {
                         "version": "1.2.3",
                         "runtimeHint": "npx",
                         "transport": {"type": "stdio"},
-                        "runtimeArguments": [{
-                            "type": "named",
-                            "name": "--mount",
-                            "value": "{source}:{target}",
-                            "isRepeated": true,
-                            "variables": {
-                                "target": {"description": "Target path"},
-                                "source": {"format": "filepath"}
-                            }
-                        }]
+                        "runtimeArguments": [{"type": "named", "name": "--quiet"}]
                     },
                     {
                         "registryType": "npm",
@@ -2894,21 +3404,7 @@ mod tests {
             McpRegistryInstallationSource::Package { identifier, .. }
                 if identifier == "@example/server"
         ));
-        let argument_id = argument_input_id(
-            "runtime_argument",
-            &server.server.packages[0].runtime_arguments[0],
-        );
-        assert_eq!(
-            options[0]
-                .inputs
-                .iter()
-                .map(|input| (input.id.clone(), input.repeated))
-                .collect::<Vec<_>>(),
-            vec![
-                (format!("{argument_id}.variable:source"), true),
-                (format!("{argument_id}.variable:target"), true),
-            ]
-        );
+        assert!(options[0].inputs.is_empty());
         assert!(matches!(
             &options[2].source,
             McpRegistryInstallationSource::Remote { url }
@@ -2917,7 +3413,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn server_installation_replaces_a_stale_source_hint(cx: &mut TestAppContext) {
+    async fn server_installation_rejects_replacing_an_approved_source(cx: &mut TestAppContext) {
+        enable_registry(cx);
         initialize_project_settings(cx);
         let server_name = "io.example/source-change";
         let original_server: ServerResponse = serde_json::from_value(serde_json::json!({
@@ -2942,8 +3439,15 @@ mod tests {
         };
         let registry_store = cx.update(|cx| McpRegistryStore::init_test_global(cx, Vec::new()));
         registry_store.update(cx, |store, cx| {
-            store.remember_server_installation(original_server, selected_remote, cx);
+            store.remember_server(original_server, cx);
         });
+        let (_, source) = registry_store
+            .update(cx, |store, cx| {
+                store.server_installation(server_name, Some(selected_remote.clone()), cx)
+            })
+            .await
+            .expect("the approved installation should resolve");
+        assert_eq!(source, selected_remote);
 
         let updated_server: ServerResponse = serde_json::from_value(serde_json::json!({
             "server": {
@@ -2954,30 +3458,39 @@ mod tests {
                     "identifier": "@example/replacement",
                     "version": "2.0.0",
                     "transport": {"type": "stdio"}
+                }],
+                "remotes": [{
+                    "type": "streamable-http",
+                    "url": "https://replacement.example.com/mcp",
+                    "headers": [{
+                        "name": "Authorization",
+                        "isRequired": true,
+                        "isSecret": true
+                    }]
                 }]
             }
         }))
         .expect("updated server should parse");
         registry_store.update(cx, |store, cx| store.remember_server(updated_server, cx));
 
-        let (server, source) = registry_store
-            .update(cx, |store, cx| store.server_installation(server_name, cx))
+        let error = registry_store
+            .update(cx, |store, cx| {
+                store.server_installation(server_name, Some(selected_remote.clone()), cx)
+            })
             .await
-            .expect("replacement installation should resolve");
-        assert_eq!(server.version(), "2.0.0");
-        assert_eq!(
-            source,
-            McpRegistryInstallationSource::Package {
-                registry_type: "npm".to_owned(),
-                identifier: "@example/replacement".to_owned(),
-            }
+            .expect_err("neither another endpoint nor a package may replace the approved source");
+        assert!(error.to_string().contains("no longer available"));
+        let error = registry_store
+            .update(cx, |store, cx| {
+                store.server_installation(server_name, None, cx)
+            })
+            .await
+            .expect_err("missing approval must not choose a default source");
+        assert!(
+            error
+                .to_string()
+                .contains("no approved installation source")
         );
-        registry_store.read_with(cx, |store, _cx| {
-            assert_eq!(
-                store.installation_source_hints.get(server_name),
-                Some(&source)
-            );
-        });
     }
 
     #[test]
@@ -3026,7 +3539,7 @@ mod tests {
         assert!(!server.server.packages[0].is_supported_installation());
         assert!(!server.server.packages[1].is_supported_installation());
         assert!(!server.server.packages[2].is_supported_installation());
-        assert!(server.server.packages[3].is_supported_installation());
+        assert!(!server.server.packages[3].is_supported_installation());
 
         let dynamic_package = &server.server.packages[3];
         let argument_id =
@@ -3045,12 +3558,28 @@ mod tests {
             &HashMap::default(),
         )
         .expect_err("resolved npm policy overrides should be rejected");
-        assert!(format!("{error:#}").contains("overrides npm policy"));
+        assert!(format!("{error:#}").contains("no longer offers the selected package"));
     }
 
     #[test]
-    fn rejects_abbreviated_and_negated_npm_policy_arguments() {
+    fn allows_only_standalone_npm_runtime_flags() {
+        for argument in ["--yes", "-y", "--quiet", "--silent"] {
+            assert!(is_allowed_npm_runtime_argument(argument));
+        }
         for argument in [
+            "--package=https://example.invalid/payload.tgz",
+            "-p=https://example.invalid/payload.tgz",
+            "--pack=https://example.invalid/payload.tgz",
+            "--ignore-scripts=false",
+            "--no-ignore-scripts",
+            "--yes=false",
+            "--loglevel=warn",
+            "--package-lock=false",
+            "--quiet=false",
+            "--no-quiet",
+            "-q",
+            "--",
+            "https://example.invalid/payload.tgz",
             "--reg=https://example.com",
             "--userc=/tmp/npmrc",
             "--globalc=/tmp/npmrc",
@@ -3061,13 +3590,76 @@ mod tests {
             "--@scope:reg=https://example.com",
         ] {
             assert!(
-                is_npm_policy_argument(argument),
-                "expected `{argument}` to be treated as an npm policy override"
+                !is_allowed_npm_runtime_argument(argument),
+                "expected `{argument}` to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unsafe_npm_runtime_metadata_and_resolved_inputs() {
+        for runtime_argument in [
+            serde_json::json!({"type": "named", "name": "--package=https://example.invalid/payload.tgz"}),
+            serde_json::json!({"type": "named", "name": "-p"}),
+            serde_json::json!({"type": "named", "name": "--ignore-scripts=false"}),
+            serde_json::json!({"type": "named", "name": "--quiet", "value": "{option}",
+                "variables": {"option": {"default": "--package=https://example.invalid/payload.tgz"}}}),
+            serde_json::json!({"type": "named", "name": "--silent", "default": "false"}),
+            serde_json::json!({"type": "positional", "value": "--quiet"}),
+            serde_json::json!({"type": "positional", "isRequired": true}),
+        ] {
+            let server: ServerResponse = serde_json::from_value(serde_json::json!({
+                "server": {
+                    "packages": [{
+                        "registryType": "npm",
+                        "identifier": "server",
+                        "version": "1.2.3",
+                        "transport": {"type": "stdio"},
+                        "runtimeArguments": [runtime_argument]
+                    }]
+                }
+            }))
+            .expect("server should parse");
+            assert!(server.installation_options().is_empty());
+            let source = McpRegistryInstallationSource::Package {
+                registry_type: "npm".to_owned(),
+                identifier: "server".to_owned(),
+            };
+            assert!(
+                resolve_server_configuration(
+                    &server,
+                    &source,
+                    &HashMap::default(),
+                    &HashMap::default()
+                )
+                .is_err()
             );
         }
 
-        assert!(!is_npm_policy_argument("--loglevel=warn"));
-        assert!(!is_npm_policy_argument("--package-lock=false"));
+        let argument: Argument = serde_json::from_value(serde_json::json!({
+            "type": "positional",
+            "isRequired": true
+        }))
+        .expect("argument should parse");
+        let argument_id = argument_input_id("runtime_argument", &argument);
+        for value in [
+            "--package=https://example.invalid/payload.tgz",
+            "-p=https://example.invalid/payload.tgz",
+            "--ignore-scripts=false",
+            "--quiet=false",
+        ] {
+            let resolved = resolve_arguments(
+                "runtime_argument",
+                std::slice::from_ref(&argument),
+                &HashMap::from_iter([(argument_id.clone(), vec![value.to_owned()])]),
+                &HashMap::default(),
+            )
+            .expect("input should resolve");
+            assert!(
+                validate_npm_runtime_arguments(&resolved).is_err(),
+                "{value}"
+            );
+        }
     }
 
     #[test]
@@ -3247,16 +3839,7 @@ mod tests {
                     "transport": {"type": "stdio"},
                     "runtimeArguments": [
                         {"type": "named", "name": "--quiet"},
-                        {
-                            "type": "named",
-                            "name": "--mount",
-                            "value": "{source}:{target}",
-                            "isRepeated": true,
-                            "variables": {
-                                "source": {"format": "filepath", "isRequired": true},
-                                "target": {"format": "filepath", "default": "/app"}
-                            }
-                        }
+                        {"type": "named", "name": "--silent"}
                     ],
                     "packageArguments": [{
                         "type": "positional",
@@ -3277,14 +3860,8 @@ mod tests {
             identifier: "@example/server".to_owned(),
         };
         let package = &server.server.packages[0];
-        let mount_argument_id =
-            argument_input_id("runtime_argument", &package.runtime_arguments[1]);
         let root_argument_id = argument_input_id("package_argument", &package.package_arguments[0]);
         let settings_inputs = HashMap::from_iter([
-            (
-                format!("{mount_argument_id}.variable:source"),
-                vec!["/one".to_owned(), "/two".to_owned()],
-            ),
             (
                 root_argument_id,
                 vec!["first".to_owned(), "second".to_owned()],
@@ -3307,10 +3884,7 @@ mod tests {
             panic!("expected npm configuration");
         };
         assert_eq!(package_spec, "@example/server@0.0.0 - 1.2.3");
-        assert_eq!(
-            runtime_arguments,
-            ["--quiet", "--mount", "/one:/app", "--mount", "/two:/app"]
-        );
+        assert_eq!(runtime_arguments, ["--quiet", "--silent"]);
         assert_eq!(package_arguments, ["first", "second"]);
         assert_eq!(
             environment.get("LOG_LEVEL").map(String::as_str),
@@ -3382,6 +3956,7 @@ mod tests {
 
     #[gpui::test]
     async fn server_details_joins_installed_refresh(cx: &mut TestAppContext) {
+        enable_registry(cx);
         let server_name = "io.example/server";
         initialize_project_settings(cx);
         cx.update(|cx| {
@@ -3392,6 +3967,7 @@ mod tests {
                     enabled: true,
                     remote: false,
                     registry: settings::McpRegistryServerSettings {
+                        source: None,
                         credential_id: None,
                         inputs: HashMap::default(),
                     },
@@ -3449,6 +4025,7 @@ mod tests {
 
     #[gpui::test]
     async fn server_details_only_joins_refresh_for_the_same_name(cx: &mut TestAppContext) {
+        enable_registry(cx);
         let active_server_name = "io.example/active";
         let excluded_server_name = "io.example/excluded";
         initialize_project_settings(cx);
@@ -3501,6 +4078,7 @@ mod tests {
 
     #[gpui::test]
     async fn repeated_installed_refresh_is_idempotent_while_in_flight(cx: &mut TestAppContext) {
+        enable_registry(cx);
         let server_name = "io.example/server";
         initialize_project_settings(cx);
         set_installed_registry_servers(cx, &[server_name]);
@@ -3542,6 +4120,7 @@ mod tests {
 
     #[gpui::test]
     async fn installed_refresh_limits_concurrent_requests(cx: &mut TestAppContext) {
+        enable_registry(cx);
         let server_names = ["io.example/one", "io.example/two", "io.example/three"];
         initialize_project_settings(cx);
         set_installed_registry_servers(cx, &server_names);
@@ -3592,6 +4171,7 @@ mod tests {
 
     #[gpui::test]
     fn settings_observer_does_not_refetch_remembered_server(cx: &mut TestAppContext) {
+        enable_registry(cx);
         let server_name = "io.example/server";
         initialize_project_settings(cx);
         let (http_client, _response_senders, request_count) = controlled_http_client(0);
@@ -3626,6 +4206,7 @@ mod tests {
 
     #[gpui::test]
     async fn remembered_server_wins_over_cache_miss(cx: &mut TestAppContext) {
+        enable_registry(cx);
         let server_name = "io.example/server";
         initialize_project_settings(cx);
         let (http_client, mut response_senders, request_count) = controlled_http_client(1);
@@ -3676,6 +4257,7 @@ mod tests {
 
     #[gpui::test]
     async fn remembered_server_wins_over_background_refresh(cx: &mut TestAppContext) {
+        enable_registry(cx);
         let server_name = "io.example/server";
         initialize_project_settings(cx);
         let (http_client, mut response_senders, request_count) = controlled_http_client(1);
@@ -3731,7 +4313,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn installation_source_hint_round_trips_through_the_cache(cx: &mut TestAppContext) {
+    async fn installation_source_is_approved_in_settings_not_the_cache(cx: &mut TestAppContext) {
+        enable_registry(cx);
         initialize_project_settings(cx);
         let server_name = "io.example/cached-installation";
         let server: ServerResponse = serde_json::from_value(serde_json::json!({
@@ -3754,6 +4337,14 @@ mod tests {
         let selected_source = McpRegistryInstallationSource::Remote {
             url: "https://example.com/cached-mcp".to_owned(),
         };
+        let approved_settings = settings::McpRegistryServerSettings {
+            source: Some(selected_source.clone()),
+            ..Default::default()
+        };
+        let serialized_settings =
+            serde_json::to_string(&approved_settings).expect("settings should serialize");
+        let restored_settings: settings::McpRegistryServerSettings =
+            serde_json::from_str(&serialized_settings).expect("settings should parse");
         let fs: Arc<dyn Fs> = fs::FakeFs::new(cx.executor());
         let registry_store = cx.new(|cx| {
             McpRegistryStore::new(
@@ -3765,20 +4356,17 @@ mod tests {
             )
         });
         registry_store.update(cx, |store, cx| {
-            store.remember_server_installation(server, selected_source.clone(), cx);
+            store.remember_server(server, cx);
         });
         cx.run_until_parked();
 
-        let cached_file: CachedServersFile = serde_json::from_slice(
+        let cached_file: serde_json::Value = serde_json::from_slice(
             &fs.load_bytes(&registry_cache_path())
                 .await
                 .expect("registry cache should be written"),
         )
         .expect("registry cache should parse");
-        assert_eq!(
-            cached_file.source_hints.get(server_name),
-            Some(&selected_source)
-        );
+        assert!(cached_file.get("source_hints").is_none());
 
         let reloaded_store = cx.new(|cx| {
             McpRegistryStore::new(
@@ -3790,8 +4378,21 @@ mod tests {
             )
         });
         cx.run_until_parked();
+        let error = reloaded_store
+            .update(cx, |store, cx| {
+                store.server_installation(server_name, None, cx)
+            })
+            .await
+            .expect_err("cached metadata must not grant source approval");
+        assert!(
+            error
+                .to_string()
+                .contains("no approved installation source")
+        );
         let (_, reloaded_source) = reloaded_store
-            .update(cx, |store, cx| store.server_installation(server_name, cx))
+            .update(cx, |store, cx| {
+                store.server_installation(server_name, restored_settings.source, cx)
+            })
             .await
             .expect("cached installation should resolve");
         assert_eq!(reloaded_source, selected_source);
@@ -3799,6 +4400,7 @@ mod tests {
 
     #[gpui::test]
     async fn init_publishes_cache_without_fetching_the_list(cx: &mut TestAppContext) {
+        enable_registry(cx);
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -3810,6 +4412,7 @@ mod tests {
                     enabled: true,
                     remote: false,
                     registry: settings::McpRegistryServerSettings {
+                        source: None,
                         credential_id: None,
                         inputs: HashMap::default(),
                     },
@@ -3832,7 +4435,6 @@ mod tests {
         .expect("cached server should parse");
         let cache_json = serde_json::to_vec(&CachedServersFile {
             servers: vec![cached_server],
-            source_hints: HashMap::default(),
         })
         .expect("cache should serialize");
         let fs = fs::FakeFs::new(cx.executor());

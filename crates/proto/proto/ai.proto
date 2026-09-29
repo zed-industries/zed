@@ -14,6 +14,7 @@ message GetContextServerCommand {
   string server_id = 2;
   optional string root_dir = 3;
   optional ResolvedRegistryNpmContextServer resolved_registry_npm = 4;
+  bool mcp_registry_enabled = 5;
 }
 
 message ResolvedRegistryNpmContextServer {

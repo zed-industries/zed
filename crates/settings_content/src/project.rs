@@ -573,6 +573,10 @@ pub enum ContextServerSettingsContent {
 
 #[derive(Default, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom, Debug)]
 pub struct McpRegistryServerSettings {
+    /// The installation source approved by the user. Registry updates must not
+    /// silently change the endpoint or package that receives these inputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<McpRegistryInstallationSource>,
     /// Opaque identifier for secret input values stored in the system keychain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential_id: Option<String>,
@@ -583,6 +587,20 @@ pub struct McpRegistryServerSettings {
     /// as secret by the registry are stored in the system keychain instead.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub inputs: HashMap<String, Vec<String>>,
+}
+
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum McpRegistryInstallationSource {
+    Package {
+        registry_type: String,
+        identifier: String,
+    },
+    Remote {
+        url: String,
+    },
 }
 
 impl ContextServerSettingsContent {
@@ -1408,7 +1426,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_registry_context_server_source_is_ignored_by_serde() {
+    fn registry_context_server_preserves_approved_source() {
         let json = r#"{
             "enabled": false,
             "remote": true,
@@ -1439,6 +1457,13 @@ mod tests {
         assert!(!enabled);
         assert!(*remote);
         assert_eq!(
+            registry.source,
+            Some(McpRegistryInstallationSource::Package {
+                registry_type: "npm".to_owned(),
+                identifier: "@example/server".to_owned(),
+            })
+        );
+        assert_eq!(
             registry.credential_id.as_deref(),
             Some("test-credential-id")
         );
@@ -1450,7 +1475,14 @@ mod tests {
         let Ok(serialized) = serde_json::to_value(settings) else {
             panic!("registry context server settings should serialize");
         };
-        assert!(serialized["registry"].get("source").is_none());
+        assert_eq!(
+            serialized["registry"]["source"],
+            serde_json::json!({
+                "type": "package",
+                "registry_type": "npm",
+                "identifier": "@example/server"
+            })
+        );
         assert_eq!(
             serialized["registry"]["credential_id"],
             "test-credential-id"

@@ -124,6 +124,7 @@ agent = { workspace = true, features = ["test-support"] }
 agent_servers = { workspace = true, features = ["test-support"] }
 buffer_diff = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
+credentials_provider.workspace = true
 db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 eval_utils.workspace = true
@@ -145,3 +146,4 @@ reqwest_client.workspace = true
 tempfile.workspace = true
 vim.workspace = true
 terminal = { workspace = true, features = ["test-support"] }
+zed_credentials_provider.workspace = true

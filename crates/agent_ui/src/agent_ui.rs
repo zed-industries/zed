@@ -46,7 +46,7 @@ use agent_client_protocol::schema::v1 as acp;
 use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
 use editor::{Editor, SelectionEffects, scroll::Autoscroll};
-use feature_flags::FeatureFlagAppExt as _;
+use feature_flags::{FeatureFlagAppExt as _, McpRegistryFeatureFlag};
 use fs::Fs;
 use gpui::{
     Action, App, Context, Entity, ImageSource, ReadGlobal as _, Resource, SharedString, SharedUri,
@@ -656,6 +656,10 @@ pub fn init(
                   _: &zed_actions::McpRegistry,
                   window: &mut Window,
                   cx: &mut Context<Workspace>| {
+                if !cx.has_flag::<McpRegistryFeatureFlag>() {
+                    return;
+                }
+
                 let existing = workspace
                     .active_pane()
                     .read(cx)
@@ -719,6 +723,10 @@ pub fn init(
     .detach();
 
     cx.on_flags_ready(|_, cx| {
+        update_command_palette_filter(cx);
+    })
+    .detach();
+    cx.observe_flag::<McpRegistryFeatureFlag, _>(|_, cx| {
         update_command_palette_filter(cx);
     })
     .detach();
@@ -817,6 +825,7 @@ fn maybe_backfill_editor_layout(fs: Arc<dyn Fs>, is_new_install: bool, cx: &mut 
 fn update_command_palette_filter(cx: &mut App) {
     let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
     let agent_enabled = AgentSettings::get_global(cx).enabled;
+    let mcp_registry_enabled = cx.has_flag::<McpRegistryFeatureFlag>();
 
     let edit_prediction_provider = AllLanguageSettings::get_global(cx)
         .edit_predictions
@@ -842,6 +851,12 @@ fn update_command_palette_filter(cx: &mut App) {
             TypeId::of::<zed_actions::assistant::OpenSkillCreator>(),
             TypeId::of::<zed_actions::assistant::CreateSkillFromUrl>(),
         ];
+
+        if mcp_registry_enabled {
+            filter.show_action_types(&[TypeId::of::<zed_actions::McpRegistry>()]);
+        } else {
+            filter.hide_action_types(&[TypeId::of::<zed_actions::McpRegistry>()]);
+        }
 
         if disable_ai {
             filter.hide_namespace("agent");
@@ -978,11 +993,47 @@ mod tests {
     use command_palette_hooks::CommandPaletteFilter;
     use db::kvp::KeyValueStore;
     use editor::actions::AcceptEditPrediction;
+    use feature_flags::FeatureFlag;
     use gpui::{BorrowAppContext, TestAppContext, px};
     use project::DisableAiSettings;
     use settings::{
         DockPosition, NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, Settings, SettingsStore,
     };
+
+    #[gpui::test]
+    fn mcp_registry_palette_follows_flag_changes(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            command_palette_hooks::init(cx);
+            AgentSettings::register(cx);
+            DisableAiSettings::register(cx);
+            AllLanguageSettings::register(cx);
+            update_command_palette_filter(cx);
+            cx.observe_flag::<McpRegistryFeatureFlag, _>(|_, cx| {
+                update_command_palette_filter(cx);
+            })
+            .detach();
+        });
+
+        let is_hidden = |cx: &mut App| {
+            CommandPaletteFilter::try_global(cx)
+                .is_some_and(|filter| filter.is_hidden(&zed_actions::McpRegistry))
+        };
+        assert!(cx.update(is_hidden));
+
+        cx.update(|cx| cx.update_flags(true, vec![]));
+        cx.run_until_parked();
+        assert!(cx.update(is_hidden));
+
+        cx.update(|cx| cx.update_flags(true, vec![McpRegistryFeatureFlag::NAME.to_string()]));
+        cx.run_until_parked();
+        assert!(!cx.update(is_hidden));
+
+        cx.update(|cx| cx.update_flags(true, vec![]));
+        cx.run_until_parked();
+        assert!(cx.update(is_hidden));
+    }
 
     #[gpui::test]
     fn test_agent_command_palette_visibility(cx: &mut TestAppContext) {

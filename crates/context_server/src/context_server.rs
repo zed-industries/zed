@@ -171,7 +171,7 @@ impl ContextServer {
     pub fn stop(&self) -> Result<()> {
         let mut client = self.client.write();
         if let Some(protocol) = client.take() {
-            drop(protocol);
+            protocol.stop();
         }
         Ok(())
     }

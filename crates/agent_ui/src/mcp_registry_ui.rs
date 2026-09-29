@@ -2,6 +2,7 @@ use std::{ops::Range, time::Duration};
 
 use collections::{HashMap, HashSet};
 use editor::{Editor, EditorElement, EditorStyle};
+use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use futures::{FutureExt as _, future::Either};
 use gpui::{
@@ -10,7 +11,10 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, Window, point, prelude::*, uniform_list,
 };
 use project::{
-    context_server_store::ContextServerStore,
+    context_server_store::{
+        ContextServerStore, RegistrySettingsOwnership, registry_settings_ownership,
+        registry_user_settings_destination_is_active,
+    },
     mcp_registry_store::{
         McpRegistryInputDescriptor, McpRegistryInstallationOption, McpRegistryInstallationSource,
         McpRegistryStore, ServerResponse, delete_server_secrets, registry_credential_is_referenced,
@@ -124,7 +128,7 @@ impl RenderOnce for McpRegistryCard {
                 .p_3()
                 .mt_4()
                 .w_full()
-                .min_h(rems_from_px(94.))
+                .min_h(rems_from_px(94.0_f32))
                 .gap_2()
                 .bg(cx.theme().colors().elevated_surface_background.opacity(0.5))
                 .border_1()
@@ -439,7 +443,7 @@ impl McpRegistryPage {
         h_flex()
             .key_context(key_context)
             .h_8()
-            .min_w(rems_from_px(384.))
+            .min_w(rems_from_px(384.0_f32))
             .flex_1()
             .pl_1p5()
             .pr_2()
@@ -792,8 +796,23 @@ impl McpRegistryPage {
         match install_status {
             RegistryInstallStatus::InstalledRegistry => {
                 let server_name = server.name().to_string();
+                let configured_in_project =
+                    self.context_server_store.as_ref().is_some_and(|store| {
+                        store.read(cx).is_server_configured_locally(
+                            &context_server::ContextServerId(server_name.clone().into()),
+                        )
+                    });
+                let removable =
+                    registry_settings_ownership(&server_name, configured_in_project, cx)
+                        == RegistrySettingsOwnership::User;
                 Button::new(button_id, "Remove")
                     .style(ButtonStyle::OutlinedGhost)
+                    .disabled(!removable)
+                    .tooltip(Tooltip::text(if removable {
+                        "Remove MCP Registry server"
+                    } else {
+                        "Remove this server from its active profile, OS, channel, project, or managed settings source"
+                    }))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.remove_registry_server(server_name.clone(), cx);
                     }))
@@ -982,12 +1001,20 @@ impl McpRegistryPage {
             return;
         }
 
+        if !registry_user_settings_destination_is_active(cx) {
+            self.operation_errors.insert(
+                server_name,
+                "The active settings profile excludes user settings. Switch to a profile based on User before installing.".into(),
+            );
+            cx.notify();
+            return;
+        }
         let registry_store = self.registry_store.clone();
         let operation_started = registry_store.update(cx, |store, cx| {
             if !store.begin_server_operation(&server_name, cx) {
                 return false;
             }
-            store.remember_server_installation(server, source, cx);
+            store.remember_server(server, cx);
             true
         });
         if !operation_started {
@@ -1007,6 +1034,7 @@ impl McpRegistryPage {
         let registry_settings = McpRegistryServerSettings {
             credential_id: None,
             inputs: HashMap::default(),
+            source: Some(source),
         };
         let settings_completion =
             update_registry_server_settings(server_name.clone(), registry_settings.clone(), cx);
@@ -1067,7 +1095,26 @@ impl McpRegistryPage {
     }
 
     fn remove_registry_server(&mut self, server_name: String, cx: &mut Context<Self>) {
-        let Some(registry_settings) = raw_user_registry_server_settings(&server_name, cx) else {
+        let configured_in_project = self.context_server_store.as_ref().is_some_and(|store| {
+            store
+                .read(cx)
+                .is_server_configured_locally(&context_server::ContextServerId(
+                    server_name.clone().into(),
+                ))
+        });
+        if registry_settings_ownership(&server_name, configured_in_project, cx)
+            != RegistrySettingsOwnership::User
+        {
+            self.operation_errors.insert(
+                server_name,
+                "Remove this server from its active profile, OS, channel, project, or managed settings source instead of user settings.".into(),
+            );
+            cx.notify();
+            return;
+        }
+        let Some(removed_settings @ ContextServerSettingsContent::Registry { .. }) =
+            raw_user_context_server_settings(&server_name, cx)
+        else {
             let error_message = format!(
                 "MCP Registry server {server_name} is not present in user settings and must be removed from its original settings file"
             );
@@ -1095,7 +1142,7 @@ impl McpRegistryPage {
 
         let task_server_name = server_name.clone();
         let settings_completion =
-            remove_registry_server_settings(server_name.clone(), registry_settings.clone(), cx);
+            remove_registry_server_settings(server_name.clone(), removed_settings.clone(), cx);
         let task = cx.spawn(async move |this, cx| {
             let operation_cx = cx.clone();
             let operation = complete_registry_server_operation(
@@ -1103,7 +1150,7 @@ impl McpRegistryPage {
                 task_server_name.clone(),
                 finish_registry_server_removal(
                     &task_server_name,
-                    &registry_settings,
+                    &removed_settings,
                     settings_completion,
                     &operation_cx,
                 )
@@ -1219,7 +1266,7 @@ impl Render for McpRegistryPage {
                                     ],
                                 )
                                 .style(ToggleButtonGroupStyle::Outlined)
-                                .size(ToggleButtonGroupSize::Custom(rems_from_px(30.)))
+                                .size(ToggleButtonGroupSize::Custom(rems_from_px(30.0_f32)))
                                 .label_size(LabelSize::Default)
                                 .auto_width()
                                 .selected_index(
@@ -1434,6 +1481,13 @@ impl McpRegistryInstallModal {
             return;
         }
 
+        if !registry_user_settings_destination_is_active(cx) {
+            self.form_error = Some(
+                "The active settings profile excludes user settings. Switch to a profile based on User before installing.".into(),
+            );
+            cx.notify();
+            return;
+        }
         let server = self.server.clone();
         let server_name = server.name().to_string();
         let registry_store = self.registry_store.clone();
@@ -1452,6 +1506,7 @@ impl McpRegistryInstallModal {
         let registry_settings = McpRegistryServerSettings {
             credential_id: credential_id.clone(),
             inputs: settings_inputs,
+            source: Some(source),
         };
         let task = cx.spawn(async move |this, cx| {
             let operation_cx = cx.clone();
@@ -1469,7 +1524,7 @@ impl McpRegistryInstallModal {
 
                 operation_cx.update(|cx| {
                     cache_registry_store.update(cx, |store, cx| {
-                        store.remember_server_installation(server, source, cx);
+                        store.remember_server(server, cx);
                     });
                 });
                 let settings_completion = operation_cx.update(|cx| {
@@ -1697,7 +1752,7 @@ impl Render for McpRegistryInstallModal {
                                                 &focus_handle,
                                                 cx,
                                             )
-                                            .map(|binding| binding.size(rems_from_px(12.))),
+                                            .map(|binding| binding.size(rems_from_px(12.0_f32))),
                                         )
                                         .on_click(cx.listener(|this, _, _, cx| this.cancel(cx))),
                                 )
@@ -1718,7 +1773,7 @@ impl Render for McpRegistryInstallModal {
                                             &focus_handle,
                                             cx,
                                         )
-                                        .map(|binding| binding.size(rems_from_px(12.))),
+                                        .map(|binding| binding.size(rems_from_px(12.0_f32))),
                                     )
                                     .on_click(cx.listener(|this, _, _, cx| this.confirm(cx))),
                                 ),
@@ -1767,16 +1822,12 @@ fn update_registry_server_settings(
 
 fn remove_registry_server_settings(
     server_name: String,
-    registry_settings: McpRegistryServerSettings,
+    removed_settings: ContextServerSettingsContent,
     cx: &mut App,
 ) -> futures::channel::oneshot::Receiver<anyhow::Result<()>> {
     let fs = <dyn Fs>::global(cx);
     update_settings_file_with_completion(fs, cx, move |settings, _| {
-        if matches!(
-            settings.project.context_servers.get(server_name.as_str()),
-            Some(ContextServerSettingsContent::Registry { registry, .. })
-                if registry == &registry_settings
-        ) {
+        if settings.project.context_servers.get(server_name.as_str()) == Some(&removed_settings) {
             settings
                 .project
                 .context_servers
@@ -1803,7 +1854,12 @@ async fn finish_registry_server_installation(
         )
     });
     if settings_match {
-        return Ok(());
+        if cx.update(|cx| registry_user_settings_destination_is_active(cx)) {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "the active settings profile excludes user settings; switch to a profile based on User"
+        );
     }
 
     let rollback_error =
@@ -1819,7 +1875,7 @@ async fn finish_registry_server_installation(
 
 async fn finish_registry_server_removal(
     server_name: &str,
-    removed_settings: &McpRegistryServerSettings,
+    removed_settings: &ContextServerSettingsContent,
     settings_completion: futures::channel::oneshot::Receiver<anyhow::Result<()>>,
     cx: &gpui::AsyncApp,
 ) -> anyhow::Result<()> {
@@ -1828,25 +1884,62 @@ async fn finish_registry_server_removal(
         Ok(Err(error)) => Some(format!("failed to update settings: {error:#}")),
         Err(error) => Some(format!("settings update was canceled: {error}")),
     };
-    let removed_settings_are_still_active = cx.update(|cx| {
-        registry_server_settings_match(
-            raw_user_context_server_settings(server_name, cx).as_ref(),
-            removed_settings,
-        )
-    });
-    if removed_settings_are_still_active {
+    let current_settings = cx.update(|cx| raw_user_context_server_settings(server_name, cx));
+    if current_settings.is_some() {
         return Err(anyhow::anyhow!(completion_error.unwrap_or_else(
             || format!("server `{server_name}` changed while it was being removed")
         )));
     }
 
-    delete_unreferenced_registry_credential(removed_settings.credential_id.as_deref(), cx).await
+    let credential_id = match removed_settings {
+        ContextServerSettingsContent::Registry { registry, .. } => {
+            registry.credential_id.as_deref()
+        }
+        _ => None,
+    };
+    let cleanup_result = delete_unreferenced_registry_credential(credential_id, cx).await;
+    if let Err(error) = cleanup_result {
+        let restore_completion = cx.update(|cx| {
+            let fs = <dyn Fs>::global(cx);
+            let server_name = server_name.to_owned();
+            let removed_settings = removed_settings.clone();
+            update_settings_file_with_completion(fs, cx, move |settings, _| {
+                settings
+                    .project
+                    .context_servers
+                    .entry(server_name.into())
+                    .or_insert(removed_settings);
+            })
+        });
+        restore_completion
+            .await
+            .map_err(|restore_error| {
+                anyhow::anyhow!("{error:#}; settings restoration was canceled: {restore_error}")
+            })?
+            .map_err(|restore_error| {
+                anyhow::anyhow!("{error:#}; settings restoration failed: {restore_error:#}")
+            })?;
+        if cx
+            .update(|cx| raw_user_context_server_settings(server_name, cx))
+            .as_ref()
+            != Some(removed_settings)
+        {
+            anyhow::bail!(
+                "{error:#}; settings changed during restoration, so verify the server and credentials before retrying"
+            );
+        }
+        anyhow::bail!("{error:#}; server settings were restored so removal can be retried");
+    }
+    Ok(())
 }
 
 async fn delete_unreferenced_registry_credential(
     credential_id: Option<&str>,
     cx: &gpui::AsyncApp,
 ) -> anyhow::Result<()> {
+    if !cx.update(|cx| cx.has_flag::<feature_flags::McpRegistryFeatureFlag>()) {
+        anyhow::bail!("MCP Registry feature disabled during credential removal");
+    }
     let Some(credential_id) = credential_id else {
         return Ok(());
     };
@@ -1866,21 +1959,6 @@ fn raw_user_context_server_settings(
         .raw_user_settings()
         .and_then(|settings| settings.content.project.context_servers.get(server_name))
         .cloned()
-}
-
-fn raw_user_registry_server_settings(
-    server_name: &str,
-    cx: &App,
-) -> Option<McpRegistryServerSettings> {
-    match raw_user_context_server_settings(server_name, cx) {
-        Some(ContextServerSettingsContent::Registry { registry, .. }) => Some(registry),
-        Some(
-            ContextServerSettingsContent::Stdio { .. }
-            | ContextServerSettingsContent::Http { .. }
-            | ContextServerSettingsContent::Extension { .. },
-        )
-        | None => None,
-    }
 }
 
 fn registry_server_settings_match(
@@ -1974,13 +2052,263 @@ fn normalize_formatted_input(
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{
+        future::Future,
+        path::Path,
+        pin::Pin,
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+        },
+    };
 
+    use credentials_provider::CredentialsProvider;
+    use feature_flags::{FeatureFlag, McpRegistryFeatureFlag};
     use fs::FakeFs;
-    use gpui::TestAppContext;
+    use gpui::{AsyncApp, TestAppContext};
     use project::Project;
+    use zed_credentials_provider::ZedCredentialsProvider;
 
     use super::*;
+
+    struct FailingCredentialsProvider {
+        delete_started: AtomicBool,
+        release: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+    }
+
+    impl CredentialsProvider for FailingCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<Option<(String, Vec<u8>)>>> + 'a>> {
+            Box::pin(async { anyhow::bail!("unexpected credential read") })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>> {
+            Box::pin(async { anyhow::bail!("unexpected credential write") })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>> {
+            Box::pin(async move {
+                self.delete_started.store(true, Ordering::SeqCst);
+                let release = self.release.lock().expect("test lock").take();
+                if let Some(release) = release {
+                    release.await?;
+                }
+                anyhow::bail!("injected credential deletion failure")
+            })
+        }
+    }
+
+    fn removal_settings() -> ContextServerSettingsContent {
+        ContextServerSettingsContent::Registry {
+            enabled: false,
+            remote: true,
+            registry: McpRegistryServerSettings {
+                credential_id: Some("registry-credential".to_owned()),
+                inputs: HashMap::from_iter([(
+                    "argument:0".to_owned(),
+                    vec!["visible input".to_owned()],
+                )]),
+                source: Some(McpRegistryInstallationSource::Remote {
+                    url: "https://example.com/mcp".into(),
+                }),
+            },
+        }
+    }
+
+    async fn setup_removal(
+        cx: &mut TestAppContext,
+        provider: Arc<FailingCredentialsProvider>,
+    ) -> Arc<FakeFs> {
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(paths::settings_file().parent().expect("settings parent"))
+            .await
+            .expect("create settings directory");
+        let settings = serde_json::json!({
+            "context_servers": { "registry-server": removal_settings() },
+        })
+        .to_string();
+        fs.insert_file(paths::settings_file(), settings.as_bytes().to_vec())
+            .await;
+        cx.update(|cx| {
+            <dyn Fs>::set_global(fs.clone(), cx);
+            let mut store = SettingsStore::test(cx);
+            store
+                .set_user_settings(&settings, cx)
+                .expect("valid user settings");
+            cx.set_global(store);
+            cx.set_global(ZedCredentialsProvider(provider));
+            cx.update_flags(false, vec![McpRegistryFeatureFlag::NAME.to_owned()]);
+        });
+        fs
+    }
+
+    fn start_removal(cx: &mut TestAppContext) -> Task<anyhow::Result<()>> {
+        cx.update(|cx| {
+            let removed_settings = removal_settings();
+            let completion = remove_registry_server_settings(
+                "registry-server".into(),
+                removed_settings.clone(),
+                cx,
+            );
+            cx.spawn(async move |cx| {
+                finish_registry_server_removal("registry-server", &removed_settings, completion, cx)
+                    .await
+            })
+        })
+    }
+
+    fn user_server(cx: &TestAppContext) -> Option<ContextServerSettingsContent> {
+        cx.update(|cx| raw_user_context_server_settings("registry-server", cx))
+    }
+
+    async fn saved_server(fs: &Arc<FakeFs>) -> Option<ContextServerSettingsContent> {
+        let text = fs
+            .load(paths::settings_file())
+            .await
+            .expect("settings file");
+        let settings: serde_json::Value = serde_json::from_str(&text).expect("settings JSON");
+        settings
+            .get("context_servers")
+            .and_then(|servers| servers.get("registry-server"))
+            .map(|server| serde_json::from_value(server.clone()).expect("registry server settings"))
+    }
+
+    #[gpui::test]
+    async fn failed_credential_deletion_restores_complete_registry_entry(cx: &mut TestAppContext) {
+        let provider = Arc::new(FailingCredentialsProvider {
+            delete_started: AtomicBool::new(false),
+            release: Mutex::new(None),
+        });
+        let fs = setup_removal(cx, provider.clone()).await;
+        let result = start_removal(cx).await;
+        assert!(
+            result
+                .expect_err("deletion must fail")
+                .to_string()
+                .contains("restored")
+        );
+        assert!(provider.delete_started.load(Ordering::SeqCst));
+        assert_eq!(user_server(cx), Some(removal_settings()));
+        assert_eq!(saved_server(&fs).await, Some(removal_settings()));
+    }
+
+    #[gpui::test]
+    async fn opt_out_during_credential_deletion_restores_registry_entry(cx: &mut TestAppContext) {
+        let (release_sender, release_receiver) = futures::channel::oneshot::channel();
+        let provider = Arc::new(FailingCredentialsProvider {
+            delete_started: AtomicBool::new(false),
+            release: Mutex::new(Some(release_receiver)),
+        });
+        let fs = setup_removal(cx, provider.clone()).await;
+        let task = start_removal(cx);
+        cx.run_until_parked();
+        assert!(provider.delete_started.load(Ordering::SeqCst));
+        assert_eq!(user_server(cx), None);
+        assert_eq!(saved_server(&fs).await, None);
+        cx.update(|cx| cx.update_flags(false, Vec::new()));
+        assert!(
+            task.await
+                .expect_err("opt-out must fail cleanup")
+                .to_string()
+                .contains("restored")
+        );
+        assert_eq!(user_server(cx), Some(removal_settings()));
+        assert_eq!(saved_server(&fs).await, Some(removal_settings()));
+        drop(release_sender);
+    }
+
+    #[gpui::test]
+    async fn concurrent_registry_edit_is_not_overwritten_by_failed_cleanup(
+        cx: &mut TestAppContext,
+    ) {
+        let (release_sender, release_receiver) = futures::channel::oneshot::channel();
+        let provider = Arc::new(FailingCredentialsProvider {
+            delete_started: AtomicBool::new(false),
+            release: Mutex::new(Some(release_receiver)),
+        });
+        let fs = setup_removal(cx, provider.clone()).await;
+        let task = start_removal(cx);
+        cx.run_until_parked();
+        assert!(provider.delete_started.load(Ordering::SeqCst));
+        assert_eq!(user_server(cx), None);
+        let replacement = ContextServerSettingsContent::Registry {
+            enabled: true,
+            remote: false,
+            registry: McpRegistryServerSettings {
+                credential_id: Some("replacement-credential".into()),
+                ..McpRegistryServerSettings::default()
+            },
+        };
+        let completion = cx.update(|cx| {
+            let replacement = replacement.clone();
+            update_settings_file_with_completion(<dyn Fs>::global(cx), cx, move |settings, _| {
+                settings
+                    .project
+                    .context_servers
+                    .insert("registry-server".into(), replacement);
+            })
+        });
+        completion
+            .await
+            .expect("settings update completion")
+            .expect("settings update");
+        release_sender
+            .send(())
+            .expect("release credential deletion");
+        assert!(task.await.is_err());
+        assert_eq!(user_server(cx), Some(replacement.clone()));
+        assert_eq!(saved_server(&fs).await, Some(replacement));
+    }
+
+    #[gpui::test]
+    async fn removal_rejects_changed_enabled_and_remote_before_settings_write(
+        cx: &mut TestAppContext,
+    ) {
+        let provider = Arc::new(FailingCredentialsProvider {
+            delete_started: AtomicBool::new(false),
+            release: Mutex::new(None),
+        });
+        let fs = setup_removal(cx, provider.clone()).await;
+        let task = start_removal(cx);
+        let replacement = ContextServerSettingsContent::Registry {
+            enabled: true,
+            remote: false,
+            registry: match removal_settings() {
+                ContextServerSettingsContent::Registry { registry, .. } => registry,
+                _ => unreachable!("test fixture is a registry entry"),
+            },
+        };
+        let settings = serde_json::json!({
+            "context_servers": { "registry-server": replacement },
+        })
+        .to_string();
+        fs.insert_file(paths::settings_file(), settings.as_bytes().to_vec())
+            .await;
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store
+                    .set_user_settings(&settings, cx)
+                    .expect("valid settings");
+            });
+        });
+        assert!(task.await.is_err());
+        assert_eq!(user_server(cx), Some(replacement.clone()));
+        assert_eq!(saved_server(&fs).await, Some(replacement));
+        assert!(!provider.delete_started.load(Ordering::SeqCst));
+    }
 
     fn descriptor(required: bool, repeated: bool, format: &str) -> McpRegistryInputDescriptor {
         McpRegistryInputDescriptor {
@@ -2050,7 +2378,12 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         let server_name = "io.example/pending-operation";
-        let registry_store = cx.update(|cx| McpRegistryStore::init_test_global(cx, Vec::new()));
+        let registry_store = cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            cx.update_flags(false, vec![McpRegistryFeatureFlag::NAME.to_owned()]);
+            McpRegistryStore::init_test_global(cx, Vec::new())
+        });
         assert!(registry_store.update(cx, |store, cx| {
             store.begin_server_operation(server_name, cx)
         }));
@@ -2110,11 +2443,28 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn removal_cleanup_rejects_feature_opt_out_even_without_credentials(
+        cx: &mut TestAppContext,
+    ) {
+        let task = cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            cx.update_flags(false, vec![McpRegistryFeatureFlag::NAME.to_owned()]);
+            cx.spawn(async move |cx| delete_unreferenced_registry_credential(None, cx).await)
+        });
+        cx.update(|cx| cx.update_flags(false, Vec::new()));
+        assert!(task.await.is_err());
+    }
+
     #[test]
     fn identical_no_secret_registry_install_is_idempotent() {
         let expected_settings = McpRegistryServerSettings {
             credential_id: None,
             inputs: HashMap::default(),
+            source: Some(McpRegistryInstallationSource::Remote {
+                url: "https://example.com/mcp".into(),
+            }),
         };
         let current_settings = ContextServerSettingsContent::Registry {
             enabled: false,
@@ -2133,6 +2483,9 @@ mod tests {
         let expected_settings = McpRegistryServerSettings {
             credential_id: Some("attempt-credential".to_string()),
             inputs: HashMap::from_iter([("argument:0".to_string(), vec!["expected".to_string()])]),
+            source: Some(McpRegistryInstallationSource::Remote {
+                url: "https://example.com/mcp".into(),
+            }),
         };
         let mut different_registry_settings = expected_settings.clone();
         different_registry_settings.credential_id = Some("winner-credential".to_string());
@@ -2146,11 +2499,26 @@ mod tests {
             Some(&current_settings),
             &expected_settings
         ));
+        let different_source = ContextServerSettingsContent::Registry {
+            enabled: true,
+            remote: false,
+            registry: McpRegistryServerSettings {
+                source: Some(McpRegistryInstallationSource::Remote {
+                    url: "https://other.example.com/mcp".into(),
+                }),
+                ..expected_settings.clone()
+            },
+        };
+        assert!(!registry_server_settings_match(
+            Some(&different_source),
+            &expected_settings
+        ));
     }
 
     #[gpui::test]
     async fn registry_page_can_be_created_during_workspace_update(cx: &mut TestAppContext) {
         crate::test_support::init_test(cx);
+        cx.update(|cx| cx.update_flags(false, vec![McpRegistryFeatureFlag::NAME.to_owned()]));
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, None::<&Path>, cx).await;
         cx.update(|cx| {
@@ -2172,6 +2540,7 @@ mod tests {
     #[gpui::test]
     async fn install_options_use_server_details_from_the_list(cx: &mut TestAppContext) {
         crate::test_support::init_test(cx);
+        cx.update(|cx| cx.update_flags(false, vec![McpRegistryFeatureFlag::NAME.to_owned()]));
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, None::<&Path>, cx).await;
         let registry_store = cx.update(|cx| McpRegistryStore::init_test_global(cx, Vec::new()));

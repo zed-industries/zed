@@ -11,6 +11,7 @@ use context_server::oauth::{self, McpOAuthTokenProvider, OAuthDiscovery, OAuthSe
 use context_server::transport::{HttpTransport, TransportShutdownReason};
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use credentials_provider::CredentialsProvider;
+use feature_flags::{FeatureFlagAppExt as _, FeatureFlagStore, McpRegistryFeatureFlag};
 use fs::Fs;
 use futures::future::Either;
 use futures::{FutureExt as _, StreamExt as _, future::join_all};
@@ -26,14 +27,18 @@ use rand::Rng as _;
 use registry::ContextServerDescriptorRegistry;
 use remote::{Interactive, RemoteClient};
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
-use settings::{Settings as _, SettingsLocation, SettingsStore, WorktreeId};
+use settings::{
+    ContextServerSettingsContent, ProfileBase, Settings as _, SettingsFile, SettingsLocation,
+    SettingsStore, UserSettingsContentExt as _, WorktreeId,
+};
 use util::{ResultExt as _, rel_path::RelPath};
 
 use crate::{
     DisableAiSettings, McpRegistryStore, Project, ProjectEnvironment,
     mcp_registry_store::{
         McpRegistryInstallationSource, ResolvedMcpRegistryServer, read_server_secrets,
-        resolve_server_configuration,
+        registry_npm_package_name, resolve_server_configuration, run_with_registry_enabled,
+        validate_npm_environment, validate_npm_runtime_arguments,
     },
     project_settings::{ContextServerSettings, OAuthClientSettings, ProjectSettings},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
@@ -79,6 +84,69 @@ pub enum ContextServerSource {
     Custom,
     Extension,
     Registry,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegistrySettingsOwnership {
+    User,
+    Project,
+    Managed,
+}
+
+pub fn registry_settings_ownership(
+    server_name: &str,
+    configured_in_project: bool,
+    cx: &App,
+) -> RegistrySettingsOwnership {
+    if configured_in_project {
+        return RegistrySettingsOwnership::Project;
+    }
+    let settings_store = cx.global::<SettingsStore>();
+    if settings_store
+        .get_content_for_file(SettingsFile::Server)
+        .and_then(|settings| settings.project.context_servers.get(server_name))
+        .is_some()
+    {
+        return RegistrySettingsOwnership::Managed;
+    }
+    let Some(user_settings) = settings_store.raw_user_settings() else {
+        return RegistrySettingsOwnership::Managed;
+    };
+    if !matches!(
+        user_settings
+            .content
+            .project
+            .context_servers
+            .get(server_name),
+        Some(ContextServerSettingsContent::Registry { .. })
+    ) {
+        return RegistrySettingsOwnership::Managed;
+    }
+    if user_settings.for_profile(cx).is_some_and(|profile| {
+        profile.base == ProfileBase::Default
+            || profile
+                .settings
+                .project
+                .context_servers
+                .contains_key(server_name)
+    }) || user_settings
+        .for_os()
+        .is_some_and(|settings| settings.project.context_servers.contains_key(server_name))
+        || user_settings
+            .for_release_channel()
+            .is_some_and(|settings| settings.project.context_servers.contains_key(server_name))
+    {
+        RegistrySettingsOwnership::Managed
+    } else {
+        RegistrySettingsOwnership::User
+    }
+}
+
+pub fn registry_user_settings_destination_is_active(cx: &App) -> bool {
+    cx.global::<SettingsStore>()
+        .raw_user_settings()
+        .and_then(|settings| settings.for_profile(cx))
+        .is_none_or(|profile| profile.base == ProfileBase::User)
 }
 
 impl ContextServerStatus {
@@ -341,14 +409,17 @@ impl ContextServerConfiguration {
                 remote,
                 registry,
             } => {
-                Self::from_registry_settings(
-                    registry,
-                    id,
-                    remote,
-                    node_runtime,
-                    project_environment,
-                    defer_remote_registry_npm,
+                run_with_registry_enabled(
                     cx,
+                    Self::from_registry_settings(
+                        registry,
+                        id,
+                        remote,
+                        node_runtime,
+                        project_environment,
+                        defer_remote_registry_npm,
+                        cx,
+                    ),
                 )
                 .await
             }
@@ -364,15 +435,25 @@ impl ContextServerConfiguration {
         defer_remote_registry_npm: bool,
         cx: &AsyncApp,
     ) -> Result<Self> {
+        anyhow::ensure!(
+            cx.update(|cx| cx.has_flag::<McpRegistryFeatureFlag>()),
+            "MCP Registry feature is not enabled"
+        );
         let registry_store = cx
             .update(|cx| McpRegistryStore::try_global(cx))
             .context("MCP Registry store is not initialized")?;
         let installation_task = cx.update(|cx| {
-            registry_store.update(cx, |store, cx| store.server_installation(&id.0, cx))
+            registry_store.update(cx, |store, cx| {
+                store.server_installation(&id.0, registry_settings.source.clone(), cx)
+            })
         });
         let (server, source) = installation_task
             .await
             .with_context(|| format!("loading MCP Registry installation for `{id}`"))?;
+        anyhow::ensure!(
+            cx.update(|cx| cx.has_flag::<McpRegistryFeatureFlag>()),
+            "MCP Registry feature is not enabled"
+        );
         if server.name() != id.0.as_ref() {
             anyhow::bail!("MCP Registry returned details for an unexpected server");
         }
@@ -394,6 +475,10 @@ impl ContextServerConfiguration {
         } else {
             HashMap::default()
         };
+        anyhow::ensure!(
+            cx.update(|cx| cx.has_flag::<McpRegistryFeatureFlag>()),
+            "MCP Registry feature is not enabled"
+        );
         let resolved = resolve_server_configuration(
             &server,
             &source,
@@ -453,6 +538,9 @@ impl ContextServerConfiguration {
         use_local_execution_environment: bool,
         cx: &AsyncApp,
     ) -> Result<ContextServerCommand> {
+        registry_npm_package_name(&package_spec)?;
+        validate_npm_runtime_arguments(&runtime_arguments)?;
+        validate_npm_environment(&environment)?;
         let node_runtime =
             node_runtime.context("Node.js is unavailable for this MCP Registry package")?;
         let fs = cx.update(|cx| <dyn Fs>::global(cx));
@@ -574,6 +662,7 @@ pub struct ContextServerStore {
     server_working_directories: HashMap<ContextServerId, Option<Arc<Path>>>,
     needs_server_update: bool,
     ai_disabled: bool,
+    mcp_registry_enabled: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -656,6 +745,10 @@ impl ContextServerStore {
         self.context_server_settings
             .iter()
             .filter(|(_, entry)| entry.settings.enabled())
+            .filter(|(_, entry)| {
+                self.mcp_registry_enabled
+                    || !matches!(entry.settings, ContextServerSettings::Registry { .. })
+            })
             .map(|(id, _)| ContextServerId(id.clone()))
             .collect()
     }
@@ -803,6 +896,38 @@ impl ContextServerStore {
             }
         })];
 
+        subscriptions.push(cx.observe_global::<FeatureFlagStore>(move |this, cx| {
+            let enabled = cx.has_flag::<McpRegistryFeatureFlag>();
+            if enabled == this.mcp_registry_enabled {
+                return;
+            }
+            this.mcp_registry_enabled = enabled;
+            if !enabled {
+                this.update_servers_task.take();
+                this.needs_server_update = false;
+                let server_ids = this
+                    .servers
+                    .keys()
+                    .filter(|id| this.is_registry_server(id))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for id in server_ids {
+                    this.stop_server(&id, cx).log_err();
+                    this.desired_configurations.remove(&id);
+                    this.agent_configurations.remove(&id);
+                    this.set_configuration_error(
+                        id,
+                        "MCP Registry feature is not enabled".into(),
+                        cx,
+                    );
+                }
+            }
+            if maintain_server_loop && !DisableAiSettings::get_global(cx).disable_ai {
+                this.available_context_servers_changed(cx);
+            }
+            cx.notify();
+        }));
+
         if maintain_server_loop {
             subscriptions.push(cx.observe(&registry, |this, _registry, cx| {
                 if !DisableAiSettings::get_global(cx).disable_ai {
@@ -811,7 +936,9 @@ impl ContextServerStore {
             }));
             if let Some(mcp_registry_store) = McpRegistryStore::try_global(cx) {
                 subscriptions.push(cx.observe(&mcp_registry_store, |this, _registry, cx| {
-                    if !DisableAiSettings::get_global(cx).disable_ai {
+                    if cx.has_flag::<McpRegistryFeatureFlag>()
+                        && !DisableAiSettings::get_global(cx).disable_ai
+                    {
                         this.available_context_servers_changed(cx);
                     }
                 }));
@@ -842,6 +969,7 @@ impl ContextServerStore {
             registry,
             needs_server_update: false,
             ai_disabled,
+            mcp_registry_enabled: cx.has_flag::<McpRegistryFeatureFlag>(),
             servers: HashMap::default(),
             desired_configurations: HashMap::default(),
             agent_configurations: HashMap::default(),
@@ -888,6 +1016,9 @@ impl ContextServerStore {
         &self,
         id: &ContextServerId,
     ) -> Option<Arc<ContextServerConfiguration>> {
+        if !self.mcp_registry_enabled && self.is_registry_server(id) {
+            return None;
+        }
         select_agent_configuration(
             self.is_remote_project(),
             self.configuration_errors.contains_key(id),
@@ -903,6 +1034,21 @@ impl ContextServerStore {
         self.context_server_settings
             .get(&id.0)
             .map(|entry| &entry.settings)
+    }
+
+    pub fn registry_settings_ownership(
+        &self,
+        id: &ContextServerId,
+        cx: &App,
+    ) -> RegistrySettingsOwnership {
+        registry_settings_ownership(&id.0, self.is_server_configured_locally(id), cx)
+    }
+
+    fn is_registry_server(&self, id: &ContextServerId) -> bool {
+        matches!(
+            self.settings_for_server(id),
+            Some(ContextServerSettings::Registry { .. })
+        )
     }
 
     pub fn is_server_configured_locally(&self, id: &ContextServerId) -> bool {
@@ -947,6 +1093,9 @@ impl ContextServerStore {
     /// descriptor in the registry, and those are enabled by default
     /// ([`ContextServerSettings::default_extension`]).
     pub fn is_server_enabled(&self, id: &ContextServerId, cx: &App) -> bool {
+        if self.is_registry_server(id) && !cx.has_flag::<McpRegistryFeatureFlag>() {
+            return false;
+        }
         match self.settings_for_server(id) {
             Some(settings) => settings.enabled(),
             None => self
@@ -1117,6 +1266,13 @@ impl ContextServerStore {
         cx: &mut Context<Self>,
     ) {
         let id = server.id();
+        if self.is_registry_server(&id) && !cx.has_flag::<McpRegistryFeatureFlag>() {
+            server.stop().log_err();
+            self.desired_configurations.remove(&id);
+            self.agent_configurations.remove(&id);
+            self.set_configuration_error(id, "MCP Registry feature is not enabled".into(), cx);
+            return;
+        }
         if matches!(
             self.servers.get(&id),
             Some(
@@ -1378,6 +1534,14 @@ impl ContextServerStore {
         Option<Arc<ContextServerConfiguration>>,
     )> {
         let remote = configuration.remote();
+        let is_registry_server = matches!(
+            configuration.as_ref(),
+            ContextServerConfiguration::RemoteRegistryNpm { .. }
+        ) || this.update(cx, |this, _| this.is_registry_server(&id))?;
+        let mcp_registry_enabled = cx.update(|cx| cx.has_flag::<McpRegistryFeatureFlag>());
+        if is_registry_server && !mcp_registry_enabled {
+            anyhow::bail!("MCP Registry is disabled");
+        }
         let needs_remote_command = match configuration.as_ref() {
             ContextServerConfiguration::Custom { .. }
             | ContextServerConfiguration::Extension { .. }
@@ -1425,9 +1589,14 @@ impl ContextServerStore {
                                 server_id: id.0.to_string(),
                                 root_dir: root_dir.clone(),
                                 resolved_registry_npm,
+                                mcp_registry_enabled,
                             })
                     })
                     .await?;
+
+                if is_registry_server && !cx.update(|cx| cx.has_flag::<McpRegistryFeatureFlag>()) {
+                    anyhow::bail!("MCP Registry is disabled");
+                }
 
                 let agent_command = ContextServerCommand {
                     path: response.path.clone().into(),
@@ -1511,6 +1680,9 @@ impl ContextServerStore {
                 None
             };
 
+        if is_registry_server && !cx.update(|cx| cx.has_flag::<McpRegistryFeatureFlag>()) {
+            anyhow::bail!("MCP Registry is disabled");
+        }
         let server: Arc<ContextServer> = this.update(cx, |this, cx| {
             let global_timeout = this.timeout_for_server(&id, cx);
 
@@ -1610,19 +1782,36 @@ impl ContextServerStore {
                 ))
             })?;
 
-        let command = if let Some(resolved_registry_npm) = payload.resolved_registry_npm {
-            if !matches!(
+        if (payload.resolved_registry_npm.is_some()
+            || matches!(
                 settings_entry.settings,
-                ContextServerSettings::Registry {
-                    enabled: true,
-                    remote: true,
-                    ..
-                }
-            ) {
+                ContextServerSettings::Registry { .. }
+            ))
+            && !payload.mcp_registry_enabled
+        {
+            anyhow::bail!("MCP Registry is disabled for this request");
+        }
+
+        let command = if let Some(resolved_registry_npm) = payload.resolved_registry_npm {
+            let ContextServerSettings::Registry {
+                enabled: true,
+                remote: true,
+                registry,
+            } = &settings_entry.settings
+            else {
                 anyhow::bail!(
                     "resolved Registry npm configuration was provided for an ineligible context server"
                 );
-            }
+            };
+            let package_name = registry_npm_package_name(&resolved_registry_npm.package_spec)?;
+            anyhow::ensure!(
+                matches!(
+                    registry.source.as_ref(),
+                    Some(McpRegistryInstallationSource::Package { registry_type, identifier })
+                        if registry_type == "npm" && identifier == package_name
+                ),
+                "resolved Registry npm configuration does not match the approved installation source"
+            );
 
             ContextServerConfiguration::registry_npm_command(
                 &server_id,

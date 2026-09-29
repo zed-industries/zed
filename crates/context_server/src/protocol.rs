@@ -123,6 +123,10 @@ impl InitializedContextServerProtocol {
         self.inner.notify(T::METHOD, params)
     }
 
+    pub(crate) fn stop(&self) {
+        self.inner.stop();
+    }
+
     /// A future that resolves once the underlying transport's output loop has
     /// terminated — after a send failure, or when the client is dropped —
     /// yielding the reason recorded by the transport.

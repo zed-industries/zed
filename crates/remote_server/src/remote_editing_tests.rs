@@ -247,6 +247,8 @@ async fn test_remote_registry_npm_uses_the_client_resolved_installation(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
 ) {
+    use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, McpRegistryFeatureFlag};
+
     const SERVER_ID: &str = "io.example/remote-registry-npm";
     const PACKAGE_IDENTIFIER: &str = "@example/remote-registry-npm";
     const REMOTE_URL: &str = "https://example.com/mcp";
@@ -262,6 +264,8 @@ async fn test_remote_registry_npm_uses_the_client_resolved_installation(
     .await;
     server_cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
     let (project, headless) = init_test_with_node_runtime(&fs, node_runtime, cx, server_cx).await;
+    cx.update(|cx| cx.update_flags(true, vec![McpRegistryFeatureFlag::NAME.to_string()]));
+    assert!(!server_cx.update(|cx| cx.has_flag::<McpRegistryFeatureFlag>()));
 
     let registry_server: ServerResponse = serde_json::from_value(json!({
         "server": {
@@ -272,7 +276,7 @@ async fn test_remote_registry_npm_uses_the_client_resolved_installation(
                 "identifier": PACKAGE_IDENTIFIER,
                 "version": "2.3.4",
                 "transport": {"type": "stdio"},
-                "runtimeArguments": [{"type": "named", "name": "--loglevel", "value": "warn"}],
+                "runtimeArguments": [{"type": "named", "name": "--quiet"}],
                 "packageArguments": [{"type": "positional", "value": "workspace"}],
                 "environmentVariables": [{"name": "SERVER_MODE", "default": "remote"}]
             }],
@@ -284,25 +288,19 @@ async fn test_remote_registry_npm_uses_the_client_resolved_installation(
         registry_type: "npm".to_owned(),
         identifier: PACKAGE_IDENTIFIER.to_owned(),
     };
-    let remote_source = McpRegistryInstallationSource::Remote {
-        url: REMOTE_URL.to_owned(),
-    };
-
     let client_registry_store = cx.update(|cx| {
         let registry_store = McpRegistryStore::init_test_global(cx, Vec::new());
         registry_store.update(cx, |registry_store, cx| {
-            registry_store.remember_server_installation(
-                registry_server.clone(),
-                package_source,
-                cx,
-            );
+            registry_store.remember_server(registry_server.clone(), cx);
         });
         registry_store
     });
     server_cx.update(|cx| {
         let registry_store = McpRegistryStore::init_test_global(cx, Vec::new());
         registry_store.update(cx, |registry_store, cx| {
-            registry_store.remember_server_installation(registry_server, remote_source, cx);
+            let mut registry_server = registry_server;
+            registry_server.server.packages.clear();
+            registry_store.set_cached_servers(vec![registry_server], cx);
         });
         let context_server_store = headless.read(cx).context_server_store.clone();
         context_server_store.update(cx, |store, _cx| {
@@ -311,7 +309,10 @@ async fn test_remote_registry_npm_uses_the_client_resolved_installation(
                 ContextServerSettings::Registry {
                     enabled: true,
                     remote: true,
-                    registry: settings::McpRegistryServerSettings::default(),
+                    registry: settings::McpRegistryServerSettings {
+                        source: Some(package_source.clone()),
+                        ..Default::default()
+                    },
                 },
             );
         });
@@ -319,7 +320,7 @@ async fn test_remote_registry_npm_uses_the_client_resolved_installation(
 
     server_cx.run_until_parked();
     let installation_task = client_registry_store.update(cx, |registry_store, cx| {
-        registry_store.server_installation(SERVER_ID, cx)
+        registry_store.server_installation(SERVER_ID, Some(package_source), cx)
     });
     let (client_server, client_source) = installation_task
         .await
@@ -344,7 +345,7 @@ async fn test_remote_registry_npm_uses_the_client_resolved_installation(
     )
     .expect("resolve the client Registry npm configuration")
     else {
-        panic!("expected the client Registry hint to select npm");
+        panic!("expected the approved Registry source to select npm");
     };
     let configuration = Arc::new(ContextServerConfiguration::RemoteRegistryNpm {
         package_spec,
@@ -369,8 +370,7 @@ async fn test_remote_registry_npm_uses_the_client_resolved_installation(
     assert_eq!(command.path, npm_path);
     assert!(command.args.ends_with(&[
         "--yes".to_owned(),
-        "--loglevel".to_owned(),
-        "warn".to_owned(),
+        "--quiet".to_owned(),
         "--".to_owned(),
         format!("{PACKAGE_IDENTIFIER}@0.0.0 - 2.3.4"),
         "workspace".to_owned(),
@@ -390,6 +390,167 @@ async fn test_remote_registry_npm_uses_the_client_resolved_installation(
             .map(String::as_str),
         Some("remote")
     );
+}
+
+#[cfg(unix)]
+#[gpui::test]
+async fn test_remote_registry_npm_requires_client_opt_in(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    use feature_flags::{FeatureFlagAppExt as _, McpRegistryFeatureFlag};
+
+    const SERVER_ID: &str = "io.example/remote-registry-npm-denied";
+    let npm_path = PathBuf::from("/test/npm");
+    let node_runtime = NodeRuntime::test_with_paths(PathBuf::from("/test/node"), npm_path.clone());
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({ "project": { "README.md": "test" } }),
+    )
+    .await;
+    server_cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+    let (project, headless) = init_test_with_node_runtime(&fs, node_runtime, cx, server_cx).await;
+    assert!(!cx.update(|cx| cx.has_flag::<McpRegistryFeatureFlag>()));
+    assert!(!server_cx.update(|cx| cx.has_flag::<McpRegistryFeatureFlag>()));
+
+    server_cx.update(|cx| {
+        let context_server_store = headless.read(cx).context_server_store.clone();
+        context_server_store.update(cx, |store, _cx| {
+            store.test_set_context_server_settings(
+                SERVER_ID.into(),
+                ContextServerSettings::Registry {
+                    enabled: true,
+                    remote: true,
+                    registry: settings::McpRegistryServerSettings {
+                        source: Some(McpRegistryInstallationSource::Package {
+                            registry_type: "npm".to_owned(),
+                            identifier: "@example/remote-registry-npm".to_owned(),
+                        }),
+                        ..Default::default()
+                    },
+                },
+            );
+        });
+    });
+    let configuration = Arc::new(ContextServerConfiguration::RemoteRegistryNpm {
+        package_spec: "@example/remote-registry-npm@0.0.0 - 1.0.0".to_owned(),
+        runtime_arguments: Vec::new(),
+        package_arguments: Vec::new(),
+        environment: HashMap::default(),
+    });
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let result = ContextServerStore::test_create_context_server(
+        context_server_store.downgrade(),
+        SERVER_ID.into(),
+        configuration,
+        &mut cx.to_async(),
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "flag-off client must not dispatch Registry npm"
+    );
+
+    let remote_client = project.read_with(cx, |project, _| {
+        project
+            .remote_client()
+            .expect("project should have a remote client")
+    });
+    let proto_client = remote_client.read_with(cx, |client, _| client.proto_client());
+    for resolved_registry_npm in [
+        None,
+        Some(proto::ResolvedRegistryNpmContextServer {
+            package_spec: "@example/remote-registry-npm@0.0.0 - 1.0.0".to_owned(),
+            runtime_arguments: Vec::new(),
+            package_arguments: Vec::new(),
+            environment: Default::default(),
+        }),
+    ] {
+        let result = proto_client
+            .request(proto::GetContextServerCommand {
+                project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                server_id: SERVER_ID.to_owned(),
+                root_dir: None,
+                resolved_registry_npm,
+                mcp_registry_enabled: false,
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "flag-off request must not resolve Registry settings"
+        );
+    }
+
+    for (package_spec, runtime_arguments) in [
+        ("@example/unapproved@0.0.0 - 1.0.0", Vec::new()),
+        (
+            "@example/remote-registry-npm@0.0.0 - 1.0.0",
+            vec!["--package=https://example.invalid/payload.tgz".to_owned()],
+        ),
+        (
+            "https://example.invalid/payload.tgz#@0.0.0 - 1.0.0",
+            Vec::new(),
+        ),
+    ] {
+        let result = proto_client
+            .request(proto::GetContextServerCommand {
+                project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                server_id: SERVER_ID.to_owned(),
+                root_dir: None,
+                resolved_registry_npm: Some(proto::ResolvedRegistryNpmContextServer {
+                    package_spec: package_spec.to_owned(),
+                    runtime_arguments,
+                    package_arguments: Vec::new(),
+                    environment: Default::default(),
+                }),
+                mcp_registry_enabled: true,
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "opt-in must not bypass the approved npm source or runtime policy"
+        );
+    }
+
+    for name in ["NPM_CONFIG_REGISTRY", "NODE_OPTIONS", "PATH"] {
+        let result = proto_client
+            .request(proto::GetContextServerCommand {
+                project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                server_id: SERVER_ID.to_owned(),
+                root_dir: None,
+                resolved_registry_npm: Some(proto::ResolvedRegistryNpmContextServer {
+                    package_spec: "@example/remote-registry-npm@0.0.0 - 1.0.0".to_owned(),
+                    runtime_arguments: Vec::new(),
+                    package_arguments: Vec::new(),
+                    environment: [(name.to_owned(), "untrusted".to_owned())].into(),
+                }),
+                mcp_registry_enabled: true,
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "remote registry command must reject {name}"
+        );
+    }
+
+    let command = proto_client
+        .request(proto::GetContextServerCommand {
+            project_id: proto::REMOTE_SERVER_PROJECT_ID,
+            server_id: SERVER_ID.to_owned(),
+            root_dir: None,
+            resolved_registry_npm: Some(proto::ResolvedRegistryNpmContextServer {
+                package_spec: "@example/remote-registry-npm@0.0.0 - 1.0.0".to_owned(),
+                runtime_arguments: Vec::new(),
+                package_arguments: Vec::new(),
+                environment: Default::default(),
+            }),
+            mcp_registry_enabled: true,
+        })
+        .await
+        .expect("opted-in request should use the remote npm runtime");
+    assert_eq!(command.path, npm_path.to_string_lossy());
+    assert!(!server_cx.update(|cx| cx.has_flag::<McpRegistryFeatureFlag>()));
 }
 
 #[gpui::test]

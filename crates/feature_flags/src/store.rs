@@ -263,7 +263,7 @@ fn variant_from_key<V: FeatureFlagValue>(key: &str) -> Option<V> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EnumFeatureFlag, FeatureFlag, PresenceFlag};
+    use crate::{EnumFeatureFlag, FeatureFlag, McpRegistryFeatureFlag, PresenceFlag};
     use gpui::UpdateGlobal;
     use settings::SettingsStore;
 
@@ -393,6 +393,20 @@ mod tests {
         let store = FeatureFlagStore::default();
         assert_eq!(store.try_flag_value::<DemoFlag>(cx), None);
         assert_eq!(PresenceFlag::default(), PresenceFlag::Off);
+    }
+
+    #[gpui::test]
+    fn mcp_registry_requires_explicit_opt_in(cx: &mut App) {
+        init_settings_store(cx);
+        let mut store = FeatureFlagStore::default();
+        assert!(!FeatureFlagStore::has_flag_default::<McpRegistryFeatureFlag>());
+        assert!(!store.has_flag::<McpRegistryFeatureFlag>(cx));
+
+        store.update_server_flags(true, vec![]);
+        assert!(!store.has_flag::<McpRegistryFeatureFlag>(cx));
+
+        set_override(McpRegistryFeatureFlag::NAME, "on", cx);
+        assert!(store.has_flag::<McpRegistryFeatureFlag>(cx));
     }
 
     #[gpui::test]

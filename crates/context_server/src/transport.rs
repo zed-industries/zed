@@ -47,6 +47,10 @@ pub trait Transport: Send + Sync {
         }
     }
 
+    fn supports_concurrent_sends(&self) -> bool {
+        false
+    }
+
     fn receive(&self) -> Pin<Box<dyn Stream<Item = String> + Send>>;
     fn receive_err(&self) -> Pin<Box<dyn Stream<Item = String> + Send>>;
 

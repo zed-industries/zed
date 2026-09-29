@@ -253,7 +253,6 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2026_05_04::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2026_05_04,
         ),
-        MigrationType::Json(migrations::m_2026_07_21::remove_mcp_registry_source),
         MigrationType::Json(migrations::m_2026_08_17::make_git_gutter_width_an_enum),
         MigrationType::Json(migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator),
         MigrationType::Json(migrations::m_2026_08_30::nest_markdown_preview_settings),
@@ -5029,222 +5028,65 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_mcp_registry_source_across_settings_scopes() {
-        assert_migrate_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2026_07_21::remove_mcp_registry_source,
-            )],
-            indoc! {r#"
-            {
-                "source": "keep-root-source",
-                "context_servers": {
-                    "registry_server": {
-                        "source": "keep-server-source",
-                        "registry": {
-                            "source": {
-                                "type": "package",
-                                "registry_type": "npm",
-                                "identifier": "@example/server"
-                            },
-                            "credential_id": "credential-id",
-                            "inputs": {
-                                "environment:LOG_LEVEL": ["debug"]
-                            },
-                            "source_note": "keep-registry-source-note"
-                        }
-                    },
-                    "custom_server": {
-                        "source": "custom",
-                        "command": "example"
-                    },
-                    "already_migrated": {
-                        "registry": {
-                            "inputs": {
-                                "variable:tenant": ["acme"]
-                            }
-                        }
-                    }
-                },
-                "linux": {
-                    "context_servers": {
-                        "registry_server": {
-                            "registry": {
-                                "source": {
-                                    "type": "remote",
-                                    "url": "https://linux.example.com/mcp"
-                                },
-                                "inputs": {
-                                    "header:X-Account": ["linux"]
-                                }
-                            }
-                        }
-                    }
-                },
-                "preview": {
-                    "context_servers": {
-                        "registry_server": {
-                            "registry": {
-                                "source": {
-                                    "type": "remote",
-                                    "url": "https://preview.example.com/mcp"
-                                },
-                                "credential_id": "preview-credential"
-                            }
-                        }
-                    }
-                },
-                "profiles": {
-                    "Modern": {
-                        "settings": {
-                            "context_servers": {
-                                "registry_server": {
-                                    "registry": {
-                                        "source": {
-                                            "type": "remote",
-                                            "url": "https://modern.example.com/mcp"
-                                        },
-                                        "inputs": {
-                                            "variable:tenant": ["modern"]
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "Legacy": {
-                        "context_servers": {
-                            "registry_server": {
-                                "registry": {
-                                    "source": {
-                                        "type": "package",
-                                        "registry_type": "npm",
-                                        "identifier": "@example/legacy"
-                                    },
-                                    "credential_id": "legacy-credential"
-                                }
-                            }
-                        }
-                    }
-                },
-                "other": {
-                    "source": "keep-unrelated-source"
-                }
-            }
-            "#},
-            Some(indoc! {r#"
-                {
-                    "source": "keep-root-source",
-                    "context_servers": {
-                        "registry_server": {
-                            "source": "keep-server-source",
-                            "registry": {
-                                "credential_id": "credential-id",
-                                "inputs": {
-                                    "environment:LOG_LEVEL": ["debug"]
-                                },
-                                "source_note": "keep-registry-source-note"
-                            }
-                        },
-                        "custom_server": {
-                            "source": "custom",
-                            "command": "example"
-                        },
-                        "already_migrated": {
-                            "registry": {
-                                "inputs": {
-                                    "variable:tenant": ["acme"]
-                                }
-                            }
-                        }
-                    },
-                    "linux": {
-                        "context_servers": {
-                            "registry_server": {
-                                "registry": {
-                                    "inputs": {
-                                        "header:X-Account": ["linux"]
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "preview": {
-                        "context_servers": {
-                            "registry_server": {
-                                "registry": {
-                                    "credential_id": "preview-credential"
-                                }
-                            }
-                        }
-                    },
-                    "profiles": {
-                        "Modern": {
-                            "settings": {
-                                "context_servers": {
-                                    "registry_server": {
-                                        "registry": {
-                                            "inputs": {
-                                                "variable:tenant": ["modern"]
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        "Legacy": {
-                            "context_servers": {
-                                "registry_server": {
-                                    "registry": {
-                                        "credential_id": "legacy-credential"
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "other": {
-                        "source": "keep-unrelated-source"
-                    }
-                }
-                "#}),
-        );
-    }
+    fn test_mcp_registry_approval_survives_settings_migrations() {
+        use serde_json::{Value, json};
 
-    #[test]
-    fn test_remove_mcp_registry_source_is_registered() {
-        assert_migrate_settings(
-            indoc! {r#"
-            {
-                "context_servers": {
-                    "registry_server": {
-                        "registry": {
-                            "source": {
-                                "type": "remote",
-                                "url": "https://example.com/mcp"
-                            },
-                            "credential_id": "credential-id",
-                            "inputs": {
-                                "variable:tenant": ["acme"]
-                            }
-                        }
+        let package_registry = json!({
+            "source": {
+                "type": "package",
+                "registry_type": "npm",
+                "identifier": "@example/server"
+            },
+            "credential_id": "package-credential",
+            "inputs": { "environment:LOG_LEVEL": ["debug"] }
+        });
+        let remote_registry = json!({
+            "source": { "type": "remote", "url": "https://example.com/mcp" },
+            "credential_id": "remote-credential",
+            "inputs": { "variable:tenant": ["acme"] }
+        });
+        let input = json!({
+            "gutter": { "git_gutter_width": 4.0 },
+            "context_servers": { "package": { "registry": package_registry } },
+            "linux": {
+                "context_servers": { "remote": { "registry": remote_registry } }
+            },
+            "preview": {
+                "context_servers": { "package": { "registry": package_registry } }
+            },
+            "profiles": {
+                "Modern": {
+                    "settings": {
+                        "context_servers": { "remote": { "registry": remote_registry } }
                     }
+                },
+                "Legacy": {
+                    "context_servers": { "package": { "registry": package_registry } }
                 }
             }
-            "#},
-            Some(indoc! {r#"
-                {
-                    "context_servers": {
-                        "registry_server": {
-                            "registry": {
-                                "credential_id": "credential-id",
-                                "inputs": {
-                                    "variable:tenant": ["acme"]
-                                }
-                            }
-                        }
-                    }
-                }
-                "#}),
+        });
+        let migrated = migrate_settings(&input.to_string())
+            .unwrap()
+            .expect("git gutter width should be migrated");
+        let output: Value = serde_json::from_str(&migrated).unwrap();
+
+        for path in [
+            "/context_servers/package/registry",
+            "/linux/context_servers/remote/registry",
+            "/preview/context_servers/package/registry",
+            "/profiles/Modern/settings/context_servers/remote/registry",
+        ] {
+            assert_eq!(output.pointer(path), input.pointer(path), "{path}");
+        }
+        assert_eq!(
+            output.pointer("/profiles/Legacy/settings/context_servers/package/registry"),
+            input.pointer("/profiles/Legacy/context_servers/package/registry")
         );
+        assert_eq!(
+            output.pointer("/gutter/git_gutter_width"),
+            Some(&json!({ "custom": 4.0 }))
+        );
+        assert_eq!(migrate_settings(&migrated).unwrap(), None);
     }
 
     #[test]
