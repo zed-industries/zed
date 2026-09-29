@@ -13,6 +13,8 @@ fn make_settings_with_read_only(patterns: &[&str]) -> WorktreeSettings {
         file_scan_exclusions: PathMatcher::default(),
         file_scan_inclusions: PathMatcher::default(),
         parent_dir_scan_inclusions: PathMatcher::default(),
+        file_search_exclusions: PathMatcher::default(),
+        file_finder_exclusions: PathMatcher::default(),
         private_files: PathMatcher::default(),
         hidden_files: PathMatcher::default(),
         read_only_files: PathMatcher::new(
@@ -55,6 +57,8 @@ fn assert_file_pattern_settings(setting: &str) {
         let matcher = match setting {
             "file_scan_exclusions" => &settings.file_scan_exclusions,
             "file_scan_inclusions" => &settings.file_scan_inclusions,
+            "file_search_exclusions" => &settings.file_search_exclusions,
+            "file_finder_exclusions" => &settings.file_finder_exclusions,
             "hidden_files" => &settings.hidden_files,
             "read_only_files" => &settings.read_only_files,
             _ => unreachable!(),
@@ -88,6 +92,60 @@ fn test_invalid_exclusion_addition_preserves_git() {
 #[test]
 fn test_invalid_file_scan_inclusions() {
     assert_file_pattern_settings("file_scan_inclusions");
+}
+
+#[test]
+fn test_invalid_file_search_exclusions() {
+    assert_file_pattern_settings("file_search_exclusions");
+}
+
+#[test]
+fn test_invalid_file_finder_exclusions() {
+    assert_file_pattern_settings("file_finder_exclusions");
+}
+
+#[test]
+fn test_path_exclusions_match_ancestors() {
+    let mut content = SettingsContent::parse_json_with_comments(&settings::default_settings())
+        .expect("default settings");
+    let overrides: SettingsContent = serde_json::from_value(json!({
+        "file_search_exclusions": ["vendor", "**/*.orig"],
+        "file_finder_exclusions": ["vendor", "**/generated"],
+    }))
+    .expect("override settings");
+    content.merge_from(&overrides);
+    let settings = WorktreeSettings::from_settings(&content);
+
+    for (path, expected) in [
+        ("vendor", EntryExclusions::SEARCH | EntryExclusions::FINDER),
+        (
+            "vendor/lib/file.php",
+            EntryExclusions::SEARCH | EntryExclusions::FINDER,
+        ),
+        (
+            "src/vendor/file.php",
+            EntryExclusions::SEARCH | EntryExclusions::FINDER,
+        ),
+        ("src/vendored/file.php", EntryExclusions::empty()),
+        ("src/main.rs.orig", EntryExclusions::SEARCH),
+        ("src/generated/types.rs", EntryExclusions::FINDER),
+        ("src/main.rs", EntryExclusions::empty()),
+    ] {
+        assert_eq!(settings.path_exclusions(rel_path(path)), expected, "{path}");
+    }
+}
+
+#[test]
+fn test_path_exclusions_never_exclude_root() {
+    let settings = settings_with_patterns("file_search_exclusions", &["**"]);
+    assert_eq!(
+        settings.path_exclusions(rel_path("")),
+        EntryExclusions::empty()
+    );
+    assert_eq!(
+        settings.path_exclusions(rel_path("file.txt")),
+        EntryExclusions::SEARCH
+    );
 }
 
 #[test]

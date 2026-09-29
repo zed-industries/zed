@@ -27,7 +27,7 @@ use file_content::{
     ByteContent, DecodingReader, FILE_ANALYSIS_BYTES, decode_byte_header, detect_encoding,
 };
 use util::{ResultExt, maybe, rel_path::RelPath};
-use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
+use worktree::{Entry, EntryExclusions, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
 
 use crate::{
     Project, ProjectItem, ProjectPath, RemotelyCreatedModels,
@@ -504,6 +504,11 @@ impl Search {
                     cx.background_executor()
                         .spawn(async move {
                             for entry in snapshot.files(include_ignored, 0) {
+                                if !include_ignored
+                                    && entry.exclusions.contains(EntryExclusions::SEARCH)
+                                {
+                                    continue;
+                                }
                                 let (should_scan_tx, should_scan_rx) = oneshot::channel();
 
                                 let Ok(_) = tx
@@ -681,7 +686,7 @@ impl Search {
                         && let Some(entry) = b
                             .entry_id(cx)
                             .and_then(|entry_id| worktree_store.entry_for_id(entry_id, cx))
-                        && entry.is_ignored
+                        && (entry.is_ignored || entry.exclusions.contains(EntryExclusions::SEARCH))
                     {
                         return false;
                     }
