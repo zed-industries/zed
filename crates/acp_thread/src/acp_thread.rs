@@ -13,7 +13,9 @@ use collections::HashSet;
 pub use connection::*;
 pub use diff::*;
 use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
-use futures::{FutureExt, channel::oneshot, future::BoxFuture};
+#[cfg(any(test, feature = "test-support"))]
+use futures::future::BoxFuture;
+use futures::{FutureExt, channel::oneshot};
 use gpui::{
     ActivityGuard, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription,
     Task, WeakEntity,
