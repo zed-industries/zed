@@ -935,11 +935,27 @@ fn collect_project_threads(
     threads
 }
 
+type AgentSessionId = (AgentId, acp::SessionId);
 type AgentSessionKey = (
     AgentId,
     acp::SessionId,
     Option<RemoteConnectionIdentity>,
 );
+
+fn remote_session_ids(sessions_by_agent: &[SessionByAgent]) -> HashSet<AgentSessionId> {
+    sessions_by_agent
+        .iter()
+        .filter(|sessions| sessions.remote_connection.is_some())
+        .flat_map(|sessions| {
+            sessions.sessions.iter().map(|session| {
+                (
+                    sessions.agent_id.clone(),
+                    session.session_id.clone(),
+                )
+            })
+        })
+        .collect()
+}
 
 fn agent_session_key(
     agent_id: &AgentId,
@@ -959,9 +975,18 @@ fn count_importable_threads_by_agent(
 ) -> HashMap<AgentId, usize> {
     let mut counts_by_agent = HashMap::default();
     let mut seen_sessions = existing_sessions.clone();
+    let remote_sessions = remote_session_ids(sessions_by_agent);
 
     for sessions_for_agent in sessions_by_agent {
         for session in &sessions_for_agent.sessions {
+            if sessions_for_agent.remote_connection.is_none()
+                && remote_sessions.contains(&(
+                    sessions_for_agent.agent_id.clone(),
+                    session.session_id.clone(),
+                ))
+            {
+                continue;
+            }
             if !seen_sessions.insert(agent_session_key(
                 &sessions_for_agent.agent_id,
                 &session.session_id,
@@ -984,6 +1009,7 @@ fn collect_importable_threads(
     sessions_by_agent: Vec<SessionByAgent>,
     mut existing_sessions: HashSet<AgentSessionKey>,
 ) -> Vec<ThreadMetadata> {
+    let remote_sessions = remote_session_ids(&sessions_by_agent);
     let mut to_insert = Vec::new();
     for SessionByAgent {
         agent_id,
@@ -992,6 +1018,11 @@ fn collect_importable_threads(
     } in sessions_by_agent
     {
         for session in sessions {
+            if remote_connection.is_none()
+                && remote_sessions.contains(&(agent_id.clone(), session.session_id.clone()))
+            {
+                continue;
+            }
             if !existing_sessions.insert(agent_session_key(
                 &agent_id,
                 &session.session_id,
@@ -1337,7 +1368,7 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_keeps_local_and_remote_copies_of_same_session() {
+    fn test_collect_prefers_remote_copy_of_same_session() {
         let existing = HashSet::default();
         let paths = PathList::new(&[Path::new("/project")]);
         let remote_connection =
@@ -1373,9 +1404,9 @@ mod tests {
 
         let result = collect_importable_threads(sessions_by_agent, existing);
 
-        assert_eq!(result.len(), 2);
-        assert!(result.iter().any(|thread| thread.remote_connection.is_none()));
-        assert!(result.iter().any(|thread| thread.remote_connection.is_some()));
+        assert_eq!(result.len(), 1);
+        assert!(result[0].remote_connection.is_some());
+        assert_eq!(result[0].display_title(), "Remote session");
     }
 
     #[test]
