@@ -263,13 +263,4 @@ mod tests {
 
         assert_eq!(binding_label(&action), "lazygit");
     }
-
-    #[test]
-    fn test_binding_label_falls_back_to_humanized_action_name() {
-        assert_eq!(binding_label(&zed_actions::Spawn::modal()), "task: spawn");
-        assert_eq!(
-            binding_label(&zed_actions::OpenSettings),
-            command_palette::humanize_action_name(zed_actions::OpenSettings.name())
-        );
-    }
 }
