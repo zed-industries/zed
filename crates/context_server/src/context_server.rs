@@ -73,8 +73,13 @@ impl ContextServer {
         let transport = match endpoint.scheme() {
             "http" | "https" => {
                 log::info!("Using HTTP transport for {}", endpoint);
-                let transport =
-                    HttpTransport::new(http_client, endpoint.to_string(), headers, executor);
+                let transport = HttpTransport::new(
+                    http_client,
+                    endpoint.to_string(),
+                    headers,
+                    executor,
+                    request_timeout,
+                );
                 Arc::new(transport) as _
             }
             _ => anyhow::bail!("unsupported MCP url scheme {}", endpoint.scheme()),
@@ -105,6 +110,13 @@ impl ContextServer {
 
     pub fn client(&self) -> Option<Arc<crate::protocol::InitializedContextServerProtocol>> {
         self.client.read().clone()
+    }
+
+    /// Whether this server runs as a local process rather than connecting to a
+    /// remote endpoint. Process exits are not auto-restarted by the store, so
+    /// transport-death handling can gate on this.
+    pub fn uses_stdio_transport(&self) -> bool {
+        matches!(self.configuration, ContextServerTransport::Stdio(..))
     }
 
     /// The authentication challenge from the last `401 Unauthorized` response

@@ -769,8 +769,7 @@ impl ContextServerStore {
         );
     }
 
-    /// Watches a running server's transport and initiates the OAuth flow if it
-    /// shuts down on an authentication challenge.
+    /// Watches a running server's transport and reacts to its shutdown.
     ///
     /// MCP servers may accept `initialize` unauthenticated and only send a 401
     /// with a `WWW-Authenticate` challenge on a later request or notification.
@@ -779,6 +778,11 @@ impl ContextServerStore {
     /// relying on some request to carry a typed error back to a caller — is
     /// what lets any post-initialize 401 move the server into `AuthRequired`
     /// instead of leaving it `Running` with a dead client.
+    ///
+    /// For HTTP servers that die without an auth challenge, the transport is
+    /// unusable (e.g. a stale keep-alive connection that stopped delivering
+    /// responses), so the server is restarted with a fresh connection instead
+    /// of staying `Running` with a dead client.
     fn watch_transport_shutdown(
         this: WeakEntity<Self>,
         server: Arc<ContextServer>,
@@ -790,17 +794,56 @@ impl ContextServerStore {
         else {
             return Task::ready(());
         };
-        cx.spawn(async move |cx| {
-            let Some(www_authenticate) = shutdown.await else {
-                // Non-auth transport deaths leave the server state untouched,
-                // as they did before this watch existed.
-                return;
-            };
-            this.update(cx, |this, cx| {
-                this.handle_auth_challenge(server, www_authenticate, cx);
-            })
-            .log_err();
+        cx.spawn(async move |cx| match shutdown.await {
+            Some(www_authenticate) => {
+                this.update(cx, |this, cx| {
+                    this.handle_auth_challenge(server.clone(), www_authenticate, cx);
+                })
+                .log_err();
+            }
+            None => {
+                this.update(cx, |this, cx| {
+                    this.restart_after_transport_death(server.clone(), cx);
+                })
+                .log_err();
+            }
         })
+    }
+
+    /// Restarts an HTTP server whose transport died without an auth
+    /// challenge. Stdio servers are left alone: their transport dying means
+    /// the server process exited, and blindly re-spawning a crashing binary
+    /// would churn.
+    fn restart_after_transport_death(
+        &mut self,
+        server: Arc<ContextServer>,
+        cx: &mut Context<Self>,
+    ) {
+        if server.uses_stdio_transport() {
+            return;
+        }
+
+        // Act only if this exact server is still the one we consider running.
+        // If the state has changed since the shutdown was observed, whoever
+        // changed it owns the lifecycle now.
+        let Some(ContextServerState::Running {
+            server: running_server,
+            configuration,
+            ..
+        }) = self.servers.get(&server.id())
+        else {
+            return;
+        };
+        if !Arc::ptr_eq(running_server, &server) {
+            return;
+        }
+
+        log::info!(
+            "{} transport died without an auth challenge; restarting",
+            server.id()
+        );
+        let configuration = configuration.clone();
+        self.run_server(server, configuration, cx);
     }
 
     fn handle_auth_challenge(
@@ -1028,19 +1071,21 @@ impl ContextServerStore {
                     timeout,
                     oauth: _,
                 } => {
+                    let request_timeout = Some(Duration::from_secs(
+                        timeout.unwrap_or(global_timeout).min(MAX_TIMEOUT_SECS),
+                    ));
                     let transport = HttpTransport::new_with_token_provider(
                         cx.http_client(),
                         url.to_string(),
                         headers.clone(),
                         cx.background_executor().clone(),
                         cached_token_provider.clone(),
+                        request_timeout,
                     );
                     anyhow::Ok(Arc::new(ContextServer::new_with_timeout(
                         id,
                         Arc::new(transport),
-                        Some(Duration::from_secs(
-                            timeout.unwrap_or(global_timeout).min(MAX_TIMEOUT_SECS),
-                        )),
+                        request_timeout,
                     )))
                 }
                 _ => {
@@ -1541,19 +1586,21 @@ impl ContextServerStore {
                 timeout,
                 oauth: _,
             } => {
+                let request_timeout = Some(Duration::from_secs(
+                    timeout.unwrap_or(global_timeout).min(MAX_TIMEOUT_SECS),
+                ));
                 let transport = HttpTransport::new_with_token_provider(
                     http_client.clone(),
                     url.to_string(),
                     headers.clone(),
                     cx.background_executor().clone(),
                     Some(token_provider.clone()),
+                    request_timeout,
                 );
                 Ok(Arc::new(ContextServer::new_with_timeout(
                     id.clone(),
                     Arc::new(transport),
-                    Some(Duration::from_secs(
-                        timeout.unwrap_or(global_timeout).min(MAX_TIMEOUT_SECS),
-                    )),
+                    request_timeout,
                 )))
             }
             _ => anyhow::bail!("OAuth authentication only supported for HTTP servers"),

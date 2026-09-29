@@ -55,7 +55,6 @@ pub(crate) struct Client {
     subscription_set: Arc<Mutex<NotificationSubscriptionSet>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
     #[allow(clippy::type_complexity)]
-    #[allow(dead_code)]
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     executor: BackgroundExecutor,
@@ -349,6 +348,23 @@ impl Client {
         Ok(())
     }
 
+    /// Tears this client down after its transport stopped delivering responses
+    /// (e.g. a request timeout on a stale keep-alive connection).
+    ///
+    /// Cancelling the I/O tasks resolves [`Self::wait_for_shutdown`], which
+    /// lets the owning store restart the server with a fresh connection, and
+    /// clearing the response handlers makes concurrent in-flight requests fail
+    /// fast with the given reason instead of hanging until their own timers
+    /// expire. Later requests fail fast on the closed outbound channel.
+    fn shutdown(&self, reason: anyhow::Error) {
+        *self.last_transport_error.lock() = Some(reason);
+        self.outbound_tx.close();
+        if let Some((input_task, output_task)) = self.io_tasks.lock().take() {
+            drop(input_task);
+            drop(output_task);
+        }
+    }
+
     /// A future that resolves once the transport's output loop has terminated
     /// — after a send failure, or when this client is dropped — yielding the
     /// authentication challenge recorded by the transport if it shut down on a
@@ -479,8 +495,13 @@ impl Client {
                 anyhow::bail!(RequestCanceled)
             }
             _ = timeout_fut => {
-                log::error!("cancelled csp request task for {method:?} id {id} which took over {:?}", timeout.unwrap());
-                anyhow::bail!("Context server request timeout");
+                let timeout = timeout.unwrap();
+                log::error!(
+                    "context server request {method:?} (id {id}) timed out after {timeout:?}; \
+                     shutting down client so the next request reconnects"
+                );
+                self.shutdown(anyhow!("Context server request timeout"));
+                anyhow::bail!("Context server request timeout")
             }
         }
     }

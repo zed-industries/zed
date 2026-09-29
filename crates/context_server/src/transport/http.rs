@@ -3,9 +3,9 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::{Stream, StreamExt};
 use gpui::BackgroundExecutor;
-use http_client::{AsyncBody, HttpClient, Request, Response, http::Method};
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request, Response, http::Method};
 use parking_lot::Mutex as SyncMutex;
-use std::{pin::Pin, sync::Arc};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
 use crate::oauth::{self, OAuthTokenProvider, WwwAuthenticate};
 use crate::transport::Transport;
@@ -62,7 +62,18 @@ pub struct HttpTransport {
     /// the start of each send so it always describes the most recent attempt.
     /// See [`Transport::auth_challenge`].
     auth_challenge: SyncMutex<Option<WwwAuthenticate>>,
+    /// Total deadline applied to every HTTP request, slightly above the
+    /// client-level request timeout. Without it a request written into a stale
+    /// keep-alive connection that never answers would hang at the HTTP layer
+    /// until the client-level timer fires — producing no transport error and
+    /// leaving the dead connection in the pool for the next request to reuse.
+    request_deadline: Option<Duration>,
 }
+
+/// Grace added on top of the client-level request timeout when computing the
+/// HTTP request deadline, so the MCP-level timeout (which can carry a
+/// cancellation) wins the race against the transport-level deadline.
+const REQUEST_DEADLINE_GRACE: Duration = Duration::from_secs(10);
 
 impl HttpTransport {
     pub fn new(
@@ -70,8 +81,16 @@ impl HttpTransport {
         endpoint: String,
         headers: HashMap<String, String>,
         executor: BackgroundExecutor,
+        request_timeout: Option<Duration>,
     ) -> Self {
-        Self::new_with_token_provider(http_client, endpoint, headers, executor, None)
+        Self::new_with_token_provider(
+            http_client,
+            endpoint,
+            headers,
+            executor,
+            None,
+            request_timeout,
+        )
     }
 
     pub fn new_with_token_provider(
@@ -80,6 +99,7 @@ impl HttpTransport {
         headers: HashMap<String, String>,
         executor: BackgroundExecutor,
         token_provider: Option<Arc<dyn OAuthTokenProvider>>,
+        request_timeout: Option<Duration>,
     ) -> Self {
         let (response_tx, response_rx) = async_channel::unbounded();
         let (error_tx, error_rx) = async_channel::unbounded();
@@ -97,6 +117,7 @@ impl HttpTransport {
             headers,
             token_provider,
             auth_challenge: SyncMutex::new(None),
+            request_deadline: request_timeout.map(|timeout| timeout + REQUEST_DEADLINE_GRACE),
         }
     }
 
@@ -112,6 +133,10 @@ impl HttpTransport {
                 "Accept",
                 format!("{}, {}", JSON_MIME_TYPE, EVENT_STREAM_MIME_TYPE),
             );
+
+        if let Some(deadline) = self.request_deadline {
+            request_builder = request_builder.timeout(deadline);
+        }
 
         for (key, value) in &self.headers {
             request_builder = request_builder.header(key.as_str(), value.as_str());
@@ -518,6 +543,7 @@ mod tests {
                 "http://mcp.example.com/mcp".to_string(),
                 HashMap::default(),
                 cx.background_executor.clone(),
+                None,
             );
 
             transport
@@ -564,6 +590,7 @@ mod tests {
             HashMap::default(),
             cx.background_executor.clone(),
             Some(provider),
+            None,
         );
 
         transport
@@ -596,6 +623,7 @@ mod tests {
             "http://mcp.example.com/mcp".to_string(),
             HashMap::default(),
             cx.background_executor.clone(),
+            None,
         );
 
         transport
@@ -627,6 +655,7 @@ mod tests {
             HashMap::default(),
             cx.background_executor.clone(),
             Some(provider.clone()),
+            None,
         );
 
         transport
@@ -675,6 +704,7 @@ mod tests {
             HashMap::default(),
             cx.background_executor.clone(),
             Some(provider.clone()),
+            None,
         );
 
         transport
@@ -720,6 +750,7 @@ mod tests {
             HashMap::default(),
             cx.background_executor.clone(),
             Some(provider.clone()),
+            None,
         );
 
         // Set the new token that will be used on retry.
@@ -757,6 +788,7 @@ mod tests {
             HashMap::default(),
             cx.background_executor.clone(),
             Some(provider.clone()),
+            None,
         );
 
         let err = transport
@@ -803,6 +835,7 @@ mod tests {
             "http://mcp.example.com/mcp".to_string(),
             HashMap::default(),
             cx.background_executor.clone(),
+            None,
         );
 
         let err = transport
@@ -843,6 +876,7 @@ mod tests {
             HashMap::default(),
             cx.background_executor.clone(),
             Some(provider.clone()),
+            None,
         );
 
         let err = transport

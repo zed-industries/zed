@@ -1106,11 +1106,12 @@ async fn test_http_server_authenticates_on_notification_401(cx: &mut TestAppCont
     });
 }
 
-// A transport failure that is not an authentication challenge must not touch
-// the server's state: no spurious auth flow, and (as before the transport
-// watch existed) the server stays `Running`.
+// A transport failure that is not an authentication challenge must not trip
+// the auth flow. Since the transport is unusable afterwards, the store
+// restarts the HTTP server with a fresh connection instead of leaving it
+// `Running` with a dead client.
 #[gpui::test]
-async fn test_http_server_ignores_non_auth_transport_failure(cx: &mut TestAppContext) {
+async fn test_http_server_restarts_on_non_auth_transport_failure(cx: &mut TestAppContext) {
     const SERVER_ID: &str = "flaky-server";
     let server_id = ContextServerId(SERVER_ID.into());
 
@@ -1135,12 +1136,16 @@ async fn test_http_server_ignores_non_auth_transport_failure(cx: &mut TestAppCon
             vec![
                 (server_id.clone(), ContextServerStatus::Starting),
                 (server_id.clone(), ContextServerStatus::Running),
+                // Restart after the non-auth transport failure.
+                (server_id.clone(), ContextServerStatus::Stopped),
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
             ],
             cx,
         );
         cx.run_until_parked();
 
-        let client = store.read_with(cx, |store, _| {
+        let old_client = store.read_with(cx, |store, _| {
             store
                 .get_running_server(&server_id)
                 .expect("server should be running")
@@ -1148,12 +1153,24 @@ async fn test_http_server_ignores_non_auth_transport_failure(cx: &mut TestAppCon
                 .expect("running server should have a client")
         });
 
-        client
+        old_client
             .request::<context_server::types::requests::ListTools>(())
             .await
             .expect_err("request should fail when the transport errors");
+        // Drop our handle so the dead client fully goes away: a lingering
+        // client would compete with its successor for the reused transport's
+        // response channel and starve the restart's initialize handshake.
+        drop(old_client);
 
         cx.run_until_parked();
+
+        store.read_with(cx, |store, _| {
+            store
+                .get_running_server(&server_id)
+                .expect("server should be running again")
+                .client()
+                .expect("restarted server should have a client")
+        });
         // Dropping the events guard asserts no further status change happened.
     }
 
@@ -1161,7 +1178,7 @@ async fn test_http_server_ignores_non_auth_transport_failure(cx: &mut TestAppCon
         assert_eq!(
             store.read(cx).status_for_server(&server_id),
             Some(ContextServerStatus::Running),
-            "a non-auth transport failure should not change the server state"
+            "server should recover via restart after a non-auth transport failure"
         );
     });
 }
@@ -1287,6 +1304,10 @@ async fn test_http_server_restart_clears_stale_auth_challenge(cx: &mut TestAppCo
         .request::<context_server::types::requests::ListTools>(())
         .await
         .expect_err("request should fail when the transport errors");
+    // Drop our handle so the dead client fully goes away: a lingering client
+    // would compete with its successor for the reused transport's response
+    // channel and starve the restart's initialize handshake.
+    drop(client);
     cx.run_until_parked();
 
     cx.update(|cx| {
