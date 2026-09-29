@@ -3039,6 +3039,9 @@ pub(crate) async fn spawn_dev_container(
     )?;
 
     devcontainer_manifest.parse_nonremote_vars()?;
+    devcontainer_manifest
+        .dev_container()
+        .validate_environment_names()?;
 
     if force_rebuild {
         log::debug!("Rebuild requested. Removing any existing container before building");

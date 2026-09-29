@@ -18,7 +18,7 @@ use lsp::{
 };
 use serde::Serialize;
 use serde_json::Value;
-use util::{ResultExt, fs::make_file_executable, maybe, rel_path::RelPath};
+use util::{ResultExt, maybe, rel_path::RelPath};
 
 use crate::{LanguageServerRegistryProxy, LspAccess};
 
@@ -122,6 +122,7 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
 
     fn update_language_server_status(
         &self,
+        source: Option<gpui::EntityId>,
         language_server_id: LanguageServerName,
         status: BinaryStatus,
     ) {
@@ -130,8 +131,16 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
             language_server_id,
             status
         );
-        self.language_registry
-            .update_lsp_binary_status(language_server_id, status);
+        if let Some(source) = source {
+            self.language_registry.update_lsp_binary_status_for_entity(
+                source,
+                language_server_id,
+                status,
+            );
+        } else {
+            self.language_registry
+                .update_lsp_binary_status(language_server_id, status);
+        }
     }
 }
 
@@ -167,6 +176,7 @@ impl DynLspInstaller for ExtensionLspAdapter {
     ) -> LanguageServerBinaryLocations {
         async move {
             let ret = maybe!(async move {
+                let language_server_status_source = delegate.status_source_id();
                 let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
                 let command = self
                     .extension
@@ -174,6 +184,7 @@ impl DynLspInstaller for ExtensionLspAdapter {
                         self.language_server_id.clone(),
                         self.language_name.clone(),
                         delegate,
+                        language_server_status_source,
                     )
                     .await?;
 
@@ -203,21 +214,6 @@ impl DynLspInstaller for ExtensionLspAdapter {
                     command.command.as_ref()
                 };
                 let path = self.extension.path_from_extension(command_path);
-
-                // TODO: This should now be done via the `zed::make_file_executable` function in
-                // Zed extension API, but we're leaving these existing usages in place temporarily
-                // to avoid any compatibility issues between Zed and the extension versions.
-                //
-                // We can remove once the following extension versions no longer see any use:
-                // - toml@0.0.2
-                // - zig@0.0.1
-                if ["toml", "zig"].contains(&self.extension.manifest().id.as_ref())
-                    && path.starts_with(&self.extension.work_dir())
-                {
-                    make_file_executable(&path)
-                        .await
-                        .context("failed to set file permissions")?;
-                }
 
                 Ok(LanguageServerBinary {
                     path,
@@ -314,6 +310,7 @@ impl LspAdapter for ExtensionLspAdapter {
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
+        let language_server_status_source = delegate.status_source_id();
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
         let json_options = self
             .extension
@@ -321,6 +318,7 @@ impl LspAdapter for ExtensionLspAdapter {
                 self.language_server_id.clone(),
                 self.language_name.clone(),
                 delegate,
+                language_server_status_source,
             )
             .await?;
         Ok(if let Some(json_options) = json_options {
@@ -339,10 +337,15 @@ impl LspAdapter for ExtensionLspAdapter {
         _: Option<Uri>,
         _cx: &mut AsyncApp,
     ) -> Result<Value> {
+        let language_server_status_source = delegate.status_source_id();
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
         let json_options: Option<String> = self
             .extension
-            .language_server_workspace_configuration(self.language_server_id.clone(), delegate)
+            .language_server_workspace_configuration(
+                self.language_server_id.clone(),
+                delegate,
+                language_server_status_source,
+            )
             .await?;
         Ok(if let Some(json_options) = json_options {
             serde_json::from_str(&json_options).with_context(|| {
@@ -359,12 +362,14 @@ impl LspAdapter for ExtensionLspAdapter {
         _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
         _cx: &mut AsyncApp,
     ) -> Option<serde_json::Value> {
+        let language_server_status_source = delegate.status_source_id();
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
         let json_schema: Option<String> = self
             .extension
             .language_server_initialization_options_schema(
                 self.language_server_id.clone(),
                 delegate,
+                language_server_status_source,
             )
             .await
             .ok()
@@ -378,12 +383,14 @@ impl LspAdapter for ExtensionLspAdapter {
         _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
         _cx: &mut AsyncApp,
     ) -> Option<serde_json::Value> {
+        let language_server_status_source = delegate.status_source_id();
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
         let json_schema: Option<String> = self
             .extension
             .language_server_workspace_configuration_schema(
                 self.language_server_id.clone(),
                 delegate,
+                language_server_status_source,
             )
             .await
             .ok()
@@ -396,6 +403,7 @@ impl LspAdapter for ExtensionLspAdapter {
         target_language_server_id: LanguageServerName,
         delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
+        let language_server_status_source = delegate.status_source_id();
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
         let json_options: Option<String> = self
             .extension
@@ -403,6 +411,7 @@ impl LspAdapter for ExtensionLspAdapter {
                 self.language_server_id.clone(),
                 target_language_server_id.clone(),
                 delegate,
+                language_server_status_source,
             )
             .await?;
         Ok(if let Some(json_options) = json_options {
@@ -424,6 +433,7 @@ impl LspAdapter for ExtensionLspAdapter {
 
         _cx: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
+        let language_server_status_source = delegate.status_source_id();
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
         let json_options: Option<String> = self
             .extension
@@ -431,6 +441,7 @@ impl LspAdapter for ExtensionLspAdapter {
                 self.language_server_id.clone(),
                 target_language_server_id.clone(),
                 delegate,
+                language_server_status_source,
             )
             .await?;
         Ok(if let Some(json_options) = json_options {

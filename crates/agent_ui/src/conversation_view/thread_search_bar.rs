@@ -3,8 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use acp_thread::{
-    AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessageChunk, ContentBlock,
-    ToolCallContent,
+    AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessageChunk, ToolCallContent,
 };
 use collections::HashMap;
 use editor::{
@@ -16,7 +15,7 @@ use gpui::{
     TextStyle, WeakEntity, actions, prelude::*,
 };
 use markdown::Markdown;
-use multi_buffer::{Anchor, MultiBufferOffset, MultiBufferSnapshot};
+use multi_buffer::{Anchor, Event as MultiBufferEvent, MultiBufferOffset, MultiBufferSnapshot};
 use project::search::SearchQuery;
 use search::{SearchOption, SearchOptions, SearchSource};
 use settings::Settings as _;
@@ -145,6 +144,7 @@ pub struct ThreadSearchBar {
     _update_matches_task: Option<Task<()>>,
     _search_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
+    patch_buffer_subscriptions: HashMap<EntityId, Subscription>,
 }
 
 pub enum ThreadSearchBarEvent {
@@ -222,6 +222,7 @@ impl ThreadSearchBar {
             _update_matches_task: None,
             _search_task: None,
             _subscriptions: vec![editor_subscription, thread_subscription],
+            patch_buffer_subscriptions: HashMap::default(),
         }
     }
 
@@ -250,6 +251,19 @@ impl ThreadSearchBar {
     #[cfg(test)]
     pub(super) fn match_count(&self) -> usize {
         self.matches.len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_patch_buffer_subscribed(&self, buffer_id: EntityId) -> bool {
+        self.patch_buffer_subscriptions.contains_key(&buffer_id)
+    }
+
+    #[cfg(test)]
+    pub(super) fn match_source_ranges(&self) -> Vec<Range<usize>> {
+        self.matches
+            .iter()
+            .map(|thread_match| thread_match.source_range.clone())
+            .collect()
     }
 
     #[cfg(test)]
@@ -319,12 +333,14 @@ impl ThreadSearchBar {
         self.query_error_message = err_msg;
 
         let Some(query) = query else {
+            self.patch_buffer_subscriptions.clear();
             self.clear_results(cx);
             cx.notify();
             return;
         };
 
         let mut targets: Vec<SearchTarget> = Vec::new();
+        let mut patch_buffers = Vec::new();
         let thread = self.thread.read(cx);
         let entry_view_state = self.entry_view_state.read(cx);
         for (entry_ix, entry) in thread.entries().iter().enumerate() {
@@ -354,9 +370,55 @@ impl ThreadSearchBar {
                             source,
                         });
                     }
+                    if let AgentThreadEntry::ToolCall(tool_call) = entry
+                        && entry_view_state.is_tool_call_content_visible(tool_call)
+                    {
+                        for content in tool_call.content() {
+                            if let ToolCallContent::DiffPatch { render, .. } = content {
+                                for hunk in render.files.iter().flat_map(|file| &file.hunks) {
+                                    if let Some(editor) = entry_view_state
+                                        .entry(entry_ix)
+                                        .and_then(|entry| entry.editor_for_patch_hunk(&hunk.buffer))
+                                    {
+                                        patch_buffers.push(hunk.buffer.clone());
+                                        let snapshot =
+                                            editor.read(cx).buffer().read(cx).snapshot(cx);
+                                        targets.push(SearchTarget::Editor {
+                                            entry_ix,
+                                            editor,
+                                            snapshot,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
+
+        let mut previous_subscriptions = std::mem::take(&mut self.patch_buffer_subscriptions);
+        for buffer in patch_buffers {
+            let id = buffer.entity_id();
+            self.patch_buffer_subscriptions
+                .entry(id)
+                .or_insert_with(|| {
+                    previous_subscriptions.remove(&id).unwrap_or_else(|| {
+                        cx.subscribe_in(
+                            &buffer,
+                            window,
+                            |this, _, event: &MultiBufferEvent, window, cx| {
+                                if this.is_active
+                                    && matches!(event, MultiBufferEvent::Edited { .. })
+                                {
+                                    this.schedule_update_matches(window, cx);
+                                }
+                            },
+                        )
+                    })
+                });
+        }
+        drop(previous_subscriptions);
 
         if targets.is_empty() {
             self.clear_results(cx);
@@ -641,6 +703,7 @@ impl ThreadSearchBar {
 
     fn clear_highlights_impl(&mut self, cx: &mut App) {
         self.clear_results(cx);
+        self.patch_buffer_subscriptions.clear();
         self.is_active = false;
         self._update_matches_task = None;
     }
@@ -892,18 +955,14 @@ fn collect_markdowns(
             for (chunk_ix, chunk) in message.chunks.iter().enumerate() {
                 match chunk {
                     AssistantMessageChunk::Message { block, .. } => {
-                        if let Some(md) = block.markdown() {
-                            out.push(md.clone());
-                        }
+                        out.extend(block.markdowns().cloned());
                     }
                     AssistantMessageChunk::Thought { block, .. }
                         if entry_view_state
                             .thinking_block_state((entry_ix, chunk_ix), cx)
                             .0 =>
                     {
-                        if let Some(md) = block.markdown() {
-                            out.push(md.clone());
-                        }
+                        out.extend(block.markdowns().cloned());
                     }
                     AssistantMessageChunk::Thought { .. } => {}
                 }
@@ -911,43 +970,76 @@ fn collect_markdowns(
         }
         AgentThreadEntry::ToolCall(tool_call) => {
             out.push(tool_call.label.clone());
-            if entry_view_state.is_tool_call_expanded(&tool_call.id) {
+            if entry_view_state.is_tool_call_content_visible(tool_call) {
                 out.extend(
                     tool_call
-                        .content
+                        .content()
                         .iter()
-                        .filter_map(|content| match content {
-                            ToolCallContent::ContentBlock(ContentBlock::Markdown { markdown }) => {
-                                Some(markdown.clone())
-                            }
-                            ToolCallContent::ContentBlock(ContentBlock::EmbeddedResource {
-                                markdown: Some(markdown),
-                                ..
-                            }) => Some(markdown.clone()),
-                            ToolCallContent::ContentBlock(
-                                ContentBlock::Empty
-                                | ContentBlock::EmbeddedResource { markdown: None, .. }
-                                | ContentBlock::ResourceLink { .. }
-                                | ContentBlock::Image { .. },
-                            )
-                            | ToolCallContent::Diff(_)
-                            | ToolCallContent::Terminal(_) => None,
-                        }),
+                        .filter_map(|content| content.markdown().cloned()),
                 );
             }
         }
-        AgentThreadEntry::CompletedPlan(entries) => {
-            out.extend(entries.iter().map(|e| e.content.clone()))
-        }
-        AgentThreadEntry::ContextCompaction(compaction)
-            if entry_view_state.is_compaction_expanded(entry_ix) =>
-        {
-            if let Some(summary) = &compaction.summary {
-                out.push(summary.clone());
-            }
-        }
+        AgentThreadEntry::ContextCompaction(compaction) => out.extend(compaction_markdowns(
+            compaction,
+            entry_view_state.is_compaction_expanded(entry_ix),
+        )),
         AgentThreadEntry::Elicitation(_) => {}
-        AgentThreadEntry::ContextCompaction(_) => {}
     }
     out
+}
+
+fn compaction_markdowns(
+    compaction: &acp_thread::ContextCompaction,
+    is_expanded: bool,
+) -> impl Iterator<Item = Entity<Markdown>> + '_ {
+    compaction
+        .summary
+        .iter()
+        .filter_map(|content| content.markdown().cloned())
+        .chain(compaction.error.iter().cloned())
+        .filter(move |_| is_expanded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use acp_thread::{
+        ContentBlock, ContextCompaction, ContextCompactionId, ContextCompactionStatus,
+    };
+    use agent_client_protocol::schema::v1 as acp_v1;
+    use language::LanguageRegistry;
+
+    #[gpui::test]
+    fn test_compaction_markdowns_include_summary_and_error(cx: &mut App) {
+        let summary = cx.new(|cx| Markdown::new("summary match".into(), None, None, cx));
+        let error = cx.new(|cx| Markdown::new("error match".into(), None, None, cx));
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        let unsupported_block = ContentBlock::new_output(
+            acp_thread::content::from_v1(acp_v1::ContentBlock::Audio(acp_v1::AudioContent::new(
+                "YXVkaW8=",
+                "audio/wav",
+            )))
+            .expect("known v1 audio content"),
+            &language_registry,
+            cx,
+        );
+        let unsupported = unsupported_block
+            .markdown()
+            .expect("audio fallback")
+            .clone();
+        let compaction = ContextCompaction {
+            id: ContextCompactionId("compaction".into()),
+            status: ContextCompactionStatus::Failed,
+            summary: vec![
+                ContentBlock::from_markdown(summary.clone()),
+                unsupported_block,
+            ],
+            error: Some(error.clone()),
+        };
+
+        assert!(compaction_markdowns(&compaction, false).next().is_none());
+
+        let markdowns = compaction_markdowns(&compaction, true).collect::<Vec<_>>();
+        assert_eq!(markdowns, vec![summary, unsupported, error]);
+    }
 }
