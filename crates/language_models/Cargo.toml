@@ -56,6 +56,7 @@ open_ai = { workspace = true, features = ["schemars"] }
 openai_subscribed.workspace = true
 opencode = { workspace = true, features = ["schemars"] }
 open_router = { workspace = true, features = ["schemars"] }
+parking_lot.workspace = true
 paths.workspace = true
 rand.workspace = true
 release_channel.workspace = true
@@ -80,7 +81,6 @@ feature_flags.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
-parking_lot.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 
 [package.metadata.cargo-shear]
