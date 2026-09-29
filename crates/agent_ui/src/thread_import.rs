@@ -1003,21 +1003,29 @@ type AgentSessionKey = (
     Option<RemoteConnectionIdentity>,
 );
 
+fn agent_session_scope(
+    agent_id: &AgentId,
+    session: &acp_thread::AgentSessionInfo,
+) -> AgentSessionScope {
+    (
+        agent_id.clone(),
+        session.session_id.clone(),
+        session
+            .work_dirs
+            .as_ref()
+            .and_then(|work_dirs| primary_work_dir(work_dirs).cloned()),
+    )
+}
+
 fn remote_session_scopes(sessions_by_agent: &[SessionByAgent]) -> HashSet<AgentSessionScope> {
     sessions_by_agent
         .iter()
         .filter(|sessions| sessions.remote_connection.is_some())
         .flat_map(|sessions| {
-            sessions.sessions.iter().map(|session| {
-                (
-                    sessions.agent_id.clone(),
-                    session.session_id.clone(),
-                    session
-                        .work_dirs
-                        .as_ref()
-                        .and_then(|work_dirs| primary_work_dir(work_dirs).cloned()),
-                )
-            })
+            sessions
+                .sessions
+                .iter()
+                .map(|session| agent_session_scope(&sessions.agent_id, session))
         })
         .collect()
 }
@@ -1045,13 +1053,9 @@ fn count_importable_threads_by_agent(
     for sessions_for_agent in sessions_by_agent {
         for session in &sessions_for_agent.sessions {
             if sessions_for_agent.remote_connection.is_none()
-                && remote_sessions.contains(&(
-                    sessions_for_agent.agent_id.clone(),
-                    session.session_id.clone(),
-                    session
-                        .work_dirs
-                        .as_ref()
-                        .and_then(|work_dirs| primary_work_dir(work_dirs).cloned()),
+                && remote_sessions.contains(&agent_session_scope(
+                    &sessions_for_agent.agent_id,
+                    session,
                 ))
             {
                 continue;
@@ -1088,14 +1092,7 @@ fn collect_importable_threads(
     {
         for session in sessions {
             if remote_connection.is_none()
-                && remote_sessions.contains(&(
-                    agent_id.clone(),
-                    session.session_id.clone(),
-                    session
-                        .work_dirs
-                        .as_ref()
-                        .and_then(|work_dirs| primary_work_dir(work_dirs).cloned()),
-                ))
+                && remote_sessions.contains(&agent_session_scope(&agent_id, &session))
             {
                 continue;
             }
