@@ -5713,8 +5713,8 @@ impl Sidebar {
                     let workspace = thread.workspace.clone();
                     let draft_id = thread.metadata.thread_id;
                     self.remove_draft(draft_id, &workspace, window, cx);
-                } else if let Some(session_id) = thread.metadata.session_id.clone() {
-                    self.archive_thread(&session_id, window, cx);
+                } else if thread.metadata.session_id.is_some() {
+                    self.archive_thread(thread.metadata.thread_id, window, cx);
                 }
             }
             Some(ListEntry::Terminal(terminal)) => {
@@ -6521,11 +6521,10 @@ impl Sidebar {
                         }
 
                         menu.separator().entry("Archive Thread", None, {
-                            let session_id = session_id.clone();
                             move |window, cx| {
                                 sidebar
                                     .update(cx, |sidebar, cx| {
-                                        sidebar.archive_thread(&session_id, window, cx);
+                                        sidebar.archive_thread(thread_id, window, cx);
                                     })
                                     .ok();
                             }
