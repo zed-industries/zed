@@ -14981,7 +14981,7 @@ mod tests {
                 .expect("`src` directory should be present in the Git panel");
 
             panel.selected_entry = Some(index);
-            panel.add_to_gitignore(&AddToGitignore, window, cx);
+            panel.add_to_gitignore(&git::AddToGitignore, window, cx);
         });
 
         cx.run_until_parked();
@@ -15019,7 +15019,7 @@ mod tests {
                 .expect("`docs` directory should be present in the Git panel");
 
             panel.selected_entry = Some(index);
-            panel.add_to_gitignore(&AddToGitignore, window, cx);
+            panel.add_to_gitignore(&git::AddToGitignore, window, cx);
         });
 
         cx.run_until_parked();
@@ -15072,7 +15072,7 @@ mod tests {
                 .expect("`src` directory should be present in the Git panel");
 
             panel.selected_entry = Some(index);
-            panel.add_to_git_info_exclude(&AddToGitInfoExclude, window, cx);
+            panel.add_to_git_info_exclude(&git::AddToGitInfoExclude, window, cx);
         });
 
         cx.run_until_parked();
@@ -15110,7 +15110,7 @@ mod tests {
                 .expect("`docs` directory should be present in the Git panel");
 
             panel.selected_entry = Some(index);
-            panel.add_to_git_info_exclude(&AddToGitInfoExclude, window, cx);
+            panel.add_to_git_info_exclude(&git::AddToGitInfoExclude, window, cx);
         });
 
         cx.run_until_parked();
