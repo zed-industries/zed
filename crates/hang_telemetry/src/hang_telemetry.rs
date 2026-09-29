@@ -257,6 +257,7 @@ fn to_value(incidents: &[SerializedHangIncident]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::profiler::hang::{StallCause, StallPhase, StallProfile};
     use serde_json::json;
 
     #[test]
@@ -346,8 +347,28 @@ mod tests {
 
     #[test]
     fn hang_incidents_event_uses_expected_wire_shape() {
+        let mut incident = serialized_incident(125.0);
+        incident.stall_profile = Some(StallProfile {
+            cause: StallCause::CpuBound,
+            sampled_ms: 120.0,
+            cpu_ms: 90.0,
+            system_cpu_ms: Some(10.0),
+            major_faults: Some(0),
+            run_delay_ms: None,
+            phases: vec![
+                StallPhase {
+                    cause: StallCause::CpuBound,
+                    duration_ms: 100.0,
+                },
+                StallPhase {
+                    cause: StallCause::Blocked,
+                    duration_ms: 20.0,
+                },
+            ],
+            phases_elided: 0,
+        });
         let event = HangIncidentsEvent {
-            incidents: vec![serialized_incident(125.0)],
+            incidents: vec![incident],
             total_incidents: 3,
             threshold_incidents: 2,
             budget_incidents: 1,
@@ -378,7 +399,20 @@ mod tests {
                     "dropped_events": 0,
                     "journal_discontinuous": false,
                     "contributors": [],
-                    "contributors_elided": 0
+                    "contributors_elided": 0,
+                    "stall_profile": {
+                        "cause": "cpu_bound",
+                        "sampled_ms": 120.0,
+                        "cpu_ms": 90.0,
+                        "system_cpu_ms": 10.0,
+                        "major_faults": 0,
+                        "run_delay_ms": null,
+                        "phases": [
+                            { "cause": "cpu_bound", "duration_ms": 100.0 },
+                            { "cause": "blocked", "duration_ms": 20.0 }
+                        ],
+                        "phases_elided": 0
+                    }
                 }],
                 "total_incidents": 3,
                 "threshold_incidents": 2,
@@ -410,6 +444,7 @@ mod tests {
             journal_discontinuous: false,
             contributors: Vec::new(),
             contributors_elided: 0,
+            stall_profile: None,
         }
     }
 }

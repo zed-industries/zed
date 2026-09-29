@@ -2061,7 +2061,9 @@ impl App {
     /// Nothing is spawned unless the app calls this. The thread polls a
     /// detector over this app's foreground journal every `config.interval`
     /// and passes each poll's incidents, including empty polls, to `on_poll`
-    /// on that thread. When the app quits, a final poll with
+    /// on that thread. Where the platform allows, the thread also samples
+    /// the foreground thread's CPU time while it works, to profile each
+    /// threshold incident's stall. When the app quits, a final poll with
     /// [`HangMonitorPollReason::Flush`] runs during shutdown, concurrently
     /// with quit handlers and within [`SHUTDOWN_TIMEOUT`], so `on_poll` can
     /// deliver batched results.
@@ -2078,18 +2080,24 @@ impl App {
         config: crate::profiler::hang::HangMonitorConfig,
         on_poll: impl FnMut(crate::profiler::hang::HangMonitorPoll) + Send + 'static,
     ) -> Result<(), crate::profiler::hang::HangMonitorError> {
-        use crate::profiler::hang::{HangDetector, HangMonitor, HangMonitorError};
+        use crate::profiler::hang::{
+            HangDetector, HangMonitor, HangMonitorError, ThreadUsageReader, Watchdog,
+        };
 
         if self.hang_monitor.is_some() {
             debug_assert!(false, "the hang monitor was started twice");
             return Err(HangMonitorError::AlreadyStarted);
         }
-        let detector = HangDetector::new(
-            self.foreground_journal(),
-            config.threshold,
-            config.frame_budget,
-        );
-        let monitor = HangMonitor::spawn(detector, config.interval, on_poll)
+        let journal = self.foreground_journal();
+        // Apps run on their foreground thread, so this reads the thread the
+        // journal records.
+        let watchdog = ThreadUsageReader::for_current_thread()
+            .map(|reader| Watchdog::new(journal.activity(), reader));
+        if watchdog.is_none() {
+            log::info!("stall profiling is unavailable on this platform");
+        }
+        let detector = HangDetector::new(journal, config.threshold, config.frame_budget);
+        let monitor = HangMonitor::spawn(detector, watchdog, config.interval, on_poll)
             .map_err(HangMonitorError::Spawn)?;
         self.hang_monitor = Some(monitor);
         Ok(())

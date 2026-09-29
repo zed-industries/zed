@@ -1,10 +1,12 @@
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::mpsc::{self, TryRecvError};
 use std::time::Duration;
 
 use futures::channel::oneshot;
 use scheduler::Instant;
 
-use super::{HangDetector, HangIncident};
+use super::watchdog::Watchdog;
+use super::{HangDetector, HangIncident, HangTrigger};
+use crate::profiler::journal::ForegroundEvent;
 
 /// Detection thresholds and polling cadence for
 /// [`crate::App::start_hang_monitor`].
@@ -57,49 +59,44 @@ enum Request {
 ///
 /// Detection runs off the foreground thread so incidents are still collected
 /// and reported while GPUI's executors are stalled. The thread owns the
-/// detector and the callback; other threads only send it requests. Dropping
-/// the monitor stops the thread.
+/// detector, the optional [`Watchdog`] that profiles each stall, and the
+/// callback; other threads only send it requests. Dropping the monitor stops
+/// the thread.
 pub(crate) struct HangMonitor {
-    requests: mpsc::Sender<Request>,
+    /// `None` once dropping, so the thread sees the channel disconnect.
+    requests: Option<mpsc::Sender<Request>>,
+    thread: std::thread::Thread,
 }
 
 impl HangMonitor {
     /// Starts a thread that polls `detector` every `interval` and passes each
     /// poll's result, including empty ones, to `on_poll` on that thread.
+    /// With a `watchdog`, the thread also samples the foreground between
+    /// polls and attaches a [`super::StallProfile`] to each threshold
+    /// incident.
     ///
     /// # Errors
     ///
     /// Returns an error when the thread can't be spawned.
     pub(crate) fn spawn<F>(
-        mut detector: HangDetector,
+        detector: HangDetector,
+        watchdog: Option<Watchdog>,
         interval: Duration,
-        mut on_poll: F,
+        on_poll: F,
     ) -> std::io::Result<Self>
     where
         F: FnMut(HangMonitorPoll) + Send + 'static,
     {
         let (requests, receiver) = mpsc::channel();
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name("HangDetection".to_string())
-            .spawn(move || {
-                loop {
-                    let (reason, done) = match receiver.recv_timeout(interval) {
-                        Ok(Request::Flush { done }) => (HangMonitorPollReason::Flush, Some(done)),
-                        Err(RecvTimeoutError::Timeout) => (HangMonitorPollReason::Interval, None),
-                        Err(RecvTimeoutError::Disconnected) => break,
-                    };
-                    let incidents = detector.poll();
-                    on_poll(HangMonitorPoll {
-                        incidents,
-                        first_present_at: detector.first_present_at(),
-                        reason,
-                    });
-                    if let Some(done) = done {
-                        done.send(()).ok();
-                    }
-                }
-            })?;
-        Ok(Self { requests })
+            .spawn(move || run(detector, watchdog, interval, on_poll, receiver))?
+            .thread()
+            .clone();
+        Ok(Self {
+            requests: Some(requests),
+            thread,
+        })
     }
 
     /// Asks the monitor thread to poll now with [`HangMonitorPollReason::Flush`]
@@ -107,7 +104,82 @@ impl HangMonitor {
     /// callback has returned. Returns `None` if the thread has exited.
     pub(crate) fn request_flush(&self) -> Option<oneshot::Receiver<()>> {
         let (done, finished) = oneshot::channel();
-        self.requests.send(Request::Flush { done }).ok()?;
+        self.requests.as_ref()?.send(Request::Flush { done }).ok()?;
+        self.thread.unpark();
         Some(finished)
     }
+}
+
+impl Drop for HangMonitor {
+    fn drop(&mut self) {
+        self.requests = None;
+        self.thread.unpark();
+    }
+}
+
+fn run(
+    mut detector: HangDetector,
+    mut watchdog: Option<Watchdog>,
+    interval: Duration,
+    mut on_poll: impl FnMut(HangMonitorPoll),
+    requests: mpsc::Receiver<Request>,
+) {
+    let mut next_poll = Instant::now() + interval;
+    loop {
+        let request = match requests.try_recv() {
+            Ok(request) => Some(request),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => break,
+        };
+        let now = Instant::now();
+        let (reason, done) = match request {
+            Some(Request::Flush { done }) => (HangMonitorPollReason::Flush, Some(done)),
+            None if now >= next_poll => (HangMonitorPollReason::Interval, None),
+            None => {
+                match watchdog.as_mut() {
+                    Some(watchdog) => {
+                        watchdog.wait(next_poll);
+                        watchdog.sample(Instant::now());
+                    }
+                    None => std::thread::park_timeout(next_poll.saturating_duration_since(now)),
+                }
+                continue;
+            }
+        };
+        if reason == HangMonitorPollReason::Interval {
+            next_poll = now + interval;
+        }
+
+        let mut incidents = detector.poll();
+        if let Some(watchdog) = watchdog.as_mut() {
+            // Sampled after the drain, so every drained stall has ended by
+            // the latest sample.
+            watchdog.sample(Instant::now());
+            for incident in &mut incidents {
+                incident.stall_profile = profile_stall(watchdog, incident);
+            }
+        }
+        on_poll(HangMonitorPoll {
+            incidents,
+            first_present_at: detector.first_present_at(),
+            reason,
+        });
+        if let Some(done) = done {
+            done.send(()).ok();
+        }
+    }
+}
+
+/// Profiles the incident's longest stall, when it crossed the threshold.
+/// Budget incidents are made of work too short to sample.
+fn profile_stall(watchdog: &Watchdog, incident: &HangIncident) -> Option<super::StallProfile> {
+    if incident.trigger != HangTrigger::Threshold {
+        return None;
+    }
+    let stall = incident.contributors.first()?;
+    watchdog.profile(
+        stall.start_time(),
+        stall.end_time(),
+        matches!(stall, ForegroundEvent::Present(_)),
+    )
 }
