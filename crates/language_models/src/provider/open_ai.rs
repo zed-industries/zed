@@ -11,7 +11,8 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoiceSupport, ModelRateLimiters, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME,
-    ProviderSettingsView, RateLimiter, env_var, stream_in_background, unavailable_error,
+    PromptCompactionStrategy, ProviderSettingsView, RateLimiter, env_var, stream_in_background,
+    unavailable_error,
 };
 use open_ai::{
     ResponseStreamEvent,
@@ -690,6 +691,7 @@ fn language_model(model: &open_ai::Model) -> LanguageModel {
         supports_tools: true,
         supports_images,
         tool_choice_support: LanguageModelToolChoiceSupport::ALL,
+        prompt_compaction_strategy: PromptCompactionStrategy::PreserveRequestPrefix,
         supports_streaming_tools: true,
         supports_thinking: supports_selectable_thinking_effort(model),
         supports_fast_mode: model.supports_priority(),

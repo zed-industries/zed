@@ -22,8 +22,9 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelCompletionStream, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelRequest, LanguageModelToolChoiceSupport, ModelRateLimiters, OPEN_AI_PROVIDER_ID,
-    OPEN_AI_PROVIDER_NAME, ProviderErrorCategory, RateLimiter, X_AI_PROVIDER_ID,
-    X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME, unavailable_error,
+    OPEN_AI_PROVIDER_NAME, PromptCompactionStrategy, ProviderErrorCategory, RateLimiter,
+    X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
+    unavailable_error,
 };
 
 use schemars::JsonSchema;
@@ -457,6 +458,11 @@ pub fn language_model(model: &cloud_llm_client::LanguageModel) -> LanguageModel 
             auto: true,
             none: true,
             any: model.provider != Anthropic || anthropic::supports_forced_tool_use(&model.id.0),
+        },
+        // Anthropic invalidates cached messages when `tool_choice` changes.
+        prompt_compaction_strategy: match model.provider {
+            OpenAi | XAi => PromptCompactionStrategy::PreserveRequestPrefix,
+            Anthropic | Google => PromptCompactionStrategy::RebuildPrompt,
         },
         supports_split_token_display: matches!(model.provider, OpenAi | XAi),
         max_output_tokens: Some(model.max_output_tokens as u64),
@@ -1955,6 +1961,18 @@ mod tests {
         assert_eq!(
             model.minimum_explicit_compaction_input_tokens(),
             Some(anthropic::MIN_COMPACTION_TRIGGER_TOKENS)
+        );
+    }
+
+    #[test]
+    fn prompt_compaction_preserves_prefix_only_for_supported_upstreams() {
+        assert_eq!(
+            language_model(&cloud_test_config()).prompt_compaction_strategy,
+            PromptCompactionStrategy::PreserveRequestPrefix
+        );
+        assert_eq!(
+            language_model(&cloud_anthropic_test_config()).prompt_compaction_strategy,
+            PromptCompactionStrategy::RebuildPrompt
         );
     }
 

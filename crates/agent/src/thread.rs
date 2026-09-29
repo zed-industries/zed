@@ -43,9 +43,10 @@ use language_model::{
     CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
-    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, ProviderErrorCategory, Role, SelectedModel, Speed,
-    StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelToolChoice, LanguageModelToolResult, LanguageModelToolResultContent,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, PromptCompactionStrategy,
+    ProviderErrorCategory, Role, SelectedModel, Speed, StopReason, TokenUsage,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use project::{Project, trusted_worktrees::TrustedWorktrees};
 use prompt_store::ProjectContext;
@@ -4123,51 +4124,8 @@ impl Thread {
         let model = self
             .model()
             .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
-        let sandboxing_enabled = crate::sandboxing::sandboxing_enabled(cx);
         let tools = if let Some(turn) = self.running_turn.as_ref() {
-            turn.tools
-                .iter()
-                .map(|(tool_name, tool)| {
-                    log::trace!("Including tool: {}", tool_name);
-                    let mut description = tool.description().to_string();
-                    let mut schema = tool.input_schema();
-                    // TEMPORARY (sandboxing feature flag): with the flag off,
-                    // the fetch and create_directory descriptions/schemas must
-                    // not advertise sandbox-dependent behavior (host grants,
-                    // out-of-project creation via the `reason` field), since
-                    // the corresponding runtime paths are disabled. Restore
-                    // the pre-sandboxing model-facing surface here rather than
-                    // forking the tools; delete this when the flag is removed
-                    // again.
-                    if !sandboxing_enabled {
-                        if tool_name.as_ref() == FetchTool::NAME {
-                            description =
-                                "Fetches a URL and returns the content as Markdown.".to_string();
-                        } else if tool_name.as_ref() == CreateDirectoryTool::NAME {
-                            description = "Creates a new directory at the specified path within \
-                                the project. Returns confirmation that the directory was \
-                                created.\n\nThis tool creates a directory and all necessary \
-                                parent directories. It should be used whenever you need to \
-                                create new directories within the project.\nThe only supported \
-                                path outside the project is `~/.agents/skills` or a descendant, \
-                                for global agent skills."
-                                .to_string();
-                            if let Some(properties) = schema
-                                .get_mut("properties")
-                                .and_then(|value| value.as_object_mut())
-                            {
-                                properties.remove("reason");
-                            }
-                        }
-                    }
-                    LanguageModelRequestTool::function(
-                        tool_name.to_string(),
-                        description,
-                        schema,
-                        tool.supports_input_streaming(),
-                    )
-                })
-                .collect::<Vec<_>>()
+            build_request_tools(&turn.tools, cx)
         } else {
             Vec::new()
         };
@@ -4564,13 +4522,53 @@ impl Thread {
         model: &LanguageModel,
         cx: &App,
     ) -> LanguageModelRequest {
+        let uses_thread_model = self.model().is_some_and(|thread_model| {
+            thread_model.provider_id == model.provider_id && thread_model.id == model.id
+        });
+        let preserves_request_prefix = uses_thread_model
+            && model.prompt_compaction_strategy()
+                == PromptCompactionStrategy::PreserveRequestPrefix;
+        let enabled_tools = if preserves_request_prefix
+            && model.supports_tools()
+            && model.supports_tool_choice(LanguageModelToolChoice::None)
+        {
+            self.enabled_tools(cx)
+        } else {
+            BTreeMap::new()
+        };
+        let available_tools = enabled_tools.keys().cloned().collect();
+        let tools = build_request_tools(&enabled_tools, cx);
+        // Keeping the tool definitions preserves the cached prefix, but
+        // compaction can't execute or retain tool calls.
+        let tool_choice = (!tools.is_empty()).then_some(LanguageModelToolChoice::None);
+        let (thinking_allowed, thinking_effort) = if preserves_request_prefix {
+            (
+                self.thinking_enabled || !model.supports_disabling_thinking(),
+                self.thinking_effort.clone(),
+            )
+        } else {
+            (false, None)
+        };
+
         let mut request = LanguageModelRequest {
             thread_id: Some(self.id.to_string()),
+            prompt_cache_key: None,
             prompt_id: Some(self.prompt_id.to_string()),
             intent: Some(CompletionIntent::ThreadContextSummarization),
+            messages: self.build_request_messages_until(available_tools, insertion_ix, cx),
+            tools,
+            tool_choice,
+            stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(&model, cx),
-            messages: self.build_request_messages_until(Vec::new(), insertion_ix, cx),
-            ..Default::default()
+            thinking_allowed,
+            thinking_effort,
+            speed: if uses_thread_model {
+                self.speed()
+            } else {
+                None
+            },
+            compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         request.messages.push(LanguageModelRequestMessage {
@@ -4703,6 +4701,55 @@ fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
 }
 
 /// Reserves output without subtracting it from an independent input ceiling.
+fn build_request_tools(
+    tools: &BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
+    cx: &App,
+) -> Vec<LanguageModelRequestTool> {
+    let sandboxing_enabled = crate::sandboxing::sandboxing_enabled(cx);
+    tools
+        .iter()
+        .map(|(tool_name, tool)| {
+            log::trace!("Including tool: {}", tool_name);
+            let mut description = tool.description().to_string();
+            let mut schema = tool.input_schema();
+            // TEMPORARY (sandboxing feature flag): with the flag off,
+            // the fetch and create_directory descriptions/schemas must
+            // not advertise sandbox-dependent behavior (host grants,
+            // out-of-project creation via the `reason` field), since
+            // the corresponding runtime paths are disabled. Restore
+            // the pre-sandboxing model-facing surface here rather than
+            // forking the tools; delete this when the flag is removed
+            // again.
+            if !sandboxing_enabled {
+                if tool_name.as_ref() == FetchTool::NAME {
+                    description = "Fetches a URL and returns the content as Markdown.".to_string();
+                } else if tool_name.as_ref() == CreateDirectoryTool::NAME {
+                    description = "Creates a new directory at the specified path within \
+                        the project. Returns confirmation that the directory was \
+                        created.\n\nThis tool creates a directory and all necessary \
+                        parent directories. It should be used whenever you need to \
+                        create new directories within the project.\nThe only supported \
+                        path outside the project is `~/.agents/skills` or a descendant, \
+                        for global agent skills."
+                        .to_string();
+                    if let Some(properties) = schema
+                        .get_mut("properties")
+                        .and_then(|value| value.as_object_mut())
+                    {
+                        properties.remove("reason");
+                    }
+                }
+            }
+            LanguageModelRequestTool::function(
+                tool_name.to_string(),
+                description,
+                schema,
+                tool.supports_input_streaming(),
+            )
+        })
+        .collect()
+}
+
 fn compaction_input_capacity(
     input_limit: u64,
     combined_limit: Option<u64>,
@@ -7934,6 +7981,216 @@ mod tests {
             matches!(&event, Some(Ok(ThreadEvent::ContextCompaction(_)))),
             "expected the compaction to replay after the marker, got {event:?}"
         );
+    }
+
+    fn enable_replay_image_tool(thread: &Entity<Thread>, cx: &mut App) {
+        let profile_id = thread.read(cx).profile().clone();
+        let mut settings = AgentSettings::get_global(cx).clone();
+        settings
+            .profiles
+            .get_mut(&profile_id)
+            .expect("thread profile should exist")
+            .tools
+            .insert(ReplayImageTool::NAME.into(), true);
+        AgentSettings::override_global(settings, cx);
+        thread.update(cx, |thread, _cx| thread.add_tool(ReplayImageTool));
+    }
+
+    fn supports_tools_and_tool_choice(model: &mut LanguageModel) {
+        model.supports_tools = true;
+        model.tool_choice_support = language_model::LanguageModelToolChoiceSupport::ALL;
+    }
+
+    #[gpui::test]
+    async fn test_prompt_compaction_uses_default_strategy_without_opt_in(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.update_model("fake", |model| {
+            supports_tools_and_tool_choice(model);
+            model.supports_thinking = true;
+        });
+
+        let request = cx.update(|cx| {
+            enable_replay_image_tool(&thread, cx);
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread.set_thinking_enabled(true, cx);
+                thread.set_thinking_effort(Some("high".to_string()), cx);
+                thread.set_speed(Speed::Fast, cx);
+                assert_eq!(thread.enabled_tools(cx).len(), 1);
+                thread
+                    .messages
+                    .push(user_text_message(ClientUserMessageId::new(), "old user"));
+                thread.build_compaction_request(thread.messages.len(), &model, cx)
+            })
+        });
+
+        assert!(request.tools.is_empty());
+        assert_eq!(request.tool_choice, None);
+        assert!(!request.thinking_allowed);
+        assert_eq!(request.thinking_effort, None);
+        assert_eq!(request.speed, Some(Speed::Fast));
+    }
+
+    #[gpui::test]
+    async fn test_prompt_compaction_reuses_request_prefix_when_enabled(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.update_model("fake", |model| {
+            supports_tools_and_tool_choice(model);
+            model.supports_thinking = true;
+            model.prompt_compaction_strategy = PromptCompactionStrategy::PreserveRequestPrefix;
+        });
+
+        cx.update(|cx| {
+            enable_replay_image_tool(&thread, cx);
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread.set_thinking_enabled(true, cx);
+                thread.set_thinking_effort(Some("high".to_string()), cx);
+                thread.set_speed(Speed::Fast, cx);
+            });
+        });
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.send(ClientUserMessageId::new(), vec!["context to compact"], cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let completion_request = fake.pending_completions().pop().unwrap();
+        assert_eq!(completion_request.tools.len(), 1);
+        fake.send_text(&model, &completion_request, "assistant response");
+        fake.end_stream(&model, &completion_request);
+        cx.run_until_parked();
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.compact(ClientUserMessageId::new(), cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let compaction_request = fake.pending_completions().pop().unwrap();
+        assert_eq!(
+            compaction_request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        assert_eq!(compaction_request.tools, completion_request.tools);
+        assert_eq!(
+            compaction_request.tool_choice,
+            Some(LanguageModelToolChoice::None)
+        );
+        assert_eq!(
+            compaction_request.thinking_allowed,
+            completion_request.thinking_allowed
+        );
+        assert_eq!(
+            compaction_request.thinking_effort,
+            completion_request.thinking_effort
+        );
+        assert_eq!(completion_request.speed, Some(Speed::Fast));
+        assert_eq!(compaction_request.speed, completion_request.speed);
+        // The compaction request extends the previous request with the
+        // assistant response and the compaction prompt.
+        assert_eq!(
+            compaction_request.messages.len(),
+            completion_request.messages.len() + 2
+        );
+        for (compaction_message, completion_message) in compaction_request
+            .messages
+            .iter()
+            .zip(&completion_request.messages)
+        {
+            assert_eq!(compaction_message.role, completion_message.role);
+            assert_eq!(compaction_message.content, completion_message.content);
+            assert_eq!(
+                compaction_message.reasoning_details,
+                completion_message.reasoning_details
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_prompt_compaction_omits_tool_choice_without_tools(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.update_model("fake", |model| {
+            supports_tools_and_tool_choice(model);
+            model.prompt_compaction_strategy = PromptCompactionStrategy::PreserveRequestPrefix;
+        });
+
+        let request = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(ClientUserMessageId::new(), "old user"));
+                thread.build_compaction_request(thread.messages.len(), &model, cx)
+            })
+        });
+
+        assert!(request.tools.is_empty());
+        assert_eq!(request.tool_choice, None);
+    }
+
+    #[gpui::test]
+    async fn test_prompt_compaction_omits_tools_without_tool_choice_support(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.update_model("fake", |model| {
+            model.supports_tools = true;
+            model.prompt_compaction_strategy = PromptCompactionStrategy::PreserveRequestPrefix;
+        });
+
+        let request = cx.update(|cx| {
+            enable_replay_image_tool(&thread, cx);
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                assert_eq!(thread.enabled_tools(cx).len(), 1);
+                thread
+                    .messages
+                    .push(user_text_message(ClientUserMessageId::new(), "old user"));
+                thread.build_compaction_request(thread.messages.len(), &model, cx)
+            })
+        });
+
+        assert!(request.tools.is_empty());
+        assert_eq!(request.tool_choice, None);
+    }
+
+    #[gpui::test]
+    async fn test_prompt_compaction_rebuilds_prompt_for_different_model(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let thread_model = fake.update_model("fake", |model| model.supports_thinking = true);
+        let compaction_model = fake.update_model("compaction", |model| {
+            supports_tools_and_tool_choice(model);
+            model.supports_thinking = true;
+            model.prompt_compaction_strategy = PromptCompactionStrategy::PreserveRequestPrefix;
+        });
+
+        let request = cx.update(|cx| {
+            enable_replay_image_tool(&thread, cx);
+            thread.update(cx, |thread, cx| {
+                thread.set_model(thread_model.clone(), cx);
+                thread.set_thinking_enabled(true, cx);
+                thread.set_thinking_effort(Some("high".to_string()), cx);
+                thread.set_speed(Speed::Fast, cx);
+                thread
+                    .messages
+                    .push(user_text_message(ClientUserMessageId::new(), "old user"));
+                thread.build_compaction_request(thread.messages.len(), &compaction_model, cx)
+            })
+        });
+
+        assert!(request.tools.is_empty());
+        assert_eq!(request.tool_choice, None);
+        assert!(!request.thinking_allowed);
+        assert_eq!(request.thinking_effort, None);
+        assert_eq!(request.speed, None);
     }
 
     /// When `agent.compaction_model` is configured, manual `/compact` streams
