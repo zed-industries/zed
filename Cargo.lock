@@ -11463,6 +11463,8 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "tempfile",
+ "thiserror 2.0.17",
  "util",
  "watch",
  "which",
