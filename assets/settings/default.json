@@ -1396,6 +1396,12 @@
     //
     // Default: false
     "show_turn_stats": false,
+    // Whether to pin the user message that owns the currently visible part of
+    // the thread to the top of the agent panel once it scrolls out of view.
+    // Clicking the pinned header scrolls back to that message.
+    //
+    // Default: false
+    "sticky_user_messages": false,
     // Whether to show the merge conflict indicator in the status bar
     // that offers to resolve conflicts using the agent.
     //

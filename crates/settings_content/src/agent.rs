@@ -387,6 +387,15 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     pub show_turn_stats: Option<bool>,
+    /// Whether to pin the user message that owns the currently visible part of
+    /// the thread to the top of the agent panel once it scrolls out of view.
+    ///
+    /// The pinned header shows a condensed, single-line preview of the message
+    /// and scrolls back to it when clicked. This is the conversation-turn
+    /// equivalent of the editor's `sticky_scroll`.
+    ///
+    /// Default: false
+    pub sticky_user_messages: Option<bool>,
     /// Whether to show the merge conflict indicator in the status bar
     /// that offers to resolve conflicts using the agent.
     ///
