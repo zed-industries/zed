@@ -212,11 +212,13 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
 
     Some(AnnouncementContent {
         heading: "Introducing Delta".into(),
-        description: "A new place to build software with coding agents.".into(),
+        description:
+            "Built on DeltaDB, so your threads and code stay in sync across machines and teammates."
+                .into(),
         bullet_items: vec![
-            "Delegate work across projects".into(),
-            "Keep decisions, feedback, and code changes together".into(),
-            "Continue work with your team from anywhere".into(),
+            "Made by the Zed team, with the same quality and performance".into(),
+            "Work with teammates and agents in the same thread, live or later".into(),
+            "Pick up your thread on the web or your phone, without committing or pushing".into(),
         ],
         primary_action_label: "Try Delta".into(),
         secondary_action_label: "Learn More".into(),
