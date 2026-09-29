@@ -11464,6 +11464,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "tempfile",
  "util",
  "watch",
  "which",
