@@ -222,8 +222,8 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
         ],
         primary_action_label: "Try Delta".into(),
         secondary_action_label: "Learn More".into(),
-        primary_action_url: "https://delta.dev".into(),
-        secondary_action_url: "https://delta.dev".into(),
+        primary_action_url: "https://delta.dev/".into(),
+        secondary_action_url: "https://delta.dev/docs/getting-started".into(),
     })
 }
 
