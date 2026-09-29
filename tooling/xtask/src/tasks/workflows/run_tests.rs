@@ -545,7 +545,7 @@ fn check_remote_server(platform: Platform, arch: Arch) -> NamedJob {
     let runner = match (platform, arch) {
         (Platform::Linux, Arch::X86_64) => runners::LINUX_LARGE,
         (Platform::Linux, Arch::AARCH64) => runners::LINUX_ARM_BUNDLER,
-        (Platform::Mac, _) => runners::MAC_DEFAULT,
+        (Platform::Mac, _) => runners::MAC_SMALL,
         (Platform::Windows, _) => runners::WINDOWS_DEFAULT,
     };
     let command = format!(
@@ -628,7 +628,7 @@ pub(crate) fn clippy(platform: Platform, arch: Option<Arch>, harden: bool) -> Na
     let runner = match platform {
         Platform::Windows => runners::WINDOWS_DEFAULT,
         Platform::Linux => runners::LINUX_DEFAULT,
-        Platform::Mac => runners::MAC_DEFAULT,
+        Platform::Mac => runners::MAC_SMALL,
     };
     let mut job = release_job(&[])
         .runs_on(runner)
@@ -741,7 +741,7 @@ fn build_visual_tests_binary() -> NamedJob {
 
     named::job(
         Job::default()
-            .runs_on(runners::MAC_DEFAULT)
+            .runs_on(runners::MAC_SMALL)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Mac))
             .add_step(steps::cache_rust_dependencies_namespace())
