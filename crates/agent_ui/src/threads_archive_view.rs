@@ -731,13 +731,14 @@ impl ThreadsArchiveView {
                                 let agent = thread.agent_id.clone();
                                 let thread_id = thread.thread_id;
                                 let session_id = thread.session_id.clone();
+                                let remote_connection = thread.remote_connection.clone();
                                 cx.listener(move |this, _, _, cx| {
                                     this.preserve_selection_on_next_update = true;
                                     this.delete_thread(
                                         thread_id,
                                         session_id.clone(),
                                         agent.clone(),
-                                        thread.remote_connection.clone(),
+                                        remote_connection.clone(),
                                         cx,
                                     );
                                     cx.stop_propagation();
@@ -868,9 +869,9 @@ impl ThreadsArchiveView {
         cx: &App,
     ) -> Option<Entity<AgentConnectionStore>> {
         let matches = |store: &Entity<AgentConnectionStore>| {
-            let project = store.read(cx).project().read(cx);
+            let project = store.read(cx).project().clone();
             same_remote_connection_identity(
-                project.remote_connection_options(cx).as_ref(),
+                project.read(cx).remote_connection_options(cx).as_ref(),
                 remote_connection,
             )
         };
