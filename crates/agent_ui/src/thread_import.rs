@@ -903,7 +903,7 @@ pub(crate) fn sync_project_sessions(
 const RECENT_PROJECT_SESSION_COUNT: usize = 5;
 
 fn primary_work_dir(work_dirs: &PathList) -> Option<&PathBuf> {
-    work_dirs.paths().first()
+    work_dirs.ordered_paths().next()
 }
 
 fn session_matches_project(work_dirs: &PathList, project_paths: &PathList) -> bool {
@@ -1284,7 +1284,7 @@ mod tests {
 
     #[test]
     fn test_reconcile_project_threads_accepts_additional_directories() {
-        let project_paths = PathList::new(&[Path::new("/project")]);
+        let project_paths = PathList::new(&[Path::new("/z-project")]);
         let worktree_paths = WorktreePaths::from_folder_paths(&project_paths);
         let sessions = SessionByAgent {
             agent_id: AgentId::new("agent-a"),
@@ -1293,8 +1293,8 @@ mod tests {
                 "with-additional-dir",
                 Some("Thread"),
                 Some(PathList::new(&[
-                    PathBuf::from("/project"),
-                    PathBuf::from("/shared"),
+                    PathBuf::from("/z-project"),
+                    PathBuf::from("/a-shared"),
                 ])),
                 None,
                 None,
