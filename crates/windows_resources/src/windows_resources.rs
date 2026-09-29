@@ -106,11 +106,11 @@ END
 "#
     );
 
-    let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR")?);
+    let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR")?);
     let rc_path = out_dir.join("zed_resources.rc");
     std::fs::write(&rc_path, rc_content)?;
 
-    if let Ok(toolkit_path) = std::env::var("ZED_RC_TOOLKIT_PATH") {
+    if let Ok(toolkit_path) = std::env::var_os("ZED_RC_TOOLKIT_PATH") {
         let rc_exe = std::path::Path::new(&toolkit_path).join("rc.exe");
         unsafe {
             std::env::set_var("RC", rc_exe);
