@@ -5,7 +5,9 @@ mod pending_keystrokes_indicator;
 mod which_key_modal;
 mod which_key_settings;
 
-use gpui::{App, KeybindingKeystroke, Keystroke, PlatformKeyboardMapper, SharedString, Window};
+use gpui::{
+    Action, App, KeybindingKeystroke, Keystroke, PlatformKeyboardMapper, SharedString, Window,
+};
 pub use pending_keystrokes_indicator::PendingKeystrokesIndicator;
 use settings::Settings;
 use std::{sync::LazyLock, time::Duration};
@@ -77,13 +79,20 @@ fn collect_bindings_for_pending_input(
                 return None;
             }
             let remaining_keystrokes = remaining_keystrokes.to_vec();
-            let action_name = command_palette::humanize_action_name(binding.action().name()).into();
+            let action_name = binding_label(binding.action());
             Some(PendingBinding {
                 remaining_keystrokes,
                 action_name,
             })
         })
         .collect()
+}
+
+fn binding_label(action: &dyn Action) -> SharedString {
+    match action.as_any().downcast_ref::<zed_actions::Spawn>() {
+        Some(zed_actions::Spawn::ByName { task_name, .. }) => task_name.clone().into(),
+        _ => command_palette::humanize_action_name(action.name()).into(),
+    }
 }
 
 pub fn init(cx: &mut App) {
@@ -242,6 +251,25 @@ mod tests {
         assert_eq!(
             ui::text_for_keybinding_keystrokes(&mapped, cx),
             expected_display_text
+        );
+    }
+
+    #[test]
+    fn test_binding_label_uses_task_name_for_spawn_by_name() {
+        let action = zed_actions::Spawn::ByName {
+            task_name: "lazygit".to_string(),
+            reveal_target: None,
+        };
+
+        assert_eq!(binding_label(&action), "lazygit");
+    }
+
+    #[test]
+    fn test_binding_label_falls_back_to_humanized_action_name() {
+        assert_eq!(binding_label(&zed_actions::Spawn::modal()), "task: spawn");
+        assert_eq!(
+            binding_label(&zed_actions::OpenSettings),
+            command_palette::humanize_action_name(zed_actions::OpenSettings.name())
         );
     }
 }
