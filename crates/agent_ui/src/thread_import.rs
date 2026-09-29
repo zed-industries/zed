@@ -979,14 +979,14 @@ fn reconcile_project_threads(
     threads
 }
 
-type AgentSessionId = (AgentId, acp::SessionId);
+type AgentSessionScope = (AgentId, acp::SessionId, Option<PathList>);
 type AgentSessionKey = (
     AgentId,
     acp::SessionId,
     Option<RemoteConnectionIdentity>,
 );
 
-fn remote_session_ids(sessions_by_agent: &[SessionByAgent]) -> HashSet<AgentSessionId> {
+fn remote_session_scopes(sessions_by_agent: &[SessionByAgent]) -> HashSet<AgentSessionScope> {
     sessions_by_agent
         .iter()
         .filter(|sessions| sessions.remote_connection.is_some())
@@ -995,6 +995,7 @@ fn remote_session_ids(sessions_by_agent: &[SessionByAgent]) -> HashSet<AgentSess
                 (
                     sessions.agent_id.clone(),
                     session.session_id.clone(),
+                    session.work_dirs.clone(),
                 )
             })
         })
@@ -1019,7 +1020,7 @@ fn count_importable_threads_by_agent(
 ) -> HashMap<AgentId, usize> {
     let mut counts_by_agent = HashMap::default();
     let mut seen_sessions = existing_sessions.clone();
-    let remote_sessions = remote_session_ids(sessions_by_agent);
+    let remote_sessions = remote_session_scopes(sessions_by_agent);
 
     for sessions_for_agent in sessions_by_agent {
         for session in &sessions_for_agent.sessions {
@@ -1027,6 +1028,7 @@ fn count_importable_threads_by_agent(
                 && remote_sessions.contains(&(
                     sessions_for_agent.agent_id.clone(),
                     session.session_id.clone(),
+                    session.work_dirs.clone(),
                 ))
             {
                 continue;
@@ -1053,7 +1055,7 @@ fn collect_importable_threads(
     sessions_by_agent: Vec<SessionByAgent>,
     mut existing_sessions: HashSet<AgentSessionKey>,
 ) -> Vec<ThreadMetadata> {
-    let remote_sessions = remote_session_ids(&sessions_by_agent);
+    let remote_sessions = remote_session_scopes(&sessions_by_agent);
     let mut to_insert = Vec::new();
     for SessionByAgent {
         agent_id,
@@ -1063,7 +1065,11 @@ fn collect_importable_threads(
     {
         for session in sessions {
             if remote_connection.is_none()
-                && remote_sessions.contains(&(agent_id.clone(), session.session_id.clone()))
+                && remote_sessions.contains(&(
+                    agent_id.clone(),
+                    session.session_id.clone(),
+                    session.work_dirs.clone(),
+                ))
             {
                 continue;
             }
