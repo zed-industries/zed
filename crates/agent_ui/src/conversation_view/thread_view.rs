@@ -30,6 +30,8 @@ use crate::ui::{
 use crate::unicode_confusables;
 
 use db::kvp::KeyValueStore;
+use gpui::AvailableSpace;
+use gpui::Bounds;
 use gpui::List;
 use gpui::Stateful;
 use gpui::TaskExt;
@@ -42,7 +44,7 @@ use notifications::status_toast::StatusToast;
 use settings::{update_settings_file, update_settings_file_with_completion};
 use ui::{
     ButtonLike, CalloutBorderPosition, Checkbox, SpinnerLabel, SpinnerVariant, SplitButton,
-    SplitButtonStyle, Tab, ToggleState,
+    SplitButtonStyle, Tab, ToggleState, utils::WithRemSize,
 };
 use util::markdown::{source_position_from_fragment, split_local_url_fragment};
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
@@ -50,14 +52,36 @@ use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 use super::elicitation::{
     ElicitationCard, ElicitationCardHandlers, ElicitationFormState, should_render_elicitation,
 };
+use super::sticky_user_message_preview::{
+    StickyUserMessageSearchHighlights, parse_sticky_user_message_preview,
+    render_sticky_user_message_preview,
+};
 use super::*;
+use theme_settings::ThemeSettings;
 
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
+
+/// Bottom padding of a user message row. The sticky header needs this to know
+/// how much of a row is padding rather than content when deciding to swap.
+const USER_MESSAGE_ROW_BOTTOM_PADDING: Rems = rems(0.75);
 
 #[derive(Default)]
 struct ThreadFeedbackState {
     feedback: Option<ThreadFeedback>,
     comments_editor: Option<Entity<Editor>>,
+}
+
+/// Everything needed to draw the sticky user message header for the current
+/// scroll position, resolved once per frame.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct StickyUserMessageState {
+    pub(crate) message_index: usize,
+    message_segments: Vec<UserMessageContentSegment>,
+    search_highlights: Option<StickyUserMessageSearchHighlights>,
+    pub(crate) has_more_message_content: bool,
+    /// Vertical offset of the header. Negative while the next user message is
+    /// pushing this one out of view.
+    pub(crate) top_offset: Pixels,
 }
 
 impl ThreadFeedbackState {
@@ -6172,7 +6196,7 @@ impl ThreadView {
                             this.pt_2()
                         }
                     })
-                    .pb_3()
+                    .pb(USER_MESSAGE_ROW_BOTTOM_PADDING)
                     .px_2()
                     .gap_1p5()
                     .w_full()
@@ -6935,7 +6959,12 @@ impl ThreadView {
             )
             .when_some(feedback_buttons, |this, buttons| this.child(buttons))
             .when_some(copy_response_button, |this, button| this.child(button))
-            .child(scroll_to_recent_user_prompt)
+            // The sticky header already jumps to the owning prompt, so this
+            // button would be a second control for the same thing.
+            .children(
+                (!AgentSettings::get_global(cx).sticky_user_messages)
+                    .then_some(scroll_to_recent_user_prompt),
+            )
             .when_some(scroll_to_top, |this, button| this.child(button))
             .into_any_element()
     }
@@ -7217,6 +7246,10 @@ impl ThreadView {
                     }
                 },
             ));
+            // The sticky header mirrors the search highlights, so it has to be
+            // repainted whenever the match set or active match changes.
+            self._subscriptions
+                .push(cx.observe(&search_bar, |_, _, cx| cx.notify()));
             self.thread_search_bar = Some(search_bar);
         }
 
@@ -9936,6 +9969,258 @@ impl ThreadView {
             }))
     }
 
+    const STICKY_HEADER_OUTER_PADDING: Rems = rems(0.5);
+    const STICKY_HEADER_INNER_PADDING: Rems = rems(0.75);
+    const STICKY_HEADER_GAP: Rems = rems(0.75);
+
+    fn sticky_user_message_header_height() -> Rems {
+        rems_from_px(36_f32)
+    }
+
+    /// Picks which user message the sticky header should show.
+    ///
+    /// The topmost visible row is preferred once it has scrolled far enough
+    /// that only `swap_threshold` of it remains, which is the point where the
+    /// row itself no longer conveys the prompt. Otherwise the search walks
+    /// backwards for the nearest user message above the viewport.
+    fn sticky_user_message_candidate_index(
+        entry_count: usize,
+        mut is_user_message: impl FnMut(usize) -> bool,
+        top_item_index: usize,
+        top_user_bounds: Option<Bounds<Pixels>>,
+        viewport_top: Pixels,
+        swap_threshold: Pixels,
+    ) -> Option<usize> {
+        if top_user_bounds.is_some_and(|bounds| {
+            bounds.top() < viewport_top
+                && (bounds.bottom() - viewport_top).max(px(0.0)) <= swap_threshold
+        }) {
+            Some(top_item_index)
+        } else {
+            let search_end = top_item_index.min(entry_count);
+            (0..search_end).rev().find(|&index| is_user_message(index))
+        }
+    }
+
+    /// How far the next user message has pushed the current header off-screen,
+    /// from 1.0 (fully resting at the top) to 0.0 (completely pushed out).
+    fn sticky_user_message_push_progress(
+        next_visible_user_top: Option<Pixels>,
+        viewport_top: Pixels,
+        sticky_header_height: Pixels,
+    ) -> f32 {
+        let Some(next_top) = next_visible_user_top else {
+            return 1.0;
+        };
+
+        let sticky_bottom = viewport_top + sticky_header_height;
+        if next_top >= sticky_bottom {
+            1.0
+        } else if next_top <= viewport_top {
+            0.0
+        } else {
+            ((next_top - viewport_top) / sticky_header_height).clamp(0.0, 1.0)
+        }
+    }
+
+    fn sticky_user_message_top_offset(push_progress: f32, sticky_header_height: Pixels) -> Pixels {
+        -sticky_header_height * (1.0 - push_progress)
+    }
+
+    pub(crate) fn sticky_user_message_state(&self, cx: &App) -> Option<StickyUserMessageState> {
+        if !AgentSettings::get_global(cx).sticky_user_messages {
+            return None;
+        }
+
+        let path_style = self
+            .thread
+            .read_with(cx, |thread, cx| thread.project().read(cx).path_style(cx));
+        let entries = self.thread.read(cx).entries();
+        if entries.is_empty() {
+            return None;
+        }
+
+        let top_item_index = self.list_state.logical_scroll_top().item_ix;
+        let viewport_top = self.list_state.viewport_bounds().top();
+        let agent_ui_font_size = ThemeSettings::get_global(cx).agent_ui_font_size(cx);
+        let sticky_header_height =
+            Self::sticky_user_message_header_height().to_pixels(agent_ui_font_size);
+        let swap_threshold =
+            sticky_header_height + USER_MESSAGE_ROW_BOTTOM_PADDING.to_pixels(agent_ui_font_size);
+        let top_user_bounds = entries
+            .get(top_item_index)
+            .filter(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
+            .and_then(|_| self.list_state.bounds_for_item(top_item_index));
+
+        let message_index = Self::sticky_user_message_candidate_index(
+            entries.len(),
+            |index| matches!(entries.get(index), Some(AgentThreadEntry::UserMessage(_))),
+            top_item_index,
+            top_user_bounds,
+            viewport_top,
+            swap_threshold,
+        )?;
+
+        let next_visible_user_index = ((message_index + 1).max(top_item_index).min(entries.len())
+            ..entries.len())
+            .find(|&index| matches!(entries.get(index), Some(AgentThreadEntry::UserMessage(_))));
+        let next_visible_user_top = next_visible_user_index
+            .and_then(|index| self.list_state.bounds_for_item(index))
+            .map(|bounds| bounds.top());
+        let push_progress = Self::sticky_user_message_push_progress(
+            next_visible_user_top,
+            viewport_top,
+            sticky_header_height,
+        );
+
+        // Zero progress means the next user message has reached the viewport
+        // top and is fully readable on its own. Hiding the header here is what
+        // produces the hard swap between one prompt and the next, instead of
+        // briefly drawing the header over a message that says the same thing.
+        if push_progress <= 0.0 {
+            return None;
+        }
+
+        let AgentThreadEntry::UserMessage(message) = entries.get(message_index)? else {
+            return None;
+        };
+
+        let preview =
+            parse_sticky_user_message_preview(message.content.source_blocks(), path_style);
+        let search_highlights = self
+            .thread_search_visible
+            .then(|| {
+                self.thread_search_bar.as_ref().and_then(|bar| {
+                    bar.read(cx).sticky_user_message_search_highlights(
+                        message_index,
+                        &preview.segments,
+                        cx,
+                    )
+                })
+            })
+            .flatten();
+
+        Some(StickyUserMessageState {
+            message_index,
+            message_segments: preview.segments,
+            search_highlights,
+            has_more_message_content: preview.has_more_message_content,
+            top_offset: Self::sticky_user_message_top_offset(push_progress, sticky_header_height),
+        })
+    }
+
+    fn render_sticky_user_message(
+        &self,
+        state: StickyUserMessageState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let max_content_width = AgentSettings::get_global(cx).max_content_width;
+        let agent_ui_font_size = ThemeSettings::get_global(cx).agent_ui_font_size(cx);
+        let StickyUserMessageState {
+            message_index,
+            message_segments,
+            search_highlights,
+            has_more_message_content,
+            top_offset,
+        } = state;
+
+        let render_jump_action = || {
+            h_flex()
+                .gap_1()
+                .items_center()
+                .flex_shrink_0()
+                .child(
+                    Label::new("Jump to Message")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(
+                    Icon::new(IconName::ForwardArrowUp)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+                .into_any_element()
+        };
+
+        // The preview is fitted to whatever the jump affordance and paddings
+        // leave behind, so it never pushes the action out of the header.
+        let mut jump_action_for_measure = render_jump_action();
+        let jump_action_width = window.with_rem_size(Some(agent_ui_font_size), |window| {
+            jump_action_for_measure
+                .layout_as_root(AvailableSpace::min_size(), window, cx)
+                .width
+        });
+        let reserved_width = jump_action_width
+            + Self::STICKY_HEADER_OUTER_PADDING.to_pixels(agent_ui_font_size) * 2.0
+            + Self::STICKY_HEADER_INNER_PADDING.to_pixels(agent_ui_font_size) * 2.0
+            + Self::STICKY_HEADER_GAP.to_pixels(agent_ui_font_size);
+        let viewport_width = self.list_state.viewport_bounds().size.width;
+        let header_width = max_content_width
+            .map(|max_width| max_width.min(viewport_width))
+            .unwrap_or(viewport_width);
+        // Two pixels of slack for the header's own border.
+        let available_preview_width = (header_width - reserved_width - px(2.0)).max(px(0.0));
+
+        let rendered_preview = render_sticky_user_message_preview(
+            message_segments,
+            search_highlights,
+            has_more_message_content,
+            available_preview_width,
+            agent_ui_font_size,
+            window,
+            cx,
+        );
+
+        div()
+            .absolute()
+            .top(top_offset)
+            .left_0()
+            .right_0()
+            .child(
+                WithRemSize::new(agent_ui_font_size).w_full().child(
+                    h_flex().w_full().justify_center().child(
+                        h_flex()
+                            .id("sticky-user-message-header")
+                            .cursor_pointer()
+                            .w_full()
+                            .when_some(max_content_width, |this, max_width| this.max_w(max_width))
+                            .px(Self::STICKY_HEADER_OUTER_PADDING)
+                            .h(Self::sticky_user_message_header_height())
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .h_full()
+                                    .items_center()
+                                    .justify_between()
+                                    .gap(Self::STICKY_HEADER_GAP)
+                                    .px(Self::STICKY_HEADER_INNER_PADDING)
+                                    .rounded_b_md()
+                                    .bg(cx.theme().colors().editor_background)
+                                    .border_1()
+                                    .border_t_0()
+                                    .border_color(cx.theme().colors().border)
+                                    .hover(|style| {
+                                        style.border_color(
+                                            cx.theme().colors().border_focused.opacity(0.8),
+                                        )
+                                    })
+                                    .child(rendered_preview)
+                                    .child(render_jump_action()),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.list_state.scroll_to(ListOffset {
+                                    item_ix: message_index,
+                                    offset_in_item: px(0.0),
+                                });
+                                cx.notify();
+                            })),
+                    ),
+                ),
+            )
+            .into_any_element()
+    }
+
     fn render_diff_loading(&self, cx: &Context<Self>) -> AnyElement {
         let bar = |n: u64, width_class: &str| {
             let bg_color = cx.theme().colors().element_active;
@@ -12330,6 +12615,9 @@ impl Render for ThreadView {
 
         let has_messages = self.list_state.item_count() > 0;
         let list_state = self.list_state.clone();
+        let sticky_user_message = self
+            .sticky_user_message_state(cx)
+            .map(|state| self.render_sticky_user_message(state, window, cx));
 
         let conversation = v_flex()
             .when(self.resumed_without_history, |this| {
@@ -12339,8 +12627,15 @@ impl Render for ThreadView {
                 if has_messages {
                     this.flex_1()
                         .size_full()
-                        .child(self.render_entries(cx))
-                        .vertical_scrollbar_for(&list_state, window, cx)
+                        .child(
+                            v_flex()
+                                .relative()
+                                .flex_1()
+                                .overflow_hidden()
+                                .child(self.render_entries(cx).size_full())
+                                .children(sticky_user_message)
+                                .vertical_scrollbar_for(&list_state, window, cx),
+                        )
                         .into_any()
                 } else {
                     this.into_any()
@@ -13199,4 +13494,107 @@ pub(crate) fn reset_fast_mode_warnings(cx: &mut App) {
             .log_err();
     })
     .detach();
+}
+
+#[cfg(test)]
+mod sticky_user_message_tests {
+    use super::*;
+    use gpui::point;
+
+    fn bounds(top: Pixels, bottom: Pixels) -> Option<Bounds<Pixels>> {
+        Some(Bounds::from_corners(
+            point(px(0.0), top),
+            point(px(400.0), bottom),
+        ))
+    }
+
+    #[test]
+    fn keeps_showing_earlier_message_while_top_message_is_still_readable() {
+        let viewport_top = px(100.0);
+
+        let candidate = ThreadView::sticky_user_message_candidate_index(
+            4,
+            |index| matches!(index, 0 | 2),
+            2,
+            bounds(viewport_top, viewport_top + px(24.0)),
+            viewport_top,
+            px(48.0),
+        );
+
+        // Entry 2 begins at the viewport top, so it is fully visible and the
+        // header must still refer to the previous prompt.
+        assert_eq!(candidate, Some(0));
+    }
+
+    #[test]
+    fn replaces_top_message_once_only_header_height_remains() {
+        let viewport_top = px(100.0);
+
+        let candidate = ThreadView::sticky_user_message_candidate_index(
+            4,
+            |index| matches!(index, 0 | 2),
+            2,
+            bounds(viewport_top - px(60.0), viewport_top + px(20.0)),
+            viewport_top,
+            px(48.0),
+        );
+
+        assert_eq!(candidate, Some(2));
+    }
+
+    #[test]
+    fn has_no_candidate_before_the_first_user_message() {
+        let candidate = ThreadView::sticky_user_message_candidate_index(
+            4,
+            |_| false,
+            2,
+            None,
+            px(100.0),
+            px(48.0),
+        );
+
+        assert_eq!(candidate, None);
+    }
+
+    #[test]
+    fn rests_at_top_when_no_following_user_message_is_visible() {
+        let progress = ThreadView::sticky_user_message_push_progress(None, px(100.0), px(40.0));
+
+        assert_eq!(progress, 1.0);
+        assert_eq!(
+            ThreadView::sticky_user_message_top_offset(progress, px(40.0)),
+            px(0.0)
+        );
+    }
+
+    #[test]
+    fn is_pushed_out_as_next_message_enters_the_sticky_zone() {
+        let viewport_top = px(100.0);
+        let header_height = px(40.0);
+
+        let progress = ThreadView::sticky_user_message_push_progress(
+            Some(viewport_top + px(20.0)),
+            viewport_top,
+            header_height,
+        );
+
+        assert_eq!(progress, 0.5);
+        assert_eq!(
+            ThreadView::sticky_user_message_top_offset(progress, header_height),
+            px(-20.0)
+        );
+    }
+
+    #[test]
+    fn is_fully_pushed_out_once_next_message_reaches_viewport_top() {
+        let viewport_top = px(100.0);
+
+        let progress = ThreadView::sticky_user_message_push_progress(
+            Some(viewport_top),
+            viewport_top,
+            px(40.0),
+        );
+
+        assert_eq!(progress, 0.0);
+    }
 }
