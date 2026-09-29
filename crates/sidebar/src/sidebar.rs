@@ -5341,35 +5341,24 @@ impl Sidebar {
 
     fn archive_thread(
         &mut self,
-        session_id: &acp::SessionId,
+        thread_id: ThreadId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let store = ThreadMetadataStore::global(cx);
-        let metadata = store.read(cx).entry_by_session(session_id).cloned();
-        let metadata_thread_id = metadata.as_ref().map(|metadata| metadata.thread_id);
+        let metadata = store.read(cx).entry(thread_id).cloned();
         let thread_entry = self.contents.entries.iter().find_map(|entry| match entry {
-            ListEntry::Thread(thread) => metadata_thread_id
-                .map_or_else(
-                    || thread.metadata.session_id.as_ref() == Some(session_id),
-                    |thread_id| thread.metadata.thread_id == thread_id,
-                )
-                .then(|| thread.clone()),
+            ListEntry::Thread(thread) if thread.metadata.thread_id == thread_id => {
+                Some(thread.clone())
+            }
             _ => None,
         });
-        let thread_id = metadata_thread_id.or_else(|| {
-            thread_entry
-                .as_ref()
-                .map(|thread| thread.metadata.thread_id)
-        });
-        let active_workspace = thread_id.and_then(|thread_id| {
-            self.active_entry.as_ref().and_then(|entry| {
-                if entry.is_active_thread(&thread_id) {
-                    Some(entry.workspace().clone())
-                } else {
-                    None
-                }
-            })
+        let active_workspace = self.active_entry.as_ref().and_then(|entry| {
+            if entry.is_active_thread(&thread_id) {
+                Some(entry.workspace().clone())
+            } else {
+                None
+            }
         });
         let thread_folder_paths = metadata
             .as_ref()
@@ -5397,12 +5386,11 @@ impl Sidebar {
                 &folder_paths,
                 &project_group_key,
                 metadata.remote_connection.as_ref(),
-                Some(metadata.thread_id),
+                Some(thread_id),
                 None,
                 cx,
             )
         {
-            let session_id = session_id.clone();
             self.open_workspace_for_archive(
                 folder_paths,
                 project_group_key,
@@ -5410,24 +5398,19 @@ impl Sidebar {
                 cx,
                 move |this, _workspace, window, cx| {
                     this.update_entries(cx);
-                    this.archive_thread(&session_id, window, cx);
+                    this.archive_thread(thread_id, window, cx);
                 },
             );
             return;
         }
 
-        // Compute which linked worktree roots should be archived from disk if
-        // this thread is archived. This must happen before we remove any
-        // workspace from the MultiWorkspace, because `build_root_plan` needs
-        // the currently open workspaces in order to find the affected projects
-        // and repository handles for each linked worktree.
         let roots_to_archive = metadata
             .as_ref()
             .map(|metadata| {
                 self.roots_to_archive_for_paths(
                     metadata.folder_paths(),
                     metadata.remote_connection.as_ref(),
-                    thread_id,
+                    Some(thread_id),
                     None,
                     cx,
                 )
@@ -5435,37 +5418,25 @@ impl Sidebar {
             .unwrap_or_default();
 
         let current_pos = self.contents.entries.iter().position(|entry| match entry {
-            ListEntry::Thread(thread) => thread_id.map_or_else(
-                || thread.metadata.session_id.as_ref() == Some(session_id),
-                |tid| thread.metadata.thread_id == tid,
-            ),
+            ListEntry::Thread(thread) => thread.metadata.thread_id == thread_id,
             _ => false,
         });
         let neighbor =
             current_pos.and_then(|position| self.neighboring_activatable_entry(position));
 
-        // Check if archiving this thread would leave its worktree workspace
-        // with no threads, requiring workspace removal.
         let workspace_to_remove = thread_folder_paths.as_ref().and_then(|folder_paths| {
             let thread_remote_connection =
                 metadata.as_ref().and_then(|m| m.remote_connection.as_ref());
             self.linked_worktree_workspace_to_remove(
                 folder_paths,
                 thread_remote_connection,
-                thread_id,
+                Some(thread_id),
                 None,
                 &roots_to_archive,
                 cx,
             )
         });
 
-        // Also find workspaces for root plans that aren't covered by
-        // workspace_to_remove. For workspaces that exclusively contain
-        // worktrees being archived, remove the whole workspace. For
-        // "mixed" workspaces (containing both archived and non-archived
-        // worktrees), close only the editor items referencing the
-        // archived worktrees so their Entity<Worktree> handles are
-        // dropped without destroying the user's workspace layout.
         let mut workspaces_to_remove: Vec<Entity<Workspace>> =
             workspace_to_remove.into_iter().collect();
         let close_item_tasks = self.close_items_for_archived_worktrees(
@@ -5476,7 +5447,6 @@ impl Sidebar {
         );
 
         let removed_workspace = !workspaces_to_remove.is_empty();
-        let session_id = session_id.clone();
         let thread_remote_connection = metadata
             .as_ref()
             .and_then(|metadata| metadata.remote_connection.clone());
@@ -5495,10 +5465,9 @@ impl Sidebar {
                         cx,
                     );
                 }
-                let in_flight = thread_id
-                    .and_then(|tid| this.start_archive_worktree_task(tid, roots_to_archive, cx));
+                let in_flight =
+                    this.start_archive_worktree_task(thread_id, roots_to_archive, cx);
                 this.archive_and_activate(
-                    &session_id,
                     thread_id,
                     neighbor.as_ref(),
                     thread_folder_paths.as_ref(),
@@ -5529,8 +5498,7 @@ impl Sidebar {
     /// initiated unarchive can cancel the task.
     fn archive_and_activate(
         &mut self,
-        _session_id: &acp::SessionId,
-        thread_id: Option<agent_ui::ThreadId>,
+        thread_id: ThreadId,
         neighbor: Option<&ActivatableEntry>,
         thread_folder_paths: Option<&PathList>,
         thread_remote_connection: Option<&RemoteConnectionOptions>,
@@ -5538,16 +5506,14 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(thread_id) = thread_id {
-            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-                store.archive(thread_id, in_flight_archive, cx);
-            });
-        }
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.archive(thread_id, in_flight_archive, cx);
+        });
 
         let is_active = self
             .active_entry
             .as_ref()
-            .is_some_and(|entry| thread_id.is_some_and(|tid| entry.is_active_thread(&tid)));
+            .is_some_and(|entry| entry.is_active_thread(&thread_id));
 
         if is_active {
             self.active_entry = None;
@@ -5567,9 +5533,7 @@ impl Sidebar {
                             .read(cx)
                             .active_conversation_view()
                             .map(|cv| cv.read(cx).parent_id())
-                            .is_some_and(|live_thread_id| {
-                                thread_id.is_some_and(|id| id == live_thread_id)
-                            });
+                            .is_some_and(|live_thread_id| thread_id == live_thread_id);
                         if panel_shows_archived {
                             panel.update(cx, |panel, cx| {
                                 panel.clear_base_view(window, cx);
@@ -6245,7 +6209,6 @@ impl Sidebar {
             self.rename_target == Some(RenameTarget::Thread(thread.metadata.thread_id));
 
         let thread_id_for_actions = thread.metadata.thread_id;
-        let session_id_for_delete = thread.metadata.session_id.clone();
         let focus_handle = self.focus_handle.clone();
         let rename_title_editor = is_renaming.then(|| self.render_rename_title_editor(cx));
 
@@ -6395,14 +6358,9 @@ impl Sidebar {
                                         )
                                     }
                                 })
-                                .on_click({
-                                    let session_id = session_id_for_delete.clone();
-                                    cx.listener(move |this, _, window, cx| {
-                                        if let Some(ref session_id) = session_id {
-                                            this.archive_thread(session_id, window, cx);
-                                        }
-                                    })
-                                })
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.archive_thread(thread_id_for_actions, window, cx);
+                                }))
                                 .into_any_element(),
                         ),
                     }
