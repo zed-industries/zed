@@ -61,26 +61,35 @@ fn group_bindings(bindings: Vec<PendingBinding>) -> Vec<PendingBindingRow> {
 
     let mut result = Vec::new();
     for (first_keystroke, bindings) in groups {
+        // A group row hides what the next keystroke runs, so a binding that completes on it
+        // always gets its own row, and only the longer bindings are collapsed.
+        let (completing_bindings, longer_bindings): (Vec<_>, Vec<_>) = bindings
+            .into_iter()
+            .partition(|binding| binding.remaining_keystrokes.len() <= 1);
+        result.extend(completing_bindings.into_iter().map(binding_row));
+
         if let Some(first_keystroke) = first_keystroke
-            && bindings.len() > 1
+            && longer_bindings.len() > 1
         {
-            // Collapse bindings sharing the next keystroke into a single row.
             result.push(PendingBindingRow {
                 keystrokes: Rc::from([first_keystroke]),
-                action_name: format!("+{} keybinds", bindings.len()).into(),
+                action_name: format!("+{} keybinds", longer_bindings.len()).into(),
                 is_group: true,
             });
         } else {
-            // Keep individual bindings as-is when there is nothing to collapse.
-            result.extend(bindings.into_iter().map(|binding| PendingBindingRow {
-                keystrokes: binding.remaining_keystrokes.into(),
-                action_name: binding.action_name,
-                is_group: false,
-            }));
+            result.extend(longer_bindings.into_iter().map(binding_row));
         }
     }
 
     result
+}
+
+fn binding_row(binding: PendingBinding) -> PendingBindingRow {
+    PendingBindingRow {
+        keystrokes: binding.remaining_keystrokes.into(),
+        action_name: binding.action_name,
+        is_group: false,
+    }
 }
 
 #[derive(IntoElement)]
@@ -542,13 +551,18 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_prepare_pending_bindings_groups_complete_chord_with_continuation(cx: &mut App) {
-        // A custom keymap can keep Open Keymap on cmd-k cmd-s and add a longer chord.
+    fn test_group_bindings_always_shows_completing_bindings(cx: &mut App) {
+        ui::KeyBinding::set_vim_mode(cx, false);
+        // A custom keymap can keep Open Keymap on cmd-k cmd-s and add longer chords after it.
         let rows = prepare_pending_bindings(
             vec![
                 binding_after_first_keystroke("cmd-k cmd-s", "zed::OpenKeymap"),
                 binding_after_first_keystroke("cmd-k cmd-s cmd-,", "zed::OpenSettings"),
-                binding_after_first_keystroke("cmd-k cmd-t", "theme_selector::Toggle"),
+                binding_after_first_keystroke("cmd-k cmd-s cmd-.", "zed::OpenKeymapFile"),
+                binding_after_first_keystroke("cmd-k cmd-o", "workspace::Open"),
+                binding_after_first_keystroke("cmd-k cmd-o cmd-p", "workspace::ReopenLastPicker"),
+                binding_after_first_keystroke("cmd-k z a", "theme::ToggleMode"),
+                binding_after_first_keystroke("cmd-k z b", "theme_selector::Toggle"),
             ],
             cx,
         );
@@ -562,8 +576,108 @@ mod tests {
                 ))
                 .collect::<Vec<_>>(),
             vec![
-                (parse_keystrokes("cmd-t"), "theme selector: toggle", false),
+                (parse_keystrokes("cmd-o"), "workspace: open", false),
+                (parse_keystrokes("cmd-s"), "zed: open keymap", false),
+                (
+                    parse_keystrokes("cmd-o cmd-p"),
+                    "workspace: reopen last picker",
+                    false
+                ),
+                (parse_keystrokes("z"), "+2 keybinds", true),
                 (parse_keystrokes("cmd-s"), "+2 keybinds", true),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_group_bindings_keeps_first_binding_per_sequence() {
+        // Bindings on the same keys need not be adjacent once a longer chord sits between them.
+        let rows = group_bindings(vec![
+            binding("a", "zed: open keymap"),
+            binding("a b", "zed: open settings"),
+            binding("a", "theme selector: toggle"),
+        ]);
+
+        assert_eq!(
+            rows.iter()
+                .map(|row| (row.keystrokes.to_vec(), row.action_name.as_ref()))
+                .collect::<Vec<_>>(),
+            vec![
+                (parse_keystrokes("a"), "zed: open keymap"),
+                (parse_keystrokes("a b"), "zed: open settings"),
+            ],
+        );
+        assert!(rows.iter().all(|row| !row.is_group));
+    }
+
+    #[gpui::test]
+    fn test_completing_row_matches_dispatch_with_continuation(cx: &mut App) {
+        let contexts = [
+            KeyContext::parse("Workspace").expect("valid context"),
+            KeyContext::parse("Editor").expect("valid context"),
+        ];
+        let keymap = Keymap::new(vec![
+            KeyBinding::new("cmd-k cmd-s", zed_actions::OpenKeymap, Some("Workspace")),
+            KeyBinding::new(
+                "cmd-k cmd-s cmd-,",
+                zed_actions::OpenKeymapFile,
+                Some("Workspace"),
+            ),
+            KeyBinding::new("cmd-k cmd-s", zed_actions::OpenSettings, Some("Editor")),
+        ]);
+        let input = [
+            Keystroke::parse("cmd-k").expect("valid keystroke"),
+            Keystroke::parse("cmd-s").expect("valid keystroke"),
+        ];
+
+        let (matches, _) = keymap.bindings_for_input(&input, &contexts);
+        let first_match = matches.first().expect("matching binding");
+        assert_eq!(
+            first_match.action().name(),
+            zed_actions::OpenSettings.name()
+        );
+
+        // The longer chord sits between the two cmd-k cmd-s candidates.
+        let candidates = keymap.possible_next_bindings_for_input(&input[..1], &contexts);
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|binding| binding.action().name())
+                .collect::<Vec<_>>(),
+            vec![
+                zed_actions::OpenSettings.name(),
+                zed_actions::OpenKeymapFile.name(),
+                zed_actions::OpenKeymap.name(),
+            ],
+        );
+
+        let pending = candidates
+            .into_iter()
+            .map(|binding| PendingBinding {
+                remaining_keystrokes: binding.keystrokes().iter().skip(1).cloned().collect(),
+                action_name: command_palette::humanize_action_name(binding.action().name()).into(),
+            })
+            .collect();
+        let rows = prepare_pending_bindings(pending, cx);
+        assert_eq!(
+            rows.iter()
+                .map(|row| (
+                    row.keystrokes.to_vec(),
+                    row.action_name.to_string(),
+                    row.is_group,
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    parse_keystrokes("cmd-s"),
+                    command_palette::humanize_action_name(first_match.action().name()),
+                    false,
+                ),
+                (
+                    parse_keystrokes("cmd-s cmd-,"),
+                    command_palette::humanize_action_name(zed_actions::OpenKeymapFile.name()),
+                    false,
+                ),
             ],
         );
     }
