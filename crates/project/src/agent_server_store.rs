@@ -387,7 +387,17 @@ impl AgentServerStore {
                                 .extension()
                                 .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
                         {
-                            Some(SharedString::from(path.to_string_lossy().into_owned()))
+                            if path.is_file() {
+                                Some(SharedString::from(path.to_string_lossy().into_owned()))
+                            } else {
+                                let cached_icon = crate::agent_icon::external_agents_icons_dir()
+                                    .join(crate::agent_icon::sanitize_icon_filename(name));
+                                if cached_icon.is_file() {
+                                    Some(SharedString::from(cached_icon.to_string_lossy().into_owned()))
+                                } else {
+                                    Some(SharedString::from(path.to_string_lossy().into_owned()))
+                                }
+                            }
                         } else {
                             log::warn!(
                                 "Invalid custom agent icon path '{path:?}' for '{name}'. Expected an absolute path to a .svg file."
