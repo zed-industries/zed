@@ -1,4 +1,7 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use gpui::{
     App, AvailableSpace, KeybindingKeystroke, Pixels, RenderOnce, ScrollHandle, Window, size,
@@ -37,17 +40,19 @@ pub(crate) fn prepare_pending_bindings(
             .then_with(|| text_a.len().cmp(&text_b.len()))
             .then_with(|| text_a.cmp(text_b))
     });
-    rows.dedup_by(|(row_a, _), (row_b, _)| {
-        row_a.keystrokes == row_b.keystrokes && row_a.action_name == row_b.action_name
-    });
 
     rows.into_iter().map(|(row, _)| row).collect()
 }
 
 fn group_bindings(bindings: Vec<PendingBinding>) -> Vec<PendingBindingRow> {
+    let mut seen_sequences = HashSet::new();
     let mut groups: HashMap<Option<KeybindingKeystroke>, Vec<PendingBinding>> = HashMap::new();
-    // Group bindings by their first keystroke
     for binding in bindings {
+        // Candidates are in precedence order, so the first binding for a sequence is the one
+        // that dispatch runs.
+        if !seen_sequences.insert(binding.remaining_keystrokes.clone()) {
+            continue;
+        }
         groups
             .entry(binding.remaining_keystrokes.first().cloned())
             .or_default()
@@ -55,12 +60,7 @@ fn group_bindings(bindings: Vec<PendingBinding>) -> Vec<PendingBindingRow> {
     }
 
     let mut result = Vec::new();
-    for (first_keystroke, mut bindings) in groups {
-        // Preserve which-key's adjacent-only deduplication and candidate order.
-        bindings.dedup_by(|binding_a, binding_b| {
-            binding_a.remaining_keystrokes == binding_b.remaining_keystrokes
-        });
-
+    for (first_keystroke, bindings) in groups {
         if let Some(first_keystroke) = first_keystroke
             && bindings.len() > 1
         {
@@ -330,11 +330,8 @@ mod tests {
     }
 
     #[test]
-    fn test_group_bindings_only_deduplicates_adjacent_sequences() {
-        for (sequences, expected_label) in [
-            (["g h", "g h", "g l"], "+2 keybinds"),
-            (["g h", "g l", "g h"], "+3 keybinds"),
-        ] {
+    fn test_group_bindings_counts_distinct_sequences() {
+        for sequences in [["g h", "g h", "g l"], ["g h", "g l", "g h"]] {
             let bindings = group_bindings(
                 sequences
                     .into_iter()
@@ -344,7 +341,7 @@ mod tests {
 
             assert_eq!(bindings.len(), 1);
             let group = bindings.first().expect("group");
-            assert_eq!(group.action_name.as_ref(), expected_label);
+            assert_eq!(group.action_name.as_ref(), "+2 keybinds");
             assert!(group.is_group);
         }
     }
