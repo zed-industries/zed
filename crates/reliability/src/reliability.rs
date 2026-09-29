@@ -7,16 +7,14 @@
 //! crate reports hangs with the same thresholds and wire schema.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::profiler::hang::{
-    HangDetector, HangMonitor, HangMonitorPoll, HangTrigger, MEASUREMENT_VERSION,
-    SerializedHangIncident,
+    HangDetector, HangMonitor, HangMonitorPoll, HangMonitorPollReason, HangTrigger,
+    MEASUREMENT_VERSION, SerializedHangIncident,
 };
 use gpui::profiler::journal::ForegroundJournal;
 use hdrhistogram::Histogram;
-use parking_lot::Mutex;
 use serde_json::Value;
 use telemetry_events::FlexibleEvent;
 
@@ -34,6 +32,11 @@ const MAX_REPORTED_INCIDENTS: usize = 10;
 const SEND_INTERVAL: Duration = Duration::from_mins(30);
 
 const MONITOR_INTERVAL: Duration = Duration::from_secs(1);
+
+/// How long [`HangReporting::flush`] waits for the monitor thread. Quit
+/// handlers get [`gpui::SHUTDOWN_TIMEOUT`] in total, and the app still has to
+/// deliver the event afterwards.
+const FLUSH_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// Duration at which a single piece of foreground work counts as a hang.
 pub fn hang_threshold() -> Duration {
@@ -63,13 +66,8 @@ pub fn frame_budget() -> Duration {
     }
 }
 
-/// Receives each "Hang Incidents" event for delivery through the app's
-/// telemetry pipeline. Called from the monitor thread, or from the thread that
-/// calls [`HangReporting::flush`].
-pub type HangEventSink = Arc<dyn Fn(FlexibleEvent) + Send + Sync>;
-
 /// Receives the incidents collected by each poll, e.g. to show recent hangs in
-/// a feedback report. Called from the monitor thread.
+/// a feedback report. Called on the monitor thread.
 pub type HangIncidentObserver = Box<dyn FnMut(&[SerializedHangIncident]) + Send>;
 
 /// Detects foreground hangs on a dedicated thread and reports them in batched
@@ -78,16 +76,15 @@ pub type HangIncidentObserver = Box<dyn FnMut(&[SerializedHangIncident]) + Send>
 /// Reporting stops when this is dropped.
 pub struct HangReporting {
     monitor: HangMonitor,
-    reporter: Arc<Mutex<Reporter>>,
-    send_event: HangEventSink,
 }
 
 impl HangReporting {
     /// Starts observing `journal` with [`hang_threshold`] and [`frame_budget`].
     ///
-    /// Incident timestamps are reported relative to `startup`. A batch is
-    /// passed to `send_event` every 30 minutes, including empty batches, whose
-    /// `report_window_seconds` still counts toward observed time.
+    /// Incident timestamps are reported relative to `startup`. Every 30
+    /// minutes the current batch is passed to `send_event` on the monitor
+    /// thread, including empty batches, whose `report_window_seconds` still
+    /// counts toward observed time.
     ///
     /// # Errors
     ///
@@ -95,48 +92,39 @@ impl HangReporting {
     pub fn start(
         journal: ForegroundJournal,
         startup: Instant,
-        send_event: HangEventSink,
+        send_event: impl Fn(FlexibleEvent) + Send + 'static,
         mut observe_incidents: Option<HangIncidentObserver>,
     ) -> std::io::Result<Self> {
-        let reporter = Arc::new(Mutex::new(Reporter::new()));
+        let mut reporter = Reporter::new();
         let monitor = HangMonitor::spawn(
             HangDetector::new(journal, hang_threshold(), frame_budget()),
             MONITOR_INTERVAL,
-            {
-                let reporter = reporter.clone();
-                let send_event = send_event.clone();
-                move |poll| {
-                    let incidents = serialize_incidents(startup, poll);
-                    if !incidents.is_empty()
-                        && let Some(observe_incidents) = observe_incidents.as_mut()
-                    {
-                        observe_incidents(&incidents);
-                    }
-                    let mut reporter = reporter.lock();
-                    for incident in incidents {
-                        reporter.add(incident);
-                    }
-                    if reporter.last_send.elapsed() > SEND_INTERVAL {
-                        let event = reporter.take_event().into_flexible_event();
-                        drop(reporter);
-                        send_event(event);
-                    }
+            move |poll| {
+                let flush = poll.reason == HangMonitorPollReason::Flush;
+                let incidents = serialize_incidents(startup, poll);
+                if !incidents.is_empty()
+                    && let Some(observe_incidents) = observe_incidents.as_mut()
+                {
+                    observe_incidents(&incidents);
+                }
+                for incident in incidents {
+                    reporter.add(incident);
+                }
+                if flush || reporter.last_send.elapsed() > SEND_INTERVAL {
+                    send_event(reporter.take_event().into_flexible_event());
                 }
             },
         )?;
-        Ok(Self {
-            monitor,
-            reporter,
-            send_event,
-        })
+        Ok(Self { monitor })
     }
 
-    /// Collects pending incidents and sends the current batch immediately,
-    /// e.g. when the application quits.
+    /// Collects pending incidents and sends the current batch now, e.g. when
+    /// the application quits. Waits briefly for the monitor thread; if it
+    /// doesn't finish in time the batch is sent late or lost at exit.
     pub fn flush(&self) {
-        self.monitor.poll_now();
-        let event = self.reporter.lock().take_event().into_flexible_event();
-        (self.send_event)(event);
+        if !self.monitor.flush(FLUSH_TIMEOUT) {
+            log::warn!("hang reporting did not flush within {FLUSH_TIMEOUT:?}");
+        }
     }
 }
 

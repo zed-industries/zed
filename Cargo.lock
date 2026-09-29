@@ -15189,7 +15189,6 @@ dependencies = [
  "gpui",
  "hdrhistogram",
  "log",
- "parking_lot",
  "serde_json",
  "telemetry_events",
 ]

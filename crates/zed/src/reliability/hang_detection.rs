@@ -2,9 +2,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use ::reliability::HangReporting;
 use client::Client;
 use gpui::{AppContext, TasksIncluded, profiler};
-use ::reliability::HangReporting;
 use ui::App;
 
 use crate::STARTUP_TIME;
@@ -74,7 +74,7 @@ fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &
     let hang_reporting = HangReporting::start(
         cx.foreground_journal(),
         startup,
-        Arc::new(telemetry::send_event),
+        telemetry::send_event,
         None,
     );
     match hang_reporting {

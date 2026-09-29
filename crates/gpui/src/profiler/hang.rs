@@ -15,6 +15,11 @@ use std::time::Duration;
 use scheduler::Instant;
 use serde::Serialize;
 
+#[cfg(not(target_family = "wasm"))]
+mod monitor;
+#[cfg(not(target_family = "wasm"))]
+pub use monitor::{HangMonitor, HangMonitorPoll, HangMonitorPollReason};
+
 /// Version of the power/visibility-aware measurement rules.
 pub const MEASUREMENT_VERSION: u32 = 2;
 
@@ -106,81 +111,6 @@ impl HangDetector {
                 HangIncident::detect(snapshot, self.threshold, self.frame_budget)
             })
             .collect()
-    }
-}
-
-/// The incidents a [`HangMonitor`] collected in one poll.
-pub struct HangMonitorPoll {
-    /// Incidents sealed since the previous poll, possibly none.
-    pub incidents: Vec<HangIncident>,
-    /// See [`HangDetector::first_present_at`].
-    pub first_present_at: Option<Instant>,
-}
-
-/// Polls a [`HangDetector`] on a dedicated OS thread.
-///
-/// Detection runs off the foreground thread so incidents are still collected
-/// and reported while GPUI's executors are stalled. The thread exits once the
-/// monitor is dropped.
-#[cfg(not(target_family = "wasm"))]
-pub struct HangMonitor {
-    state: std::sync::Arc<parking_lot::Mutex<HangMonitorState>>,
-}
-
-#[cfg(not(target_family = "wasm"))]
-struct HangMonitorState {
-    detector: HangDetector,
-    on_poll: Box<dyn FnMut(HangMonitorPoll) + Send>,
-}
-
-#[cfg(not(target_family = "wasm"))]
-impl HangMonitorState {
-    fn poll(&mut self) {
-        let incidents = self.detector.poll();
-        let first_present_at = self.detector.first_present_at();
-        (self.on_poll)(HangMonitorPoll {
-            incidents,
-            first_present_at,
-        });
-    }
-}
-
-#[cfg(not(target_family = "wasm"))]
-impl HangMonitor {
-    /// Starts a thread that polls `detector` every `interval` and passes each
-    /// poll's result, including empty ones, to `on_poll`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the thread can't be spawned.
-    pub fn spawn(
-        detector: HangDetector,
-        interval: Duration,
-        on_poll: impl FnMut(HangMonitorPoll) + Send + 'static,
-    ) -> std::io::Result<Self> {
-        let state = std::sync::Arc::new(parking_lot::Mutex::new(HangMonitorState {
-            detector,
-            on_poll: Box::new(on_poll),
-        }));
-        let weak_state = std::sync::Arc::downgrade(&state);
-        std::thread::Builder::new()
-            .name("HangDetection".to_string())
-            .spawn(move || {
-                loop {
-                    std::thread::sleep(interval);
-                    let Some(state) = weak_state.upgrade() else {
-                        break;
-                    };
-                    state.lock().poll();
-                }
-            })?;
-        Ok(Self { state })
-    }
-
-    /// Polls immediately on the calling thread, e.g. to flush incidents
-    /// before the application quits.
-    pub fn poll_now(&self) {
-        self.state.lock().poll();
     }
 }
 
@@ -705,29 +635,53 @@ mod tests {
     }
 
     #[test]
-    fn hang_monitor_reports_incidents_from_its_thread_and_on_demand() {
+    fn hang_monitor_polls_on_its_interval_and_on_flush() {
+        use super::{HangMonitor, HangMonitorPollReason};
+
         let (journal, _guard) = install_test_foreground_journal(64, 4);
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let monitor = super::HangMonitor::spawn(
-            HangDetector::new(journal, HANG_THRESHOLD, FRAME_BUDGET),
-            Duration::from_millis(10),
-            move |poll| {
-                if !poll.incidents.is_empty() {
-                    sender.send(poll.incidents.len()).ok();
-                }
-            },
-        )
-        .expect("spawn monitor thread");
+        // Each monitor reports on its own channel, which disconnects once the
+        // monitor's thread has exited and dropped its callback.
+        let spawn_monitor = |journal, interval| {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let monitor = HangMonitor::spawn(
+                HangDetector::new(journal, HANG_THRESHOLD, FRAME_BUDGET),
+                interval,
+                move |poll| {
+                    if !poll.incidents.is_empty() {
+                        sender.send((poll.reason, poll.incidents.len())).ok();
+                    }
+                },
+            )
+            .expect("spawn monitor thread");
+            (monitor, receiver)
+        };
 
+        let (monitor, receiver) = spawn_monitor(journal.clone(), Duration::from_millis(10));
         simulate_blocked_foreground_poll(HANG_THRESHOLD * 2);
-        let from_thread = receiver
-            .recv_timeout(Duration::from_secs(10))
-            .expect("the monitor thread reports the hang");
-        assert_eq!(from_thread, 1);
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(10)).ok(),
+            Some((HangMonitorPollReason::Interval, 1)),
+        );
+        drop(monitor);
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(10)),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected),
+        );
 
+        // An interval longer than the test isolates the flush path.
+        let (monitor, receiver) = spawn_monitor(journal, Duration::from_secs(3600));
         simulate_blocked_foreground_poll(HANG_THRESHOLD * 2);
-        monitor.poll_now();
-        assert_eq!(receiver.try_recv().ok(), Some(1));
+        assert!(monitor.flush(Duration::from_secs(10)));
+        assert_eq!(
+            receiver.try_recv().ok(),
+            Some((HangMonitorPollReason::Flush, 1)),
+        );
+
+        drop(monitor);
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(10)),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected),
+        );
     }
 
     #[test]

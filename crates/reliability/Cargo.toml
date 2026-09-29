@@ -16,6 +16,5 @@ doctest = false
 gpui = { workspace = true, features = ["profiler"] }
 hdrhistogram.workspace = true
 log.workspace = true
-parking_lot.workspace = true
 serde_json.workspace = true
 telemetry_events.workspace = true
