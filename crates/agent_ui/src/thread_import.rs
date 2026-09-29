@@ -1,4 +1,4 @@
-use std::{rc::Rc, time::Duration};
+use std::{path::PathBuf, rc::Rc, time::Duration};
 
 use acp_thread::{AgentConnection, AgentSessionListRequest};
 use agent::ThreadStore;
@@ -754,7 +754,7 @@ fn fetch_sessions_for_agent(
                 async move |cx| {
                     (
                         agent_id_for_error,
-                        collect_all_sessions(agent_id, remote_connection, list, cx).await,
+                        collect_all_sessions(agent_id, remote_connection, None, list, cx).await,
                     )
                 }
             }));
@@ -810,6 +810,7 @@ fn fetch_sessions_for_agent(
 async fn collect_all_sessions(
     agent_id: AgentId,
     remote_connection: Option<RemoteConnectionOptions>,
+    cwd: Option<PathBuf>,
     list: std::rc::Rc<dyn acp_thread::AgentSessionList>,
     cx: &mut gpui::AsyncApp,
 ) -> anyhow::Result<SessionByAgent> {
@@ -817,6 +818,7 @@ async fn collect_all_sessions(
     let mut cursor: Option<String> = None;
     loop {
         let request = AgentSessionListRequest {
+            cwd: cwd.clone(),
             cursor: cursor.clone(),
             ..Default::default()
         };
@@ -859,9 +861,16 @@ pub(crate) fn sync_project_sessions(
             project.remote_connection_options(cx),
         )
     };
+    let folder_paths = worktree_paths.folder_path_list();
+    let cwd = if folder_paths.paths().len() == 1 {
+        folder_paths.paths().first().cloned()
+    } else {
+        None
+    };
+
     cx.spawn(async move |cx| {
         let sessions =
-            collect_all_sessions(agent_id, remote_connection, list, cx).await?;
+            collect_all_sessions(agent_id, remote_connection, cwd, list, cx).await?;
 
         cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
