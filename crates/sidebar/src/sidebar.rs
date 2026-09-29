@@ -28,8 +28,9 @@ use feature_flags::{
     AgentThreadWorktreeLabel, AgentThreadWorktreeLabelFlag, FeatureFlag, FeatureFlagAppExt as _,
 };
 use gpui::{
-    Action as _, AnyElement, App, ClickEvent, Context, Decorations, DismissEvent, Entity, EntityId,
-    FocusHandle, Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task,
+    Action as _, AnyElement, App, ClickEvent, ClipboardItem, Context, Decorations, DismissEvent,
+    Entity, EntityId, FocusHandle, Focusable, KeyContext, ListState, Modifiers, Pixels, Render,
+    SharedString, Task,
     TaskExt, WeakEntity, Window, WindowBackgroundAppearance, WindowHandle, linear_color_stop,
     linear_gradient, list, prelude::*, px,
 };
@@ -6511,6 +6512,15 @@ impl Sidebar {
                                         );
                                     })
                                     .ok();
+                            }
+                        });
+
+                        menu = menu.entry("Copy Session ID", None, {
+                            let session_id = session_id.clone();
+                            move |_window, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                    session_id.0.to_string(),
+                                ));
                             }
                         });
 
