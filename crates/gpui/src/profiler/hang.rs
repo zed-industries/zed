@@ -691,6 +691,10 @@ mod tests {
     fn app_flushes_its_hang_monitor_on_shutdown(cx: &mut TestAppContext) {
         use super::{HangMonitorConfig, HangMonitorPollReason};
 
+        // The monitor runs on a real OS thread, so shutdown has to park until it
+        // finishes the flush, and its completion wakes the scheduler from that thread.
+        cx.executor().allow_parking();
+
         let (sender, receiver) = std::sync::mpsc::channel();
         cx.update(|cx| {
             cx.start_hang_monitor(
