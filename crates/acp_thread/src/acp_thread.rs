@@ -1357,6 +1357,7 @@ impl ToolCall {
         terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<()> {
+        let legacy_terminal_labels = matches!(&patch.meta, ToolMetadataPatch::Legacy(_));
         let ToolCallPatch {
             kind,
             status,
@@ -1438,7 +1439,8 @@ impl ToolCall {
 
         if !title.is_undefined() {
             self.title = title.take().map(SharedString::from);
-            if self.kind() == &acp_v2::ToolKind::Execute
+            if legacy_terminal_labels
+                && self.kind() == &acp_v2::ToolKind::Execute
                 && let Some(title) = self.effective_title()
             {
                 // A missing tool title must not overwrite an actual terminal command.
@@ -5178,6 +5180,16 @@ impl AcpThread {
         update: acp_v2::ToolCallUpdate,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        if let Some(content) = update.content.value() {
+            for content in content {
+                if let acp_v2::ToolCallContent::Terminal(terminal) = content {
+                    self.ensure_display_terminal(
+                        acp_v1::TerminalId::new(terminal.terminal_id.0.clone()),
+                        cx,
+                    );
+                }
+            }
+        }
         let id = acp_v1::ToolCallId::new(update.tool_call_id.0.clone());
         let patch = ToolCallPatch::protocol(update);
         let locations_changed = !patch.locations.is_undefined();
@@ -6753,6 +6765,94 @@ impl AcpThread {
         }
     }
 
+    pub fn upsert_display_terminal(
+        &mut self,
+        terminal_id: acp_v2::TerminalId,
+        patch: DisplayTerminalPatch,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let terminal = self.ensure_display_terminal(acp_v1::TerminalId::new(terminal_id.0), cx);
+        terminal.update(cx, |terminal, cx| terminal.apply_display_patch(patch, cx))
+    }
+
+    pub fn append_display_terminal_output(
+        &mut self,
+        terminal_id: acp_v2::TerminalId,
+        data: &[u8],
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let terminal = self.ensure_display_terminal(acp_v1::TerminalId::new(terminal_id.0), cx);
+        terminal.update(cx, |terminal, cx| terminal.append_display_bytes(data, cx))
+    }
+
+    fn ensure_display_terminal(
+        &mut self,
+        terminal_id: acp_v1::TerminalId,
+        cx: &mut Context<Self>,
+    ) -> Entity<Terminal> {
+        if let Some(terminal) = self.terminals.get(&terminal_id) {
+            return terminal.clone();
+        }
+        let builder = ::terminal::TerminalBuilder::new_display_only(
+            ::terminal::terminal_settings::CursorShape::default(),
+            ::terminal::terminal_settings::AlternateScroll::On,
+            None,
+            0,
+            cx.background_executor(),
+            self.project.read(cx).path_style(cx),
+        );
+        let terminal = cx.new(|cx| builder.subscribe(cx));
+        self.register_display_terminal(terminal_id, None, None, None, terminal, cx)
+    }
+
+    fn register_display_terminal(
+        &mut self,
+        terminal_id: acp_v1::TerminalId,
+        command: Option<&str>,
+        cwd: Option<PathBuf>,
+        output_byte_limit: Option<u64>,
+        terminal: Entity<::terminal::Terminal>,
+        cx: &mut Context<Self>,
+    ) -> Entity<Terminal> {
+        let language_registry = self.project.read(cx).languages().clone();
+        let entity = cx.new(|cx| {
+            Terminal::new_display(
+                terminal_id.clone(),
+                command,
+                cwd,
+                output_byte_limit.map(|limit| limit as usize),
+                terminal,
+                language_registry,
+                cx,
+            )
+        });
+        // Provider state can change without another tool-call update.
+        cx.observe(&entity, |this, terminal, cx| {
+            for (index, entry) in this.entries.iter().enumerate() {
+                if entry
+                    .terminals()
+                    .any(|entry_terminal| entry_terminal == &terminal)
+                {
+                    cx.emit(AcpThreadEvent::EntryUpdated(index));
+                }
+            }
+            cx.notify();
+        })
+        .detach();
+        self.terminals.insert(terminal_id.clone(), entity.clone());
+        if let Some(chunks) = self.pending_terminal_output.remove(&terminal_id) {
+            entity.update(cx, |terminal, cx| {
+                for data in chunks {
+                    terminal.write_display_output(&data, cx);
+                }
+            });
+        }
+        if let Some(status) = self.pending_terminal_exit.remove(&terminal_id) {
+            entity.update(cx, |terminal, cx| terminal.finish_display(status, cx));
+        }
+        entity
+    }
+
     pub fn on_terminal_provider_event(
         &mut self,
         event: TerminalProviderEvent,
@@ -6766,47 +6866,29 @@ impl AcpThread {
                 output_byte_limit,
                 terminal,
             } => {
-                if self.terminals.contains_key(&terminal_id) {
-                    return;
-                }
-                let language_registry = self.project.read(cx).languages().clone();
-                let entity = cx.new(|cx| {
-                    Terminal::new_display(
-                        terminal_id.clone(),
+                let entity = self
+                    .terminals
+                    .get(&terminal_id)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        self.register_display_terminal(
+                            terminal_id,
+                            Some(&label),
+                            cwd.clone(),
+                            output_byte_limit,
+                            terminal,
+                            cx,
+                        )
+                    });
+                // A prior reference may already have a view; keep its renderer when metadata arrives.
+                entity.update(cx, |terminal, cx| {
+                    terminal.initialize_legacy_display(
                         &label,
                         cwd,
                         output_byte_limit.map(|limit| limit as usize),
-                        terminal,
-                        language_registry,
                         cx,
-                    )
+                    );
                 });
-                // Provider output and exit can arrive without another tool-call update.
-                cx.observe(&entity, |this, terminal, cx| {
-                    for (index, entry) in this.entries.iter().enumerate() {
-                        if entry
-                            .terminals()
-                            .any(|entry_terminal| entry_terminal == &terminal)
-                        {
-                            cx.emit(AcpThreadEvent::EntryUpdated(index));
-                        }
-                    }
-                    cx.notify();
-                })
-                .detach();
-                self.terminals.insert(terminal_id.clone(), entity.clone());
-
-                if let Some(mut chunks) = self.pending_terminal_output.remove(&terminal_id) {
-                    for data in chunks.drain(..) {
-                        entity.update(cx, |term, cx| {
-                            term.write_display_output(&data, cx);
-                        });
-                    }
-                }
-
-                if let Some(status) = self.pending_terminal_exit.remove(&terminal_id) {
-                    entity.update(cx, |term, cx| term.finish_display(status, cx));
-                }
 
                 cx.notify();
             }
@@ -8994,6 +9076,548 @@ mod tests {
             assert_eq!(output.content, lower.read(cx).get_content());
             assert_eq!(output.original_content_len, output.content.len());
             assert_eq!(output.content_line_count, lower.read(cx).total_lines());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_v2_terminal_reference_and_output_share_display_identity(cx: &mut TestAppContext) {
+        init_test(cx);
+        for reference_first in [true, false] {
+            let thread = new_test_thread(cx).await;
+            let terminal_id = acp_v2::TerminalId::new("shared-terminal");
+            let lookup_id = acp_v1::TerminalId::new("shared-terminal");
+            let tool_id = acp_v1::ToolCallId::new("terminal-tool");
+            let reference = acp_v2::ToolCallUpdate::new("terminal-tool")
+                .title("Tool caption")
+                .kind(acp_v2::ToolKind::Execute)
+                .content(vec![acp_v2::ToolCallContent::Terminal(
+                    acp_v2::Terminal::new(terminal_id.clone()),
+                )]);
+            if reference_first {
+                thread
+                    .update(cx, |thread, cx| {
+                        thread.upsert_tool_call_patch(reference.clone(), cx)
+                    })
+                    .expect("reference creates a placeholder");
+            } else {
+                thread
+                    .update(cx, |thread, cx| {
+                        thread.append_display_terminal_output(terminal_id.clone(), b"early\n", cx)
+                    })
+                    .expect("output creates a display terminal");
+            }
+            let terminal = thread.read_with(cx, |thread, _| {
+                thread
+                    .terminal(lookup_id.clone())
+                    .expect("display terminal")
+            });
+            let lower = terminal.read_with(cx, |terminal, _| terminal.inner().clone());
+            if reference_first {
+                thread
+                    .update(cx, |thread, cx| {
+                        thread.append_display_terminal_output(terminal_id.clone(), b"early\n", cx)
+                    })
+                    .expect("append to placeholder");
+            } else {
+                thread
+                    .update(cx, |thread, cx| {
+                        thread.upsert_tool_call_patch(reference, cx)
+                    })
+                    .expect("reference existing display terminal");
+            }
+            thread
+                .update(cx, |thread, cx| {
+                    thread.upsert_display_terminal(
+                        terminal_id.clone(),
+                        DisplayTerminalPatch {
+                            command: MaybeUndefined::Value("actual command".into()),
+                            ..Default::default()
+                        },
+                        cx,
+                    )
+                })
+                .expect("update display terminal");
+            thread
+                .update(cx, |thread, cx| {
+                    thread.upsert_tool_call_patch(
+                        acp_v2::ToolCallUpdate::new("terminal-tool").title("New caption"),
+                        cx,
+                    )
+                })
+                .expect("tool title is not the terminal command");
+            thread.read_with(cx, |thread, cx| {
+                let reused = thread.terminal(lookup_id).expect("same terminal");
+                assert_eq!(reused.entity_id(), terminal.entity_id());
+                assert_eq!(reused.read(cx).inner().entity_id(), lower.entity_id());
+                assert_eq!(
+                    reused.read(cx).command().read(cx).source(),
+                    "```\nactual command\n```"
+                );
+                assert!(lower.read(cx).get_content().contains("early"));
+                let (_, tool) = thread.tool_call(&tool_id).expect("tool");
+                assert_eq!(tool.label.read(cx).source(), "New caption");
+                assert_eq!(tool.terminals().next(), Some(&terminal));
+            });
+            thread
+                .update(cx, |thread, cx| {
+                    thread.update_tool_call(
+                        acp_v1::ToolCallUpdate::new(
+                            tool_id.clone(),
+                            acp_v1::ToolCallUpdateFields::new().title("Legacy caption"),
+                        ),
+                        cx,
+                    )
+                })
+                .expect("legacy caption update");
+            terminal.read_with(cx, |terminal, cx| {
+                assert_eq!(
+                    terminal.command().read(cx).source(),
+                    "```\nactual command\n```"
+                );
+            });
+            thread
+                .update(cx, |thread, cx| {
+                    thread.upsert_display_terminal(
+                        terminal_id,
+                        DisplayTerminalPatch {
+                            command: MaybeUndefined::Null,
+                            ..Default::default()
+                        },
+                        cx,
+                    )?;
+                    thread.update_tool_call(
+                        acp_v1::ToolCallUpdate::new(
+                            tool_id,
+                            acp_v1::ToolCallUpdateFields::new().title("Another legacy caption"),
+                        ),
+                        cx,
+                    )
+                })
+                .expect("explicit command clear remains authoritative");
+            terminal.read_with(cx, |terminal, cx| {
+                assert_eq!(terminal.command().read(cx).source(), "```\nTerminal\n```");
+            });
+            thread
+                .update(cx, |thread, cx| {
+                    for (id, content) in [
+                        (
+                            "another-tool",
+                            vec![acp_v2::ToolCallContent::Terminal(acp_v2::Terminal::new(
+                                "shared-terminal",
+                            ))],
+                        ),
+                        ("unrelated-tool", Vec::new()),
+                    ] {
+                        thread.upsert_tool_call_patch(
+                            acp_v2::ToolCallUpdate::new(id).content(content),
+                            cx,
+                        )?;
+                    }
+                    anyhow::Ok(())
+                })
+                .expect("shared and unrelated tool rows");
+            cx.run_until_parked();
+            let updated_entries = Rc::new(RefCell::new(Vec::new()));
+            let _subscription = cx.update(|cx| {
+                cx.subscribe(&thread, {
+                    let updated_entries = updated_entries.clone();
+                    move |_, event, _| {
+                        if let AcpThreadEvent::EntryUpdated(index) = event {
+                            updated_entries.borrow_mut().push(*index);
+                        }
+                    }
+                })
+            });
+            thread
+                .update(cx, |thread, cx| {
+                    thread.upsert_display_terminal(
+                        "shared-terminal".into(),
+                        DisplayTerminalPatch {
+                            meta: MaybeUndefined::Value(acp_v2::Meta::new()),
+                            ..Default::default()
+                        },
+                        cx,
+                    )
+                })
+                .expect("terminal metadata refresh");
+            cx.run_until_parked();
+            assert_eq!(&*updated_entries.borrow(), &[0, 1]);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_terminal_placeholder_consumes_legacy_events_in_order(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let terminal_id = acp_v1::TerminalId::new("mixed");
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Output {
+                    terminal_id: terminal_id.clone(),
+                    data: b"old\noutput".to_vec(),
+                },
+                cx,
+            );
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Exit {
+                    terminal_id: terminal_id.clone(),
+                    status: acp_v1::TerminalExitStatus::new().exit_code(7),
+                },
+                cx,
+            );
+            thread
+                .upsert_tool_call_patch(
+                    acp_v2::ToolCallUpdate::new("tool").content(vec![
+                        acp_v2::ToolCallContent::Terminal(acp_v2::Terminal::new("mixed")),
+                    ]),
+                    cx,
+                )
+                .expect("reference consumes queued legacy output");
+            let terminal = thread.terminal(terminal_id.clone()).expect("placeholder");
+            let renderer = terminal.read(cx).inner().clone();
+            assert!(renderer.read(cx).get_content().contains("old\noutput"));
+            let ended_at = terminal.read(cx).output().expect("reported exit").ended_at;
+            let meta = acp_v2::Meta::from_iter([("snapshot".into(), true.into())]);
+            thread
+                .upsert_display_terminal(
+                    "mixed".into(),
+                    DisplayTerminalPatch {
+                        command: MaybeUndefined::Value("reported command".into()),
+                        output: MaybeUndefined::Value(DisplayTerminalOutput {
+                            data: b"new output".to_vec(),
+                            meta: Some(meta.clone()),
+                        }),
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .expect("snapshot supersedes older bytes");
+            let incoming_renderer = cx.new(|cx| {
+                ::terminal::TerminalBuilder::new_display_only(
+                    Default::default(),
+                    ::terminal::terminal_settings::AlternateScroll::On,
+                    None,
+                    0,
+                    cx.background_executor(),
+                    PathStyle::local(),
+                )
+                .subscribe(cx)
+            });
+            for (label, cwd, output_limit) in [
+                ("legacy command", path!("/work"), 3),
+                ("ignored duplicate", path!("/ignored"), 1),
+            ] {
+                thread.on_terminal_provider_event(
+                    TerminalProviderEvent::Created {
+                        terminal_id: terminal_id.clone(),
+                        label: label.into(),
+                        cwd: Some(PathBuf::from(cwd)),
+                        output_byte_limit: Some(output_limit),
+                        terminal: incoming_renderer.clone(),
+                    },
+                    cx,
+                );
+            }
+            let reused = thread.terminal(terminal_id).expect("hydrated terminal");
+            assert_eq!(reused, terminal);
+            let terminal = reused.read(cx);
+            assert_eq!(terminal.inner(), &renderer);
+            assert_ne!(terminal.inner(), &incoming_renderer);
+            assert_eq!(
+                terminal.display_state().expect("display").command(),
+                Some("reported command")
+            );
+            assert_eq!(
+                terminal
+                    .display_state()
+                    .expect("display")
+                    .output_meta
+                    .as_ref(),
+                Some(&meta)
+            );
+            assert_eq!(
+                terminal.working_dir().as_deref(),
+                Some(Path::new(path!("/work")))
+            );
+            let output = terminal.output().expect("completion preserved");
+            assert_eq!(output.ended_at, ended_at);
+            assert_eq!(output.exit_status.exit_code, Some(7));
+            assert_eq!(output.content, "new");
+            assert!(!renderer.read(cx).get_content().contains("old"));
+            assert!(thread.pending_terminal_output.is_empty());
+            assert!(thread.pending_terminal_exit.is_empty());
+            thread
+                .upsert_display_terminal(
+                    "mixed".into(),
+                    DisplayTerminalPatch {
+                        exit_status: MaybeUndefined::Null,
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .expect("clear completion");
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Exit {
+                    terminal_id: acp_v1::TerminalId::new("mixed"),
+                    status: acp_v1::TerminalExitStatus::new().exit_code(0),
+                },
+                cx,
+            );
+            assert!(
+                reused.read(cx).output().is_none(),
+                "duplicate legacy exit must not restore completion"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_v2_terminal_patch_tristate_metadata_and_output_ordering(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let terminal_id = acp_v2::TerminalId::new("snapshot-terminal");
+        let lookup_id = acp_v1::TerminalId::new("snapshot-terminal");
+        let terminal_meta = acp_v2::Meta::from_iter([("terminal".into(), 1.into())]);
+        let output_meta = acp_v2::Meta::from_iter([("output".into(), 2.into())]);
+        let status_meta = acp_v2::Meta::from_iter([("exit".into(), 3.into())]);
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_display_terminal(
+                    terminal_id.clone(),
+                    DisplayTerminalPatch {
+                        command: MaybeUndefined::Value("first command".into()),
+                        cwd: MaybeUndefined::Value(acp_v2::AbsolutePath::new(PathBuf::from(
+                            path!("/work"),
+                        ))),
+                        meta: MaybeUndefined::Value(terminal_meta.clone()),
+                        output: MaybeUndefined::Value(DisplayTerminalOutput {
+                            data: b"old line\r\n".to_vec(),
+                            meta: Some(output_meta.clone()),
+                        }),
+                        exit_status: MaybeUndefined::Value(
+                            acp_v2::TerminalExitStatus::new()
+                                .exit_code(7)
+                                .meta(status_meta.clone()),
+                        ),
+                    },
+                    cx,
+                )
+            })
+            .expect("initial snapshot");
+        let terminal = thread.read_with(cx, |thread, _| {
+            thread.terminal(lookup_id.clone()).expect("terminal")
+        });
+        let ended_at = terminal.read_with(cx, |terminal, _| {
+            let state = terminal.display_state().expect("display");
+            assert_eq!(state.meta.as_ref(), Some(&terminal_meta));
+            assert_eq!(state.output_meta.as_ref(), Some(&output_meta));
+            let output = terminal.output().expect("completed");
+            assert_eq!(output.exit_status.exit_code, Some(7));
+            assert_eq!(output.exit_status.meta.as_ref(), Some(&status_meta));
+            output.ended_at
+        });
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_display_terminal(
+                    terminal_id.clone(),
+                    DisplayTerminalPatch {
+                        output: MaybeUndefined::Value(DisplayTerminalOutput {
+                            data: b"new line\r\n".to_vec(),
+                            meta: None,
+                        }),
+                        ..Default::default()
+                    },
+                    cx,
+                )?;
+                thread.append_display_terminal_output(terminal_id.clone(), b"appended\r\n", cx)?;
+                thread.upsert_display_terminal(
+                    terminal_id.clone(),
+                    DisplayTerminalPatch {
+                        exit_status: MaybeUndefined::Value(acp_v2::TerminalExitStatus::new()),
+                        ..Default::default()
+                    },
+                    cx,
+                )
+            })
+            .expect("replacement, append, and exit correction");
+        terminal.read_with(cx, |terminal, cx| {
+            let state = terminal.display_state().expect("display state");
+            assert_eq!(state.command(), Some("first command"));
+            assert_eq!(
+                terminal.working_dir().as_deref(),
+                Some(Path::new(path!("/work")))
+            );
+            assert_eq!(state.meta.as_ref(), Some(&terminal_meta));
+            assert_eq!(state.output_meta, None);
+            let output = terminal.output().expect("completed");
+            assert_eq!(output.ended_at, ended_at);
+            assert_eq!(output.exit_status.exit_code, None);
+            assert_eq!(output.exit_status.signal, None);
+            assert_eq!(output.exit_status.meta, None);
+            assert!(output.content.contains("new line\nappended"));
+            assert!(!output.content.contains("old line"));
+            assert_eq!(output.content, terminal.inner().read(cx).get_content());
+        });
+        thread
+            .update(cx, |thread, cx| {
+                thread.on_terminal_provider_event(
+                    TerminalProviderEvent::Exit {
+                        terminal_id: lookup_id.clone(),
+                        status: acp_v1::TerminalExitStatus::new().exit_code(5),
+                    },
+                    cx,
+                );
+                thread.upsert_display_terminal(
+                    terminal_id.clone(),
+                    DisplayTerminalPatch {
+                        output: MaybeUndefined::Null,
+                        exit_status: MaybeUndefined::Null,
+                        ..Default::default()
+                    },
+                    cx,
+                )?;
+                thread.on_terminal_provider_event(
+                    TerminalProviderEvent::Exit {
+                        terminal_id: lookup_id.clone(),
+                        status: acp_v1::TerminalExitStatus::new().exit_code(6),
+                    },
+                    cx,
+                );
+                anyhow::Ok(())
+            })
+            .expect("clear snapshot and completion");
+        terminal.read_with(cx, |terminal, cx| {
+            assert!(terminal.output().is_none());
+            assert!(terminal.inner().read(cx).get_content().trim().is_empty());
+            assert!(
+                terminal
+                    .display_state()
+                    .expect("display")
+                    .output_meta
+                    .is_none()
+            );
+            assert_eq!(
+                terminal.display_state().expect("display").meta.as_ref(),
+                Some(&terminal_meta)
+            );
+        });
+        thread
+            .update(cx, |thread, cx| {
+                thread.append_display_terminal_output(terminal_id.clone(), b"fresh\n", cx)?;
+                thread.upsert_display_terminal(
+                    terminal_id.clone(),
+                    DisplayTerminalPatch::default(),
+                    cx,
+                )
+            })
+            .expect("append and undefined patch");
+        terminal.read_with(cx, |terminal, cx| {
+            assert!(terminal.output().is_none());
+            assert!(terminal.inner().read(cx).get_content().contains("fresh"));
+            assert_eq!(
+                terminal.command().read(cx).source(),
+                "```\nfirst command\n```"
+            );
+        });
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_display_terminal(
+                    terminal_id,
+                    DisplayTerminalPatch {
+                        command: MaybeUndefined::Null,
+                        cwd: MaybeUndefined::Null,
+                        meta: MaybeUndefined::Null,
+                        ..Default::default()
+                    },
+                    cx,
+                )
+            })
+            .expect("clear metadata without changing output");
+        terminal.read_with(cx, |terminal, cx| {
+            let state = terminal.display_state().expect("display");
+            assert!(state.command().is_none());
+            assert!(state.meta.is_none());
+            assert!(terminal.working_dir().is_none());
+            assert!(terminal.inner().read(cx).get_content().contains("fresh"));
+        });
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread.terminal(lookup_id).expect("terminal").entity_id(),
+                terminal.entity_id()
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_v2_terminal_updates_reject_client_owned_headless_terminal(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let terminal_id = acp_v1::TerminalId::new("native-terminal");
+        let lower = cx.new(|cx| {
+            ::terminal::TerminalBuilder::new_display_only(
+                ::terminal::terminal_settings::CursorShape::default(),
+                ::terminal::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .subscribe(cx)
+        });
+        let terminal = thread.update(cx, |thread, cx| {
+            thread.register_terminal_created(
+                terminal_id.clone(),
+                "native command".into(),
+                None,
+                None,
+                lower.clone(),
+                cx,
+            )
+        });
+        assert!(terminal.read_with(cx, |terminal, _| terminal.is_process_backed()));
+        assert!(!lower.read_with(cx, |lower, _| lower.is_pty()));
+        let before = lower.read_with(cx, |lower, _| lower.get_content());
+        thread.update(cx, |thread, cx| {
+            assert!(
+                thread
+                    .upsert_display_terminal(
+                        acp_v2::TerminalId::new("native-terminal"),
+                        DisplayTerminalPatch {
+                            command: MaybeUndefined::Value("wrong command".into()),
+                            output: MaybeUndefined::Null,
+                            exit_status: MaybeUndefined::Value(acp_v2::TerminalExitStatus::new()),
+                            ..Default::default()
+                        },
+                        cx,
+                    )
+                    .is_err()
+            );
+            assert!(
+                thread
+                    .append_display_terminal_output(
+                        acp_v2::TerminalId::new("native-terminal"),
+                        b"wrong output\n",
+                        cx
+                    )
+                    .is_err()
+            );
+            assert_eq!(
+                thread
+                    .terminal(terminal_id)
+                    .expect("native terminal")
+                    .entity_id(),
+                terminal.entity_id()
+            );
+        });
+        terminal.read_with(cx, |terminal, cx| {
+            assert!(terminal.display_state().is_none());
+            assert_eq!(
+                terminal.command().read(cx).source(),
+                "```\nnative command\n```"
+            );
+            assert!(terminal.output().is_none());
+            assert_eq!(lower.read(cx).get_content(), before);
         });
     }
 
@@ -12233,13 +12857,13 @@ mod tests {
                 serde_json::from_value(json!({
                     "toolCallId": "permission",
                     "status": "cancelled",
-                    "title": "must not replace valid presentation",
+                    "title": "Cancelled command",
                     "content": [{"type": "terminal", "terminalId": "missing"}]
                 }))
                 .expect("cancelled patch"),
                 cx,
             );
-            assert!(result.is_err());
+            result.expect("a missing v2 terminal creates a placeholder");
             let (_, call) = thread.tool_call(&id).expect("tool");
             assert_eq!(
                 call.reported_status,
@@ -12248,7 +12872,8 @@ mod tests {
             assert_eq!(call.status(), ToolCallStatus::Canceled);
             assert!(call.authorization().is_none());
             assert_eq!(call.label, original_label);
-            assert_eq!(call.label.read(cx).source(), "Authorize");
+            assert_eq!(call.label.read(cx).source(), "Cancelled command");
+            assert!(call.terminals().next().is_some());
         });
         assert!(matches!(
             permission.await,
@@ -18506,7 +19131,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_failed_v2_terminal_patch_settles_only_its_permission(cx: &mut TestAppContext) {
+    async fn test_v2_terminal_reference_settles_only_its_permission(cx: &mut TestAppContext) {
         init_test(cx);
         for status in [
             acp_v2::ToolCallStatus::Completed,
@@ -18536,24 +19161,25 @@ mod tests {
             let first_index = thread.update(cx, |thread, cx| {
                 let (index, first) = thread.tool_call(&first_id).expect("first tool");
                 let original_label = first.label.clone();
-                assert!(
-                    thread
-                        .upsert_tool_call_patch(
-                            acp_v2::ToolCallUpdate::new("first")
-                                .status(status.clone())
-                                .title("invalid replacement")
-                                .content(vec![acp_v2::ToolCallContent::Terminal(
-                                    acp_v2::Terminal::new("missing")
-                                )]),
-                            cx,
-                        )
-                        .is_err()
-                );
+                thread
+                    .upsert_tool_call_patch(
+                        acp_v2::ToolCallUpdate::new("first")
+                            .status(status.clone())
+                            .title("Terminal result")
+                            .content(vec![acp_v2::ToolCallContent::Terminal(
+                                acp_v2::Terminal::new("unseen"),
+                            )]),
+                        cx,
+                    )
+                    .expect("unseen terminal references create placeholders");
                 let (_, first) = thread.tool_call(&first_id).expect("updated tool");
                 assert_eq!(first.reported_status.as_ref(), Some(&status));
                 assert!(first.authorization().is_none());
                 assert_eq!(first.label, original_label);
-                assert_eq!(first.label.read(cx).source(), "Needs permission");
+                assert_eq!(first.label.read(cx).source(), "Terminal result");
+                let terminal = first.terminals().next().expect("terminal placeholder");
+                assert_eq!(terminal.read(cx).id(), &acp_v1::TerminalId::new("unseen"));
+                assert!(!terminal.read(cx).is_process_backed());
                 assert!(
                     thread
                         .tool_call(&second_id)

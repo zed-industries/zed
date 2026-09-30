@@ -12027,6 +12027,137 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_terminal_snapshots_reuse_the_read_only_tool_view(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_tool_call_patch(
+                    acp_v2::ToolCallUpdate::new("tool")
+                        .title("Run command")
+                        .kind(acp_v2::ToolKind::Execute)
+                        .status(acp_v2::ToolCallStatus::Completed)
+                        .content(vec![acp_v2::ToolCallContent::Terminal(
+                            acp_v2::Terminal::new("display"),
+                        )]),
+                    cx,
+                )
+                .expect("reference before terminal state");
+        });
+        cx.run_until_parked();
+        let entry_state = thread_view.read_with(cx, |view, _| view.entry_view_state.clone());
+        entry_state.update(cx, |state, cx| {
+            state.expand_tool_call(acp_v1::ToolCallId::new("tool"));
+            cx.notify();
+        });
+        let terminal = thread.read_with(cx, |thread, _| {
+            thread
+                .terminal(acp_v1::TerminalId::new("display"))
+                .expect("placeholder")
+        });
+        let renderer = terminal.read_with(cx, |terminal, _| terminal.inner().clone());
+        let terminal_view = entry_state.read_with(cx, |state, _| {
+            state
+                .entry(0)
+                .and_then(|entry| entry.terminal(&terminal))
+                .expect("terminal view")
+        });
+        assert!(terminal_view.read_with(cx, |view, _| view.is_read_only()));
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_display_terminal(
+                    "display".into(),
+                    acp_thread::DisplayTerminalPatch {
+                        command: agent_client_protocol::schema::MaybeUndefined::Value(
+                            "actual command".into(),
+                        ),
+                        output: agent_client_protocol::schema::MaybeUndefined::Value(
+                            acp_thread::DisplayTerminalOutput {
+                                data: b"old output".to_vec(),
+                                meta: None,
+                            },
+                        ),
+                        exit_status: agent_client_protocol::schema::MaybeUndefined::Value(
+                            acp_v2::TerminalExitStatus::new().exit_code(7),
+                        ),
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .expect("terminal snapshot");
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("terminal-tool-failed-Some(7)").is_some());
+        assert!(
+            renderer
+                .read_with(cx, |terminal, _| terminal.get_content())
+                .contains("old output")
+        );
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_display_terminal(
+                    "display".into(),
+                    acp_thread::DisplayTerminalPatch {
+                        output: agent_client_protocol::schema::MaybeUndefined::Value(
+                            acp_thread::DisplayTerminalOutput {
+                                data: b"new output".to_vec(),
+                                meta: None,
+                            },
+                        ),
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .expect("replace output without changing completion");
+        });
+        cx.run_until_parked();
+        renderer.read_with(cx, |terminal, _| {
+            let content = terminal.get_content();
+            assert!(content.contains("new output"));
+            assert!(!content.contains("old output"));
+        });
+        assert!(cx.debug_bounds("terminal-tool-failed-Some(7)").is_some());
+        assert!(cx.debug_bounds("ICON-Stop").is_none());
+        assert_eq!(
+            terminal.read_with(cx, |terminal, _| terminal.inner().clone()),
+            renderer
+        );
+        assert_eq!(
+            entry_state.read_with(cx, |state, _| state
+                .entry(0)
+                .and_then(|entry| entry.terminal(&terminal))),
+            Some(terminal_view),
+        );
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_display_terminal(
+                    "display".into(),
+                    acp_thread::DisplayTerminalPatch {
+                        output: agent_client_protocol::schema::MaybeUndefined::Null,
+                        exit_status: agent_client_protocol::schema::MaybeUndefined::Null,
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .expect("clear output and exit information");
+        });
+        cx.run_until_parked();
+        assert!(
+            renderer
+                .read_with(cx, |terminal, _| terminal.get_content())
+                .is_empty()
+        );
+        assert!(cx.debug_bounds("terminal-tool-failed-Some(7)").is_none());
+    }
+
+    #[gpui::test]
     async fn test_display_terminal_does_not_move_to_background_when_tool_completes(
         cx: &mut TestAppContext,
     ) {
