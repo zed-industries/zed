@@ -1,0 +1,111 @@
+{
+  "version": 2,
+  "servers": {
+    "clearthought": {
+      "displayName": "Clear-Thought",
+      "enabled": true,
+      "required": false,
+      "trustLevel": "trusted",
+      "transport": {
+        "type": "http",
+        "http": {
+          "url": "http://host.docker.internal:3000/mcp"
+        }
+      },
+      "capabilities": {
+        "allow": {
+          "tools": [
+            "sequential_thinking",
+            "decision_framework",
+            "metacognitive_monitoring",
+            "debugging_approach",
+            "assumption_xray",
+            "socratic_method",
+            "argument_map",
+            "structured_argumentation"
+          ],
+          "resources": [],
+          "prompts": []
+        }
+      },
+      "connection": {
+        "startupTimeoutSeconds": 30,
+        "requestTimeoutSeconds": 120,
+        "reconnect": {
+          "enabled": true,
+          "maximumAttempts": 2,
+          "delayMilliseconds": 1000
+        }
+      }
+    },
+    "gitnexus": {
+      "displayName": "GitNexus",
+      "enabled": true,
+      "required": true,
+      "trustLevel": "trusted",
+      "transport": {
+        "type": "http",
+        "http": {
+          "url": "http://host.docker.internal:4747/api/mcp"
+        }
+      },
+      "capabilities": {
+        "allow": {
+          "tools": [
+            "check",
+            "query",
+            "detect_changes",
+            "list_repos"
+          ],
+          "resources": [],
+          "prompts": []
+        }
+      },
+      "connection": {
+        "startupTimeoutSeconds": 30,
+        "requestTimeoutSeconds": 300,
+        "reconnect": {
+          "enabled": true,
+          "maximumAttempts": 2,
+          "delayMilliseconds": 1000
+        }
+      },
+      "containerRoute": {
+        "url": "http://host.docker.internal:4747/api/mcp"
+      }
+    },
+    "insight": {
+      "displayName": "Insight",
+      "enabled": true,
+      "required": false,
+      "trustLevel": "trusted",
+      "transport": {
+        "type": "http",
+        "http": {
+          "url": "http://host.docker.internal:3002/mcp"
+        }
+      },
+      "capabilities": {
+        "allow": {
+          "tools": [
+            "experience_search",
+            "experience_record_observation"
+          ],
+          "resources": [
+            "insight://project/*"
+          ],
+          "prompts": []
+        }
+      },
+      "connection": {
+        "startupTimeoutSeconds": 30,
+        "requestTimeoutSeconds": 120,
+        "reconnect": {
+          "enabled": true,
+          "maximumAttempts": 2,
+          "delayMilliseconds": 1000
+        }
+      }
+    }
+  }
+}

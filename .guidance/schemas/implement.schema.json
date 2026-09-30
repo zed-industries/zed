@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "implementedTasks"
+  ],
+  "properties": {
+    "implementedTasks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "changedFiles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "createdFiles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "deletedFiles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "testsAddedOrUpdated": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "commandsExecuted": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "deviations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "unresolvedIssues": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

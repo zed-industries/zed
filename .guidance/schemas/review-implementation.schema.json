@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "findings"
+  ],
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "filesChangedDuringReview": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "testsAddedOrUpdated": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "unresolvedFindings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

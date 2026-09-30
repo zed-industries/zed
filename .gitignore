@@ -61,3 +61,5 @@ crates/docs_preprocessor/actions.json
 
 .local*
 .cache
+
+.guidance/state/

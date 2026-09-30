@@ -1,0 +1,201 @@
+{
+  "version": 2,
+  "operations": {
+    "build": {
+      "description": "Build the project (Cargo workspace).",
+      "type": "process",
+      "executable": "cargo",
+      "args": [
+        "build",
+        "--workspace"
+      ],
+      "required": true,
+      "timeoutSeconds": 1800,
+      "riskClass": "workspace_write",
+      "validation": {
+        "protocolRequestMustSucceed": true,
+        "exitCodeMustBeZero": true
+      },
+      "output": {
+        "returnToAgent": "summary_and_errors",
+        "retainRawResult": true
+      }
+    },
+    "lint": {
+      "description": "Run clippy over the workspace (fail on warnings).",
+      "type": "process",
+      "executable": "cargo",
+      "args": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "required": false,
+      "timeoutSeconds": 900,
+      "riskClass": "read_only",
+      "validation": {
+        "protocolRequestMustSucceed": true,
+        "exitCodeMustBeZero": true
+      },
+      "output": {
+        "returnToAgent": "summary_and_errors",
+        "retainRawResult": true
+      }
+    },
+    "test": {
+      "description": "Run the automated test suite (Cargo workspace).",
+      "type": "process",
+      "executable": "cargo",
+      "args": [
+        "test",
+        "--workspace"
+      ],
+      "required": false,
+      "timeoutSeconds": 1800,
+      "riskClass": "read_only",
+      "validation": {
+        "protocolRequestMustSucceed": true,
+        "exitCodeMustBeZero": true
+      },
+      "output": {
+        "returnToAgent": "summary_and_errors",
+        "retainRawResult": true
+      }
+    },
+    "repository-analysis": {
+      "description": "Verify the GitNexus index for this repo is present and queryable (HTTP mode: mcpTool check; stdio mode: local CLI refresh). The index REFRESH itself stays a host-side pre-complete step: the HTTP server exposes no analyze tool.",
+      "type": "composite",
+      "strategy": "firstAvailable",
+      "required": true,
+      "timeoutSeconds": 900,
+      "riskClass": "read_only",
+      "steps": [
+        {
+          "type": "mcpTool",
+          "server": "gitnexus",
+          "capability": "check",
+          "arguments": {
+            "mode": "fixed",
+            "value": {
+              "repo": "zed"
+            }
+          }
+        },
+        {
+          "type": "process",
+          "executable": "gitnexus",
+          "args": [
+            "analyze",
+            "--no-stats"
+          ]
+        }
+      ],
+      "validation": {
+        "protocolRequestMustSucceed": true,
+        "toolResultMustNotBeError": true,
+        "requiredContent": true
+      },
+      "output": {
+        "returnToAgent": "summary_and_errors",
+        "retainRawResult": true
+      },
+      "failure": {
+        "remainInPhase": true,
+        "allowManualRetry": true,
+        "reportToAgent": true
+      }
+    },
+    "query-project-insights": {
+      "description": "Retrieve existing development insights (experience_search).",
+      "type": "mcpTool",
+      "server": "insight",
+      "capability": "experience_search",
+      "required": false,
+      "timeoutSeconds": 60,
+      "riskClass": "read_only",
+      "arguments": {
+        "mode": "template",
+        "value": {
+          "query": "${session.request}",
+          "scope_id": "zed"
+        }
+      },
+      "validation": {
+        "protocolRequestMustSucceed": true,
+        "toolResultMustNotBeError": true
+      },
+      "output": {
+        "returnToAgent": "normalized",
+        "retainRawResult": false
+      }
+    },
+    "capture-session-lessons": {
+      "description": "Seed validated session lessons. The agent writes .guidance/state/session-lessons.json BEFORE calling complete_workflow ([{slug, observation, cause, fix}]; empty array = no-op success; redact secrets — the script bypasses Guidance pattern redaction). Idempotent per slug.",
+      "type": "process",
+      "executable": "sh",
+      "args": [
+        "-c",
+        "EMMS_HTTP_URL=http://host.docker.internal:3002/mcp EMMS_LESSON_SCOPE=zed-lessons node .guidance/scripts/seed-lessons.mjs .guidance/state/session-lessons.json"
+      ],
+      "required": false,
+      "timeoutSeconds": 120,
+      "riskClass": "external_write",
+      "validation": {
+        "protocolRequestMustSucceed": true,
+        "exitCodeMustBeZero": true
+      },
+      "output": {
+        "returnToAgent": "summary_and_errors",
+        "retainRawResult": true
+      },
+      "failure": {
+        "remainInPhase": true,
+        "allowManualRetry": true,
+        "reportToAgent": true
+      }
+    },
+    "final-review-gate": {
+      "description": "Final-Review Evidence Gate (amendment 003, FR-120/121): validates .guidance/state/final-review.json — strict schema, headCommit == HEAD (any commit after the review invalidates the gate), no open HIGH/CRITICAL findings. [adopted from reference — review args/paths]",
+      "type": "process",
+      "executable": "node",
+      "args": [
+        ".guidance/scripts/check-final-review.mjs",
+        "."
+      ],
+      "required": true,
+      "timeoutSeconds": 60,
+      "riskClass": "read_only",
+      "validation": {
+        "protocolRequestMustSucceed": true,
+        "exitCodeMustBeZero": true
+      },
+      "output": {
+        "returnToAgent": "normalized",
+        "retainRawResult": true
+      }
+    },
+    "docs-drift": {
+      "description": "Spec status drift gate (specs/012): verifies every specs/*/spec.md with a completed tasks.md is no longer Draft. Read-only. [adopted from reference — review args/paths]",
+      "type": "process",
+      "executable": "node",
+      "args": [
+        ".guidance/scripts/check-spec-drift.mjs",
+        "."
+      ],
+      "required": true,
+      "timeoutSeconds": 60,
+      "riskClass": "read_only",
+      "validation": {
+        "protocolRequestMustSucceed": true,
+        "exitCodeMustBeZero": true
+      },
+      "output": {
+        "returnToAgent": "normalized",
+        "retainRawResult": true
+      }
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tasks"
+  ],
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "publicApiChanges": {
+      "type": "boolean"
+    },
+    "configurationChanges": {
+      "type": "boolean"
+    },
+    "documentationChanges": {
+      "type": "boolean"
+    }
+  }
+}

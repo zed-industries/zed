@@ -1,0 +1,64 @@
+{
+  "version": 2,
+  "project": {
+    "name": "zed"
+  },
+  "workflow": {
+    "file": "workflow.json"
+  },
+  "responses": {
+    "file": "responses.json"
+  },
+  "operations": {
+    "file": "operations.json"
+  },
+  "downstreamServers": {
+    "file": "downstream-servers.json"
+  },
+  "policies": {
+    "file": "policies.json"
+  },
+  "state": {
+    "directory": "state",
+    "persistAfterEveryOperation": true
+  },
+  "orchestration": {
+    "defaultTimeoutSeconds": 120,
+    "defaultRetryCount": 0,
+    "maximumConcurrentOperations": 4,
+    "failClosedForRequiredOperations": true
+  },
+  "security": {
+    "allowAgentDefinedServers": false,
+    "allowAgentDefinedOperations": false,
+    "allowAgentProvidedCommands": false,
+    "restrictWorkingDirectory": true,
+    "redactSensitiveOutput": true
+  },
+  "adoption": {
+    "source": "builtin",
+    "resolvedPath": "/examples/default-guidance",
+    "strategy": "adopt",
+    "date": "2026-09-29T15:42:41.046Z",
+    "nonGenericOps": [
+      "final-review-gate",
+      "docs-drift"
+    ],
+    "adaptedOps": [
+      "lint",
+      "test",
+      "build",
+      "repository-analysis",
+      "query-project-insights"
+    ],
+    "divergentOps": [],
+    "shellSource": "answer"
+  },
+  "workspaces": [
+    {
+      "name": "default",
+      "root": "/workspaces/zed",
+      "projectName": "zed"
+    }
+  ]
+}

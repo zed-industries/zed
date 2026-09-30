@@ -1,0 +1,133 @@
+{
+  "version": 2,
+  "workflow": {
+    "id": "standard-development",
+    "profile": "plain",
+    "initialPhase": "understand",
+    "terminalStates": [
+      "completed",
+      "cancelled"
+    ]
+  },
+  "instructions": {
+    "global": "Worktree isolation: parallel agents on the same checkout MUST isolate concurrent changes in separate git worktrees, each with its own workspaceRoot and .guidance state. Never commit, rebase, or write shared files (memory-bank/, .guidance/, SDD/) in a checkout another agent is actively working in; coordinate explicitly or work in your own worktree.\nwsl.exe -e bash"
+  },
+  "phases": {
+    "understand": {
+      "response": "understand",
+      "submissionSchema": "schemas/understand.schema.json",
+      "transitions": [
+        {
+          "to": "plan",
+          "when": "submission_valid"
+        }
+      ],
+      "lifecycle": {
+        "afterEnter": [
+          "query-project-insights"
+        ]
+      }
+    },
+    "plan": {
+      "response": "plan",
+      "submissionSchema": "schemas/plan.schema.json",
+      "transitions": [
+        {
+          "to": "review_and_adjust_plan",
+          "when": "submission_valid"
+        }
+      ]
+    },
+    "review_and_adjust_plan": {
+      "response": "review_and_adjust_plan",
+      "submissionSchema": "schemas/review-plan.schema.json",
+      "transitions": [
+        {
+          "to": "plan",
+          "reason": "major_plan_revision_required"
+        },
+        {
+          "to": "implement",
+          "when": "submission_valid"
+        }
+      ]
+    },
+    "implement": {
+      "response": "implement",
+      "submissionSchema": "schemas/implement.schema.json",
+      "transitions": [
+        {
+          "to": "review_and_fix_implementation",
+          "when": "submission_valid"
+        },
+        {
+          "to": "plan",
+          "reason": "significant_plan_deviation"
+        }
+      ]
+    },
+    "review_and_fix_implementation": {
+      "response": "review_and_fix_implementation",
+      "submissionSchema": "schemas/review-implementation.schema.json",
+      "transitions": [
+        {
+          "to": "implement",
+          "reason": "implementation_changes_required"
+        },
+        {
+          "to": "verify",
+          "when": "submission_valid"
+        }
+      ]
+    },
+    "verify": {
+      "response": "verify",
+      "submissionSchema": "schemas/verify.schema.json",
+      "lifecycle": {
+        "beforeExit": [
+          "lint",
+          "test",
+          "build"
+        ]
+      },
+      "transitions": [
+        {
+          "to": "review_and_fix_implementation",
+          "reason": "verification_failed"
+        },
+        {
+          "to": "complete",
+          "when": "required_operations_succeeded"
+        }
+      ]
+    },
+    "complete": {
+      "response": "complete",
+      "submissionSchema": "schemas/complete.schema.json",
+      "lifecycle": {
+        "beforeExit": [
+          "docs-drift",
+          "final-review-gate",
+          "repository-analysis"
+        ]
+      },
+      "transitions": [
+        {
+          "to": "completed",
+          "when": "required_operations_succeeded"
+        }
+      ]
+    }
+  },
+  "states": {
+    "completed": {
+      "terminal": true
+    },
+    "blocked": {
+      "system": true
+    },
+    "cancelled": {
+      "terminal": true
+    }
+  }
+}
