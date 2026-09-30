@@ -125,6 +125,8 @@ You can set a custom endpoint for Vercel AI Gateway in settings:
 
 Use Amazon Bedrock when you want model access through AWS.
 
+Select GPT-6 Astra or Claude Fable 5.1 in the Amazon Bedrock model picker to use them through the `bedrock-runtime` Converse API. Astra supports a 1,050,000-token context window, and Fable 5.1 supports 1,000,000 tokens. Both support image input and up to 128,000 output tokens. See the [Astra](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html) and [Fable 5.1](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-fable-5-1.html) model cards for availability.
+
 Bedrock supports models that support streaming tool use. See [Amazon Bedrock's Tool Use documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html).
 
 Your AWS credentials need these permissions:
@@ -197,6 +199,10 @@ By default, Zed uses regional inference profiles. To opt into global profiles, a
 ```
 
 Only some models support global inference profiles. See the AWS Bedrock supported models documentation for the current list.
+
+GPT-6 Astra and Claude Fable 5.1 use US geo profiles from US and Canadian commercial Regions by default. From other supported commercial Regions, Zed uses their global profiles because these models require cross-region inference.
+
+Fable 5.1 uses its geo profile in GovCloud, including when `allow_global` is enabled. Astra is not available in GovCloud. See the model cards above for supported Regions.
 
 ### Bedrock Guardrails {#bedrock-guardrails}
 
