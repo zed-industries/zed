@@ -1512,6 +1512,15 @@ fn resolve_preview_image(
         ))));
     }
 
+    // `file:` URLs name a path on the client machine, so resolve them there
+    // directly instead of routing through project/workspace-relative lookup.
+    if dest_url.starts_with("file:") {
+        let path = url::Url::parse(dest_url).ok()?.to_file_path().ok()?;
+        return path
+            .exists()
+            .then(|| ImageSource::Resource(Resource::Path(Arc::from(path.as_path()))));
+    }
+
     let decoded = urlencoding::decode(dest_url)
         .map(|decoded| decoded.into_owned())
         .unwrap_or_else(|_| dest_url.to_string());
@@ -2331,6 +2340,46 @@ mod tests {
 
         let missing = resolve_preview_image(
             "/missing_image.png",
+            Some(&base_directory),
+            Some(workspace_directory),
+            None,
+            None,
+            PathStyle::local(),
+            cx,
+        );
+        assert!(missing.is_none());
+    }
+
+    #[gpui::test]
+    fn resolves_file_url_preview_image_and_rejects_missing(cx: &mut App) {
+        let tree = TempTree::new(json!({
+            "docs": {},
+            "test image.png": "mock data"
+        }));
+        let workspace_directory = tree.path();
+        let base_directory = markdown_fixture_directory(&tree);
+        let image_file = workspace_directory.join("test image.png");
+
+        let file_url = url::Url::from_file_path(&image_file).unwrap();
+        assert!(
+            file_url.as_str().contains("%20"),
+            "fixture must exercise percent-encoded file URLs"
+        );
+        let resolved = resolve_preview_image(
+            file_url.as_str(),
+            Some(&base_directory),
+            Some(workspace_directory),
+            None,
+            None,
+            PathStyle::local(),
+            cx,
+        );
+        assert_resolved_preview_image_path(resolved, image_file.as_path());
+
+        let missing_url = url::Url::from_file_path(workspace_directory.join("missing.png"))
+            .unwrap();
+        let missing = resolve_preview_image(
+            missing_url.as_str(),
             Some(&base_directory),
             Some(workspace_directory),
             None,
