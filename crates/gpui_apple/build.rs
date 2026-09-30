@@ -126,15 +126,23 @@ mod apple_build {
     fn compile_metal_shaders(header_path: &Path) {
         use std::process::{self, Command};
 
-        let target = env::var("TARGET").unwrap();
-        let (sdk, minimum_version_argument) = if target.contains("apple-ios") {
-            if target.ends_with("-sim") {
-                ("iphonesimulator", "-mios-simulator-version-min=15.0")
-            } else {
-                ("iphoneos", "-mios-version-min=15.0")
+        // Build scripts run on the host, so the target platform must come from
+        // Cargo's environment rather than `cfg!`. The target environment, not the
+        // target name, identifies simulators: `x86_64-apple-ios` has no `-sim` suffix.
+        let target_os = env::var("CARGO_CFG_TARGET_OS")
+            .expect("Cargo sets CARGO_CFG_TARGET_OS for build scripts");
+        let target_env = env::var("CARGO_CFG_TARGET_ENV")
+            .expect("Cargo sets CARGO_CFG_TARGET_ENV for build scripts");
+        let (sdk, minimum_version_argument) = match (target_os.as_str(), target_env.as_str()) {
+            ("macos", _) => ("macosx", "-mmacosx-version-min=10.15.7"),
+            ("ios", "sim") => ("iphonesimulator", "-mios-simulator-version-min=15.0"),
+            ("ios", "") => ("iphoneos", "-mios-version-min=15.0"),
+            _ => {
+                println!(
+                    "cargo::error=unsupported Metal shader target: target_os={target_os}, target_env={target_env}"
+                );
+                process::exit(1);
             }
-        } else {
-            ("macosx", "-mmacosx-version-min=10.15.7")
         };
 
         let shader_path = "./src/shaders.metal";
