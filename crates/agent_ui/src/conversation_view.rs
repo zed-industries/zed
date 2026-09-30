@@ -1,9 +1,9 @@
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
     AuthRequired, ClientUserMessageId, ElicitationEntryId, ElicitationStatus, ElicitationStore,
-    LoadError, MaxOutputTokensError, MentionUri, PermissionOptionChoice, PermissionOptions,
-    PermissionPattern, RetryStatus, SelectedPermissionOutcome, ThreadStatus, ToolCall,
-    ToolCallContent, ToolCallStatus,
+    ForegroundActivity, LoadError, MaxOutputTokensError, MentionUri, PermissionOptionChoice,
+    PermissionOptions, PermissionPattern, RetryStatus, SelectedPermissionOutcome, ThreadStatus,
+    ToolCall, ToolCallContent, ToolCallStatus,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
@@ -335,13 +335,14 @@ impl Conversation {
                     }
                     AcpThreadEvent::NewEntry
                     | AcpThreadEvent::StatusChanged
+                    | AcpThreadEvent::SubmissionUpdated(_)
                     | AcpThreadEvent::TitleUpdated
                     | AcpThreadEvent::TokenUsageUpdated
                     | AcpThreadEvent::EntryUpdated(_)
                     | AcpThreadEvent::EntriesRemoved(_)
                     | AcpThreadEvent::Retry(_)
                     | AcpThreadEvent::SubagentSpawned(_)
-                    | AcpThreadEvent::Stopped(_)
+                    | AcpThreadEvent::Stopped { .. }
                     | AcpThreadEvent::Error
                     | AcpThreadEvent::LoadError(_)
                     | AcpThreadEvent::PromptCapabilitiesUpdated
@@ -604,7 +605,7 @@ fn affects_thread_metadata(event: &AcpThreadEvent) -> bool {
         | AcpThreadEvent::ToolAuthorizationReceived(_)
         | AcpThreadEvent::ElicitationRequested(_)
         | AcpThreadEvent::ElicitationResponded(_)
-        | AcpThreadEvent::Stopped(_)
+        | AcpThreadEvent::Stopped { .. }
         | AcpThreadEvent::Error
         | AcpThreadEvent::LoadError(_)
         | AcpThreadEvent::Refusal
@@ -612,6 +613,7 @@ fn affects_thread_metadata(event: &AcpThreadEvent) -> bool {
         // --
         AcpThreadEvent::EntryUpdated(_)
         | AcpThreadEvent::StatusChanged
+        | AcpThreadEvent::SubmissionUpdated(_)
         | AcpThreadEvent::EntriesRemoved(_)
         | AcpThreadEvent::Retry(_)
         | AcpThreadEvent::TokenUsageUpdated
@@ -1649,7 +1651,19 @@ impl ConversationView {
             AcpThreadEvent::StatusChanged => {
                 if let Some(active) = self.thread_view(&session_id) {
                     active.update(cx, |active, cx| {
+                        active.sync_reported_activity(cx);
                         active.sync_generating_indicator(cx);
+                    });
+                }
+            }
+            AcpThreadEvent::SubmissionUpdated(submission_id) => {
+                if let Some(active) = self.thread_view(&session_id) {
+                    let is_latest = thread.read(cx).latest_submission_id() == Some(*submission_id);
+                    active.update(cx, |active, cx| {
+                        if is_latest {
+                            active.current_submission = Some(*submission_id);
+                        }
+                        cx.notify();
                     });
                 }
             }
@@ -1725,7 +1739,23 @@ impl ConversationView {
                     });
                 }
             }
-            AcpThreadEvent::Stopped(stop_reason) => {
+            AcpThreadEvent::Stopped {
+                activity_generation,
+                activity_duration,
+                stop_reason,
+            } => {
+                if thread.read(cx).uses_reported_activity()
+                    && let Some(active) = self.thread_view(&session_id)
+                {
+                    active
+                        .read(cx)
+                        .report_activity_completion(stop_reason, *activity_duration, cx);
+                }
+                if thread.read(cx).activity_generation() != *activity_generation
+                    || thread.read(cx).foreground_activity() != ForegroundActivity::Idle
+                {
+                    return;
+                }
                 if let Some(active) = self.thread_view(&session_id) {
                     let is_generating =
                         matches!(thread.read(cx).status(), ThreadStatus::Generating);
@@ -1741,11 +1771,47 @@ impl ConversationView {
                     });
                 }
                 if is_subagent {
-                    if *stop_reason == acp_v1::StopReason::EndTurn {
+                    if *stop_reason == Some(acp_v2::StopReason::EndTurn) {
                         thread.update(cx, |thread, cx| {
                             thread.mark_as_subagent_output(cx);
                         });
                     }
+                    return;
+                }
+
+                if *stop_reason == Some(acp_v2::StopReason::MaxTokens)
+                    && thread.read(cx).uses_reported_activity()
+                {
+                    if let Some(active) = self.root_thread_view() {
+                        active.update(cx, |active, cx| {
+                            active.message_queue.pause();
+                            active
+                                .handle_thread_error(anyhow::Error::new(MaxOutputTokensError), cx);
+                        });
+                    }
+                    self.notify_with_sound(
+                        "Agent stopped at the output token limit",
+                        IconName::Warning,
+                        window,
+                        cx,
+                    );
+                    return;
+                }
+                if *stop_reason == Some(acp_v2::StopReason::Refusal)
+                    && thread.read(cx).uses_reported_activity()
+                {
+                    if let Some(active) = self.root_thread_view() {
+                        active.update(cx, |active, cx| {
+                            active.message_queue.pause();
+                            active.handle_thread_error(ThreadError::Refusal, cx);
+                        });
+                    }
+                    self.notify_with_sound(
+                        "Agent refused to respond to this request",
+                        IconName::Warning,
+                        window,
+                        cx,
+                    );
                     return;
                 }
 
@@ -4322,6 +4388,390 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_receipt_submission_waits_for_echo_and_reported_idle(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new().with_receipt_submissions(true);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let message_editor = message_editor(&conversation_view, cx);
+        let finish_receipt = connection.defer_next_receipt_response();
+
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("receipt prompt", window, cx);
+        });
+        thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        let submission_id = thread_view.read_with(cx, |view, cx| {
+            assert_eq!(view.thread.read(cx).entries().len(), 0);
+            view.current_submission.expect("submission created")
+        });
+        let copy_selector: &'static str =
+            Box::leak(format!("copy-submission-{}", submission_id.as_u64()).into_boxed_str());
+        assert!(cx.debug_bounds(copy_selector).is_some());
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("running state update");
+        });
+        cx.run_until_parked();
+        thread_view.update_in(cx, |view, window, cx| {
+            view.add_to_queue(vec!["queued".into()], vec![], window, cx);
+        });
+        finish_receipt
+            .send(Ok(acp_v2::PromptResponse::new("receipt-echo")))
+            .expect("receipt response pending");
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds(copy_selector).is_some());
+        thread_view.read_with(cx, |view, cx| {
+            assert_eq!(view.message_queue.len(), 1);
+            assert!(view.turn_fields.turn_started_at.is_some());
+            assert!(matches!(
+                view.thread
+                    .read(cx)
+                    .submission(submission_id)
+                    .map(|record| &record.state),
+                Some(acp_thread::SubmissionState::Accepted { echoed: false, .. })
+            ));
+            assert!(view.thread.read(cx).entries().is_empty());
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_user_message(
+                    acp_v2::UserMessage::new("receipt-echo").content(vec!["receipt prompt".into()]),
+                    cx,
+                )
+                .expect("echo update");
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds(copy_selector).is_none());
+        thread_view.read_with(cx, |view, cx| {
+            assert!(matches!(
+                view.thread
+                    .read(cx)
+                    .submission(submission_id)
+                    .map(|record| &record.state),
+                Some(acp_thread::SubmissionState::Accepted { echoed: true, .. })
+            ));
+            assert_eq!(view.thread.read(cx).entries().len(), 1);
+            assert_eq!(view.message_queue.len(), 1);
+            assert!(view.turn_fields.turn_started_at.is_some());
+        });
+
+        let finish_queued = connection.defer_next_receipt_response();
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
+                    cx,
+                )
+                .expect("idle state update");
+        });
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, _| {
+            assert!(view.turn_fields.turn_started_at.is_none());
+            assert_eq!(view.message_queue.len(), 0);
+        });
+        finish_queued
+            .send(Ok(acp_v2::PromptResponse::new("queued-echo")))
+            .expect("queued submission pending");
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_authentication_keeps_receipt_submission_recoverable(cx: &mut TestAppContext) {
+        init_test(cx);
+        let connection = StubAgentConnection::new().with_receipt_submissions(true);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let message_editor = message_editor(&conversation_view, cx);
+        let reject = connection.defer_next_receipt_response();
+
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("retain this prompt", window, cx);
+        });
+        thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+        let submission_id = thread.read_with(cx, |thread, _| {
+            thread.latest_submission_id().expect("submission")
+        });
+        reject
+            .send(Err(anyhow!(acp_v1::Error::auth_required())))
+            .expect("receipt response pending");
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, _| {
+            assert!(matches!(
+                view.thread_error,
+                Some(ThreadError::AuthenticationRequired(_))
+            ));
+        });
+
+        let authenticate = cx
+            .debug_bounds("authenticate-submission")
+            .expect("authentication recovery button");
+        cx.simulate_click(authenticate.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert_eq!(
+            message_editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "retain this prompt",
+        );
+        thread.read_with(cx, |thread, _| {
+            let original = thread.submission(submission_id).expect("retained original");
+            assert_eq!(original.content.as_ref(), &["retain this prompt".into()]);
+            assert!(matches!(
+                original.state,
+                acp_thread::SubmissionState::Failed(_)
+            ));
+            assert!(!thread.is_idle_for_retention());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_receipt_recovery_preserves_draft_and_copies_failed_submission(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let connection = StubAgentConnection::new().with_receipt_submissions(true);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let message_editor = message_editor(&conversation_view, cx);
+        let reject = connection.defer_next_receipt_response();
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("first rejected text", window, cx);
+        });
+        thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+        let first_id = thread.read_with(cx, |thread, _| {
+            thread.latest_submission_id().expect("first submission")
+        });
+        reject
+            .send(Err(anyhow!("first rejected")))
+            .expect("rejection receiver");
+        cx.run_until_parked();
+        assert!(thread_view.read_with(cx, |view, _| view.thread_error.is_some()));
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("running after rejection");
+        });
+        cx.run_until_parked();
+        assert!(thread_view.read_with(cx, |view, _| view.thread_error.is_some()));
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
+                    cx,
+                )
+                .expect("idle after independent activity");
+        });
+        cx.run_until_parked();
+
+        let accept = connection.defer_next_receipt_response();
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("second un-echoed text", window, cx);
+        });
+        thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+        let second_id = thread.read_with(cx, |thread, _| {
+            thread.latest_submission_id().expect("second submission")
+        });
+        accept
+            .send(Ok(acp_v2::PromptResponse::new("second-echo")))
+            .expect("receipt receiver");
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread
+                    .recoverable_submissions()
+                    .map(|(id, _)| id)
+                    .collect::<Vec<_>>(),
+                [first_id, second_id]
+            );
+        });
+        let first_copy: &'static str =
+            Box::leak(format!("copy-submission-{}", first_id.as_u64()).into_boxed_str());
+        let second_copy: &'static str =
+            Box::leak(format!("copy-submission-{}", second_id.as_u64()).into_boxed_str());
+        let first_restore: &'static str =
+            Box::leak(format!("restore-submission-{}", first_id.as_u64()).into_boxed_str());
+        assert!(cx.debug_bounds(first_copy).is_some());
+        assert!(cx.debug_bounds(second_copy).is_some());
+        let copy = cx
+            .debug_bounds(first_copy)
+            .expect("failed submission copy button");
+        cx.simulate_click(copy.center(), gpui::Modifiers::default());
+        assert_eq!(
+            cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text())),
+            Some("first rejected text".to_string())
+        );
+
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("keep this draft", window, cx);
+        });
+        let restore = cx
+            .debug_bounds(first_restore)
+            .expect("failed submission restore button");
+        cx.simulate_click(restore.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert_eq!(
+            message_editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "keep this draft"
+        );
+        assert!(thread.read_with(cx, |thread, _| thread.submission(first_id).is_some()));
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("", window, cx);
+        });
+        let restore = cx
+            .debug_bounds(first_restore)
+            .expect("failed submission remains restorable");
+        cx.simulate_click(restore.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert_eq!(
+            message_editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "first rejected text"
+        );
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread
+                    .submission(first_id)
+                    .expect("retained original")
+                    .content
+                    .as_ref(),
+                &[acp_v1::ContentBlock::from("first rejected text")],
+            );
+        });
+        assert!(cx.debug_bounds(first_copy).is_some());
+        thread.update(cx, |thread, cx| thread.forget_submission(first_id, cx));
+        cx.run_until_parked();
+        assert!(thread.read_with(cx, |thread, _| thread.submission(first_id).is_none()));
+        assert!(cx.debug_bounds(first_copy).is_none());
+        assert!(cx.debug_bounds(second_copy).is_some());
+    }
+
+    #[gpui::test]
+    async fn test_reported_stale_stop_and_token_limit_do_not_send_queue(cx: &mut TestAppContext) {
+        init_test(cx);
+        let connection = StubAgentConnection::new().with_receipt_submissions(true);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread_view.update_in(cx, |view, window, cx| {
+            view.add_to_queue(vec!["queued".into()], vec![], window, cx);
+        });
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("running A");
+        });
+        cx.run_until_parked();
+        let generation_a = thread.read_with(cx, |thread, _| thread.activity_generation());
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
+                    cx,
+                )
+                .expect("idle A");
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("running B");
+        });
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, _| assert_eq!(view.message_queue.len(), 1));
+        assert!(thread.read_with(cx, |thread, _| thread.activity_generation() > generation_a));
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
+                    cx,
+                )
+                .expect("idle B");
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("running C");
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(
+                        acp_v2::IdleStateUpdate::new().stop_reason(acp_v2::StopReason::MaxTokens),
+                    ),
+                    cx,
+                )
+                .expect("token limit");
+        });
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, cx| {
+            assert!(matches!(
+                view.thread_error,
+                Some(ThreadError::MaxOutputTokens)
+            ));
+            assert_eq!(view.message_queue.len(), 1);
+            assert!(view.turn_fields.turn_started_at.is_none());
+            assert!(view.turn_fields._turn_timer_task.is_none());
+            assert_eq!(
+                view.turn_fields.last_turn_duration,
+                thread.read(cx).activity_duration(),
+            );
+        });
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("independent running");
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
+                    cx,
+                )
+                .expect("independent idle");
+        });
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, cx| {
+            assert!(matches!(
+                view.thread_error,
+                Some(ThreadError::MaxOutputTokens)
+            ));
+            assert_eq!(view.message_queue.len(), 1);
+            assert!(view.turn_fields.turn_started_at.is_none());
+            assert!(view.turn_fields._turn_timer_task.is_none());
+            assert_eq!(
+                view.turn_fields.last_turn_duration,
+                thread.read(cx).activity_duration(),
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_stale_send_result_preserves_new_prompt(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -4370,7 +4820,7 @@ pub(crate) mod tests {
                 } else {
                     assert_eq!(view.thread.read(cx).status(), ThreadStatus::Generating);
                     assert!(matches!(
-                        view.in_flight_prompt.as_deref(),
+                        view.in_flight_prompt(cx).as_deref(),
                         Some([acp_v1::ContentBlock::Text(text)]) if text.text == "second"
                     ));
                 }
@@ -4397,7 +4847,7 @@ pub(crate) mod tests {
                 assert_eq!(view.thread.read(cx).status(), ThreadStatus::Generating);
                 assert!(view.turn_fields.turn_started_at.is_some());
                 assert!(matches!(
-                    view.in_flight_prompt.as_deref(),
+                    view.in_flight_prompt(cx).as_deref(),
                     Some([acp_v1::ContentBlock::Text(text)]) if text.text == "second"
                 ));
                 assert!(view.thread_error.is_none());
@@ -4421,12 +4871,12 @@ pub(crate) mod tests {
                         Some(ThreadError::Other { message, .. }) if message.as_ref() == "current prompt failed"
                     ));
                     assert!(matches!(
-                        view.in_flight_prompt.as_deref(),
+                        view.in_flight_prompt(cx).as_deref(),
                         Some([acp_v1::ContentBlock::Text(text)]) if text.text == "second"
                     ));
                 } else {
                     assert!(view.thread_error.is_none());
-                    assert!(view.in_flight_prompt.is_none());
+                    assert!(view.in_flight_prompt(cx).is_none());
                 }
             });
         }
@@ -11574,6 +12024,137 @@ pub(crate) mod tests {
 
             assert_eq!(text, expected_txt);
         })
+    }
+
+    #[gpui::test]
+    async fn test_terminal_snapshots_reuse_the_read_only_tool_view(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_tool_call_patch(
+                    acp_v2::ToolCallUpdate::new("tool")
+                        .title("Run command")
+                        .kind(acp_v2::ToolKind::Execute)
+                        .status(acp_v2::ToolCallStatus::Completed)
+                        .content(vec![acp_v2::ToolCallContent::Terminal(
+                            acp_v2::Terminal::new("display"),
+                        )]),
+                    cx,
+                )
+                .expect("reference before terminal state");
+        });
+        cx.run_until_parked();
+        let entry_state = thread_view.read_with(cx, |view, _| view.entry_view_state.clone());
+        entry_state.update(cx, |state, cx| {
+            state.expand_tool_call(acp_v1::ToolCallId::new("tool"));
+            cx.notify();
+        });
+        let terminal = thread.read_with(cx, |thread, _| {
+            thread
+                .terminal(acp_v1::TerminalId::new("display"))
+                .expect("placeholder")
+        });
+        let renderer = terminal.read_with(cx, |terminal, _| terminal.inner().clone());
+        let terminal_view = entry_state.read_with(cx, |state, _| {
+            state
+                .entry(0)
+                .and_then(|entry| entry.terminal(&terminal))
+                .expect("terminal view")
+        });
+        assert!(terminal_view.read_with(cx, |view, _| view.is_read_only()));
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_display_terminal(
+                    "display".into(),
+                    acp_thread::DisplayTerminalPatch {
+                        command: agent_client_protocol::schema::MaybeUndefined::Value(
+                            "actual command".into(),
+                        ),
+                        output: agent_client_protocol::schema::MaybeUndefined::Value(
+                            acp_thread::DisplayTerminalOutput {
+                                data: b"old output".to_vec(),
+                                meta: None,
+                            },
+                        ),
+                        exit_status: agent_client_protocol::schema::MaybeUndefined::Value(
+                            acp_v2::TerminalExitStatus::new().exit_code(7),
+                        ),
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .expect("terminal snapshot");
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("terminal-tool-failed-Some(7)").is_some());
+        assert!(
+            renderer
+                .read_with(cx, |terminal, _| terminal.get_content())
+                .contains("old output")
+        );
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_display_terminal(
+                    "display".into(),
+                    acp_thread::DisplayTerminalPatch {
+                        output: agent_client_protocol::schema::MaybeUndefined::Value(
+                            acp_thread::DisplayTerminalOutput {
+                                data: b"new output".to_vec(),
+                                meta: None,
+                            },
+                        ),
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .expect("replace output without changing completion");
+        });
+        cx.run_until_parked();
+        renderer.read_with(cx, |terminal, _| {
+            let content = terminal.get_content();
+            assert!(content.contains("new output"));
+            assert!(!content.contains("old output"));
+        });
+        assert!(cx.debug_bounds("terminal-tool-failed-Some(7)").is_some());
+        assert!(cx.debug_bounds("ICON-Stop").is_none());
+        assert_eq!(
+            terminal.read_with(cx, |terminal, _| terminal.inner().clone()),
+            renderer
+        );
+        assert_eq!(
+            entry_state.read_with(cx, |state, _| state
+                .entry(0)
+                .and_then(|entry| entry.terminal(&terminal))),
+            Some(terminal_view),
+        );
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_display_terminal(
+                    "display".into(),
+                    acp_thread::DisplayTerminalPatch {
+                        output: agent_client_protocol::schema::MaybeUndefined::Null,
+                        exit_status: agent_client_protocol::schema::MaybeUndefined::Null,
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .expect("clear output and exit information");
+        });
+        cx.run_until_parked();
+        assert!(
+            renderer
+                .read_with(cx, |terminal, _| terminal.get_content())
+                .is_empty()
+        );
+        assert!(cx.debug_bounds("terminal-tool-failed-Some(7)").is_none());
     }
 
     #[gpui::test]

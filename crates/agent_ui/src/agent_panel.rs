@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, ThreadStatus, line_range_suffix};
+use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, line_range_suffix};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol::schema::v1 as acp;
 use agent_servers::AgentServer;
@@ -2221,6 +2221,7 @@ impl AgentPanel {
                     this.request_close_terminal_from_terminal_event(terminal_id, cx);
                 }
                 TerminalEvent::BlinkChanged(_)
+                | TerminalEvent::OutputReplaced
                 | TerminalEvent::SelectionsChanged
                 | TerminalEvent::NewNavigationTarget(_)
                 | TerminalEvent::Open(_) => {}
@@ -4230,8 +4231,13 @@ impl AgentPanel {
     ) {
         let subscription = if let Some(acp_thread) = conversation_view.read(cx).root_thread(cx) {
             let subscription = cx.subscribe(&acp_thread, |this, acp_thread, event, cx| {
-                if matches!(event, AcpThreadEvent::StatusChanged)
-                    && acp_thread.read(cx).status() == ThreadStatus::Idle
+                if matches!(
+                    event,
+                    AcpThreadEvent::StatusChanged
+                        | AcpThreadEvent::SubmissionUpdated(_)
+                        | AcpThreadEvent::ToolAuthorizationReceived(_)
+                        | AcpThreadEvent::ElicitationResponded(_)
+                ) && acp_thread.read(cx).is_idle_for_retention()
                 {
                     this.cleanup_retained_threads(cx);
                 }
@@ -4262,7 +4268,7 @@ impl AgentPanel {
                     return true;
                 };
                 let thread = thread_view.read(cx).thread.read(cx);
-                thread.connection().supports_load_session() && thread.status() == ThreadStatus::Idle
+                thread.connection().supports_load_session() && thread.is_idle_for_retention()
             })
             .collect::<Vec<_>>();
 
