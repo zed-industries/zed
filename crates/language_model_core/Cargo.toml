@@ -22,7 +22,8 @@ log.workspace = true
 partial-json-fixer.workspace = true
 schemars.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+sha2.workspace = true
 strum.workspace = true
 thiserror.workspace = true
 
