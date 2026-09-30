@@ -1,7 +1,7 @@
 use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
-use acp_thread::AgentConnection;
+use acp_thread::{AgentConnection, LoadError};
 use agent_client_protocol::schema::v1 as acp;
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::HashSet;
 use fs::Fs;
 use gpui::{App, AppContext as _, Entity, Task};
@@ -265,7 +265,14 @@ impl AgentServer for CustomAgentServer {
                     }
                     anyhow::Ok(agent.get_command(vec![], extra_env, &mut cx.to_async()))
                 })??
-                .await?;
+                .await
+                .map_err(|error| {
+                    if is_registry_agent {
+                        anyhow!(LoadError::FailedToInstall(format!("{error:#}").into()))
+                    } else {
+                        error
+                    }
+                })?;
             let connection = crate::acp::connect(
                 agent_id,
                 project,

@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use client::zed_urls;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::{Editor, EditorElement, EditorStyle};
 use fs::Fs;
 use gpui::{
@@ -9,8 +9,11 @@ use gpui::{
     RenderOnce, SharedString, Styled, TextStyle, UniformListScrollHandle, Window, point,
     uniform_list,
 };
-use project::agent_server_store::{AllAgentServersSettings, CustomAgentServerSettings};
+use project::agent_server_store::{
+    AgentId, AgentServerStore, AllAgentServersSettings, CustomAgentServerSettings,
+};
 use project::{AgentRegistryStore, RegistryAgent};
+use semver::Version;
 use settings::{Settings, SettingsStore, update_settings_file};
 use theme_settings::ThemeSettings;
 use ui::{
@@ -34,6 +37,14 @@ enum RegistryInstallStatus {
     NotInstalled,
     InstalledRegistry,
     InstalledCustom,
+}
+
+#[derive(Clone, Debug)]
+enum RegistryInstalledVersion {
+    Checking,
+    Installed(Version),
+    Missing,
+    Error(SharedString),
 }
 
 #[derive(IntoElement)]
@@ -75,10 +86,14 @@ impl RenderOnce for AgentRegistryCard {
 
 pub struct AgentRegistryPage {
     registry_store: Entity<AgentRegistryStore>,
+    agent_server_store: Entity<AgentServerStore>,
     list: UniformListScrollHandle,
     registry_agents: Vec<RegistryAgent>,
     filtered_registry_indices: Vec<usize>,
     installed_statuses: HashMap<String, RegistryInstallStatus>,
+    installed_versions: HashMap<String, RegistryInstalledVersion>,
+    updating_agents: HashSet<String>,
+    update_errors: HashMap<String, SharedString>,
     query_editor: Entity<Editor>,
     filter: RegistryFilter,
     _subscriptions: Vec<gpui::Subscription>,
@@ -86,11 +101,12 @@ pub struct AgentRegistryPage {
 
 impl AgentRegistryPage {
     pub fn new(
-        _workspace: &Workspace,
+        workspace: &Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
-        cx.new(|cx| {
+        let agent_server_store = workspace.project().read(cx).agent_server_store().clone();
+        cx.new(move |cx| {
             let registry_store = AgentRegistryStore::global(cx);
             let query_editor = cx.new(|cx| {
                 let mut input = Editor::single_line(window, cx);
@@ -103,16 +119,25 @@ impl AgentRegistryPage {
             subscriptions.push(cx.observe(&registry_store, |this, _, cx| {
                 this.reload_registry_agents(cx);
             }));
+            subscriptions.push(cx.observe(&agent_server_store, |this, _, cx| {
+                this.installed_versions.clear();
+                this.refresh_installed_versions(cx);
+            }));
             subscriptions.push(cx.observe_global::<SettingsStore>(|this, cx| {
                 this.filter_registry_agents(cx);
+                this.refresh_installed_versions(cx);
             }));
 
             let mut this = Self {
                 registry_store,
+                agent_server_store,
                 list: UniformListScrollHandle::new(),
                 registry_agents: Vec::new(),
                 filtered_registry_indices: Vec::new(),
                 installed_statuses: HashMap::default(),
+                installed_versions: HashMap::default(),
+                updating_agents: HashSet::default(),
+                update_errors: HashMap::default(),
                 query_editor,
                 filter: RegistryFilter::All,
                 _subscriptions: subscriptions,
@@ -141,6 +166,7 @@ impl AgentRegistryPage {
                 })
         });
         self.filter_registry_agents(cx);
+        self.refresh_installed_versions(cx);
     }
 
     fn refresh_installed_statuses(&mut self, cx: &mut Context<Self>) {
@@ -164,6 +190,141 @@ impl AgentRegistryPage {
             .get(id)
             .copied()
             .unwrap_or(RegistryInstallStatus::NotInstalled)
+    }
+
+    fn refresh_installed_versions(&mut self, cx: &mut Context<Self>) {
+        let installed_ids = self
+            .installed_statuses
+            .iter()
+            .filter_map(|(id, status)| {
+                matches!(status, RegistryInstallStatus::InstalledRegistry).then(|| id.clone())
+            })
+            .collect::<HashSet<_>>();
+
+        self.installed_versions
+            .retain(|id, _| installed_ids.contains(id));
+        self.update_errors
+            .retain(|id, _| installed_ids.contains(id));
+
+        for agent_id in installed_ids {
+            if self.installed_versions.contains_key(&agent_id) {
+                continue;
+            }
+
+            self.installed_versions
+                .insert(agent_id.clone(), RegistryInstalledVersion::Checking);
+
+            let task = self.agent_server_store.update(cx, |store, cx| {
+                store.registry_agent_installed_version(
+                    &AgentId::new(agent_id.clone()),
+                    &mut cx.to_async(),
+                )
+            });
+            let Some(task) = task else {
+                self.installed_versions.insert(
+                    agent_id.clone(),
+                    RegistryInstalledVersion::Error(
+                        "The registry agent is not available in this project.".into(),
+                    ),
+                );
+                continue;
+            };
+
+            let this = cx.entity().downgrade();
+            cx.spawn(async move |_, cx| {
+                let result = task.await;
+                this.update(cx, |this, cx| {
+                    let status = match result {
+                        Ok(Some(version)) => RegistryInstalledVersion::Installed(version),
+                        Ok(None) => RegistryInstalledVersion::Missing,
+                        Err(error) => RegistryInstalledVersion::Error(format!("{error:#}").into()),
+                    };
+                    this.installed_versions.insert(agent_id, status);
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+        }
+    }
+
+    fn has_update(
+        &self,
+        agent: &RegistryAgent,
+        installed_version: Option<&RegistryInstalledVersion>,
+    ) -> bool {
+        let Some(RegistryInstalledVersion::Installed(installed_version)) = installed_version else {
+            return false;
+        };
+        Version::parse(agent.version())
+            .is_ok_and(|available_version| available_version.cmp(installed_version).is_gt())
+    }
+
+    fn installed_version_label(
+        &self,
+        agent: &RegistryAgent,
+        install_status: RegistryInstallStatus,
+    ) -> Option<SharedString> {
+        if install_status != RegistryInstallStatus::InstalledRegistry {
+            return None;
+        }
+
+        match self.installed_versions.get(agent.id().as_ref()) {
+            Some(RegistryInstalledVersion::Checking) => Some("Checking installed version…".into()),
+            Some(RegistryInstalledVersion::Installed(version)) => {
+                Some(format!("Installed v{version}").into())
+            }
+            Some(RegistryInstalledVersion::Missing) => {
+                Some("Installed package not found; repair required".into())
+            }
+            Some(RegistryInstalledVersion::Error(error)) => {
+                Some(format!("Could not read installed version: {error}").into())
+            }
+            None => None,
+        }
+    }
+
+    fn update_agent(&mut self, agent_id: String, cx: &mut Context<Self>) {
+        if !self.updating_agents.insert(agent_id.clone()) {
+            return;
+        }
+        self.update_errors.remove(&agent_id);
+        cx.notify();
+
+        let task = self.agent_server_store.update(cx, |store, cx| {
+            store.install_registry_agent(&AgentId::new(agent_id.clone()), &mut cx.to_async())
+        });
+        let Some(task) = task else {
+            self.updating_agents.remove(&agent_id);
+            self.update_errors.insert(
+                agent_id,
+                "The registry agent is not available in this project.".into(),
+            );
+            cx.notify();
+            return;
+        };
+
+        let this = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                this.updating_agents.remove(&agent_id);
+                match result {
+                    Ok(_) => {
+                        this.installed_versions.remove(&agent_id);
+                        this.update_errors.remove(&agent_id);
+                        this.refresh_installed_versions(cx);
+                    }
+                    Err(error) => {
+                        this.update_errors
+                            .insert(agent_id.clone(), format!("{error:#}").into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn search_query(&self, cx: &mut App) -> Option<String> {
@@ -394,6 +555,7 @@ impl AgentRegistryPage {
         cx: &mut Context<Self>,
     ) -> AgentRegistryCard {
         let install_status = self.install_status(agent.id().as_ref());
+        let installed_version = self.installed_versions.get(agent.id().as_ref());
         let supports_current_platform = agent.supports_current_platform();
 
         let icon = match agent.icon_path() {
@@ -403,8 +565,15 @@ impl AgentRegistryPage {
         .size(IconSize::Medium)
         .color(Color::Muted);
 
-        let install_button =
-            self.install_button(agent, install_status, supports_current_platform, cx);
+        let install_button = self.install_button(
+            agent,
+            install_status,
+            installed_version,
+            supports_current_platform,
+            cx,
+        );
+        let installed_version_label = self.installed_version_label(agent, install_status);
+        let update_error = self.update_errors.get(agent.id().as_ref()).cloned();
 
         let repository_button = agent.repository().map(|repository| {
             let repository_for_tooltip = repository.clone();
@@ -474,7 +643,19 @@ impl AgentRegistryPage {
                             .gap_2()
                             .child(icon)
                             .child(Headline::new(agent.name().clone()).size(HeadlineSize::Small))
-                            .child(Label::new(format!("v{}", agent.version())).color(Color::Muted))
+                            .child(
+                                Label::new(format!("Available v{}", agent.version()))
+                                    .color(Color::Muted),
+                            )
+                            .when_some(installed_version_label, |this, label| {
+                                this.child(Label::new(label).size(LabelSize::Small).color(
+                                    if self.has_update(agent, installed_version) {
+                                        Color::Warning
+                                    } else {
+                                        Color::Muted
+                                    },
+                                ))
+                            })
                             .when(!supports_current_platform, |this| {
                                 this.child(
                                     Label::new("Not supported on this platform")
@@ -494,6 +675,13 @@ impl AgentRegistryPage {
                             .size(LabelSize::Small)
                             .truncate(),
                     )
+                    .when_some(update_error, |this, error| {
+                        this.child(
+                            Label::new(format!("Update failed: {error}"))
+                                .size(LabelSize::Small)
+                                .color(Color::Error),
+                        )
+                    })
                     .child(
                         h_flex()
                             .gap_1()
@@ -514,6 +702,7 @@ impl AgentRegistryPage {
         &self,
         agent: &RegistryAgent,
         install_status: RegistryInstallStatus,
+        installed_version: Option<&RegistryInstalledVersion>,
         supports_current_platform: bool,
         cx: &mut Context<Self>,
     ) -> Button {
@@ -560,6 +749,38 @@ impl AgentRegistryPage {
                     })
             }
             RegistryInstallStatus::InstalledRegistry => {
+                if self.updating_agents.contains(agent.id().as_ref()) {
+                    return Button::new(button_id, "Updating…")
+                        .style(ButtonStyle::OutlinedGhost)
+                        .disabled(true);
+                }
+
+                if self.has_update(agent, installed_version)
+                    || matches!(
+                        installed_version,
+                        Some(
+                            RegistryInstalledVersion::Missing | RegistryInstalledVersion::Error(_)
+                        )
+                    )
+                {
+                    let agent_id = agent.id().to_string();
+                    let button_label = if matches!(
+                        installed_version,
+                        Some(
+                            RegistryInstalledVersion::Missing | RegistryInstalledVersion::Error(_)
+                        )
+                    ) {
+                        "Repair"
+                    } else {
+                        "Update"
+                    };
+                    return Button::new(button_id, button_label)
+                        .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.update_agent(agent_id.clone(), cx);
+                        }));
+                }
+
                 let fs = <dyn Fs>::global(cx);
                 let agent_id = agent.id().to_string();
                 Button::new(button_id, "Remove")
