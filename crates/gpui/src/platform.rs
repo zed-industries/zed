@@ -798,6 +798,17 @@ pub struct A11yCallbacks {
     pub deactivation: Box<dyn Fn() + Send + 'static>,
 }
 
+/// The source of a platform frame request's timestamp.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
+#[repr(u8)]
+pub enum FrameRequestSource {
+    /// An OS or compositor callback requesting a frame.
+    #[default]
+    NativeCallback,
+    /// A local refresh timer, retry timer, or queued frame wakeup.
+    LocalSchedule,
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 #[expect(missing_docs)]
 pub struct RequestFrameOptions {
@@ -805,21 +816,25 @@ pub struct RequestFrameOptions {
     pub require_presentation: bool,
     /// Force refresh of all rendering states when true.
     pub force_render: bool,
-    /// When the platform first offered this frame, before main-thread dispatch.
+    /// When the platform first requested this frame, before main-thread dispatch.
     ///
     /// `None` leaves platform-wait attribution unsupported for this request.
-    /// Coalesced requests carry their earliest opportunity, not their delivery time.
+    /// Coalesced requests carry their first request time, not their delivery time.
     pub signal_at: Option<Instant>,
+    /// Distinguishes native callbacks from local scheduling requests.
+    pub signal_source: FrameRequestSource,
 }
 
-/// Preserves the earliest frame opportunity across coalesced platform notifications.
+/// Preserves the first platform frame request time across coalesced notifications.
 ///
 /// Producers may record from a platform thread without waiting for the UI thread.
-/// The consumer drains notifications on the UI thread; GPUI retains skipped
-/// opportunities until drawing so its own throttling remains attributable to GPUI.
+/// The consumer drains the timestamp on the UI thread; GPUI retains skipped
+/// requests until drawing so its own throttling remains attributable to GPUI.
+/// Timestamps are encoded relative to `origin` because `Instant` cannot be stored
+/// directly in an atomic integer; `u64::MAX` represents an empty accumulator.
 pub struct PlatformFrameSignal {
     origin: Instant,
-    earliest_nanoseconds: std::sync::atomic::AtomicU64,
+    first_signal_nanoseconds: std::sync::atomic::AtomicU64,
 }
 
 impl Default for PlatformFrameSignal {
@@ -833,24 +848,24 @@ impl PlatformFrameSignal {
     pub fn new() -> Self {
         Self {
             origin: Instant::now(),
-            earliest_nanoseconds: std::sync::atomic::AtomicU64::new(u64::MAX),
+            first_signal_nanoseconds: std::sync::atomic::AtomicU64::new(u64::MAX),
         }
     }
 
-    /// Records an opportunity, retaining the earliest undrained timestamp.
+    /// Records a platform frame request, retaining the first undrained timestamp.
     pub fn record(&self, at: Instant) {
         let nanoseconds = at
             .saturating_duration_since(self.origin)
             .as_nanos()
             .min(u128::from(u64::MAX - 1)) as u64;
-        self.earliest_nanoseconds
+        self.first_signal_nanoseconds
             .fetch_min(nanoseconds, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Drains the earliest opportunity, leaving the accumulator empty.
+    /// Drains the first platform frame request time, leaving the accumulator empty.
     pub fn take(&self) -> Option<Instant> {
         let nanoseconds = self
-            .earliest_nanoseconds
+            .first_signal_nanoseconds
             .swap(u64::MAX, std::sync::atomic::Ordering::Relaxed);
         (nanoseconds != u64::MAX).then(|| self.origin + Duration::from_nanos(nanoseconds))
     }

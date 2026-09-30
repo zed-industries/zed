@@ -910,8 +910,8 @@ pub struct WindowProfiler {
     last_present_at: Option<Instant>,
     animating_at_last_present: bool,
     pending_frame: Option<FrameTiming>,
-    first_frame_signal: Option<Instant>,
-    first_signal_since_present: Option<Instant>,
+    frame_latency_start_at: Option<Instant>,
+    first_signal_at: Option<Instant>,
     platform_wait_threshold: Duration,
 }
 
@@ -951,8 +951,8 @@ impl WindowProfiler {
             last_present_at: None,
             animating_at_last_present: false,
             pending_frame: None,
-            first_frame_signal: None,
-            first_signal_since_present: None,
+            frame_latency_start_at: None,
+            first_signal_at: None,
             platform_wait_threshold: Duration::from_micros(66_668),
         };
         journal::record_frame_pending(window_id, Instant::now());
@@ -1074,18 +1074,19 @@ impl WindowProfiler {
         draw_duration
     }
 
-    /// Associates the drawn frame with its first eligible platform opportunities.
+    /// Associates the drawn frame with its first platform frame request time.
     ///
-    /// Signals precede callback dispatch. External invalidations clamp coalesced
-    /// signals to dirty time; animation demand may legitimately precede invalidation.
+    /// `frame_latency_start_at` adjusts requests predating external invalidation
+    /// to dirty time. `first_signal_at` remains unadjusted for input and animation;
+    /// their demand may precede invalidation.
     pub(crate) fn record_frame_signals(
         &mut self,
-        first_signal: Option<Instant>,
-        first_signal_since_present: Option<Instant>,
+        frame_latency_start_at: Option<Instant>,
+        first_signal_at: Option<Instant>,
         refresh_interval: Duration,
     ) {
-        self.first_frame_signal = first_signal;
-        self.first_signal_since_present = first_signal_since_present;
+        self.frame_latency_start_at = frame_latency_start_at;
+        self.first_signal_at = first_signal_at;
         self.platform_wait_threshold =
             Duration::from_millis(50).max(refresh_interval.min(Self::MAX_REFRESH_INTERVAL) * 4);
     }
@@ -1135,8 +1136,8 @@ impl WindowProfiler {
         window_active: bool,
         next_frame_scheduled: bool,
     ) {
-        let first_signal = self.first_frame_signal.take();
-        let first_signal_since_present = self.first_signal_since_present.take();
+        let frame_latency_start_at = self.frame_latency_start_at.take();
+        let first_signal_at = self.first_signal_at.take();
         let wait_threshold = self.platform_wait_threshold;
         let platform_wait_is_short = |started_at: Instant, signal: Option<Instant>| {
             signal
@@ -1145,8 +1146,8 @@ impl WindowProfiler {
         if let Some(first_input_at) = self.first_input_at.take()
             && journal::frame_sample_is_valid(self.window_id, first_input_at)
             // Input dispatch can itself block before it invalidates. Use the
-            // raw opportunity rather than one clamped to that late invalidation.
-            && platform_wait_is_short(first_input_at, first_signal_since_present)
+            // actual frame request time rather than the late invalidation time.
+            && platform_wait_is_short(first_input_at, first_signal_at)
         {
             let latency_nanos = present_end.duration_since(first_input_at).as_nanos() as u64;
             self.input_latency_histogram.record(latency_nanos).ok();
@@ -1168,18 +1169,18 @@ impl WindowProfiler {
                     .filter(|at| journal::frame_sample_is_valid(self.window_id, *at));
                 frame
             });
-        let eligible_signal = frame.and(first_signal);
+        let frame_latency_start_at = frame.and(frame_latency_start_at);
         let frame = frame.map(|mut frame| {
             frame.dirty_at = frame
                 .dirty_at
-                .filter(|at| platform_wait_is_short(*at, first_signal));
+                .filter(|at| platform_wait_is_short(*at, frame_latency_start_at));
             frame
         });
         let animation_interval =
             if frame.is_some() && self.animating_at_last_present && window_active {
                 self.last_present_at
                     .filter(|at| journal::frame_sample_is_valid(self.window_id, *at))
-                    .filter(|at| platform_wait_is_short(*at, first_signal_since_present))
+                    .filter(|at| platform_wait_is_short(*at, first_signal_at))
                     .map(|last_present_at| present_end.duration_since(last_present_at))
             } else {
                 None
@@ -1196,11 +1197,13 @@ impl WindowProfiler {
             return;
         };
 
-        if let Some(signal) = eligible_signal
-            && journal::frame_sample_is_valid(self.window_id, signal)
-            && let Err(error) = self
-                .signal_to_present_histogram
-                .record(present_end.saturating_duration_since(signal).as_nanos() as u64)
+        if let Some(frame_latency_start_at) = frame_latency_start_at
+            && journal::frame_sample_is_valid(self.window_id, frame_latency_start_at)
+            && let Err(error) = self.signal_to_present_histogram.record(
+                present_end
+                    .saturating_duration_since(frame_latency_start_at)
+                    .as_nanos() as u64,
+            )
         {
             log::error!("failed to record signal-to-present frame timing: {error}");
         }

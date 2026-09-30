@@ -33,9 +33,9 @@ use super::journal::{
 
 /// Detects foreground hangs by polling the journal.
 ///
-/// Detection is post-hoc: a hang is reported once an explicit presentation
-/// or foreground-idle boundary completes its interval. Work that never
-/// yields back to the foreground is not observed until it does.
+/// Detection is post-hoc: a hang is reported once an explicit presentation,
+/// completed frame skip, or foreground-idle boundary completes its interval.
+/// Work that never yields back to the foreground is not observed until it does.
 pub struct HangDetector {
     collector: ForegroundJournalCollector,
     sealer: IntervalSealer,
@@ -145,8 +145,9 @@ pub struct SerializedHangIncident {
     /// For presentation-sealed incidents, how long the submitted frame had
     /// been dirty, in milliseconds.
     pub dirty_to_present_ms: Option<f64>,
-    /// What closed the incident: `"present"`, `"idle"`, or `"power_transition"`. This labels the
-    /// boundary, not the hang's cause — the cause is the first contributor.
+    /// What closed the incident: `"present"`, `"frame_skipped"`, `"idle"`, or
+    /// `"power_transition"`. This labels the boundary, not the hang's cause —
+    /// the cause is the first contributor.
     pub sealed_by: &'static str,
     /// Fraction of the active window the foreground spent working,
     /// `0.0..=1.0`. Low values with a high `dirty_to_present_ms` indicate
@@ -294,10 +295,13 @@ impl SerializedHangIncident {
                 IntervalBoundary::Presented(presented) => {
                     presented.dirty_to_present_duration().map(as_millis)
                 }
-                IntervalBoundary::Idle { .. } | IntervalBoundary::PowerTransition { .. } => None,
+                IntervalBoundary::FrameSkipped(_)
+                | IntervalBoundary::Idle { .. }
+                | IntervalBoundary::PowerTransition { .. } => None,
             },
             sealed_by: match snapshot.boundary {
                 IntervalBoundary::Presented(_) => "present",
+                IntervalBoundary::FrameSkipped(_) => "frame_skipped",
                 IntervalBoundary::Idle { .. } => "idle",
                 IntervalBoundary::PowerTransition { .. } => "power_transition",
             },
@@ -483,8 +487,9 @@ mod tests {
     use crate::profiler::{ActionTiming, FrameTiming, PresentTiming, TaskTiming, YieldTime};
 
     use super::super::journal::{
-        FRAME_DEADLINE, ForegroundEvent, ForegroundJournalEntry, FrameSnapshot, FrameStateChange,
-        InputTiming, IntervalBoundary, PollSummary, PresentedFrame, SmallPollFlush,
+        FRAME_DEADLINE, ForegroundEvent, ForegroundJournalEntry, FrameMetadata, FrameSkipReason,
+        FrameSkipped, FrameSnapshot, FrameStateChange, InputTiming, IntervalBoundary,
+        IntervalSealer, PlatformSignal, PollSummary, PresentedFrame, SmallPollFlush,
         install_test_foreground_journal, record_present,
     };
     use super::{
@@ -499,6 +504,99 @@ mod tests {
     // Equal to the threshold, mirroring how production wires the detector
     // today.
     const FRAME_BUDGET: Duration = HANG_THRESHOLD;
+
+    #[test]
+    fn completed_skips_preserve_real_hangs_and_serialize_their_boundary() {
+        let startup = scheduler::Instant::now();
+        let at = |ms: u64| startup + Duration::from_millis(ms);
+        let window_id = WindowId::from(1);
+        for reason in [
+            FrameSkipReason::NoRenderNeeded,
+            FrameSkipReason::InactiveFrameRateLimit { retry_at: at(100) },
+            FrameSkipReason::ThermalFrameRateLimit { retry_at: at(100) },
+        ] {
+            for discontinuous in [false, true] {
+                for trigger in [HangTrigger::Threshold, HangTrigger::Budget] {
+                    let mut sealer = IntervalSealer::new(startup);
+                    let mut entries = vec![ForegroundJournalEntry::Metadata(
+                        FrameMetadata::PlatformSignal(PlatformSignal {
+                            window_id,
+                            signal_at: Some(startup),
+                            handled_at: at(10),
+                            source: crate::FrameRequestSource::NativeCallback,
+                        }),
+                    )];
+                    match trigger {
+                        HangTrigger::Threshold => entries.push(ForegroundJournalEntry::Event(
+                            task_poll_event(at(10), at(30)),
+                        )),
+                        HangTrigger::Budget => entries.extend([
+                            ForegroundJournalEntry::Event(task_poll_event(at(10), at(16))),
+                            ForegroundJournalEntry::Event(task_poll_event(at(20), at(26))),
+                        ]),
+                    }
+                    if discontinuous {
+                        entries.push(ForegroundJournalEntry::Discontinuity { lost: 1 });
+                    }
+                    entries.push(ForegroundJournalEntry::Boundary(
+                        IntervalBoundary::FrameSkipped(FrameSkipped {
+                            window_id,
+                            at: at(60),
+                            reason,
+                        }),
+                    ));
+                    let snapshots = sealer.push_entries(entries);
+                    let [snapshot] = snapshots.as_slice() else {
+                        panic!("expected one snapshot, got {snapshots:?}");
+                    };
+                    let incident =
+                        HangIncident::detect(snapshot.clone(), HANG_THRESHOLD, FRAME_BUDGET);
+                    if discontinuous && trigger == HangTrigger::Budget {
+                        assert!(incident.is_none(), "skips must not exempt journal gaps");
+                        continue;
+                    }
+                    let incident = incident.expect("real work still qualifies across a skip");
+                    assert_eq!(incident.trigger, trigger);
+                    assert_eq!(incident.snapshot.metadata.len(), 1);
+                    let serialized = SerializedHangIncident::convert(startup, &incident, 10, None);
+                    assert_eq!(serialized.sealed_by, "frame_skipped");
+                    assert_eq!(serialized.dirty_to_present_ms, None);
+                    assert_eq!(serialized.start_ms, 10.0);
+                    assert_eq!(serialized.active_ms, 50.0);
+                    assert_eq!(serialized.journal_discontinuous, discontinuous);
+                    assert_eq!(serialized.event_count, incident.contributors.len());
+                    let json = serde_json::to_value(&serialized).expect("serialize incident");
+                    assert_eq!(json["sealed_by"], "frame_skipped");
+                    assert!(json["dirty_to_present_ms"].is_null());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn delayed_platform_signals_without_work_are_not_hangs() {
+        let start = scheduler::Instant::now();
+        let window_id = WindowId::from(1);
+        let mut sealer = IntervalSealer::new(start);
+        let snapshots = sealer.push_entries([
+            ForegroundJournalEntry::Metadata(FrameMetadata::PlatformSignal(PlatformSignal {
+                window_id,
+                signal_at: Some(start),
+                handled_at: start + Duration::from_secs(5),
+                source: crate::FrameRequestSource::NativeCallback,
+            })),
+            ForegroundJournalEntry::Boundary(IntervalBoundary::FrameSkipped(FrameSkipped {
+                window_id,
+                at: start + Duration::from_secs(6),
+                reason: FrameSkipReason::NoRenderNeeded,
+            })),
+        ]);
+        let [snapshot] = snapshots.as_slice() else {
+            panic!("expected one snapshot, got {snapshots:?}");
+        };
+        assert_eq!(snapshot.occupancy(), Duration::ZERO);
+        assert!(HangIncident::detect(snapshot.clone(), HANG_THRESHOLD, FRAME_BUDGET).is_none());
+    }
 
     /// A hang that outlives the frame deadline stays in one incident with
     /// the frame it starved: the deadline only unblocks idle boundaries, so
@@ -570,6 +668,7 @@ mod tests {
             draw_end: at(380),
         };
         let snapshot = FrameSnapshot {
+            metadata: Vec::new(),
             interval_start: at(150),
             boundary: IntervalBoundary::Presented(PresentedFrame {
                 frame,
@@ -742,6 +841,7 @@ mod tests {
         let at = |ms: u64| startup + Duration::from_millis(ms);
 
         let idle = FrameSnapshot {
+            metadata: Vec::new(),
             interval_start: at(200),
             boundary: IntervalBoundary::Idle { ended_at: at(260) },
             events: vec![task_poll_event(at(200), at(260))],
@@ -767,6 +867,7 @@ mod tests {
         let startup = scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let snapshot = FrameSnapshot {
+            metadata: Vec::new(),
             interval_start: at(500),
             boundary: IntervalBoundary::Idle { ended_at: at(600) },
             events: vec![task_poll_event(at(500), at(600))],
@@ -833,6 +934,7 @@ mod tests {
         let startup = scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let snapshot = FrameSnapshot {
+            metadata: Vec::new(),
             interval_start: at(0),
             boundary: IntervalBoundary::Idle { ended_at: at(1000) },
             events: vec![task_poll_event(at(900), at(950))],
@@ -868,6 +970,7 @@ mod tests {
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let window_id = WindowId::from(0xB0D6E7);
         let snapshot = FrameSnapshot {
+            metadata: Vec::new(),
             interval_start: at(0),
             boundary: IntervalBoundary::Presented(PresentedFrame {
                 frame: FrameTiming {
@@ -954,6 +1057,7 @@ mod tests {
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let window_id = WindowId::from(0xFA57);
         let snapshot = FrameSnapshot {
+            metadata: Vec::new(),
             interval_start: at(0),
             boundary: IntervalBoundary::Presented(PresentedFrame {
                 frame: FrameTiming {
@@ -987,6 +1091,7 @@ mod tests {
         let startup = scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let snapshot = FrameSnapshot {
+            metadata: Vec::new(),
             interval_start: at(0),
             boundary: IntervalBoundary::Idle { ended_at: at(200) },
             events: (0..10)
@@ -1017,6 +1122,7 @@ mod tests {
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let window_id = WindowId::from(0x2E57ED);
         let snapshot = FrameSnapshot {
+            metadata: Vec::new(),
             interval_start: at(0),
             boundary: IntervalBoundary::Idle { ended_at: at(80) },
             events: vec![
@@ -1068,6 +1174,7 @@ mod tests {
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let window_id = WindowId::from(0xDE1A7);
         let snapshot = FrameSnapshot {
+            metadata: Vec::new(),
             interval_start: at(0),
             boundary: IntervalBoundary::Presented(PresentedFrame {
                 frame: FrameTiming {
@@ -1140,6 +1247,7 @@ mod tests {
                 .collect::<Vec<_>>();
             let interval_end_ms = cursor_ms.max(1);
             let snapshot = FrameSnapshot {
+                metadata: Vec::new(),
                 interval_start: origin,
                 boundary: IntervalBoundary::Idle {
                     ended_at: origin + Duration::from_millis(interval_end_ms),

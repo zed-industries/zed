@@ -1365,6 +1365,7 @@ impl WindowsWindowInner {
             require_presentation: false,
             force_render,
             signal_at: self.state.frame_signal.take(),
+            signal_source: FrameRequestSource::NativeCallback,
         });
 
         self.state.callbacks.request_frame.set(Some(request_frame));

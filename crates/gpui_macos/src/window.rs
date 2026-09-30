@@ -25,10 +25,10 @@ use cocoa::{
 use dispatch2::DispatchQueue;
 use gpui::{
     AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalDragPayload,
-    ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptButton, PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab,
+    ExternalPaths, FileDropEvent, ForegroundExecutor, FrameRequestSource, KeyDownEvent, Keystroke,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
+    Point, PromptButton, PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind,
     WindowParams, WindowVisibility, point, px, size,
 };
@@ -3172,6 +3172,7 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
                 drop(lock);
                 callback(RequestFrameOptions {
                     signal_at: Some(signal_at),
+                    signal_source: FrameRequestSource::NativeCallback,
                     ..Default::default()
                 });
 
@@ -3297,6 +3298,7 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
         drop(lock);
         callback(RequestFrameOptions {
             signal_at: Some(signal_at),
+            signal_source: FrameRequestSource::NativeCallback,
             ..Default::default()
         });
 
@@ -3320,6 +3322,7 @@ extern "C" fn step(view: *mut c_void) {
         drop(lock);
         callback(RequestFrameOptions {
             signal_at,
+            signal_source: FrameRequestSource::NativeCallback,
             ..Default::default()
         });
         window_state.lock().request_frame_callback = Some(callback);
