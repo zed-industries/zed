@@ -513,6 +513,7 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::SixAstra
             | Model::SixSol
             | Model::SixLuna
+            | Model::SixPointOneSol
             | Model::O3 => true,
             Model::Four => false,
             Model::Custom {

@@ -49,7 +49,7 @@ fn temperature_for_model(
     reasoning_effort: Option<ReasoningEffort>,
 ) -> Option<f32> {
     temperature.filter(|_| match model_id {
-        "gpt-6-astra" => false,
+        "gpt-6-astra" | "gpt-6.1-sol" => false,
         "gpt-6-sol" | "gpt-6-luna" => reasoning_effort == Some(ReasoningEffort::None),
         _ => true,
     })
@@ -2371,6 +2371,8 @@ mod tests {
         use ReasoningEffort::{Medium, None as NoReasoning};
 
         for (model_id, temperature, effort, expected_temperature) in [
+            ("gpt-6.1-sol", Some(0.25), None, None),
+            ("gpt-6.1-sol", None, None, None),
             ("gpt-6-astra", Some(0.25), None, None),
             ("gpt-6-astra", None, None, None),
             ("gpt-6-sol", Some(0.25), None, None),
