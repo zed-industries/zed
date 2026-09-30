@@ -1929,7 +1929,11 @@ impl MarkdownElement {
         let fallback_opens_image_url = enclosing_link_url.is_none();
 
         let image_element = {
-            let wrapper = div().id(("markdown-image-link", range.start)).min_w_0();
+            let image_start = range.start;
+            let wrapper = div()
+                .id(("markdown-image-link", range.start))
+                .debug_selector(move || format!("markdown_image_{image_start}"))
+                .min_w_0();
             let wrapper = if !self.style.prevent_mouse_interaction
                 && let Some(url) = enclosing_link_url
             {
@@ -3024,6 +3028,7 @@ impl Element for MarkdownElement {
                             builder.table.start_row();
                         }
                         MarkdownTag::TableCell => {
+                            builder.table.start_cell();
                             let is_header = builder.table.in_head;
                             let row_index = builder.table.row_index;
                             let col_index = builder.table.col_index;
@@ -3033,6 +3038,13 @@ impl Element for MarkdownElement {
                                 .unwrap_or(self.style.base_text_style.text_align);
 
                             let mut cell_div = div()
+                                .debug_selector(|| {
+                                    if is_header {
+                                        format!("markdown_table_header_cell_{col_index}")
+                                    } else {
+                                        format!("markdown_table_cell_{row_index}_{col_index}")
+                                    }
+                                })
                                 .flex()
                                 .flex_col()
                                 .h_full()
@@ -3606,6 +3618,7 @@ impl ParentElement for AnyDiv {
 struct TableState {
     alignments: Vec<Alignment>,
     in_head: bool,
+    in_cell: bool,
     row_index: usize,
     col_index: usize,
 }
@@ -3614,6 +3627,7 @@ impl TableState {
     fn start(&mut self, alignments: Vec<Alignment>) {
         self.alignments = alignments;
         self.in_head = false;
+        self.in_cell = false;
         self.row_index = 0;
         self.col_index = 0;
     }
@@ -3621,6 +3635,7 @@ impl TableState {
     fn end(&mut self) {
         self.alignments.clear();
         self.in_head = false;
+        self.in_cell = false;
         self.row_index = 0;
         self.col_index = 0;
     }
@@ -3641,7 +3656,12 @@ impl TableState {
         self.row_index += 1;
     }
 
+    fn start_cell(&mut self) {
+        self.in_cell = true;
+    }
+
     fn end_cell(&mut self) {
+        self.in_cell = false;
         self.col_index += 1;
     }
 
@@ -3908,7 +3928,27 @@ impl MarkdownElementBuilder {
     }
 
     fn push_image_child(&mut self, child: impl IntoElement) {
-        self.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
+        let table_cell_alignment = self
+            .table
+            .in_cell
+            .then(|| self.table.current_cell_alignment());
+        self.modify_current_div(|el| {
+            let el = el.flex().flex_row().flex_wrap();
+            // Table cells center their content vertically and apply column alignment via a
+            // column-direction container. Switching it to a row moves those axes, so the
+            // alignment has to be restated for the row.
+            match table_cell_alignment {
+                Some(alignment) => {
+                    let el = el.items_center().content_center();
+                    match alignment {
+                        Some(Alignment::Center) => el.justify_center(),
+                        Some(Alignment::Right) => el.justify_end(),
+                        _ => el.justify_start(),
+                    }
+                }
+                None => el.items_start(),
+            }
+        });
         self.div_stack.last_mut().unwrap().line_break_mode = LineBreakMode::FlexWrap;
         self.append_child(child.into_any_element());
     }
@@ -4222,7 +4262,7 @@ impl MarkdownElementBuilder {
         self.rendered_lines.push(rendered_line.clone());
         self.append_child(
             RenderedLineElement {
-                text: text.into_any(),
+                text,
                 line: rendered_line,
             }
             .into_any_element(),
@@ -4247,7 +4287,7 @@ impl MarkdownElementBuilder {
 /// Wraps a rendered line so its code chips and highlights share the glyphs'
 /// ancestor content masks, and records the clipped bounds for platform text hit testing.
 struct RenderedLineElement {
-    text: AnyElement,
+    text: StyledText,
     line: Rc<RenderedLine>,
 }
 
@@ -4266,26 +4306,27 @@ impl Element for RenderedLineElement {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
+        inspector_id: Option<&gpui::InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        (self.text.request_layout(window, cx), ())
+        self.text.request_layout(None, inspector_id, window, cx)
     }
 
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
+        inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
+        request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
         self.line
             .visible_bounds
             .set(Some(bounds.intersect(&window.content_mask().bounds)));
-        self.text.prepaint(window, cx);
+        self.text
+            .prepaint(None, inspector_id, bounds, request_layout, window, cx);
     }
 
     fn paint(
@@ -4298,9 +4339,11 @@ impl Element for RenderedLineElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let layout = self.text.layout();
         self.line.paint_code_chips(window);
-        self.text.paint(window, cx);
+        layout.paint_background(window, cx).log_err();
         self.line.paint_highlights(window);
+        layout.paint_foreground(window, cx).log_err();
     }
 }
 
@@ -4372,6 +4415,8 @@ impl RenderedLine {
         }
     }
 
+    /// Painted between the text run backgrounds and the glyphs, so opaque highlight
+    /// colors neither hide the text nor get hidden by run backgrounds
     fn paint_highlights(&self, window: &mut Window) {
         if self.highlights.is_empty() {
             return;
@@ -5112,13 +5157,16 @@ impl InputHandler for MarkdownInputHandler {
 mod tests {
     use super::*;
     use gpui::{
-        Modifiers, RenderImage, ScrollDelta, ScrollWheelEvent, TestAppContext, TouchPhase,
+        Background, DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId, LineLayout,
+        Modifiers, NoopTextSystem, PlatformTextSystem, RenderGlyphParams, RenderImage, ScrollDelta,
+        ScrollWheelEvent, Size, TestAppContext, TestDispatcher, TextRenderingMode, TouchPhase,
         UpdateGlobal, VisualTestContext, size,
     };
     use language::{Language, LanguageConfig, LanguageMatcher};
+    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     };
 
@@ -6469,6 +6517,159 @@ mod tests {
     }
 
     #[test]
+    fn test_table_state_tracks_whether_inside_a_cell() {
+        let mut table = TableState::default();
+        assert!(!table.in_cell);
+
+        table.start(vec![Alignment::Left]);
+        assert!(!table.in_cell);
+        table.start_head();
+        table.start_cell();
+        assert!(table.in_cell);
+        table.end_cell();
+        assert!(!table.in_cell);
+        table.end_head();
+
+        table.start_row();
+        table.start_cell();
+        assert!(table.in_cell);
+        table.end();
+        assert!(!table.in_cell);
+    }
+
+    struct ImageLayoutView {
+        markdown: Entity<Markdown>,
+        icon: Arc<RenderImage>,
+        tall_image: Arc<RenderImage>,
+    }
+
+    impl Render for ImageLayoutView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let icon = self.icon.clone();
+            let tall_image = self.tall_image.clone();
+            div().size_full().child(
+                MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                    .image_resolver(move |dest_url, _| {
+                        let image = if dest_url == "tall.png" {
+                            tall_image.clone()
+                        } else {
+                            icon.clone()
+                        };
+                        Some(ImageSource::Render(image))
+                    }),
+            )
+        }
+    }
+
+    fn render_image_layout(source: &'static str, cx: &mut TestAppContext) -> VisualTestContext {
+        ensure_theme_initialized(cx);
+        let render_svg = |svg: &'static [u8], cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                cx.svg_renderer()
+                    .render_single_frame(svg, 1.0)
+                    .expect("test svg should render")
+            })
+        };
+        let icon = render_svg(
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>"#,
+            cx,
+        );
+        let tall_image = render_svg(
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="80"></svg>"#,
+            cx,
+        );
+        let window = cx.open_window(size(px(800.), px(600.)), |_, cx| {
+            let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+            ImageLayoutView {
+                markdown,
+                icon,
+                tall_image,
+            }
+        });
+        cx.run_until_parked();
+        VisualTestContext::from_window(window.into(), cx)
+    }
+
+    fn image_selectors(source: &str) -> Vec<&'static str> {
+        source
+            .match_indices("![")
+            .map(|(offset, _)| &*format!("markdown_image_{offset}").leak())
+            .collect()
+    }
+
+    #[gpui::test]
+    fn test_images_in_table_cells_follow_column_alignment(cx: &mut TestAppContext) {
+        let source = "| Left column | Center column | Right column | Tall |\n\
+                      |:---|:---:|---:|:---|\n\
+                      | ![](icon.png) | ![](icon.png) | ![](icon.png) | ![](tall.png) |";
+        let mut cx = render_image_layout(source, cx);
+        let selectors = image_selectors(source);
+        let [left_image, center_image, right_image, _] = selectors.as_slice() else {
+            panic!("expected four images, found {}", selectors.len());
+        };
+
+        let mut gaps = |image: &'static str, cell: &'static str| {
+            let image = cx.debug_bounds(image).expect("image should be rendered");
+            let cell = cx.debug_bounds(cell).expect("cell should be rendered");
+            (
+                image.left() - cell.left(),
+                cell.right() - image.right(),
+                image.top() - cell.top(),
+                cell.bottom() - image.bottom(),
+                cell.size.height,
+            )
+        };
+        let left = gaps(left_image, "markdown_table_cell_0_0");
+        let center = gaps(center_image, "markdown_table_cell_0_1");
+        let right = gaps(right_image, "markdown_table_cell_0_2");
+
+        assert!(
+            left.0 < px(8.) && left.1 > px(20.),
+            "image in a left-aligned column should sit at the left edge: {left:?}"
+        );
+        assert!(
+            (center.0 - center.1).abs() <= px(1.5) && center.0 > px(8.),
+            "image in a center-aligned column should be horizontally centered: {center:?}"
+        );
+        assert!(
+            right.1 < px(8.) && right.0 > px(20.),
+            "image in a right-aligned column should sit at the right edge: {right:?}"
+        );
+
+        for (column, gaps) in [("left", left), ("center", center), ("right", right)] {
+            assert!(
+                gaps.4 > px(60.),
+                "the tall image should make the row taller than the icon: {gaps:?}"
+            );
+            assert!(
+                (gaps.2 - gaps.3).abs() <= px(1.5),
+                "image in the {column} column should be vertically centered in a tall row: {gaps:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_images_outside_tables_keep_top_alignment(cx: &mut TestAppContext) {
+        let source = "![](icon.png)![](tall.png)";
+        let mut cx = render_image_layout(source, cx);
+        let selectors = image_selectors(source);
+        let [icon, tall_image] = selectors.as_slice() else {
+            panic!("expected two images, found {}", selectors.len());
+        };
+
+        let icon = cx.debug_bounds(icon).expect("icon should be rendered");
+        let tall_image = cx
+            .debug_bounds(tall_image)
+            .expect("tall image should be rendered");
+        assert_eq!(
+            icon.top(),
+            tall_image.top(),
+            "images in a paragraph should stay top-aligned"
+        );
+        assert!(icon.left() < tall_image.left());
+    }
+
+    #[test]
     fn test_task_list_marker_for_item() {
         // Small helper that takes the Markdown contents and returns a vector of
         // all task list marker strings as well as whether they are checked or
@@ -7735,6 +7936,251 @@ mod tests {
         assert!(quad_bounds.left() < px(0.));
         assert!(visible_bounds.left() >= px(0.));
         assert!(visible_bounds.right() <= window_width);
+    }
+
+    #[gpui::test]
+    fn test_search_and_selection_below_aligned_inline_code(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        for alignment in ["---", ":---:", "---:"] {
+            for text in ["xx", "é中🙂"] {
+                let source = format!(
+                    "| WWWWWWWWWWWWWWWWWWWWWWWWWWWWWW |\n| {alignment} |\n| ~~`{text}`~~ |\n"
+                );
+                let start = source.find(text).expect("inline code is present");
+                let range = start..start + text.len();
+                let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+                markdown.update(cx, |markdown, cx| {
+                    markdown.selection.start = range.start;
+                    markdown.selection.end = range.end;
+                    markdown.set_search_highlights(vec![range], None, cx);
+                });
+                let (_, cx) = cx.add_window_view(move |_, _| MarkdownTestView {
+                    markdown,
+                    style: MarkdownStyle {
+                        inline_code: TextStyleRefinement {
+                            background_color: Some(gpui::green()),
+                            ..TextStyleRefinement::default()
+                        },
+                        selection_background_color: gpui::red(),
+                        ..MarkdownStyle::default()
+                    },
+                    code_span_link: None,
+                    rendered_text: Rc::new(RefCell::new(None)),
+                });
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    let quads = window.painted_quads();
+                    let selection_bounds = quads
+                        .iter()
+                        .find(|quad| quad.background == Background::from(gpui::red()))
+                        .expect("selection is painted")
+                        .bounds;
+                    let order_for_color = |color| {
+                        let orders = quads
+                            .iter()
+                            .filter(|quad| {
+                                quad.background == Background::from(color)
+                                    && quad.bounds.intersects(&selection_bounds)
+                            })
+                            .map(|quad| quad.order)
+                            .collect::<Vec<_>>();
+                        assert_eq!(orders.len(), 1);
+                        orders[0]
+                    };
+                    let chip_order = order_for_color(gpui::green());
+                    let search_order = order_for_color(cx.theme().colors().search_match_background);
+                    let selection_order = order_for_color(gpui::red());
+                    let text_order = window
+                        .painted_underlines()
+                        .iter()
+                        .map(|underline| underline.order)
+                        .min()
+                        .expect("strikethrough is painted");
+                    assert!(chip_order < search_order);
+                    assert!(search_order < selection_order);
+                    assert!(
+                        selection_order < text_order,
+                        "alignment={alignment}, text={text}, selection={selection_order}, glyphs={text_order}",
+                    );
+                });
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_search_highlights_are_painted_between_text_backgrounds_and_glyphs(
+        cx: &mut TestAppContext,
+    ) {
+        ensure_theme_initialized(cx);
+        let source = "~~[struck](https://zed.dev) through~~";
+        let highlight_start = source
+            .find("struck")
+            .expect("highlighted text should be present");
+        let highlight_range = highlight_start..highlight_start + "struck".len();
+        let run_background_color = gpui::red();
+
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        markdown.update(cx, |markdown, cx| {
+            markdown.set_search_highlights(vec![highlight_range], None, cx);
+        });
+        let (_, cx) = cx.add_window_view(move |_, _| MarkdownTestView {
+            markdown,
+            style: MarkdownStyle {
+                link: TextStyleRefinement {
+                    background_color: Some(run_background_color),
+                    ..Default::default()
+                },
+                ..MarkdownStyle::default()
+            },
+            code_span_link: None,
+            rendered_text: Rc::new(RefCell::new(None)),
+        });
+        cx.run_until_parked();
+
+        let highlight_color = cx.update(|_, cx| cx.theme().colors().search_match_background);
+        cx.update(|window, _| {
+            let quads = window.painted_quads();
+            let order_of_quad_with = |color: Hsla| {
+                quads
+                    .iter()
+                    .find(|quad| quad.background == color.into())
+                    .map(|quad| quad.order)
+            };
+            let run_background_order =
+                order_of_quad_with(run_background_color).expect("link background should be painted");
+            let highlight_order =
+                order_of_quad_with(highlight_color).expect("search highlight should be painted");
+            // Strikethroughs are painted in the same layer as the glyphs
+            let text_order = window
+                .painted_underlines()
+                .iter()
+                .map(|underline| underline.order)
+                .min()
+                .expect("strikethrough should be painted");
+            assert!(
+                run_background_order < highlight_order,
+                "text run backgrounds must not cover search highlights"
+            );
+            assert!(
+                highlight_order < text_order,
+                "search highlight must be drawn below the text, otherwise opaque theme colors hide it"
+            );
+        });
+    }
+
+    /// Records the font runs of every line it shapes, delegating everything else.
+    struct FontRunRecordingTextSystem {
+        text_system: NoopTextSystem,
+        shaped_lines: Mutex<Vec<(String, Vec<usize>)>>,
+    }
+
+    impl PlatformTextSystem for FontRunRecordingTextSystem {
+        fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> anyhow::Result<()> {
+            self.text_system.add_fonts(fonts)
+        }
+
+        fn all_font_names(&self) -> Vec<String> {
+            self.text_system.all_font_names()
+        }
+
+        fn font_id(&self, descriptor: &Font) -> anyhow::Result<FontId> {
+            self.text_system.font_id(descriptor)
+        }
+
+        fn font_metrics(&self, font_id: FontId) -> FontMetrics {
+            self.text_system.font_metrics(font_id)
+        }
+
+        fn typographic_bounds(
+            &self,
+            font_id: FontId,
+            glyph_id: GlyphId,
+        ) -> anyhow::Result<Bounds<f32>> {
+            self.text_system.typographic_bounds(font_id, glyph_id)
+        }
+
+        fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<Size<f32>> {
+            self.text_system.advance(font_id, glyph_id)
+        }
+
+        fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
+            self.text_system.glyph_for_char(font_id, ch)
+        }
+
+        fn glyph_raster_bounds(
+            &self,
+            params: &RenderGlyphParams,
+        ) -> anyhow::Result<Bounds<DevicePixels>> {
+            self.text_system.glyph_raster_bounds(params)
+        }
+
+        fn rasterize_glyph(
+            &self,
+            params: &RenderGlyphParams,
+            raster_bounds: Bounds<DevicePixels>,
+        ) -> anyhow::Result<(Size<DevicePixels>, Vec<u8>)> {
+            self.text_system.rasterize_glyph(params, raster_bounds)
+        }
+
+        fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+            self.shaped_lines
+                .lock()
+                .expect("shaped lines lock should not be poisoned")
+                .push((text.to_string(), runs.iter().map(|run| run.len).collect()));
+            self.text_system.layout_line(text, font_size, runs)
+        }
+
+        fn recommended_rendering_mode(
+            &self,
+            font_id: FontId,
+            font_size: Pixels,
+        ) -> TextRenderingMode {
+            self.text_system
+                .recommended_rendering_mode(font_id, font_size)
+        }
+    }
+
+    #[test]
+    fn test_runs_differing_only_in_background_are_shaped_separately() {
+        let text_system = Arc::new(FontRunRecordingTextSystem {
+            text_system: NoopTextSystem,
+            shaped_lines: Mutex::default(),
+        });
+        let mut cx = TestAppContext::build_with_text_system(
+            TestDispatcher::new(0),
+            None,
+            text_system.clone(),
+        );
+        ensure_theme_initialized(&mut cx);
+        // Only the link background distinguishes `f` from its neighbors, so the
+        // run boundaries around it must survive shaping to keep `f` and `i` from
+        // forming a ligature across them
+        let source = "a[f](https://zed.dev)i b";
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        let (_, cx) = cx.add_window_view(move |_, _| MarkdownTestView {
+            markdown,
+            style: MarkdownStyle {
+                link: TextStyleRefinement {
+                    background_color: Some(gpui::red()),
+                    ..Default::default()
+                },
+                ..MarkdownStyle::default()
+            },
+            code_span_link: None,
+            rendered_text: Rc::new(RefCell::new(None)),
+        });
+        cx.run_until_parked();
+
+        let shaped_lines = text_system
+            .shaped_lines
+            .lock()
+            .expect("shaped lines lock should not be poisoned");
+        let (_, font_run_lengths) = shaped_lines
+            .iter()
+            .rev()
+            .find(|(text, _)| text == "afi b")
+            .expect("paragraph should be shaped");
+        assert_eq!(font_run_lengths, &[1, 1, 3]);
     }
 
     /// Renders a paragraph followed by a fenced code block at the given
