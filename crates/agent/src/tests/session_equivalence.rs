@@ -19,10 +19,6 @@
 //!   where Thread merges them.
 //! - A later partial tool use without the `thought_signature` an earlier one
 //!   carried. The session keeps the earlier signature where Thread drops it.
-//! - A `StartMessage` after a tool use Thread runs in the same round. Thread
-//!   answers that tool use with a canceled result when it flushes the message,
-//!   then attaches the real result to the next message, or drops it if that
-//!   message is empty. The session keeps each result with its own tool use.
 
 use super::*;
 use gpui::proptest::prelude::*;
@@ -472,12 +468,10 @@ fn round() -> impl Strategy<Value = Round> {
 }
 
 /// Drops the segments the module docs exclude: thinking that would directly
-/// follow a signed thinking block, and message boundaries after a tool use
-/// Thread would run.
+/// follow a signed thinking block.
 fn without_excluded_shapes(segments: Vec<Segment>) -> Vec<Segment> {
     let mut kept = Vec::new();
     let mut last_content_is_signed_thinking = false;
-    let mut has_complete_tool_use = false;
     for segment in segments {
         match &segment {
             Segment::Thinking { signature, .. } => {
@@ -487,19 +481,10 @@ fn without_excluded_shapes(segments: Vec<Segment>) -> Vec<Segment> {
                 last_content_is_signed_thinking = signature.is_some();
             }
             Segment::ReasoningDetails(_) => {}
-            Segment::StartMessage => {
-                if has_complete_tool_use {
-                    continue;
-                }
-                last_content_is_signed_thinking = false;
-            }
-            Segment::ToolUse { is_complete, .. } => {
-                has_complete_tool_use |= is_complete;
-                last_content_is_signed_thinking = false;
-            }
-            Segment::Text(_) | Segment::RedactedThinking(_) => {
-                last_content_is_signed_thinking = false
-            }
+            Segment::StartMessage
+            | Segment::ToolUse { .. }
+            | Segment::Text(_)
+            | Segment::RedactedThinking(_) => last_content_is_signed_thinking = false,
         }
         kept.push(segment);
     }
