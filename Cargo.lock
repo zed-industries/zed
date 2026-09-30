@@ -1419,7 +1419,6 @@ dependencies = [
 name = "auto_update_ui"
 version = "0.1.0"
 dependencies = [
- "agent_skills",
  "anyhow",
  "auto_update",
  "client",
@@ -1427,11 +1426,12 @@ dependencies = [
  "editor",
  "gpui",
  "markdown_preview",
- "prompt_store",
+ "project",
  "release_channel",
  "semver",
  "serde",
  "serde_json",
+ "settings",
  "smol",
  "telemetry",
  "ui",
