@@ -1576,9 +1576,9 @@ impl ConversationView {
         &self.connection_key
     }
 
-    /// When the agent can't set titles (e.g. external ACP agents), a rename is
-    /// only stored here and the root `AcpThread` keeps the agent's title, so
-    /// anything displaying the thread's title must prefer this override.
+    /// User renames are stored in ThreadMetadataStore.
+    /// Some agents can't set titles directly, so this should be checked
+    /// when rendering the thread's title.
     fn title_override(&self, cx: &App) -> Option<SharedString> {
         ThreadMetadataStore::try_global(cx).and_then(|store| {
             store
@@ -5906,10 +5906,16 @@ pub(crate) mod tests {
             .update_in(cx, |view, window, cx| view.send(window, cx));
         cx.run_until_parked();
 
-        cx.windows()
+        let first_notification = cx
+            .windows()
             .iter()
             .find_map(|window| window.downcast::<AgentNotification>())
-            .expect("Expected a notification for the first turn")
+            .expect("Expected a notification for the first turn");
+        let first_notification_title = first_notification
+            .read_with(cx, |notification, _cx| notification.title().clone())
+            .unwrap();
+        assert_eq!(first_notification_title.as_ref(), "Agent Title");
+        first_notification
             .update(cx, |notification, _window, cx| notification.dismiss(cx))
             .unwrap();
         cx.run_until_parked();
@@ -5920,6 +5926,19 @@ pub(crate) mod tests {
         cx.dispatch_action(editor::actions::SelectAll);
         cx.simulate_input("Renamed Title");
         cx.run_until_parked();
+
+        let thread_id = conversation_view.read_with(cx, |view, _cx| view.thread_id);
+        let title_override = cx.read(|cx| {
+            ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry(thread_id)
+                .and_then(|metadata| metadata.title_override.clone())
+        });
+        assert_eq!(
+            title_override,
+            Some("Renamed Title".into()),
+            "The rename should be persisted as a title override"
+        );
 
         let thread =
             active_thread(&conversation_view, cx).read_with(cx, |view, _cx| view.thread.clone());
