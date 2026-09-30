@@ -1632,6 +1632,18 @@ impl ConversationView {
         &self.connection_key
     }
 
+    /// User renames are stored in ThreadMetadataStore.
+    /// Some agents can't set titles directly, so this should be checked
+    /// when rendering the thread's title.
+    fn title_override(&self, cx: &App) -> Option<SharedString> {
+        ThreadMetadataStore::try_global(cx).and_then(|store| {
+            store
+                .read(cx)
+                .entry(self.thread_id)
+                .and_then(|metadata| metadata.title_override.clone())
+        })
+    }
+
     pub fn title(&self, cx: &App) -> SharedString {
         match &self.server_state {
             ServerState::Connected(view) => view
@@ -1888,13 +1900,7 @@ impl ConversationView {
                 );
             }
             AcpThreadEvent::TitleUpdated => {
-                let override_title = ThreadMetadataStore::try_global(cx).and_then(|store| {
-                    store
-                        .read(cx)
-                        .entry(self.thread_id)
-                        .and_then(|m| m.title_override.clone())
-                });
-                let title = override_title.or_else(|| thread.read(cx).title());
+                let title = self.title_override(cx).or_else(|| thread.read(cx).title());
                 if let Some(title) = title
                     && let Some(active_thread) = self.thread_view(&session_id)
                 {
@@ -3030,7 +3036,7 @@ impl ConversationView {
         let root_thread = root_thread.read(cx).thread.read(cx);
         let root_thread_id = self.thread_id;
         let root_work_dirs = root_thread.work_dirs().cloned();
-        let root_title = root_thread.title();
+        let root_title = self.title_override(cx).or_else(|| root_thread.title());
 
         let title = root_title
             .clone()
@@ -6043,6 +6049,92 @@ pub(crate) mod tests {
                 "Expected accepting the notification to load the notified thread in AgentPanel"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_notification_uses_renamed_title_when_agent_cannot_set_title(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new().with_supports_set_title(false);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::SessionInfoUpdate(
+            acp_v1::SessionInfoUpdate::new().title("Agent Title"),
+        )]);
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        let first_notification = cx
+            .windows()
+            .iter()
+            .find_map(|window| window.downcast::<AgentNotification>())
+            .expect("Expected a notification for the first turn");
+        let first_notification_title = first_notification
+            .read_with(cx, |notification, _cx| notification.title().clone())
+            .unwrap();
+        assert_eq!(first_notification_title.as_ref(), "Agent Title");
+        first_notification
+            .update(cx, |notification, _window, cx| notification.dismiss(cx))
+            .unwrap();
+        cx.run_until_parked();
+
+        let title_editor = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, _cx| view.title_editor.clone());
+        cx.focus(&title_editor);
+        cx.dispatch_action(editor::actions::SelectAll);
+        cx.simulate_input("Renamed Title");
+        cx.run_until_parked();
+
+        let thread_id = conversation_view.read_with(cx, |view, _cx| view.thread_id);
+        let title_override = cx.read(|cx| {
+            ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry(thread_id)
+                .and_then(|metadata| metadata.title_override.clone())
+        });
+        assert_eq!(
+            title_override,
+            Some("Renamed Title".into()),
+            "The rename should be persisted as a title override"
+        );
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _cx| view.thread.clone());
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(
+                thread.title(),
+                Some("Agent Title".into()),
+                "The agent can't be told about the rename, so its thread keeps the agent's title"
+            );
+        });
+
+        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+            acp_v1::ContentChunk::new("Done".into()),
+        )]);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Next", window, cx);
+        });
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        let notification_title = cx
+            .windows()
+            .iter()
+            .find_map(|window| window.downcast::<AgentNotification>())
+            .expect("Expected a notification for the second turn")
+            .read_with(cx, |notification, _cx| notification.title().clone())
+            .unwrap();
+        assert_eq!(notification_title.as_ref(), "Renamed Title");
     }
 
     #[gpui::test]
