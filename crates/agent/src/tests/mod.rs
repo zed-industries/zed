@@ -54,6 +54,7 @@ use std::{
 };
 use util::path;
 
+mod session_equivalence;
 pub(crate) mod test_tools;
 use test_tools::*;
 
@@ -5207,6 +5208,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                             StreamingJsonErrorContextTool::NAME: true,
                             StreamingFailingEchoTool::NAME: true,
                             TerminalTool::NAME: true,
+                            ScriptedResultTool::NAME: true,
                         }
                     }
                 }
