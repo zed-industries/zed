@@ -2819,9 +2819,6 @@ impl Element for MarkdownElement {
                                     let mut parent_container: AnyDiv = if let Some(scroll_handle) =
                                         scroll_handle.as_ref()
                                     {
-                                        let mut container_style = parent_container.style().clone();
-                                        container_style.refine(&self.style.code_block);
-
                                         let scrollbars = Scrollbars::new(ScrollAxes::Horizontal)
                                             .id(("markdown-code-block-scrollbar", range.start))
                                             .tracked_scroll_handle(scroll_handle)
@@ -2830,7 +2827,8 @@ impl Element for MarkdownElement {
                                                 cx.theme().colors().editor_background,
                                             )
                                             .track_corner_radius(bottom_inner_corner_radius(
-                                                &container_style,
+                                                parent_container.style(),
+                                                &self.style.code_block,
                                                 window.rem_size(),
                                             ))
                                             .notify_content();
@@ -3581,22 +3579,21 @@ impl IntoElement for MarkdownElement {
 
 /// The corner radius of the area inside a container's bottom border, which is
 /// where absolutely positioned children like scrollbar tracks are laid out.
-fn bottom_inner_corner_radius(style: &StyleRefinement, rem_size: Pixels) -> Pixels {
-    let corner_radius = style
+fn bottom_inner_corner_radius(
+    container_style: &StyleRefinement,
+    code_block_style: &StyleRefinement,
+    rem_size: Pixels,
+) -> Pixels {
+    let corner_radius = code_block_style
         .corner_radii
         .bottom_left
+        .or(container_style.corner_radii.bottom_left)
         .unwrap_or_default()
-        .to_pixels(rem_size)
-        .max(
-            style
-                .corner_radii
-                .bottom_right
-                .unwrap_or_default()
-                .to_pixels(rem_size),
-        );
-    let border_width = style
+        .to_pixels(rem_size);
+    let border_width = code_block_style
         .border_widths
         .bottom
+        .or(container_style.border_widths.bottom)
         .unwrap_or_default()
         .to_pixels(rem_size);
     (corner_radius - border_width).max(Pixels::ZERO)
