@@ -216,7 +216,7 @@ impl Model {
             Self::SixAstra => "GPT-6 Astra",
             Self::SixSol => "GPT-6 Sol",
             Self::SixLuna => "GPT-6 Luna",
-            Self::SixPointOneSol => "gpt-6.1-sol",
+            Self::SixPointOneSol => "GPT-6.1 Sol",
             Self::Custom { display_name, .. } => display_name.as_deref().unwrap_or(&self.id()),
         }
     }
