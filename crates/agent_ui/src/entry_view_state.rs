@@ -1,6 +1,6 @@
 use std::{ops::Range, sync::Arc};
 
-use acp_thread::{AcpThread, AgentThreadEntry, AssistantMessageChunk};
+use acp_thread::{AcpThread, AgentThreadEntry, AssistantMessageChunk, ToolCall};
 use agent::ThreadStore;
 use agent_client_protocol::schema::v1 as acp_v1;
 use agent_settings::AgentSettings;
@@ -14,6 +14,7 @@ use gpui::{
     Focusable, ScrollHandle, TextStyleRefinement, WeakEntity, Window,
 };
 use language::language_settings::SoftWrap;
+use multi_buffer::MultiBuffer;
 use project::{AgentId, Project, project_settings::DiagnosticSeverity};
 use rope::Point;
 use settings::{Settings as _, ThinkingBlockDisplay};
@@ -75,6 +76,10 @@ impl EntryViewState {
 
     pub(crate) fn is_tool_call_expanded(&self, tool_call_id: &acp_v1::ToolCallId) -> bool {
         self.expanded_tool_calls.contains(tool_call_id)
+    }
+
+    pub(crate) fn is_tool_call_content_visible(&self, tool_call: &ToolCall) -> bool {
+        self.is_tool_call_expanded(&tool_call.id) || tool_call.authorization().is_some()
     }
 
     pub(crate) fn expand_tool_call(&mut self, tool_call_id: acp_v1::ToolCallId) {
@@ -309,6 +314,22 @@ impl EntryViewState {
                 let id = tool_call.id.clone();
                 let terminals = tool_call.terminals().cloned().collect::<Vec<_>>();
                 let diffs = tool_call.diffs().cloned().collect::<Vec<_>>();
+                let patch_hunk_buffers = tool_call
+                    .content()
+                    .iter()
+                    .filter_map(|content| match content {
+                        acp_thread::ToolCallContent::DiffPatch { render, .. } => {
+                            Some(&render.files)
+                        }
+                        _ => None,
+                    })
+                    .flat_map(|files| files.iter().flat_map(|file| &file.hunks))
+                    .map(|hunk| hunk.buffer.clone())
+                    .collect::<Vec<_>>();
+                let patch_hunk_ids: HashSet<_> = patch_hunk_buffers
+                    .iter()
+                    .map(|buffer| buffer.entity_id())
+                    .collect();
 
                 let views = if let Some(Entry::ToolCall(tool_call)) = self.entries.get_mut(index) {
                     &mut tool_call.content
@@ -317,6 +338,7 @@ impl EntryViewState {
                         index,
                         Entry::ToolCall(ToolCallEntry {
                             content: HashMap::default(),
+                            patch_hunk_ids: HashSet::default(),
                             focus_handle: cx.focus_handle(),
                         }),
                     );
@@ -327,7 +349,7 @@ impl EntryViewState {
                 };
 
                 let is_tool_call_completed =
-                    matches!(tool_call.status, acp_thread::ToolCallStatus::Completed);
+                    matches!(tool_call.status(), acp_thread::ToolCallStatus::Completed);
 
                 for terminal in terminals {
                     match views.entry(terminal.entity_id()) {
@@ -406,6 +428,22 @@ impl EntryViewState {
                         });
                         editor.into_any()
                     });
+                }
+                for buffer in patch_hunk_buffers {
+                    views.entry(buffer.entity_id()).or_insert_with(|| {
+                        let editor = create_multibuffer_diff_editor(buffer, window, cx);
+                        cx.emit(EntryViewEvent {
+                            entry_index: index,
+                            view_event: ViewEvent::NewDiff(id.clone()),
+                        });
+                        editor.into_any()
+                    });
+                }
+                if let Some(Entry::ToolCall(entry)) = self.entries.get_mut(index) {
+                    for stale_id in entry.patch_hunk_ids.difference(&patch_hunk_ids) {
+                        entry.content.remove(stale_id);
+                    }
+                    entry.patch_hunk_ids = patch_hunk_ids;
                 }
             }
             AgentThreadEntry::Elicitation(_) => {
@@ -555,6 +593,7 @@ impl AssistantMessageEntry {
 #[derive(Debug)]
 pub struct ToolCallEntry {
     content: HashMap<EntityId, AnyEntity>,
+    patch_hunk_ids: HashSet<EntityId>,
     focus_handle: FocusHandle,
 }
 
@@ -596,6 +635,13 @@ impl Entry {
     pub fn editor_for_diff(&self, diff: &Entity<acp_thread::Diff>) -> Option<Entity<Editor>> {
         self.content_map()?
             .get(&diff.entity_id())
+            .cloned()
+            .and_then(|entity| entity.downcast::<Editor>().ok())
+    }
+
+    pub fn editor_for_patch_hunk(&self, buffer: &Entity<MultiBuffer>) -> Option<Entity<Editor>> {
+        self.content_map()?
+            .get(&buffer.entity_id())
             .cloned()
             .and_then(|entity| entity.downcast::<Editor>().ok())
     }
@@ -704,6 +750,14 @@ fn create_editor_diff(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<Editor> {
+    create_multibuffer_diff_editor(diff.read(cx).multibuffer().clone(), window, cx)
+}
+
+fn create_multibuffer_diff_editor(
+    multibuffer: Entity<MultiBuffer>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<Editor> {
     cx.new(|cx| {
         let mut editor = Editor::new(
             EditorMode::Full {
@@ -711,7 +765,7 @@ fn create_editor_diff(
                 show_active_line_background: false,
                 sizing_behavior: SizingBehavior::SizeByContent,
             },
-            diff.read(cx).multibuffer().clone(),
+            multibuffer,
             None,
             window,
             cx,

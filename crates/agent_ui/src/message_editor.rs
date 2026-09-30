@@ -476,6 +476,7 @@ impl MessageEditor {
             let mut editor = Editor::new(mode, buffer, None, window, cx);
             editor.set_placeholder_text(placeholder, window, cx);
             editor.set_show_indent_guides(false, cx);
+            editor.set_show_wrap_guides(false, cx);
             editor.set_show_completions_on_input(Some(true));
             editor.set_soft_wrap();
             editor.disable_mouse_wheel_zoom();
