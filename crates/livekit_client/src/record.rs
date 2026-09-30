@@ -58,7 +58,7 @@ fn start_capture(
 ) -> Result<cpal::Stream> {
     let stream = device
         .build_input_stream_raw(
-            &config.config(),
+            config.config(),
             config.sample_format(),
             move |data, _: &_| {
                 let data = crate::get_sample_data(config.sample_format(), data).log_err();
