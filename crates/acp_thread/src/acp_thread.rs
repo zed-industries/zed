@@ -45,7 +45,7 @@ use task::{Shell, ShellBuilder};
 pub use terminal::*;
 use text::Bias;
 use ui::App;
-use util::markdown::MarkdownEscaped;
+use util::markdown::{MarkdownCodeBlock, MarkdownEscaped};
 use util::path_list::PathList;
 use util::{
     ResultExt, get_default_system_shell_preferring_bash,
@@ -1020,9 +1020,13 @@ pub struct ToolCall {
     pub id: acp_v1::ToolCallId,
     pub label: Entity<Markdown>,
     title: Option<SharedString>,
-    pub kind: acp_v1::ToolKind,
+    pub name: Option<SharedString>,
+    pub reported_kind: Option<acp_v2::ToolKind>,
+    pub reported_status: Option<acp_v2::ToolCallStatus>,
+    pub meta: Option<acp_v2::Meta>,
     structured_content: Vec<ToolCallContent>,
-    pub status: ToolCallStatus,
+    local_status: Option<ToolCallStatus>,
+    authorization: Option<ToolCallAuthorization>,
     pub locations: Vec<acp_v1::ToolCallLocation>,
     pub resolved_locations: Vec<Option<AgentLocation>>,
     pub raw_input: Option<serde_json::Value>,
@@ -1039,58 +1043,196 @@ pub struct ToolCall {
     pub sandbox_not_applied: Option<SandboxNotAppliedReason>,
 }
 
+#[derive(Debug)]
+pub struct ToolCallAuthorization {
+    pub options: PermissionOptions,
+    pub kind: AuthorizationKind,
+    respond_tx: oneshot::Sender<RequestPermissionOutcome>,
+}
+
+struct ToolCallPatch {
+    title: MaybeUndefined<String>,
+    name: MaybeUndefined<String>,
+    kind: MaybeUndefined<acp_v2::ToolKind>,
+    status: MaybeUndefined<acp_v2::ToolCallStatus>,
+    content: MaybeUndefined<ToolContentPatch>,
+    locations: MaybeUndefined<Vec<acp_v1::ToolCallLocation>>,
+    raw_input: MaybeUndefined<serde_json::Value>,
+    raw_output: MaybeUndefined<serde_json::Value>,
+    meta: ToolMetadataPatch,
+}
+
+enum ToolContentPatch {
+    Legacy(Vec<acp_v1::ToolCallContent>),
+    Protocol(Vec<acp_v2::ToolCallContent>),
+}
+
+impl ToolContentPatch {
+    fn prepare(
+        self,
+        terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
+    ) -> Result<Vec<PreparedToolCallContent>> {
+        match self {
+            Self::Legacy(content) => PreparedToolCallContent::prepare(content, terminals),
+            Self::Protocol(content) => PreparedToolCallContent::prepare_v2(content, terminals),
+        }
+    }
+}
+
+enum ToolMetadataPatch {
+    Legacy(Option<acp_v1::Meta>),
+    Protocol(MaybeUndefined<acp_v2::Meta>),
+}
+
+fn legacy_tool_field<T>(value: Option<T>) -> MaybeUndefined<T> {
+    value.map(MaybeUndefined::Value).unwrap_or_default()
+}
+
+fn tool_kind_from_v1(kind: acp_v1::ToolKind) -> Option<acp_v2::ToolKind> {
+    Some(match kind {
+        acp_v1::ToolKind::Read => acp_v2::ToolKind::Read,
+        acp_v1::ToolKind::Edit => acp_v2::ToolKind::Edit,
+        acp_v1::ToolKind::Delete => acp_v2::ToolKind::Delete,
+        acp_v1::ToolKind::Move => acp_v2::ToolKind::Move,
+        acp_v1::ToolKind::Search => acp_v2::ToolKind::Search,
+        acp_v1::ToolKind::Execute => acp_v2::ToolKind::Execute,
+        acp_v1::ToolKind::Think => acp_v2::ToolKind::Think,
+        acp_v1::ToolKind::Fetch => acp_v2::ToolKind::Fetch,
+        acp_v1::ToolKind::SwitchMode => acp_v2::ToolKind::SwitchMode,
+        acp_v1::ToolKind::Other => acp_v2::ToolKind::Other,
+        _ => return None,
+    })
+}
+
+fn tool_status_from_v1(status: acp_v1::ToolCallStatus) -> Option<acp_v2::ToolCallStatus> {
+    Some(match status {
+        acp_v1::ToolCallStatus::Pending => acp_v2::ToolCallStatus::Pending,
+        acp_v1::ToolCallStatus::InProgress => acp_v2::ToolCallStatus::InProgress,
+        acp_v1::ToolCallStatus::Completed => acp_v2::ToolCallStatus::Completed,
+        acp_v1::ToolCallStatus::Failed => acp_v2::ToolCallStatus::Failed,
+        _ => return None,
+    })
+}
+
+impl ToolCallPatch {
+    fn legacy(fields: acp_v1::ToolCallUpdateFields, meta: Option<acp_v1::Meta>) -> Self {
+        Self {
+            title: legacy_tool_field(fields.title),
+            name: legacy_tool_field(fields.name),
+            kind: legacy_tool_field(fields.kind.and_then(tool_kind_from_v1)),
+            status: legacy_tool_field(fields.status.and_then(tool_status_from_v1)),
+            content: legacy_tool_field(fields.content.map(ToolContentPatch::Legacy)),
+            locations: legacy_tool_field(fields.locations),
+            raw_input: legacy_tool_field(fields.raw_input),
+            raw_output: legacy_tool_field(fields.raw_output),
+            meta: ToolMetadataPatch::Legacy(meta),
+        }
+    }
+
+    fn protocol(update: acp_v2::ToolCallUpdate) -> Self {
+        Self {
+            title: update.title,
+            name: update.name,
+            kind: update.kind,
+            status: update.status,
+            content: update.content.map_value(ToolContentPatch::Protocol),
+            // Unlike v2 AbsolutePath, this also preserves relative native paths.
+            locations: update.locations.map_value(|locations| {
+                locations
+                    .into_iter()
+                    .map(|location| {
+                        acp_v1::ToolCallLocation::new(location.path.0)
+                            .line(location.line)
+                            .meta(location.meta)
+                    })
+                    .collect()
+            }),
+            raw_input: update.raw_input,
+            raw_output: update.raw_output,
+            meta: ToolMetadataPatch::Protocol(update.meta),
+        }
+    }
+}
+
 impl ToolCall {
     fn from_acp(
         tool_call: acp_v1::ToolCall,
-        status: ToolCallStatus,
+        status: Option<ToolCallStatus>,
         language_registry: Arc<LanguageRegistry>,
         terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Self> {
-        let title =
-            Some(SharedString::from(tool_call.title)).filter(|title| !title.trim().is_empty());
-        let content = PreparedToolCallContent::prepare(tool_call.content, terminals)?
+        let update = acp_v1::ToolCallUpdate::from(tool_call);
+        let mut call = Self::from_patch(
+            update.tool_call_id,
+            ToolCallPatch::legacy(update.fields, update.meta),
+            language_registry,
+            terminals,
+            cx,
+        )?;
+        if let Some(status) = status {
+            call.set_legacy_status(status);
+        }
+        Ok(call)
+    }
+
+    fn from_patch(
+        id: acp_v1::ToolCallId,
+        patch: ToolCallPatch,
+        language_registry: Arc<LanguageRegistry>,
+        terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
+        cx: &mut App,
+    ) -> Result<Self> {
+        let content = patch
+            .content
+            .take()
+            .map(|content| content.prepare(terminals))
+            .transpose()?
+            .unwrap_or_default()
             .into_iter()
             .map(|item| ToolCallContent::from_prepared(item, &language_registry, cx))
             .collect();
-
-        let raw_input_markdown = tool_call
-            .raw_input
+        let title = patch.title.take().map(SharedString::from);
+        let name = patch.name.take().map(SharedString::from);
+        let kind = patch.kind.take();
+        let raw_input = patch.raw_input.take();
+        let raw_input_markdown = raw_input
             .as_ref()
             .and_then(|input| markdown_for_raw_output(input, &language_registry, cx));
-
-        let tool_name = tool_call
-            .name
-            .map(SharedString::from)
-            .or_else(|| tool_name_from_meta(&tool_call.meta));
-
-        let subagent_session_info = subagent_session_info_from_meta(&tool_call.meta);
-        let sandbox_authorization_details =
-            sandbox_authorization_details_from_meta(&tool_call.meta);
+        let meta = match patch.meta {
+            ToolMetadataPatch::Legacy(meta) => meta,
+            ToolMetadataPatch::Protocol(meta) => meta.take(),
+        };
+        let tool_name = name.clone().or_else(|| tool_name_from_meta(&meta));
+        let subagent_session_info = subagent_session_info_from_meta(&meta);
+        let sandbox_authorization_details = sandbox_authorization_details_from_meta(&meta);
         let sandbox_fallback_authorization_details =
-            sandbox_fallback_authorization_details_from_meta(&tool_call.meta);
-        let sandbox_not_applied = sandbox_not_applied_from_meta(&tool_call.meta);
-
+            sandbox_fallback_authorization_details_from_meta(&meta);
+        let sandbox_not_applied = sandbox_not_applied_from_meta(&meta);
         let label = Self::new_label(
-            title.as_ref(),
+            title.as_ref().filter(|title| !title.trim().is_empty()),
             tool_name.as_ref(),
-            tool_call.kind,
+            kind.as_ref().unwrap_or(&acp_v2::ToolKind::Other),
             language_registry.clone(),
             cx,
         );
 
         let mut result = Self {
-            id: tool_call.tool_call_id,
+            id,
             label,
             title,
-            kind: tool_call.kind,
+            name,
+            reported_kind: kind,
+            reported_status: patch.status.take(),
+            meta,
             structured_content: content,
-            locations: tool_call.locations,
+            locations: patch.locations.take().unwrap_or_default(),
             resolved_locations: Vec::default(),
-            status,
-            raw_input: tool_call.raw_input,
+            local_status: None,
+            authorization: None,
+            raw_input,
             raw_input_markdown,
-            raw_output: tool_call.raw_output,
+            raw_output: patch.raw_output.take(),
             raw_output_content: None,
             tool_name,
             subagent_session_info,
@@ -1102,10 +1244,56 @@ impl ToolCall {
         Ok(result)
     }
 
+    pub fn kind(&self) -> &acp_v2::ToolKind {
+        self.reported_kind
+            .as_ref()
+            .unwrap_or(&acp_v2::ToolKind::Other)
+    }
+
+    pub fn status(&self) -> ToolCallStatus {
+        if self.authorization.is_some() {
+            ToolCallStatus::WaitingForConfirmation
+        } else {
+            self.underlying_status()
+        }
+    }
+
+    pub fn authorization(&self) -> Option<&ToolCallAuthorization> {
+        self.authorization.as_ref()
+    }
+
+    fn underlying_status(&self) -> ToolCallStatus {
+        self.local_status
+            .or_else(|| ToolCallStatus::from_reported(self.reported_status.as_ref()))
+            .unwrap_or(ToolCallStatus::Pending)
+    }
+
+    fn permission_status(&self) -> Option<acp_v1::ToolCallStatus> {
+        self.local_status
+            .or_else(|| ToolCallStatus::from_reported(self.reported_status.as_ref()))
+            .and_then(|status| status.as_acp_status())
+    }
+
+    fn set_legacy_status(&mut self, status: ToolCallStatus) {
+        self.local_status = (Some(status)
+            != ToolCallStatus::from_reported(self.reported_status.as_ref()))
+        .then_some(status);
+    }
+
+    fn set_local_status(&mut self, status: ToolCallStatus) {
+        // An explicit decision survives a later clear of reported information,
+        // even if the two statuses happen to agree right now.
+        self.local_status = Some(status);
+    }
+
+    fn effective_title(&self) -> Option<&SharedString> {
+        self.title.as_ref().filter(|title| !title.trim().is_empty())
+    }
+
     fn label_text(
         title: Option<&SharedString>,
         tool_name: Option<&SharedString>,
-        kind: acp_v1::ToolKind,
+        kind: &acp_v2::ToolKind,
     ) -> SharedString {
         let Some(title) = title else {
             return tool_name
@@ -1114,9 +1302,9 @@ impl ToolCall {
                 .unwrap_or_else(|| "Tool call".into());
         };
 
-        if kind == acp_v1::ToolKind::Execute {
+        if kind == &acp_v2::ToolKind::Execute {
             title.clone()
-        } else if kind == acp_v1::ToolKind::Edit {
+        } else if kind == &acp_v2::ToolKind::Edit {
             MarkdownEscaped(title).to_string().into()
         } else if let Some((first_line, _)) = title.split_once('\n') {
             (first_line.to_owned() + "…").into()
@@ -1128,13 +1316,13 @@ impl ToolCall {
     fn new_label(
         title: Option<&SharedString>,
         tool_name: Option<&SharedString>,
-        kind: acp_v1::ToolKind,
+        kind: &acp_v2::ToolKind,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Entity<Markdown> {
         let text = Self::label_text(title, tool_name, kind);
         cx.new(|cx| {
-            if title.is_none() || kind == acp_v1::ToolKind::Execute {
+            if title.is_none() || kind == &acp_v2::ToolKind::Execute {
                 Markdown::new_text(text, cx)
             } else {
                 Markdown::new(text, Some(language_registry), None, cx)
@@ -1150,7 +1338,22 @@ impl ToolCall {
         terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<()> {
-        let acp_v1::ToolCallUpdateFields {
+        self.apply_patch(
+            ToolCallPatch::legacy(fields, meta),
+            language_registry,
+            terminals,
+            cx,
+        )
+    }
+
+    fn apply_patch(
+        &mut self,
+        patch: ToolCallPatch,
+        language_registry: Arc<LanguageRegistry>,
+        terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
+        cx: &mut App,
+    ) -> Result<()> {
+        let ToolCallPatch {
             kind,
             status,
             title,
@@ -1159,57 +1362,80 @@ impl ToolCall {
             locations,
             raw_input,
             raw_output,
-            ..
-        } = fields;
-        let output_changed = content.is_some() || raw_output.is_some();
+            meta,
+        } = patch;
+        let output_changed = !content.is_undefined() || !raw_output.is_undefined();
         // Completion remains authoritative even when output cannot be displayed;
         // otherwise a finished tool could leave its permission request waiting.
-        if let Some(status) = status {
-            self.update_acp_status(status);
-        }
+        self.apply_reported_status(status);
         // Prepare all content before changing presentation fields or shared
         // display entities; cloning their handles would not isolate mutations.
-        let content = content
-            .map(|content| PreparedToolCallContent::prepare(content, terminals))
-            .transpose()?;
+        let content = match content {
+            MaybeUndefined::Undefined => None,
+            MaybeUndefined::Null => Some(Vec::new()),
+            MaybeUndefined::Value(content) => Some(content.prepare(terminals)?),
+        };
+        let was_plain_text =
+            self.effective_title().is_none() || self.kind() == &acp_v2::ToolKind::Execute;
+        let mut label_changed = !title.is_undefined() || !kind.is_undefined();
+        if !kind.is_undefined() {
+            self.reported_kind = kind.take();
+        }
+        let name_changed = !name.is_undefined();
+        if name_changed {
+            self.name = name.take().map(SharedString::from);
+        }
+        let old_tool_name = self.tool_name.clone();
+        match meta {
+            ToolMetadataPatch::Legacy(meta) => {
+                if name_changed {
+                    self.tool_name = self.name.clone();
+                } else if self.tool_name.is_none() {
+                    self.tool_name = tool_name_from_meta(&meta);
+                }
+                // Legacy extension hints are sticky; omitted or malformed hints
+                // have never cleared values received in an earlier v1 update.
+                if let Some(value) = subagent_session_info_from_meta(&meta) {
+                    self.subagent_session_info = Some(value);
+                }
+                if let Some(value) = sandbox_authorization_details_from_meta(&meta) {
+                    self.sandbox_authorization_details = Some(value);
+                }
+                if let Some(value) = sandbox_fallback_authorization_details_from_meta(&meta) {
+                    self.sandbox_fallback_authorization_details = Some(value);
+                }
+                if let Some(value) = sandbox_not_applied_from_meta(&meta) {
+                    self.sandbox_not_applied = Some(value);
+                }
+                if meta.is_some() {
+                    self.meta = meta;
+                }
+            }
+            ToolMetadataPatch::Protocol(meta) => {
+                let meta_changed = !meta.is_undefined();
+                if meta_changed {
+                    self.meta = meta.take();
+                    self.subagent_session_info = subagent_session_info_from_meta(&self.meta);
+                    self.sandbox_authorization_details =
+                        sandbox_authorization_details_from_meta(&self.meta);
+                    self.sandbox_fallback_authorization_details =
+                        sandbox_fallback_authorization_details_from_meta(&self.meta);
+                    self.sandbox_not_applied = sandbox_not_applied_from_meta(&self.meta);
+                }
+                if name_changed || meta_changed {
+                    self.tool_name = self
+                        .name
+                        .clone()
+                        .or_else(|| tool_name_from_meta(&self.meta));
+                }
+            }
+        }
+        label_changed |= self.tool_name != old_tool_name;
 
-        let was_plain_text = self.title.is_none() || self.kind == acp_v1::ToolKind::Execute;
-        let mut label_changed = title.is_some() || kind.is_some();
-        if let Some(kind) = kind {
-            self.kind = kind;
-        }
-
-        if let Some(tool_name) = name.map(SharedString::from) {
-            self.tool_name = Some(tool_name);
-            label_changed = true;
-        } else if self.tool_name.is_none() {
-            // Legacy metadata only fills a missing name so it cannot replace a
-            // first-class name received earlier.
-            self.tool_name = tool_name_from_meta(&meta);
-            label_changed |= self.tool_name.is_some();
-        }
-
-        if let Some(subagent_session_info) = subagent_session_info_from_meta(&meta) {
-            self.subagent_session_info = Some(subagent_session_info);
-        }
-        if let Some(sandbox_authorization_details) = sandbox_authorization_details_from_meta(&meta)
-        {
-            self.sandbox_authorization_details = Some(sandbox_authorization_details);
-        }
-        if let Some(sandbox_fallback_authorization_details) =
-            sandbox_fallback_authorization_details_from_meta(&meta)
-        {
-            self.sandbox_fallback_authorization_details =
-                Some(sandbox_fallback_authorization_details);
-        }
-        if let Some(sandbox_not_applied) = sandbox_not_applied_from_meta(&meta) {
-            self.sandbox_not_applied = Some(sandbox_not_applied);
-        }
-
-        if let Some(title) = title {
-            self.title = Some(SharedString::from(title)).filter(|title| !title.trim().is_empty());
-            if self.kind == acp_v1::ToolKind::Execute
-                && let Some(title) = &self.title
+        if !title.is_undefined() {
+            self.title = title.take().map(SharedString::from);
+            if self.kind() == &acp_v2::ToolKind::Execute
+                && let Some(title) = self.effective_title()
             {
                 // A missing tool title must not overwrite an actual terminal command.
                 for terminal in self.terminals() {
@@ -1220,18 +1446,19 @@ impl ToolCall {
             }
         }
         if label_changed {
-            let is_plain_text = self.title.is_none() || self.kind == acp_v1::ToolKind::Execute;
+            let is_plain_text =
+                self.effective_title().is_none() || self.kind() == &acp_v2::ToolKind::Execute;
             if was_plain_text != is_plain_text {
                 self.label = Self::new_label(
-                    self.title.as_ref(),
+                    self.effective_title(),
                     self.tool_name.as_ref(),
-                    self.kind,
+                    self.kind(),
                     language_registry.clone(),
                     cx,
                 );
             } else {
                 let text =
-                    Self::label_text(self.title.as_ref(), self.tool_name.as_ref(), self.kind);
+                    Self::label_text(self.effective_title(), self.tool_name.as_ref(), self.kind());
                 if self.label.read(cx).source() != &text {
                     self.label.update(cx, |label, cx| label.replace(text, cx));
                 }
@@ -1255,30 +1482,35 @@ impl ToolCall {
             self.structured_content.truncate(new_content_len);
         }
 
-        if let Some(locations) = locations {
-            self.locations = locations;
-        }
-
-        if let Some(raw_input) = raw_input
-            && self.raw_input.as_ref() != Some(&raw_input)
-        {
-            match (
-                self.raw_input_markdown.as_ref(),
-                raw_output_text(&raw_input),
-            ) {
-                (Some(markdown), Some(text)) => update_markdown_in_place(markdown, &text, cx),
-                (_, Some(text)) => {
-                    self.raw_input_markdown = Some(cx.new(|cx| {
-                        Markdown::new(text.into(), Some(language_registry.clone()), None, cx)
-                    }));
-                }
-                (_, None) => self.raw_input_markdown = None,
+        if !locations.is_undefined() {
+            let locations = locations.take().unwrap_or_default();
+            if self.locations != locations {
+                self.locations = locations;
+                self.resolved_locations.clear();
             }
-            self.raw_input = Some(raw_input);
         }
 
-        if let Some(raw_output) = raw_output {
-            self.raw_output = Some(raw_output);
+        if !raw_input.is_undefined() {
+            let raw_input = raw_input.take();
+            if self.raw_input != raw_input {
+                match (
+                    self.raw_input_markdown.as_ref(),
+                    raw_input.as_ref().and_then(raw_output_text),
+                ) {
+                    (Some(markdown), Some(text)) => update_markdown_in_place(markdown, &text, cx),
+                    (_, Some(text)) => {
+                        self.raw_input_markdown = Some(cx.new(|cx| {
+                            Markdown::new(text.into(), Some(language_registry.clone()), None, cx)
+                        }));
+                    }
+                    (_, None) => self.raw_input_markdown = None,
+                }
+                self.raw_input = raw_input;
+            }
+        }
+
+        if !raw_output.is_undefined() {
+            self.raw_output = raw_output.take();
         }
         if output_changed {
             self.update_raw_output_content(&language_registry, cx);
@@ -1299,16 +1531,19 @@ impl ToolCall {
             self.raw_output_content = None;
             return;
         };
-        if let Some(ToolCallContent::ContentBlock(block)) = self.raw_output_content.as_deref()
-            && let Some(markdown) = block.markdown()
+        if let Some(markdown) = self
+            .raw_output_content
+            .as_deref()
+            .and_then(ToolCallContent::markdown)
         {
             update_markdown_in_place(markdown, &text, cx);
         } else {
             let markdown =
                 cx.new(|cx| Markdown::new(text.into(), Some(language_registry.clone()), None, cx));
-            self.raw_output_content = Some(Box::new(ToolCallContent::ContentBlock(
-                ContentBlock::from_markdown(markdown),
-            )));
+            self.raw_output_content = Some(Box::new(ToolCallContent::ContentBlock {
+                block: ContentBlock::from_markdown(markdown),
+                meta: None,
+            }));
         }
     }
 
@@ -1323,30 +1558,26 @@ impl ToolCall {
         }
     }
 
-    fn update_status(&mut self, status: ToolCallStatus) {
+    fn apply_reported_status(&mut self, status: MaybeUndefined<acp_v2::ToolCallStatus>) {
         match status {
-            ToolCallStatus::Pending => self.update_acp_status(acp_v1::ToolCallStatus::Pending),
-            ToolCallStatus::InProgress => {
-                self.update_acp_status(acp_v1::ToolCallStatus::InProgress)
+            MaybeUndefined::Undefined => {}
+            MaybeUndefined::Null => {
+                // Clearing reported information does not resolve a local request
+                // or undo a user's local decision.
+                self.reported_status = None;
             }
-            ToolCallStatus::Completed => self.update_acp_status(acp_v1::ToolCallStatus::Completed),
-            ToolCallStatus::Failed => self.update_acp_status(acp_v1::ToolCallStatus::Failed),
-            status @ (ToolCallStatus::WaitingForConfirmation { .. }
-            | ToolCallStatus::Rejected
-            | ToolCallStatus::Canceled) => self.status = status,
-        }
-    }
-
-    fn update_acp_status(&mut self, status: acp_v1::ToolCallStatus) {
-        if let ToolCallStatus::WaitingForConfirmation { current_status, .. } = &mut self.status
-            && matches!(
-                status,
-                acp_v1::ToolCallStatus::Pending | acp_v1::ToolCallStatus::InProgress
-            )
-        {
-            *current_status = status;
-        } else {
-            self.status = status.into();
+            MaybeUndefined::Value(status) => {
+                if matches!(
+                    status,
+                    acp_v2::ToolCallStatus::Completed
+                        | acp_v2::ToolCallStatus::Failed
+                        | acp_v2::ToolCallStatus::Cancelled
+                ) {
+                    self.authorization = None;
+                }
+                self.reported_status = Some(status);
+                self.local_status = None;
+            }
         }
     }
 
@@ -1354,9 +1585,10 @@ impl ToolCall {
         self.structured_content
             .iter()
             .filter_map(|content| match content {
-                ToolCallContent::Diff(diff) => Some(diff),
-                ToolCallContent::ContentBlock(_) => None,
-                ToolCallContent::Terminal(_) => None,
+                ToolCallContent::Diff(diff) | ToolCallContent::LegacyDiff { diff, .. } => {
+                    Some(diff)
+                }
+                _ => None,
             })
     }
 
@@ -1364,9 +1596,8 @@ impl ToolCall {
         self.structured_content
             .iter()
             .filter_map(|content| match content {
-                ToolCallContent::Terminal(terminal) => Some(terminal),
-                ToolCallContent::ContentBlock(_) => None,
-                ToolCallContent::Diff(_) => None,
+                ToolCallContent::Terminal { terminal, .. } => Some(terminal),
+                _ => None,
             })
     }
 
@@ -1377,12 +1608,12 @@ impl ToolCall {
 
     pub fn to_markdown(&self, cx: &App) -> String {
         let label = self.label.read(cx).source();
-        let label = if self.title.is_none() {
+        let label = if self.effective_title().is_none() {
             MarkdownEscaped(label).to_string()
         } else {
             label.to_string()
         };
-        let mut markdown = format!("**Tool Call: {}**\nStatus: {}\n\n", label, self.status);
+        let mut markdown = format!("**Tool Call: {}**\nStatus: {}\n\n", label, self.status());
         for content in self.content() {
             markdown.push_str(content.to_markdown(cx).as_str());
             markdown.push_str("\n\n");
@@ -1528,18 +1759,13 @@ pub enum AuthorizationKind {
     ActionChoice,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolCallStatus {
     /// The tool call hasn't started running yet, but we start showing it to
     /// the user.
     Pending,
     /// The tool call is waiting for confirmation from the user.
-    WaitingForConfirmation {
-        current_status: acp_v1::ToolCallStatus,
-        options: PermissionOptions,
-        respond_tx: oneshot::Sender<RequestPermissionOutcome>,
-        kind: AuthorizationKind,
-    },
+    WaitingForConfirmation,
     /// The tool call is currently running.
     InProgress,
     /// The tool call completed successfully.
@@ -1554,25 +1780,31 @@ pub enum ToolCallStatus {
 
 impl From<acp_v1::ToolCallStatus> for ToolCallStatus {
     fn from(status: acp_v1::ToolCallStatus) -> Self {
-        match status {
-            acp_v1::ToolCallStatus::Pending => Self::Pending,
-            acp_v1::ToolCallStatus::InProgress => Self::InProgress,
-            acp_v1::ToolCallStatus::Completed => Self::Completed,
-            acp_v1::ToolCallStatus::Failed => Self::Failed,
-            _ => Self::Pending,
-        }
+        Self::from_reported(tool_status_from_v1(status).as_ref()).unwrap_or(Self::Pending)
     }
 }
 
 impl ToolCallStatus {
+    fn from_reported(status: Option<&acp_v2::ToolCallStatus>) -> Option<Self> {
+        match status? {
+            acp_v2::ToolCallStatus::Pending => Some(Self::Pending),
+            acp_v2::ToolCallStatus::InProgress => Some(Self::InProgress),
+            acp_v2::ToolCallStatus::Completed => Some(Self::Completed),
+            acp_v2::ToolCallStatus::Failed => Some(Self::Failed),
+            acp_v2::ToolCallStatus::Cancelled => Some(Self::Canceled),
+            _ => None,
+        }
+    }
+
     fn as_acp_status(&self) -> Option<acp_v1::ToolCallStatus> {
         match self {
             ToolCallStatus::Pending => Some(acp_v1::ToolCallStatus::Pending),
-            ToolCallStatus::WaitingForConfirmation { current_status, .. } => Some(*current_status),
             ToolCallStatus::InProgress => Some(acp_v1::ToolCallStatus::InProgress),
             ToolCallStatus::Completed => Some(acp_v1::ToolCallStatus::Completed),
             ToolCallStatus::Failed => Some(acp_v1::ToolCallStatus::Failed),
-            ToolCallStatus::Rejected | ToolCallStatus::Canceled => None,
+            ToolCallStatus::WaitingForConfirmation
+            | ToolCallStatus::Rejected
+            | ToolCallStatus::Canceled => None,
         }
     }
 
@@ -1591,7 +1823,7 @@ impl Display for ToolCallStatus {
             "{}",
             match self {
                 ToolCallStatus::Pending => "Pending",
-                ToolCallStatus::WaitingForConfirmation { .. } => "Waiting for confirmation",
+                ToolCallStatus::WaitingForConfirmation => "Waiting for confirmation",
                 ToolCallStatus::InProgress => "In Progress",
                 ToolCallStatus::Completed => "Completed",
                 ToolCallStatus::Failed => "Failed",
@@ -2062,6 +2294,74 @@ impl ContentBlock {
         }
     }
 
+    fn new_tool_content(
+        block: acp_v2::ContentBlock,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> Self {
+        let render = Self::render_from_source(&block, language_registry, cx);
+        Self {
+            render,
+            source: Some(block),
+        }
+    }
+
+    fn update_tool_content(
+        &mut self,
+        block: acp_v2::ContentBlock,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) {
+        let reused = match (self.source.as_ref(), &block) {
+            (Some(acp_v2::ContentBlock::Text(old)), acp_v2::ContentBlock::Text(new))
+                if matches!(self.render, RenderBlock::Markdown { .. }) =>
+            {
+                if old.text != new.text {
+                    self.update_text_in_place(&block, cx);
+                }
+                true
+            }
+            (Some(acp_v2::ContentBlock::Image(old)), acp_v2::ContentBlock::Image(new)) => {
+                old.data == new.data && old.mime_type == new.mime_type
+            }
+            (Some(acp_v2::ContentBlock::Resource(old)), acp_v2::ContentBlock::Resource(new)) => {
+                match (&old.resource, &new.resource) {
+                    (
+                        acp_v2::EmbeddedResourceResource::TextResourceContents(_),
+                        acp_v2::EmbeddedResourceResource::TextResourceContents(new),
+                    ) => {
+                        if let RenderBlock::EmbeddedResource {
+                            markdown: Some(markdown),
+                        } = &self.render
+                        {
+                            update_markdown_in_place(
+                                markdown,
+                                &Self::text_resource_markdown(new),
+                                cx,
+                            );
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    (
+                        acp_v2::EmbeddedResourceResource::BlobResourceContents(old),
+                        acp_v2::EmbeddedResourceResource::BlobResourceContents(new),
+                    ) => old.blob == new.blob && old.mime_type == new.mime_type,
+                    _ => false,
+                }
+            }
+            (Some(acp_v2::ContentBlock::Audio(_)), acp_v2::ContentBlock::Audio(_))
+            | (Some(acp_v2::ContentBlock::Other(_)), acp_v2::ContentBlock::Other(_)) => true,
+            (Some(previous), _) => previous == &block,
+            _ => false,
+        };
+        if !reused {
+            self.render = Self::render_from_source(&block, language_registry, cx);
+        }
+        self.source = Some(block);
+    }
+
     fn render_from_source(
         block: &acp_v2::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
@@ -2507,15 +2807,38 @@ fn text_resource_render_mode(mime_type: Option<&str>) -> TextResourceRenderMode 
 
 #[derive(Debug)]
 pub enum ToolCallContent {
-    ContentBlock(ContentBlock),
+    ContentBlock {
+        block: ContentBlock,
+        meta: Option<acp_v2::Meta>,
+    },
     Diff(Entity<Diff>),
-    Terminal(Entity<Terminal>),
+    LegacyDiff {
+        source: acp_v1::Diff,
+        diff: Entity<Diff>,
+    },
+    Terminal {
+        terminal: Entity<Terminal>,
+        meta: Option<acp_v2::Meta>,
+    },
+    DiffPatch {
+        source: acp_v2::Diff,
+        render: DiffPatch,
+    },
+    Other {
+        source: acp_v2::ToolCallContent,
+        markdown: Entity<Markdown>,
+    },
 }
 
 enum PreparedToolCallContent {
-    ContentBlock(acp_v2::ContentBlock),
-    Diff(acp_v1::Diff),
-    Terminal(Entity<Terminal>),
+    ContentBlock(acp_v2::Content),
+    LegacyDiff(acp_v1::Diff),
+    Terminal {
+        terminal: Entity<Terminal>,
+        meta: Option<acp_v2::Meta>,
+    },
+    DiffPatch(acp_v2::Diff),
+    Other(acp_v2::ToolCallContent),
 }
 
 impl PreparedToolCallContent {
@@ -2526,46 +2849,104 @@ impl PreparedToolCallContent {
         let mut prepared = Vec::with_capacity(content.len());
         for content in content {
             let content = match content {
-                acp_v1::ToolCallContent::Content(acp_v1::Content { content, .. }) => {
-                    Self::ContentBlock(content::from_v1(content)?)
+                acp_v1::ToolCallContent::Content(acp_v1::Content { content, meta, .. }) => {
+                    Self::ContentBlock(acp_v2::Content::new(content::from_v1(content)?).meta(meta))
                 }
-                acp_v1::ToolCallContent::Diff(diff) => Self::Diff(diff),
-                acp_v1::ToolCallContent::Terminal(acp_v1::Terminal { terminal_id, .. }) => {
-                    Self::Terminal(
-                        terminals
-                            .get(&terminal_id)
-                            .cloned()
-                            .ok_or_else(|| anyhow!("Terminal with id `{terminal_id}` not found"))?,
-                    )
-                }
+                acp_v1::ToolCallContent::Diff(diff) => Self::LegacyDiff(diff),
+                acp_v1::ToolCallContent::Terminal(acp_v1::Terminal {
+                    terminal_id, meta, ..
+                }) => Self::Terminal {
+                    terminal: terminals
+                        .get(&terminal_id)
+                        .cloned()
+                        .ok_or_else(|| anyhow!("Terminal with id `{terminal_id}` not found"))?,
+                    meta,
+                },
                 _ => continue,
             };
             prepared.push(content);
         }
         Ok(prepared)
     }
+
+    fn prepare_v2(
+        content: Vec<acp_v2::ToolCallContent>,
+        terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
+    ) -> Result<Vec<Self>> {
+        content
+            .into_iter()
+            .map(|content| match content {
+                acp_v2::ToolCallContent::Content(content) => Ok(Self::ContentBlock(*content)),
+                acp_v2::ToolCallContent::Diff(diff) => Ok(Self::DiffPatch(diff)),
+                acp_v2::ToolCallContent::Terminal(terminal) => {
+                    let terminal_id = acp_v1::TerminalId::new(terminal.terminal_id.0);
+                    Ok(Self::Terminal {
+                        terminal: terminals
+                            .get(&terminal_id)
+                            .cloned()
+                            .ok_or_else(|| anyhow!("Terminal with id `{terminal_id}` not found"))?,
+                        meta: terminal.meta,
+                    })
+                }
+                other => Ok(Self::Other(other)),
+            })
+            .collect()
+    }
 }
 
 impl ToolCallContent {
+    fn patch_preview(diff: &acp_v2::Diff) -> String {
+        match diff.patch.as_ref() {
+            Some(patch) => MarkdownCodeBlock {
+                tag: if patch.format == acp_v2::DiffPatchFormat::GitPatch {
+                    "diff"
+                } else {
+                    ""
+                },
+                text: &patch.text,
+            }
+            .to_string(),
+            None => "Diff patch preview unavailable.".to_string(),
+        }
+    }
+
     fn from_prepared(
         content: PreparedToolCallContent,
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Self {
         match content {
-            PreparedToolCallContent::ContentBlock(content) => {
-                Self::ContentBlock(ContentBlock::new_output(content, language_registry, cx))
+            PreparedToolCallContent::ContentBlock(content) => Self::ContentBlock {
+                block: ContentBlock::new_tool_content(content.content, language_registry, cx),
+                meta: content.meta,
+            },
+            PreparedToolCallContent::LegacyDiff(source) => {
+                let diff = cx.new(|cx| {
+                    Diff::finalized(
+                        source.path.to_string_lossy().into_owned(),
+                        source.old_text.clone(),
+                        source.new_text.clone(),
+                        language_registry.clone(),
+                        cx,
+                    )
+                });
+                Self::LegacyDiff { source, diff }
             }
-            PreparedToolCallContent::Diff(diff) => Self::Diff(cx.new(|cx| {
-                Diff::finalized(
-                    diff.path.to_string_lossy().into_owned(),
-                    diff.old_text,
-                    diff.new_text,
-                    language_registry.clone(),
+            PreparedToolCallContent::Terminal { terminal, meta } => {
+                Self::Terminal { terminal, meta }
+            }
+            PreparedToolCallContent::DiffPatch(source) => Self::DiffPatch {
+                render: DiffPatch::new(&source, language_registry, cx),
+                source,
+            },
+            PreparedToolCallContent::Other(source) => Self::Other {
+                source,
+                markdown: ContentBlock::create_markdown(
+                    "Unsupported tool call content.".into(),
+                    language_registry,
                     cx,
-                )
-            })),
-            PreparedToolCallContent::Terminal(terminal) => Self::Terminal(terminal),
+                ),
+            },
         }
     }
 
@@ -2575,38 +2956,79 @@ impl ToolCallContent {
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) {
-        if let (Self::ContentBlock(block), PreparedToolCallContent::ContentBlock(content)) =
-            (&mut *self, &new)
-            && block.update_text_in_place(content, cx)
-        {
-            return;
-        }
-        if let (Self::Diff(old_diff), PreparedToolCallContent::Diff(new_diff)) = (&*self, &new) {
-            let old_diff = old_diff.read(cx);
-            if old_diff.file_path(cx).as_deref() == Some(new_diff.path.to_string_lossy().as_ref())
-                && !old_diff.needs_update(
-                    new_diff.old_text.as_deref().unwrap_or(""),
-                    &new_diff.new_text,
-                    cx,
-                )
-            {
-                return;
+        match (&mut *self, new) {
+            (
+                Self::ContentBlock { block, meta },
+                PreparedToolCallContent::ContentBlock(content),
+            ) => {
+                block.update_tool_content(content.content, language_registry, cx);
+                *meta = content.meta;
             }
+            (Self::LegacyDiff { source, .. }, PreparedToolCallContent::LegacyDiff(new_source))
+                if source.path == new_source.path
+                    && source.old_text == new_source.old_text
+                    && source.new_text == new_source.new_text =>
+            {
+                *source = new_source;
+            }
+            (
+                Self::Terminal { terminal, meta },
+                PreparedToolCallContent::Terminal {
+                    terminal: new_terminal,
+                    meta: new_meta,
+                },
+            ) if *terminal == new_terminal => *meta = new_meta,
+            (
+                Self::DiffPatch { source, render },
+                PreparedToolCallContent::DiffPatch(new_source),
+            ) => {
+                if source.patch != new_source.patch
+                    || source.changes.len() != new_source.changes.len()
+                    || source
+                        .changes
+                        .iter()
+                        .zip(&new_source.changes)
+                        .any(|(old, new)| {
+                            old.operation != new.operation || old.file_type != new.file_type
+                        })
+                {
+                    *render = DiffPatch::new(&new_source, language_registry, cx);
+                }
+                *source = new_source;
+            }
+            (Self::Other { source, .. }, PreparedToolCallContent::Other(new_source)) => {
+                *source = new_source;
+            }
+            (_, new) => *self = Self::from_prepared(new, language_registry, cx),
         }
-        *self = Self::from_prepared(new, language_registry, cx);
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
-            Self::ContentBlock(content) => content.to_markdown(cx).to_string(),
-            Self::Diff(diff) => diff.read(cx).to_markdown(cx),
-            Self::Terminal(terminal) => terminal.read(cx).to_markdown(cx),
+            Self::ContentBlock { block, .. } => block.to_markdown(cx).to_string(),
+            Self::Diff(diff) | Self::LegacyDiff { diff, .. } => diff.read(cx).to_markdown(cx),
+            Self::Terminal { terminal, .. } => terminal.read(cx).to_markdown(cx),
+            Self::DiffPatch { source, .. } => format!(
+                "{}\n\n{}",
+                source.changes.iter().map(diff_change_label).join("\n"),
+                Self::patch_preview(source)
+            ),
+            Self::Other { markdown, .. } => markdown.read(cx).source().to_string(),
+        }
+    }
+
+    pub fn markdown(&self) -> Option<&Entity<Markdown>> {
+        match self {
+            Self::ContentBlock { block, .. } => block.markdown(),
+            Self::DiffPatch { render, .. } => render.fallback.as_ref(),
+            Self::Other { markdown, .. } => Some(markdown),
+            Self::Diff(_) | Self::LegacyDiff { .. } | Self::Terminal { .. } => None,
         }
     }
 
     pub fn image(&self) -> Option<(&Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
         match self {
-            Self::ContentBlock(content) => content.image(),
+            Self::ContentBlock { block, .. } => block.image(),
             _ => None,
         }
     }
@@ -2659,9 +3081,17 @@ pub struct ToolCallUpdateTerminal {
     pub terminal: Entity<Terminal>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum PlanIdentity {
+    Legacy,
+    Keyed(acp_v2::PlanId),
+}
+
 #[derive(Debug, Default)]
 pub struct Plan {
     pub entries: Vec<PlanEntry>,
+    pub meta: Option<acp_v2::Meta>,
+    pub update_meta: Option<acp_v2::Meta>,
 }
 
 #[derive(Debug)]
@@ -2669,6 +3099,7 @@ pub struct PlanStats<'a> {
     pub in_progress_entry: Option<&'a PlanEntry>,
     pub pending: u32,
     pub completed: u32,
+    pub cancelled: u32,
 }
 
 impl Plan {
@@ -2681,43 +3112,88 @@ impl Plan {
             in_progress_entry: None,
             pending: 0,
             completed: 0,
+            cancelled: 0,
         };
 
         for entry in &self.entries {
-            match &entry.status {
-                acp_v1::PlanEntryStatus::Pending => {
-                    stats.pending += 1;
-                }
-                acp_v1::PlanEntryStatus::InProgress => {
+            match &entry.source.status {
+                acp_v2::PlanEntryStatus::InProgress => {
                     stats.in_progress_entry = stats.in_progress_entry.or(Some(entry));
                     stats.pending += 1;
                 }
-                acp_v1::PlanEntryStatus::Completed => {
+                acp_v2::PlanEntryStatus::Completed => {
                     stats.completed += 1;
                 }
-                _ => {}
+                acp_v2::PlanEntryStatus::Cancelled => {
+                    stats.cancelled += 1;
+                }
+                _ => stats.pending += 1,
             }
         }
 
         stats
     }
+
+    fn replace(
+        &mut self,
+        entries: Vec<acp_v2::PlanEntry>,
+        meta: Option<acp_v2::Meta>,
+        update_meta: Option<acp_v2::Meta>,
+        cx: &mut App,
+    ) -> bool {
+        let changed = self.entries.len() != entries.len()
+            || self.entries.iter().zip(&entries).any(|(old, new)| {
+                old.source.content != new.content
+                    || old.source.priority != new.priority
+                    || old.source.status != new.status
+            });
+        let new_length = entries.len();
+        let mut entries = entries.into_iter();
+        for (old, new) in self.entries.iter_mut().zip(entries.by_ref()) {
+            if old.source.content != new.content {
+                update_markdown_in_place(&old.content, &new.content, cx);
+            }
+            old.source = new;
+        }
+        self.entries
+            .extend(entries.map(|source| PlanEntry::new(source, cx)));
+        self.entries.truncate(new_length);
+        self.meta = meta;
+        self.update_meta = update_meta;
+        changed
+    }
 }
 
 #[derive(Debug)]
 pub struct PlanEntry {
+    pub source: acp_v2::PlanEntry,
     pub content: Entity<Markdown>,
-    pub priority: acp_v1::PlanEntryPriority,
-    pub status: acp_v1::PlanEntryStatus,
 }
 
 impl PlanEntry {
-    pub fn from_acp(entry: acp_v1::PlanEntry, cx: &mut App) -> Self {
+    fn new(source: acp_v2::PlanEntry, cx: &mut App) -> Self {
         Self {
-            content: cx.new(|cx| Markdown::new(entry.content.into(), None, None, cx)),
-            priority: entry.priority,
-            status: entry.status,
+            content: cx.new(|cx| Markdown::new(source.content.clone().into(), None, None, cx)),
+            source,
         }
     }
+}
+
+fn plan_entry_from_v1(entry: acp_v1::PlanEntry) -> Result<acp_v2::PlanEntry> {
+    let priority = match entry.priority {
+        acp_v1::PlanEntryPriority::High => acp_v2::PlanEntryPriority::High,
+        acp_v1::PlanEntryPriority::Medium => acp_v2::PlanEntryPriority::Medium,
+        acp_v1::PlanEntryPriority::Low => acp_v2::PlanEntryPriority::Low,
+        // V2 preserves future wire names through its Other variant.
+        other => serde_json::from_value(serde_json::to_value(other)?)?,
+    };
+    let status = match entry.status {
+        acp_v1::PlanEntryStatus::Pending => acp_v2::PlanEntryStatus::Pending,
+        acp_v1::PlanEntryStatus::InProgress => acp_v2::PlanEntryStatus::InProgress,
+        acp_v1::PlanEntryStatus::Completed => acp_v2::PlanEntryStatus::Completed,
+        other => serde_json::from_value(serde_json::to_value(other)?)?,
+    };
+    Ok(acp_v2::PlanEntry::new(entry.content, priority, status).meta(entry.meta))
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -2808,7 +3284,8 @@ pub struct AcpThread {
     notices: Vec<(usize, acp_v1::Notice)>,
     next_notice_id: usize,
     elicitations: ElicitationStore,
-    plan: Plan,
+    plans: HashMap<PlanIdentity, Plan>,
+    visible_plan: Option<PlanIdentity>,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
     _git_store_subscription: Subscription,
@@ -3123,7 +3600,8 @@ impl AcpThread {
             notices: Vec::new(),
             next_notice_id: 0,
             elicitations: ElicitationStore::default(),
-            plan: Default::default(),
+            plans: HashMap::default(),
+            visible_plan: None,
             title,
             provisional_title: None,
             project,
@@ -3289,10 +3767,7 @@ impl AcpThread {
         for entry in self.entries.iter().rev() {
             match entry {
                 AgentThreadEntry::UserMessage(_) => return false,
-                AgentThreadEntry::ToolCall(ToolCall {
-                    status: ToolCallStatus::WaitingForConfirmation { .. },
-                    ..
-                }) => return true,
+                AgentThreadEntry::ToolCall(call) if call.authorization().is_some() => return true,
                 AgentThreadEntry::Elicitation(elicitation_id)
                     if self.elicitations.elicitation(elicitation_id).is_some_and(
                         |(_, elicitation)| {
@@ -3323,12 +3798,12 @@ impl AcpThread {
         for entry in self.entries.iter().rev() {
             match entry {
                 AgentThreadEntry::UserMessage(_) => return false,
-                AgentThreadEntry::ToolCall(
-                    call @ ToolCall {
-                        status: ToolCallStatus::InProgress | ToolCallStatus::Pending,
-                        ..
-                    },
-                ) if call.diffs().next().is_some() => {
+                AgentThreadEntry::ToolCall(call)
+                    if matches!(
+                        call.status(),
+                        ToolCallStatus::InProgress | ToolCallStatus::Pending
+                    ) && call.diffs().next().is_some() =>
+                {
                     return true;
                 }
                 AgentThreadEntry::ToolCall(_)
@@ -3345,10 +3820,12 @@ impl AcpThread {
         for entry in self.entries.iter().rev() {
             match entry {
                 AgentThreadEntry::UserMessage(_) => return false,
-                AgentThreadEntry::ToolCall(ToolCall {
-                    status: ToolCallStatus::InProgress | ToolCallStatus::Pending,
-                    ..
-                }) => {
+                AgentThreadEntry::ToolCall(call)
+                    if matches!(
+                        call.status(),
+                        ToolCallStatus::InProgress | ToolCallStatus::Pending
+                    ) =>
+                {
                     return true;
                 }
                 AgentThreadEntry::ToolCall(_)
@@ -3454,7 +3931,7 @@ impl AcpThread {
                     .map_err(acp_v1::Error::from)?;
             }
             acp_v1::SessionUpdate::Plan(plan) => {
-                self.update_plan(plan, cx);
+                self.update_plan(plan, cx).map_err(acp_v1::Error::from)?;
             }
             acp_v1::SessionUpdate::Notice(notice) => {
                 let notice_id = self.next_notice_id;
@@ -4313,27 +4790,16 @@ impl AcpThread {
             Some(ix) => ix,
             None => {
                 // Tool call not found - create a failed tool call entry
-                let failed_tool_call = ToolCall {
-                    id: update.id().clone(),
-                    label: cx.new(|cx| Markdown::new("Tool call not found".into(), None, None, cx)),
-                    title: Some("Tool call not found".into()),
-                    kind: acp_v1::ToolKind::Fetch,
-                    structured_content: vec![ToolCallContent::ContentBlock(
-                        ContentBlock::new_output("Tool call not found".into(), &languages, cx),
-                    )],
-                    status: ToolCallStatus::Failed,
-                    locations: Vec::new(),
-                    resolved_locations: Vec::new(),
-                    raw_input: None,
-                    raw_input_markdown: None,
-                    raw_output: None,
-                    raw_output_content: None,
-                    tool_name: None,
-                    subagent_session_info: None,
-                    sandbox_authorization_details: None,
-                    sandbox_fallback_authorization_details: None,
-                    sandbox_not_applied: None,
-                };
+                let failed_tool_call = ToolCall::from_acp(
+                    acp_v1::ToolCall::new(update.id().clone(), "Tool call not found")
+                        .kind(acp_v1::ToolKind::Fetch)
+                        .status(acp_v1::ToolCallStatus::Failed)
+                        .content(vec!["Tool call not found".into()]),
+                    Some(ToolCallStatus::Failed),
+                    languages,
+                    &self.terminals,
+                    cx,
+                )?;
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());
             }
@@ -4363,8 +4829,10 @@ impl AcpThread {
             }
             ToolCallUpdate::UpdateTerminal(update) => {
                 call.structured_content.clear();
-                call.structured_content
-                    .push(ToolCallContent::Terminal(update.terminal));
+                call.structured_content.push(ToolCallContent::Terminal {
+                    terminal: update.terminal,
+                    meta: None,
+                });
                 call.update_raw_output_content(&languages, cx);
             }
         }
@@ -4380,20 +4848,14 @@ impl AcpThread {
         tool_call: acp_v1::ToolCall,
         cx: &mut Context<Self>,
     ) -> Result<(), acp_v1::Error> {
-        let status = tool_call.status.into();
+        let status = ToolCallStatus::from_reported(tool_status_from_v1(tool_call.status).as_ref());
+        if let Some(status) = status {
+            self.report_tool_call_completed(status);
+        }
         self.upsert_tool_call_inner(tool_call.into(), status, cx)
     }
 
-    /// Fails if id does not match an existing entry.
-    pub fn upsert_tool_call_inner(
-        &mut self,
-        update: acp_v1::ToolCallUpdate,
-        status: ToolCallStatus,
-        cx: &mut Context<Self>,
-    ) -> Result<(), acp_v1::Error> {
-        let language_registry = self.project.read(cx).languages().clone();
-        let id = update.tool_call_id.clone();
-
+    fn report_tool_call_completed(&self, status: ToolCallStatus) {
         let agent_telemetry_id = self.connection().telemetry_id();
         let session = self.session_id();
         let parent_session_id = self.parent_session_id();
@@ -4411,7 +4873,16 @@ impl AcpThread {
                 status
             );
         }
+    }
 
+    fn upsert_tool_call_inner(
+        &mut self,
+        update: acp_v1::ToolCallUpdate,
+        status: Option<ToolCallStatus>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), acp_v1::Error> {
+        let language_registry = self.project.read(cx).languages().clone();
+        let id = update.tool_call_id.clone();
         if let Some(ix) = self.index_for_tool_call(&id) {
             let AgentThreadEntry::ToolCall(call) = &mut self.entries[ix] else {
                 unreachable!()
@@ -4427,7 +4898,9 @@ impl AcpThread {
                 cx.emit(AcpThreadEvent::EntryUpdated(ix));
                 return Err(acp_v1::Error::from(error));
             }
-            call.update_status(status);
+            if let Some(status) = status {
+                call.set_legacy_status(status);
+            }
 
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
         } else {
@@ -4442,6 +4915,35 @@ impl AcpThread {
         };
 
         self.resolve_locations(id, cx);
+        Ok(())
+    }
+
+    pub fn upsert_tool_call_patch(
+        &mut self,
+        update: acp_v2::ToolCallUpdate,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let id = acp_v1::ToolCallId::new(update.tool_call_id.0.clone());
+        let patch = ToolCallPatch::protocol(update);
+        let locations_changed = !patch.locations.is_undefined();
+        if let Some(status) = ToolCallStatus::from_reported(patch.status.value()) {
+            self.report_tool_call_completed(status);
+        }
+        let languages = self.project.read(cx).languages().clone();
+        if let Some(index) = self.index_for_tool_call(&id) {
+            let AgentThreadEntry::ToolCall(call) = &mut self.entries[index] else {
+                unreachable!()
+            };
+            let result = call.apply_patch(patch, languages, &self.terminals, cx);
+            cx.emit(AcpThreadEvent::EntryUpdated(index));
+            result?;
+        } else {
+            let call = ToolCall::from_patch(id.clone(), patch, languages, &self.terminals, cx)?;
+            self.push_entry(AgentThreadEntry::ToolCall(call), cx);
+        }
+        if locations_changed {
+            self.resolve_locations(id, cx);
+        }
         Ok(())
     }
 
@@ -4516,11 +5018,18 @@ impl AcpThread {
         let Some((_, tool_call)) = self.tool_call_mut(&id) else {
             return;
         };
+        let expected_locations = tool_call.locations.clone();
         let task = tool_call.resolve_locations(project, cx);
         cx.spawn(async move |this, cx| {
             let resolved_locations = task.await;
 
             this.update(cx, |this, cx| {
+                if this
+                    .tool_call(&id)
+                    .is_none_or(|(_, call)| call.locations != expected_locations)
+                {
+                    return;
+                }
                 let project = this.project.clone();
 
                 for location in resolved_locations.iter().flatten() {
@@ -4579,18 +5088,24 @@ impl AcpThread {
 
         let current_status = self
             .tool_call(&tool_call.tool_call_id)
-            .and_then(|(_, tool_call)| tool_call.status.as_acp_status())
+            .and_then(|(_, tool_call)| tool_call.permission_status())
             .or(tool_call.fields.status)
-            .unwrap_or(acp_v1::ToolCallStatus::Pending);
-        let status = ToolCallStatus::WaitingForConfirmation {
-            current_status,
+            .and_then(tool_status_from_v1);
+        let current_status = ToolCallStatus::from_reported(current_status.as_ref())
+            .unwrap_or(ToolCallStatus::Pending);
+
+        let tool_call_id = tool_call.tool_call_id.clone();
+        self.upsert_tool_call_inner(tool_call, Some(current_status), cx)?;
+        let (_, call) = self
+            .tool_call_mut(&tool_call_id)
+            .context("tool call disappeared while requesting authorization")?;
+        // A new explicit request is installed after applying its descriptive
+        // fields, preserving the legacy request's captured continuation status.
+        call.authorization = Some(ToolCallAuthorization {
             options,
             respond_tx: tx,
             kind,
-        };
-
-        let tool_call_id = tool_call.tool_call_id.clone();
-        self.upsert_tool_call_inner(tool_call, status, cx)?;
+        });
         cx.emit(AcpThreadEvent::ToolAuthorizationRequested(
             tool_call_id.clone(),
         ));
@@ -4613,11 +5128,12 @@ impl AcpThread {
         let Some((ix, call)) = self.tool_call_mut(id) else {
             return;
         };
-        if !matches!(call.status, ToolCallStatus::WaitingForConfirmation { .. }) {
+        if call.authorization.is_none() {
             return;
         }
 
-        call.status = ToolCallStatus::Canceled;
+        call.authorization = None;
+        call.set_local_status(ToolCallStatus::Canceled);
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
         cx.emit(AcpThreadEvent::ToolAuthorizationReceived(id.clone()));
     }
@@ -4632,20 +5148,21 @@ impl AcpThread {
             return;
         };
 
-        let new_status = match &call.status {
-            ToolCallStatus::WaitingForConfirmation {
+        let new_status = match call.authorization() {
+            Some(ToolCallAuthorization {
                 kind: AuthorizationKind::ActionChoice,
                 ..
-            } => ToolCallStatus::InProgress,
-            ToolCallStatus::WaitingForConfirmation { current_status, .. } => {
+            }) => ToolCallStatus::InProgress,
+            Some(_) => {
+                let current_status = call.permission_status().unwrap_or_default();
                 match outcome.option_kind {
                     acp_v1::PermissionOptionKind::RejectOnce
                     | acp_v1::PermissionOptionKind::RejectAlways => ToolCallStatus::Rejected,
                     acp_v1::PermissionOptionKind::AllowOnce
                     | acp_v1::PermissionOptionKind::AllowAlways => {
-                        ToolCallStatus::status_after_permission_grant(*current_status)
+                        ToolCallStatus::status_after_permission_grant(current_status)
                     }
-                    _ => ToolCallStatus::status_after_permission_grant(*current_status),
+                    _ => ToolCallStatus::status_after_permission_grant(current_status),
                 }
             }
             _ => match outcome.option_kind {
@@ -4657,10 +5174,10 @@ impl AcpThread {
             },
         };
 
-        let curr_status = mem::replace(&mut call.status, new_status);
-
-        if let ToolCallStatus::WaitingForConfirmation { respond_tx, .. } = curr_status {
-            respond_tx
+        call.set_local_status(new_status);
+        if let Some(authorization) = call.authorization.take() {
+            authorization
+                .respond_tx
                 .send(RequestPermissionOutcome::Selected(outcome))
                 .ok();
         }
@@ -4769,44 +5286,70 @@ impl AcpThread {
         Some((index, elicitation))
     }
 
-    pub fn plan(&self) -> &Plan {
-        &self.plan
+    pub fn plan(&self) -> Option<&Plan> {
+        self.plans.get(self.visible_plan.as_ref()?)
     }
 
-    pub fn update_plan(&mut self, request: acp_v1::Plan, cx: &mut Context<Self>) {
-        let new_entries_len = request.entries.len();
-        let mut new_entries = request.entries.into_iter();
+    pub fn plan_by_id(&self, id: &acp_v2::PlanId) -> Option<&Plan> {
+        self.plans.get(&PlanIdentity::Keyed(id.clone()))
+    }
 
-        // Reuse existing markdown to prevent flickering
-        for (old, new) in self.plan.entries.iter_mut().zip(new_entries.by_ref()) {
-            let PlanEntry {
-                content,
-                priority,
-                status,
-            } = old;
-            content.update(cx, |old, cx| {
-                old.replace(new.content, cx);
-            });
-            *priority = new.priority;
-            *status = new.status;
-        }
-        for new in new_entries {
-            self.plan.entries.push(PlanEntry::from_acp(new, cx))
-        }
-        self.plan.entries.truncate(new_entries_len);
+    pub fn update_plan(&mut self, request: acp_v1::Plan, cx: &mut Context<Self>) -> Result<()> {
+        let entries = request
+            .entries
+            .into_iter()
+            .map(plan_entry_from_v1)
+            .collect::<Result<_>>()?;
+        self.replace_plan(PlanIdentity::Legacy, entries, request.meta, None, cx);
+        Ok(())
+    }
 
+    pub fn upsert_plan_items(
+        &mut self,
+        plan: acp_v2::PlanItems,
+        update_meta: Option<acp_v2::Meta>,
+        cx: &mut Context<Self>,
+    ) {
+        self.replace_plan(
+            PlanIdentity::Keyed(plan.plan_id),
+            plan.entries,
+            plan.meta,
+            update_meta,
+            cx,
+        );
+    }
+
+    fn replace_plan(
+        &mut self,
+        identity: PlanIdentity,
+        entries: Vec<acp_v2::PlanEntry>,
+        meta: Option<acp_v2::Meta>,
+        update_meta: Option<acp_v2::Meta>,
+        cx: &mut Context<Self>,
+    ) {
+        let is_new = !self.plans.contains_key(&identity);
+        let changed =
+            self.plans
+                .entry(identity.clone())
+                .or_default()
+                .replace(entries, meta, update_meta, cx);
+        if is_new || changed || identity == PlanIdentity::Legacy {
+            self.visible_plan = Some(identity);
+        }
         cx.notify();
     }
 
     fn clear_completed_plan_entries(&mut self, cx: &mut Context<Self>) {
-        self.plan
-            .entries
-            .retain(|entry| !matches!(entry.status, acp_v1::PlanEntryStatus::Completed));
+        // V1's next-turn cleanup is a compatibility policy, not authority to alter keyed plans.
+        if let Some(plan) = self.plans.get_mut(&PlanIdentity::Legacy) {
+            plan.entries
+                .retain(|entry| !matches!(entry.source.status, acp_v2::PlanEntryStatus::Completed));
+        }
         cx.notify();
     }
 
     pub fn clear_plan(&mut self, cx: &mut Context<Self>) {
-        self.plan.entries.clear();
+        self.visible_plan = None;
         cx.notify();
     }
 
@@ -5048,7 +5591,7 @@ impl AcpThread {
                                     this.entries.iter().skip(user_msg_ix + 1).any(|entry| {
                                         if let AgentThreadEntry::ToolCall(tool_call) = entry {
                                             // Check if the tool call has completed and has output
-                                            matches!(tool_call.status, ToolCallStatus::Completed)
+                                            matches!(tool_call.status(), ToolCallStatus::Completed)
                                                 && tool_call.raw_output.is_some()
                                         } else {
                                             false
@@ -5183,17 +5726,18 @@ impl AcpThread {
             match entry {
                 AgentThreadEntry::ToolCall(call) => {
                     let cancel = matches!(
-                        call.status,
+                        call.status(),
                         ToolCallStatus::Pending
-                            | ToolCallStatus::WaitingForConfirmation { .. }
+                            | ToolCallStatus::WaitingForConfirmation
                             | ToolCallStatus::InProgress
                     );
                     if cancel {
-                        let previous_status =
-                            mem::replace(&mut call.status, ToolCallStatus::Canceled);
-                        if let ToolCallStatus::WaitingForConfirmation { respond_tx, .. } =
-                            previous_status
-                            && respond_tx.send(permission_outcome.clone()).is_err()
+                        call.set_local_status(ToolCallStatus::Canceled);
+                        if let Some(authorization) = call.authorization.take()
+                            && authorization
+                                .respond_tx
+                                .send(permission_outcome.clone())
+                                .is_err()
                         {
                             log::debug!(
                                 "Permission request closed before cancellation was delivered"
@@ -6186,6 +6730,303 @@ mod tests {
         });
     }
 
+    #[test]
+    fn test_legacy_plan_entry_conversion_preserves_fields() {
+        for priority in [
+            acp_v1::PlanEntryPriority::High,
+            acp_v1::PlanEntryPriority::Medium,
+            acp_v1::PlanEntryPriority::Low,
+        ] {
+            for status in [
+                acp_v1::PlanEntryStatus::Pending,
+                acp_v1::PlanEntryStatus::InProgress,
+                acp_v1::PlanEntryStatus::Completed,
+            ] {
+                for meta in [
+                    None,
+                    Some(acp_v1::Meta::new()),
+                    Some(acp_v1::Meta::from_iter([(
+                        "nested".into(),
+                        json!({"value": [1, null]}),
+                    )])),
+                ] {
+                    let entry =
+                        acp_v1::PlanEntry::new("Task 🦀\n`code`", priority.clone(), status.clone())
+                            .meta(meta);
+                    let expected = serde_json::to_value(&entry).expect("v1 entry");
+                    let converted = plan_entry_from_v1(entry).expect("supported v1 entry");
+                    assert_eq!(serde_json::to_value(converted).expect("v2 entry"), expected);
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_keyed_plan_metadata_and_unknown_values_are_retained(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let id = acp_v2::PlanId::new("plan");
+            let mut items: acp_v2::PlanItems = serde_json::from_value(json!({
+                "planId": "plan",
+                "entries": [
+                    {"content": "Unknown state", "priority": "_urgent", "status": "_blocked", "_meta": {"entry": [1, null]}},
+                    {"content": "Finished", "priority": "medium", "status": "completed"},
+                    {"content": "Not needed", "priority": "low", "status": "cancelled"}
+                ],
+                "_meta": {"plan": true}
+            })).expect("keyed items");
+            let update_meta = Some(acp_v2::Meta::from_iter([("update".into(), json!(true))]));
+            thread.upsert_plan_items(items.clone(), update_meta.clone(), cx);
+            let plan = thread.plan().expect("visible plan");
+            assert_eq!(plan.meta, items.meta);
+            assert_eq!(plan.update_meta, update_meta);
+            for (entry, source) in plan.entries.iter().zip(&items.entries) {
+                assert_eq!(&entry.source, source);
+                assert_eq!(entry.content.read(cx).source().as_ref(), source.content);
+            }
+            let markdown = plan.entries[0].content.clone();
+            let stats = plan.stats();
+            assert_eq!((stats.pending, stats.completed, stats.cancelled), (1, 1, 1));
+            assert!(stats.in_progress_entry.is_none());
+            thread.clear_plan(cx);
+            thread.upsert_plan_items(items.clone(), update_meta, cx);
+            assert!(thread.plan().is_none(), "an identical snapshot does not undo dismissal");
+            items.meta = Some(acp_v2::Meta::new());
+            items.entries[0].meta = Some(acp_v2::Meta::new());
+            thread.upsert_plan_items(items.clone(), Some(acp_v2::Meta::new()), cx);
+            assert!(thread.plan().is_none());
+            let plan = thread.plan_by_id(&id).expect("retained hidden plan");
+            assert_eq!(plan.meta, Some(acp_v2::Meta::new()));
+            assert_eq!(plan.update_meta, Some(acp_v2::Meta::new()));
+            assert_eq!(plan.entries[0].source.meta, Some(acp_v2::Meta::new()));
+            assert_eq!(plan.entries[0].content, markdown);
+            items.meta = None;
+            items.entries[0].meta = None;
+            thread.upsert_plan_items(items.clone(), None, cx);
+            let plan = thread.plan_by_id(&id).expect("retained plan");
+            assert_eq!(plan.meta, None);
+            assert_eq!(plan.update_meta, None);
+            assert_eq!(plan.entries[0].source.meta, None);
+            assert!(thread.plan().is_none(), "absent metadata replaces, but does not show the plan");
+            items.entries[0].status = acp_v2::PlanEntryStatus::Other("_waiting".into());
+            thread.upsert_plan_items(items, None, cx);
+            let plan = thread.plan().expect("changed unknown status reopens the plan");
+            assert_eq!(plan.entries[0].content, markdown);
+            assert_eq!(plan.stats().pending, 1);
+            assert!(thread.entries().is_empty(), "plans never become transcript entries");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_keyed_plan_task_changes_reopen_dismissed_plan(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let original = vec![
+                acp_v2::PlanEntry::new(
+                    "First",
+                    acp_v2::PlanEntryPriority::Medium,
+                    acp_v2::PlanEntryStatus::Pending,
+                ),
+                acp_v2::PlanEntry::new(
+                    "Second",
+                    acp_v2::PlanEntryPriority::Low,
+                    acp_v2::PlanEntryStatus::Pending,
+                ),
+            ];
+            let mut content = original.clone();
+            content[0].content = "First, revised".into();
+            let mut status = original.clone();
+            status[0].status = acp_v2::PlanEntryStatus::InProgress;
+            let mut priority = original.clone();
+            priority[0].priority = acp_v2::PlanEntryPriority::High;
+            let mut reordered = original.clone();
+            reordered.swap(0, 1);
+            let mut appended = original.clone();
+            appended.push(acp_v2::PlanEntry::new(
+                "Third",
+                acp_v2::PlanEntryPriority::Low,
+                acp_v2::PlanEntryStatus::Pending,
+            ));
+            for updated in [
+                content,
+                status,
+                priority,
+                reordered,
+                appended,
+                vec![original[0].clone()],
+                vec![],
+            ] {
+                thread.upsert_plan_items(
+                    acp_v2::PlanItems::new("plan", original.clone()),
+                    None,
+                    cx,
+                );
+                let markdown = thread.plan_by_id(&"plan".into()).expect("plan").entries[0]
+                    .content
+                    .clone();
+                thread.clear_plan(cx);
+                thread.upsert_plan_items(acp_v2::PlanItems::new("plan", updated.clone()), None, cx);
+                let plan = thread.plan().expect("meaningful changes select the plan");
+                assert_eq!(plan.entries.len(), updated.len());
+                for (entry, source) in plan.entries.iter().zip(&updated) {
+                    assert_eq!(&entry.source, source);
+                    assert_eq!(entry.content.read(cx).source().as_ref(), source.content);
+                }
+                if let Some(first) = plan.entries.first() {
+                    assert_eq!(first.content, markdown);
+                }
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_keyed_plan_selection_and_empty_snapshots(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let entries = vec![acp_v2::PlanEntry::new(
+                "Same task",
+                acp_v2::PlanEntryPriority::Medium,
+                acp_v2::PlanEntryStatus::Pending,
+            )];
+            thread.upsert_plan_items(acp_v2::PlanItems::new("a", entries.clone()), None, cx);
+            let first_markdown = thread.plan().expect("A").entries[0].content.clone();
+            thread.upsert_plan_items(acp_v2::PlanItems::new("b", entries.clone()), None, cx);
+            let second_markdown = thread
+                .plan()
+                .expect("new B selects despite identical contents")
+                .entries[0]
+                .content
+                .clone();
+            assert_ne!(
+                first_markdown, second_markdown,
+                "identity owns its render cache"
+            );
+            thread.upsert_plan_items(
+                acp_v2::PlanItems::new("a", entries.clone()).meta(acp_v2::Meta::new()),
+                Some(acp_v2::Meta::new()),
+                cx,
+            );
+            assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("b".into())));
+            thread.upsert_plan_items(acp_v2::PlanItems::new("empty", vec![]), None, cx);
+            assert!(thread.plan().expect("selected empty plan").is_empty());
+            thread.upsert_plan_items(acp_v2::PlanItems::new("a", entries.clone()), None, cx);
+            assert_eq!(
+                thread.visible_plan,
+                Some(PlanIdentity::Keyed("empty".into()))
+            );
+            let mut changed = entries;
+            changed[0].content = "Changed".into();
+            thread.upsert_plan_items(acp_v2::PlanItems::new("a", changed), None, cx);
+            assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("a".into())));
+            assert_eq!(
+                thread.plan().expect("A reopens").entries[0].content,
+                first_markdown
+            );
+            thread.upsert_plan_items(acp_v2::PlanItems::new("b", vec![]), None, cx);
+            assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("b".into())));
+            assert!(
+                thread
+                    .plan()
+                    .expect("clearing older B selects empty B")
+                    .is_empty()
+            );
+            assert_eq!(
+                thread
+                    .plan_by_id(&"a".into())
+                    .expect("A retained")
+                    .entries
+                    .len(),
+                1
+            );
+            assert!(thread.entries().is_empty());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_legacy_plan_cleanup_does_not_mutate_keyed_plans(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let keyed = acp_v2::PlanItems::new(
+            "legacy",
+            vec![
+                acp_v2::PlanEntry::new(
+                    "Keyed completion",
+                    acp_v2::PlanEntryPriority::High,
+                    acp_v2::PlanEntryStatus::Completed,
+                ),
+                acp_v2::PlanEntry::new(
+                    "Keyed cancellation",
+                    acp_v2::PlanEntryPriority::Low,
+                    acp_v2::PlanEntryStatus::Cancelled,
+                ),
+            ],
+        )
+        .meta(acp_v2::Meta::from_iter([("keyed".into(), json!(true))]));
+        thread.update(cx, |thread, cx| {
+            let legacy = acp_v1::Plan::new(vec![
+                acp_v1::PlanEntry::new(
+                    "Done",
+                    acp_v1::PlanEntryPriority::High,
+                    acp_v1::PlanEntryStatus::Completed,
+                ),
+                acp_v1::PlanEntry::new(
+                    "Pending",
+                    acp_v1::PlanEntryPriority::Medium,
+                    acp_v1::PlanEntryStatus::Pending,
+                )
+                .meta(acp_v1::Meta::new()),
+            ])
+            .meta(acp_v1::Meta::from_iter([("legacy".into(), json!(true))]));
+            thread
+                .update_plan(legacy.clone(), cx)
+                .expect("legacy snapshot");
+            assert_eq!(thread.plan().expect("legacy plan").meta, legacy.meta);
+            assert_eq!(thread.plan().expect("legacy plan").update_meta, None);
+            assert_eq!(
+                thread.plan().expect("legacy plan").entries[1].source.meta,
+                Some(acp_v2::Meta::new())
+            );
+            thread.clear_plan(cx);
+            assert!(thread.plan().is_none());
+            thread
+                .update_plan(legacy, cx)
+                .expect("identical legacy update restores the panel");
+            assert_eq!(
+                thread.plan().expect("legacy compatibility").entries.len(),
+                2
+            );
+            thread.upsert_plan_items(keyed.clone(), None, cx);
+            assert_eq!(thread.plans.len(), 2, "legacy has no reserved protocol ID");
+        });
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread.visible_plan,
+                Some(PlanIdentity::Keyed("legacy".into()))
+            );
+            let retained = thread.plan_by_id(&keyed.plan_id).expect("keyed plan");
+            assert_eq!(retained.meta, keyed.meta);
+            assert_eq!(retained.entries.len(), keyed.entries.len());
+            for (entry, expected) in retained.entries.iter().zip(&keyed.entries) {
+                assert_eq!(&entry.source, expected);
+            }
+            let legacy = thread
+                .plans
+                .get(&PlanIdentity::Legacy)
+                .expect("legacy record");
+            assert_eq!(legacy.entries.len(), 1);
+            assert_eq!(legacy.entries[0].source.content, "Pending");
+        });
+        complete
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+            .expect("turn is running");
+        request.await.expect("turn completes");
+    }
+
     fn enable_acp_beta(cx: &mut TestAppContext) {
         cx.update(|cx| {
             cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
@@ -7039,6 +7880,381 @@ mod tests {
             ContentBlock::text_resource_markdown(&untyped),
             "```\n# plain preview\n```"
         );
+    }
+
+    #[gpui::test]
+    fn test_tool_content_retains_and_refreshes_inner_and_envelope_meta(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let make_content = |inner: &str, outer: &str| {
+                acp_v2::ToolCallContent::Content(Box::new(
+                    acp_v2::Content::new(acp_v2::ContentBlock::Text(
+                        acp_v2::TextContent::new("same")
+                            .meta(acp_v2::Meta::from_iter([("inner".into(), inner.into())])),
+                    ))
+                    .meta(acp_v2::Meta::from_iter([("outer".into(), outer.into())])),
+                ))
+            };
+            let prepared = PreparedToolCallContent::prepare_v2(
+                vec![make_content("first", "first")],
+                &HashMap::default(),
+            )
+            .expect("prepare content");
+            let mut content = ToolCallContent::from_prepared(
+                prepared.into_iter().next().expect("content"),
+                &languages,
+                cx,
+            );
+            let original = content.markdown().expect("markdown").clone();
+            let prepared = PreparedToolCallContent::prepare_v2(
+                vec![make_content("second", "second")],
+                &HashMap::default(),
+            )
+            .expect("prepare update");
+            content.update_from_prepared(
+                prepared.into_iter().next().expect("update"),
+                &languages,
+                cx,
+            );
+            let ToolCallContent::ContentBlock { block, meta } = &content else {
+                panic!("content block");
+            };
+            assert_eq!(block.markdown(), Some(&original));
+            assert_eq!(
+                meta.as_ref().and_then(|meta| meta.get("outer")),
+                Some(&serde_json::json!("second"))
+            );
+            let Some(acp_v2::ContentBlock::Text(source)) = block.source.as_ref() else {
+                panic!("retained text");
+            };
+            assert_eq!(
+                source.meta.as_ref().and_then(|meta| meta.get("inner")),
+                Some(&serde_json::json!("second"))
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_tool_content_resource_updates_refresh_source_and_reuse_rendering(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let resource = |uri: &str, mime: &str| {
+                acp_v2::ContentBlock::Resource(acp_v2::EmbeddedResource::new(
+                    acp_v2::EmbeddedResourceResource::TextResourceContents(
+                        acp_v2::TextResourceContents::new("**text**", uri)
+                            .mime_type(mime)
+                            .meta(acp_v2::Meta::from_iter([("uri".into(), json!(uri))])),
+                    ),
+                ))
+            };
+            let mut content = ToolCallContent::from_prepared(
+                PreparedToolCallContent::ContentBlock(acp_v2::Content::new(resource(
+                    "tool://old",
+                    "text/markdown",
+                ))),
+                &languages,
+                cx,
+            );
+            let markdown = content.markdown().expect("preview").clone();
+            for mime in ["text/markdown", "text/plain"] {
+                let source = resource("tool://new", mime);
+                content.update_from_prepared(
+                    PreparedToolCallContent::ContentBlock(acp_v2::Content::new(source.clone())),
+                    &languages,
+                    cx,
+                );
+                assert_eq!(content.markdown(), Some(&markdown));
+                let ToolCallContent::ContentBlock { block, .. } = &content else {
+                    panic!("resource");
+                };
+                assert_eq!(block.source.as_ref(), Some(&source));
+                assert_eq!(
+                    markdown.read(cx).source().as_ref(),
+                    if mime == "text/markdown" {
+                        "**text**"
+                    } else {
+                        "```\n**text**\n```"
+                    },
+                );
+            }
+
+            let acp_v2::ContentBlock::Image(image) = message_test_image() else {
+                panic!("image fixture");
+            };
+            let blob = |uri: &str| {
+                acp_v2::ContentBlock::Resource(acp_v2::EmbeddedResource::new(
+                    acp_v2::EmbeddedResourceResource::BlobResourceContents(
+                        acp_v2::BlobResourceContents::new(image.data.clone(), uri)
+                            .mime_type(image.mime_type.clone()),
+                    ),
+                ))
+            };
+            content.update_from_prepared(
+                PreparedToolCallContent::ContentBlock(acp_v2::Content::new(blob("tool://old.png"))),
+                &languages,
+                cx,
+            );
+            assert!(content.markdown().is_none());
+            let decoded = content.image().expect("embedded image").0.clone();
+            let source = blob("tool://renamed.png");
+            content.update_from_prepared(
+                PreparedToolCallContent::ContentBlock(acp_v2::Content::new(source.clone())),
+                &languages,
+                cx,
+            );
+            assert!(Arc::ptr_eq(content.image().expect("image").0, &decoded));
+            let ToolCallContent::ContentBlock { block, .. } = &content else {
+                panic!("resource image");
+            };
+            assert_eq!(block.source.as_ref(), Some(&source));
+        });
+    }
+
+    #[gpui::test]
+    fn test_tool_content_image_metadata_update_reuses_decoded_image(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let acp_v2::ContentBlock::Image(image) = message_test_image() else {
+                panic!("image");
+            };
+            let mut content = ToolCallContent::from_prepared(
+                PreparedToolCallContent::ContentBlock(acp_v2::Content::new(
+                    acp_v2::ContentBlock::Image(image.clone()),
+                )),
+                &languages,
+                cx,
+            );
+            let original = content.image().expect("image").0.clone();
+            content.update_from_prepared(
+                PreparedToolCallContent::ContentBlock(acp_v2::Content::new(
+                    acp_v2::ContentBlock::Image(
+                        image.meta(acp_v2::Meta::from_iter([("revision".into(), 2.into())])),
+                    ),
+                )),
+                &languages,
+                cx,
+            );
+            assert!(Arc::ptr_eq(&original, content.image().expect("image").0));
+            let ToolCallContent::ContentBlock { block, .. } = &content else {
+                panic!("image block");
+            };
+            let Some(acp_v2::ContentBlock::Image(source)) = block.source.as_ref() else {
+                panic!("retained image");
+            };
+            assert_eq!(
+                source.meta.as_ref().and_then(|meta| meta.get("revision")),
+                Some(&serde_json::json!(2))
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_tool_content_legacy_diff_preserves_raw_source_and_native_authority(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let mut content = ToolCallContent::from_prepared(
+                PreparedToolCallContent::LegacyDiff(acp_v1::Diff::new("first.rs", "new")),
+                &languages,
+                cx,
+            );
+            let ToolCallContent::LegacyDiff { diff, .. } = &content else {
+                panic!("legacy diff")
+            };
+            let original = diff.clone();
+            content.update_from_prepared(
+                PreparedToolCallContent::LegacyDiff(
+                    acp_v1::Diff::new("first.rs", "new")
+                        .meta(acp_v1::Meta::from_iter([("revision".into(), 1.into())])),
+                ),
+                &languages,
+                cx,
+            );
+            let ToolCallContent::LegacyDiff { source, diff } = &content else {
+                panic!("legacy diff")
+            };
+            assert_eq!(diff, &original);
+            assert_eq!(
+                source.meta.as_ref().and_then(|meta| meta.get("revision")),
+                Some(&serde_json::json!(1))
+            );
+            content.update_from_prepared(
+                PreparedToolCallContent::LegacyDiff(
+                    acp_v1::Diff::new("first.rs", "new").old_text(""),
+                ),
+                &languages,
+                cx,
+            );
+            let ToolCallContent::LegacyDiff { source, diff } = &content else {
+                panic!("legacy diff")
+            };
+            assert_eq!(source.old_text.as_deref(), Some(""));
+            assert_ne!(diff, &original);
+            let previous = diff.clone();
+            content.update_from_prepared(
+                PreparedToolCallContent::LegacyDiff(
+                    acp_v1::Diff::new("second.rs", "new").old_text(""),
+                ),
+                &languages,
+                cx,
+            );
+            let ToolCallContent::LegacyDiff { source, diff } = &content else {
+                panic!("legacy diff")
+            };
+            assert_eq!(source.path, PathBuf::from("second.rs"));
+            assert_ne!(diff, &previous);
+            let native_diff = cx.new(|cx| {
+                Diff::finalized(
+                    "native.rs".into(),
+                    Some("before".into()),
+                    "after".into(),
+                    languages.clone(),
+                    cx,
+                )
+            });
+            let mut native = ToolCallContent::Diff(native_diff.clone());
+            native.update_from_prepared(
+                PreparedToolCallContent::LegacyDiff(acp_v1::Diff::new("native.rs", "replacement")),
+                &languages,
+                cx,
+            );
+            assert!(matches!(native, ToolCallContent::LegacyDiff { .. }));
+            assert_eq!(
+                native_diff.read(cx).file_path(cx).as_deref(),
+                Some("native.rs")
+            );
+            assert_ne!(
+                native_diff,
+                match &native {
+                    ToolCallContent::LegacyDiff { diff, .. } => diff.clone(),
+                    _ => panic!("legacy diff"),
+                }
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_tool_diff_patch_reuses_hunks_for_metadata_changes(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let mut source: acp_v2::Diff = serde_json::from_value(serde_json::json!({
+                "changes": [{"operation": "modify", "path": "/test.rs"}],
+                "patch": {
+                    "format": "git_patch",
+                    "text": "--- /test.rs\n+++ /test.rs\n@@ -5 +5 @@\n-before\n+after\n"
+                }
+            }))
+            .expect("diff");
+            let mut content = ToolCallContent::from_prepared(
+                PreparedToolCallContent::DiffPatch(source.clone()),
+                &languages,
+                cx,
+            );
+            let ToolCallContent::DiffPatch { render, .. } = &content else {
+                panic!("patch");
+            };
+            assert!(render.fallback.is_none());
+            let buffer = render.files[0].hunks[0].buffer.clone();
+            source.meta = Some(acp_v2::Meta::from_iter([("revision".into(), 2.into())]));
+            source.changes[0].meta = source.meta.clone();
+            source.changes[0].mime_type = Some(acp_v2::MediaType::new("text/x-rust"));
+            content.update_from_prepared(
+                PreparedToolCallContent::DiffPatch(source.clone()),
+                &languages,
+                cx,
+            );
+            let ToolCallContent::DiffPatch {
+                source: retained,
+                render,
+            } = &content
+            else {
+                panic!("patch");
+            };
+            assert_eq!(retained, &source);
+            assert_eq!(render.files[0].hunks[0].buffer, buffer);
+            assert!(
+                content.markdown().is_none(),
+                "no hidden Markdown copy of a rendered patch"
+            );
+            assert!(content.to_markdown(cx).contains("-before\n+after"));
+            source.patch.as_mut().expect("patch").text = "@@ -5 +5 @@\n-before\n+updated\n".into();
+            content.update_from_prepared(
+                PreparedToolCallContent::DiffPatch(source.clone()),
+                &languages,
+                cx,
+            );
+            let ToolCallContent::DiffPatch {
+                source: retained,
+                render,
+            } = &content
+            else {
+                panic!("patch");
+            };
+            assert_eq!(retained, &source);
+            assert_ne!(render.files[0].hunks[0].buffer, buffer);
+        });
+    }
+
+    #[gpui::test]
+    fn test_tool_content_v2_diff_patch_and_unknown_retain_source(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let patch = "diff --git a/one b/one\n+``` nested";
+            let diff = acp_v2::Diff::patch(patch, vec![])
+                .meta(acp_v2::Meta::from_iter([("revision".into(), 1.into())]));
+            let unknown: acp_v2::ToolCallContent =
+                serde_json::from_value(serde_json::json!({"type":"future","payload":{"value":1}}))
+                    .expect("unknown content");
+            let prepared = PreparedToolCallContent::prepare_v2(
+                vec![acp_v2::ToolCallContent::Diff(diff.clone()), unknown.clone()],
+                &HashMap::default(),
+            )
+            .expect("prepare v2 content");
+            let mut content: Vec<_> = prepared
+                .into_iter()
+                .map(|content| ToolCallContent::from_prepared(content, &languages, cx))
+                .collect();
+            let ToolCallContent::DiffPatch { source, render } = &content[0] else {
+                panic!("patch")
+            };
+            assert_eq!(source, &diff);
+            let markdown = render
+                .fallback
+                .as_ref()
+                .expect("unsupported patch fallback");
+            assert!(markdown.read(cx).source().contains("````diff\n"));
+            let original = markdown.clone();
+            content[0].update_from_prepared(
+                PreparedToolCallContent::DiffPatch(
+                    acp_v2::Diff::patch(patch, vec![])
+                        .meta(acp_v2::Meta::from_iter([("revision".into(), 2.into())])),
+                ),
+                &languages,
+                cx,
+            );
+            let ToolCallContent::DiffPatch { source, render } = &content[0] else {
+                panic!("patch")
+            };
+            assert_eq!(render.fallback.as_ref(), Some(&original));
+            assert_eq!(
+                source.meta.as_ref().and_then(|meta| meta.get("revision")),
+                Some(&serde_json::json!(2))
+            );
+            let ToolCallContent::Other { source, markdown } = &content[1] else {
+                panic!("unknown")
+            };
+            assert_eq!(source, &unknown);
+            assert!(!markdown.read(cx).source().is_empty());
+        });
     }
 
     #[gpui::test]
@@ -9316,11 +10532,8 @@ mod tests {
 
         thread.read_with(cx, |thread, _| {
             assert!(matches!(
-                thread.entries[1],
-                AgentThreadEntry::ToolCall(ToolCall {
-                    status: ToolCallStatus::InProgress,
-                    ..
-                })
+                &thread.entries[1],
+                AgentThreadEntry::ToolCall(call) if call.status() == ToolCallStatus::InProgress
             ));
         });
 
@@ -9329,10 +10542,7 @@ mod tests {
         thread.read_with(cx, |thread, _| {
             assert!(matches!(
                 &thread.entries[1],
-                AgentThreadEntry::ToolCall(ToolCall {
-                    status: ToolCallStatus::Canceled,
-                    ..
-                })
+                AgentThreadEntry::ToolCall(call) if call.status() == ToolCallStatus::Canceled
             ));
         });
 
@@ -9353,11 +10563,8 @@ mod tests {
 
         thread.read_with(cx, |thread, _| {
             assert!(matches!(
-                thread.entries[1],
-                AgentThreadEntry::ToolCall(ToolCall {
-                    status: ToolCallStatus::Completed,
-                    ..
-                })
+                &thread.entries[1],
+                AgentThreadEntry::ToolCall(call) if call.status() == ToolCallStatus::Completed
             ));
         });
     }
@@ -9775,6 +10982,596 @@ mod tests {
         });
     }
 
+    #[test]
+    fn test_legacy_tool_enum_translations_preserve_known_values() {
+        for kind in [
+            acp_v1::ToolKind::Read,
+            acp_v1::ToolKind::Edit,
+            acp_v1::ToolKind::Delete,
+            acp_v1::ToolKind::Move,
+            acp_v1::ToolKind::Search,
+            acp_v1::ToolKind::Execute,
+            acp_v1::ToolKind::Think,
+            acp_v1::ToolKind::Fetch,
+            acp_v1::ToolKind::SwitchMode,
+            acp_v1::ToolKind::Other,
+        ] {
+            assert_eq!(
+                serde_json::to_value(tool_kind_from_v1(kind).expect("known kind"))
+                    .expect("v2 kind"),
+                serde_json::to_value(kind).expect("v1 kind"),
+            );
+        }
+        for status in [
+            acp_v1::ToolCallStatus::Pending,
+            acp_v1::ToolCallStatus::InProgress,
+            acp_v1::ToolCallStatus::Completed,
+            acp_v1::ToolCallStatus::Failed,
+        ] {
+            assert_eq!(
+                serde_json::to_value(tool_status_from_v1(status).expect("known status"))
+                    .expect("v2 status"),
+                serde_json::to_value(status).expect("v1 status"),
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_skipped_legacy_tool_enums_preserve_current_state(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let id = acp_v1::ToolCallId::new("kept");
+            thread
+                .upsert_tool_call_patch(
+                    acp_v2::ToolCallUpdate::new("kept")
+                        .kind(acp_v2::ToolKind::Execute)
+                        .status(acp_v2::ToolCallStatus::Completed),
+                    cx,
+                )
+                .expect("known state");
+            assert!(legacy_tool_field::<acp_v2::ToolKind>(None).is_undefined());
+            assert!(legacy_tool_field::<acp_v2::ToolCallStatus>(None).is_undefined());
+            thread
+                .upsert_tool_call_inner(
+                    acp_v1::ToolCallUpdate::new(
+                        id.clone(),
+                        acp_v1::ToolCallUpdateFields::new().title("updated title"),
+                    ),
+                    None,
+                    cx,
+                )
+                .expect("no translated kind or status");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.reported_kind, Some(acp_v2::ToolKind::Execute));
+            assert_eq!(
+                call.reported_status,
+                Some(acp_v2::ToolCallStatus::Completed)
+            );
+            assert_eq!(call.status(), ToolCallStatus::Completed);
+            assert_eq!(call.local_status, None);
+            assert_eq!(call.label.read(cx).source(), "updated title");
+            thread
+                .update_tool_call(
+                    acp_v1::ToolCallUpdate::new(
+                        id,
+                        acp_v1::ToolCallUpdateFields::new().kind(acp_v1::ToolKind::Other),
+                    ),
+                    cx,
+                )
+                .expect("Other is a supported explicit value");
+            assert_eq!(thread.entries().len(), 1);
+            let languages = thread.project.read(cx).languages().clone();
+            let empty = ToolCall::from_patch(
+                "fallback".into(),
+                ToolCallPatch::legacy(acp_v1::ToolCallUpdateFields::new(), None),
+                languages,
+                &thread.terminals,
+                cx,
+            )
+            .expect("missing enums use display fallbacks");
+            assert_eq!(empty.reported_kind, None);
+            assert_eq!(empty.reported_status, None);
+            assert_eq!(empty.kind(), &acp_v2::ToolKind::Other);
+            assert_eq!(empty.status(), ToolCallStatus::Pending);
+            let (_, call) = thread
+                .tool_call(&acp_v1::ToolCallId::new("kept"))
+                .expect("tool");
+            assert_eq!(call.reported_kind, Some(acp_v2::ToolKind::Other));
+            assert_eq!(call.status(), ToolCallStatus::Completed);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_patch_preserves_unknown_values_and_applies_field_clears(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let id = acp_v1::ToolCallId::new("patch");
+            thread
+                .upsert_tool_call_patch(acp_v2::ToolCallUpdate::new("patch"), cx)
+                .expect("ID-only upsert");
+            let (_, call) = thread.tool_call(&id).expect("new tool");
+            assert_eq!(call.reported_kind, None);
+            assert_eq!(call.reported_status, None);
+            assert_eq!(call.status(), ToolCallStatus::Pending);
+            assert_eq!(call.label.read(cx).source(), "Tool call");
+            assert!(call.content().is_empty());
+
+            thread
+                .upsert_tool_call_patch(
+                    serde_json::from_value(json!({
+                        "toolCallId": "patch",
+                        "title": "**Title**",
+                        "name": "named",
+                        "kind": "_future_kind",
+                        "status": "_future_status",
+                        "content": [{
+                            "type": "content",
+                            "content": {"type": "text", "text": "body", "_meta": {"block": true}},
+                            "_meta": {"envelope": true}
+                        }],
+                        "rawInput": {"nested": [1, {"value": "input"}]},
+                        "rawOutput": "fallback",
+                        "_meta": {"opaque": {"nested": [1, 2]}}
+                    }))
+                    .expect("SDK patch"),
+                    cx,
+                )
+                .expect("populated upsert");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(
+                call.reported_kind,
+                Some(acp_v2::ToolKind::Unknown("_future_kind".into()))
+            );
+            assert_eq!(
+                call.reported_status,
+                Some(acp_v2::ToolCallStatus::Other("_future_status".into()))
+            );
+            assert_eq!(call.status(), ToolCallStatus::Pending);
+            assert_eq!(call.name.as_deref(), Some("named"));
+            assert_eq!(
+                serde_json::to_value(&call.meta).expect("metadata"),
+                json!({"opaque": {"nested": [1, 2]}})
+            );
+            let [ToolCallContent::ContentBlock { block, meta }] = call.content() else {
+                panic!("one protocol content block");
+            };
+            assert_eq!(
+                serde_json::to_value(&block.source).expect("source"),
+                json!({"type": "text", "text": "body", "_meta": {"block": true}})
+            );
+            assert_eq!(
+                serde_json::to_value(meta).expect("envelope"),
+                json!({"envelope": true})
+            );
+            let label = call.label.clone();
+            let output = block.markdown().expect("body").clone();
+            let input = call.raw_input_markdown.clone().expect("input");
+
+            for patch in [
+                json!({"toolCallId": "patch"}),
+                json!({"toolCallId": "patch", "_meta": {}}),
+            ] {
+                thread
+                    .upsert_tool_call_patch(serde_json::from_value(patch).expect("patch"), cx)
+                    .expect("metadata-only update");
+                let (_, call) = thread.tool_call(&id).expect("tool");
+                assert_eq!(call.label, label);
+                assert_eq!(call.content()[0].markdown(), Some(&output));
+                assert_eq!(call.raw_input_markdown.as_ref(), Some(&input));
+                assert_eq!(output.read(cx).source(), "body");
+            }
+            assert_eq!(
+                thread.tool_call(&id).expect("tool").1.meta,
+                Some(acp_v2::Meta::new())
+            );
+            thread
+                .upsert_tool_call_patch(acp_v2::ToolCallUpdate::new("patch").title("  "), cx)
+                .expect("whitespace title");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.title.as_deref(), Some("  "));
+            assert_eq!(call.label.read(cx).source(), "named");
+
+            thread
+                .upsert_tool_call_patch(
+                    serde_json::from_value(json!({
+                        "toolCallId": "patch",
+                        "title": null, "name": null, "kind": null, "status": null,
+                        "content": null, "rawInput": null, "_meta": null
+                    }))
+                    .expect("clear patch"),
+                    cx,
+                )
+                .expect("clear optional fields");
+            let (_, call) = thread.tool_call(&id).expect("tool survives clear");
+            assert_eq!(call.title, None);
+            assert_eq!(call.name, None);
+            assert_eq!(call.tool_name, None);
+            assert_eq!(call.reported_kind, None);
+            assert_eq!(call.reported_status, None);
+            assert_eq!(call.meta, None);
+            assert_eq!(call.raw_input, None);
+            assert!(call.raw_input_markdown.is_none());
+            assert_eq!(call.raw_output, Some(json!("fallback")));
+            assert_eq!(call.content()[0].to_markdown(cx), "fallback");
+            let ToolCallContent::ContentBlock { block, .. } = &call.content()[0] else {
+                panic!("derived raw-output fallback");
+            };
+            assert!(block.source.is_none());
+            assert_eq!(thread.entries().len(), 1);
+            thread
+                .upsert_tool_call_patch(
+                    serde_json::from_value(json!({"toolCallId": "patch", "rawOutput": null}))
+                        .expect("raw clear"),
+                    cx,
+                )
+                .expect("clear retained raw output");
+            assert!(thread.tool_call(&id).expect("tool").1.content().is_empty());
+            thread
+                .upsert_tool_call_patch(
+                    acp_v2::ToolCallUpdate::new("patch")
+                        .content(vec!["refilled".into()])
+                        .status(acp_v2::ToolCallStatus::Completed),
+                    cx,
+                )
+                .expect("refill existing record");
+            let (index, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(index, 0);
+            assert_eq!(call.content()[0].to_markdown(cx), "refilled");
+            assert_eq!(call.status(), ToolCallStatus::Completed);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_patch_metadata_policy_preserves_legacy_hints_and_clears_v2_hints(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let id = acp_v1::ToolCallId::new("metadata");
+            let meta = acp_v1::Meta::from_iter([
+                (TOOL_NAME_META_KEY.into(), json!("legacy_name")),
+                (
+                    SUBAGENT_SESSION_INFO_META_KEY.into(),
+                    json!({"session_id": "child", "message_start_index": 0}),
+                ),
+                ("opaque".into(), json!({"keep": ["all", "values"]})),
+            ]);
+            thread
+                .upsert_tool_call(acp_v1::ToolCall::new(id.clone(), "").meta(meta.clone()), cx)
+                .expect("legacy creation");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.name, None);
+            assert_eq!(call.tool_name.as_deref(), Some("legacy_name"));
+            assert!(call.subagent_session_info.is_some());
+            assert_eq!(call.meta.as_ref(), Some(&meta));
+
+            let newer_meta = acp_v1::Meta::from_iter([("opaque".into(), json!({"new": true}))]);
+            thread
+                .update_tool_call(
+                    acp_v1::ToolCallUpdate::new(id.clone(), acp_v1::ToolCallUpdateFields::new())
+                        .meta(newer_meta.clone()),
+                    cx,
+                )
+                .expect("legacy metadata update");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.meta.as_ref(), Some(&newer_meta));
+            assert_eq!(call.tool_name.as_deref(), Some("legacy_name"));
+            assert!(call.subagent_session_info.is_some());
+            thread
+                .upsert_tool_call_patch(
+                    acp_v2::ToolCallUpdate::new("metadata").meta(acp_v2::Meta::new()),
+                    cx,
+                )
+                .expect("authoritative metadata replacement");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.meta, Some(acp_v2::Meta::new()));
+            assert_eq!(call.tool_name, None);
+            assert!(call.subagent_session_info.is_none());
+            assert_eq!(call.label.read(cx).source(), "Tool call");
+            thread
+                .upsert_tool_call_patch(
+                    acp_v2::ToolCallUpdate::new("metadata")
+                        .name("first_class")
+                        .meta(meta),
+                    cx,
+                )
+                .expect("first-class name wins");
+            assert_eq!(
+                thread.tool_call(&id).expect("tool").1.tool_name.as_deref(),
+                Some("first_class")
+            );
+            thread
+                .upsert_tool_call_patch(
+                    acp_v2::ToolCallUpdate::new("metadata").meta(None::<acp_v2::Meta>),
+                    cx,
+                )
+                .expect("clear metadata without clearing name");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.meta, None);
+            assert_eq!(call.name.as_deref(), Some("first_class"));
+            assert_eq!(call.tool_name.as_deref(), Some("first_class"));
+            assert!(call.subagent_session_info.is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_reported_status_is_independent_of_local_authorization(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let id = acp_v1::ToolCallId::new("permission");
+        let permission = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(
+                    acp_v1::ToolCall::new(id.clone(), "Authorize").into(),
+                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                        "allow",
+                        "Allow",
+                        acp_v1::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .expect("request");
+        thread.update(cx, |thread, cx| {
+            for status in [json!("_future_status"), serde_json::Value::Null] {
+                thread
+                    .upsert_tool_call_patch(
+                        serde_json::from_value(
+                            json!({"toolCallId": "permission", "status": status}),
+                        )
+                        .expect("status patch"),
+                        cx,
+                    )
+                    .expect("nonterminal status");
+                let (_, call) = thread.tool_call(&id).expect("tool");
+                assert_eq!(call.status(), ToolCallStatus::WaitingForConfirmation);
+                assert!(call.authorization().is_some());
+                assert_eq!(
+                    serde_json::to_value(&call.reported_status).expect("reported status"),
+                    status
+                );
+            }
+            thread.cancel_tool_call_authorization(&id, cx);
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.reported_status, None);
+            assert_eq!(call.status(), ToolCallStatus::Canceled);
+            thread
+                .upsert_tool_call_patch(
+                    acp_v2::ToolCallUpdate::new("permission")
+                        .status(None::<acp_v2::ToolCallStatus>),
+                    cx,
+                )
+                .expect("clear only reported information");
+            assert_eq!(
+                thread.tool_call(&id).expect("tool").1.status(),
+                ToolCallStatus::Canceled
+            );
+            thread
+                .upsert_tool_call_patch(
+                    acp_v2::ToolCallUpdate::new("permission")
+                        .status(acp_v2::ToolCallStatus::InProgress),
+                    cx,
+                )
+                .expect("new reported progress supersedes local outcome");
+            assert_eq!(
+                thread.tool_call(&id).expect("tool").1.status(),
+                ToolCallStatus::InProgress
+            );
+        });
+        assert!(matches!(
+            permission.await,
+            RequestPermissionOutcome::Cancelled
+        ));
+
+        let permission = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(
+                    acp_v1::ToolCallUpdate::new(id.clone(), acp_v1::ToolCallUpdateFields::new()),
+                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                        "allow",
+                        "Allow",
+                        acp_v1::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .expect("second request");
+        thread.update(cx, |thread, cx| {
+            let original_label = thread.tool_call(&id).expect("tool").1.label.clone();
+            let result = thread.upsert_tool_call_patch(
+                serde_json::from_value(json!({
+                    "toolCallId": "permission",
+                    "status": "cancelled",
+                    "title": "must not replace valid presentation",
+                    "content": [{"type": "terminal", "terminalId": "missing"}]
+                }))
+                .expect("cancelled patch"),
+                cx,
+            );
+            assert!(result.is_err());
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(
+                call.reported_status,
+                Some(acp_v2::ToolCallStatus::Cancelled)
+            );
+            assert_eq!(call.status(), ToolCallStatus::Canceled);
+            assert!(call.authorization().is_none());
+            assert_eq!(call.label, original_label);
+            assert_eq!(call.label.read(cx).source(), "Authorize");
+        });
+        assert!(matches!(
+            permission.await,
+            RequestPermissionOutcome::Cancelled
+        ));
+    }
+
+    #[gpui::test]
+    async fn test_tool_authorization_preserves_legacy_continuation_without_rewriting_reported_status(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        for (kind, initial, incoming, expected) in [
+            (
+                AuthorizationKind::PermissionGrant,
+                acp_v1::ToolCallStatus::Pending,
+                None,
+                ToolCallStatus::InProgress,
+            ),
+            (
+                AuthorizationKind::PermissionGrant,
+                acp_v1::ToolCallStatus::InProgress,
+                None,
+                ToolCallStatus::InProgress,
+            ),
+            (
+                AuthorizationKind::PermissionGrant,
+                acp_v1::ToolCallStatus::Completed,
+                None,
+                ToolCallStatus::Completed,
+            ),
+            (
+                AuthorizationKind::ActionChoice,
+                acp_v1::ToolCallStatus::InProgress,
+                None,
+                ToolCallStatus::InProgress,
+            ),
+            (
+                AuthorizationKind::ActionChoice,
+                acp_v1::ToolCallStatus::Completed,
+                None,
+                ToolCallStatus::InProgress,
+            ),
+            (
+                AuthorizationKind::PermissionGrant,
+                acp_v1::ToolCallStatus::InProgress,
+                Some(acp_v1::ToolCallStatus::Completed),
+                ToolCallStatus::InProgress,
+            ),
+        ] {
+            let thread = new_test_thread(cx).await;
+            let id = acp_v1::ToolCallId::new("continuation");
+            thread.update(cx, |thread, cx| {
+                thread
+                    .upsert_tool_call(
+                        acp_v1::ToolCall::new(id.clone(), "Original").status(initial),
+                        cx,
+                    )
+                    .expect("initial tool");
+            });
+            let option_kind = if kind == AuthorizationKind::ActionChoice {
+                acp_v1::PermissionOptionKind::RejectOnce
+            } else {
+                acp_v1::PermissionOptionKind::AllowOnce
+            };
+            let permission = thread
+                .update(cx, |thread, cx| {
+                    thread.request_tool_call_authorization(
+                        acp_v1::ToolCallUpdate::new(
+                            id.clone(),
+                            acp_v1::ToolCallUpdateFields::new().status(incoming),
+                        ),
+                        PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                            "selected",
+                            "Choose",
+                            option_kind,
+                        )]),
+                        kind,
+                        cx,
+                    )
+                })
+                .expect("explicit legacy authorization request");
+            let reported =
+                tool_status_from_v1(incoming.unwrap_or(initial)).expect("known test status");
+            thread.update(cx, |thread, cx| {
+                let (_, call) = thread.tool_call(&id).expect("waiting tool");
+                assert_eq!(call.status(), ToolCallStatus::WaitingForConfirmation);
+                assert_eq!(call.reported_status.as_ref(), Some(&reported));
+                assert_eq!(call.permission_status(), Some(initial));
+                thread.authorize_tool_call(
+                    id.clone(),
+                    SelectedPermissionOutcome::new("selected".into(), option_kind),
+                    cx,
+                );
+                let (_, call) = thread.tool_call(&id).expect("authorized tool");
+                assert_eq!(call.status(), expected);
+                assert_eq!(call.reported_status.as_ref(), Some(&reported));
+                assert!(call.authorization().is_none());
+            });
+            assert!(
+                matches!(permission.await, RequestPermissionOutcome::Selected(outcome) if outcome.option_id == "selected".into())
+            );
+            thread.update(cx, |thread, cx| {
+                thread
+                    .upsert_tool_call_patch(
+                        acp_v2::ToolCallUpdate::new("continuation")
+                            .status(None::<acp_v2::ToolCallStatus>),
+                        cx,
+                    )
+                    .expect("clear reported state, not the local decision");
+                let (_, call) = thread.tool_call(&id).expect("tool");
+                assert_eq!(call.reported_status, None);
+                assert_eq!(call.status(), expected);
+                thread
+                    .upsert_tool_call_patch(
+                        acp_v2::ToolCallUpdate::new("continuation").status(reported),
+                        cx,
+                    )
+                    .expect("even repeated reported state supersedes a local outcome");
+                assert_eq!(thread.tool_call(&id).expect("tool").1.local_status, None);
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_tool_location_clear_ignores_pending_resolution(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({"file.rs": "first\nsecond\n"}))
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/project"))]), cx)
+            })
+            .await
+            .expect("session");
+        let id = acp_v1::ToolCallId::new("locations");
+        thread.update(cx, |thread, cx| {
+            thread.upsert_tool_call_patch(
+                serde_json::from_value(json!({
+                    "toolCallId": "locations",
+                    "locations": [{"path": path!("/project/file.rs"), "line": 2, "_meta": {"location": true}}]
+                })).expect("location patch"),
+                cx,
+            ).expect("new locations");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.locations[0].path, PathBuf::from(path!("/project/file.rs")));
+            assert_eq!(call.locations[0].line, Some(2));
+            assert_eq!(call.locations[0].meta, Some(acp_v1::Meta::from_iter([("location".into(), json!(true))])));
+            thread.upsert_tool_call_patch(
+                serde_json::from_value(json!({"toolCallId": "locations", "locations": null})).expect("clear locations"),
+                cx,
+            ).expect("clear before the previous lookup finishes");
+        });
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, cx| {
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert!(call.locations.is_empty());
+            assert!(call.resolved_locations.is_empty());
+            assert!(thread.project.read(cx).agent_location().is_none());
+        });
+    }
+
     #[gpui::test]
     fn test_tool_call_label_fallback(cx: &mut TestAppContext) {
         use markdown::parser::{MarkdownEvent, MarkdownTag};
@@ -9822,7 +11619,7 @@ mod tests {
             let call = cx.update(|cx| {
                 ToolCall::from_acp(
                     call,
-                    ToolCallStatus::Pending,
+                    Some(ToolCallStatus::Pending),
                     languages.clone(),
                     &HashMap::default(),
                     cx,
@@ -9862,7 +11659,7 @@ mod tests {
         let mut call = cx.update(|cx| {
             ToolCall::from_acp(
                 acp_v1::ToolCall::new("tool", ""),
-                ToolCallStatus::Pending,
+                Some(ToolCallStatus::Pending),
                 languages.clone(),
                 &HashMap::default(),
                 cx,
@@ -9946,7 +11743,7 @@ mod tests {
         let mut created_with_raw_output = cx.update(|cx| {
             ToolCall::from_acp(
                 acp_v1::ToolCall::new("created", "Tool").raw_output(serde_json::json!("first")),
-                ToolCallStatus::Pending,
+                Some(ToolCallStatus::Pending),
                 languages.clone(),
                 &HashMap::default(),
                 cx,
@@ -9956,7 +11753,7 @@ mod tests {
         let mut updated_with_raw_output = cx.update(|cx| {
             ToolCall::from_acp(
                 acp_v1::ToolCall::new("updated", "Tool"),
-                ToolCallStatus::Pending,
+                Some(ToolCallStatus::Pending),
                 languages.clone(),
                 &HashMap::default(),
                 cx,
@@ -9977,7 +11774,8 @@ mod tests {
                 .expect("first raw output update should apply");
         });
         let first_update_export = cx.read(|cx| updated_with_raw_output.to_markdown(cx));
-        let Some(ToolCallContent::ContentBlock(block)) = updated_with_raw_output.content().first()
+        let Some(ToolCallContent::ContentBlock { block, .. }) =
+            updated_with_raw_output.content().first()
         else {
             panic!("expected raw output content");
         };
@@ -10037,7 +11835,7 @@ mod tests {
                 acp_v1::ToolCall::new("tool", "Tool")
                     .content(vec!["structured".into()])
                     .raw_output(serde_json::json!("raw")),
-                ToolCallStatus::Pending,
+                Some(ToolCallStatus::Pending),
                 languages.clone(),
                 &HashMap::default(),
                 cx,
@@ -10336,15 +12134,15 @@ mod tests {
                     .content(content.clone())
                     .raw_input(json!("input"))
                     .raw_output(json!("raw fallback")),
-                ToolCallStatus::InProgress,
+                Some(ToolCallStatus::InProgress),
                 languages.clone(),
                 &terminals,
                 cx,
             )
             .expect("tool");
             let [
-                ToolCallContent::ContentBlock(block),
-                ToolCallContent::Diff(diff),
+                ToolCallContent::ContentBlock { block, .. },
+                ToolCallContent::LegacyDiff { diff, .. },
             ] = call.content()
             else {
                 panic!("text and diff");
@@ -10366,7 +12164,7 @@ mod tests {
                 assert_eq!(call.raw_input_markdown.as_ref(), Some(&input));
                 assert_eq!(input.read(cx).source(), text);
                 assert_eq!(call.diffs().next(), Some(&diff));
-                let ToolCallContent::ContentBlock(block) = &call.content()[0] else {
+                let ToolCallContent::ContentBlock { block, .. } = &call.content()[0] else {
                     panic!("text content");
                 };
                 assert_eq!(block.markdown(), Some(&output));
@@ -10552,7 +12350,9 @@ mod tests {
                 let (_, call) = thread.tool_call(&id).expect("original tool");
                 let label = call.label.clone();
                 let original_content = match &call.content()[0] {
-                    ToolCallContent::ContentBlock(block) => block.markdown().expect("text").clone(),
+                    ToolCallContent::ContentBlock { block, .. } => {
+                        block.markdown().expect("text").clone()
+                    }
                     _ => panic!("text content"),
                 };
                 let update = acp_v1::ToolCallUpdate::new(
@@ -10575,30 +12375,30 @@ mod tests {
                 )]));
                 let result = if upsert {
                     thread
-                        .upsert_tool_call_inner(update, status.into(), cx)
+                        .upsert_tool_call_inner(update, Some(status.into()), cx)
                         .map_err(anyhow::Error::from)
                 } else {
                     thread.update_tool_call(update, cx)
                 };
                 assert!(result.is_err(), "unknown terminal must fail conversion");
                 let (_, call) = thread.tool_call(&id).expect("tool must remain");
-                assert_eq!(call.status.as_acp_status(), Some(status));
+                assert_eq!(call.permission_status(), Some(status));
                 assert_eq!(call.label, label);
                 assert_eq!(call.label.read(cx).source(), "Original title");
-                assert_eq!(call.kind, acp_v1::ToolKind::Read);
+                assert_eq!(call.kind(), &acp_v2::ToolKind::Read);
                 assert_eq!(call.tool_name.as_deref(), Some("original-tool"));
                 assert_eq!(call.raw_input, Some(json!({"original": true})));
                 assert_eq!(call.raw_output, Some(json!("original raw")));
                 assert!(call.subagent_session_info.is_none());
                 assert_eq!(original_content.read(cx).source(), "original output");
-                let [ToolCallContent::ContentBlock(block)] = call.content() else {
+                let [ToolCallContent::ContentBlock { block, .. }] = call.content() else {
                     panic!("original content must remain");
                 };
                 assert_eq!(block.markdown(), Some(&original_content));
                 if status == acp_v1::ToolCallStatus::InProgress {
                     assert!(matches!(
-                        call.status,
-                        ToolCallStatus::WaitingForConfirmation { .. }
+                        call.status(),
+                        ToolCallStatus::WaitingForConfirmation
                     ));
                     thread.authorize_tool_call(
                         id.clone(),
@@ -10609,7 +12409,7 @@ mod tests {
                         cx,
                     );
                 } else {
-                    assert!(matches!(call.status, ToolCallStatus::Completed));
+                    assert!(matches!(call.status(), ToolCallStatus::Completed));
                 }
             });
             if status == acp_v1::ToolCallStatus::InProgress {
@@ -10636,7 +12436,7 @@ mod tests {
                     )
                     .expect("valid correction after failed patch");
                 let (_, call) = thread.tool_call(&id).expect("corrected tool");
-                assert!(matches!(call.status, ToolCallStatus::Completed));
+                assert!(matches!(call.status(), ToolCallStatus::Completed));
                 assert_eq!(call.content()[0].to_markdown(cx), "corrected output");
             });
         }
@@ -10699,8 +12499,8 @@ mod tests {
                 .expect("tool call should exist");
             assert_eq!(tool_call.label.read(cx).source(), "Updated title");
             assert!(matches!(
-                tool_call.status,
-                ToolCallStatus::WaitingForConfirmation { .. }
+                tool_call.status(),
+                ToolCallStatus::WaitingForConfirmation
             ));
             assert_eq!(tool_call.content().len(), 1);
             assert_eq!(tool_call.content()[0].to_markdown(cx), "updated content");
@@ -10727,8 +12527,8 @@ mod tests {
                 .expect("tool call should exist");
             assert_eq!(tool_call.label.read(cx).source(), "Updated again");
             assert!(matches!(
-                tool_call.status,
-                ToolCallStatus::WaitingForConfirmation { .. }
+                tool_call.status(),
+                ToolCallStatus::WaitingForConfirmation
             ));
             assert_eq!(tool_call.content().len(), 1);
             assert_eq!(tool_call.content()[0].to_markdown(cx), "updated again");
@@ -10746,7 +12546,7 @@ mod tests {
             let (_, tool_call) = thread
                 .tool_call(&tool_call_id)
                 .expect("tool call should exist");
-            assert!(matches!(tool_call.status, ToolCallStatus::InProgress));
+            assert!(matches!(tool_call.status(), ToolCallStatus::InProgress));
         });
 
         match permission_task.await {
@@ -10780,7 +12580,7 @@ mod tests {
                 .tool_call(&tool_call_id)
                 .expect("tool call should exist");
             assert_eq!(tool_call.label.read(cx).source(), "Completed");
-            assert!(matches!(tool_call.status, ToolCallStatus::Completed));
+            assert!(matches!(tool_call.status(), ToolCallStatus::Completed));
             assert_eq!(tool_call.content().len(), 1);
             assert_eq!(tool_call.content()[0].to_markdown(cx), "done");
         });
@@ -10836,13 +12636,11 @@ mod tests {
             let (_, tool_call) = thread
                 .tool_call(&tool_call_id)
                 .expect("tool call should exist");
-            assert!(matches!(
-                tool_call.status,
-                ToolCallStatus::WaitingForConfirmation {
-                    current_status: acp_v1::ToolCallStatus::InProgress,
-                    ..
-                }
-            ));
+            assert_eq!(tool_call.status(), ToolCallStatus::WaitingForConfirmation);
+            assert_eq!(
+                tool_call.permission_status(),
+                Some(acp_v1::ToolCallStatus::InProgress)
+            );
         });
 
         thread.update(cx, |thread, cx| {
@@ -10860,7 +12658,7 @@ mod tests {
             let (_, tool_call) = thread
                 .tool_call(&tool_call_id)
                 .expect("tool call should exist");
-            assert!(matches!(tool_call.status, ToolCallStatus::InProgress));
+            assert!(matches!(tool_call.status(), ToolCallStatus::InProgress));
         });
 
         match permission_task.await {
@@ -10928,13 +12726,11 @@ mod tests {
                 .tool_call(&tool_call_id)
                 .expect("tool call should exist");
             assert_eq!(tool_call.label.read(cx).source(), "Needs permission");
-            assert!(matches!(
-                tool_call.status,
-                ToolCallStatus::WaitingForConfirmation {
-                    current_status: acp_v1::ToolCallStatus::InProgress,
-                    ..
-                }
-            ));
+            assert_eq!(tool_call.status(), ToolCallStatus::WaitingForConfirmation);
+            assert_eq!(
+                tool_call.permission_status(),
+                Some(acp_v1::ToolCallStatus::InProgress)
+            );
         });
 
         thread.update(cx, |thread, cx| {
@@ -11003,7 +12799,7 @@ mod tests {
             let (_, tool_call) = thread
                 .tool_call(&tool_call_id)
                 .expect("tool call should exist");
-            assert!(matches!(tool_call.status, ToolCallStatus::Canceled));
+            assert!(matches!(tool_call.status(), ToolCallStatus::Canceled));
         });
 
         match permission_task.await {
@@ -11067,7 +12863,7 @@ mod tests {
             let (_, tool_call) = thread
                 .tool_call(&tool_call_id)
                 .expect("tool call should exist");
-            assert!(matches!(tool_call.status, ToolCallStatus::Completed));
+            assert!(matches!(tool_call.status(), ToolCallStatus::Completed));
         });
 
         match permission_task.await {
@@ -13342,12 +15138,16 @@ mod tests {
             // The entry should be a failed tool call
             if let AgentThreadEntry::ToolCall(tool_call) = &thread.entries[0] {
                 assert_eq!(tool_call.id, nonexistent_id);
-                assert!(matches!(tool_call.status, ToolCallStatus::Failed));
-                assert_eq!(tool_call.kind, acp_v1::ToolKind::Fetch);
+                assert!(matches!(tool_call.status(), ToolCallStatus::Failed));
+                assert_eq!(tool_call.kind(), &acp_v2::ToolKind::Fetch);
 
                 // Check that the content contains the error message
                 assert_eq!(tool_call.content().len(), 1);
-                if let ToolCallContent::ContentBlock(content_block) = &tool_call.content()[0] {
+                if let ToolCallContent::ContentBlock {
+                    block: content_block,
+                    ..
+                } = &tool_call.content()[0]
+                {
                     let markdown = content_block.plain_markdown().expect("expected markdown");
                     assert!(markdown.read(cx).source().contains("Tool call not found"));
                 } else {
@@ -14163,9 +15963,9 @@ mod tests {
                 .expect("should have tool call entry");
 
             assert!(
-                matches!(tool_entry.status, ToolCallStatus::Canceled),
+                matches!(tool_entry.status(), ToolCallStatus::Canceled),
                 "tool should be marked as Canceled when response is Cancelled, got {:?}",
-                tool_entry.status
+                tool_entry.status()
             );
         });
     }
@@ -15846,6 +17646,92 @@ mod tests {
         assert_failed_tool_update_resumes_sleep_prevention(true, cx).await;
     }
 
+    #[gpui::test]
+    async fn test_failed_v2_terminal_patch_settles_only_its_permission(cx: &mut TestAppContext) {
+        init_test(cx);
+        for status in [
+            acp_v2::ToolCallStatus::Completed,
+            acp_v2::ToolCallStatus::Failed,
+            acp_v2::ToolCallStatus::Cancelled,
+        ] {
+            let thread = new_test_thread(cx).await;
+            let (complete, request) = start_test_turn(&thread, cx);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+            let first_id = acp_v1::ToolCallId::new("first");
+            let second_id = acp_v1::ToolCallId::new("second");
+            let first_permission = request_test_permission(&thread, first_id.clone(), cx);
+            let second_permission = request_test_permission(&thread, second_id.clone(), cx);
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+            let updated_entries = Rc::new(RefCell::new(Vec::new()));
+            let _subscription = cx.update(|cx| {
+                cx.subscribe(&thread, {
+                    let updated_entries = updated_entries.clone();
+                    move |_, event, _| {
+                        if let AcpThreadEvent::EntryUpdated(index) = event {
+                            updated_entries.borrow_mut().push(*index);
+                        }
+                    }
+                })
+            });
+            let first_index = thread.update(cx, |thread, cx| {
+                let (index, first) = thread.tool_call(&first_id).expect("first tool");
+                let original_label = first.label.clone();
+                assert!(
+                    thread
+                        .upsert_tool_call_patch(
+                            acp_v2::ToolCallUpdate::new("first")
+                                .status(status.clone())
+                                .title("invalid replacement")
+                                .content(vec![acp_v2::ToolCallContent::Terminal(
+                                    acp_v2::Terminal::new("missing")
+                                )]),
+                            cx,
+                        )
+                        .is_err()
+                );
+                let (_, first) = thread.tool_call(&first_id).expect("updated tool");
+                assert_eq!(first.reported_status.as_ref(), Some(&status));
+                assert!(first.authorization().is_none());
+                assert_eq!(first.label, original_label);
+                assert_eq!(first.label.read(cx).source(), "Needs permission");
+                assert!(
+                    thread
+                        .tool_call(&second_id)
+                        .expect("second tool")
+                        .1
+                        .authorization()
+                        .is_some()
+                );
+                index
+            });
+            assert!(matches!(
+                first_permission.await,
+                RequestPermissionOutcome::Cancelled
+            ));
+            cx.run_until_parked();
+            assert!(updated_entries.borrow().contains(&first_index));
+            assert_eq!(
+                cx.active_idle_sleep_preventions(),
+                0,
+                "another permission still needs input"
+            );
+            thread.update(cx, |thread, cx| {
+                thread.cancel_tool_call_authorization(&second_id, cx)
+            });
+            assert!(matches!(
+                second_permission.await,
+                RequestPermissionOutcome::Cancelled
+            ));
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+            complete
+                .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+                .expect("backend still running");
+            request.await.expect("turn completes");
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        }
+    }
+
     fn start_test_turn(
         thread: &Entity<AcpThread>,
         cx: &mut TestAppContext,
@@ -16050,7 +17936,7 @@ mod tests {
             if upsert {
                 assert!(
                     thread
-                        .upsert_tool_call_inner(update, ToolCallStatus::Completed, cx)
+                        .upsert_tool_call_inner(update, Some(ToolCallStatus::Completed), cx)
                         .is_err()
                 );
             } else {
@@ -16068,8 +17954,7 @@ mod tests {
                     .tool_call(&tool_call_id)
                     .expect("tool call should remain present")
                     .1
-                    .status
-                    .as_acp_status(),
+                    .permission_status(),
                 Some(acp_v1::ToolCallStatus::Completed)
             );
             assert!(!thread.is_waiting_for_confirmation());

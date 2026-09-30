@@ -8,7 +8,7 @@ use acp_thread::{
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
 use agent::{NativeAgentServer, NoModelConfiguredError, ThreadStore};
-use agent_client_protocol::schema::v1 as acp_v1;
+use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
 #[cfg(test)]
 use agent_servers::AgentServerDelegate;
 use agent_servers::{AgentServer, GEMINI_TERMINAL_AUTH_METHOD_ID};
@@ -297,10 +297,7 @@ impl Conversation {
         let session_id = thread_state.session_id().clone();
         for entry in thread_state.entries() {
             if let AgentThreadEntry::ToolCall(tool_call) = entry
-                && matches!(
-                    tool_call.status,
-                    ToolCallStatus::WaitingForConfirmation { .. }
-                )
+                && matches!(tool_call.status(), ToolCallStatus::WaitingForConfirmation)
             {
                 self.add_permission_request(&session_id, &tool_call.id);
             }
@@ -384,10 +381,10 @@ impl Conversation {
     ) -> Option<&'a PermissionOptions> {
         let thread = self.threads.get(session_id)?;
         let (_, tool_call) = thread.read(cx).tool_call(&tool_call_id)?;
-        let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
+        if !matches!(tool_call.status(), ToolCallStatus::WaitingForConfirmation) {
             return None;
-        };
-        Some(options)
+        }
+        Some(&tool_call.authorization()?.options)
     }
 
     pub fn pending_tool_call<'a>(
@@ -408,10 +405,14 @@ impl Conversation {
         };
         let (_, tool_call) = thread.read(cx).tool_call(tool_id)?;
 
-        let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
+        if !matches!(tool_call.status(), ToolCallStatus::WaitingForConfirmation) {
             return None;
-        };
-        Some((result_session_id, tool_id.clone(), options))
+        }
+        Some((
+            result_session_id,
+            tool_id.clone(),
+            &tool_call.authorization()?.options,
+        ))
     }
 
     pub fn subagents_awaiting_permission(&self, cx: &App) -> Vec<(acp_v1::SessionId, usize)> {
@@ -439,10 +440,7 @@ impl Conversation {
         let thread = self.threads.get(session_id)?;
         let tool_call_id = self.permission_requests.get(session_id)?.iter().next()?;
         let (_, tool_call) = thread.read(cx).tool_call(tool_call_id)?;
-        if !matches!(
-            tool_call.status,
-            ToolCallStatus::WaitingForConfirmation { .. }
-        ) {
+        if !matches!(tool_call.status(), ToolCallStatus::WaitingForConfirmation) {
             return None;
         }
         Some(tool_call_id.clone())
@@ -3706,8 +3704,25 @@ impl AgentCodeSpanResolver {
     }
 }
 
+fn plan_summary_label(stats: &acp_thread::PlanStats<'_>, entry_count: usize) -> String {
+    if stats.pending == 0 {
+        if stats.cancelled == 0 {
+            "All Done"
+        } else if stats.completed == 0 {
+            "Cancelled"
+        } else {
+            "Finished"
+        }
+        .to_owned()
+    } else if stats.completed == 0 {
+        format!("{entry_count} Tasks")
+    } else {
+        format!("{}/{entry_count}", stats.completed)
+    }
+}
+
 fn plan_label_markdown_style(
-    status: &acp_v1::PlanEntryStatus,
+    status: &acp_v2::PlanEntryStatus,
     window: &Window,
     cx: &App,
 ) -> MarkdownStyle {
@@ -3716,7 +3731,7 @@ fn plan_label_markdown_style(
     MarkdownStyle {
         base_text_style: TextStyle {
             color: cx.theme().colors().text_muted,
-            strikethrough: if matches!(status, acp_v1::PlanEntryStatus::Completed) {
+            strikethrough: if matches!(status, acp_v2::PlanEntryStatus::Completed) {
                 Some(gpui::StrikethroughStyle {
                     thickness: px(1.),
                     color: Some(cx.theme().colors().text_muted.opacity(0.8)),
@@ -4298,6 +4313,117 @@ pub(crate) mod tests {
                 "steering should be on after toggling"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_stale_send_result_preserves_new_prompt(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        for (responses_are_errors, defer_contents) in [(false, false), (true, false), (true, true)]
+        {
+            let connection = StubAgentConnection::new();
+            let (conversation_view, cx) =
+                setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+            add_to_workspace(conversation_view.clone(), cx);
+            let thread_view = active_thread(&conversation_view, cx);
+            let message_editor = message_editor(&conversation_view, cx);
+
+            let finish_first = connection.defer_next_prompt_response();
+            message_editor.update_in(cx, |editor, window, cx| {
+                editor.set_text("first", window, cx);
+            });
+            thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+            cx.run_until_parked();
+
+            thread_view.update_in(cx, |view, _window, cx| view.cancel_generation(cx));
+            cx.run_until_parked();
+            let finish_second = connection.defer_next_prompt_response();
+            message_editor.update_in(cx, |editor, window, cx| {
+                editor.set_text("second", window, cx);
+            });
+            let finish_contents = if defer_contents {
+                let (sender, receiver) = futures::channel::oneshot::channel();
+                thread_view.update_in(cx, |view, window, cx| {
+                    let contents = cx.spawn(async move |_, _| {
+                        receiver.await?;
+                        anyhow::Ok(Some((vec!["second".into()], Vec::new())))
+                    });
+                    view.send_content(contents, false, window, cx);
+                });
+                Some(sender)
+            } else {
+                thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+                None
+            };
+            cx.run_until_parked();
+
+            thread_view.read_with(cx, |view, cx| {
+                if defer_contents {
+                    assert!(view.is_loading_contents);
+                    assert_eq!(view.thread.read(cx).status(), ThreadStatus::Idle);
+                } else {
+                    assert_eq!(view.thread.read(cx).status(), ThreadStatus::Generating);
+                    assert!(matches!(
+                        view.in_flight_prompt.as_deref(),
+                        Some([acp_v1::ContentBlock::Text(text)]) if text.text == "second"
+                    ));
+                }
+                assert!(view.thread_error.is_none());
+            });
+
+            let first_response = if responses_are_errors {
+                Err(anyhow!("stale prompt failed"))
+            } else {
+                Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
+            };
+            finish_first
+                .send(first_response)
+                .expect("first prompt response should still be pending");
+            cx.run_until_parked();
+            if let Some(finish_contents) = finish_contents {
+                finish_contents
+                    .send(())
+                    .expect("second contents are pending");
+                cx.run_until_parked();
+            }
+
+            thread_view.read_with(cx, |view, cx| {
+                assert_eq!(view.thread.read(cx).status(), ThreadStatus::Generating);
+                assert!(view.turn_fields.turn_started_at.is_some());
+                assert!(matches!(
+                    view.in_flight_prompt.as_deref(),
+                    Some([acp_v1::ContentBlock::Text(text)]) if text.text == "second"
+                ));
+                assert!(view.thread_error.is_none());
+            });
+
+            let second_response = if responses_are_errors {
+                Err(anyhow!("current prompt failed"))
+            } else {
+                Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
+            };
+            finish_second
+                .send(second_response)
+                .expect("second prompt response should be pending");
+            cx.run_until_parked();
+            thread_view.read_with(cx, |view, cx| {
+                assert_eq!(view.thread.read(cx).status(), ThreadStatus::Idle);
+                assert!(view.turn_fields.turn_started_at.is_none());
+                if responses_are_errors {
+                    assert!(matches!(
+                        &view.thread_error,
+                        Some(ThreadError::Other { message, .. }) if message.as_ref() == "current prompt failed"
+                    ));
+                    assert!(matches!(
+                        view.in_flight_prompt.as_deref(),
+                        Some([acp_v1::ContentBlock::Text(text)]) if text.text == "second"
+                    ));
+                } else {
+                    assert!(view.thread_error.is_none());
+                    assert!(view.in_flight_prompt.is_none());
+                }
+            });
+        }
     }
 
     #[gpui::test]
@@ -6024,6 +6150,7 @@ pub(crate) mod tests {
             view.thread
                 .read(cx)
                 .plan()
+                .expect("active plan")
                 .entries
                 .first()
                 .expect("active plan entry")
@@ -6054,11 +6181,12 @@ pub(crate) mod tests {
             let thread = view.thread.read(cx);
             assert_eq!(thread.status(), ThreadStatus::Idle);
             assert_eq!(thread.entries().len(), entry_count);
-            assert_eq!(thread.plan().stats().completed, 1);
-            assert_eq!(thread.plan().stats().pending, 0);
+            assert_eq!(thread.plan().expect("completed plan").stats().completed, 1);
+            assert_eq!(thread.plan().expect("completed plan").stats().pending, 0);
             assert_eq!(
                 thread
                     .plan()
+                    .expect("completed plan")
                     .entries
                     .first()
                     .expect("completed plan entry")
@@ -6082,17 +6210,22 @@ pub(crate) mod tests {
         active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
             assert_thread_list_item_count_matches_entries(view, cx);
             let thread = view.thread.read(cx);
-            let entry = thread.plan().entries.first().expect("reopened plan entry");
+            let entry = thread
+                .plan()
+                .expect("reopened plan")
+                .entries
+                .first()
+                .expect("reopened plan entry");
             assert_eq!(entry.content, plan_content);
             assert_eq!(entry.content.read(cx).source(), "Revise the thing");
-            assert_eq!(thread.plan().stats().pending, 1);
+            assert_eq!(thread.plan().expect("reopened plan").stats().pending, 1);
             assert_eq!(thread.entries().len(), entry_count);
         });
 
         active_thread(&conversation_view, cx).update(cx, |view, cx| {
             view.thread.update(cx, |thread, cx| {
                 thread.clear_plan(cx);
-                assert!(thread.plan().is_empty());
+                assert!(thread.plan().is_none());
                 assert_eq!(thread.entries().len(), entry_count);
             });
         });
@@ -6109,7 +6242,15 @@ pub(crate) mod tests {
         });
         cx.run_until_parked();
         active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
-            assert_eq!(view.thread.read(cx).plan().stats().completed, 1);
+            assert_eq!(
+                view.thread
+                    .read(cx)
+                    .plan()
+                    .expect("next plan")
+                    .stats()
+                    .completed,
+                1
+            );
         });
 
         message_editor(&conversation_view, cx).update_in(cx, |editor, window, cx| {
@@ -6121,10 +6262,150 @@ pub(crate) mod tests {
         cx.run_until_parked();
         active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
             assert_thread_list_item_count_matches_entries(view, cx);
-            assert!(view.thread.read(cx).plan().is_empty());
+            assert!(view.thread.read(cx).plan().is_none_or(Plan::is_empty));
         });
         connection.end_turn(session_id, acp_v1::StopReason::EndTurn);
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_plan_panel_dismissal_and_status_updates(cx: &mut TestAppContext) {
+        use agent_client_protocol::schema::v2 as acp_v2;
+
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let entry = |status| {
+            acp_v2::PlanEntry::new("Unchanged task", acp_v2::PlanEntryPriority::Medium, status)
+        };
+        thread.update(cx, |thread, cx| {
+            thread.upsert_plan_items(
+                acp_v2::PlanItems::new(
+                    "status-plan",
+                    vec![entry(acp_v2::PlanEntryStatus::Pending)],
+                ),
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        let markdown = thread.read_with(cx, |thread, _| {
+            thread.plan().expect("visible plan").entries[0]
+                .content
+                .clone()
+        });
+        assert!(cx.debug_bounds("plan-status-1 Tasks").is_some());
+        let plan_bounds = cx.debug_bounds("plan_summary").expect("visible plan panel");
+        let dismiss = cx.debug_bounds("ICON-Close").expect("Clear Plan button");
+        assert!(plan_bounds.contains(&dismiss.center()));
+        cx.simulate_click(dismiss.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("plan_summary").is_none());
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.plan().is_none());
+            assert!(thread.plan_by_id(&"status-plan".into()).is_some());
+        });
+        thread.update(cx, |thread, cx| {
+            for meta in [None, Some(acp_v2::Meta::new())] {
+                thread.upsert_plan_items(
+                    acp_v2::PlanItems::new(
+                        "status-plan",
+                        vec![entry(acp_v2::PlanEntryStatus::Pending).meta(meta.clone())],
+                    )
+                    .meta(meta.clone()),
+                    meta,
+                    cx,
+                );
+            }
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("plan_summary").is_none());
+        thread.update(cx, |thread, cx| {
+            thread.upsert_plan_items(
+                acp_v2::PlanItems::new(
+                    "status-plan",
+                    vec![entry(acp_v2::PlanEntryStatus::InProgress)],
+                ),
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        let summary = cx.debug_bounds("plan_summary").expect("plan disclosure");
+        cx.simulate_click(summary.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("plan-entry-0-TodoProgress").is_some());
+
+        for (status, summary, row) in [
+            (
+                acp_v2::PlanEntryStatus::Completed,
+                "plan-status-All Done",
+                "plan-entry-0-TodoComplete",
+            ),
+            (
+                acp_v2::PlanEntryStatus::Cancelled,
+                "plan-status-Cancelled",
+                "plan-entry-0-Close",
+            ),
+            (
+                acp_v2::PlanEntryStatus::Other("_blocked".into()),
+                "plan-status-1 Tasks",
+                "plan-entry-0-TodoPending",
+            ),
+        ] {
+            thread.update(cx, |thread, cx| {
+                thread.upsert_plan_items(
+                    acp_v2::PlanItems::new("status-plan", vec![entry(status)]),
+                    None,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            assert!(cx.debug_bounds(summary).is_some(), "{summary}");
+            assert!(cx.debug_bounds(row).is_some(), "{row}");
+            thread.read_with(cx, |thread, cx| {
+                assert_eq!(
+                    thread.plan().expect("visible plan").entries[0].content,
+                    markdown
+                );
+                assert_eq!(markdown.read(cx).source(), "Unchanged task");
+            });
+        }
+        thread.update(cx, |thread, cx| {
+            thread.upsert_plan_items(
+                acp_v2::PlanItems::new(
+                    "status-plan",
+                    vec![
+                        entry(acp_v2::PlanEntryStatus::Cancelled),
+                        acp_v2::PlanEntry::new(
+                            "Finished task",
+                            acp_v2::PlanEntryPriority::Medium,
+                            acp_v2::PlanEntryStatus::Completed,
+                        ),
+                    ],
+                ),
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("plan-status-Finished").is_some());
+        assert!(cx.debug_bounds("plan-entry-0-Close").is_some());
+        assert!(cx.debug_bounds("plan-entry-1-TodoComplete").is_some());
+        assert!(cx.debug_bounds("plan-status-All Done").is_none());
+        thread.update(cx, |thread, cx| {
+            thread.upsert_plan_items(acp_v2::PlanItems::new("status-plan", vec![]), None, cx);
+            assert!(thread.plan().expect("empty selected plan").is_empty());
+            assert!(thread.entries().is_empty());
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("plan_summary").is_none());
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(view.render_activity_bar(window, cx).is_none());
+        });
     }
 
     async fn setup_conversation_view_with_initial_content(
@@ -8412,6 +8693,572 @@ pub(crate) mod tests {
                 "expanded tool search should track the latest raw fallback",
             );
         }
+    }
+
+    #[gpui::test]
+    async fn test_new_patch_hunk_auto_expands_only_on_creation(cx: &mut TestAppContext) {
+        use agent_client_protocol::schema::v2 as acp_v2;
+
+        init_test(cx);
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    expand_edit_card: true,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let tool_call_id = acp_v1::ToolCallId::new("new-patch");
+
+        let patch: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
+            "toolCallId": "new-patch",
+            "title": "Edit file",
+            "kind": "edit",
+            "content": [{
+                "type": "diff",
+                "changes": [{"operation": "modify", "path": "/tmp/new-patch"}],
+                "patch": {
+                    "format": "git_patch",
+                    "text": "diff --git a//tmp/new-patch b//tmp/new-patch\n--- a//tmp/new-patch\n+++ b//tmp/new-patch\n@@ -1 +1 @@\n-old patch\n+new patch\n"
+                }
+            }]
+        }))
+        .expect("new patch should deserialize");
+        thread
+            .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
+            .expect("new patch should apply");
+        cx.run_until_parked();
+
+        let (entry_index, hunk_buffer) = thread.read_with(cx, |thread, _| {
+            let (entry_index, call) = thread.tool_call(&tool_call_id).expect("new tool exists");
+            let [acp_thread::ToolCallContent::DiffPatch { render, .. }] = call.content() else {
+                panic!("expected patch content");
+            };
+            (entry_index, render.files[0].hunks[0].buffer.clone())
+        });
+        let original_editor = thread_view.read_with(cx, |view, cx| {
+            let state = view.entry_view_state.read(cx);
+            assert!(state.is_tool_call_expanded(&tool_call_id));
+            assert!(
+                state.is_tool_call_content_visible(
+                    thread
+                        .read(cx)
+                        .tool_call(&tool_call_id)
+                        .expect("tool exists")
+                        .1
+                )
+            );
+            state
+                .entry(entry_index)
+                .and_then(|entry| entry.editor_for_patch_hunk(&hunk_buffer))
+                .expect("hunk editor should be renderable")
+        });
+
+        thread_view.update(cx, |view, cx| {
+            view.entry_view_state.update(cx, |state, _| {
+                state.collapse_tool_call(&tool_call_id);
+            });
+        });
+        let metadata: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
+            "toolCallId": "new-patch",
+            "title": "Renamed edit"
+        }))
+        .expect("metadata patch should deserialize");
+        thread
+            .update(cx, |thread, cx| thread.upsert_tool_call_patch(metadata, cx))
+            .expect("metadata patch should apply");
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, cx| {
+            let state = view.entry_view_state.read(cx);
+            assert!(!state.is_tool_call_expanded(&tool_call_id));
+            assert_eq!(
+                state
+                    .entry(entry_index)
+                    .and_then(|entry| entry.editor_for_patch_hunk(&hunk_buffer)),
+                Some(original_editor),
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_awaiting_authorization_searches_visible_patch_content(cx: &mut TestAppContext) {
+        use agent_client_protocol::schema::v2 as acp_v2;
+
+        init_test(cx);
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    expand_edit_card: false,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let tool_call_id = acp_v1::ToolCallId::new("authorization-patch");
+        let patch: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
+            "toolCallId": "authorization-patch",
+            "title": "Review patch",
+            "content": [
+                {
+                    "type": "diff",
+                    "changes": [{"operation": "modify", "path": "/tmp/review"}],
+                    "patch": {
+                        "format": "git_patch",
+                        "text": "diff --git a//tmp/review b//tmp/review\n--- a//tmp/review\n+++ b//tmp/review\n@@ -1 +1 @@\n-review deleted\n+review added\n"
+                    }
+                },
+                {"type": "content", "content": {"type": "text", "text": "Review markdown"}}
+            ]
+        }))
+        .expect("patch should deserialize");
+        thread
+            .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
+            .expect("patch should apply");
+        cx.run_until_parked();
+        let _authorization = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(
+                    acp_v1::ToolCallUpdate::new(
+                        tool_call_id.clone(),
+                        acp_v1::ToolCallUpdateFields::new(),
+                    ),
+                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                        "allow-review",
+                        "Allow",
+                        acp_v1::PermissionOptionKind::AllowOnce,
+                    )]),
+                    acp_thread::AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .expect("authorization should preserve the existing patch");
+        cx.run_until_parked();
+
+        let (entry_index, hunk_buffer) = thread.read_with(cx, |thread, _| {
+            let (entry_index, call) = thread.tool_call(&tool_call_id).expect("tool exists");
+            assert!(call.authorization().is_some());
+            let [acp_thread::ToolCallContent::DiffPatch { render, .. }, ..] = call.content() else {
+                panic!("expected patch content");
+            };
+            (entry_index, render.files[0].hunks[0].buffer.clone())
+        });
+        thread_view.read_with(cx, |view, cx| {
+            let state = view.entry_view_state.read(cx);
+            assert!(!state.is_tool_call_expanded(&tool_call_id));
+            assert!(
+                state.is_tool_call_content_visible(
+                    thread
+                        .read(cx)
+                        .tool_call(&tool_call_id)
+                        .expect("tool exists")
+                        .1
+                )
+            );
+            assert!(
+                state
+                    .entry(entry_index)
+                    .and_then(|entry| entry.editor_for_patch_hunk(&hunk_buffer))
+                    .is_some()
+            );
+        });
+
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        let search_bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("search should be open");
+        for query in ["review deleted", "review added", "Review markdown"] {
+            search_bar.update_in(cx, |bar, window, cx| {
+                bar.query_editor.update(cx, |editor, cx| {
+                    editor.set_text(query, window, cx);
+                });
+                bar.update_matches(window, cx);
+            });
+            cx.run_until_parked();
+            assert_eq!(
+                search_bar.read_with(cx, |bar, _| bar.match_count()),
+                1,
+                "{query}"
+            );
+        }
+        assert!(
+            search_bar.read_with(cx, |bar, _| bar
+                .is_patch_buffer_subscribed(hunk_buffer.entity_id())),
+            "visible patch buffer should remain subscribed while awaiting authorization"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_thread_search_tracks_shared_tool_patch_content_and_raw_fallback(
+        cx: &mut TestAppContext,
+    ) {
+        use agent_client_protocol::schema::v2 as acp_v2;
+
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let tool_call_id = acp_v1::ToolCallId::new("shared-search-tool");
+
+        let patch: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
+            "toolCallId": "shared-search-tool",
+            "title": "Inspect output",
+            "status": "completed",
+            "content": [{
+                "type": "content",
+                "content": {"type": "text", "text": "Structured papaya output"}
+            }],
+            "rawOutput": "Raw mango output"
+        }))
+        .expect("initial tool patch should deserialize");
+        thread
+            .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
+            .expect("initial tool patch should apply");
+        cx.run_until_parked();
+
+        let original_index = thread.read_with(cx, |thread, _| {
+            let (index, call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert_eq!(call.content().len(), 1);
+            index
+        });
+
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        let search_bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread search should be open");
+        search_bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("papaya", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 0);
+
+        thread_view.update(cx, |view, cx| {
+            view.entry_view_state.update(cx, |state, _| {
+                state.expand_tool_call(tool_call_id.clone());
+            });
+        });
+        search_bar.update_in(cx, |bar, window, cx| bar.update_matches(window, cx));
+        cx.run_until_parked();
+        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 1);
+
+        search_bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("mango", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            search_bar.read_with(cx, |bar, _| bar.match_count()),
+            0,
+            "structured content should hide the raw fallback",
+        );
+
+        let patch: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
+            "toolCallId": "shared-search-tool",
+            "content": [{
+                "type": "diff",
+                "changes": [{"operation": "modify", "path": "/tmp/output"}],
+                "patch": {
+                    "format": "git_patch",
+                    "text": "diff --git a//tmp/output b//tmp/output\n--- a//tmp/output\n+++ b//tmp/output\n@@ -1 +1 @@\n-old output\n+durian patch\n"
+                }
+            }]
+        }))
+        .expect("diff patch should deserialize");
+        thread
+            .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
+            .expect("diff patch should apply");
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
+        cx.run_until_parked();
+        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 0);
+
+        thread.read_with(cx, |thread, _| {
+            let (index, call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert_eq!(
+                index, original_index,
+                "patches must reuse the existing tool row"
+            );
+            assert!(matches!(
+                call.content(),
+                [acp_thread::ToolCallContent::DiffPatch { source, .. }]
+                    if source
+                        .patch
+                        .as_ref()
+                        .is_some_and(|patch| patch.text.contains("durian patch"))
+            ));
+        });
+        let hunk_buffer = thread_view.read_with(cx, |view, cx| {
+            let (_, call) = thread
+                .read(cx)
+                .tool_call(&tool_call_id)
+                .expect("tool exists");
+            let [acp_thread::ToolCallContent::DiffPatch { render, .. }] = call.content() else {
+                panic!("expected a structured patch");
+            };
+            assert_eq!(render.files.len(), 1);
+            assert_eq!(render.files[0].hunks.len(), 1);
+            let hunk = &render.files[0].hunks[0];
+            assert_eq!(hunk.header.to_string(), "@@ -1 +1 @@");
+            let editor = view
+                .entry_view_state
+                .read(cx)
+                .entry(original_index)
+                .and_then(|entry| entry.editor_for_patch_hunk(&hunk.buffer))
+                .expect("patch hunk editor");
+            assert!(editor.read(cx).read_only(cx));
+            assert!(
+                editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .snapshot(cx)
+                    .text()
+                    .contains("durian patch")
+            );
+            assert!(
+                editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .snapshot(cx)
+                    .text()
+                    .contains("old output"),
+                "expanded patch text must include deleted lines",
+            );
+            assert!(
+                editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .snapshot(cx)
+                    .diff_hunks()
+                    .next()
+                    .is_some(),
+                "patch hunk should render as an inline diff",
+            );
+            hunk.buffer.clone()
+        });
+        search_bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("durian patch", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 1);
+
+        search_bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("old output", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 1);
+        search_bar.update_in(cx, |bar, window, cx| {
+            bar.select_next_match(&super::thread_search_bar::SelectNextThreadMatch, window, cx);
+        });
+        let selected_text = thread_view.update(cx, |view, cx| {
+            let editor = view
+                .entry_view_state
+                .read(cx)
+                .entry(original_index)
+                .and_then(|entry| entry.editor_for_patch_hunk(&hunk_buffer))
+                .expect("patch hunk editor");
+            editor.update(cx, |editor, cx| {
+                let selection = editor.selections.newest_anchor().range();
+                editor
+                    .buffer()
+                    .read(cx)
+                    .snapshot(cx)
+                    .text_for_range(selection)
+                    .collect::<String>()
+            })
+        });
+        assert_eq!(selected_text, "old output");
+
+        search_bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("durian patch", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        search_bar.update_in(cx, |bar, window, cx| {
+            bar.select_next_match(&super::thread_search_bar::SelectNextThreadMatch, window, cx);
+        });
+        let selected_text = thread_view.update(cx, |view, cx| {
+            let editor = view
+                .entry_view_state
+                .read(cx)
+                .entry(original_index)
+                .and_then(|entry| entry.editor_for_patch_hunk(&hunk_buffer))
+                .expect("patch hunk editor");
+            editor.update(cx, |editor, cx| {
+                let selection = editor.selections.newest_anchor().range();
+                editor
+                    .buffer()
+                    .read(cx)
+                    .snapshot(cx)
+                    .text_for_range(selection)
+                    .collect::<String>()
+            })
+        });
+        assert_eq!(selected_text, "durian patch");
+
+        search_bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("late deleted", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 0);
+
+        let (delayed_diff, finish_diff) = cx.update(|_, cx| {
+            let mut source_buffer = None;
+            hunk_buffer
+                .read(cx)
+                .for_each_buffer(&mut |buffer| source_buffer = Some(buffer.clone()));
+            let source_buffer = source_buffer.expect("patch hunk source buffer");
+            let snapshot = source_buffer.read(cx).snapshot();
+            let delayed_diff = cx.new(|cx| BufferDiff::new(&snapshot, None, None, cx));
+            let finish_diff = delayed_diff.update(cx, |diff, cx| {
+                diff.set_base_text(Some(Arc::from("late deleted\n")), snapshot.text, cx)
+            });
+            (delayed_diff, finish_diff)
+        });
+        finish_diff.await;
+        cx.update(|_, cx| {
+            hunk_buffer.update(cx, |buffer, cx| {
+                buffer.add_diff(delayed_diff, cx);
+                buffer.set_all_diff_hunks_expanded(cx);
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            search_bar.read_with(cx, |bar, _| bar.match_count()),
+            0,
+            "the active query should await the patch buffer's debounced refresh",
+        );
+        cx.executor()
+            .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
+        cx.run_until_parked();
+        let expected_start = cx.read(|cx| {
+            hunk_buffer
+                .read(cx)
+                .snapshot(cx)
+                .text()
+                .find("late deleted")
+                .expect("deleted text should appear in the expanded diff")
+        });
+        assert_eq!(
+            search_bar.read_with(cx, |bar, _| bar.match_source_ranges()),
+            vec![expected_start..expected_start + "late deleted".len()],
+        );
+        search_bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("durian patch", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        let expected_start = cx.read(|cx| {
+            hunk_buffer
+                .read(cx)
+                .snapshot(cx)
+                .text()
+                .find("durian patch")
+                .expect("new text should follow the deleted diff rows")
+        });
+        assert_eq!(
+            search_bar.read_with(cx, |bar, _| bar.match_source_ranges()),
+            vec![expected_start..expected_start + "durian patch".len()],
+        );
+        thread_view.read_with(cx, |view, cx| {
+            let editor = view
+                .entry_view_state
+                .read(cx)
+                .entry(original_index)
+                .and_then(|entry| entry.editor_for_patch_hunk(&hunk_buffer))
+                .expect("patch hunk editor should still be displayed");
+            assert!(editor.read(cx).read_only(cx));
+        });
+
+        let patch: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
+            "toolCallId": "shared-search-tool",
+            "content": null
+        }))
+        .expect("clear patch should deserialize");
+        thread
+            .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
+            .expect("clear patch should apply");
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
+        cx.run_until_parked();
+        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 0);
+        thread_view.read_with(cx, |view, cx| {
+            assert!(
+                view.entry_view_state
+                    .read(cx)
+                    .entry(original_index)
+                    .and_then(|entry| entry.editor_for_patch_hunk(&hunk_buffer))
+                    .is_none(),
+                "clearing a patch must discard its hunk editor",
+            );
+        });
+        search_bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("durian patch", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 0);
+
+        thread.read_with(cx, |thread, _| {
+            let (index, call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert_eq!(index, original_index);
+            assert_eq!(
+                call.content().len(),
+                1,
+                "clearing content restores raw output"
+            );
+        });
+        search_bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("mango", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 1);
     }
 
     #[gpui::test]
@@ -10933,17 +11780,16 @@ pub(crate) mod tests {
             // Verify it's waiting for confirmation
             assert!(
                 matches!(
-                    tool_call.status,
-                    acp_thread::ToolCallStatus::WaitingForConfirmation { .. }
+                    tool_call.status(),
+                    acp_thread::ToolCallStatus::WaitingForConfirmation
                 ),
                 "Expected WaitingForConfirmation status, got {:?}",
-                tool_call.status
+                tool_call.status()
             );
 
             // Verify the options count (granularity options only, no separate Deny option)
-            if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
-                &tool_call.status
-            {
+            if let Some(authorization) = tool_call.authorization() {
+                let options = &authorization.options;
                 let PermissionOptions::Dropdown(choices) = options else {
                     panic!("Expected dropdown permission options");
                 };
@@ -11040,9 +11886,8 @@ pub(crate) mod tests {
             assert!(tool_call.is_some(), "Expected a tool call entry");
             let tool_call = tool_call.unwrap();
 
-            if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
-                &tool_call.status
-            {
+            if let Some(authorization) = tool_call.authorization() {
+                let options = &authorization.options;
                 let PermissionOptions::Dropdown(choices) = options else {
                     panic!("Expected dropdown permission options");
                 };
@@ -11130,9 +11975,8 @@ pub(crate) mod tests {
             assert!(tool_call.is_some(), "Expected a tool call entry");
             let tool_call = tool_call.unwrap();
 
-            if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
-                &tool_call.status
-            {
+            if let Some(authorization) = tool_call.authorization() {
+                let options = &authorization.options;
                 let PermissionOptions::Dropdown(choices) = options else {
                     panic!("Expected dropdown permission options");
                 };
@@ -11224,9 +12068,8 @@ pub(crate) mod tests {
             assert!(tool_call.is_some(), "Expected a tool call entry");
             let tool_call = tool_call.unwrap();
 
-            if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
-                &tool_call.status
-            {
+            if let Some(authorization) = tool_call.authorization() {
+                let options = &authorization.options;
                 let PermissionOptions::Dropdown(choices) = options else {
                     panic!("Expected dropdown permission options");
                 };
