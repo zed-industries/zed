@@ -624,6 +624,7 @@ derive_more = { version = "2.1.1", features = [
 dialoguer = { version = "0.12", default-features = false }
 diffy = "0.4.2"
 dirs = "6.0"
+dispatch2 = "0.3.1"
 documented = "0.10"
 dotenvy = "0.15.0"
 dunce = "1.0"
