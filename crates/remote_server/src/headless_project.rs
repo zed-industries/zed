@@ -37,7 +37,7 @@ use rpc::{
 };
 use smol::process::Child;
 
-use settings::initial_server_settings_content;
+use settings::{Settings as _, SettingsLocation, initial_server_settings_content};
 use std::{
     num::NonZeroU64,
     path::{Path, PathBuf},
@@ -48,6 +48,7 @@ use std::{
     time::Instant,
 };
 use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
+use terminal::terminal_settings::TerminalSettings;
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use worktree::Worktree;
 
@@ -306,6 +307,7 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_find_search_candidates);
         session.add_entity_request_handler(Self::handle_open_server_settings);
         session.add_entity_request_handler(Self::handle_get_directory_environment);
+        session.add_entity_request_handler(Self::handle_get_terminal_shell);
         session.add_entity_message_handler(Self::handle_toggle_lsp_logs);
         session.add_entity_request_handler(Self::handle_open_image_by_path);
         session.add_entity_request_handler(Self::handle_trust_worktrees);
@@ -457,6 +459,10 @@ impl HeadlessProject {
                     .log_err();
             }
             LspStoreEvent::LanguageServerUpdate {
+                message: proto::update_language_server::Variant::MetadataUpdated(_),
+                ..
+            } => {}
+            LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
                 name,
                 message,
@@ -478,6 +484,33 @@ impl HeadlessProject {
                         message: message.clone(),
                     })
                     .log_err();
+            }
+            LspStoreEvent::LanguageServerShowDocument(show_document_request) => {
+                let request = self
+                    .session
+                    .request(proto::LanguageServerShowDocumentRequest {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        uri: show_document_request.uri.as_str().to_owned(),
+                        external: show_document_request.external,
+                        take_focus: show_document_request.take_focus,
+                        selection_start: show_document_request.selection.map(|selection| {
+                            proto::PointUtf16 {
+                                row: selection.start.line,
+                                column: selection.start.character,
+                            }
+                        }),
+                        selection_end: show_document_request.selection.map(|selection| {
+                            proto::PointUtf16 {
+                                row: selection.end.line,
+                                column: selection.end.character,
+                            }
+                        }),
+                    });
+                let show_document_request = show_document_request.clone();
+                cx.background_spawn(async move {
+                    show_document_request.respond(request.await.is_ok());
+                })
+                .detach();
             }
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 let request = self.session.request(proto::LanguageServerPromptRequest {
@@ -869,6 +902,7 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::ToggleLspLogs>,
         cx: AsyncApp,
     ) -> Result<()> {
+        let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
         let server_id = LanguageServerId::from_proto(envelope.payload.server_id);
         let lsp_store = this.read_with(&cx, |this, _| this.lsp_store.downgrade());
         cx.update(|cx| {
@@ -887,8 +921,14 @@ impl HeadlessProject {
                 };
             let server_key =
                 LanguageServerLogKey::new(LanguageServerKind::LocalSsh { lsp_store }, server_id);
-            log_store.update(cx, |log_store, _| {
-                log_store.toggle_lsp_logs(&server_key, envelope.payload.enabled, toggled_log_kind);
+            log_store.update(cx, |log_store, cx| {
+                log_store.set_downstream_log_stream(
+                    &server_key,
+                    peer_id,
+                    toggled_log_kind,
+                    envelope.payload.enabled,
+                    cx,
+                );
             });
             anyhow::Ok(())
         })?;
@@ -1361,6 +1401,26 @@ impl HeadlessProject {
             .into_iter()
             .collect();
         Ok(proto::DirectoryEnvironment { environment })
+    }
+
+    async fn handle_get_terminal_shell(
+        _this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetTerminalShell>,
+        cx: AsyncApp,
+    ) -> Result<proto::GetTerminalShellResponse> {
+        let worktree_id = envelope.payload.worktree_id.map(WorktreeId::from_proto);
+        let shell = cx.update(|cx| {
+            let settings_location = worktree_id.map(|worktree_id| SettingsLocation {
+                worktree_id,
+                path: RelPath::empty(),
+            });
+            TerminalSettings::get(settings_location, cx).shell.clone()
+        });
+        log::debug!("handle_get_terminal_shell: resolved remote terminal shell setting: {shell:?}");
+
+        Ok(proto::GetTerminalShellResponse {
+            shell: Some(task::shell_to_proto(shell)),
+        })
     }
 }
 

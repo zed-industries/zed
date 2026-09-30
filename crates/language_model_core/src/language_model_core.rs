@@ -31,6 +31,12 @@ pub use crate::util::{
 };
 pub use gpui_shared_string::SharedString;
 
+/// The events of a streaming completion, as produced by a provider.
+pub type LanguageModelCompletionStream = futures::stream::BoxStream<
+    'static,
+    Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+>;
+
 /// A completion event from a language model.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum LanguageModelCompletionEvent {
@@ -243,6 +249,13 @@ pub enum LanguageModelCompletionError {
     },
     #[error("stream from {provider} ended unexpectedly")]
     StreamEndedUnexpectedly { provider: LanguageModelProviderName },
+    /// The provider no longer offers a model with this id, for example after
+    /// its settings or fetched model list changed.
+    #[error("{provider} no longer offers the model {}", model.0)]
+    ModelUnavailable {
+        provider: LanguageModelProviderName,
+        model: LanguageModelId,
+    },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -379,15 +392,16 @@ impl LanguageModelCompletionError {
                 category,
                 ..
             } => {
-                status.is_some_and(|status| is_retryable_provider_status(provider, status))
-                    || matches!(
-                        category,
-                        ProviderErrorCategory::RateLimit
-                            | ProviderErrorCategory::Overloaded
-                            | ProviderErrorCategory::Timeout
-                            | ProviderErrorCategory::InternalServer
-                    )
-                    || retry_after.is_some()
+                *category != ProviderErrorCategory::PaymentRequired
+                    && (status.is_some_and(|status| is_retryable_provider_status(provider, status))
+                        || matches!(
+                            category,
+                            ProviderErrorCategory::RateLimit
+                                | ProviderErrorCategory::Overloaded
+                                | ProviderErrorCategory::Timeout
+                                | ProviderErrorCategory::InternalServer
+                        )
+                        || retry_after.is_some())
             }
             Self::ApiReadResponseError { .. } | Self::HttpSend { .. } => true,
             Self::DataRetentionConsentRequired { .. }
@@ -396,6 +410,7 @@ impl LanguageModelCompletionError {
             | Self::BuildRequestBody { .. }
             | Self::DeserializeResponse { .. }
             | Self::StreamEndedUnexpectedly { .. }
+            | Self::ModelUnavailable { .. }
             | Self::Other(_) => false,
         }
     }
@@ -425,6 +440,7 @@ impl LanguageModelCompletionError {
             | Self::BuildRequestBody { .. }
             | Self::DeserializeResponse { .. }
             | Self::StreamEndedUnexpectedly { .. }
+            | Self::ModelUnavailable { .. }
             | Self::Other(_) => None,
         }
     }
@@ -673,7 +689,7 @@ impl LanguageModelToolUseInput {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LanguageModelEffortLevel {
     pub name: SharedString,
     pub value: SharedString,

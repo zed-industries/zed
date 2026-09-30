@@ -15,6 +15,16 @@ use std::time::Duration;
 use scheduler::Instant;
 use serde::Serialize;
 
+#[cfg(not(target_family = "wasm"))]
+mod monitor;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) use monitor::HangMonitor;
+#[cfg(not(target_family = "wasm"))]
+pub use monitor::{HangMonitorConfig, HangMonitorError, HangMonitorPoll, HangMonitorPollReason};
+
+/// Version of the power/visibility-aware measurement rules.
+pub const MEASUREMENT_VERSION: u32 = 2;
+
 use super::SerializedLocation;
 use super::journal::{
     ForegroundEvent, ForegroundJournal, ForegroundJournalCollector, ForegroundJournalEntry,
@@ -111,6 +121,8 @@ impl HangDetector {
 /// locations as plain data, contributor count capped by the converter.
 #[derive(Debug, Clone, Serialize)]
 pub struct SerializedHangIncident {
+    /// Identifies the rules used to exclude interrupted measurements.
+    pub measurement_version: u32,
     /// `"startup"` when the active window began before the first observed
     /// newly drawn frame finished platform submission (see
     /// [`HangDetector::first_present_at`]), otherwise `"steady"`.
@@ -133,7 +145,7 @@ pub struct SerializedHangIncident {
     /// For presentation-sealed incidents, how long the submitted frame had
     /// been dirty, in milliseconds.
     pub dirty_to_present_ms: Option<f64>,
-    /// What closed the incident: `"present"` or `"idle"`. This labels the
+    /// What closed the incident: `"present"`, `"idle"`, or `"power_transition"`. This labels the
     /// boundary, not the hang's cause — the cause is the first contributor.
     pub sealed_by: &'static str,
     /// Fraction of the active window the foreground spent working,
@@ -269,6 +281,7 @@ impl SerializedHangIncident {
                 Some(first_present_at) if active_start >= first_present_at => "steady",
                 _ => "startup",
             },
+            measurement_version: MEASUREMENT_VERSION,
             trigger: incident.trigger,
             start_ms: since_startup(active_start),
             active_ms: as_millis(active),
@@ -281,11 +294,12 @@ impl SerializedHangIncident {
                 IntervalBoundary::Presented(presented) => {
                     presented.dirty_to_present_duration().map(as_millis)
                 }
-                IntervalBoundary::Idle { .. } => None,
+                IntervalBoundary::Idle { .. } | IntervalBoundary::PowerTransition { .. } => None,
             },
             sealed_by: match snapshot.boundary {
                 IntervalBoundary::Presented(_) => "present",
                 IntervalBoundary::Idle { .. } => "idle",
+                IntervalBoundary::PowerTransition { .. } => "power_transition",
             },
             busy_fraction: (busy_fraction * 1000.0).round() / 1000.0,
             event_count: snapshot.events.len(),
@@ -620,6 +634,106 @@ mod tests {
                 ..
             } if start_ms == 150.0 && duration_ms == 150.0
         ));
+    }
+
+    #[test]
+    fn hang_monitor_polls_on_its_interval_and_on_flush() {
+        use super::{HangMonitor, HangMonitorPollReason};
+
+        let (journal, _guard) = install_test_foreground_journal(64, 4);
+        // Each monitor reports on its own channel, which disconnects once the
+        // monitor's thread has exited and dropped its callback.
+        let spawn_monitor = |journal, interval| {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let monitor = HangMonitor::spawn(
+                HangDetector::new(journal, HANG_THRESHOLD, FRAME_BUDGET),
+                interval,
+                move |poll| {
+                    if !poll.incidents.is_empty() {
+                        sender.send((poll.reason, poll.incidents.len())).ok();
+                    }
+                },
+            )
+            .expect("spawn monitor thread");
+            (monitor, receiver)
+        };
+
+        let (monitor, receiver) = spawn_monitor(journal.clone(), Duration::from_millis(10));
+        simulate_blocked_foreground_poll(HANG_THRESHOLD * 2);
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(10)).ok(),
+            Some((HangMonitorPollReason::Interval, 1)),
+        );
+        drop(monitor);
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(10)),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected),
+        );
+
+        // An interval longer than the test isolates the flush path.
+        let (monitor, receiver) = spawn_monitor(journal, Duration::from_secs(3600));
+        simulate_blocked_foreground_poll(HANG_THRESHOLD * 2);
+        let flushed = monitor.request_flush().expect("monitor thread is running");
+        futures::executor::block_on(flushed).expect("flush completes");
+        assert_eq!(
+            receiver.try_recv().ok(),
+            Some((HangMonitorPollReason::Flush, 1)),
+        );
+
+        drop(monitor);
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(10)),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected),
+        );
+    }
+
+    #[gpui::test]
+    fn app_flushes_its_hang_monitor_on_shutdown(cx: &mut TestAppContext) {
+        use super::{HangMonitorConfig, HangMonitorPollReason};
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        cx.update(|cx| {
+            cx.start_hang_monitor(
+                HangMonitorConfig {
+                    threshold: HANG_THRESHOLD,
+                    frame_budget: FRAME_BUDGET,
+                    // Longer than the test, so only shutdown can poll.
+                    interval: Duration::from_secs(3600),
+                },
+                move |poll| {
+                    sender.send(poll.reason).ok();
+                },
+            )
+            .expect("start hang monitor");
+        });
+        assert!(receiver.try_recv().is_err());
+
+        cx.update(|cx| cx.shutdown());
+        assert_eq!(receiver.try_recv().ok(), Some(HangMonitorPollReason::Flush));
+    }
+
+    #[gpui::test]
+    fn starting_the_hang_monitor_twice_is_rejected(cx: &mut TestAppContext) {
+        use super::{HangMonitorConfig, HangMonitorError};
+
+        let config = HangMonitorConfig {
+            threshold: HANG_THRESHOLD,
+            frame_budget: FRAME_BUDGET,
+            interval: Duration::from_secs(3600),
+        };
+        cx.update(|cx| {
+            cx.start_hang_monitor(config, |_| {})
+                .expect("start hang monitor");
+            let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                cx.start_hang_monitor(config, |_| {})
+            }));
+            // Debug builds also assert, so misuse is caught during development.
+            if cfg!(debug_assertions) {
+                assert!(second.is_err());
+            } else {
+                assert!(matches!(second, Ok(Err(HangMonitorError::AlreadyStarted))));
+            }
+        });
     }
 
     #[test]
