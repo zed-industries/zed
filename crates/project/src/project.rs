@@ -6597,30 +6597,31 @@ pub struct ProjectGroupKey {
 }
 
 impl ProjectGroupKey {
+    fn deduplicated_paths(paths: &PathList) -> PathList {
+        PathList::new(&paths.ordered_paths().unique().cloned().collect_vec())
+    }
+
     /// Creates a new `ProjectGroupKey` with the given path list.
     ///
     /// The path list should point to the git main worktree paths for a project.
     pub fn new(host: Option<RemoteConnectionOptions>, paths: PathList) -> Self {
-        Self { paths, host }
+        Self {
+            paths: Self::deduplicated_paths(&paths),
+            host,
+        }
     }
 
     pub fn from_project(project: &Project, cx: &App) -> Self {
         let paths = project.worktree_paths(cx);
         let host = project.remote_connection_options(cx);
-        Self {
-            paths: paths.main_worktree_path_list().clone(),
-            host,
-        }
+        Self::new(host, paths.main_worktree_path_list().clone())
     }
 
     pub fn from_worktree_paths(
         paths: &WorktreePaths,
         host: Option<RemoteConnectionOptions>,
     ) -> Self {
-        Self {
-            paths: paths.main_worktree_path_list().clone(),
-            host,
-        }
+        Self::new(host, paths.main_worktree_path_list().clone())
     }
 
     pub fn path_list(&self) -> &PathList {

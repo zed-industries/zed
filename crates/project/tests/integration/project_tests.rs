@@ -91,6 +91,7 @@ use text::{Anchor, PointUtf16, ReplicaId, ToOffset, Unclipped};
 use unindent::Unindent as _;
 use util::{
     RandomCharIter, TryFutureExt as _, assert_set_eq, maybe, path,
+    path_list::PathList,
     paths::{PathMatcher, PathStyle},
     rel_path::{RelPath, rel_path},
     test::{TempTree, marked_text_offsets},
@@ -17994,6 +17995,28 @@ async fn test_project_group_keys_remain_distinct_for_sibling_repo_subdirectories
             .map(|path| path.as_path())
             .collect::<Vec<_>>(),
         vec![Path::new(path!("/root/my-repo/packages/b"))]
+    );
+}
+
+#[test]
+fn test_project_group_key_deduplicates_linked_worktrees_from_same_repo() {
+    let worktree_paths = WorktreePaths::from_path_lists(
+        PathList::new(&[path!("/root/my-repo"), path!("/root/my-repo")]),
+        PathList::new(&[
+            path!("/root/my-repo/.claude/worktrees/feature-a"),
+            path!("/root/my-repo/.claude/worktrees/feature-b"),
+        ]),
+    )
+    .unwrap();
+
+    let key = ProjectGroupKey::from_worktree_paths(&worktree_paths, None);
+
+    assert_eq!(
+        key.path_list()
+            .ordered_paths()
+            .map(|path| path.as_path())
+            .collect::<Vec<_>>(),
+        vec![Path::new(path!("/root/my-repo"))]
     );
 }
 
