@@ -9,8 +9,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
-use sha2::{Digest, Sha256};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
@@ -122,49 +121,22 @@ pub enum SessionError {
     UnmatchedToolResult(LanguageModelToolUseId),
 }
 
-/// SHA-256 of a log's JSON encoding, from [`SessionLog::content_hash`].
-///
-/// This fingerprints the exact serialized bytes rather than the log's
-/// meaning: two logs hash equal when they would encode to the same bytes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct SessionLogHash([u8; 32]);
-
-impl SessionLogHash {
-    /// The raw 32-byte digest.
-    pub fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
-}
-
-impl fmt::Display for SessionLogHash {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for byte in self.0 {
-            write!(formatter, "{byte:02x}")?;
-        }
-        Ok(())
-    }
-}
-
 /// The conversation a session sends, as an append-only log.
 ///
-/// Deserializing fails unless the encoded version is [`Self::VERSION`].
+/// The log implements `Serialize` and `Deserialize` so hosts can persist it
+/// in a format of their choosing; opaque provider data such as signatures and
+/// reasoning details is only reachable through it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SessionLog {
-    #[serde(deserialize_with = "deserialize_supported_version")]
-    version: u32,
     config: SessionConfig,
     entries: Vec<SessionLogEntry>,
     next_anchor: u64,
 }
 
 impl SessionLog {
-    /// The encoding version written by [`Self::to_json`].
-    pub const VERSION: u32 = 1;
-
     /// An empty log whose requests use `config`.
     pub fn new(config: SessionConfig) -> Self {
         Self {
-            version: Self::VERSION,
             config,
             entries: Vec::new(),
             next_anchor: 0,
@@ -386,55 +358,6 @@ impl SessionLog {
             max_output_tokens: None,
         }
     }
-
-    /// SHA-256 of [`Self::to_json`].
-    ///
-    /// This fingerprints the serialized bytes, not the log's meaning. Keys
-    /// keep their insertion order (the workspace enables
-    /// `serde_json/preserve_order`) rather than being sorted, because byte
-    /// identity is what prompt caching depends on. A log decoded with
-    /// [`Self::from_json`] hashes the same as the log that encoded it.
-    ///
-    /// # Errors
-    ///
-    /// Fails if [`Self::to_json`] does.
-    pub fn content_hash(&self) -> Result<SessionLogHash, serde_json::Error> {
-        let json = self.to_json()?;
-        Ok(SessionLogHash(Sha256::digest(&json).into()))
-    }
-
-    /// Encodes the log as JSON, for persisting and [`Self::from_json`].
-    ///
-    /// # Errors
-    ///
-    /// Fails if a tool schema, tool input, or reasoning details value can't
-    /// be serialized.
-    pub fn to_json(&self) -> Result<Vec<u8>, serde_json::Error> {
-        serde_json::to_vec(self)
-    }
-
-    /// Decodes a log written by [`Self::to_json`].
-    ///
-    /// # Errors
-    ///
-    /// Fails for malformed input or a log written with a version other than
-    /// [`Self::VERSION`].
-    pub fn from_json(bytes: &[u8]) -> Result<Self, serde_json::Error> {
-        serde_json::from_slice(bytes)
-    }
-}
-
-fn deserialize_supported_version<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<u32, D::Error> {
-    let version = u32::deserialize(deserializer)?;
-    if version != SessionLog::VERSION {
-        return Err(D::Error::custom(format_args!(
-            "unsupported session log version {version}, expected {}",
-            SessionLog::VERSION
-        )));
-    }
-    Ok(version)
 }
 
 /// Pushes `message` without its unanswered tool uses, then a user message
@@ -1204,100 +1127,6 @@ mod tests {
         assert_ne!(stale, replacement);
         assert_eq!(log.truncate(stale), Err(SessionError::UnknownAnchor(stale)));
         assert_eq!(log.entries().len(), 1);
-    }
-
-    #[test]
-    fn json_round_trip_preserves_log_and_hash() {
-        let log = full_log();
-        let json = log.to_json().unwrap();
-        let decoded = SessionLog::from_json(&json).unwrap();
-
-        assert_eq!(decoded, log);
-        assert_eq!(decoded.to_json().unwrap(), json);
-        assert_eq!(decoded.content_hash().unwrap(), log.content_hash().unwrap());
-    }
-
-    #[test]
-    fn deserializing_rejects_unsupported_version() {
-        let mut json: serde_json::Value =
-            serde_json::from_slice(&full_log().to_json().unwrap()).unwrap();
-        json["version"] = json!(SessionLog::VERSION + 1);
-        let expected = format!(
-            "unsupported session log version {}, expected {}",
-            SessionLog::VERSION + 1,
-            SessionLog::VERSION
-        );
-
-        let from_json = SessionLog::from_json(&serde_json::to_vec(&json).unwrap());
-        let from_serde = serde_json::from_value::<SessionLog>(json);
-
-        for result in [from_json, from_serde] {
-            match result {
-                Err(error) => assert!(error.to_string().contains(&expected), "{error}"),
-                Ok(log) => panic!("decoded an unsupported version: {log:?}"),
-            }
-        }
-    }
-
-    #[test]
-    fn json_round_trip_preserves_hash_with_non_trivial_floats() {
-        let mut log = SessionLog::new(SessionConfig {
-            tools: vec![LanguageModelRequestTool::function(
-                "scale".into(),
-                "Scales a value".into(),
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "factor": {
-                            "type": "number",
-                            "minimum": 0.1,
-                            "maximum": 1.7976931348623157e308,
-                            "default": -2.5e-8,
-                        },
-                    },
-                }),
-                false,
-            )],
-            ..config_without_system_prompt()
-        });
-        log.append(user_text("Scale it"));
-        run_round(
-            &mut log,
-            &[
-                LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
-                    input: LanguageModelToolUseInput::Json(json!({
-                        "factor": 0.30000000000000004,
-                        "epsilon": 2.2250738585072014e-308,
-                        "largest_exact_integer": 9007199254740991.0,
-                    })),
-                    ..tool_use("tool-1", true)
-                }),
-                LanguageModelCompletionEvent::ReasoningDetails(json!([
-                    {"score": 1.2345678901234567, "weight": 1e21, "bias": -0.1},
-                ])),
-                LanguageModelCompletionEvent::Stop(StopReason::ToolUse),
-            ],
-        );
-        log.submit_tool_result(tool_result("tool-1", "done"))
-            .unwrap();
-
-        let json = log.to_json().unwrap();
-        let decoded = SessionLog::from_json(&json).unwrap();
-
-        assert_eq!(decoded, log);
-        assert_eq!(decoded.to_json().unwrap(), json);
-        assert_eq!(decoded.content_hash().unwrap(), log.content_hash().unwrap());
-    }
-
-    #[test]
-    fn independently_built_equal_logs_hash_equal() {
-        let hash = full_log().content_hash().unwrap();
-        let mut extended = full_log();
-        extended.append(user_text("One more thing"));
-
-        assert_eq!(full_log().content_hash().unwrap(), hash);
-        assert_ne!(extended.content_hash().unwrap(), hash);
-        assert_eq!(hash.to_string().len(), 64);
     }
 
     /// A system prompt, a tool, an image, every assistant block kind, and an

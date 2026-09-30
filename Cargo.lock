@@ -9730,7 +9730,6 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "serde_json",
- "sha2",
  "strum 0.28.0",
  "thiserror 2.0.17",
 ]
