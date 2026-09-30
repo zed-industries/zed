@@ -1,6 +1,7 @@
 mod api_key;
 mod registry;
 mod request;
+pub mod session;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;

@@ -3,6 +3,7 @@ mod provider;
 mod rate_limiter;
 mod request;
 mod role;
+pub mod session;
 pub mod tool_schema;
 pub mod util;
 
