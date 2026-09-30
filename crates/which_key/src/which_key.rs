@@ -1,5 +1,6 @@
 //! Which-key support for Zed.
 
+mod pending_bindings;
 mod pending_keystrokes_indicator;
 mod which_key_modal;
 mod which_key_settings;
@@ -12,6 +13,15 @@ use util::ResultExt;
 use which_key_modal::WhichKeyModal;
 use which_key_settings::WhichKeySettings;
 use workspace::Workspace;
+
+gpui::actions!(
+    which_key,
+    [
+        /// Shows the bindings that can complete the pending key sequence. Must be bound to a
+        /// single keystroke.
+        ShowPendingBindings
+    ]
+);
 
 pub(crate) struct PendingBinding {
     pub(crate) remaining_keystrokes: Vec<KeybindingKeystroke>,

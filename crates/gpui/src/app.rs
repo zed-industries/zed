@@ -21,7 +21,10 @@ use slotmap::SlotMap;
 
 pub use async_context::*;
 #[cfg(feature = "bench-support")]
-pub use bench_context::{BenchAppContext, BenchReport, BenchWindowContext, bench_platform};
+pub use bench_context::{
+    BenchAppContext, BenchMeasurement, BenchReport, BenchWindowContext, CountingAllocator,
+    MetricReport, bench_platform,
+};
 use collections::{FxHashMap, FxHashSet, HashMap, TypeIdHashMap, TypeIdHashSet, VecDeque};
 pub use context::*;
 pub use entity_map::*;
@@ -2289,9 +2292,10 @@ impl App {
         })
     }
 
-    /// Register a callback to be invoked when a keystroke is received by the application
-    /// in any window. Note that this fires after all other action and event mechanisms have resolved
-    /// and that this API will not be invoked if the event's propagation is stopped.
+    /// Register a callback to be invoked after a keystroke is resolved in any window,
+    /// including the action that handled it, if any. Keystrokes consumed by an
+    /// interceptor or raw keyboard event handler are not observed.
+    /// Standalone modifiers are observed on release.
     pub fn observe_keystrokes(
         &mut self,
         mut f: impl FnMut(&KeystrokeEvent, &mut Window, &mut App) + 'static,
@@ -3196,11 +3200,29 @@ pub struct AnyTooltip {
     pub check_visible_and_update: Rc<dyn Fn(Bounds<Pixels>, &mut Window, &mut App) -> bool>,
 }
 
+/// Whether a keystroke should prefer character input or key bindings.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InputPreference {
+    /// Prefer typing text over triggering key bindings.
+    CharacterInput,
+    /// Dispatch key bindings normally, if any match.
+    KeyBindings,
+}
+
 /// A keystroke event, and potentially the associated action
 #[derive(Debug)]
 pub struct KeystrokeEvent {
     /// The keystroke that occurred
     pub keystroke: Keystroke,
+
+    /// Whether this keystroke should prefer character input or key bindings.
+    /// This is [`InputPreference::CharacterInput`] when the platform prefers text for the key
+    /// (e.g. AltGr on Windows) and the focused input accepts text. Interceptors still receive
+    /// these keystrokes and can consume them.
+    ///
+    /// If the keystroke is part of a multi-stroke binding, it still waits as pending input
+    /// even when this is [`InputPreference::CharacterInput`].
+    pub input_preference: InputPreference,
 
     /// The action that was resolved for the keystroke, if any
     pub action: Option<Box<dyn Action>>,
