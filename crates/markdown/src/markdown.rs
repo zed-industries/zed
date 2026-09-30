@@ -3577,8 +3577,7 @@ impl IntoElement for MarkdownElement {
     }
 }
 
-/// The corner radius of the area inside a container's bottom border, which is
-/// where absolutely positioned children like scrollbar tracks are laid out.
+/// Prefers `code_block_style` since it's refined onto the container afterwards.
 fn bottom_inner_corner_radius(
     container_style: &StyleRefinement,
     code_block_style: &StyleRefinement,
