@@ -109,10 +109,9 @@ impl DisplayConnection {
         dispatch!(self, connection => connection.has_windows(), headless(connection) => connection.has_windows())
     }
 
-    /// The display variables for programs launched while connected, or `None` while headless.
-    #[cfg(any(feature = "wayland", feature = "x11"))]
-    pub(crate) fn launch_environment(&self) -> Option<super::LaunchEnvironment> {
-        dispatch!(self, connection => Some(connection.launch_environment()), headless => None)
+    /// The environment this connection was made in, or `None` while headless.
+    pub(crate) fn graphical_environment(&self) -> Option<GraphicalEnvironment> {
+        dispatch!(self, connection => Some(connection.graphical_environment()), headless => None)
     }
 
     pub(crate) fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {

@@ -1129,10 +1129,16 @@ impl App {
         self.platform.request_windowing(request)
     }
 
-    /// Whether the platform has no display server: it started headless, or switched with
-    /// [`App::request_windowing`]. Always `false` on platforms that can't switch windowing modes.
-    pub fn is_headless(&self) -> bool {
-        self.platform.is_headless()
+    /// The environment of the display server the platform is connected to, or `None` while
+    /// headless. Its activation token is always unset, since the connection has used it.
+    ///
+    /// Programs an app launches inherit this process's environment, which may name another
+    /// graphical session, or none if the app started headless. Pass them this one with
+    /// [`GraphicalEnvironment::apply_to`](crate::GraphicalEnvironment::apply_to).
+    ///
+    /// Always `None` on platforms that can't switch windowing modes.
+    pub fn graphical_environment(&self) -> Option<crate::GraphicalEnvironment> {
+        self.platform.graphical_environment()
     }
 
     /// Returns the current policy for hiding the cursor in response to

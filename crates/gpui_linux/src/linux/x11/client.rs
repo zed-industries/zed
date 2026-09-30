@@ -49,10 +49,9 @@ use super::{
 };
 
 use crate::linux::{
-    DEFAULT_CURSOR_ICON_NAME, LaunchEnvironment, capslock_from_xkb, cursor_style_to_icon_names,
-    get_xkb_compose_state, is_within_click_distance, keystroke_from_xkb,
-    keystroke_underlying_dead_key, log_cursor_icon_warning, modifiers_from_xkb, new_xkb_context,
-    open_uri_internal,
+    DEFAULT_CURSOR_ICON_NAME, capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state,
+    is_within_click_distance, keystroke_from_xkb, keystroke_underlying_dead_key,
+    log_cursor_icon_warning, modifiers_from_xkb, new_xkb_context, open_uri_internal,
     platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
     reveal_path_internal,
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
@@ -186,7 +185,8 @@ pub struct X11ClientState {
     /// Long-lived sources this client registered on the loop, removed when its
     /// [`X11Connection`] drops.
     registrations: Vec<RegistrationToken>,
-    launch_environment: LaunchEnvironment,
+    /// The environment this connection was made in, without its activation token.
+    graphical_environment: GraphicalEnvironment,
 
     pub(crate) last_click: Instant,
     pub(crate) last_mouse_button: Option<MouseButton>,
@@ -501,7 +501,10 @@ impl X11Connection {
             RefCell::new(X11ClientState {
                 this: X11ClientStatePtr(this.clone()),
                 registrations: Vec::new(),
-                launch_environment: LaunchEnvironment::new(environment),
+                graphical_environment: GraphicalEnvironment {
+                    activation_token: None,
+                    ..environment.clone()
+                },
                 modifiers: Modifiers::default(),
                 capslock: Capslock::default(),
                 last_modifiers_changed_event: Modifiers::default(),
@@ -641,8 +644,8 @@ impl X11Client {
         !self.0.borrow().windows.is_empty()
     }
 
-    pub(crate) fn launch_environment(&self) -> LaunchEnvironment {
-        self.0.borrow().launch_environment.clone()
+    pub(crate) fn graphical_environment(&self) -> GraphicalEnvironment {
+        self.0.borrow().graphical_environment.clone()
     }
 
     pub fn process_x11_events(
@@ -1804,7 +1807,7 @@ impl X11Client {
             self.with_common(|c| c.background_executor.clone()),
             uri,
             None,
-            self.launch_environment(),
+            self.graphical_environment(),
         );
     }
 
@@ -1813,7 +1816,7 @@ impl X11Client {
             self.with_common(|c| c.background_executor.clone()),
             path,
             None,
-            self.launch_environment(),
+            self.graphical_environment(),
         );
     }
 

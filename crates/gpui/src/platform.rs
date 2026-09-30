@@ -168,7 +168,8 @@ pub fn guess_compositor() -> &'static str {
 /// A long-running process can outlive the graphical session it was started in, so a platform
 /// that attaches to a display server later can be given a fresher environment than its own.
 /// While connected, programs the platform launches (for example to open a URL) get these
-/// variables instead of the ones this process started with.
+/// variables instead of the ones this process started with. Apply
+/// [`App::graphical_environment`] to the programs an app launches, for the same reason.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[derive(Clone, Debug, Default)]
 pub struct GraphicalEnvironment {
@@ -197,6 +198,9 @@ impl GraphicalEnvironment {
     pub fn detect() -> Self {
         Self
     }
+
+    /// Does nothing on this platform.
+    pub fn apply_to(&self, _command: &mut std::process::Command) {}
 }
 
 /// A display mode for [`App::request_windowing`] to switch to.
@@ -220,6 +224,22 @@ impl GraphicalEnvironment {
             x11_display: std::env::var_os("DISPLAY"),
             xdg_runtime_dir: std::env::var_os("XDG_RUNTIME_DIR"),
             activation_token: None,
+        }
+    }
+
+    /// Sets this environment's display variables on `command`, and removes the ones it doesn't
+    /// set, so the program connects to this graphical session rather than the one this process
+    /// started in. Leaves `XDG_ACTIVATION_TOKEN` alone.
+    pub fn apply_to(&self, command: &mut std::process::Command) {
+        for (name, value) in [
+            ("WAYLAND_DISPLAY", &self.wayland_display),
+            ("DISPLAY", &self.x11_display),
+            ("XDG_RUNTIME_DIR", &self.xdg_runtime_dir),
+        ] {
+            match value {
+                Some(value) => command.env(name, value),
+                None => command.env_remove(name),
+            };
         }
     }
 
@@ -435,9 +455,10 @@ pub trait Platform: 'static {
     fn compositor_name(&self) -> &'static str {
         ""
     }
-    /// Whether a platform that can switch windowing modes is headless. See [`App::is_headless`].
-    fn is_headless(&self) -> bool {
-        false
+    /// The environment of the display server a platform that can switch windowing modes is
+    /// connected to. See [`App::graphical_environment`].
+    fn graphical_environment(&self) -> Option<GraphicalEnvironment> {
+        None
     }
     fn app_path(&self) -> Result<PathBuf>;
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;

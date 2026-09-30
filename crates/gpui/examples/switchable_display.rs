@@ -172,13 +172,13 @@ async fn run_command(
     match cx.update(|cx| handle_command(&command, todos, cx))? {
         None => return Ok(()),
         Some(request @ WindowingRequest::Headless) => {
-            if !cx.update(|cx| cx.is_headless()) {
+            if cx.update(|cx| cx.graphical_environment()).is_some() {
                 cx.update(|cx| cx.request_windowing(request)).await?;
             }
         }
         Some(request @ WindowingRequest::Windowed(_)) => {
             // Switching fails while windowed, so `open` then just opens the window.
-            if cx.update(|cx| cx.is_headless()) {
+            if cx.update(|cx| cx.graphical_environment()).is_none() {
                 cx.update(|cx| cx.request_windowing(request)).await?;
             }
             cx.update(|cx| open_window(todos, cx))?;

@@ -85,11 +85,10 @@ use super::{
 };
 
 use crate::linux::{
-    DOUBLE_CLICK_INTERVAL, LaunchEnvironment, LinuxCommon, LinuxKeyboardLayout, PIPE_READ_TIMEOUT,
-    SCROLL_LINES, capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state,
-    is_within_click_distance, keystroke_from_xkb, keystroke_underlying_dead_key,
-    modifiers_from_xkb, new_xkb_context, open_uri_internal, read_fd_with_timeout,
-    reveal_path_internal,
+    DOUBLE_CLICK_INTERVAL, LinuxCommon, LinuxKeyboardLayout, PIPE_READ_TIMEOUT, SCROLL_LINES,
+    capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state, is_within_click_distance,
+    keystroke_from_xkb, keystroke_underlying_dead_key, modifiers_from_xkb, new_xkb_context,
+    open_uri_internal, read_fd_with_timeout, reveal_path_internal,
     wayland::{
         clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
         cursor::Cursor,
@@ -401,7 +400,8 @@ pub(crate) struct WaylandClientState {
     cursor: Cursor,
     pending_activation: Option<PendingActivation>,
     startup_activation_token: Option<String>,
-    launch_environment: LaunchEnvironment,
+    /// The environment this connection was made in, without its activation token.
+    graphical_environment: GraphicalEnvironment,
     /// Long-lived sources this client registered on the loop, removed when it drops.
     registrations: Vec<RegistrationToken>,
     pub common: Rc<RefCell<LinuxCommon>>,
@@ -1089,7 +1089,10 @@ impl WaylandConnection {
             cursor,
             pending_activation: None,
             startup_activation_token: activation_token,
-            launch_environment: LaunchEnvironment::new(environment),
+            graphical_environment: GraphicalEnvironment {
+                activation_token: None,
+                ..environment.clone()
+            },
             registrations: Vec::new(),
             ime_enabled: None,
         }));
@@ -1176,8 +1179,8 @@ impl WaylandConnection {
         !self.0.borrow().windows.is_empty()
     }
 
-    pub(crate) fn launch_environment(&self) -> LaunchEnvironment {
-        self.0.borrow().launch_environment.clone()
+    pub(crate) fn graphical_environment(&self) -> GraphicalEnvironment {
+        self.0.borrow().graphical_environment.clone()
     }
 }
 
@@ -1355,7 +1358,7 @@ impl WaylandConnection {
             token.commit();
         } else {
             let executor = state.common.borrow().background_executor.clone();
-            open_uri_internal(executor, uri, None, state.launch_environment.clone());
+            open_uri_internal(executor, uri, None, state.graphical_environment.clone());
         }
     }
 
@@ -1373,7 +1376,7 @@ impl WaylandConnection {
             token.commit();
         } else {
             let executor = state.common.borrow().background_executor.clone();
-            reveal_path_internal(executor, path, None, state.launch_environment.clone());
+            reveal_path_internal(executor, path, None, state.graphical_environment.clone());
         }
     }
 
@@ -1826,13 +1829,13 @@ impl Dispatch<xdg_activation_token_v1::XdgActivationTokenV1, ()> for WaylandClie
 
         if let xdg_activation_token_v1::Event::Done { token } = event {
             let executor = state.common.borrow().background_executor.clone();
-            let launch_environment = state.launch_environment.clone();
+            let environment = state.graphical_environment.clone();
             match state.pending_activation.take() {
                 Some(PendingActivation::Uri(uri)) => {
-                    open_uri_internal(executor, &uri, Some(token), launch_environment)
+                    open_uri_internal(executor, &uri, Some(token), environment)
                 }
                 Some(PendingActivation::Path(path)) => {
-                    reveal_path_internal(executor, path, Some(token), launch_environment)
+                    reveal_path_internal(executor, path, Some(token), environment)
                 }
                 Some(PendingActivation::Window(window)) => {
                     let Some(window) = get_window(&mut state, &window) else {

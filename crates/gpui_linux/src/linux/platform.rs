@@ -598,8 +598,8 @@ impl Platform for LinuxPlatform {
         self.connection.borrow().compositor_name()
     }
 
-    fn is_headless(&self) -> bool {
-        self.connection.borrow().is_headless()
+    fn graphical_environment(&self) -> Option<GraphicalEnvironment> {
+        self.connection.borrow().graphical_environment()
     }
 
     fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<std::ffi::OsString>) {
@@ -848,15 +848,13 @@ impl Platform for LinuxPlatform {
 
     fn open_with_system(&self, path: &Path) {
         let path = path.to_owned();
-        #[cfg(any(feature = "wayland", feature = "x11"))]
-        let launch_environment = self.connection.borrow().launch_environment();
+        let environment = self.connection.borrow().graphical_environment();
         self.background_executor()
             .spawn(async move {
                 let mut command = new_std_command("xdg-open");
                 command.arg(path);
-                #[cfg(any(feature = "wayland", feature = "x11"))]
-                if let Some(launch_environment) = launch_environment {
-                    launch_environment.apply(&mut command);
+                if let Some(environment) = environment {
+                    environment.apply_to(&mut command);
                 }
                 #[allow(
                     clippy::disallowed_methods,
@@ -1076,49 +1074,16 @@ impl Platform for LinuxPlatform {
     fn add_recent_document(&self, _path: &Path) {}
 }
 
-/// The display variables of the session a connection belongs to, given to the programs the
-/// platform launches.
-///
-/// This process's own variables can name a different session, or none, when it attached to
-/// a display server after starting.
-#[cfg(any(feature = "wayland", feature = "x11"))]
-#[derive(Clone, Debug)]
-pub(crate) struct LaunchEnvironment {
-    variables: [(&'static str, Option<OsString>); 3],
-}
-
-#[cfg(any(feature = "wayland", feature = "x11"))]
-impl LaunchEnvironment {
-    pub(crate) fn new(environment: &GraphicalEnvironment) -> Self {
-        Self {
-            variables: [
-                ("WAYLAND_DISPLAY", environment.wayland_display.clone()),
-                ("DISPLAY", environment.x11_display.clone()),
-                ("XDG_RUNTIME_DIR", environment.xdg_runtime_dir.clone()),
-            ],
-        }
-    }
-
-    pub(crate) fn apply(&self, command: &mut std::process::Command) {
-        for (name, value) in &self.variables {
-            match value {
-                Some(value) => command.env(name, value),
-                None => command.env_remove(name),
-            };
-        }
-    }
-}
-
 /// Opens `target` with the first of the desktop's launchers that succeeds. Returns whether one
 /// did.
 #[cfg(any(feature = "wayland", feature = "x11"))]
 async fn run_open_commands(
     target: &std::ffi::OsStr,
     activation_token: Option<&str>,
-    launch_environment: &LaunchEnvironment,
+    environment: &GraphicalEnvironment,
 ) -> bool {
     for mut command in open::commands(target) {
-        launch_environment.apply(&mut command);
+        environment.apply_to(&mut command);
         if let Some(token) = activation_token {
             command.env("XDG_ACTIVATION_TOKEN", token);
         }
@@ -1140,7 +1105,7 @@ pub(super) fn open_uri_internal(
     executor: BackgroundExecutor,
     uri: &str,
     activation_token: Option<String>,
-    launch_environment: LaunchEnvironment,
+    environment: GraphicalEnvironment,
 ) {
     if let Some(uri) = ashpd::Uri::parse(uri).log_err() {
         executor
@@ -1148,7 +1113,7 @@ pub(super) fn open_uri_internal(
                 let opened = run_open_commands(
                     uri.as_str().as_ref(),
                     activation_token.as_deref(),
-                    &launch_environment,
+                    &environment,
                 )
                 .await;
                 if !opened {
@@ -1175,7 +1140,7 @@ pub(super) fn reveal_path_internal(
     executor: BackgroundExecutor,
     path: PathBuf,
     activation_token: Option<String>,
-    launch_environment: LaunchEnvironment,
+    environment: GraphicalEnvironment,
 ) {
     executor
         .spawn(async move {
@@ -1196,7 +1161,7 @@ pub(super) fn reveal_path_internal(
                 run_open_commands(
                     directory.as_os_str(),
                     activation_token.as_deref(),
-                    &launch_environment,
+                    &environment,
                 )
                 .await;
             }
@@ -2028,7 +1993,7 @@ mod display_mode_tests {
                     });
                     assert_error_contains(attach.await, "names no display server that");
                     assert_eq!(cx.update(|cx| cx.compositor_name()), "headless");
-                    assert!(cx.update(|cx| cx.is_headless()));
+                    assert!(cx.update(|cx| cx.graphical_environment()).is_none());
 
                     let detach = cx.update(|cx| cx.request_windowing(WindowingRequest::Headless));
                     assert_error_contains(detach.await, "already headless");
