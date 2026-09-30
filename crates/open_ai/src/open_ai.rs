@@ -362,8 +362,7 @@ impl Model {
                 ReasoningEffort::XHigh,
                 ReasoningEffort::Max,
             ],
-            Self::SixAstra
-            | Self::SixPointOneSol => &[
+            Self::SixAstra | Self::SixPointOneSol => &[
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
