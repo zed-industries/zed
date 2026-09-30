@@ -18,9 +18,17 @@ use serde::Serialize;
 #[cfg(not(target_family = "wasm"))]
 mod monitor;
 #[cfg(not(target_family = "wasm"))]
+mod thread_usage;
+#[cfg(not(target_family = "wasm"))]
+mod watchdog;
+#[cfg(not(target_family = "wasm"))]
 pub(crate) use monitor::HangMonitor;
 #[cfg(not(target_family = "wasm"))]
 pub use monitor::{HangMonitorConfig, HangMonitorError, HangMonitorPoll, HangMonitorPollReason};
+#[cfg(not(target_family = "wasm"))]
+pub(crate) use thread_usage::ThreadUsageReader;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) use watchdog::Watchdog;
 
 /// Version of the power/visibility-aware measurement rules.
 pub const MEASUREMENT_VERSION: u32 = 2;
@@ -57,6 +65,70 @@ pub struct HangIncident {
     /// [`HangTrigger::Budget`], no event crossed the threshold and this instead
     /// holds every event in the interval, longest first.
     pub contributors: Vec<ForegroundEvent>,
+    /// How the foreground spent the longest contributor, when the hang
+    /// monitor's watchdog sampled it. Only threshold incidents are profiled.
+    pub stall_profile: Option<StallProfile>,
+}
+
+/// How the foreground thread spent a stall, sampled from another thread.
+///
+/// Samples are taken about every 50 ms while the foreground works, so
+/// durations and usage are accurate to about that much at each end of the
+/// stall.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StallProfile {
+    /// The cause the stall spent the most time in.
+    pub cause: StallCause,
+    /// How much of the stall was sampled, in milliseconds. Less than the
+    /// stall's duration when sampling started during it or samples were lost.
+    pub sampled_ms: f64,
+    /// CPU time the foreground spent running during the sampled time, in
+    /// milliseconds.
+    pub cpu_ms: f64,
+    /// The part of `cpu_ms` spent in the kernel, where available. High
+    /// values can mean memory pressure: macOS decompresses swapped memory on
+    /// the faulting thread, which counts as kernel time rather than a fault.
+    pub system_cpu_ms: Option<f64>,
+    /// Page faults that waited on storage: the foreground's own on Linux,
+    /// the whole process's pageins on macOS, and unavailable on Windows.
+    pub major_faults: Option<u64>,
+    /// Time the foreground was ready to run but waited for a CPU, in
+    /// milliseconds. Linux only.
+    pub run_delay_ms: Option<f64>,
+    /// Consecutive spans of one cause, in order.
+    pub phases: Vec<StallPhase>,
+    /// Phases beyond the reported cap.
+    pub phases_elided: usize,
+}
+
+/// A span of a stall with one cause.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct StallPhase {
+    /// What the foreground was doing.
+    pub cause: StallCause,
+    /// How long it lasted, in milliseconds.
+    pub duration_ms: f64,
+}
+
+/// What the foreground thread was doing while it made no visible progress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StallCause {
+    /// Running on a CPU for at least half the time.
+    CpuBound,
+    /// Off the CPU, waiting on something other than a CPU or storage: a
+    /// lock, I/O, IPC, or a sleep.
+    Blocked,
+    /// Blocked while submitting a frame to the platform, which typically
+    /// waits for the compositor or display rather than the application.
+    PresentBlocked,
+    /// Off the CPU while page faults read memory back from storage.
+    Paging,
+    /// Ready to run but waiting for a CPU, as on an overloaded machine.
+    CpuStarved,
+    /// The whole process was stopped, e.g. by a debugger, SIGSTOP, or a
+    /// paused virtual machine.
+    Frozen,
 }
 
 /// The detection rule that qualified an interval as a [`HangIncident`].
@@ -170,6 +242,8 @@ pub struct SerializedHangIncident {
     pub contributors: Vec<SerializedHangContributor>,
     /// Contributors elided by the cap.
     pub contributors_elided: usize,
+    /// See [`HangIncident::stall_profile`].
+    pub stall_profile: Option<StallProfile>,
 }
 
 /// One hang contributor in serialized form.
@@ -325,6 +399,7 @@ impl SerializedHangIncident {
                     .collect()
             },
             contributors_elided: incident.contributors.len().saturating_sub(max_contributors),
+            stall_profile: incident.stall_profile.clone(),
         }
     }
 }
@@ -459,6 +534,7 @@ impl HangIncident {
             snapshot,
             trigger,
             contributors,
+            stall_profile: None,
         })
     }
 }
@@ -647,8 +723,9 @@ mod tests {
             let (sender, receiver) = std::sync::mpsc::channel();
             let monitor = HangMonitor::spawn(
                 HangDetector::new(journal, HANG_THRESHOLD, FRAME_BUDGET),
+                None,
                 interval,
-                move |poll| {
+                move |poll: super::HangMonitorPoll| {
                     if !poll.incidents.is_empty() {
                         sender.send((poll.reason, poll.incidents.len())).ok();
                     }
@@ -687,9 +764,58 @@ mod tests {
         );
     }
 
+    /// The watchdog tells a stall spent computing from one spent waiting,
+    /// by sampling the foreground's CPU time from the monitor thread.
+    #[test]
+    fn hang_monitor_profiles_stalls_by_cause() {
+        use super::{HangMonitor, StallCause, ThreadUsageReader, Watchdog};
+
+        let Some(reader) = ThreadUsageReader::for_current_thread() else {
+            return;
+        };
+        let (journal, _guard) = install_test_foreground_journal(64, 4);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let monitor = HangMonitor::spawn(
+            HangDetector::new(journal.clone(), HANG_THRESHOLD, FRAME_BUDGET),
+            Some(Watchdog::new(journal.activity(), reader)),
+            // Longer than the test, so only the flush polls.
+            Duration::from_secs(3600),
+            move |poll: super::HangMonitorPoll| {
+                for incident in poll.incidents {
+                    sender.send(incident.stall_profile).ok();
+                }
+            },
+        )
+        .expect("spawn monitor thread");
+
+        let stall = Duration::from_millis(400);
+        simulate_blocked_foreground_poll(stall);
+        simulate_spinning_foreground_poll(stall);
+        let flushed = monitor.request_flush().expect("monitor thread is running");
+        futures::executor::block_on(flushed).expect("flush completes");
+
+        let profiles: Vec<_> = receiver
+            .try_iter()
+            .map(|profile| profile.expect("the stall was sampled"))
+            .collect();
+        let [blocked, spinning] = profiles.as_slice() else {
+            panic!("expected two incidents, got {profiles:?}");
+        };
+        assert_eq!(blocked.cause, StallCause::Blocked, "{blocked:?}");
+        assert!(blocked.cpu_ms < 100.0, "{blocked:?}");
+        assert_eq!(spinning.cause, StallCause::CpuBound, "{spinning:?}");
+        assert!(spinning.cpu_ms > 200.0, "{spinning:?}");
+        for profile in profiles {
+            assert!(profile.sampled_ms > 300.0, "{profile:?}");
+        }
+    }
+
     #[gpui::test]
     fn app_flushes_its_hang_monitor_on_shutdown(cx: &mut TestAppContext) {
         use super::{HangMonitorConfig, HangMonitorPollReason};
+
+        // Shutdown waits on the monitor's real thread.
+        cx.executor().allow_parking();
 
         let (sender, receiver) = std::sync::mpsc::channel();
         cx.update(|cx| {
@@ -1378,6 +1504,16 @@ mod tests {
         let location = std::panic::Location::caller();
         crate::profiler::update_running_task(SpawnTime(scheduler::Instant::now()), location);
         thread::sleep(duration);
+        crate::profiler::save_task_timing();
+    }
+
+    fn simulate_spinning_foreground_poll(duration: Duration) {
+        let location = std::panic::Location::caller();
+        crate::profiler::update_running_task(SpawnTime(scheduler::Instant::now()), location);
+        let started = std::time::Instant::now();
+        while started.elapsed() < duration {
+            std::hint::spin_loop();
+        }
         crate::profiler::save_task_timing();
     }
 

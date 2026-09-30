@@ -16,8 +16,8 @@ use std::cell::{RefCell, UnsafeCell};
 use std::collections::{HashMap, VecDeque};
 use std::mem::MaybeUninit;
 use std::sync::{
-    Arc,
-    atomic::{AtomicU64, AtomicUsize, Ordering},
+    Arc, Mutex,
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 use std::time::Duration;
 
@@ -399,6 +399,68 @@ impl ForegroundRunnableCounter {
     }
 }
 
+/// Whether the foreground is working, readable from other threads.
+///
+/// The foreground pays two atomic increments per outermost turn. A watcher
+/// thread that waits for work with [`ForegroundActivity::wait_while_idle`]
+/// is woken when the next turn begins, so it can observe that turn's start
+/// without polling the foreground at a high rate while it's idle.
+#[derive(Default)]
+pub(crate) struct ForegroundActivity {
+    /// Incremented when an outermost turn begins and when it ends, so the
+    /// value is odd exactly while the foreground is working and changes
+    /// whenever it did any work.
+    state: AtomicU64,
+    watcher_waiting: AtomicBool,
+    watcher: Mutex<Option<std::thread::Thread>>,
+}
+
+impl ForegroundActivity {
+    /// The current activity state; see [`ForegroundActivity::is_working`].
+    pub(crate) fn state(&self) -> u64 {
+        self.state.load(Ordering::SeqCst)
+    }
+
+    /// Whether the foreground was working when `state` was read.
+    pub(crate) fn is_working(state: u64) -> bool {
+        state % 2 == 1
+    }
+
+    /// Blocks the calling thread for up to `timeout`, or until the foreground
+    /// begins a turn if the activity state still equals `observed`. Only one
+    /// thread may wait at a time.
+    pub(crate) fn wait_while_idle(&self, observed: u64, timeout: Duration) {
+        *self.watcher() = Some(std::thread::current());
+        // Pairs with `begin_turn`: either this load sees the new turn, or
+        // the foreground sees `watcher_waiting` and unparks this thread.
+        self.watcher_waiting.store(true, Ordering::SeqCst);
+        if self.state.load(Ordering::SeqCst) == observed {
+            std::thread::park_timeout(timeout);
+        }
+        self.watcher_waiting.store(false, Ordering::SeqCst);
+    }
+
+    fn begin_turn(&self) {
+        self.state.fetch_add(1, Ordering::SeqCst);
+        if self.watcher_waiting.load(Ordering::SeqCst)
+            && self.watcher_waiting.swap(false, Ordering::SeqCst)
+            && let Some(watcher) = self.watcher().as_ref()
+        {
+            watcher.unpark();
+        }
+    }
+
+    fn end_turn(&self) {
+        self.state.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn watcher(&self) -> std::sync::MutexGuard<'_, Option<std::thread::Thread>> {
+        self.watcher
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
 // Visibility and power changes clear `dirty_at`; `Window::refresh_visibility`
 // re-records the frame from the window's actual dirty state afterwards.
 struct WindowFrameState {
@@ -447,6 +509,9 @@ impl ForegroundJournalWriter {
     }
 
     fn begin_turn(&mut self) {
+        if self.turn_depth == 0 {
+            self.publisher.activity.begin_turn();
+        }
         self.turn_depth += 1;
     }
 
@@ -463,6 +528,9 @@ impl ForegroundJournalWriter {
             return;
         };
         self.turn_depth = turn_depth;
+        if self.turn_depth == 0 {
+            self.publisher.activity.end_turn();
+        }
         if self.turn_depth > 0
             || self.foreground_runnables.has_runnables()
             || self.has_unexpired_pending_frame(ended_at)
@@ -663,6 +731,7 @@ pub(crate) fn install_foreground_journal() -> ForegroundJournal {
         if let Some(journal) = journal.as_ref() {
             return ForegroundJournal {
                 ring: Arc::clone(&journal.publisher.ring),
+                activity: Arc::clone(&journal.publisher.activity),
             };
         }
 
@@ -1121,6 +1190,7 @@ struct PendingJournalEntry {
 
 struct JournalPublisher {
     ring: Arc<JournalRing>,
+    activity: Arc<ForegroundActivity>,
     next_sequence: u64,
     pending: VecDeque<PendingJournalEntry>,
     dropped_after_pending: u64,
@@ -1128,9 +1198,14 @@ struct JournalPublisher {
 }
 
 impl JournalPublisher {
-    fn new(ring: Arc<JournalRing>, pending_capacity: usize) -> Self {
+    fn new(
+        ring: Arc<JournalRing>,
+        activity: Arc<ForegroundActivity>,
+        pending_capacity: usize,
+    ) -> Self {
         Self {
             ring,
+            activity,
             next_sequence: 0,
             pending: VecDeque::with_capacity(pending_capacity),
             dropped_after_pending: 0,
@@ -1201,17 +1276,25 @@ impl JournalPublisher {
 #[derive(Clone)]
 pub struct ForegroundJournal {
     ring: Arc<JournalRing>,
+    activity: Arc<ForegroundActivity>,
 }
 
 impl ForegroundJournal {
     fn new(capacity: usize, pending_capacity: usize) -> (Self, JournalPublisher) {
         let ring = Arc::new(JournalRing::new(capacity));
+        let activity = Arc::new(ForegroundActivity::default());
         (
             Self {
                 ring: Arc::clone(&ring),
+                activity: Arc::clone(&activity),
             },
-            JournalPublisher::new(ring, pending_capacity),
+            JournalPublisher::new(ring, activity, pending_capacity),
         )
+    }
+
+    /// Whether the journaled foreground thread is working.
+    pub(crate) fn activity(&self) -> Arc<ForegroundActivity> {
+        Arc::clone(&self.activity)
     }
 
     /// Creates an independent collector that observes entries offered after
@@ -1662,6 +1745,39 @@ mod tests {
                 )
             }));
         }
+    }
+
+    /// A watcher waiting for work wakes when the next outermost turn
+    /// begins, and the activity state marks exactly the time inside turns.
+    #[test]
+    fn foreground_activity_tracks_outermost_turns_and_wakes_its_watcher() {
+        let start = Instant::now();
+        let (mut journal, _collector) = test_journal(ForegroundRunnableCounter::new());
+        let activity = Arc::clone(&journal.publisher.activity);
+        let idle = activity.state();
+        assert!(!ForegroundActivity::is_working(idle));
+
+        let watcher = std::thread::spawn({
+            let activity = Arc::clone(&activity);
+            move || {
+                let waited = std::time::Instant::now();
+                activity.wait_while_idle(idle, Duration::from_secs(30));
+                waited.elapsed()
+            }
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        journal.begin_turn();
+        journal.begin_turn();
+        let working = activity.state();
+        assert!(ForegroundActivity::is_working(working));
+        journal.end_turn(start);
+        assert_eq!(activity.state(), working, "nested turns don't count");
+        journal.end_turn(start);
+        assert!(!ForegroundActivity::is_working(activity.state()));
+        assert_ne!(activity.state(), idle);
+
+        let waited = watcher.join().expect("watcher exits");
+        assert!(waited < Duration::from_secs(10), "waited {waited:?}");
     }
 
     #[test]
