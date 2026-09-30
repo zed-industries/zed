@@ -353,7 +353,7 @@ fn detect_handles_block_boundary_splits() {
         None,
     )
     .unwrap();
-    let text = format!("ignored\n{}x{needle}\n", &needle[..BLOCK_BYTES - 1]);
+    let text = format!("ignored\n{}x\n{needle}", &needle[..BLOCK_BYTES - 1]);
     for max_read in [257, BLOCK_BYTES] {
         let mut input = reader(text.as_bytes());
         input.max_read = max_read;
@@ -363,7 +363,7 @@ fn detect_handles_block_boundary_splits() {
         input.max_read = max_read;
         assert_eq!(
             smol::block_on(query.detect(&mut input)).unwrap(),
-            Some(MatchPositionHint::Line(1)),
+            Some(MatchPositionHint::Line(2)),
         );
     }
 
@@ -388,6 +388,14 @@ fn detect_handles_block_boundary_splits() {
             None,
             "split = {split}"
         );
+        let mut matched_text = text.clone();
+        matched_text[..query.as_str().len()].copy_from_slice(query.as_str().as_bytes());
+        matched_text.push(0xff);
+        assert_eq!(
+            smol::block_on(query.detect(&mut reader(&matched_text))).unwrap(),
+            Some(MatchPositionHint::Line(0)),
+            "matched split = {split}"
+        );
         text.truncate(BLOCK_BYTES - split + 2);
         let error = smol::block_on(query.detect(&mut reader(&text))).unwrap_err();
         assert_eq!(
@@ -395,6 +403,58 @@ fn detect_handles_block_boundary_splits() {
             Some(io::ErrorKind::InvalidData),
             "truncated split = {split}"
         );
+    }
+}
+
+#[test]
+fn detect_validates_matching_line_before_io_errors() {
+    let query = SearchQuery::text(
+        "n",
+        false,
+        true,
+        false,
+        PathMatcher::default(),
+        PathMatcher::default(),
+        false,
+        None,
+    )
+    .unwrap();
+    let found = Ok(Some(MatchPositionHint::Line(0)));
+    let invalid = Err(io::ErrorKind::InvalidData);
+    let failed = Err(io::ErrorKind::Other);
+    for (bytes, at_eof, at_error) in [
+        (b"".as_slice(), Ok(None), failed),
+        (b"n", found, failed),
+        (b"n\xff", invalid, failed),
+        (b"\xff\nn", invalid, invalid),
+        (b"n\xff\n", invalid, invalid),
+        (b"n\n\xff", found, found),
+        (b"n\xf0\x9f", invalid, failed),
+        (b"n\n\xf0\x9f", found, found),
+        (
+            "x\n😀n".as_bytes(),
+            Ok(Some(MatchPositionHint::Line(1))),
+            failed,
+        ),
+    ] {
+        for terminal_error in [None, Some(io::ErrorKind::Other)] {
+            for max_read in [1, 64 * 1024] {
+                let mut input = reader(bytes);
+                input.max_read = max_read;
+                input.terminal_error = terminal_error;
+                let actual = smol::block_on(query.detect(&mut input))
+                    .map_err(|error| error.downcast_ref::<io::Error>().unwrap().kind());
+                let expected = if terminal_error.is_some() {
+                    at_error
+                } else {
+                    at_eof
+                };
+                assert_eq!(
+                    actual, expected,
+                    "{bytes:?}, {terminal_error:?}, {max_read}"
+                );
+            }
+        }
     }
 }
 
@@ -472,6 +532,7 @@ fn reader(bytes: &[u8]) -> InterruptingReader {
         inner: Cursor::new(bytes.to_vec()),
         interrupt_next_read: false,
         max_read: usize::MAX,
+        terminal_error: None,
     }
 }
 
@@ -479,6 +540,7 @@ struct InterruptingReader {
     inner: Cursor<Vec<u8>>,
     interrupt_next_read: bool,
     max_read: usize,
+    terminal_error: Option<io::ErrorKind>,
 }
 
 impl io::Read for InterruptingReader {
@@ -488,7 +550,14 @@ impl io::Read for InterruptingReader {
             Err(io::Error::from(io::ErrorKind::Interrupted))
         } else {
             let length = buffer.len().min(self.max_read);
-            self.inner.read(&mut buffer[..length])
+            let read = self.inner.read(&mut buffer[..length])?;
+            if read == 0
+                && !buffer.is_empty()
+                && let Some(error) = self.terminal_error
+            {
+                return Err(io::Error::from(error));
+            }
+            Ok(read)
         }
     }
 }

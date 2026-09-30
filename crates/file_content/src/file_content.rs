@@ -652,13 +652,18 @@ mod tests {
     }
 
     #[test]
-    fn binary_header_lookup_matches_linear_scan() {
+    fn binary_headers_are_sorted_and_prefix_free() {
         for headers in [KNOWN_BINARY_HEADERS, ADDITIONAL_BINARY_HEADERS] {
             for pair in headers.windows(2) {
                 assert!(pair[0] < pair[1], "{pair:?}");
                 assert_eq!(pair[1].strip_prefix(pair[0]), None, "{pair:?}");
             }
+        }
+    }
 
+    #[test]
+    fn binary_header_lookup_matches_linear_scan() {
+        for headers in [KNOWN_BINARY_HEADERS, ADDITIONAL_BINARY_HEADERS] {
             let check = |bytes: &[u8]| {
                 let expected = headers.iter().any(|header| bytes.starts_with(header));
                 assert_eq!(has_binary_header(bytes, headers), expected, "{bytes:?}");

@@ -404,107 +404,17 @@ impl SearchQuery {
             return Ok(None);
         }
 
-        const BLOCK_BYTES: usize = 64 * 1024;
-
         match self {
+            Self::Text { search, .. } if !query_str.contains('\n') => {
+                detect_single_line(search, reader).await
+            }
             Self::Text { search, .. } => {
-                if query_str.contains('\n') {
-                    let mut text = read_to_string(reader).await?;
-                    text::LineEnding::normalize(&mut text);
-                    if search.is_match(&text) {
-                        Ok(Some(MatchPositionHint::default()))
-                    } else {
-                        Ok(None)
-                    }
+                let mut text = read_to_string(reader).await?;
+                text::LineEnding::normalize(&mut text);
+                if search.is_match(&text) {
+                    Ok(Some(MatchPositionHint::default()))
                 } else {
-                    let batch_size = search.max_pattern_len().max(BLOCK_BYTES);
-                    let carry_len = search.max_pattern_len().saturating_sub(1).max(3);
-                    let mut block = vec![0; BLOCK_BYTES];
-                    let mut window = Vec::new();
-                    let mut batch_start = 0usize;
-                    let mut validated_len = 0usize;
-                    let mut lines_before_window = 0usize;
-                    let mut first_match = None;
-                    loop {
-                        let batch_end = batch_start
-                            + if first_match.is_some() {
-                                BLOCK_BYTES
-                            } else {
-                                batch_size
-                            };
-                        let limit = (batch_end - window.len()).min(BLOCK_BYTES);
-                        let read_result = match reader.read(&mut block[..limit]) {
-                            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                            result => result,
-                        };
-                        if let std::result::Result::Ok(read) = read_result {
-                            if window.len() + read > window.capacity() {
-                                let capacity = window
-                                    .capacity()
-                                    .saturating_mul(2)
-                                    .max(window.len() + read)
-                                    .min(batch_size + carry_len);
-                                window.try_reserve_exact(capacity - window.len())?;
-                            }
-                            window.extend_from_slice(&block[..read]);
-                            if read > 0 && window.len() < batch_end {
-                                yield_now().await;
-                                continue;
-                            }
-                        }
-                        let line_end_search_start = if first_match.is_some() {
-                            Some(batch_start)
-                        } else if let Some(found) = search.find(&window) {
-                            let line =
-                                lines_before_window + count_newlines(&window[..found.start()]);
-                            first_match = Some(MatchPositionHint::Line(
-                                u32::try_from(line).unwrap_or(u32::MAX),
-                            ));
-                            Some(found.end())
-                        } else {
-                            None
-                        };
-                        let line_end = line_end_search_start.and_then(|start| {
-                            window[start..]
-                                .iter()
-                                .position(|&byte| byte == b'\n')
-                                .map(|offset| start + offset + 1)
-                        });
-                        let validation_end = line_end.unwrap_or_else(|| {
-                            if read_result.is_err() {
-                                window
-                                    .iter()
-                                    .rposition(|&byte| byte == b'\n')
-                                    .map_or(validated_len, |offset| (offset + 1).max(validated_len))
-                            } else {
-                                window.len()
-                            }
-                        });
-                        validated_len +=
-                            match std::str::from_utf8(&window[validated_len..validation_end]) {
-                                Err(error) if error.error_len().is_some() => {
-                                    return Err(invalid_data());
-                                }
-                                Err(error) => error.valid_up_to(),
-                                _ => validation_end - validated_len,
-                            };
-                        if line_end.is_some() {
-                            return Ok(first_match);
-                        }
-                        if read_result? == 0 {
-                            if validated_len < window.len() {
-                                return Err(invalid_data());
-                            }
-                            return Ok(first_match);
-                        }
-                        let retained_len = if first_match.is_some() { 3 } else { carry_len };
-                        let consumed = window.len().saturating_sub(retained_len);
-                        lines_before_window += count_newlines(&window[..consumed]);
-                        window.drain(..consumed);
-                        batch_start = window.len();
-                        validated_len -= consumed;
-                        yield_now().await;
-                    }
+                    Ok(None)
                 }
             }
             Self::Regex { regex, .. } => {
@@ -780,6 +690,126 @@ impl SearchQuery {
             }
         }
         matches
+    }
+}
+
+async fn detect_single_line(
+    search: &AhoCorasick,
+    reader: &mut (dyn Read + Send),
+) -> Result<Option<MatchPositionHint>> {
+    const BLOCK_BYTES: usize = 64 * 1024;
+    let batch_size = search.max_pattern_len().max(BLOCK_BYTES);
+    let carry_len = search.max_pattern_len().saturating_sub(1).max(3);
+    let mut block = vec![0; BLOCK_BYTES];
+    let mut window = TextSearchWindow::default();
+    loop {
+        let batch_end = window.batch_start
+            + if window.first_match.is_some() {
+                BLOCK_BYTES
+            } else {
+                batch_size
+            };
+        let limit = (batch_end - window.bytes.len()).min(BLOCK_BYTES);
+        let read_result = match reader.read(&mut block[..limit]) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            result => result,
+        };
+        if let std::result::Result::Ok(read) = read_result {
+            window.extend(&block[..read], batch_size + carry_len)?;
+            if read > 0 && window.bytes.len() < batch_end {
+                yield_now().await;
+                continue;
+            }
+        }
+        let line_end = window.find_matching_line_end(search);
+        window.validate_prefix(line_end, read_result.is_err())?;
+        if line_end.is_some() {
+            return Ok(window.first_match);
+        }
+        if read_result? == 0 {
+            if window.validated_len < window.bytes.len() {
+                return Err(invalid_data());
+            }
+            return Ok(window.first_match);
+        }
+        window.retain_suffix(if window.first_match.is_some() {
+            3
+        } else {
+            carry_len
+        });
+        yield_now().await;
+    }
+}
+
+#[derive(Default)]
+struct TextSearchWindow {
+    bytes: Vec<u8>,
+    batch_start: usize,
+    validated_len: usize,
+    lines_before_window: usize,
+    first_match: Option<MatchPositionHint>,
+}
+
+impl TextSearchWindow {
+    fn extend(&mut self, bytes: &[u8], max_capacity: usize) -> Result<()> {
+        if self.bytes.len() + bytes.len() > self.bytes.capacity() {
+            let capacity = self
+                .bytes
+                .capacity()
+                .saturating_mul(2)
+                .max(self.bytes.len() + bytes.len())
+                .min(max_capacity);
+            self.bytes.try_reserve_exact(capacity - self.bytes.len())?;
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn find_matching_line_end(&mut self, search: &AhoCorasick) -> Option<usize> {
+        let start = if self.first_match.is_some() {
+            self.batch_start
+        } else {
+            let found = search.find(&self.bytes)?;
+            let line = self.lines_before_window + count_newlines(&self.bytes[..found.start()]);
+            self.first_match = Some(MatchPositionHint::Line(
+                u32::try_from(line).unwrap_or(u32::MAX),
+            ));
+            found.end()
+        };
+        self.bytes[start..]
+            .iter()
+            .position(|&byte| byte == b'\n')
+            .map(|offset| start + offset + 1)
+    }
+
+    fn validate_prefix(&mut self, line_end: Option<usize>, read_failed: bool) -> Result<()> {
+        let validation_end = line_end.unwrap_or_else(|| {
+            if read_failed {
+                self.bytes
+                    .iter()
+                    .rposition(|&byte| byte == b'\n')
+                    .map_or(self.validated_len, |offset| {
+                        (offset + 1).max(self.validated_len)
+                    })
+            } else {
+                self.bytes.len()
+            }
+        });
+        self.validated_len +=
+            match std::str::from_utf8(&self.bytes[self.validated_len..validation_end]) {
+                Err(error) if error.error_len().is_some() => return Err(invalid_data()),
+                Err(error) => error.valid_up_to(),
+                _ => validation_end - self.validated_len,
+            };
+        Ok(())
+    }
+
+    fn retain_suffix(&mut self, length: usize) {
+        let consumed = self.bytes.len().saturating_sub(length);
+        self.lines_before_window += count_newlines(&self.bytes[..consumed]);
+        self.bytes.drain(..consumed);
+        self.batch_start = self.bytes.len();
+        self.validated_len -= consumed;
     }
 }
 

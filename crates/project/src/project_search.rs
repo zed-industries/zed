@@ -838,7 +838,7 @@ impl RequestHandler<'_> {
                 return anyhow::Ok(());
             };
 
-            let mut file_start = Vec::new();
+            let mut file_start = Vec::with_capacity(8 * 1024);
             (&mut *file).take(8 * 1024).read_to_end(&mut file_start)?;
             let (bom_encoding, byte_content) =
                 decode_byte_header(&file_start[..file_start.len().min(FILE_ANALYSIS_BYTES)]);
