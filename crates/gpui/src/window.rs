@@ -1848,15 +1848,10 @@ impl Window {
                         invalidator.wake_platform();
                         #[cfg(feature = "profiler")]
                         {
-                            let retry_at = last_frame + min_interval;
                             let reason = if _inactive_throttle {
-                                profiler::journal::FrameSkipReason::InactiveFrameRateLimit {
-                                    retry_at,
-                                }
+                                profiler::journal::FrameSkipReason::InactiveFrameRateLimit
                             } else {
-                                profiler::journal::FrameSkipReason::ThermalFrameRateLimit {
-                                    retry_at,
-                                }
+                                profiler::journal::FrameSkipReason::ThermalFrameRateLimit
                             };
                             profiler::journal::record_frame_skipped(
                                 window_id,
@@ -7823,7 +7818,7 @@ mod tests {
     fn test_frame_requests_and_skips_are_journaled(cx: &mut TestAppContext) {
         use crate::FrameRequestSource;
         use crate::profiler::journal::{
-            self, ForegroundJournalEntry, FrameMetadata, FrameSkipReason, IntervalBoundary,
+            self, ForegroundJournalEntry, FrameSkipReason, IntervalBoundary,
         };
         use scheduler::Instant;
 
@@ -7851,7 +7846,7 @@ mod tests {
                 .position(|entry| {
                     matches!(
                         entry,
-                        ForegroundJournalEntry::Metadata(FrameMetadata::PlatformSignal(signal))
+                        ForegroundJournalEntry::PlatformSignal(signal)
                             if signal.window_id == window.window_id()
                                 && signal.signal_at == signal_at
                                 && signal.source == source
@@ -7980,11 +7975,7 @@ mod tests {
                     entry,
                     ForegroundJournalEntry::Boundary(IntervalBoundary::FrameSkipped(skipped))
                         if skipped.window_id == window.window_id()
-                            && matches!(
-                                skipped.reason,
-                                FrameSkipReason::InactiveFrameRateLimit { retry_at }
-                                    if retry_at > skipped.at
-                            )
+                            && skipped.reason == FrameSkipReason::InactiveFrameRateLimit
                 )
             }));
             // Window and profiler timestamps use the wall clock, not the test dispatcher clock.
