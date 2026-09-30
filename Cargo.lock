@@ -15244,6 +15244,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "context_server",
  "crashes",
  "dap_adapters",
  "debug_adapter_extension",

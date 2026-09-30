@@ -881,6 +881,7 @@ impl ContextServerStore {
             .remove(id)
             .context("Context server not found")?;
         self.server_working_directories.remove(id);
+        self.remote_native_commands.remove(id);
 
         if let ContextServerConfiguration::Http { url, .. } = state.configuration().as_ref() {
             let server_url = url.clone();

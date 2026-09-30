@@ -495,6 +495,29 @@ mod tests {
     }
 
     #[test]
+    fn test_remote_load_eligibility() {
+        let manifest = extension_manifest();
+        assert!(
+            manifest.remote_load().is_none(),
+            "an extension with no remote-capable contributions should not be loaded remotely"
+        );
+
+        // An extension whose only contribution is a context server still has to
+        // reach the remote host, otherwise its MCP server can never run there.
+        let mut manifest = extension_manifest();
+        manifest
+            .context_servers
+            .insert("my-context-server".into(), ContextServerManifestEntry {});
+        assert!(manifest.remote_load().is_some());
+
+        let mut manifest = extension_manifest();
+        manifest
+            .language_servers
+            .insert("my-language-server".into(), Default::default());
+        assert!(manifest.remote_load().is_some());
+    }
+
+    #[test]
     fn test_build_adapter_schema_path_with_schema_path() {
         let adapter_name = Arc::from("my_adapter");
         let entry = DebugAdapterManifestEntry {

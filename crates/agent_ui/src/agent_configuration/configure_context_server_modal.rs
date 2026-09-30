@@ -253,6 +253,19 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
     )
 }
 
+/// The `remote` flag of the entry this modal is about to overwrite.
+///
+/// The modal has no control for `remote`, so its form output always reports it
+/// as false. Carrying the configured value over keeps saving from silently
+/// moving an MCP server back onto the local machine. On a rename the entry is
+/// still filed under the original id.
+fn configured_remote(
+    current: Option<&ContextServerSettings>,
+    original: Option<&ContextServerSettings>,
+) -> Option<bool> {
+    current.or(original).map(ContextServerSettings::remote)
+}
+
 fn context_server_http_input(
     existing: Option<(
         ContextServerId,
@@ -600,20 +613,17 @@ impl ConfigureContextServerModal {
             }
         };
 
-        // This modal has no control for `remote`, so `output` always reports it
-        // as false. Carry the configured value over instead, otherwise saving
-        // here silently moves an MCP server back onto the local machine.
+        // Resolved settings, not `ProjectSettings::get_global`: a server can be
+        // configured in a worktree's `.zed/settings.json`, which only the store's
+        // merged view knows about.
         let configured_remote = {
-            let project_settings = ProjectSettings::get_global(cx);
-            project_settings
-                .context_servers
-                .get(&id.0)
-                .or_else(|| {
-                    self.original_server_id.as_ref().and_then(|original_id| {
-                        project_settings.context_servers.get(&original_id.0)
-                    })
-                })
-                .map(ContextServerSettings::remote)
+            let store = self.context_server_store.read(cx);
+            configured_remote(
+                store.settings_for_server(&id),
+                self.original_server_id
+                    .as_ref()
+                    .and_then(|original_id| store.settings_for_server(original_id)),
+            )
         };
         if let Some(remote) = configured_remote {
             settings.set_remote(remote);
@@ -661,7 +671,7 @@ impl ConfigureContextServerModal {
         .detach();
 
         let settings_changed =
-            ProjectSettings::get_global(cx).context_servers.get(&id.0) != Some(&settings);
+            self.context_server_store.read(cx).settings_for_server(&id) != Some(&settings);
 
         if settings_changed {
             // When we write the settings to the file, the context server will be restarted.
@@ -1283,6 +1293,50 @@ pub(crate) fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn stdio_settings(remote: bool) -> ContextServerSettings {
+        ContextServerSettings::Stdio {
+            enabled: true,
+            remote,
+            command: settings::ContextServerCommand {
+                path: "my-server".into(),
+                args: Vec::new(),
+                env: None,
+                timeout: None,
+            },
+        }
+    }
+
+    #[test]
+    fn configured_remote_carries_the_flag_the_form_cannot_show() {
+        assert_eq!(
+            configured_remote(Some(&stdio_settings(true)), None),
+            Some(true)
+        );
+        assert_eq!(
+            configured_remote(Some(&stdio_settings(false)), None),
+            Some(false)
+        );
+        assert_eq!(
+            configured_remote(None, None),
+            None,
+            "a server that is not configured yet has no flag to carry over"
+        );
+    }
+
+    #[test]
+    fn configured_remote_follows_a_renamed_server() {
+        assert_eq!(
+            configured_remote(None, Some(&stdio_settings(true))),
+            Some(true),
+            "renaming a remote server should keep it on the remote host"
+        );
+        assert_eq!(
+            configured_remote(Some(&stdio_settings(false)), Some(&stdio_settings(true))),
+            Some(false),
+            "the entry under the new name wins when both exist"
+        );
+    }
 
     #[test]
     fn parse_http_input_reads_oauth_settings() {
