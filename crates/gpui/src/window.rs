@@ -1850,9 +1850,9 @@ impl Window {
         }));
         platform_window.on_insets_changed(Box::new({
             let mut cx = cx.to_async();
-            move |_| {
+            move |insets| {
                 handle
-                    .update(&mut cx, |_, window, _| window.refresh())
+                    .update(&mut cx, |_, window, _| window.insets_changed(insets))
                     .log_err();
             }
         }));
@@ -1869,14 +1869,6 @@ impl Window {
             move || {
                 handle
                     .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
-                    .log_err();
-            }
-        }));
-        platform_window.on_insets_changed(Box::new({
-            let mut cx = cx.to_async();
-            move |insets| {
-                handle
-                    .update(&mut cx, |_, window, _cx| window.insets_changed(insets))
                     .log_err();
             }
         }));
@@ -7842,7 +7834,7 @@ mod tests {
         assert!(platform_window.frame_wake_count() > wakes);
         platform_window.simulate_frame_request(RequestFrameOptions::default());
         let wakes = platform_window.frame_wake_count();
-        platform_window.simulate_insets_change(crate::WindowInsets {
+        let insets = crate::WindowInsets {
             safe_area: crate::Edges {
                 top: px(60.),
                 right: px(20.),
@@ -7853,10 +7845,12 @@ mod tests {
                 bottom: px(350.),
                 ..Default::default()
             },
-        });
+        };
+        platform_window.simulate_insets_change(insets.clone());
         assert!(platform_window.frame_wake_count() > wakes);
         window
             .update(cx, |_, window, _| {
+                assert_eq!(window.insets(), &insets);
                 assert_eq!(window.viewport_size(), size(px(400.), px(800.)));
                 assert_eq!(window.visual_viewport_bounds(), visual_bounds);
                 assert_eq!(

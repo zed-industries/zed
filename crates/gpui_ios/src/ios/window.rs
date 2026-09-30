@@ -322,26 +322,23 @@ impl IosWindow {
             // Create UIWindow
             let window_scene = platform.application.window_scene();
             let window_scene = window_scene.as_deref();
-            let screen_obj = if let Some(scene) = window_scene {
-                scene.screen()
-            } else {
-                UIScreen::mainScreen(main_thread)
-            };
-            let screen_bounds_cg = screen_obj.bounds();
-            let window = if let Some(scene) = window_scene {
+            let (window, screen_bounds_cg, scale) = if let Some(scene) = window_scene {
+                let screen = scene.screen();
+                let bounds = screen.bounds();
                 let window = UIWindow::initWithWindowScene(UIWindow::alloc(main_thread), scene);
-                window.setFrame(screen_bounds_cg);
-                window
+                window.setFrame(bounds);
+                (window, bounds, screen.scale())
             } else {
-                UIWindow::initWithFrame(UIWindow::alloc(main_thread), screen_bounds_cg)
+                let screen = UIScreen::mainScreen(main_thread);
+                let bounds = screen.bounds();
+                let window = UIWindow::initWithFrame(UIWindow::alloc(main_thread), bounds);
+                (window, bounds, screen.scale())
             };
 
-            let view_controller = ViewController::new(main_thread);
             let metal_frame = CGRect::new(CGPoint::ZERO, screen_bounds_cg.size);
             let view = MetalView::new(metal_frame, main_thread);
 
             let layer = view.layer();
-            let scale = screen_obj.scale();
             layer.setContentsScale(scale);
 
             // Auto-resize the Metal view when the parent view changes size
@@ -354,9 +351,8 @@ impl IosWindow {
             view.setUserInteractionEnabled(true);
             view.setMultipleTouchEnabled(true);
 
+            let view_controller = ViewController::new(main_thread);
             view_controller.setView(Some(&view));
-
-            // Set the root view controller
             window.setRootViewController(Some(&view_controller));
 
             // Make the window visible
@@ -683,14 +679,14 @@ impl IosWindowState {
         let view_bounds = self.view.bounds();
         let scale = self.window.screen().scale();
 
-        let new_w = view_bounds.size.width as f32;
-        let new_h = view_bounds.size.height as f32;
+        let width = view_bounds.size.width as f32;
+        let height = view_bounds.size.height as f32;
         let new_scale = scale as f32;
 
         let old_bounds = self.bounds.get();
         let old_scale = self.scale_factor.get();
 
-        let new_size = size(px(new_w), px(new_h));
+        let new_size = size(px(width), px(height));
         self.notify_insets_changed();
 
         if old_bounds.size == new_size && (old_scale - new_scale).abs() < 0.01 {
@@ -716,11 +712,11 @@ impl IosWindowState {
         // correct pixel dimensions.
         self.view.layer().setContentsScale(scale);
 
-        let pixel_w = (new_w * new_scale) as i32;
-        let pixel_h = (new_h * new_scale) as i32;
+        let pixel_width = (width * new_scale) as i32;
+        let pixel_height = (height * new_scale) as i32;
         self.renderer
             .lock()
-            .update_drawable_size(size(DevicePixels(pixel_w), DevicePixels(pixel_h)));
+            .update_drawable_size(size(DevicePixels(pixel_width), DevicePixels(pixel_height)));
 
         self.resize_callback
             .with(|callback| callback(new_size, new_scale));
