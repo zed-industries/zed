@@ -453,12 +453,13 @@ impl ExtensionsPage {
                 query_editor,
                 upsells: BTreeSet::default(),
             };
-            this.fetch_extensions(
+            let fetch_task = this.fetch_extensions(
                 this.search_query(cx),
                 Some(BTreeSet::from_iter(this.provides_filter)),
                 None,
                 cx,
             );
+            this.extension_fetch_task = Some(fetch_task);
             this
         })
     }
@@ -566,7 +567,7 @@ impl ExtensionsPage {
         provides_filter: Option<BTreeSet<ExtensionProvides>>,
         on_complete: Option<Box<dyn FnOnce(&mut Self, &mut Context<Self>) + Send>>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Task<()> {
         self.is_fetching_extensions = true;
         self.fetch_failed = false;
         cx.notify();
@@ -648,9 +649,8 @@ impl ExtensionsPage {
                 }
             });
 
-            result?
+            result.and_then(|result| result).log_err();
         })
-        .detach_and_log_err(cx);
     }
 
     fn render_extensions(
@@ -884,15 +884,18 @@ impl ExtensionsPage {
                     .await;
             };
 
-            this.update(cx, |this, cx| {
+            let fetch_task = this.update(cx, |this, cx| {
                 this.fetch_extensions(
                     search,
                     Some(BTreeSet::from_iter(this.provides_filter)),
                     on_complete,
                     cx,
-                );
-            })
-            .ok();
+                )
+            });
+
+            if let Ok(fetch_task) = fetch_task {
+                fetch_task.await;
+            }
         }));
     }
 
