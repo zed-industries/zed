@@ -31,6 +31,7 @@ pub struct MultiDiffView {
     editor: Entity<SplittableEditor>,
     file_count: usize,
     _editor_event_subscription: Subscription,
+    _buffer_language_subscription: Subscription,
 }
 
 struct Entry {
@@ -210,7 +211,7 @@ impl MultiDiffView {
         let editor = cx.new(|cx| {
             let editor = SplittableEditor::new(
                 EditorSettings::get_global(cx).diff_view_style,
-                multibuffer,
+                multibuffer.clone(),
                 project.clone(),
                 workspace,
                 window,
@@ -226,10 +227,34 @@ impl MultiDiffView {
             }
         });
 
+        // The buffers' languages may load after the diff was built, e.g. when
+        // opening the view on startup via `zed --diff`. Propagate them from rhs
+        // to the corresponding lhs buffers when they change.
+        let buffer_language_subscription =
+            cx.subscribe(&multibuffer, |_, multibuffer, event, cx| {
+                let &multi_buffer::Event::LanguageChanged(buffer_id, _) = event else {
+                    return;
+                };
+                let Some(rhs_buffer) = multibuffer.read(cx).buffer(buffer_id) else {
+                    return;
+                };
+                let Some(diff) = multibuffer.read(cx).diff_for(buffer_id) else {
+                    return;
+                };
+
+                let language = rhs_buffer.read(cx).language().cloned();
+                let lhs_buffer = diff.read(cx).base_text_buffer().clone();
+
+                lhs_buffer.update(cx, |lhs_buffer, cx| {
+                    lhs_buffer.set_language_async(language, cx);
+                });
+            });
+
         Self {
             editor,
             file_count,
             _editor_event_subscription: editor_event_subscription,
+            _buffer_language_subscription: buffer_language_subscription,
         }
     }
 
@@ -361,5 +386,183 @@ impl Item for MultiDiffView {
 impl Render for MultiDiffView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         self.editor.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::BorrowAppContext;
+    use gpui::TestAppContext;
+    use language::{Language, LanguageConfig};
+    use project::{FakeFs, Project};
+    use settings::{DiffViewStyle, SettingsStore};
+    use util::path;
+    use workspace::MultiWorkspace;
+
+    async fn test_init(
+        cx: &mut TestAppContext,
+        diff_style: DiffViewStyle,
+    ) -> Entity<MultiDiffView> {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.diff_view_style = Some(diff_style);
+                });
+            });
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/test"),
+            serde_json::json!({
+                "old": {
+                    "file.rs": "fn main() {}\n",
+                    "old_file.rs": "pub const BAR: usize = 0;\n",
+                },
+                "new": {
+                    "file.rs": "fn main() { unimplemented!() }\n",
+                    "new_file.rs": "pub fn foo() {}\n",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let diff_view = workspace
+            .update_in(cx, |workspace, window, cx| {
+                MultiDiffView::open(
+                    vec![
+                        [
+                            path!("/test/old/file.rs").into(),
+                            path!("/test/new/file.rs").into(),
+                        ],
+                        [
+                            path!("/test/old/old_file.rs").into(),
+                            path!("/test/new/old_file.rs").into(),
+                        ],
+                        [
+                            path!("/test/old/new_file.rs").into(),
+                            path!("/test/new/new_file.rs").into(),
+                        ],
+                    ],
+                    workspace,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        cx.run_until_parked();
+
+        diff_view
+    }
+
+    #[gpui::test]
+    async fn test_unified_diff_view(cx: &mut TestAppContext) {
+        let diff_view = test_init(cx, DiffViewStyle::Unified).await;
+
+        // Language detection completes only after the diff view was created,
+        // as happens on startup with `zed -n --diff old new`.
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+
+        diff_view.update(cx, |diff_view, cx| {
+            diff_view.editor.update(cx, |editor, cx| {
+                editor.rhs_editor().update(cx, |rhs_editor, cx| {
+                    rhs_editor.buffer().update(cx, |multibuffer, cx| {
+                        multibuffer.for_each_buffer(&mut |buffer| {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.set_language(Some(language.clone()), cx);
+                            })
+                        });
+                    });
+                });
+            });
+        });
+
+        cx.run_until_parked();
+
+        diff_view.read_with(cx, |diff_view, cx| {
+            let rhs_editor = diff_view.editor.read(cx).rhs_editor().clone();
+            let multibuffer = rhs_editor.read(cx).buffer().read(cx);
+
+            multibuffer.for_each_buffer(&mut |buffer| {
+                let diff = multibuffer
+                    .diff_for(buffer.read(cx).remote_id())
+                    .expect("should have diff for each buffer");
+
+                let language = diff
+                    .read(cx)
+                    .base_text_buffer()
+                    .read(cx)
+                    .language()
+                    .map(|language| language.name());
+
+                assert_eq!(language, Some("Rust".into()));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_split_diff_view(cx: &mut TestAppContext) {
+        let diff_view = test_init(cx, DiffViewStyle::Split).await;
+
+        // Language detection completes only after the diff view was created,
+        // as happens on startup with `zed -n --diff old new`.
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+
+        diff_view.update(cx, |diff_view, cx| {
+            diff_view.editor.update(cx, |editor, cx| {
+                editor.rhs_editor().update(cx, |rhs_editor, cx| {
+                    rhs_editor.buffer().update(cx, |multibuffer, cx| {
+                        multibuffer.for_each_buffer(&mut |buffer| {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.set_language(Some(language.clone()), cx);
+                            })
+                        });
+                    });
+                });
+            });
+        });
+
+        cx.run_until_parked();
+
+        diff_view.read_with(cx, |diff_view, cx| {
+            let lhs_editor = diff_view
+                .editor
+                .read(cx)
+                .lhs_editor()
+                .expect("diff view should be split")
+                .clone();
+
+            lhs_editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .for_each_buffer(&mut |buffer| {
+                    let lhs_language = buffer.read(cx).language().map(|language| language.name());
+                    assert_eq!(lhs_language, Some("Rust".into()));
+                });
+        });
     }
 }
