@@ -126,9 +126,8 @@ impl LanguageModelSession {
         let request = self.log.render_request(&parameters);
         self.log
             .begin_round(self.model.provider_id.clone(), self.model.id.clone())?;
-        let response = self
-            .client
-            .stream_completion(&self.model, request, &cx.to_async());
+        let client = self.client.clone();
+        let model = self.model.clone();
 
         let (events, host_events) = mpsc::unbounded();
         let (stream_dropped_sender, stream_dropped) = oneshot::channel::<()>();
@@ -136,6 +135,10 @@ impl LanguageModelSession {
             let events = events.clone();
             async move |this, cx| {
                 let mut stream_dropped = stream_dropped.fuse();
+                // Dispatched from the task rather than from `complete`, because
+                // providers read app state through `cx` while starting a
+                // request, and the host is still updating this entity there.
+                let response = client.stream_completion(&model, request, cx);
                 // Scoped so that a cancelled connection is dropped right away.
                 let connection = {
                     let mut connecting = response.fuse();
@@ -226,6 +229,7 @@ mod tests {
             session.append(user_text("Hello"));
             session.complete(parameters.clone(), cx).unwrap()
         });
+        cx.run_until_parked();
 
         let rendered =
             session.read_with(cx, |session, _| session.log().render_request(&parameters));
@@ -241,6 +245,7 @@ mod tests {
             session.append(user_text("Read the file"));
             session.complete(parameters(), cx).unwrap()
         });
+        cx.run_until_parked();
         let first = only_pending(&fake);
         fake.send_last_event(
             &model,
@@ -261,6 +266,7 @@ mod tests {
             session.submit_tool_result(tool_result("tool-1")).unwrap();
             session.complete(parameters(), cx).unwrap()
         });
+        cx.run_until_parked();
         let second = only_pending(&fake);
 
         let first_messages = without_cache_marks(&first);
@@ -277,6 +283,7 @@ mod tests {
             session.append(user_text("Hello"));
             session.complete(parameters(), cx).unwrap()
         });
+        cx.run_until_parked();
 
         let observer = cx.spawn({
             let session = session.clone();
@@ -317,6 +324,7 @@ mod tests {
             session.append(user_text("Hello"));
             session.complete(parameters(), cx).unwrap()
         });
+        cx.run_until_parked();
         let request = only_pending(&fake);
         fake.send_last_text(&model, "partial");
         cx.run_until_parked();
@@ -330,6 +338,7 @@ mod tests {
         let result = session.update(cx, |session, cx| {
             session.complete(parameters(), cx).map(drop)
         });
+        cx.run_until_parked();
         assert_eq!(result, Err(SessionError::NoPendingInput));
         let output = session.read_with(cx, |session, _| last_output(session.log()));
         assert_eq!(
@@ -347,6 +356,7 @@ mod tests {
             session.append(user_text("Hello"));
             session.complete(parameters(), cx).unwrap()
         });
+        cx.run_until_parked();
         let request = only_pending(&fake);
         fake.send_last_text(&model, "partial");
         cx.run_until_parked();
@@ -381,6 +391,7 @@ mod tests {
             let anchor = session.append(user_text("Hello"));
             (anchor, session.complete(parameters(), cx).unwrap())
         });
+        cx.run_until_parked();
         let request = only_pending(&fake);
         fake.send_last_text(&model, "partial");
         cx.run_until_parked();
@@ -406,6 +417,7 @@ mod tests {
             session.append(user_text("Read the file"));
             session.complete(parameters(), cx).unwrap()
         });
+        cx.run_until_parked();
         let request = only_pending(&fake);
         fake.send_last_event(
             &model,
@@ -449,6 +461,7 @@ mod tests {
             session.append(user_text("Read the file"));
             session.complete(parameters(), cx).unwrap()
         });
+        cx.run_until_parked();
         fake.send_last_event(
             &fake.model("fake"),
             LanguageModelCompletionEvent::ToolUse(tool_use("tool-1")),
@@ -460,6 +473,7 @@ mod tests {
             session.submit_tool_result(tool_result("tool-1")).unwrap();
             session.complete(parameters(), cx).map(drop)
         });
+        cx.run_until_parked();
 
         assert_eq!(result, Err(SessionError::RoundInProgress));
         assert_eq!(fake.completion_count(), 1);
@@ -469,6 +483,7 @@ mod tests {
         let result = session.update(cx, |session, cx| {
             session.complete(parameters(), cx).map(drop)
         });
+        cx.run_until_parked();
         assert_eq!(result, Ok(()));
         assert_eq!(fake.completion_count(), 2);
     }
@@ -495,6 +510,7 @@ mod tests {
         let retry = session.update(cx, |session, cx| {
             session.complete(parameters(), cx).map(drop)
         });
+        cx.run_until_parked();
         assert_eq!(retry, Ok(()));
     }
 
@@ -548,6 +564,7 @@ mod tests {
             session.append(user_text("Hello"));
             session.complete(parameters(), cx).unwrap()
         });
+        cx.run_until_parked();
         fake.send_last_event(&model, LanguageModelCompletionEvent::Started);
         fake.send_last_error(
             &model,
@@ -569,6 +586,7 @@ mod tests {
         let retry = session.update(cx, |session, cx| {
             session.complete(parameters(), cx).map(drop)
         });
+        cx.run_until_parked();
         assert_eq!(retry, Ok(()));
     }
 
@@ -580,6 +598,7 @@ mod tests {
             session.append(user_text("Hello"));
             session.complete(parameters(), cx).unwrap()
         });
+        cx.run_until_parked();
         fake.send_last_event(
             &model,
             LanguageModelCompletionEvent::Thinking {
@@ -605,6 +624,7 @@ mod tests {
         let _resumed_stream = resumed.update(cx, |session, cx| {
             session.complete(parameters(), cx).unwrap()
         });
+        cx.run_until_parked();
 
         let [from_original, from_resumed] = fake.pending_completions().try_into().unwrap();
         assert_eq!(from_resumed, from_original);
