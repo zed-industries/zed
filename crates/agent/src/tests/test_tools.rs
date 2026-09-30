@@ -183,6 +183,52 @@ impl AgentTool for StreamingFailingEchoTool {
     }
 }
 
+/// A tool that returns the result its input scripts
+#[derive(JsonSchema, Serialize, Deserialize)]
+pub struct ScriptedResultToolInput {
+    /// The result to return.
+    pub result: String,
+    /// Whether to return the result as an error.
+    pub is_error: bool,
+}
+
+pub struct ScriptedResultTool;
+
+impl AgentTool for ScriptedResultTool {
+    type Input = ScriptedResultToolInput;
+    type Output = String;
+
+    const NAME: &'static str = "scripted_result";
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn initial_title(
+        &self,
+        _input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        "Scripted Result".into()
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: ToolInput<Self::Input>,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<String, String>> {
+        cx.spawn(async move |_cx| {
+            let input = input.recv().await.map_err(|error| error.to_string())?;
+            if input.is_error {
+                Err(input.result)
+            } else {
+                Ok(input.result)
+            }
+        })
+    }
+}
+
 /// A tool that echoes its input
 #[derive(JsonSchema, Serialize, Deserialize)]
 pub struct EchoToolInput {

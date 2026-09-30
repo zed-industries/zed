@@ -69,7 +69,7 @@ use std::{
 use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock, paths::PathStyle};
 use uuid::Uuid;
 
-const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
+pub(crate) const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 const TOOL_CALL_INTERRUPTED_BY_FOLLOW_UP_MESSAGE: &str =
     "Permission denied: user sent a follow-up message instead of approving the tool call.";
 pub(crate) const FOLLOW_UP_PERMISSION_DENIED_OPTION_ID: &str = "follow_up_permission_denied";
