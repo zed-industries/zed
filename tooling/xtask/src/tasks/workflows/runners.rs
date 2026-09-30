@@ -14,6 +14,7 @@ pub const LINUX_ARM_BUNDLER: Runner = Runner("namespace-profile-8x32-ubuntu-2004
 pub const LINUX_LARGE_RAM: Runner = Runner("namespace-profile-8x32-ubuntu-2404");
 
 pub const MAC_DEFAULT: Runner = Runner("namespace-profile-mac-large");
+pub const MAC_SMALL: Runner = Runner("namespace-profile-mac-small");
 pub const WINDOWS_DEFAULT: Runner = Runner("self-32vcpu-windows-2022");
 
 pub struct Runner(&'static str);

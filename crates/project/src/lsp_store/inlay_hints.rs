@@ -324,6 +324,7 @@ impl LspStore {
             let request_timeout = ProjectSettings::get_global(cx)
                 .global_lsp_settings
                 .get_request_timeout();
+            let origin_position = hint.position;
             cx.background_spawn(async move {
                 let resolve_task = lang_server.request::<lsp::request::InlayHintResolveRequest>(
                     InlayHints::project_to_lsp_hint(hint, &buffer_snapshot),
@@ -335,7 +336,7 @@ impl LspStore {
                     .context("inlay hint resolve LSP request")?;
                 Ok(InlayHints::lsp_to_project_hint(
                     resolved_hint,
-                    &buffer_snapshot,
+                    origin_position,
                     server_id,
                     ResolveState::Resolved,
                     false,

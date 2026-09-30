@@ -1,5 +1,5 @@
 use crate::{
-    AppleDispatcher, BoolExt, MacActivity, MacDisplay, MacKeyboardLayout, MacKeyboardMapper,
+    AppleActivity, AppleDispatcher, BoolExt, MacDisplay, MacKeyboardLayout, MacKeyboardMapper,
     MacWindow, events::key_to_native, ns_string, pasteboard::Pasteboard, renderer,
     set_active_window_cursor_style,
 };
@@ -1031,7 +1031,7 @@ impl Platform for MacPlatform {
     }
 
     fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
-        Task::ready(Ok(MacActivity::begin(
+        Task::ready(Ok(AppleActivity::begin(
             reason,
             NSActivityOptions::UserInitiated,
         )))

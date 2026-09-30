@@ -317,116 +317,114 @@ impl IosWindow {
         let screen_bounds = screen.bounds();
         let scale_factor = screen.scale();
 
-        unsafe {
-            let main_thread = MainThreadMarker::new().expect("UIKit requires the main thread");
-            // Create UIWindow
-            let window_scene = platform.application.window_scene();
-            let window_scene = window_scene.as_deref();
-            let (window, screen_bounds_cg, scale) = if let Some(scene) = window_scene {
-                let screen = scene.screen();
-                let bounds = screen.bounds();
-                let window = UIWindow::initWithWindowScene(UIWindow::alloc(main_thread), scene);
-                window.setFrame(bounds);
-                (window, bounds, screen.scale())
-            } else {
-                let screen = UIScreen::mainScreen(main_thread);
-                let bounds = screen.bounds();
-                let window = UIWindow::initWithFrame(UIWindow::alloc(main_thread), bounds);
-                (window, bounds, screen.scale())
-            };
+        let main_thread = MainThreadMarker::new().expect("UIKit requires the main thread");
+        // Create UIWindow
+        let window_scene = platform.application.window_scene();
+        let window_scene = window_scene.as_deref();
+        let (window, screen_bounds_cg, scale) = if let Some(scene) = window_scene {
+            let screen = scene.screen();
+            let bounds = screen.bounds();
+            let window = UIWindow::initWithWindowScene(UIWindow::alloc(main_thread), scene);
+            window.setFrame(bounds);
+            (window, bounds, screen.scale())
+        } else {
+            let screen = UIScreen::mainScreen(main_thread);
+            let bounds = screen.bounds();
+            let window = UIWindow::initWithFrame(UIWindow::alloc(main_thread), bounds);
+            (window, bounds, screen.scale())
+        };
 
-            let metal_frame = CGRect::new(CGPoint::ZERO, screen_bounds_cg.size);
-            let view = MetalView::new(metal_frame, main_thread);
+        let metal_frame = CGRect::new(CGPoint::ZERO, screen_bounds_cg.size);
+        let view = MetalView::new(metal_frame, main_thread);
 
-            let layer = view.layer();
-            layer.setContentsScale(scale);
+        let layer = view.layer();
+        layer.setContentsScale(scale);
 
-            // Auto-resize the Metal view when the parent view changes size
-            // (e.g. rotation). UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight
-            view.setAutoresizingMask(
-                UIViewAutoresizing::FlexibleWidth | UIViewAutoresizing::FlexibleHeight,
+        // Auto-resize the Metal view when the parent view changes size
+        // (e.g. rotation). UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight
+        view.setAutoresizingMask(
+            UIViewAutoresizing::FlexibleWidth | UIViewAutoresizing::FlexibleHeight,
+        );
+
+        // Enable user interaction on the Metal view for touch handling
+        view.setUserInteractionEnabled(true);
+        view.setMultipleTouchEnabled(true);
+
+        let view_controller = ViewController::new(main_thread);
+        view_controller.setView(Some(&view));
+        window.setRootViewController(Some(&view_controller));
+
+        // Make the window visible
+        window.makeKeyAndVisible();
+
+        // Create a hidden text input view for keyboard handling.
+        // Uses our custom GPUITextInputView which implements UIKeyInput
+        // so iOS actually routes keyboard text to us.
+        let text_input_frame = CGRect::new(CGPoint::ZERO, CGSize::new(1.0, 1.0));
+        let text_input_view = TextInputView::new(text_input_frame, main_thread);
+        text_input_view.setAlpha(0.01);
+        text_input_view.setUserInteractionEnabled(true);
+        view.addSubview(&text_input_view);
+
+        let edit_menu_interaction = if AnyClass::get(c"UIEditMenuInteraction").is_some() {
+            let interaction = UIEditMenuInteraction::initWithDelegate(
+                UIEditMenuInteraction::alloc(main_thread),
+                None,
             );
+            view.addInteraction(objc2::runtime::ProtocolObject::from_ref(&*interaction));
+            Some(interaction)
+        } else {
+            None
+        };
 
-            // Enable user interaction on the Metal view for touch handling
-            view.setUserInteractionEnabled(true);
-            view.setMultipleTouchEnabled(true);
+        let pixel_w = (screen_bounds_cg.size.width * scale) as i32;
+        let pixel_h = (screen_bounds_cg.size.height * scale) as i32;
+        let mut renderer = MetalRenderer::from_layer(
+            MetalContext::default(),
+            layer
+                .downcast_ref::<CAMetalLayer>()
+                .ok_or_else(|| anyhow::anyhow!("UIKit view must have a CAMetalLayer"))?,
+            false,
+        );
+        renderer.update_drawable_size(size(DevicePixels(pixel_w), DevicePixels(pixel_h)));
 
-            let view_controller = ViewController::new(main_thread);
-            view_controller.setView(Some(&view));
-            window.setRootViewController(Some(&view_controller));
+        let state = IosWindowState {
+            platform: Rc::downgrade(platform),
+            keyboard_observers: RefCell::default(),
+            window,
+            view_controller,
+            view,
+            text_input_view,
+            edit_menu_interaction,
+            edit_menu_actions: Cell::new(EditMenuActions::default()),
+            bounds: Cell::new(screen_bounds),
+            scale_factor: Cell::new(scale_factor),
+            input_handler: CallbackSlot::default(),
+            request_frame_callback: CallbackSlot::default(),
+            force_next_frame: Cell::new(true),
+            input_callback: CallbackSlot::default(),
+            active_status_callback: CallbackSlot::default(),
+            visibility: Cell::new(WindowVisibility::Visible),
+            visibility_callback: CallbackSlot::default(),
+            hover_status_callback: CallbackSlot::default(),
+            resize_callback: CallbackSlot::default(),
+            moved_callback: CallbackSlot::default(),
+            should_close_callback: CallbackSlot::default(),
+            hit_test_callback: CallbackSlot::default(),
+            close_callback: CallbackSlot::default(),
+            appearance_changed_callback: CallbackSlot::default(),
+            insets_changed_callback: CallbackSlot::default(),
+            keyboard_dismiss_callback: CallbackSlot::default(),
+            keyboard_dismiss_touch: Cell::new(None),
+            keyboard_height: Cell::new(0.),
+            mouse_position: Cell::new(Point::default()),
+            modifiers: Cell::new(Modifiers::default()),
+            renderer: Mutex::new(renderer),
+        };
 
-            // Make the window visible
-            window.makeKeyAndVisible();
-
-            // Create a hidden text input view for keyboard handling.
-            // Uses our custom GPUITextInputView which implements UIKeyInput
-            // so iOS actually routes keyboard text to us.
-            let text_input_frame = CGRect::new(CGPoint::ZERO, CGSize::new(1.0, 1.0));
-            let text_input_view = TextInputView::new(text_input_frame, main_thread);
-            text_input_view.setAlpha(0.01);
-            text_input_view.setUserInteractionEnabled(true);
-            view.addSubview(&text_input_view);
-
-            let edit_menu_interaction = if AnyClass::get(c"UIEditMenuInteraction").is_some() {
-                let interaction = UIEditMenuInteraction::initWithDelegate(
-                    UIEditMenuInteraction::alloc(main_thread),
-                    None,
-                );
-                view.addInteraction(objc2::runtime::ProtocolObject::from_ref(&*interaction));
-                Some(interaction)
-            } else {
-                None
-            };
-
-            let pixel_w = (screen_bounds_cg.size.width * scale) as i32;
-            let pixel_h = (screen_bounds_cg.size.height * scale) as i32;
-            let mut renderer = MetalRenderer::from_layer(
-                MetalContext::default(),
-                Retained::as_ptr(&layer)
-                    .cast_mut()
-                    .cast::<metal::CAMetalLayer>(),
-                false,
-            );
-            renderer.update_drawable_size(size(DevicePixels(pixel_w), DevicePixels(pixel_h)));
-
-            let state = IosWindowState {
-                platform: Rc::downgrade(platform),
-                keyboard_observers: RefCell::default(),
-                window,
-                view_controller,
-                view,
-                text_input_view,
-                edit_menu_interaction,
-                edit_menu_actions: Cell::new(EditMenuActions::default()),
-                bounds: Cell::new(screen_bounds),
-                scale_factor: Cell::new(scale_factor),
-                input_handler: CallbackSlot::default(),
-                request_frame_callback: CallbackSlot::default(),
-                force_next_frame: Cell::new(true),
-                input_callback: CallbackSlot::default(),
-                active_status_callback: CallbackSlot::default(),
-                visibility: Cell::new(WindowVisibility::Visible),
-                visibility_callback: CallbackSlot::default(),
-                hover_status_callback: CallbackSlot::default(),
-                resize_callback: CallbackSlot::default(),
-                moved_callback: CallbackSlot::default(),
-                should_close_callback: CallbackSlot::default(),
-                hit_test_callback: CallbackSlot::default(),
-                close_callback: CallbackSlot::default(),
-                appearance_changed_callback: CallbackSlot::default(),
-                insets_changed_callback: CallbackSlot::default(),
-                keyboard_dismiss_callback: CallbackSlot::default(),
-                keyboard_dismiss_touch: Cell::new(None),
-                keyboard_height: Cell::new(0.),
-                mouse_position: Cell::new(Point::default()),
-                modifiers: Cell::new(Modifiers::default()),
-                renderer: Mutex::new(renderer),
-            };
-
-            Ok(Self {
-                state: Rc::new(state),
-            })
-        }
+        Ok(Self {
+            state: Rc::new(state),
+        })
     }
 
     pub(crate) fn register(&self) {
