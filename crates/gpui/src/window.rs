@@ -127,10 +127,6 @@ struct WindowInvalidatorInner {
     pub update_count: usize,
     #[cfg(feature = "profiler")]
     pub frame_dirty: FrameDirtyAccumulator,
-    #[cfg(feature = "profiler")]
-    last_signal_at: Option<Instant>,
-    #[cfg(feature = "profiler")]
-    refresh_interval: Duration,
     pub platform_waker: Option<Rc<dyn Fn()>>,
 }
 
@@ -144,11 +140,6 @@ struct WindowInvalidatorInner {
 struct FrameDirtyAccumulator {
     dirty_at: Option<Instant>,
     invalidations: u64,
-    // A request predating external invalidation starts this frame's measurement
-    // at invalidation, but input/animation attribution still needs the actual time.
-    frame_latency_start_at: Option<Instant>,
-    first_signal_at: Option<Instant>,
-    refresh_interval: Duration,
 }
 
 #[derive(Clone)]
@@ -168,10 +159,6 @@ impl WindowInvalidator {
                 update_count: 0,
                 #[cfg(feature = "profiler")]
                 frame_dirty: FrameDirtyAccumulator::default(),
-                #[cfg(feature = "profiler")]
-                last_signal_at: None,
-                #[cfg(feature = "profiler")]
-                refresh_interval: Duration::from_micros(16_667),
                 platform_waker: None,
             })),
         }
@@ -268,45 +255,6 @@ impl WindowInvalidator {
     #[cfg(feature = "profiler")]
     fn take_frame_dirty(&self) -> FrameDirtyAccumulator {
         mem::take(&mut self.inner.borrow_mut().frame_dirty)
-    }
-
-    #[cfg(feature = "profiler")]
-    fn record_frame_signal(&self, signal_at: Option<Instant>, pending_frame: bool) {
-        let Some(signal_at) = signal_at else {
-            return;
-        };
-        let mut inner = self.inner.borrow_mut();
-        if let Some(previous) = inner.last_signal_at
-            && signal_at > previous
-        {
-            let interval = signal_at.duration_since(previous);
-            // Idle, suspended, or withheld callbacks must not teach the profiler
-            // that a long platform wait is a normal refresh interval.
-            if interval <= profiler::WindowProfiler::MAX_REFRESH_INTERVAL {
-                inner.refresh_interval = interval;
-            }
-        }
-        inner.last_signal_at = Some(signal_at);
-        inner.frame_dirty.refresh_interval = inner.refresh_interval;
-        inner.frame_dirty.first_signal_at.get_or_insert(signal_at);
-        if inner.dirty || pending_frame {
-            // A coalesced signal preceding an external invalidation means the
-            // platform was already ready. Animation demand, however, precedes
-            // its callback's invalidation and must retain skipped frame requests.
-            let frame_latency_start_at =
-                signal_at.max(inner.frame_dirty.dirty_at.unwrap_or(signal_at));
-            inner
-                .frame_dirty
-                .frame_latency_start_at
-                .get_or_insert(frame_latency_start_at);
-        }
-    }
-
-    #[cfg(feature = "profiler")]
-    fn retire_frame_signals(&self) {
-        let mut inner = self.inner.borrow_mut();
-        inner.frame_dirty.frame_latency_start_at = None;
-        inner.frame_dirty.first_signal_at = None;
     }
 
     pub fn take_views(&self) -> FxHashSet<EntityId> {
@@ -1769,13 +1717,6 @@ impl Window {
                     handled_at: Instant::now(),
                     source: request_frame_options.signal_source,
                 });
-                #[cfg(feature = "profiler")]
-                invalidator.record_frame_signal(
-                    request_frame_options.signal_at,
-                    deferred_force_render
-                        || request_frame_options.force_render
-                        || !next_frame_callbacks.borrow().is_empty(),
-                );
                 // This must be checked before accessing App: if this request
                 // arrived re-entrantly while a draw is on this thread's stack
                 // (e.g. via a nested message pump in the Windows window
@@ -1921,11 +1862,6 @@ impl Window {
                 // source explicitly.
                 if invalidator.is_dirty() || !next_frame_callbacks.borrow().is_empty() {
                     invalidator.wake_platform();
-                } else {
-                    // A next-frame callback can finish without invalidating;
-                    // its frame request must not leak into a later input frame.
-                    #[cfg(feature = "profiler")]
-                    invalidator.retire_frame_signals();
                 }
                 #[cfg(feature = "profiler")]
                 if !should_draw {
@@ -3504,11 +3440,6 @@ impl Window {
 
         #[cfg(feature = "profiler")]
         {
-            self.window_profiler.record_frame_signals(
-                frame_dirty.frame_latency_start_at,
-                frame_dirty.first_signal_at,
-                frame_dirty.refresh_interval,
-            );
             let draw_duration = self
                 .window_profiler
                 .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
@@ -7871,61 +7802,7 @@ mod tests {
 
     #[cfg(feature = "profiler")]
     #[gpui::test]
-    fn test_frame_signal_latency_classification(cx: &mut TestAppContext) {
-        use crate::profiler::WindowProfiler;
-        use scheduler::Instant;
-
-        // Test mode draws during effect flushing, before the simulated platform signal.
-        cx.app.borrow_mut().mode = crate::app::GpuiMode::Production;
-        for (delay, signal_delay, expected_samples) in [
-            (16, Some(16), 1),
-            (100, Some(100), 0),
-            (100, Some(16), 1),
-            (100, None, 1),
-        ] {
-            let window = cx.add_window(|_, _| EmptyView);
-            let platform_window = cx.test_window(window.into());
-            platform_window.simulate_frame_request(RequestFrameOptions::default());
-            window
-                .update(cx, |_, window, _| {
-                    window.window_profiler =
-                        WindowProfiler::new(window.window_handle().window_id())
-                            .expect("create window profiler");
-                    window.window_profiler.begin_input("test");
-                    window.refresh();
-                    window.window_profiler.end_input(true);
-                })
-                .expect("invalidate test window");
-            let dirty_at = Instant::now();
-            // Window and profiler timestamps use the wall clock, not the test dispatcher clock.
-            std::thread::sleep(Duration::from_millis(delay));
-            platform_window.simulate_frame_request(RequestFrameOptions {
-                signal_at: signal_delay.map(|delay| dirty_at + Duration::from_millis(delay)),
-                ..Default::default()
-            });
-            window
-                .update(cx, |_, window, _| {
-                    let frames = window.window_profiler.frame_duration_snapshot();
-                    let input = window.window_profiler.input_latency_snapshot();
-                    assert_eq!(frames.dirty_to_present_histogram.len(), expected_samples);
-                    assert_eq!(input.latency_histogram.len(), expected_samples);
-                    assert_eq!(frames.draw_duration_histogram.len(), 1);
-                    assert_eq!(
-                        frames.signal_to_present_histogram.len(),
-                        u64::from(signal_delay.is_some())
-                    );
-                    if signal_delay == Some(16) && delay == 100 {
-                        assert!(frames.signal_to_present_histogram.max() >= 84_000_000);
-                    }
-                })
-                .expect("inspect frame latency");
-        }
-    }
-
-    #[cfg(feature = "profiler")]
-    #[gpui::test]
-    fn test_frame_signal_survives_throttling(cx: &mut TestAppContext) {
-        use crate::profiler::WindowProfiler;
+    fn test_frame_demand_survives_throttling(cx: &mut TestAppContext) {
         use crate::profiler::journal::{
             self, ForegroundJournalEntry, FrameSkipReason, IntervalBoundary,
         };
@@ -7936,40 +7813,58 @@ mod tests {
         let (journal, _guard) = journal::install_test_foreground_journal(256, 4);
         let mut collector = journal.collector();
         for initially_dirty in [true, false] {
-            let window = cx.add_window(|_, _| EmptyView);
+            // Keep the throttle closed without depending on short wall-clock deadlines.
+            let window = cx
+                .app
+                .borrow_mut()
+                .open_window(
+                    WindowOptions {
+                        inactive_frame_interval: Some(Duration::from_secs(3600)),
+                        ..Default::default()
+                    },
+                    |_, cx| cx.new(|_| EmptyView),
+                )
+                .expect("open inactive test window");
             let platform_window = cx.test_window(window.into());
             platform_window.simulate_active_status_change(false);
             platform_window.simulate_frame_request(RequestFrameOptions::default());
-            window
+            let callback_ran = Rc::new(Cell::new(false));
+            let draws_before = window
                 .update(cx, |_, window, _| {
-                    window.window_profiler =
-                        WindowProfiler::new(window.window_handle().window_id())
-                            .expect("create window profiler");
+                    let draws_before = window
+                        .frame_duration_snapshot()
+                        .draw_duration_histogram
+                        .len();
                     if initially_dirty {
                         window.refresh();
                     }
-                    window.on_next_frame(|window, _| window.refresh());
+                    window.on_next_frame({
+                        let callback_ran = callback_ran.clone();
+                        move |window, _| {
+                            callback_ran.set(true);
+                            window.refresh();
+                        }
+                    });
+                    draws_before
                 })
                 .expect("schedule throttled frame");
             collector.collect_unseen();
-            std::thread::sleep(Duration::from_millis(1));
             platform_window.simulate_frame_request(RequestFrameOptions {
                 signal_at: Some(Instant::now()),
                 ..Default::default()
             });
             window
                 .update(cx, |_, window, _| {
-                    assert_eq!(window.invalidator.is_dirty(), initially_dirty);
-                    assert_eq!(window.next_frame_callbacks.borrow().len(), 1);
-                    assert!(
+                    assert_eq!(
                         window
-                            .window_profiler
                             .frame_duration_snapshot()
                             .draw_duration_histogram
-                            .is_empty()
+                            .len(),
+                        draws_before,
                     );
                 })
                 .expect("inspect deferred frame");
+            assert!(!callback_ran.get());
             assert!(collector.collect_unseen().entries.iter().any(|entry| {
                 matches!(
                     entry,
@@ -7978,8 +7873,6 @@ mod tests {
                             && skipped.reason == FrameSkipReason::InactiveFrameRateLimit
                 )
             }));
-            // Window and profiler timestamps use the wall clock, not the test dispatcher clock.
-            std::thread::sleep(Duration::from_millis(99));
             platform_window.simulate_frame_request(RequestFrameOptions {
                 signal_at: Some(Instant::now()),
                 require_presentation: true,
@@ -7987,68 +7880,16 @@ mod tests {
             });
             window
                 .update(cx, |_, window, _| {
-                    let frames = window.window_profiler.frame_duration_snapshot();
-                    assert_eq!(frames.dirty_to_present_histogram.len(), 1);
-                    if initially_dirty {
-                        assert!(frames.dirty_to_present_histogram.max() >= 100_000_000);
-                    }
-                    assert!(frames.signal_to_present_histogram.max() >= 99_000_000);
+                    assert_eq!(
+                        window
+                            .frame_duration_snapshot()
+                            .draw_duration_histogram
+                            .len(),
+                        draws_before + 1,
+                    );
                 })
                 .expect("inspect presented frame");
-        }
-    }
-
-    #[cfg(feature = "profiler")]
-    #[gpui::test]
-    fn test_frame_signal_before_invalidation_does_not_hide_platform_wait(cx: &mut TestAppContext) {
-        use crate::profiler::WindowProfiler;
-        use scheduler::Instant;
-
-        // Only the manually delivered platform requests should draw these frames.
-        cx.app.borrow_mut().mode = crate::app::GpuiMode::Production;
-        for pending_callback in [false, true] {
-            let window = cx.add_window(|_, _| EmptyView);
-            let platform_window = cx.test_window(window.into());
-            platform_window.simulate_frame_request(RequestFrameOptions::default());
-            if pending_callback {
-                window
-                    .update(cx, |_, window, _| window.on_next_frame(|_, _| {}))
-                    .expect("schedule callback that does not invalidate");
-            }
-            platform_window.simulate_frame_request(RequestFrameOptions {
-                signal_at: Some(Instant::now()),
-                require_presentation: true,
-                ..Default::default()
-            });
-            window
-                .update(cx, |_, window, _| {
-                    assert!(!window.invalidator.is_dirty());
-                    assert!(window.next_frame_callbacks.borrow().is_empty());
-                    window.window_profiler =
-                        WindowProfiler::new(window.window_handle().window_id())
-                            .expect("create window profiler");
-                    window.window_profiler.begin_input("test");
-                    window.refresh();
-                    window.window_profiler.end_input(true);
-                })
-                .expect("invalidate test window after idle signal");
-            // Window and profiler timestamps use the wall clock, not the test dispatcher clock.
-            std::thread::sleep(Duration::from_millis(100));
-            platform_window.simulate_frame_request(RequestFrameOptions {
-                signal_at: Some(Instant::now()),
-                ..Default::default()
-            });
-            window
-                .update(cx, |_, window, _| {
-                    let frames = window.window_profiler.frame_duration_snapshot();
-                    let input = window.window_profiler.input_latency_snapshot();
-                    assert!(frames.dirty_to_present_histogram.is_empty());
-                    assert!(input.latency_histogram.is_empty());
-                    assert_eq!(frames.draw_duration_histogram.len(), 1);
-                    assert_eq!(frames.signal_to_present_histogram.len(), 1);
-                    assert!(frames.signal_to_present_histogram.max() < 100_000_000);
-                })
-                .expect("inspect withheld frame after idle signal");
+            assert!(callback_ran.get());
         }
     }
 

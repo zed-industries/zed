@@ -209,56 +209,42 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
         .retain(|window_id, _| open_window_ids.contains(window_id));
     let now = Instant::now();
 
-    let (
-        delta_draws,
-        delta_intervals,
-        delta_dirty_to_present,
-        delta_signal_to_present,
-        report_window_seconds,
-    ) = if let Some((prev_instant, prev_snapshot)) = state.previous.get(&window_id) {
-        let mut delta_draws = current.draw_duration_histogram.clone();
-        delta_draws
-            .subtract(&prev_snapshot.draw_duration_histogram)
-            .ok();
-        let mut delta_intervals = current.present_interval_histogram.clone();
-        delta_intervals
-            .subtract(&prev_snapshot.present_interval_histogram)
-            .ok();
-        let mut delta_dirty_to_present = current.dirty_to_present_histogram.clone();
-        if delta_dirty_to_present
-            .subtract(&prev_snapshot.dirty_to_present_histogram)
-            .is_err()
-        {
-            delta_dirty_to_present = current.dirty_to_present_histogram.clone();
-        }
-        let mut delta_signal_to_present = current.signal_to_present_histogram.clone();
-        if let Err(error) =
-            delta_signal_to_present.subtract(&prev_snapshot.signal_to_present_histogram)
-        {
-            log::error!("failed to subtract signal-to-present histogram: {error}");
-            delta_signal_to_present = current.signal_to_present_histogram.clone();
-        }
-        let elapsed = now.duration_since(*prev_instant).as_secs();
-        (
-            delta_draws,
-            delta_intervals,
-            delta_dirty_to_present,
-            delta_signal_to_present,
-            elapsed,
-        )
-    } else {
-        // First report for this window: the full cumulative histograms are
-        // the delta from the empty starting state. We don't know how long
-        // the window has been open, so record 0 to signal that this is the
-        // initial accumulation period rather than a fixed-width window.
-        (
-            current.draw_duration_histogram.clone(),
-            current.present_interval_histogram.clone(),
-            current.dirty_to_present_histogram.clone(),
-            current.signal_to_present_histogram.clone(),
-            0u64,
-        )
-    };
+    let (delta_draws, delta_intervals, delta_dirty_to_present, report_window_seconds) =
+        if let Some((prev_instant, prev_snapshot)) = state.previous.get(&window_id) {
+            let mut delta_draws = current.draw_duration_histogram.clone();
+            delta_draws
+                .subtract(&prev_snapshot.draw_duration_histogram)
+                .ok();
+            let mut delta_intervals = current.present_interval_histogram.clone();
+            delta_intervals
+                .subtract(&prev_snapshot.present_interval_histogram)
+                .ok();
+            let mut delta_dirty_to_present = current.dirty_to_present_histogram.clone();
+            if delta_dirty_to_present
+                .subtract(&prev_snapshot.dirty_to_present_histogram)
+                .is_err()
+            {
+                delta_dirty_to_present = current.dirty_to_present_histogram.clone();
+            }
+            let elapsed = now.duration_since(*prev_instant).as_secs();
+            (
+                delta_draws,
+                delta_intervals,
+                delta_dirty_to_present,
+                elapsed,
+            )
+        } else {
+            // First report for this window: the full cumulative histograms are
+            // the delta from the empty starting state. We don't know how long
+            // the window has been open, so record 0 to signal that this is the
+            // initial accumulation period rather than a fixed-width window.
+            (
+                current.draw_duration_histogram.clone(),
+                current.present_interval_histogram.clone(),
+                current.dirty_to_present_histogram.clone(),
+                0u64,
+            )
+        };
 
     let total_draws = delta_draws.len();
     if total_draws < MIN_DRAWS_TO_REPORT {
@@ -302,12 +288,6 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
         dirty_to_present_p95_ms =
             delta_dirty_to_present.value_at_quantile(0.95) as f64 / 1_000_000.0,
         dirty_to_present_max_ms = delta_dirty_to_present.max() as f64 / 1_000_000.0,
-        signal_to_present_samples = delta_signal_to_present.len(),
-        signal_to_present_p50_ms =
-            delta_signal_to_present.value_at_quantile(0.5) as f64 / 1_000_000.0,
-        signal_to_present_p95_ms =
-            delta_signal_to_present.value_at_quantile(0.95) as f64 / 1_000_000.0,
-        signal_to_present_max_ms = delta_signal_to_present.max() as f64 / 1_000_000.0,
         root_entity_type_name = window_handle.root_entity_type_name(),
         report_window_seconds = report_window_seconds,
         measurement_version = gpui::profiler::hang::MEASUREMENT_VERSION,

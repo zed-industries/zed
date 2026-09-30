@@ -818,7 +818,7 @@ pub struct RequestFrameOptions {
     pub force_render: bool,
     /// When the platform first requested this frame, before main-thread dispatch.
     ///
-    /// `None` leaves platform-wait attribution unsupported for this request.
+    /// `None` means the captured request time is unavailable.
     /// Coalesced requests carry their first request time, not their delivery time.
     pub signal_at: Option<Instant>,
     /// Distinguishes native callbacks from local scheduling requests.
@@ -828,8 +828,7 @@ pub struct RequestFrameOptions {
 /// Preserves the first platform frame request time across coalesced notifications.
 ///
 /// Producers may record from a platform thread without waiting for the UI thread.
-/// The consumer drains the timestamp on the UI thread; GPUI retains skipped
-/// requests until drawing so its own throttling remains attributable to GPUI.
+/// The consumer drains the timestamp before dispatching the request on the UI thread.
 /// Timestamps are encoded relative to `origin` because `Instant` cannot be stored
 /// directly in an atomic integer; `u64::MAX` represents an empty accumulator.
 pub struct PlatformFrameSignal {
