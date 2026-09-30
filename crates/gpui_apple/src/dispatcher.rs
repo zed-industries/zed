@@ -74,21 +74,21 @@ impl PlatformDispatcher for AppleDispatcher {
     }
 
     fn prevent_app_nap(&self, reason: &str) -> ActivityGuard {
-        MacActivity::begin(
+        AppleActivity::begin(
             reason,
             NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
         )
     }
 }
 
-pub struct MacActivity {
+pub struct AppleActivity {
     activity: Retained<ProtocolObject<dyn NSObjectProtocol>>,
 }
 
 // The activity token returned by NSProcessInfo is thread-safe
-unsafe impl Send for MacActivity {}
+unsafe impl Send for AppleActivity {}
 
-impl MacActivity {
+impl AppleActivity {
     pub fn begin(reason: &str, options: NSActivityOptions) -> ActivityGuard {
         let activity = Self {
             activity: NSProcessInfo::processInfo()
@@ -98,7 +98,7 @@ impl MacActivity {
     }
 }
 
-impl Drop for MacActivity {
+impl Drop for AppleActivity {
     fn drop(&mut self) {
         unsafe { NSProcessInfo::processInfo().endActivity(&self.activity) };
     }

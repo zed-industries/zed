@@ -9,4 +9,4 @@ mod dispatcher;
 mod metal_atlas;
 pub mod metal_renderer;
 
-pub use dispatcher::{AppleDispatcher, MacActivity};
+pub use dispatcher::{AppleActivity, AppleDispatcher};
