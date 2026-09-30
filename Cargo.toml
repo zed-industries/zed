@@ -450,7 +450,7 @@ remote_connection = { path = "crates/remote_connection" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
-rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a", default-features = false, features = ["wav", "playback", "wav_output", "recording", "dither"] }
+rodio = { git = "https://github.com/RustAudio/rodio", rev = "174ce9bd88edc3dfa856701e29f92d9b0184819e", default-features = false, features = ["wav", "playback", "wav_output", "recording", "dither"] }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 sandbox = { path = "crates/sandbox" }
@@ -599,7 +599,7 @@ core-foundation-sys = "0.8.6"
 core-graphics = "0.24"
 core-text = "21"
 core-video = { version = "0.5.2", features = ["metal"] }
-cpal = "0.17"
+cpal = { git = "https://github.com/RustAudio/cpal" }
 crash-handler = "0.8"
 criterion = { version = "0.8.2", features = ["html_reports"] }
 perf-event = { package = "perf-event2", version = "0.7.4" }

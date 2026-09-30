@@ -675,9 +675,9 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "alsa"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c88dbbce13b232b26250e1e2e6ac18b6a891a646b8148285036ebce260ac5c3"
+checksum = "812947049edcd670a82cd5c73c3661d2e58468577ba8489de58e1a73c04cbd5d"
 dependencies = [
  "alsa-sys",
  "bitflags 2.13.1",
@@ -687,9 +687,9 @@ dependencies = [
 
 [[package]]
 name = "alsa-sys"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db8fee663d06c4e303404ef5f40488a53e062f89ba8bfed81f42325aafad1527"
+checksum = "ad7569085a265dd3f607ebecce7458eaab2132a84393534c95b18dcbc3f31e04"
 dependencies = [
  "libc",
  "pkg-config",
@@ -1361,6 +1361,7 @@ dependencies = [
  "collections",
  "cpal",
  "crossbeam-queue",
+ "futures 0.3.34",
  "gpui",
  "libwebrtc",
  "log",
@@ -4027,11 +4028,11 @@ dependencies = [
 
 [[package]]
 name = "coreaudio-rs"
-version = "0.13.0"
+version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1aae284fbaf7d27aa0e292f7677dfbe26503b0d555026f702940805a630eac17"
+checksum = "7d5d7dca3ebcf65a035582c9ad4385371a9d9ee6537474d2a278f4e1e475bb58"
 dependencies = [
- "bitflags 1.3.2",
+ "bitflags 2.13.1",
  "libc",
  "objc2-audio-toolbox",
  "objc2-core-audio",
@@ -4074,12 +4075,11 @@ dependencies = [
 
 [[package]]
 name = "cpal"
-version = "0.17.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b1f9c7312f19fc2fa12fd7acaf38de54e8320ba10d1a02dcbe21038def51ccb"
+version = "0.18.0"
+source = "git+https://github.com/RustAudio/cpal#2622b29052dc972647f0d8ea65709776fcc3b0d7"
 dependencies = [
  "alsa",
- "coreaudio-rs 0.13.0",
+ "coreaudio-rs 0.14.2",
  "dasp_sample",
  "jni 0.21.1",
  "js-sys",
@@ -14836,12 +14836,12 @@ checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "rand_distr"
-version = "0.5.1"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a8615d50dcf34fa31f7ab52692afec947c4dd0ab803cc87cb3b0b4570ff7463"
+checksum = "4d431c2703ccf129de4d45253c03f49ebb22b97d6ad79ee3ecfc7e3f4862c1d8"
 dependencies = [
  "num-traits",
- "rand 0.9.4",
+ "rand 0.10.2",
 ]
 
 [[package]]
@@ -15599,14 +15599,14 @@ dependencies = [
 
 [[package]]
 name = "rodio"
-version = "0.21.1"
-source = "git+https://github.com/RustAudio/rodio?rev=e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a#e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a"
+version = "0.22.2"
+source = "git+https://github.com/RustAudio/rodio?rev=174ce9bd88edc3dfa856701e29f92d9b0184819e#174ce9bd88edc3dfa856701e29f92d9b0184819e"
 dependencies = [
  "cpal",
  "dasp_sample",
  "hound",
  "num-rational",
- "rand 0.9.4",
+ "rand 0.10.2",
  "rand_distr",
  "rtrb",
  "symphonia",
