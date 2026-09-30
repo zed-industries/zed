@@ -102,7 +102,7 @@ pub struct ExtensionCard {
 impl ExtensionCard {
     pub fn for_dev(extension: Arc<ExtensionManifest>, extension_store: &ExtensionStore) -> Self {
         let status = extension_store.extension_status(&extension.id);
-        Self::manifest::<true>(extension, status, LocalExtensionKind::Dev)
+        Self::manifest(extension, status, LocalExtensionKind::Dev)
     }
 
     pub fn for_installed(
@@ -110,7 +110,7 @@ impl ExtensionCard {
         extension_store: &ExtensionStore,
     ) -> Self {
         let status = extension_store.extension_status(&extension.id);
-        Self::manifest::<true>(extension, status, LocalExtensionKind::Installed)
+        Self::manifest(extension, status, LocalExtensionKind::Installed)
     }
 
     pub fn for_remote(
@@ -119,16 +119,15 @@ impl ExtensionCard {
         cx: &App,
     ) -> Self {
         let status = RemoteExtensionStatus::new(&extension.id, extension_store);
-        Self::remote::<true>(extension, status, cx)
+        Self::remote(extension, status, cx)
     }
 
-    fn manifest<const ENABLE_HANDLERS: bool>(
+    fn manifest(
         extension: Arc<ExtensionManifest>,
         status: ExtensionStatus,
         kind: LocalExtensionKind,
     ) -> Self {
-        let actions =
-            Self::actions_for_manifest_extension::<ENABLE_HANDLERS>(&extension, &status, kind);
+        let actions = Self::actions_for_manifest_extension(&extension, &status, kind);
         let details = ExtensionCardDetails {
             id: extension.id.clone(),
             name: extension.name.clone().into(),
@@ -151,12 +150,8 @@ impl ExtensionCard {
         }
     }
 
-    fn remote<const ENABLE_HANDLERS: bool>(
-        extension: &ExtensionMetadata,
-        status: RemoteExtensionStatus,
-        cx: &App,
-    ) -> Self {
-        let actions = Self::actions_for_remote_extension::<ENABLE_HANDLERS>(extension, &status, cx);
+    fn remote(extension: &ExtensionMetadata, status: RemoteExtensionStatus, cx: &App) -> Self {
+        let actions = Self::actions_for_remote_extension(extension, &status, cx);
         let details = ExtensionCardDetails {
             id: extension.id.clone(),
             name: extension.manifest.name.clone().into(),
@@ -192,32 +187,27 @@ impl ExtensionCard {
         (SharedString::from(extension_id.clone()), operation as usize).into()
     }
 
-    fn uninstall_button<const ENABLE_HANDLERS: bool>(
-        extension_id: &Arc<str>,
-        is_dev: bool,
-    ) -> Button {
+    fn uninstall_button(extension_id: &Arc<str>, is_dev: bool) -> Button {
         Button::new(
             Self::button_id(extension_id, ExtensionOperation::Remove),
             "Uninstall",
         )
-        .when(ENABLE_HANDLERS, |button| {
-            button.on_click({
-                let extension_id = extension_id.clone();
-                move |_, _, cx| {
-                    if !is_dev {
-                        telemetry::event!("Extension Uninstalled", extension_id);
-                    }
-                    ExtensionStore::global(cx).update(cx, |store, cx| {
-                        store
-                            .uninstall_extension(extension_id.clone(), cx)
-                            .detach_and_log_err(cx);
-                    });
+        .on_click({
+            let extension_id = extension_id.clone();
+            move |_, _, cx| {
+                if !is_dev {
+                    telemetry::event!("Extension Uninstalled", extension_id);
                 }
-            })
+                ExtensionStore::global(cx).update(cx, |store, cx| {
+                    store
+                        .uninstall_extension(extension_id.clone(), cx)
+                        .detach_and_log_err(cx);
+                });
+            }
         })
     }
 
-    fn configure_button<const ENABLE_HANDLERS: bool>(
+    fn configure_button(
         extension_id: &Arc<str>,
         manifest: Option<Arc<ExtensionManifest>>,
     ) -> Button {
@@ -225,29 +215,27 @@ impl ExtensionCard {
             SharedString::from(format!("configure-{extension_id}")),
             "Configure",
         )
-        .when(ENABLE_HANDLERS, |button| {
-            button.on_click({
-                let extension_id = extension_id.clone();
-                move |_, _, cx| {
-                    let manifest = manifest.clone().or_else(|| {
-                        ExtensionStore::global(cx)
-                            .read(cx)
-                            .extension_manifest_for_id(&extension_id)
-                            .cloned()
+        .on_click({
+            let extension_id = extension_id.clone();
+            move |_, _, cx| {
+                let manifest = manifest.clone().or_else(|| {
+                    ExtensionStore::global(cx)
+                        .read(cx)
+                        .extension_manifest_for_id(&extension_id)
+                        .cloned()
+                });
+                if let Some(manifest) = manifest
+                    && let Some(events) = extension::ExtensionEvents::try_global(cx)
+                {
+                    events.update(cx, |this, cx| {
+                        this.emit(extension::Event::ConfigureExtensionRequested(manifest), cx)
                     });
-                    if let Some(manifest) = manifest
-                        && let Some(events) = extension::ExtensionEvents::try_global(cx)
-                    {
-                        events.update(cx, |this, cx| {
-                            this.emit(extension::Event::ConfigureExtensionRequested(manifest), cx)
-                        });
-                    }
                 }
-            })
+            }
         })
     }
 
-    fn actions_for_manifest_extension<const ENABLE_HANDLERS: bool>(
+    fn actions_for_manifest_extension(
         extension: &Arc<ExtensionManifest>,
         status: &ExtensionStatus,
         kind: LocalExtensionKind,
@@ -260,18 +248,16 @@ impl ExtensionCard {
             )
             .color(Color::Accent)
             .disabled(Self::disables_actions(status))
-            .when(ENABLE_HANDLERS, |button| {
-                button.on_click({
-                    let extension_id = extension.id.clone();
-                    move |_, _, cx| {
-                        ExtensionStore::global(cx).update(cx, |store, cx| {
-                            store.rebuild_dev_extension(extension_id.clone(), cx)
-                        });
-                    }
-                })
+            .on_click({
+                let extension_id = extension.id.clone();
+                move |_, _, cx| {
+                    ExtensionStore::global(cx).update(cx, |store, cx| {
+                        store.rebuild_dev_extension(extension_id.clone(), cx)
+                    });
+                }
             })
         });
-        let uninstall = Self::uninstall_button::<ENABLE_HANDLERS>(&extension.id, is_dev)
+        let uninstall = Self::uninstall_button(&extension.id, is_dev)
             .when_else(
                 is_dev,
                 |button| button.color(Color::Accent),
@@ -279,7 +265,7 @@ impl ExtensionCard {
             )
             .disabled(Self::disables_actions(status));
         let configure = (!extension.context_servers.is_empty()).then(|| {
-            Self::configure_button::<ENABLE_HANDLERS>(&extension.id, Some(extension.clone()))
+            Self::configure_button(&extension.id, Some(extension.clone()))
                 .when_else(
                     is_dev,
                     |button| button.color(Color::Accent),
@@ -295,7 +281,7 @@ impl ExtensionCard {
         }
     }
 
-    fn install_button<const ENABLE_HANDLERS: bool>(extension_id: &Arc<str>) -> Button {
+    fn install_button(extension_id: &Arc<str>) -> Button {
         Button::new(
             Self::button_id(extension_id, ExtensionOperation::Install),
             "Install",
@@ -306,20 +292,18 @@ impl ExtensionCard {
                 .size(IconSize::Small)
                 .color(Color::Muted),
         )
-        .when(ENABLE_HANDLERS, |button| {
-            button.on_click({
-                let extension_id = extension_id.clone();
-                move |_, _, cx| {
-                    telemetry::event!("Extension Installed");
-                    ExtensionStore::global(cx).update(cx, |store, cx| {
-                        store.install_latest_extension(extension_id.clone(), cx)
-                    });
-                }
-            })
+        .on_click({
+            let extension_id = extension_id.clone();
+            move |_, _, cx| {
+                telemetry::event!("Extension Installed");
+                ExtensionStore::global(cx).update(cx, |store, cx| {
+                    store.install_latest_extension(extension_id.clone(), cx)
+                });
+            }
         })
     }
 
-    fn actions_for_remote_extension<const ENABLE_HANDLERS: bool>(
+    fn actions_for_remote_extension(
         extension: &ExtensionMetadata,
         status: &RemoteExtensionStatus,
         cx: &App,
@@ -334,7 +318,7 @@ impl ExtensionCard {
                 return [
                     None,
                     None,
-                    Some(Self::install_button::<ENABLE_HANDLERS>(&extension.id).disabled(true)),
+                    Some(Self::install_button(&extension.id).disabled(true)),
                 ];
             }
             RemoteExtensionStatus::Store(status) => status,
@@ -344,13 +328,10 @@ impl ExtensionCard {
             ExtensionStatus::NotInstalled | ExtensionStatus::Installing => [
                 None,
                 None,
-                Some(
-                    Self::install_button::<ENABLE_HANDLERS>(&extension.id)
-                        .disabled(Self::disables_actions(status)),
-                ),
+                Some(Self::install_button(&extension.id).disabled(Self::disables_actions(status))),
             ],
             ExtensionStatus::Upgrading | ExtensionStatus::Removing => {
-                let uninstall = Self::uninstall_button::<ENABLE_HANDLERS>(&extension.id, false)
+                let uninstall = Self::uninstall_button(&extension.id, false)
                     .style(ButtonStyle::OutlinedGhost)
                     .disabled(Self::disables_actions(status));
                 let upgrade = matches!(status, ExtensionStatus::Upgrading).then(|| {
@@ -361,15 +342,15 @@ impl ExtensionCard {
                     .disabled(Self::disables_actions(status))
                 });
                 let configure = is_configurable.then(|| {
-                    Self::configure_button::<ENABLE_HANDLERS>(&extension.id, None)
+                    Self::configure_button(&extension.id, None)
                         .disabled(Self::disables_actions(status))
                 });
 
                 [upgrade, configure, Some(uninstall)]
             }
             ExtensionStatus::Installed(installed_version) => {
-                let uninstall = Self::uninstall_button::<ENABLE_HANDLERS>(&extension.id, false)
-                    .style(ButtonStyle::OutlinedGhost);
+                let uninstall =
+                    Self::uninstall_button(&extension.id, false).style(ButtonStyle::OutlinedGhost);
                 let upgrade = (installed_version != &extension.manifest.version).then(|| {
                     let is_compatible = extension_host::is_version_compatible(
                         ReleaseChannel::global(cx),
@@ -394,28 +375,21 @@ impl ExtensionCard {
                         })
                     })
                     .disabled(!is_compatible)
-                    .when(ENABLE_HANDLERS, |button| {
-                        button.on_click({
-                            let extension_id = extension.id.clone();
-                            let version = extension.manifest.version.clone();
-                            move |_, _, cx| {
-                                telemetry::event!("Extension Installed", extension_id, version);
-                                ExtensionStore::global(cx).update(cx, |store, cx| {
-                                    store
-                                        .upgrade_extension(
-                                            extension_id.clone(),
-                                            version.clone(),
-                                            cx,
-                                        )
-                                        .detach_and_log_err(cx)
-                                });
-                            }
-                        })
+                    .on_click({
+                        let extension_id = extension.id.clone();
+                        let version = extension.manifest.version.clone();
+                        move |_, _, cx| {
+                            telemetry::event!("Extension Installed", extension_id, version);
+                            ExtensionStore::global(cx).update(cx, |store, cx| {
+                                store
+                                    .upgrade_extension(extension_id.clone(), version.clone(), cx)
+                                    .detach_and_log_err(cx)
+                            });
+                        }
                     })
                 });
                 let configure = is_configurable.then(|| {
-                    Self::configure_button::<ENABLE_HANDLERS>(&extension.id, None)
-                        .style(ButtonStyle::OutlinedGhost)
+                    Self::configure_button(&extension.id, None).style(ButtonStyle::OutlinedGhost)
                 });
 
                 [upgrade, configure, Some(uninstall)]
@@ -464,18 +438,6 @@ pub(crate) fn extension_provides_label(provides: ExtensionProvides) -> &'static 
     }
 }
 
-fn preview_dev_card(extension: Arc<ExtensionManifest>, status: ExtensionStatus) -> ExtensionCard {
-    ExtensionCard::manifest::<false>(extension, status, LocalExtensionKind::Dev)
-}
-
-fn preview_remote_card(
-    extension: &ExtensionMetadata,
-    status: RemoteExtensionStatus,
-    cx: &App,
-) -> ExtensionCard {
-    ExtensionCard::remote::<false>(extension, status, cx)
-}
-
 impl Component for ExtensionCard {
     fn scope() -> ComponentScope {
         ComponentScope::DataDisplay
@@ -513,7 +475,8 @@ impl Component for ExtensionCard {
 
         fn dev_extension() -> Arc<ExtensionManifest> {
             Arc::new(ExtensionManifest {
-                id: "preview-dev-theme".into(),
+                // Fake ID which will never be accepted during publishing
+                id: "zed-demo-theme".into(),
                 name: "Local Theme".to_owned(),
                 version: "0.1.0".into(),
                 schema_version: SchemaVersion::ZERO,
@@ -539,7 +502,7 @@ impl Component for ExtensionCard {
         let examples = vec![
             single_example(
                 "Available to Install",
-                preview_remote_card(
+                ExtensionCard::remote(
                     &remote_extension(
                         "preview-toml",
                         "TOML",
@@ -555,7 +518,7 @@ impl Component for ExtensionCard {
             ),
             single_example(
                 "Installed",
-                preview_remote_card(
+                ExtensionCard::remote(
                     &remote_extension(
                         "preview-python",
                         "Python",
@@ -575,7 +538,7 @@ impl Component for ExtensionCard {
             ),
             single_example(
                 "Update Available",
-                preview_remote_card(
+                ExtensionCard::remote(
                     &remote_extension(
                         "preview-rust",
                         "Rust",
@@ -594,12 +557,16 @@ impl Component for ExtensionCard {
             ),
             single_example(
                 "Development Extension",
-                preview_dev_card(dev_extension(), ExtensionStatus::Installed("0.1.0".into()))
-                    .into_any_element(),
+                ExtensionCard::manifest(
+                    dev_extension(),
+                    ExtensionStatus::Installed("0.1.0".into()),
+                    LocalExtensionKind::Dev,
+                )
+                .into_any_element(),
             ),
             single_example(
                 "Overridden by Development Extension",
-                preview_remote_card(
+                ExtensionCard::remote(
                     &remote_extension(
                         "preview-overridden-theme",
                         "Local Theme",
