@@ -2002,9 +2002,12 @@ impl MarkdownElement {
         cx: &App,
     ) -> bool {
         // Inside `[![alt](img)](target)` the alt text already renders as the enclosing
-        // link's text and clicking it opens `target`. A `data:` URL that failed to decode
-        // is not worth linking to either.
-        if builder.link_depth > 0 || dest_url.starts_with("data:") {
+        // link's text. Only web URLs get a fallback link: a path-like destination that
+        // reaches this point failed to resolve to a file, so a link to it could never
+        // open and would only surface an OS error on click.
+        if builder.link_depth > 0
+            || !(dest_url.starts_with("http://") || dest_url.starts_with("https://"))
+        {
             return false;
         }
 
@@ -7026,7 +7029,7 @@ mod tests {
 
     #[gpui::test]
     fn test_unresolved_image_renders_alt_text_as_link(cx: &mut TestAppContext) {
-        let source = "see ![shot](file:///tmp/missing.png) here";
+        let source = "see ![shot](https://example.com/missing.png) here";
         let rendered = render_markdown_with_image_resolver(
             source,
             MarkdownOptions::default(),
@@ -7035,7 +7038,10 @@ mod tests {
         );
 
         assert_eq!(rendered.links.len(), 1);
-        assert_eq!(rendered.links[0].destination_url, "file:///tmp/missing.png");
+        assert_eq!(
+            rendered.links[0].destination_url,
+            "https://example.com/missing.png"
+        );
 
         let text: String = rendered
             .lines
@@ -7049,7 +7055,7 @@ mod tests {
             rendered
                 .link_for_source_index(alt_index)
                 .map(|link| link.destination_url.as_ref()),
-            Some("file:///tmp/missing.png")
+            Some("https://example.com/missing.png")
         );
         assert!(rendered.link_for_source_index(0).is_none());
     }
@@ -7059,21 +7065,51 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         let rendered = render_markdown_with_image_resolver(
-            "![](file:///tmp/missing.png)",
+            "![](https://example.com/missing.png)",
             MarkdownOptions::default(),
             |_, _| None,
             cx,
         );
 
         assert_eq!(rendered.links.len(), 1);
-        assert_eq!(rendered.links[0].destination_url, "file:///tmp/missing.png");
+        assert_eq!(
+            rendered.links[0].destination_url,
+            "https://example.com/missing.png"
+        );
 
         let text: String = rendered
             .lines
             .iter()
             .map(|line| line.layout.wrapped_text())
             .collect();
-        assert_eq!(text, "file:///tmp/missing.png");
+        assert_eq!(text, "https://example.com/missing.png");
+    }
+
+    #[gpui::test]
+    fn test_unresolved_path_image_keeps_plain_alt_text(cx: &mut TestAppContext) {
+        for source in [
+            "![shot](missing%20file.png)",
+            "![shot](/tmp/missing.png)",
+            "![shot](file:///tmp/missing.png)",
+        ] {
+            let rendered = render_markdown_with_image_resolver(
+                source,
+                MarkdownOptions::default(),
+                |_, _| None,
+                cx,
+            );
+
+            assert!(
+                rendered.links.is_empty(),
+                "a missing path must not become a dead link: {source}"
+            );
+            let text: String = rendered
+                .lines
+                .iter()
+                .map(|line| line.layout.wrapped_text())
+                .collect();
+            assert_eq!(text, "shot", "alt text should render plainly for {source}");
+        }
     }
 
     #[gpui::test]
