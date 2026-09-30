@@ -8,7 +8,8 @@ use std::{
 #[cfg(target_os = "linux")]
 use gpui::{
     AnyWindowHandle, App, AppContext as _, AsyncApp, Context, Entity, GraphicalEnvironment,
-    QuitMode, Render, Subscription, TitlebarOptions, Window, WindowOptions, div, prelude::*,
+    QuitMode, Render, Subscription, TitlebarOptions, Window, WindowOptions, WindowingRequest, div,
+    prelude::*,
 };
 
 #[cfg(target_os = "linux")]
@@ -121,19 +122,12 @@ fn display_environment(arguments: &str) -> anyhow::Result<GraphicalEnvironment> 
     Ok(environment)
 }
 
-/// A display mode switch that a command asked for.
-#[cfg(target_os = "linux")]
-enum Switch {
-    Headless,
-    Windowed(GraphicalEnvironment),
-}
-
 #[cfg(target_os = "linux")]
 fn handle_command(
     command: &str,
     todos: &Entity<Todos>,
     cx: &mut App,
-) -> anyhow::Result<Option<Switch>> {
+) -> anyhow::Result<Option<WindowingRequest>> {
     let (name, arguments) = command.split_once(' ').unwrap_or((command, ""));
     match name {
         "ls" => print_todos(todos, cx),
@@ -147,13 +141,17 @@ fn handle_command(
                 cx.notify();
             });
         }
-        "open" => return Ok(Some(Switch::Windowed(display_environment(arguments)?))),
+        "open" => {
+            return Ok(Some(WindowingRequest::Windowed(display_environment(
+                arguments,
+            )?)));
+        }
         "close" => {
             let window = todos.update(cx, |todos, _| todos.window.take());
             if let Some(window) = window {
                 window.update(cx, |_, window, _| window.remove_window())?;
             }
-            return Ok(Some(Switch::Headless));
+            return Ok(Some(WindowingRequest::Headless));
         }
         "quit" => cx.quit(),
         "" => {}
@@ -173,15 +171,15 @@ async fn run_command(
 ) -> anyhow::Result<()> {
     match cx.update(|cx| handle_command(&command, todos, cx))? {
         None => return Ok(()),
-        Some(Switch::Headless) => {
+        Some(request @ WindowingRequest::Headless) => {
             if !cx.update(|cx| cx.is_headless()) {
-                cx.update(|cx| cx.set_headless()).await?;
+                cx.update(|cx| cx.request_windowing(request)).await?;
             }
         }
-        Some(Switch::Windowed(environment)) => {
+        Some(request @ WindowingRequest::Windowed(_)) => {
             // Switching fails while windowed, so `open` then just opens the window.
             if cx.update(|cx| cx.is_headless()) {
-                cx.update(|cx| cx.set_windowed(environment)).await?;
+                cx.update(|cx| cx.request_windowing(request)).await?;
             }
             cx.update(|cx| open_window(todos, cx))?;
         }
@@ -193,7 +191,7 @@ async fn run_command(
 
 #[cfg(target_os = "linux")]
 fn main() {
-    gpui_platform::linux(gpui::DisplayModes::all(), None)
+    gpui_platform::linux(gpui::WindowingModes::all(), None)
         .with_quit_mode(QuitMode::Explicit)
         .run(|cx| {
             let todos = cx.new(|_| Todos {

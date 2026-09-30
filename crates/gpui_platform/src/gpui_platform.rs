@@ -27,7 +27,7 @@ pub fn headless() -> gpui::Application {
 /// Returns a Linux app that may switch among `allowed_modes`. It starts connected to the display
 /// server `graphical_environment` names, or headless when that's `None` or names none.
 ///
-/// See [`gpui::App::set_headless`] and [`gpui::App::set_windowed`].
+/// See [`gpui::App::request_windowing`].
 ///
 /// # Panics
 ///
@@ -35,7 +35,7 @@ pub fn headless() -> gpui::Application {
 /// reached.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub fn linux(
-    allowed_modes: gpui::DisplayModes,
+    allowed_modes: gpui::WindowingModes,
     graphical_environment: Option<gpui::GraphicalEnvironment>,
 ) -> gpui::Application {
     gpui::Application::with_platform(gpui_linux::linux_platform(

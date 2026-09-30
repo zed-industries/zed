@@ -170,7 +170,7 @@ pub fn guess_compositor() -> &'static str {
 /// While connected, programs the platform launches (for example to open a URL) get these
 /// variables instead of the ones this process started with.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct GraphicalEnvironment {
     /// `WAYLAND_DISPLAY`: a socket name relative to `xdg_runtime_dir`, or an absolute path.
     pub wayland_display: Option<OsString>,
@@ -184,6 +184,28 @@ pub struct GraphicalEnvironment {
     /// it if it starts windowed. Pass one here to switch to windowed mode later, for example
     /// the token of the process that asked for a window.
     pub activation_token: Option<String>,
+}
+
+/// The graphical session to connect to. Carries nothing yet on this platform.
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+#[derive(Clone, Debug, Default)]
+pub struct GraphicalEnvironment;
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+impl GraphicalEnvironment {
+    /// Returns the environment of this process's graphical session.
+    pub fn detect() -> Self {
+        Self
+    }
+}
+
+/// A display mode for [`App::request_windowing`] to switch to.
+#[derive(Clone, Debug)]
+pub enum WindowingRequest {
+    /// No display server. Windows lay out and handle input but draw nothing.
+    Headless,
+    /// Connected to the display server that the environment names.
+    Windowed(GraphicalEnvironment),
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -219,9 +241,9 @@ impl GraphicalEnvironment {
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 bitflags::bitflags! {
-    /// The display modes a platform may start in or switch to.
+    /// The windowing modes a platform may start in or switch to.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub struct DisplayModes: u8 {
+    pub struct WindowingModes: u8 {
         /// Connected to a Wayland compositor.
         const WAYLAND = 1 << 0;
         /// Connected to an X server.
@@ -239,16 +261,9 @@ pub trait Platform: 'static {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);
     fn quit(&self);
-    /// Disconnects a capable platform from its display server. See [`App::set_headless`].
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    fn set_headless(&self) -> Task<anyhow::Result<()>> {
-        Task::ready(Err(anyhow::anyhow!(
-            "this platform cannot switch between headless and windowed modes"
-        )))
-    }
-    /// Connects a capable platform to a display server. See [`App::set_windowed`].
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    fn set_windowed(&self, _environment: GraphicalEnvironment) -> Task<anyhow::Result<()>> {
+    /// Switches a capable platform between headless and windowed modes. See
+    /// [`App::request_windowing`].
+    fn request_windowing(&self, _request: WindowingRequest) -> Task<anyhow::Result<()>> {
         Task::ready(Err(anyhow::anyhow!(
             "this platform cannot switch between headless and windowed modes"
         )))
@@ -420,8 +435,7 @@ pub trait Platform: 'static {
     fn compositor_name(&self) -> &'static str {
         ""
     }
-    /// Whether a platform that can switch display modes is headless. See [`App::is_headless`].
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    /// Whether a platform that can switch windowing modes is headless. See [`App::is_headless`].
     fn is_headless(&self) -> bool {
         false
     }

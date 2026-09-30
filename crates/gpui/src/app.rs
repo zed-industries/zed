@@ -1115,34 +1115,22 @@ impl App {
         self.platform.quit();
     }
 
-    /// Disconnects a capable platform from its display server. Windows opened afterwards lay
-    /// out and handle input but draw nothing.
+    /// Switches the platform between headless and windowed modes.
     ///
-    /// The returned task resolves once the switch has been applied. It fails if already headless,
-    /// if the platform doesn't allow headless mode, or if any window is open, since a window
-    /// belongs to the display server that opened it.
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    pub fn set_headless(&self) -> Task<anyhow::Result<()>> {
-        self.platform.set_headless()
-    }
-
-    /// Connects a capable platform to the display server that `environment` names.
+    /// Headless, windows opened afterwards lay out and handle input but draw nothing. Windowed,
+    /// the platform connects to the display server the environment names.
     ///
-    /// The returned task resolves once the switch has been applied. It fails if already
-    /// windowed (switching to another display server means going headless first), if the platform
-    /// doesn't allow that display server, if any window is open, or if the display server can't
-    /// be reached.
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    pub fn set_windowed(
-        &self,
-        environment: crate::GraphicalEnvironment,
-    ) -> Task<anyhow::Result<()>> {
-        self.platform.set_windowed(environment)
+    /// The returned task resolves once the switch has been applied. It fails if the platform is
+    /// already in the requested mode (switching to another display server means going headless
+    /// first), if the platform doesn't allow the mode or can't switch at all, if any window is
+    /// open (a window belongs to the display server that opened it), or if the display server
+    /// can't be reached.
+    pub fn request_windowing(&self, request: crate::WindowingRequest) -> Task<anyhow::Result<()>> {
+        self.platform.request_windowing(request)
     }
 
     /// Whether the platform has no display server: it started headless, or switched with
-    /// [`App::set_headless`]. Always `false` on platforms that can't switch display modes.
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    /// [`App::request_windowing`]. Always `false` on platforms that can't switch windowing modes.
     pub fn is_headless(&self) -> bool {
         self.platform.is_headless()
     }

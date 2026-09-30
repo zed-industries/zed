@@ -1,8 +1,8 @@
 use std::{path::PathBuf, rc::Rc};
 
 use gpui::{
-    AnyWindowHandle, ClipboardItem, CursorStyle, DisplayModes, GraphicalEnvironment,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformWindow, WindowParams,
+    AnyWindowHandle, ClipboardItem, CursorStyle, GraphicalEnvironment, PlatformDisplay,
+    PlatformKeyboardLayout, PlatformWindow, WindowParams, WindowingModes,
 };
 
 #[cfg(feature = "wayland")]
@@ -21,17 +21,17 @@ use super::{HeadlessConnection, LinuxKeyboardLayout};
     )
 )]
 pub(crate) fn select_backend(
-    modes: DisplayModes,
+    modes: WindowingModes,
     environment: &GraphicalEnvironment,
 ) -> Option<Backend> {
     let is_set =
         |value: &Option<std::ffi::OsString>| value.as_ref().is_some_and(|value| !value.is_empty());
     #[cfg(feature = "wayland")]
-    if modes.contains(DisplayModes::WAYLAND) && is_set(&environment.wayland_display) {
+    if modes.contains(WindowingModes::WAYLAND) && is_set(&environment.wayland_display) {
         return Some(Backend::Wayland);
     }
     #[cfg(feature = "x11")]
-    if modes.contains(DisplayModes::X11) && is_set(&environment.x11_display) {
+    if modes.contains(WindowingModes::X11) && is_set(&environment.x11_display) {
         return Some(Backend::X11);
     }
     None

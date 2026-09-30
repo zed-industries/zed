@@ -257,7 +257,6 @@ pub struct Callbacks {
 }
 
 pub struct X11WindowState {
-    pub destroyed: bool,
     parent: Option<X11WindowStatePtr>,
     children: FxHashSet<xproto::Window>,
     client: X11ClientStatePtr,
@@ -852,7 +851,6 @@ impl X11WindowState {
                 appearance,
                 handle,
                 background_appearance: WindowBackgroundAppearance::Opaque,
-                destroyed: false,
                 client_side_decorations_supported,
                 decorations: WindowDecorations::Server,
                 last_insets: [0, 0, 0, 0],
@@ -903,7 +901,6 @@ impl Drop for X11Window {
             anyhow::Ok(())
         })
         .log_err();
-        state.destroyed = true;
         let client = state.client.clone();
         let executor = state.executor.clone();
         drop(state);

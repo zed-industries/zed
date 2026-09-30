@@ -37,10 +37,10 @@ use crate::linux::{
 };
 use gpui::{
     Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
-    DisplayModes, ForegroundExecutor, GraphicalEnvironment, Keymap, Menu, MenuItem, OwnedMenu,
-    PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformWindow, Result, RunnableVariant, Task, ThermalState,
-    WindowAppearance, WindowButtonLayout, WindowParams,
+    ForegroundExecutor, GraphicalEnvironment, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
+    WindowButtonLayout, WindowParams, WindowingModes, WindowingRequest,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use gpui::{Pixels, Point, px};
@@ -279,17 +279,10 @@ pub(crate) struct LinuxPlatform {
     event_loop: RefCell<Option<EventLoop<'static, ()>>>,
     loop_handle: LoopHandle<'static, ()>,
     connection: RefCell<DisplayConnection>,
-    allowed_modes: DisplayModes,
+    allowed_modes: WindowingModes,
     /// A requested switch waiting for the event loop to apply it.
-    pending_mode: RefCell<Option<TargetMode>>,
+    pending_mode: RefCell<Option<WindowingRequest>>,
     transition_waiter: RefCell<Option<oneshot::Sender<anyhow::Result<()>>>>,
-}
-
-/// A display mode to switch to.
-#[derive(Clone)]
-enum TargetMode {
-    Headless,
-    Windowed(GraphicalEnvironment),
 }
 
 /// What a Wayland connection made at startup may use from this process's environment.
@@ -316,7 +309,7 @@ impl LinuxPlatform {
     /// be reached, because platform construction is infallible. An environment that names no
     /// allowed display server starts headless when `allowed_modes` allows it.
     pub(crate) fn new(
-        allowed_modes: DisplayModes,
+        allowed_modes: WindowingModes,
         graphical_environment: Option<GraphicalEnvironment>,
     ) -> Self {
         let startup = StartupEnvironment {
@@ -352,7 +345,7 @@ impl LinuxPlatform {
                 platform.replace_connection(connection);
             }
             None => assert!(
-                allowed_modes.contains(DisplayModes::HEADLESS),
+                allowed_modes.contains(WindowingModes::HEADLESS),
                 "{allowed_modes:?} does not allow starting headless, and no allowed display \
                  server was given"
             ),
@@ -429,11 +422,11 @@ impl LinuxPlatform {
             Err(anyhow!("a window was opened while switching display modes"))
         } else {
             match mode {
-                TargetMode::Headless => {
+                WindowingRequest::Headless => {
                     self.replace_connection(DisplayConnection::Headless(HeadlessConnection::new()));
                     Ok(())
                 }
-                TargetMode::Windowed(environment) => {
+                WindowingRequest::Windowed(environment) => {
                     select_backend(self.allowed_modes, &environment)
                         .context("the environment names no allowed Wayland or X11 display server")
                         .and_then(|backend| {
@@ -450,7 +443,7 @@ impl LinuxPlatform {
     }
 
     /// Validates a requested switch, then leaves it for the event loop to apply.
-    fn request_mode(&self, mode: TargetMode) -> Task<anyhow::Result<()>> {
+    fn request_mode(&self, mode: WindowingRequest) -> Task<anyhow::Result<()>> {
         if self.pending_mode.borrow().is_some() {
             return Task::ready(Err(anyhow!(
                 "a display mode transition is already in progress"
@@ -458,23 +451,25 @@ impl LinuxPlatform {
         }
         let is_headless = self.connection.borrow().is_headless();
         match &mode {
-            TargetMode::Headless if !self.allowed_modes.contains(DisplayModes::HEADLESS) => {
+            WindowingRequest::Headless
+                if !self.allowed_modes.contains(WindowingModes::HEADLESS) =>
+            {
                 return Task::ready(Err(anyhow!(
                     "{:?} does not allow headless mode",
                     self.allowed_modes
                 )));
             }
-            TargetMode::Headless if is_headless => {
+            WindowingRequest::Headless if is_headless => {
                 return Task::ready(Err(anyhow!("already headless")));
             }
-            TargetMode::Headless => {}
-            TargetMode::Windowed(_) if !is_headless => {
+            WindowingRequest::Headless => {}
+            WindowingRequest::Windowed(_) if !is_headless => {
                 return Task::ready(Err(anyhow!(
                     "already windowed ({}); switch to headless mode first",
                     self.connection.borrow().compositor_name()
                 )));
             }
-            TargetMode::Windowed(environment) => {
+            WindowingRequest::Windowed(environment) => {
                 if select_backend(self.allowed_modes, environment).is_none() {
                     return Task::ready(Err(anyhow!(
                         "the environment names no display server that {:?} allows",
@@ -595,12 +590,8 @@ impl Platform for LinuxPlatform {
         self.with_common(|common| common.signal.stop());
     }
 
-    fn set_headless(&self) -> Task<anyhow::Result<()>> {
-        self.request_mode(TargetMode::Headless)
-    }
-
-    fn set_windowed(&self, environment: GraphicalEnvironment) -> Task<anyhow::Result<()>> {
-        self.request_mode(TargetMode::Windowed(environment))
+    fn request_windowing(&self, request: WindowingRequest) -> Task<anyhow::Result<()>> {
+        self.request_mode(request)
     }
 
     fn compositor_name(&self) -> &'static str {
@@ -1942,7 +1933,7 @@ mod display_mode_tests {
     fn failed_wayland_attach_preserves_headless_app_and_allows_retry() {
         run_scenario(
             "failed_wayland_attach_preserves_headless_app_and_allows_retry",
-            DisplayModes::all(),
+            WindowingModes::all(),
             |cx| {
                 Box::pin(async move {
                     let entity = cx.new(|_| 1usize);
@@ -1958,8 +1949,11 @@ mod display_mode_tests {
                         }
                     });
 
-                    let first_attach =
-                        cx.update(|cx| cx.set_windowed(GraphicalEnvironment::detect()));
+                    let first_attach = cx.update(|cx| {
+                        cx.request_windowing(WindowingRequest::Windowed(
+                            GraphicalEnvironment::detect(),
+                        ))
+                    });
                     assert_error_contains(
                         first_attach.await,
                         "failed to connect to Wayland compositor",
@@ -1971,8 +1965,11 @@ mod display_mode_tests {
                     queued_task.await;
                     assert!(queued_task_ran.get());
 
-                    let second_attach =
-                        cx.update(|cx| cx.set_windowed(GraphicalEnvironment::detect()));
+                    let second_attach = cx.update(|cx| {
+                        cx.request_windowing(WindowingRequest::Windowed(
+                            GraphicalEnvironment::detect(),
+                        ))
+                    });
                     assert_error_contains(
                         second_attach.await,
                         "failed to connect to Wayland compositor",
@@ -1989,7 +1986,7 @@ mod display_mode_tests {
     fn headless_windows_block_switching_to_a_display_server() {
         run_scenario(
             "headless_windows_block_switching_to_a_display_server",
-            DisplayModes::all(),
+            WindowingModes::all(),
             |cx| {
                 Box::pin(async move {
                     let window = cx
@@ -1997,12 +1994,20 @@ mod display_mode_tests {
                             cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| Blank))
                         })
                         .expect("headless mode opens headless windows");
-                    let attach = cx.update(|cx| cx.set_windowed(GraphicalEnvironment::detect()));
+                    let attach = cx.update(|cx| {
+                        cx.request_windowing(WindowingRequest::Windowed(
+                            GraphicalEnvironment::detect(),
+                        ))
+                    });
                     assert_error_contains(attach.await, "while windows are open");
 
                     cx.update(|cx| window.update(cx, |_, window, _| window.remove_window()))
                         .expect("close the headless window");
-                    let attach = cx.update(|cx| cx.set_windowed(GraphicalEnvironment::detect()));
+                    let attach = cx.update(|cx| {
+                        cx.request_windowing(WindowingRequest::Windowed(
+                            GraphicalEnvironment::detect(),
+                        ))
+                    });
                     assert_error_contains(attach.await, "failed to connect to Wayland compositor");
                 })
             },
@@ -2013,15 +2018,19 @@ mod display_mode_tests {
     fn display_modes_limit_switching() {
         run_scenario(
             "display_modes_limit_switching",
-            DisplayModes::HEADLESS,
+            WindowingModes::HEADLESS,
             |cx| {
                 Box::pin(async move {
-                    let attach = cx.update(|cx| cx.set_windowed(GraphicalEnvironment::detect()));
+                    let attach = cx.update(|cx| {
+                        cx.request_windowing(WindowingRequest::Windowed(
+                            GraphicalEnvironment::detect(),
+                        ))
+                    });
                     assert_error_contains(attach.await, "names no display server that");
                     assert_eq!(cx.update(|cx| cx.compositor_name()), "headless");
                     assert!(cx.update(|cx| cx.is_headless()));
 
-                    let detach = cx.update(|cx| cx.set_headless());
+                    let detach = cx.update(|cx| cx.request_windowing(WindowingRequest::Headless));
                     assert_error_contains(detach.await, "already headless");
                 })
             },
@@ -2042,7 +2051,7 @@ mod display_mode_tests {
 
     /// Runs `scenario` on a headless platform in a child process, where `WAYLAND_DISPLAY` names a
     /// socket that doesn't exist.
-    fn run_scenario(name: &str, modes: DisplayModes, scenario: Scenario) {
+    fn run_scenario(name: &str, modes: WindowingModes, scenario: Scenario) {
         if std::env::var(SCENARIO_ENV).as_deref() == Ok(name) {
             let platform = Rc::new(LinuxPlatform::new(modes, None));
             let completed = Rc::new(Cell::new(false));

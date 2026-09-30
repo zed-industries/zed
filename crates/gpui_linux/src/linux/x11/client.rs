@@ -482,7 +482,7 @@ impl X11Connection {
             .reply()
             .context("Failed to initialize cursor theme handler")?;
 
-        let clipboard = Clipboard::new(Some(display)).context("Failed to initialize clipboard")?;
+        let clipboard = Clipboard::new(display).context("Failed to initialize clipboard")?;
 
         let screen = &xcb_connection.setup().roots[x_root_index];
         let compositor_gpu = detect_compositor_gpu(&xcb_connection, screen);
@@ -870,7 +870,6 @@ impl X11Client {
         state
             .windows
             .get(&win)
-            .filter(|window_reference| !window_reference.window.state.borrow().destroyed)
             .map(|window_reference| window_reference.window.clone())
     }
 
@@ -1915,9 +1914,7 @@ impl X11Client {
             .rev()
             .filter_map(|&win| state.windows.get(&win))
         {
-            if !window_ref.window.state.borrow().destroyed {
-                handles.push(window_ref.handle());
-            }
+            handles.push(window_ref.handle());
         }
 
         Some(handles)

@@ -28,7 +28,7 @@ pub(crate) use x11::*;
 
 use std::rc::Rc;
 
-use gpui::{DisplayModes, GraphicalEnvironment};
+use gpui::{GraphicalEnvironment, WindowingModes};
 
 /// Returns the default platform implementation for the current OS.
 ///
@@ -37,9 +37,9 @@ use gpui::{DisplayModes, GraphicalEnvironment};
 /// stays headless.
 pub fn current_platform(headless: bool) -> Rc<dyn gpui::Platform> {
     if headless || std::env::var_os("ZED_HEADLESS").is_some() {
-        linux_platform(DisplayModes::HEADLESS, None)
+        linux_platform(WindowingModes::HEADLESS, None)
     } else {
-        linux_platform(DisplayModes::all(), Some(GraphicalEnvironment::detect()))
+        linux_platform(WindowingModes::all(), Some(GraphicalEnvironment::detect()))
     }
 }
 
@@ -51,7 +51,7 @@ pub fn current_platform(headless: bool) -> Rc<dyn gpui::Platform> {
 /// Panics if `allowed_modes` doesn't allow the starting mode, or if the display server can't be
 /// reached.
 pub fn linux_platform(
-    allowed_modes: DisplayModes,
+    allowed_modes: WindowingModes,
     graphical_environment: Option<GraphicalEnvironment>,
 ) -> Rc<dyn gpui::Platform> {
     Rc::new(LinuxPlatform::new(allowed_modes, graphical_environment))
