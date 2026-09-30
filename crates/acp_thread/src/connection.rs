@@ -1,5 +1,5 @@
 use crate::{AcpThread, ElicitationStore};
-use agent_client_protocol::schema::v1 as acp_v1;
+use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet, IndexMap};
@@ -192,6 +192,14 @@ pub trait AgentConnection {
         None
     }
 
+    fn receipt_submissions(
+        &self,
+        _session_id: &acp_v1::SessionId,
+        _cx: &App,
+    ) -> Option<Rc<dyn ReceiptSessionSubmissions>> {
+        None
+    }
+
     fn prompt(
         &self,
         params: acp_v1::PromptRequest,
@@ -290,6 +298,16 @@ pub trait AgentSessionClientUserMessageIds {
         params: acp_v1::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp_v1::PromptResponse>>;
+}
+
+/// A session-bound prompt transport whose response acknowledges acceptance, not completion.
+/// Implementations must report foreground state separately through `AcpThread::update_session_state`.
+pub trait ReceiptSessionSubmissions {
+    fn prompt(
+        &self,
+        content: Vec<acp_v1::ContentBlock>,
+        cx: &mut App,
+    ) -> Task<Result<acp_v2::PromptResponse>>;
 }
 
 pub trait AgentSessionRetry {
@@ -697,12 +715,12 @@ impl PermissionOptions {
     }
 }
 
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 mod test_support {
     //! Test-only stubs and helpers for acp_thread.
     //!
-    //! This module is gated by the `test-support` feature and is not included
-    //! in production builds. It provides:
+    //! This module is available to unit tests and the `test-support` feature,
+    //! but not production builds. It provides:
     //! - `StubAgentConnection` for mocking agent connections in tests
     //! - `create_test_png_base64` for generating test images
 
@@ -768,9 +786,13 @@ mod test_support {
         permission_requests: HashMap<acp_v1::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<acp_v1::SessionUpdate>>>,
         next_prompt_response: Arc<Mutex<Option<oneshot::Receiver<Result<acp_v1::PromptResponse>>>>>,
+        next_receipt_response:
+            Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
         next_truncate: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
+        supports_receipt_submissions: bool,
         supports_load_session: bool,
         supports_session_additional_directories: bool,
+        supports_set_title: bool,
         agent_id: AgentId,
         telemetry_id: SharedString,
     }
@@ -791,11 +813,14 @@ mod test_support {
             Self {
                 next_prompt_updates: Default::default(),
                 next_prompt_response: Default::default(),
+                next_receipt_response: Default::default(),
                 next_truncate: Default::default(),
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
+                supports_receipt_submissions: false,
                 supports_load_session: false,
                 supports_session_additional_directories: false,
+                supports_set_title: true,
                 agent_id: AgentId::new("stub"),
                 telemetry_id: "stub".into(),
             }
@@ -810,6 +835,19 @@ mod test_support {
         ) -> oneshot::Sender<Result<acp_v1::PromptResponse>> {
             let (sender, receiver) = oneshot::channel();
             assert!(self.next_prompt_response.lock().replace(receiver).is_none());
+            sender
+        }
+
+        pub fn defer_next_receipt_response(
+            &self,
+        ) -> oneshot::Sender<Result<acp_v2::PromptResponse>> {
+            let (sender, receiver) = oneshot::channel();
+            assert!(
+                self.next_receipt_response
+                    .lock()
+                    .replace(receiver)
+                    .is_none()
+            );
             sender
         }
 
@@ -832,11 +870,21 @@ mod test_support {
             self
         }
 
+        pub fn with_receipt_submissions(mut self, enabled: bool) -> Self {
+            self.supports_receipt_submissions = enabled;
+            self
+        }
+
         pub fn with_supports_session_additional_directories(
             mut self,
             supports_session_additional_directories: bool,
         ) -> Self {
             self.supports_session_additional_directories = supports_session_additional_directories;
+            self
+        }
+
+        pub fn with_supports_set_title(mut self, supports_set_title: bool) -> Self {
+            self.supports_set_title = supports_set_title;
             self
         }
 
@@ -1054,6 +1102,20 @@ mod test_support {
             }))
         }
 
+        fn receipt_submissions(
+            &self,
+            session_id: &acp_v1::SessionId,
+            _cx: &App,
+        ) -> Option<Rc<dyn ReceiptSessionSubmissions>> {
+            self.supports_receipt_submissions.then(|| {
+                Rc::new(StubReceiptSessionSubmissions {
+                    session_id: session_id.clone(),
+                    sessions: self.sessions.clone(),
+                    next_receipt_response: self.next_receipt_response.clone(),
+                }) as Rc<dyn ReceiptSessionSubmissions>
+            })
+        }
+
         fn cancel(&self, session_id: &acp_v1::SessionId, _cx: &mut App) {
             if let Some(end_turn_tx) = self
                 .sessions
@@ -1072,7 +1134,8 @@ mod test_support {
             _session_id: &acp_v1::SessionId,
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionSetTitle>> {
-            Some(Rc::new(StubAgentSessionSetTitle))
+            self.supports_set_title
+                .then(|| Rc::new(StubAgentSessionSetTitle) as _)
         }
 
         fn truncate(
@@ -1111,6 +1174,29 @@ mod test_support {
             cx: &mut App,
         ) -> Task<Result<acp_v1::PromptResponse>> {
             self.connection.prompt(params, cx)
+        }
+    }
+
+    struct StubReceiptSessionSubmissions {
+        session_id: acp_v1::SessionId,
+        sessions: Arc<Mutex<HashMap<acp_v1::SessionId, Session>>>,
+        next_receipt_response:
+            Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
+    }
+
+    impl ReceiptSessionSubmissions for StubReceiptSessionSubmissions {
+        fn prompt(
+            &self,
+            _content: Vec<acp_v1::ContentBlock>,
+            cx: &mut App,
+        ) -> Task<Result<acp_v2::PromptResponse>> {
+            if !self.sessions.lock().contains_key(&self.session_id) {
+                return Task::ready(Err(anyhow::Error::msg("Unknown receipt session")));
+            }
+            match self.next_receipt_response.lock().take() {
+                Some(receiver) => cx.spawn(async move |_| Ok(receiver.await??)),
+                None => Task::ready(Err(anyhow::Error::msg("No deferred receipt response"))),
+            }
         }
     }
 
@@ -1176,5 +1262,5 @@ mod test_support {
     }
 }
 
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 pub use test_support::*;

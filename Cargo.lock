@@ -1429,7 +1429,6 @@ dependencies = [
 name = "auto_update_ui"
 version = "0.1.0"
 dependencies = [
- "agent_skills",
  "anyhow",
  "auto_update",
  "client",
@@ -1437,11 +1436,12 @@ dependencies = [
  "editor",
  "gpui",
  "markdown_preview",
- "prompt_store",
+ "project",
  "release_channel",
  "semver",
  "serde",
  "serde_json",
+ "settings",
  "smol",
  "telemetry",
  "ui",
@@ -3218,7 +3218,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.17",
- "tokio-rustls 0.26.4",
+ "tokio-rustls",
  "yawc",
 ]
 
@@ -7539,6 +7539,7 @@ dependencies = [
  "image",
  "inventory",
  "itertools 0.14.0",
+ "libc",
  "log",
  "lyon",
  "num_cpus",
@@ -11463,6 +11464,8 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "tempfile",
+ "thiserror 2.0.17",
  "util",
  "watch",
  "which",
@@ -15307,6 +15310,7 @@ dependencies = [
  "task",
  "telemetry",
  "tempfile",
+ "terminal",
  "theme",
  "theme_settings",
  "thiserror 2.0.17",
@@ -22909,7 +22913,6 @@ dependencies = [
  "smol",
  "snippet_provider",
  "snippets_ui",
- "spin 0.10.0",
  "svg_preview",
  "sysinfo 0.39.6",
  "system_specs",
