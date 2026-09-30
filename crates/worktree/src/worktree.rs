@@ -63,7 +63,7 @@ use std::{
     future::Future,
     io::Read,
     mem::{self},
-    ops::{Deref, DerefMut, Range},
+    ops::{Bound, Deref, DerefMut, Range},
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
@@ -77,7 +77,7 @@ use text::{LineEnding, Rope};
 use util::{
     ResultExt, maybe,
     paths::{PathMatcher, PathStyle, SanitizedPath, home_dir},
-    rel_path::RelPath,
+    rel_path::{RelPath, RelPathBuf},
 };
 pub use worktree_settings::WorktreeSettings;
 
@@ -2960,6 +2960,28 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
+    /// Maps an absolute path inside a scanned external (symlinked) directory,
+    /// given by its canonical form, to its path within this worktree.
+    pub fn relative_path_for_external_abs_path(&self, abs_path: &Path) -> Option<RelPathBuf> {
+        let mut query = abs_path;
+        loop {
+            let (canonical, relative) = self
+                .external_canonical_to_relative
+                .range::<Path, _>((Bound::Unbounded, Bound::Included(query)))
+                .next_back()?;
+            if let Ok(suffix) = abs_path.strip_prefix(canonical) {
+                let suffix = RelPath::new(suffix, PathStyle::local()).ok()?;
+                return Some(relative.join(&suffix));
+            }
+            // Keys are nested, so the nearest smaller key can be under a sibling
+            // directory. No key lies between it and `query`, so no ancestor of
+            // `query` below their common ancestor is a key. Retry from there.
+            query = query
+                .ancestors()
+                .find(|ancestor| canonical.starts_with(ancestor))?;
+        }
+    }
+
     fn local_repo_for_work_directory_path(&self, path: &RelPath) -> Option<&LocalRepositoryEntry> {
         self.git_repositories
             .iter()
@@ -5069,24 +5091,10 @@ impl BackgroundScanner {
                     && let Ok(path) = RelPath::new(path, PathStyle::local())
                 {
                     path
-                } else if let Some(path) = snapshot.external_canonical_to_relative.iter().find_map(
-                    |(canonical, relative)| {
-                        abs_path
-                            .as_path()
-                            .strip_prefix(canonical.as_ref())
-                            .ok()
-                            .and_then(|suffix| {
-                                RelPath::new(suffix, PathStyle::local())
-                                    .ok()
-                                    .map(|suffix_rel| {
-                                        std::borrow::Cow::Owned(
-                                            relative.join(&suffix_rel).to_rel_path_buf(),
-                                        )
-                                    })
-                            })
-                    },
-                ) {
-                    path
+                } else if let Some(path) =
+                    snapshot.relative_path_for_external_abs_path(abs_path.as_path())
+                {
+                    std::borrow::Cow::Owned(path)
                 } else {
                     skip_ix(&mut ranges_to_drop, ix);
                     continue;
