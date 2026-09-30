@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use gpui::svg;
+use gpui::{linear_color_stop, linear_gradient, svg};
 
 #[derive(IntoElement)]
 pub struct DeltaIllustration;
@@ -14,12 +14,16 @@ impl RenderOnce for DeltaIllustration {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         v_flex()
             .relative()
-            .h(rems_from_px(200_f32))
+            .h(rems_from_px(155_f32))
             .items_center()
             .justify_center()
             .rounded_t_md()
             .overflow_hidden()
-            .bg(gpui::black().opacity(0.2))
+            .bg(linear_gradient(
+                0.,
+                linear_color_stop(gpui::black().opacity(0.2), 0.),
+                linear_color_stop(gpui::black().opacity(0.1), 1.),
+            ))
             .child(
                 svg()
                     .absolute()
@@ -37,9 +41,9 @@ impl RenderOnce for DeltaIllustration {
                     .child(
                         div()
                             .relative()
-                            .w(rems_from_px(320_f32))
+                            .w(rems_from_px(220_f32))
                             .max_w_full()
-                            .h(rems_from_px(320_f32 * 131. / 594.))
+                            .h(rems_from_px(220_f32 * 131. / 594.))
                             .flex_none()
                             .child(
                                 svg()

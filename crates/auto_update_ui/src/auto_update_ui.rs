@@ -293,7 +293,7 @@ impl Render for AnnouncementToastNotification {
         div()
             .self_end()
             .flex_none()
-            .w(rems_from_px(560_f32))
+            .w(rems_from_px(400_f32))
             .max_w((window.viewport_size().width - window.rem_size() * 1.5).max(px(0.)))
             .child(toast)
     }
