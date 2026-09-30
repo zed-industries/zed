@@ -2376,8 +2376,8 @@ mod tests {
         );
         assert_resolved_preview_image_path(resolved, image_file.as_path());
 
-        let missing_url = url::Url::from_file_path(workspace_directory.join("missing.png"))
-            .unwrap();
+        let missing_url =
+            url::Url::from_file_path(workspace_directory.join("missing.png")).unwrap();
         let missing = resolve_preview_image(
             missing_url.as_str(),
             Some(&base_directory),
