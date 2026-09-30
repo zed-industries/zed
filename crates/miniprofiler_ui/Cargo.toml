@@ -10,6 +10,8 @@ workspace = true
 
 [lib]
 path = "src/miniprofiler_ui.rs"
+test = false
+doctest = false
 
 [dependencies]
 command_palette_hooks.workspace = true

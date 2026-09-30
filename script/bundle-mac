@@ -4,6 +4,8 @@ set -euo pipefail
 source script/lib/blob-store.sh
 
 build_flag="--release"
+zed_features=""
+remote_server_features=""
 target_dir="release"
 open_result=false
 local_install=false
@@ -33,8 +35,9 @@ do
         o) open_result=true;;
         d)
             export CARGO_INCREMENTAL=true
-            export CARGO_BUNDLE_SKIP_BUILD=true
             build_flag="";
+            zed_features="--features util/debug-embed"
+            remote_server_features="--features debug-embed"
             target_dir="debug"
             ;;
         i) local_install=true;;
@@ -55,6 +58,7 @@ export ZED_RELEASE_CHANNEL="${channel}"
 popd
 
 export ZED_BUNDLE=true
+export CARGO_BUNDLE_SKIP_BUILD=true
 
 cargo_bundle_version=$(cargo -q bundle --help 2>&1 | head -n 1 || echo "")
 if [ "$cargo_bundle_version" != "cargo-bundle v0.6.1-zed" ]; then
@@ -87,10 +91,10 @@ script/generate-licenses
 rustup target add $target_triple
 
 echo "Compiling zed binaries"
-cargo --config .cargo/bundle-config.toml build ${build_flag} --package zed --package cli --target $target_triple
+cargo --config .cargo/bundle-config.toml build ${build_flag} ${zed_features} --package zed --package cli --target $target_triple
 # Build remote_server in separate invocation to prevent feature unification from other crates
 # from influencing dynamic libraries required by it.
-cargo --config .cargo/bundle-config.toml build ${build_flag} --package remote_server --target $target_triple
+cargo --config .cargo/bundle-config.toml build ${build_flag} ${remote_server_features} --package remote_server --target $target_triple
 
 echo "Creating application bundle"
 pushd crates/zed

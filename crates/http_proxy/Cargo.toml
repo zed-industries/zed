@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/http_proxy.rs"
+doctest = false
 
 [features]
 # Compiles in the `ZED_SANDBOX_PROXY_ALLOW_LOCAL_IPS` escape hatch that lets the

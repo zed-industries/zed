@@ -20,4 +20,4 @@ services:
       - 7881:7881
       - 7882:7882/udp
     volumes:
-      - ./livekit.yaml:/livekit.yaml
+      - ./.config/livekit.yaml:/livekit.yaml

@@ -8,6 +8,7 @@ license = "GPL-3.0-or-later"
 [lib]
 path = "src/benchmarks.rs"
 doctest = false
+test = false
 
 [lints]
 workspace = true
