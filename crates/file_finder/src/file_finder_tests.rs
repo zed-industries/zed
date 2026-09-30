@@ -1400,6 +1400,85 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_exact_path_to_ignored_file(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_inclusions =
+                    Some(SplicingVec::from(vec!["included_file".to_string()]));
+            });
+        })
+    });
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                ".gitignore": "ignored_file\nincluded_file\nignored_dir/",
+                "tracked_file": "",
+                "ignored_file": "",
+                "included_file": "",
+                "ignored_dir": {
+                    "nested": {
+                        "file.sql": "",
+                    },
+                },
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (_, workspace, cx) = build_find_picker(project, cx);
+    // An open file changes how fuzzy matches are ranked, which would expose
+    // an exact match duplicating one that fuzzy search already found.
+    open_queried_buffer("tracked", 1, "tracked_file", &workspace, cx).await;
+    let picker = open_file_picker(&workspace, cx);
+
+    for query in [
+        "ignored_file",
+        "included_file",
+        "ignored_dir/nested/file.sql",
+    ] {
+        picker
+            .update_in(cx, |picker, window, cx| {
+                picker
+                    .delegate
+                    .spawn_search(test_path_position(query), window, cx)
+            })
+            .await;
+        picker.update(cx, |picker, _| {
+            assert_eq!(
+                picker.delegate.matches.len(),
+                1,
+                "expected a single match for {query:?}"
+            );
+            assert_eq!(
+                collect_search_matches(picker).search,
+                vec![rel_path(&format!("root/{query}")).into()],
+            );
+        });
+    }
+
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker.delegate.spawn_search(
+                test_path_position("ignored_dir/nested/missing.sql"),
+                window,
+                cx,
+            )
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        assert!(matches!(
+            picker.delegate.matches.matches.as_slice(),
+            [Match::CreateNew(_)]
+        ));
+    });
+}
+
+#[gpui::test]
 async fn test_single_file_worktrees(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
     app_state
