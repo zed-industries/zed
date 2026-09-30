@@ -15,7 +15,7 @@ pub const EDITORCONFIG_NAME: &str = ".editorconfig";
 /// and state directory paths.
 ///
 /// Forks should change this to avoid colliding with Zed's user data.
-pub const APP_NAME: &str = "Zed";
+pub const APP_NAME: &str = "Zed-Desktop";
 
 /// Lowercased form of [`APP_NAME`], for use in XDG-style paths on
 /// Linux/FreeBSD and the macOS `~/.config` fallback.
@@ -53,16 +53,16 @@ static CUSTOM_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// The resolved data directory, combining custom override or platform defaults.
 /// This is set once and cached for subsequent calls.
-/// On macOS, this is `~/Library/Application Support/Zed`.
-/// On Linux/FreeBSD, this is `$XDG_DATA_HOME/zed`.
-/// On Windows, this is `%LOCALAPPDATA%\Zed`.
+/// On macOS, this is `~/Library/Application Support/Zed-Desktop`.
+/// On Linux/FreeBSD, this is `$XDG_DATA_HOME/zed-desktop`.
+/// On Windows, this is `%LOCALAPPDATA%\Zed-Desktop`.
 static CURRENT_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// The resolved config directory, combining custom override or platform defaults.
 /// This is set once and cached for subsequent calls.
-/// On macOS, this is `~/.config/zed`.
-/// On Linux/FreeBSD, this is `$XDG_CONFIG_HOME/zed`.
-/// On Windows, this is `%APPDATA%\Zed`.
+/// On macOS, this is `~/.config/zed-desktop`.
+/// On Linux/FreeBSD, this is `$XDG_CONFIG_HOME/zed-desktop`.
+/// On Windows, this is `%APPDATA%\Zed-Desktop`.
 static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Returns the relative path to the zed_server directory on the ssh host.
@@ -634,4 +634,35 @@ pub fn global_gitignore_path() -> Option<PathBuf> {
     GLOBAL_GITIGNORE_PATH
         .get_or_init(::ignore::gitignore::gitconfig_excludes_path)
         .clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fork_identity_preserves_project_settings() {
+        assert_eq!(APP_NAME, "Zed-Desktop");
+        assert_eq!(APP_NAME_LOWERCASE, "zed-desktop");
+        assert_eq!(local_settings_folder_name(), ".zed");
+        assert_eq!(
+            local_settings_file_relative_path(),
+            RelPath::from_unix_str(".zed/settings.json").expect("valid relative path")
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_user_directories_are_isolated() {
+        for directory in [config_dir(), data_dir(), temp_dir(), state_dir()] {
+            assert_eq!(
+                directory.file_name(),
+                Some(std::ffi::OsStr::new("zed-desktop"))
+            );
+        }
+        assert_eq!(
+            GLOBAL_AGENTS_FILE_DISPLAY,
+            "~/.config/zed-desktop/AGENTS.md"
+        );
+    }
 }

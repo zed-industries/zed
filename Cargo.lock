@@ -14576,6 +14576,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+
+[[package]]
 name = "quick-error"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22874,6 +22880,7 @@ dependencies = [
  "audio",
  "auto_update",
  "auto_update_ui",
+ "base64 0.22.1",
  "breadcrumbs",
  "call",
  "call_hierarchy",
@@ -22923,6 +22930,7 @@ dependencies = [
  "gpui_tokio",
  "hdrhistogram",
  "http_client",
+ "httparse",
  "image",
  "image_viewer",
  "input_latency_ui",
@@ -22966,6 +22974,8 @@ dependencies = [
  "project_symbols",
  "prompt_store",
  "proto",
+ "qrcode",
+ "rand 0.9.4",
  "rayon",
  "recent_projects",
  "release_channel",
@@ -22983,6 +22993,7 @@ dependencies = [
  "settings",
  "settings_profile_selector",
  "settings_ui",
+ "sha2",
  "shellexpand",
  "sidebar",
  "smol",

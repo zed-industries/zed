@@ -3,6 +3,7 @@ pub mod edit_prediction_registry;
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_only_instance;
 mod migrate;
+mod mobile_gateway_pairing_modal;
 #[cfg(target_os = "macos")]
 pub(crate) mod move_to_applications;
 mod open_listener;
@@ -105,8 +106,8 @@ use workspace::{
 use workspace::{CloseProject, CloseWindow, RestoreBanner, with_active_or_new_workspace};
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
-    About, GetMerch, OpenAccountSettings, OpenBrowser, OpenDocs, OpenProjectTasks,
-    OpenServerSettings, OpenSettingsFile, OpenStatusPage, OpenZedUrl, Quit,
+    About, GetMerch, OpenAccountSettings, OpenBrowser, OpenDocs, OpenMobileGatewayPairing,
+    OpenProjectTasks, OpenServerSettings, OpenSettingsFile, OpenStatusPage, OpenZedUrl, Quit,
 };
 
 const DOCS_URL: &str = "https://zed.dev/docs/";
@@ -348,11 +349,16 @@ fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        Some(cx.on_window_closed(|cx, _window_id| {
-            if cx.windows().is_empty() {
-                cx.quit();
-            }
-        }))
+        // With Mobile Gateway enabled, the Linux fork can continue as a resident host after its
+        // last UI window closes. The normal `zed::Quit` action still performs confirmation and
+        // calls `App::quit()` explicitly. Disabling the gateway restores upstream close-to-quit.
+        (!crate::mobile_gateway::is_enabled(cx)).then(|| {
+            cx.on_window_closed(|cx, _window_id| {
+                if cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+        })
     }
 }
 
@@ -1055,6 +1061,11 @@ fn register_actions(
         .register_action(|workspace, _: &OpenUrlPrompt, window, cx| {
             workspace.toggle_modal(window, cx, |window, cx| {
                 open_url_modal::OpenUrlModal::new(window, cx)
+            });
+        })
+        .register_action(|workspace, _: &OpenMobileGatewayPairing, window, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                mobile_gateway_pairing_modal::MobileGatewayPairingModal::new(window, cx)
             });
         })
         .register_action(|workspace, action: &OpenBrowser, _window, cx| {

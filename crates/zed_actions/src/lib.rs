@@ -83,6 +83,8 @@ actions!(
         OpenOnboarding,
         /// Shows the auto-update notification for testing.
         ShowUpdateNotification,
+        /// Opens the Mobile Gateway pairing dialog.
+        OpenMobileGatewayPairing,
     ]
 );
 

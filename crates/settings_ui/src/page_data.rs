@@ -1,8 +1,8 @@
-use gpui::{Action as _, App};
+use gpui::{Action as _, App, ReadGlobal as _};
 use itertools::Itertools as _;
 use settings::{
     AudioInputDeviceName, AudioOutputDeviceName, EditPredictionDataCollectionChoice,
-    LanguageSettingsContent, SemanticTokens, SettingsContent,
+    LanguageSettingsContent, SemanticTokens, SettingsContent, SettingsStore,
 };
 use std::sync::{Arc, OnceLock};
 use strum::{EnumMessage, IntoDiscriminant as _, VariantArray};
@@ -78,6 +78,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         collaboration_page(),
         ai_page(cx),
         network_page(),
+        mobile_gateway_page(cx),
         developer_page(cx),
     ]
 }
@@ -9212,6 +9213,125 @@ fn ai_page(cx: &App) -> SettingsPage {
             edit_prediction_display_sub_section(),
         )
         .into(),
+    }
+}
+
+fn mobile_gateway_page(cx: &App) -> SettingsPage {
+    let paired_devices = SettingsStore::global(cx)
+        .raw_user_settings()
+        .and_then(|settings| settings.content.mobile_gateway.as_ref())
+        .and_then(|gateway| gateway.paired_devices.as_ref())
+        .cloned()
+        .unwrap_or_default();
+    let mut items = vec![
+        SettingsPageItem::SectionHeader("Mobile Gateway"),
+        SettingsPageItem::ActionLink(ActionLink {
+            title: "Connect mobile device".into(),
+            description: Some(
+                "Show a time-limited QR code to pair the Zed mobile app with this gateway.".into(),
+            ),
+            button_text: "Connect".into(),
+            on_click: Arc::new(|settings_window, window, cx| {
+                let Some(original_window) = settings_window.original_window else {
+                    return;
+                };
+                if let Err(error) = original_window.update(cx, |_workspace, original_window, cx| {
+                    original_window
+                        .dispatch_action(zed_actions::OpenMobileGatewayPairing.boxed_clone(), cx);
+                    original_window.activate_window();
+                }) {
+                    log::error!("Could not open Mobile Gateway pairing dialog: {error}");
+                }
+                window.remove_window();
+            }),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Enabled",
+            description: "Allow paired mobile devices to access open workspaces and reopen known local, SSH, and Dev Container workspaces from Zed's desktop history for use with the built-in Agent. On Linux, closing the final window keeps this private gateway resident until you explicitly Quit. Changes apply immediately.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                json_path: Some("mobile_gateway.enabled"),
+                pick: |settings| settings.mobile_gateway.as_ref()?.enabled.as_ref(),
+                write: |settings, value, _| {
+                    settings.mobile_gateway.get_or_insert_default().enabled = value;
+                },
+            }),
+            metadata: None,
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Bind Address",
+            description: "Literal IP and port, such as 127.0.0.1:7331 or your Tailscale IP:7331. Only loopback and Tailscale address ranges are accepted. No TLS: use Tailscale or a secure local tunnel, never a public proxy.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                json_path: Some("mobile_gateway.bind_address"),
+                pick: |settings| settings.mobile_gateway.as_ref()?.bind_address.as_ref(),
+                write: |settings, value, _| {
+                    settings.mobile_gateway.get_or_insert_default().bind_address = value;
+                },
+            }),
+            metadata: None,
+            files: USER,
+        }),
+    ];
+
+    if paired_devices.is_empty() {
+        items.push(SettingsPageItem::SectionHeader("Paired devices"));
+        items.push(SettingsPageItem::ActionLink(ActionLink {
+            title: "No paired mobile devices".into(),
+            description: Some(
+                "Use Connect mobile device to create a time-limited QR pairing code.".into(),
+            ),
+            button_text: "Connect".into(),
+            on_click: Arc::new(|settings_window, window, cx| {
+                let Some(original_window) = settings_window.original_window else {
+                    return;
+                };
+                if let Err(error) = original_window.update(cx, |_workspace, original_window, cx| {
+                    original_window
+                        .dispatch_action(zed_actions::OpenMobileGatewayPairing.boxed_clone(), cx);
+                    original_window.activate_window();
+                }) {
+                    log::error!("Could not open Mobile Gateway pairing dialog: {error}");
+                }
+                window.remove_window();
+            }),
+            files: USER,
+        }));
+    } else {
+        items.push(SettingsPageItem::SectionHeader("Paired devices"));
+        for device in paired_devices {
+            let device_id = device.id.clone();
+            let description = format!(
+                "Paired {}. Removing it immediately revokes this device's gateway access.",
+                device.created_at
+            );
+            items.push(SettingsPageItem::ActionLink(ActionLink {
+                title: device.label.into(),
+                description: Some(description.into()),
+                button_text: "Remove".into(),
+                on_click: Arc::new(move |_, _window, cx| {
+                    let device_id = device_id.clone();
+                    SettingsStore::global(cx).update_settings_file(
+                        <dyn fs::Fs>::global(cx),
+                        move |settings, _| {
+                            if let Some(gateway) = settings.mobile_gateway.as_mut()
+                                && let Some(devices) = gateway.paired_devices.as_mut()
+                            {
+                                devices.retain(|device| device.id != device_id);
+                            }
+                        },
+                    );
+                }),
+                files: USER,
+            }));
+        }
+    }
+
+    SettingsPage {
+        title: "Mobile Gateway",
+        items: items.into_boxed_slice(),
     }
 }
 

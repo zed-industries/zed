@@ -61,3 +61,5 @@ crates/docs_preprocessor/actions.json
 
 .local*
 .cache
+.fork-install-test-4wytsogg/
+zed-desktop-build.log

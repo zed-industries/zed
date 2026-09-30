@@ -199,11 +199,15 @@ impl ReleaseChannel {
 
     /// Returns whether we want to poll for updates for this [`ReleaseChannel`]
     pub fn poll_for_updates(&self) -> bool {
-        !matches!(self, ReleaseChannel::Dev)
+        // Official update artifacts must never replace a Linux fork build.
+        !cfg!(target_os = "linux") && !matches!(self, ReleaseChannel::Dev)
     }
 
     /// Returns the display name for this [`ReleaseChannel`].
     pub fn display_name(&self) -> &'static str {
+        if cfg!(target_os = "linux") {
+            return "Zed-Desktop";
+        }
         match self {
             ReleaseChannel::Dev => "Zed Dev",
             ReleaseChannel::Nightly => "Zed Nightly",
@@ -226,6 +230,9 @@ impl ReleaseChannel {
     /// and WM_CLASS on X11.
     /// This also has to match the bundle identifier for Zed on macOS.
     pub fn app_id(&self) -> &'static str {
+        if cfg!(target_os = "linux") {
+            return "io.github.piumal.ZedDesktop";
+        }
         match self {
             ReleaseChannel::Dev => "dev.zed.Zed-Dev",
             ReleaseChannel::Nightly => "dev.zed.Zed-Nightly",
@@ -283,6 +290,16 @@ impl FromStr for ReleaseChannel {
 #[cfg(test)]
 mod tests {
     use super::ReleaseChannel;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_linux_fork_identity_and_updates() {
+        for channel in ReleaseChannel::ALL {
+            assert_eq!(channel.display_name(), "Zed-Desktop");
+            assert_eq!(channel.app_id(), "io.github.piumal.ZedDesktop");
+            assert!(!channel.poll_for_updates());
+        }
+    }
 
     #[test]
     fn test_docs_url_for_release_channel() {

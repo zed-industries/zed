@@ -206,6 +206,9 @@ pub struct SettingsContent {
 
     pub preview_tabs: Option<PreviewTabsSettingsContent>,
 
+    /// Opt-in authenticated access from a mobile client. Only user settings are used.
+    pub mobile_gateway: Option<MobileGatewaySettingsContent>,
+
     pub agent: Option<AgentSettingsContent>,
     pub agent_servers: Option<AllAgentServersSettings>,
 
@@ -334,6 +337,31 @@ pub struct SettingsContent {
     pub instrumentation: Option<InstrumentationSettingsContent>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct MobileGatewayPairedDeviceSettingsContent {
+    /// Opaque device identifier returned during QR pairing.
+    pub id: String,
+    /// User-controlled label supplied by the paired mobile device.
+    pub label: String,
+    /// SHA-256 digest of the per-device credential. The credential itself is never stored here.
+    pub credential_hash: String,
+    /// RFC 3339 timestamp recorded when the device was paired.
+    pub created_at: String,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct MobileGatewaySettingsContent {
+    /// Allow authenticated mobile clients to access every currently open local project.
+    pub enabled: Option<bool>,
+    /// A literal loopback or Tailscale socket address. Wildcard and LAN binds are rejected.
+    pub bind_address: Option<String>,
+    /// Legacy v1 bearer credential. New mobile pairings use short-lived QR tickets and device credentials.
+    pub auth_token: Option<String>,
+    /// Device records persist across restarts; only credential hashes are stored.
+    pub paired_devices: Option<Vec<MobileGatewayPairedDeviceSettingsContent>>,
+}
+
 /// Configuration for developer-oriented instrumentation tools that collect
 /// diagnostic data about a running Zed instance.
 #[with_fallible_options]
@@ -402,8 +430,9 @@ impl SettingsContent {
 fallible_options::flattened_deserialize!(SettingsContent {
     sections: { project, theme, extension, workspace, editor, remote },
     options: {
-        call_hierarchy, command_palette, file_finder, git_panel, tabs, tab_bar, status_bar, preview_tabs, agent,
-        agent_servers, audio, auto_update, base_keymap, collaboration_panel, debugger, diagnostics,
+        call_hierarchy, command_palette, file_finder, git_panel, tabs, tab_bar, status_bar, preview_tabs,
+        mobile_gateway, agent, agent_servers, audio, auto_update, base_keymap, collaboration_panel, debugger,
+        diagnostics,
         git,
         global_lsp_settings, image_viewer, markdown_preview, repl, helix_mode, hide_mouse,
         journal, log, line_indicator_format, language_models, outline_panel, project_panel,

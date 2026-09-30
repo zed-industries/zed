@@ -1,6 +1,7 @@
 // Disable command line from opening on release mode
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod mobile_gateway;
 mod reliability;
 mod watcher_debug;
 mod zed;
@@ -340,6 +341,9 @@ fn main() {
     check_for_conpty_dll();
 
     let app = build_application()
+        // Zed itself still quits on the last window when Mobile Gateway is disabled. Explicit
+        // mode lets the fork remain a resident Mobile Gateway host after the last window closes.
+        .with_quit_mode(QuitMode::Explicit)
         .with_assets(Assets)
         .with_restart_arguments(restart_arguments);
 
@@ -720,6 +724,7 @@ fn main() {
             false,
             cx,
         );
+        mobile_gateway::init(cx);
         zed::watch_user_agents_md(app_state.fs.clone(), cx);
 
         repl::init(app_state.fs.clone(), cx);
@@ -926,31 +931,43 @@ fn main() {
             )
         };
 
-        let restore_task = match open_rx
-            .try_recv()
-            .ok()
-            .and_then(|request| OpenRequest::parse(request, cx).log_err())
-        {
-            Some(request) if request.is_focus_app_only() => cx.spawn({
-                let app_state = app_state.clone();
-                async move |cx| {
-                    if let Err(e) = restore_or_create_workspace(app_state, cx).await {
-                        fail_to_open_window_async(e, cx)
-                    }
-                }
-            }),
-            Some(request) => {
-                handle_open_request(request, app_state.clone(), cx);
-                Task::ready(())
+        let restore_task = if args.mobile_gateway_host {
+            if !mobile_gateway::is_enabled(cx) {
+                log::error!(
+                    "Refusing to start a resident Mobile Gateway host while Mobile Gateway is disabled"
+                );
+                cx.quit();
             }
-            None => cx.spawn({
-                let app_state = app_state.clone();
-                async move |cx| {
-                    if let Err(e) = restore_or_create_workspace(app_state, cx).await {
-                        fail_to_open_window_async(e, cx)
+            // The Linux autostart entry uses this mode. It intentionally keeps no workspace
+            // window open; a normal launcher/CLI open request can create one later.
+            Task::ready(())
+        } else {
+            match open_rx
+                .try_recv()
+                .ok()
+                .and_then(|request| OpenRequest::parse(request, cx).log_err())
+            {
+                Some(request) if request.is_focus_app_only() => cx.spawn({
+                    let app_state = app_state.clone();
+                    async move |cx| {
+                        if let Err(e) = restore_or_create_workspace(app_state, cx).await {
+                            fail_to_open_window_async(e, cx)
+                        }
                     }
+                }),
+                Some(request) => {
+                    handle_open_request(request, app_state.clone(), cx);
+                    Task::ready(())
                 }
-            }),
+                None => cx.spawn({
+                    let app_state = app_state.clone();
+                    async move |cx| {
+                        if let Err(e) = restore_or_create_workspace(app_state, cx).await {
+                            fail_to_open_window_async(e, cx)
+                        }
+                    }
+                }),
+            }
         };
 
         let (first_window_tx, first_window_rx) = oneshot::channel::<()>();
@@ -1762,6 +1779,11 @@ struct Args {
     #[cfg(target_os = "windows")]
     #[arg(hide = true)]
     dock_action: Option<usize>,
+
+    /// Start only the resident Mobile Gateway host. Used by the fork's Linux autostart entry;
+    /// it exits immediately unless Mobile Gateway is enabled in user settings.
+    #[arg(long, hide = true)]
+    mobile_gateway_host: bool,
 
     /// Used for SSH/Git password authentication, to remove the need for netcat as a dependency,
     /// by having Zed act like netcat communicating over a Unix socket.

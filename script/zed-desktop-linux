@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Build or explicitly install the local Linux fork; see zed-desktop-linux.md."""
+
+import argparse
+import os
+from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+BUILD = ROOT / "target" / "zed-desktop-linux"
+APP_ID = "io.github.piumal.ZedDesktop"
+UPDATE_EXPLANATION = "Zed-Desktop updates are manual. Rebuild and reinstall this fork."
+
+
+def build():
+    environment = dict(os.environ, ZED_BUNDLE="true", ZED_UPDATE_EXPLANATION=UPDATE_EXPLANATION)
+    # WebRTC's headers require Clang; preserve an explicit user compiler override.
+    if not environment.get("CC") and (clang := shutil.which("clang")):
+        environment["CC"] = clang
+    if not environment.get("CXX") and (clangxx := shutil.which("clang++")):
+        environment["CXX"] = clangxx
+    version = subprocess.check_output(["rustc", "-vV"], text=True, cwd=ROOT, env=environment)
+    target = next(line.removeprefix("host: ") for line in version.splitlines() if line.startswith("host: "))
+    if "linux" not in target:
+        raise ValueError("The Rust host target must be Linux")
+    subprocess.run(
+        ["cargo", "build", "--release", "--locked", "--target", target,
+         "--target-dir", str(BUILD), "--package", "zed", "--bin", "zed-desktop",
+         "--package", "cli", "--bin", "cli"],
+        cwd=ROOT, env=environment, check=True,
+    )
+    bundle = BUILD / "bundle"
+    bundle.mkdir(parents=True, exist_ok=True)
+    for name in ("zed-desktop", "cli"):
+        shutil.copy2(BUILD / target / "release" / name, bundle / name)
+    print(f"Built {bundle}. Nothing installed. See script/zed-desktop-linux.md.")
+
+
+def desktop_string(value):
+    """Encode an XDG Desktop Entry string value."""
+    return str(value).replace("\\", "\\\\")
+
+
+def desktop_exec(path):
+    # Desktop Entry Exec quoting is not shell quoting. Percent is a field-code escape.
+    value = str(path).replace("%", "%%")
+    for character in ("\\", '"', "`", "$"):
+        value = value.replace(character, "\\" + character)
+    # Backslashes are also escaped by the desktop entry string-value parser.
+    return '"' + desktop_string(value) + '"'
+
+
+def install(bundle, prefix, install_autostart=False, autostart_dir=None):
+    prefix = prefix.expanduser().absolute()
+    prefix_value = str(prefix)
+    if not all(" " <= character <= "~" for character in prefix_value):
+        raise ValueError("Installation prefix must use printable ASCII characters for XDG desktop entries")
+    if "=" in prefix_value:
+        raise ValueError("Installation prefix must not contain = because XDG Desktop Entry Exec paths forbid it")
+    for name in ("zed-desktop", "cli"):
+        source = bundle / name
+        if not source.is_file() or not os.access(source, os.X_OK):
+            raise ValueError(f"Missing executable {source}; run the build command first")
+    private = prefix / "lib" / "zed-desktop"
+    launcher = prefix / "bin" / "zed-desktop"
+    desktop = prefix / "share" / "applications" / f"{APP_ID}.desktop"
+    icon = prefix / "share" / "icons" / "hicolor" / "512x512" / "apps" / f"{APP_ID}.png"
+    if autostart_dir is None:
+        autostart_home = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+        autostart_dir = autostart_home / "autostart"
+    autostart = autostart_dir / f"{APP_ID}.mobile-gateway.desktop"
+    destinations = [private / "zed-desktop", private / "cli-bin", private / "cli", launcher, desktop, icon]
+    if install_autostart:
+        destinations.append(autostart)
+    # Refuse symlinks so an existing fork-named link cannot overwrite an official file.
+    for destination in destinations:
+        if any(path.is_symlink() for path in (destination, *destination.parents)):
+            raise ValueError(f"Refusing symlink installation path: {destination}")
+    for destination in destinations:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    for name, installed_name in (("zed-desktop", "zed-desktop"), ("cli", "cli-bin")):
+        destination = private / installed_name
+        temporary = destination.with_suffix(".new")
+        if temporary.exists() or temporary.is_symlink():
+            raise ValueError(f"Remove stale installation file first: {temporary}")
+        shutil.copy2(bundle / name, temporary)
+        temporary.replace(destination)
+    # The editor also discovers ./cli for terminal and child-process integration.
+    for wrapper in (launcher, private / "cli"):
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            f"export ZED_UPDATE_EXPLANATION={shlex.quote(UPDATE_EXPLANATION)}\n"
+            f"exec {shlex.quote(str(private / 'cli-bin'))} --zed "
+            f"{shlex.quote(str(private / 'zed-desktop'))} \"$@\"\n"
+        )
+        wrapper.chmod(0o755)
+    desktop.write_text(
+        "[Desktop Entry]\nType=Application\nName=Zed-Desktop\n"
+        "Comment=Local Zed-Desktop editor fork\n"
+        f"Exec={desktop_exec(launcher)} %F\nIcon={APP_ID}\n"
+        f"StartupWMClass={APP_ID}\nTerminal=false\nCategories=Development;\n"
+    )
+    if install_autostart:
+        autostart.write_text(
+            "[Desktop Entry]\nType=Application\nName=Zed-Desktop Mobile Gateway\n"
+            "Comment=Start the private Zed-Desktop Mobile Gateway host\n"
+            f"TryExec={desktop_string(private / 'zed-desktop')}\n"
+            f"Exec={desktop_exec(private / 'zed-desktop')} --mobile-gateway-host\n"
+            "Terminal=false\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n"
+        )
+    shutil.copy2(ROOT / "crates/zed/resources/app-icon.png", icon)
+    detail = f" Autostart entry: {autostart}." if install_autostart else ""
+    print(f"Installed {launcher}. Add {launcher.parent} to PATH if needed.{detail}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("build", help="Build locally without installing anything")
+    installer = commands.add_parser("install", help="Install already-built binaries at an explicit prefix")
+    installer.add_argument("--prefix", type=Path, required=True)
+    installer.add_argument("--bundle", type=Path, default=BUILD / "bundle")
+    installer.add_argument(
+        "--no-autostart",
+        action="store_true",
+        help="Do not install the default XDG Mobile Gateway autostart entry",
+    )
+    arguments = parser.parse_args()
+    if not sys.platform.startswith("linux"):
+        parser.error("This script only supports Linux")
+    try:
+        if arguments.command == "build":
+            build()
+        else:
+            install(arguments.bundle, arguments.prefix, install_autostart=not arguments.no_autostart)
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        parser.exit(1, f"Error: {error}\n")
+
+
+if __name__ == "__main__":
+    main()

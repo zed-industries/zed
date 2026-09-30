@@ -1,5 +1,10 @@
 {
   "$schema": "zed://schemas/settings",
+  "mobile_gateway": {
+    "enabled": false,
+    "bind_address": "127.0.0.1:7331",
+    "paired_devices": [],
+  },
   // The name of the Zed theme to use for the UI.
   //
   // `mode` is one of:

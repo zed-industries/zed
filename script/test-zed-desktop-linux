@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""Test fork packaging in a temporary workspace directory, without installing it."""
+
+import os
+import runpy
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+FORK = runpy.run_path(str(ROOT / "script/zed-desktop-linux"))
+
+
+class ForkInstallerTest(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix=".fork-install-test-", dir=ROOT)
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.bundle = self.root / "bundle"
+        self.bundle.mkdir()
+        for name in ("zed-desktop", "cli"):
+            binary = self.bundle / name
+            binary.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n")
+            binary.chmod(0o755)
+        self.prefix = self.root / "prefix with spaces"
+        self.autostart_dir = self.root / "xdg config" / "autostart"
+
+    def test_install_preserves_official_files_and_arguments(self):
+        official = self.prefix / "bin/zed"
+        official.parent.mkdir(parents=True)
+        official.write_text("official installation sentinel")
+        FORK["install"](self.bundle, self.prefix)
+        self.assertEqual(official.read_text(), "official installation sentinel")
+        launcher = self.prefix / "bin/zed-desktop"
+        output = subprocess.check_output([str(launcher), "file with spaces.rs", "--wait"], text=True)
+        self.assertEqual(output.splitlines(), [
+            "--zed", str(self.prefix / "lib/zed-desktop/zed-desktop"),
+            "file with spaces.rs", "--wait",
+        ])
+        private_output = subprocess.check_output(
+            [str(self.prefix / "lib/zed-desktop/cli"), "file with spaces.rs", "--wait"],
+            text=True,
+        )
+        self.assertEqual(private_output, output)
+        desktop = self.prefix / "share/applications/io.github.piumal.ZedDesktop.desktop"
+        contents = desktop.read_text()
+        self.assertIn("Name=Zed-Desktop\n", contents)
+        self.assertIn("StartupWMClass=io.github.piumal.ZedDesktop\n", contents)
+        self.assertNotIn("MimeType=", contents)
+        self.assertNotIn("zed://", contents)
+        if shutil.which("desktop-file-validate"):
+            subprocess.run(["desktop-file-validate", str(desktop)], check=True)
+        subprocess.run(["sh", "-n", str(launcher)], check=True)
+        # Reinstalling a fork must also leave the official installation alone.
+        FORK["install"](self.bundle, self.prefix)
+        self.assertEqual(official.read_text(), "official installation sentinel")
+
+    def test_installs_mobile_gateway_autostart_only_when_requested(self):
+        FORK["install"](
+            self.bundle,
+            self.prefix,
+            install_autostart=True,
+            autostart_dir=self.autostart_dir,
+        )
+        autostart = self.autostart_dir / "io.github.piumal.ZedDesktop.mobile-gateway.desktop"
+        contents = autostart.read_text()
+        private_binary = self.prefix / "lib/zed-desktop/zed-desktop"
+        self.assertIn("Name=Zed-Desktop Mobile Gateway\n", contents)
+        self.assertIn(
+            f"Exec={FORK['desktop_exec'](private_binary)} --mobile-gateway-host\n",
+            contents,
+        )
+        self.assertIn("NoDisplay=true\n", contents)
+        if shutil.which("desktop-file-validate"):
+            subprocess.run(["desktop-file-validate", str(autostart)], check=True)
+
+    def test_does_not_write_autostart_when_disabled(self):
+        FORK["install"](
+            self.bundle,
+            self.prefix,
+            install_autostart=False,
+            autostart_dir=self.autostart_dir,
+        )
+        self.assertFalse(
+            (self.autostart_dir / "io.github.piumal.ZedDesktop.mobile-gateway.desktop").exists()
+        )
+
+    def test_missing_build_does_not_create_prefix(self):
+        (self.bundle / "cli").unlink()
+        with self.assertRaises(ValueError):
+            FORK["install"](self.bundle, self.prefix)
+        self.assertFalse(self.prefix.exists())
+
+    def test_refuses_symlink_to_official_binary(self):
+        official = self.root / "official-zed"
+        official.write_text("official installation sentinel")
+        launcher = self.prefix / "bin/zed-desktop"
+        launcher.parent.mkdir(parents=True)
+        launcher.symlink_to(official)
+        with self.assertRaises(ValueError):
+            FORK["install"](self.bundle, self.prefix)
+        self.assertEqual(official.read_text(), "official installation sentinel")
+
+    def test_shell_metacharacters_in_prefix(self):
+        self.prefix = self.root / "prefix ' $ ` % \\ quote\""
+        FORK["install"](self.bundle, self.prefix)
+        output = subprocess.check_output([str(self.prefix / "bin/zed-desktop"), "a b"], text=True)
+        self.assertEqual(output.splitlines(), [
+            "--zed", str(self.prefix / "lib/zed-desktop/zed-desktop"), "a b",
+        ])
+        desktop = self.prefix / "share/applications/io.github.piumal.ZedDesktop.desktop"
+        quoted = FORK["desktop_exec"](self.prefix / "bin/zed-desktop")
+        self.assertIn(f"Exec={quoted} %F\n", desktop.read_text())
+        self.assertTrue(quoted.startswith('"') and quoted.endswith('"'))
+        self.assertIn("%%", quoted)
+        self.assertIn("\\" * 2 + "$", quoted)
+        self.assertIn("\\" * 2 + "`", quoted)
+        self.assertIn("\\" * 2 + '"', quoted)
+        self.assertIn("\\" * 4, quoted)
+        if shutil.which("desktop-file-validate"):
+            subprocess.run(["desktop-file-validate", str(desktop)], check=True)
+
+    def test_autostart_entry_requires_explicit_opt_in_for_install_api(self):
+        autostart_dir = self.root / "xdg config" / "autostart"
+        autostart = autostart_dir / "io.github.piumal.ZedDesktop.mobile-gateway.desktop"
+        FORK["install"](self.bundle, self.prefix, autostart_dir=autostart_dir)
+        self.assertFalse(autostart_dir.exists())
+        self.assertFalse(autostart.exists())
+
+        FORK["install"](self.bundle, self.prefix, install_autostart=True, autostart_dir=autostart_dir)
+        self.assertTrue(autostart.is_file())
+        host = self.prefix / "lib/zed-desktop/zed-desktop"
+        contents = autostart.read_text()
+        self.assertIn(f"TryExec={FORK['desktop_string'](host)}\n", contents)
+        self.assertNotIn(f"TryExec={FORK['desktop_exec'](host)}\n", contents)
+        self.assertIn(f"Exec={FORK['desktop_exec'](host)} --mobile-gateway-host\n", contents)
+        self.assertNotIn("Exec=" + FORK["desktop_exec"](host) + "\n", contents)
+        if shutil.which("desktop-file-validate"):
+            subprocess.run(["desktop-file-validate", str(autostart)], check=True)
+
+    def test_cli_autostart_default_and_no_autostart_stay_in_temporary_tree(self):
+        script = ROOT / "script/zed-desktop-linux"
+        default_config = self.root / "default config"
+        default_prefix = self.root / "default prefix"
+        default_environment = dict(
+            os.environ,
+            HOME=str(self.root / "home"),
+            XDG_CONFIG_HOME=str(default_config),
+        )
+        subprocess.run(
+            [
+                sys.executable, str(script), "install", "--bundle", str(self.bundle),
+                "--prefix", str(default_prefix),
+            ],
+            cwd=ROOT,
+            env=default_environment,
+            check=True,
+        )
+        self.assertTrue(
+            (default_config / "autostart/io.github.piumal.ZedDesktop.mobile-gateway.desktop").is_file()
+        )
+
+        disabled_config = self.root / "disabled config"
+        disabled_prefix = self.root / "disabled prefix"
+        disabled_environment = dict(
+            os.environ,
+            HOME=str(self.root / "home"),
+            XDG_CONFIG_HOME=str(disabled_config),
+        )
+        subprocess.run(
+            [
+                sys.executable, str(script), "install", "--no-autostart", "--bundle", str(self.bundle),
+                "--prefix", str(disabled_prefix),
+            ],
+            cwd=ROOT,
+            env=disabled_environment,
+            check=True,
+        )
+        self.assertFalse(disabled_config.exists())
+
+    def test_rejects_prefixes_invalid_for_desktop_entry_exec(self):
+        for name in ("prefix=invalid", "prefix\tinvalid"):
+            with self.subTest(name=name):
+                self.prefix = self.root / name
+                with self.assertRaises(ValueError):
+                    FORK["install"](self.bundle, self.prefix)
+                self.assertFalse(self.prefix.exists())
+
+
+if __name__ == "__main__":
+    unittest.main()
