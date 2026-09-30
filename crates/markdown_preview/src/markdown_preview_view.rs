@@ -1684,6 +1684,14 @@ impl Item for MarkdownPreviewView {
             .tab_tooltip_text(cx)
     }
 
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.active_editor
+            .as_ref()?
+            .editor
+            .read(cx)
+            .active_project_path(cx)
+    }
+
     fn telemetry_event_text(&self) -> Option<&'static str> {
         Some("Markdown Preview Opened")
     }
@@ -3231,6 +3239,136 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn preview_path_survives_closing_source_without_claiming_source_identity(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, workspace, multi_workspace) =
+            markdown_workspace(cx, json!({"note.md": "# Note\n"}), false).await;
+        let editor = open_project_file(cx, &project, &multi_workspace, "note.md", None, true).await;
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+        cx.run_until_parked();
+        let source_path = cx.update(|cx| test_project_path(&project, "note.md", cx));
+        assert_eq!(
+            preview.read_with(cx, |preview, cx| preview.active_project_path(cx)),
+            Some(source_path.clone())
+        );
+
+        let close = multi_workspace
+            .update(cx, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.close_item_by_id(editor.item_id(), SaveIntent::Skip, window, cx)
+                    })
+                })
+            })
+            .unwrap();
+        close.await.unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            preview.read_with(cx, |preview, cx| preview.active_project_path(cx)),
+            Some(source_path)
+        );
+        assert!(cx.update(|cx| preview.project_entry_ids(cx).is_empty()));
+        assert_preview_tab_path_actions(
+            cx,
+            multi_workspace,
+            "TAB-0",
+            path!("/project/note.md"),
+            "note.md",
+        );
+
+        let reopened =
+            open_project_file(cx, &project, &multi_workspace, "note.md", None, true).await;
+        assert_ne!(reopened.item_id(), preview.entity_id());
+        assert!(cx.update(|cx| reopened.act_as::<MarkdownPreviewView>(cx).is_none()));
+        assert!(cx.update(|cx| reopened.act_as::<Editor>(cx).is_some()));
+        assert_eq!(
+            workspace.read_with(cx, |workspace, cx| {
+                workspace.items_of_type::<MarkdownPreviewView>(cx).count()
+            }),
+            1
+        );
+    }
+
+    #[gpui::test]
+    async fn preview_path_does_not_replace_source_without_project_entry(cx: &mut TestAppContext) {
+        let (project, workspace, multi_workspace) = markdown_workspace(cx, json!({}), false).await;
+        let editor =
+            open_project_file(cx, &project, &multi_workspace, "missing.md", None, true).await;
+        assert!(cx.update(|cx| editor.project_entry_ids(cx).is_empty()));
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+        cx.run_until_parked();
+        let close = multi_workspace
+            .update(cx, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.close_item_by_id(editor.item_id(), SaveIntent::Skip, window, cx)
+                    })
+                })
+            })
+            .unwrap();
+        close.await.unwrap();
+        cx.run_until_parked();
+
+        let reopened =
+            open_project_file(cx, &project, &multi_workspace, "missing.md", None, true).await;
+        assert_ne!(reopened.item_id(), preview.entity_id());
+        assert!(cx.update(|cx| reopened.act_as::<MarkdownPreviewView>(cx).is_none()));
+        assert!(cx.update(|cx| reopened.act_as::<Editor>(cx).is_some()));
+    }
+
+    #[gpui::test]
+    async fn following_preview_path_tracks_source_switching(cx: &mut TestAppContext) {
+        let (project, workspace, multi_workspace) = markdown_workspace(
+            cx,
+            json!({"first.md": "# First\n", "second.md": "# Second\n"}),
+            false,
+        )
+        .await;
+        let first = open_project_file(cx, &project, &multi_workspace, "first.md", None, true).await;
+        let preview = multi_workspace
+            .update(cx, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    let editor = first.act_as::<Editor>(cx).unwrap();
+                    let preview = MarkdownPreviewView::create_following_markdown_view(
+                        workspace, editor, window, cx,
+                    );
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.add_item(Box::new(preview.clone()), true, true, None, window, cx);
+                    });
+                    preview
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            preview.read_with(cx, |preview, cx| preview.active_project_path(cx)),
+            Some(cx.update(|cx| test_project_path(&project, "first.md", cx)))
+        );
+        assert_preview_tab_path_actions(
+            cx,
+            multi_workspace,
+            "TAB-1",
+            path!("/project/first.md"),
+            "first.md",
+        );
+
+        open_project_file(cx, &project, &multi_workspace, "second.md", None, true).await;
+        assert_eq!(
+            preview.read_with(cx, |preview, cx| preview.active_project_path(cx)),
+            Some(cx.update(|cx| test_project_path(&project, "second.md", cx)))
+        );
+        assert!(cx.update(|cx| preview.project_entry_ids(cx).is_empty()));
+        assert_preview_tab_path_actions(
+            cx,
+            multi_workspace,
+            "TAB-1",
+            path!("/project/second.md"),
+            "second.md",
+        );
+    }
+
+    #[gpui::test]
     async fn double_click_editor_and_preview_tabs(cx: &mut TestAppContext) {
         let (multi_workspace, _) = open_markdown_file(cx, "note.md", "# Note\n").await;
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
@@ -4439,6 +4577,44 @@ mod tests {
             crate::init(cx);
             state
         })
+    }
+
+    fn assert_preview_tab_path_actions(
+        cx: &mut TestAppContext,
+        multi_workspace: WindowHandle<MultiWorkspace>,
+        tab_selector: &'static str,
+        absolute_path: &str,
+        relative_path: &str,
+    ) {
+        cx.refresh().unwrap();
+        let mut visual_cx = gpui::VisualTestContext::from_window(multi_workspace.into(), cx);
+        for (selector, expected_path) in [
+            ("MENU_ITEM-Copy Path", absolute_path),
+            ("MENU_ITEM-Copy Relative Path", relative_path),
+        ] {
+            let tab_bounds = visual_cx.debug_bounds(tab_selector).unwrap();
+            visual_cx.simulate_mouse_down(
+                tab_bounds.center(),
+                gpui::MouseButton::Right,
+                Modifiers::none(),
+            );
+            assert!(visual_cx.debug_bounds("MENU_ITEM-Edit").is_none());
+            let menu_bounds = visual_cx.debug_bounds(selector).expect(selector);
+            visual_cx.simulate_mouse_down(
+                menu_bounds.center(),
+                gpui::MouseButton::Left,
+                Modifiers::none(),
+            );
+            visual_cx.simulate_mouse_up(
+                menu_bounds.center(),
+                gpui::MouseButton::Left,
+                Modifiers::none(),
+            );
+            assert_eq!(
+                cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap()),
+                expected_path
+            );
+        }
     }
 
     async fn markdown_workspace(
