@@ -10,9 +10,7 @@ use gpui::{
 use image::RgbaImage;
 use objc2::runtime::AnyObject;
 
-#[cfg(target_os = "macos")]
 use core_foundation::base::TCFType;
-#[cfg(target_os = "macos")]
 use core_video::{
     metal_texture::CVMetalTextureGetTexture, metal_texture_cache::CVMetalTextureCache,
     pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
@@ -124,13 +122,11 @@ pub struct MetalRenderer {
     underlines_pipeline_state: metal::RenderPipelineState,
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
-    #[cfg(target_os = "macos")]
     surfaces_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     #[allow(clippy::arc_with_non_send_sync)]
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
     sprite_atlas: Arc<MetalAtlas>,
-    #[cfg(target_os = "macos")]
     core_video_texture_cache: core_video::metal_texture_cache::CVMetalTextureCache,
     path_intermediate_texture: Option<metal::Texture>,
     path_intermediate_msaa_texture: Option<metal::Texture>,
@@ -352,7 +348,6 @@ impl MetalRenderer {
             "polychrome_sprite_fragment",
             MTLPixelFormat::BGRA8Unorm,
         );
-        #[cfg(target_os = "macos")]
         let surfaces_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -365,7 +360,6 @@ impl MetalRenderer {
         let command_queue = device.new_command_queue();
         let supports_shared_storage = cfg!(target_os = "ios") || is_apple_gpu;
         let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), supports_shared_storage));
-        #[cfg(target_os = "macos")]
         let core_video_texture_cache =
             CVMetalTextureCache::new(None, device.clone(), None).unwrap();
 
@@ -384,12 +378,10 @@ impl MetalRenderer {
             underlines_pipeline_state,
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
-            #[cfg(target_os = "macos")]
             surfaces_pipeline_state,
             unit_vertices,
             instance_buffer_pool,
             sprite_atlas,
-            #[cfg(target_os = "macos")]
             core_video_texture_cache,
             path_intermediate_texture: None,
             path_intermediate_msaa_texture: None,
@@ -1168,18 +1160,6 @@ impl MetalRenderer {
         );
     }
 
-    #[cfg(target_os = "ios")]
-    fn draw_surfaces(
-        &mut self,
-        _surfaces: &[PaintSurface],
-        _first_surface: usize,
-        _instance_bindings: &InstanceBindings,
-        _viewport_size: Size<DevicePixels>,
-        _command_encoder: &metal::RenderCommandEncoderRef,
-    ) {
-    }
-
-    #[cfg(target_os = "macos")]
     fn draw_surfaces(
         &mut self,
         surfaces: &[PaintSurface],
@@ -1450,7 +1430,6 @@ struct InstanceBindings {
     underlines: InstanceBinding,
     monochrome_sprites: InstanceBinding,
     polychrome_sprites: InstanceBinding,
-    #[cfg(target_os = "macos")]
     surfaces: InstanceBinding,
 }
 
@@ -1461,7 +1440,6 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
         underlines: writer.write(&scene.underlines)?,
         monochrome_sprites: writer.write(&scene.monochrome_sprites)?,
         polychrome_sprites: writer.write(&scene.polychrome_sprites)?,
-        #[cfg(target_os = "macos")]
         surfaces: writer.write_iter(scene.surfaces.iter().map(|surface| SurfaceBounds {
             bounds: surface.bounds,
             content_mask: surface.content_mask,
@@ -1529,7 +1507,6 @@ impl InstanceBufferWriter {
         Ok(binding)
     }
 
-    #[cfg(target_os = "macos")]
     fn write_iter<T>(
         &mut self,
         values: impl ExactSizeIterator<Item = T>,
@@ -1631,8 +1608,6 @@ enum SpriteInputIndex {
     AtlasTexture = 4,
 }
 
-// Surfaces are macOS-only, but the enum is still exported to the shader header.
-#[cfg_attr(target_os = "ios", allow(dead_code))]
 #[repr(C)]
 enum SurfaceInputIndex {
     Vertices = 0,
