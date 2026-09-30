@@ -17,18 +17,12 @@ use core_video::{
     metal_texture::CVMetalTextureGetTexture, metal_texture_cache::CVMetalTextureCache,
     pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
 };
-use foreign_types::ForeignType;
-#[cfg(target_os = "macos")]
-use foreign_types::ForeignTypeRef;
+use foreign_types::{ForeignType, ForeignTypeRef};
 use metal::{
     CAMetalLayer, CommandQueue, MTLGPUFamily, MTLPixelFormat, MTLResourceOptions, NSRange,
     NSUInteger,
 };
-use objc::{
-    self, msg_send,
-    runtime::{NO, YES},
-    sel, sel_impl,
-};
+use objc::{self, msg_send, sel, sel_impl};
 use parking_lot::Mutex;
 
 use std::{cell::Cell, ffi::c_void, mem, mem::MaybeUninit, ops::Range, ptr, slice, sync::Arc};
@@ -193,21 +187,18 @@ impl MetalRenderer {
         // Allow texture reading for visual tests (captures screenshots without ScreenCaptureKit)
         #[cfg(any(test, feature = "test-support"))]
         layer.set_framebuffer_only(false);
-        unsafe {
-            let _: () = msg_send![&*layer, setAllowsNextDrawableTimeout: NO];
-            let _: () = msg_send![&*layer, setNeedsDisplayOnBoundsChange: YES];
-            // UIKit sizes a view's backing layer itself; only AppKit-hosted
-            // layers need to track their superlayer's bounds.
-            #[cfg(target_os = "macos")]
-            {
-                const K_CA_LAYER_WIDTH_SIZABLE: u32 = 1 << 1;
-                const K_CA_LAYER_HEIGHT_SIZABLE: u32 = 1 << 4;
-                let _: () = msg_send![
-                    &*layer,
-                    setAutoresizingMask: K_CA_LAYER_WIDTH_SIZABLE | K_CA_LAYER_HEIGHT_SIZABLE
-                ];
-            }
-        }
+        // metal-rs doesn't bind these setters, so view the same object through
+        // objc2's typed CAMetalLayer binding.
+        let objc2_layer: &objc2_quartz_core::CAMetalLayer = unsafe { &*layer.as_ptr().cast() };
+        objc2_layer.setAllowsNextDrawableTimeout(false);
+        objc2_layer.setNeedsDisplayOnBoundsChange(true);
+        // UIKit sizes a view's backing layer itself; only AppKit-hosted
+        // layers need to track their superlayer's bounds.
+        #[cfg(target_os = "macos")]
+        objc2_layer.setAutoresizingMask(
+            objc2_quartz_core::CAAutoresizingMask::LayerWidthSizable
+                | objc2_quartz_core::CAAutoresizingMask::LayerHeightSizable,
+        );
     }
 
     /// Creates a new headless MetalRenderer for offscreen rendering without a window.

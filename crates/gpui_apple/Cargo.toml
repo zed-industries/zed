@@ -41,6 +41,7 @@ metal.workspace = true
 objc.workspace = true
 objc2.workspace = true
 objc2-foundation = { workspace = true, features = ["NSThread"] }
+objc2-quartz-core.workspace = true
 parking_lot.workspace = true
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.build-dependencies]
