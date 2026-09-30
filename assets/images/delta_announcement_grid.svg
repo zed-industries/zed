@@ -1,13 +1,8 @@
-<svg width="520" height="200" viewBox="0 0 520 200" preserveAspectRatio="none" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse">
-      <path d="M-2 2L2-2M0 8L8 0M6 10L10 6" stroke="black" stroke-width="1" opacity="0.15"/>
-    </pattern>
-  </defs>
-  <rect x="43" y="11" width="434" height="31" fill="url(#hatch)"/>
-  <rect x="43" y="158" width="434" height="31" fill="url(#hatch)"/>
-  <rect x="11" y="43" width="31" height="114" fill="url(#hatch)"/>
-  <rect x="478" y="43" width="31" height="114" fill="url(#hatch)"/>
-  <rect x="10.5" y="10.5" width="499" height="179" stroke="black" opacity="0.7"/>
-  <path d="M10 42.5H510M10 157.5H510M42.5 10V190M477.5 10V190" stroke="black" opacity="0.7"/>
+<svg width="400" height="155" viewBox="0 0 400 155" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <g stroke="black" opacity="0.5">
+    <rect x="14.5" y="12.5" width="371" height="130"/>
+    <path d="M0 12.5H11M18 12.5H382M389 12.5H400M0 142.5H11M18 142.5H382M389 142.5H400M14.5 0V9M14.5 16V139M14.5 146V155M385.5 0V9M385.5 16V139M385.5 146V155"/>
+    <path d="M14.5 9.5L17.5 12.5L14.5 15.5L11.5 12.5ZM385.5 9.5L388.5 12.5L385.5 15.5L382.5 12.5ZM14.5 139.5L17.5 142.5L14.5 145.5L11.5 142.5ZM385.5 139.5L388.5 142.5L385.5 145.5L382.5 142.5Z"/>
+  </g>
+  <path d="M38.5 13V142M120.5 13V142M200.5 13V142M280.5 13V142" stroke="black" stroke-dasharray="4 5" opacity="0.25"/>
 </svg>

@@ -12,6 +12,12 @@ impl DeltaIllustration {
 
 impl RenderOnce for DeltaIllustration {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let (background_color, bottom_opacity, top_opacity) = if cx.theme().appearance.is_light() {
+            (cx.theme().colors().icon_muted, 0.05, 0.025)
+        } else {
+            (gpui::black(), 0.2, 0.1)
+        };
+
         v_flex()
             .relative()
             .h(rems_from_px(155_f32))
@@ -21,8 +27,8 @@ impl RenderOnce for DeltaIllustration {
             .overflow_hidden()
             .bg(linear_gradient(
                 0.,
-                linear_color_stop(gpui::black().opacity(0.2), 0.),
-                linear_color_stop(gpui::black().opacity(0.1), 1.),
+                linear_color_stop(background_color.opacity(bottom_opacity), 0.),
+                linear_color_stop(background_color.opacity(top_opacity), 1.),
             ))
             .child(
                 svg()
@@ -33,35 +39,20 @@ impl RenderOnce for DeltaIllustration {
                     .text_color(cx.theme().colors().border),
             )
             .child(
-                h_flex()
+                svg()
                     .absolute()
                     .inset_0()
-                    .justify_center()
-                    .px(rems_from_px(64_f32))
-                    .child(
-                        div()
-                            .relative()
-                            .w(rems_from_px(220_f32))
-                            .max_w_full()
-                            .h(rems_from_px(220_f32 * 131. / 594.))
-                            .flex_none()
-                            .child(
-                                svg()
-                                    .absolute()
-                                    .inset_0()
-                                    .size_full()
-                                    .path("images/delta_wordmark.svg")
-                                    .text_color(cx.theme().colors().text),
-                            )
-                            .child(
-                                svg()
-                                    .absolute()
-                                    .inset_0()
-                                    .size_full()
-                                    .path("images/delta_mark.svg")
-                                    .text_color(gpui::rgb(0xd5442c)),
-                            ),
-                    ),
+                    .size_full()
+                    .path("images/delta_announcement_diagram.svg")
+                    .text_color(cx.theme().colors().text),
+            )
+            .child(
+                svg()
+                    .absolute()
+                    .inset_0()
+                    .size_full()
+                    .path("images/delta_mark.svg")
+                    .text_color(gpui::rgb(0xd5442c)),
             )
     }
 }
