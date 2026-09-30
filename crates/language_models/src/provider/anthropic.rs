@@ -603,7 +603,15 @@ mod tests {
     use super::*;
     use futures::AsyncReadExt as _;
     use http_client::{AsyncBody, FakeHttpClient};
-    use language_model::{LanguageModelRequestMessage, MessageContent};
+    use language_model::session::{
+        LanguageModelSession, RoundParameters, SessionConfig, SessionInput, SessionLogEntry,
+        UserContent,
+    };
+    use language_model::{
+        LanguageModelCompletionEvent, LanguageModelRequestMessage, LanguageModelRequestTool,
+        LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUseInput,
+        MessageContent, StopReason,
+    };
     use serde_json::json;
     use std::sync::Mutex;
 
@@ -847,6 +855,395 @@ mod tests {
         assert!(body["tools"].is_null());
     }
 
+    #[gpui::test]
+    async fn session_rounds_through_direct_anthropic_replay_a_stable_prefix(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let recorded_requests = Arc::new(Mutex::new(Vec::<RecordedRequest>::new()));
+        let http_client = FakeHttpClient::create({
+            let recorded_requests = recorded_requests.clone();
+            move |request| {
+                let recorded_requests = recorded_requests.clone();
+                async move {
+                    if request.uri().path() == "/v1/models" {
+                        return Ok(http_client::Response::builder()
+                            .status(200)
+                            .body(AsyncBody::from(r#"{"data":[]}"#))?);
+                    }
+
+                    let header = |name: &str| {
+                        request
+                            .headers()
+                            .get(name)
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_string)
+                    };
+                    let path = request.uri().path().to_string();
+                    let api_key = header("X-Api-Key");
+                    let beta_header = header("Anthropic-Beta");
+                    let mut body = String::new();
+                    request.into_body().read_to_string(&mut body).await?;
+                    let round = {
+                        let mut recorded_requests = recorded_requests.lock().unwrap();
+                        recorded_requests.push(RecordedRequest {
+                            path,
+                            api_key,
+                            beta_header,
+                            body,
+                        });
+                        recorded_requests.len()
+                    };
+
+                    let events = match round {
+                        1 => session_round_one_events(),
+                        2 => session_round_two_events(),
+                        _ => panic!("unexpected completion request {round}"),
+                    };
+                    Ok(http_client::Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from(sse_body(events)))?)
+                }
+            }
+        });
+        let provider = direct_anthropic_test_provider(http_client, cx);
+        let store_key = cx.update(|cx| provider.set_api_key(Some("test-key".to_string()), cx));
+        store_key.await.unwrap();
+        // Not a binding or compaction model, so no beta header is involved.
+        let model = add_fetched_test_model(
+            &provider,
+            anthropic::ListModelEntry {
+                id: "claude-sonnet-4-5".to_string(),
+                display_name: "Claude Sonnet 4.5".to_string(),
+                max_input_tokens: 200_000,
+                max_tokens: 64_000,
+                capabilities: Some(anthropic::ModelCapabilities {
+                    thinking: Some(anthropic::ThinkingCapability {
+                        supported: true,
+                        types: None,
+                    }),
+                    ..Default::default()
+                }),
+            },
+            cx,
+        );
+        let session = cx.new(|_| {
+            LanguageModelSession::new(
+                Arc::new(provider),
+                model,
+                SessionConfig {
+                    thread_id: None,
+                    prompt_cache_key: None,
+                    system_prompt: Some("You are helpful.".to_string()),
+                    tools: vec![LanguageModelRequestTool::function(
+                        "read".to_string(),
+                        "Reads a file".to_string(),
+                        json!({
+                            "type": "object",
+                            "properties": {"path": {"type": "string"}},
+                            "required": ["path"]
+                        }),
+                        false,
+                    )],
+                },
+            )
+        });
+        let parameters = RoundParameters {
+            thinking_allowed: true,
+            ..Default::default()
+        };
+
+        let round_one_stream = session.update(cx, |session, cx| {
+            session.append(SessionInput::UserMessage(vec![UserContent::Text(
+                "Read a.txt".to_string(),
+            )]));
+            session.complete(parameters.clone(), cx).unwrap()
+        });
+        let round_one_events = drain_session_stream(round_one_stream, cx).await;
+
+        assert!(round_one_events.iter().any(|event| matches!(
+            event,
+            LanguageModelCompletionEvent::Thinking {
+                signature: Some(signature),
+                ..
+            } if signature == "signature-1"
+        )));
+        assert!(round_one_events.iter().any(|event| matches!(
+            event,
+            LanguageModelCompletionEvent::RedactedThinking { data } if data == "opaque"
+        )));
+        assert!(round_one_events.iter().any(|event| matches!(
+            event,
+            LanguageModelCompletionEvent::ToolUse(tool_use)
+                if tool_use.is_input_complete
+                    && tool_use.id.to_string() == "toolu_01"
+                    && tool_use.input == LanguageModelToolUseInput::Json(json!({"path": "a.txt"}))
+        )));
+        assert_eq!(
+            round_one_events.last(),
+            Some(&LanguageModelCompletionEvent::Stop(StopReason::ToolUse))
+        );
+
+        let round_two_stream = session.update(cx, |session, cx| {
+            session
+                .submit_tool_result(LanguageModelToolResult {
+                    tool_use_id: "toolu_01".into(),
+                    tool_name: "read".into(),
+                    is_error: false,
+                    content: vec![LanguageModelToolResultContent::Text("file contents".into())],
+                    output: None,
+                })
+                .unwrap();
+            session.complete(parameters.clone(), cx).unwrap()
+        });
+        drain_session_stream(round_two_stream, cx).await;
+
+        let recorded_requests = recorded_requests.lock().unwrap();
+        let [round_one, round_two] = recorded_requests.as_slice() else {
+            panic!("expected two completion requests, got {recorded_requests:?}");
+        };
+        for request in [round_one, round_two] {
+            assert_eq!(request.path, "/v1/messages");
+            assert_eq!(request.api_key.as_deref(), Some("test-key"));
+            assert_eq!(request.beta_header, None);
+        }
+
+        let one_hour_cache = json!({"type": "ephemeral", "ttl": "1h"});
+        let user_message = json!({
+            "role": "user",
+            "content": [{"type": "text", "text": "Read a.txt"}]
+        });
+        let mut round_one_body =
+            serde_json::from_str::<serde_json::Value>(&round_one.body).unwrap();
+        assert_eq!(
+            round_one_body,
+            json!({
+                "model": "claude-sonnet-4-5",
+                "max_tokens": 64_000,
+                "messages": [user_message],
+                "tools": [{
+                    "name": "read",
+                    "description": "Reads a file",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}},
+                        "required": ["path"]
+                    },
+                    "cache_control": one_hour_cache
+                }],
+                "thinking": {"type": "enabled", "budget_tokens": 4096},
+                "system": [{
+                    "type": "text",
+                    "text": "You are helpful.",
+                    "cache_control": one_hour_cache
+                }],
+                "cache_control": {"type": "ephemeral"},
+                "temperature": 1.0,
+                "stream": true
+            })
+        );
+
+        let mut round_two_body =
+            serde_json::from_str::<serde_json::Value>(&round_two.body).unwrap();
+        assert_eq!(
+            round_two_body["messages"],
+            json!([
+                user_message,
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "thinking",
+                            "thinking": "I should read it.",
+                            "signature": "signature-1"
+                        },
+                        {"type": "redacted_thinking", "data": "opaque"},
+                        {"type": "text", "text": "Reading a.txt."},
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_01",
+                            "name": "read",
+                            "input": {"path": "a.txt"}
+                        }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_01",
+                        "is_error": false,
+                        "content": "file contents"
+                    }]
+                }
+            ])
+        );
+
+        // Re-serializing is faithful only if it reproduces the wire bytes.
+        let round_one_messages = serde_json::to_string(&round_one_body["messages"]).unwrap();
+        let round_two_messages = serde_json::to_string(&round_two_body["messages"]).unwrap();
+        assert!(round_one.body.contains(&round_one_messages));
+        assert!(round_two.body.contains(&round_two_messages));
+        let round_one_open_prefix = round_one_messages.strip_suffix(']').unwrap();
+        assert!(
+            round_two_messages.starts_with(round_one_open_prefix),
+            "round two messages don't extend round one's:\n{round_one_messages}\n{round_two_messages}"
+        );
+
+        round_one_body.as_object_mut().unwrap().remove("messages");
+        round_two_body.as_object_mut().unwrap().remove("messages");
+        assert_eq!(round_one_body, round_two_body);
+
+        session.read_with(cx, |session, _| {
+            let Some(SessionLogEntry::Output(output)) = session.log().entries().last() else {
+                panic!("expected the log to end in an output");
+            };
+            assert_eq!(output.stop_reason, Some(StopReason::EndTurn));
+            assert_eq!(
+                output
+                    .messages
+                    .iter()
+                    .map(|message| message.content.clone())
+                    .collect::<Vec<_>>(),
+                vec![vec![MessageContent::Text("Done.".to_string())]]
+            );
+        });
+    }
+
+    #[derive(Debug)]
+    struct RecordedRequest {
+        path: String,
+        api_key: Option<String>,
+        beta_header: Option<String>,
+        body: String,
+    }
+
+    fn session_round_one_events() -> Vec<serde_json::Value> {
+        vec![
+            message_start_event("msg_01"),
+            json!({
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "thinking", "thinking": ""}
+            }),
+            json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "thinking_delta", "thinking": "I should read it."}
+            }),
+            json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "signature_delta", "signature": "signature-1"}
+            }),
+            json!({"type": "content_block_stop", "index": 0}),
+            json!({
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {"type": "redacted_thinking", "data": "opaque"}
+            }),
+            json!({"type": "content_block_stop", "index": 1}),
+            json!({
+                "type": "content_block_start",
+                "index": 2,
+                "content_block": {"type": "text", "text": ""}
+            }),
+            json!({
+                "type": "content_block_delta",
+                "index": 2,
+                "delta": {"type": "text_delta", "text": "Reading a.txt."}
+            }),
+            json!({"type": "content_block_stop", "index": 2}),
+            json!({
+                "type": "content_block_start",
+                "index": 3,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "toolu_01",
+                    "name": "read",
+                    "input": {}
+                }
+            }),
+            json!({
+                "type": "content_block_delta",
+                "index": 3,
+                "delta": {"type": "input_json_delta", "partial_json": "{\"path\": \"a"}
+            }),
+            json!({
+                "type": "content_block_delta",
+                "index": 3,
+                "delta": {"type": "input_json_delta", "partial_json": ".txt\"}"}
+            }),
+            json!({"type": "content_block_stop", "index": 3}),
+            message_delta_event("tool_use"),
+            json!({"type": "message_stop"}),
+        ]
+    }
+
+    fn session_round_two_events() -> Vec<serde_json::Value> {
+        vec![
+            message_start_event("msg_02"),
+            json!({
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""}
+            }),
+            json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "Done."}
+            }),
+            json!({"type": "content_block_stop", "index": 0}),
+            message_delta_event("end_turn"),
+            json!({"type": "message_stop"}),
+        ]
+    }
+
+    fn message_start_event(message_id: &str) -> serde_json::Value {
+        json!({
+            "type": "message_start",
+            "message": {
+                "id": message_id,
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": "claude-sonnet-4-5",
+                "stop_reason": null,
+                "stop_sequence": null,
+                "usage": {"input_tokens": 0, "output_tokens": 0}
+            }
+        })
+    }
+
+    fn message_delta_event(stop_reason: &str) -> serde_json::Value {
+        json!({
+            "type": "message_delta",
+            "delta": {"stop_reason": stop_reason, "stop_sequence": null},
+            "usage": {"input_tokens": 0, "output_tokens": 0}
+        })
+    }
+
+    fn sse_body(events: Vec<serde_json::Value>) -> String {
+        let lines = events
+            .into_iter()
+            .map(|event| format!("data: {event}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("{lines}\n")
+    }
+
+    async fn drain_session_stream(
+        mut stream: LanguageModelCompletionStream,
+        cx: &mut gpui::TestAppContext,
+    ) -> Vec<LanguageModelCompletionEvent> {
+        let mut events = Vec::new();
+        while let Some(event) = stream.next().await {
+            events.push(event.unwrap());
+        }
+        drop(stream);
+        cx.run_until_parked();
+        events
+    }
+
     fn direct_anthropic_test_provider(
         http_client: Arc<dyn HttpClient>,
         cx: &mut gpui::TestAppContext,
@@ -858,19 +1255,32 @@ mod tests {
         })
     }
 
-    /// Adds a listed model to the provider's fetched list, as a successful
-    /// `/v1/models` fetch would, and returns it.
+    /// Adds a listed Claude Opus 4.6 without reported capabilities.
     fn direct_anthropic_test_model(
         provider: &AnthropicLanguageModelProvider,
         cx: &mut gpui::TestAppContext,
     ) -> LanguageModel {
-        let model = anthropic::Model::from_listed(anthropic::ListModelEntry {
-            id: "claude-opus-4-6".to_string(),
-            display_name: "Claude Opus 4.6".to_string(),
-            max_input_tokens: 1_000_000,
-            max_tokens: 128_000,
-            capabilities: None,
-        });
+        add_fetched_test_model(
+            provider,
+            anthropic::ListModelEntry {
+                id: "claude-opus-4-6".to_string(),
+                display_name: "Claude Opus 4.6".to_string(),
+                max_input_tokens: 1_000_000,
+                max_tokens: 128_000,
+                capabilities: None,
+            },
+            cx,
+        )
+    }
+
+    /// Adds `entry` to the provider's fetched list, as a successful
+    /// `/v1/models` fetch would, and returns it.
+    fn add_fetched_test_model(
+        provider: &AnthropicLanguageModelProvider,
+        entry: anthropic::ListModelEntry,
+        cx: &mut gpui::TestAppContext,
+    ) -> LanguageModel {
+        let model = anthropic::Model::from_listed(entry);
         provider
             .state
             .update(cx, |state, _| state.fetched_models.push(model.clone()));
