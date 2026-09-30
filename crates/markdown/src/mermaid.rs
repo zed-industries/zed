@@ -690,7 +690,7 @@ pub(crate) fn render_mermaid_diagram(
     } else {
         None
     };
-    let use_toolbar = show_interactive && layout.width_follows_diagram;
+    let use_toolbar = show_interactive && layout.has_width_override();
 
     let mut container = div()
         .group("code_block")
@@ -1535,52 +1535,139 @@ mod tests {
     #[gpui::test]
     fn test_mermaid_layout_small_toolbar_wraps_without_overlap(cx: &mut TestAppContext) {
         let (markdown, cx) = prepare_mermaid_layout("```mermaid\nflowchart LR\nA\n```", 80., cx);
-        let options = MermaidLayoutTestOptions {
-            interactive: true,
-            layout: MermaidLayout {
+        for layout in [
+            MermaidLayout {
                 width_follows_diagram: true,
                 ..Default::default()
             },
-            ..Default::default()
-        };
-        for font_size in [16., 24.] {
-            for width in [120., 220., 1000.] {
-                markdown.update(cx, |markdown, cx| {
-                    markdown.set_mermaid_zoom_level(0, 1.0, cx)
-                });
-                let (natural, _, _) = draw_mermaid_layout(&markdown, options, width, font_size, cx);
-                markdown.update(cx, |markdown, cx| {
-                    markdown.set_mermaid_zoom_level(0, 2.0, cx)
-                });
-                let (zoomed, _, scroll) =
-                    draw_mermaid_layout(&markdown, options, width, font_size, cx);
-                assert_eq!(zoomed.size.width, natural.size.width);
-                let toolbar = cx.debug_bounds("mermaid-toolbar").expect("toolbar");
-                let controls = [
-                    "mermaid-tabs",
-                    "mermaid-zoom-controls",
-                    "mermaid-toolbar-copy",
-                ]
-                .map(|selector| cx.debug_bounds(selector).expect("toolbar controls"));
-                for bounds in controls {
-                    assert!(bounds.left() >= toolbar.left());
-                    assert!(bounds.right() <= toolbar.right() + px(1.));
-                    assert!(bounds.bottom() <= toolbar.bottom() + px(1.));
-                }
-                for (index, left) in controls.iter().enumerate() {
-                    for right in controls.iter().skip(index + 1) {
-                        assert!(
-                            left.right() <= right.left()
-                                || right.right() <= left.left()
-                                || left.bottom() <= right.top()
-                                || right.bottom() <= left.top(),
-                            "overlapping toolbar controls at width={width}, font_size={font_size}"
-                        );
+            MermaidLayout {
+                max_width: Some(px(200.)),
+                ..Default::default()
+            },
+            MermaidLayout {
+                max_width: Some(px(800.)),
+                ..Default::default()
+            },
+        ] {
+            let options = MermaidLayoutTestOptions {
+                interactive: true,
+                layout,
+                ..Default::default()
+            };
+            for font_size in [16., 24.] {
+                for width in [120., 220., 1000.] {
+                    markdown.update(cx, |markdown, cx| {
+                        markdown.set_mermaid_zoom_level(0, 1.0, cx)
+                    });
+                    let (natural, _, _) =
+                        draw_mermaid_layout(&markdown, options, width, font_size, cx);
+                    markdown.update(cx, |markdown, cx| {
+                        markdown.set_mermaid_zoom_level(0, 3.0, cx)
+                    });
+                    let (zoomed, _, scroll) =
+                        draw_mermaid_layout(&markdown, options, width, font_size, cx);
+                    assert_eq!(zoomed.size.width, natural.size.width);
+                    let toolbar = assert_mermaid_toolbar_bounds(
+                        &[
+                            "mermaid-tabs",
+                            "mermaid-zoom-controls",
+                            "mermaid-toolbar-copy",
+                        ],
+                        cx,
+                    );
+                    assert!(scroll.bounds().top() >= toolbar.bottom());
+                    assert!(zoomed.right() <= px(width));
+
+                    markdown.update(cx, |markdown, cx| {
+                        markdown.toggle_mermaid_tab(0);
+                        cx.notify();
+                    });
+                    cx.run_until_parked();
+                    assert_mermaid_toolbar_bounds(&["mermaid-tabs", "mermaid-toolbar-copy"], cx);
+                    assert!(cx.debug_bounds("mermaid-zoom-controls").is_none());
+                    assert_eq!(
+                        cx.debug_bounds("mermaid-container")
+                            .expect("code block")
+                            .size
+                            .width,
+                        natural.size.width,
+                    );
+                    markdown.update(cx, |markdown, cx| {
+                        markdown.toggle_mermaid_tab(0);
+                        cx.notify();
+                    });
+                    let (preview, _, scroll) =
+                        draw_mermaid_layout(&markdown, options, width, font_size, cx);
+                    let toolbar = assert_mermaid_toolbar_bounds(
+                        &[
+                            "mermaid-tabs",
+                            "mermaid-zoom-controls",
+                            "mermaid-toolbar-copy",
+                        ],
+                        cx,
+                    );
+                    assert_eq!(preview.size.width, natural.size.width);
+                    assert!(scroll.bounds().top() >= toolbar.bottom());
+                    if layout.max_width == Some(px(200.)) && width == 1000. {
+                        assert!(scroll.max_offset().x > px(0.));
                     }
                 }
-                assert!(scroll.bounds().top() >= toolbar.bottom());
-                assert!(zoomed.right() <= px(width));
             }
+        }
+    }
+
+    fn assert_mermaid_toolbar_bounds(
+        selectors: &[&'static str],
+        cx: &mut VisualTestContext,
+    ) -> Bounds<Pixels> {
+        let toolbar = cx.debug_bounds("mermaid-toolbar").expect("toolbar");
+        let controls = selectors
+            .iter()
+            .copied()
+            .map(|selector| cx.debug_bounds(selector).expect("toolbar control"))
+            .collect::<Vec<_>>();
+        for bounds in &controls {
+            assert!(bounds.left() >= toolbar.left());
+            assert!(bounds.right() <= toolbar.right() + px(1.));
+            assert!(bounds.bottom() <= toolbar.bottom() + px(1.));
+        }
+        for (index, left) in controls.iter().enumerate() {
+            for right in controls.iter().skip(index + 1) {
+                assert!(
+                    left.right() <= right.left()
+                        || right.right() <= left.left()
+                        || left.bottom() <= right.top()
+                        || right.bottom() <= left.top(),
+                    "overlapping toolbar controls"
+                );
+            }
+        }
+        toolbar
+    }
+
+    #[gpui::test]
+    fn test_mermaid_layout_without_width_override_keeps_overlay(cx: &mut TestAppContext) {
+        let (markdown, cx) = prepare_mermaid_layout("```mermaid\nflowchart LR\nA\n```", 80., cx);
+        for alignment in [
+            MermaidAlignment::Left,
+            MermaidAlignment::Center,
+            MermaidAlignment::Right,
+        ] {
+            let options = MermaidLayoutTestOptions {
+                interactive: true,
+                layout: MermaidLayout {
+                    alignment,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            markdown.update(cx, |markdown, cx| {
+                markdown.set_mermaid_zoom_level(0, 2.0, cx)
+            });
+            draw_mermaid_layout(&markdown, options, 1000., 16., cx);
+            assert!(cx.debug_bounds("mermaid-toolbar").is_none());
+            assert!(cx.debug_bounds("mermaid-tabs").is_some());
+            assert!(cx.debug_bounds("mermaid-zoom-controls").is_some());
         }
     }
 
