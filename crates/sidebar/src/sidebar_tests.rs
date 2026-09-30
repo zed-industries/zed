@@ -125,6 +125,19 @@ fn has_thread_entry(sidebar: &Sidebar, session_id: &acp::SessionId) -> bool {
         .any(|entry| matches!(entry, ListEntry::Thread(t) if t.metadata.session_id.as_ref() == Some(session_id)))
 }
 
+fn thread_entry_by_title<'a>(sidebar: &'a Sidebar, title: &str) -> Option<&'a ThreadEntry> {
+    sidebar
+        .contents
+        .entries
+        .iter()
+        .find_map(|entry| match entry {
+            ListEntry::Thread(thread) if thread.metadata.title.as_deref() == Some(title) => {
+                Some(thread.as_ref())
+            }
+            _ => None,
+        })
+}
+
 #[track_caller]
 fn assert_project_header_has_threads(
     sidebar: &Entity<Sidebar>,
@@ -14955,15 +14968,20 @@ fn test_worktree_info_branch_names_for_main_worktrees() {
     let folder_paths = PathList::new(&[PathBuf::from("/projects/myapp")]);
     let worktree_paths = WorktreePaths::from_folder_paths(&folder_paths);
 
-    let branch_by_path: HashMap<PathBuf, SharedString> =
-        [(PathBuf::from("/projects/myapp"), "feature-x".into())]
-            .into_iter()
-            .collect();
+    let head_by_path: HashMap<PathBuf, WorktreeHead> = [(
+        PathBuf::from("/projects/myapp"),
+        WorktreeHead::Branch("feature-x".into()),
+    )]
+    .into_iter()
+    .collect();
 
-    let infos = worktree_info_from_thread_paths(&worktree_paths, &branch_by_path);
+    let infos = worktree_info_from_thread_paths(&worktree_paths, &head_by_path);
     assert_eq!(infos.len(), 1);
     assert_eq!(infos[0].kind, ui::WorktreeKind::Main);
-    assert_eq!(infos[0].branch_name, Some(SharedString::from("feature-x")));
+    assert_eq!(
+        infos[0].head,
+        Some(WorktreeHead::Branch("feature-x".into()))
+    );
     assert_eq!(infos[0].worktree_name, Some(SharedString::from("myapp")));
 }
 
@@ -14974,19 +14992,19 @@ fn test_worktree_info_branch_names_for_linked_worktrees() {
     let worktree_paths =
         WorktreePaths::from_path_lists(main_paths, folder_paths).expect("same length");
 
-    let branch_by_path: HashMap<PathBuf, SharedString> = [(
+    let head_by_path: HashMap<PathBuf, WorktreeHead> = [(
         PathBuf::from("/projects/myapp-feature"),
-        "feature-branch".into(),
+        WorktreeHead::Branch("feature-branch".into()),
     )]
     .into_iter()
     .collect();
 
-    let infos = worktree_info_from_thread_paths(&worktree_paths, &branch_by_path);
+    let infos = worktree_info_from_thread_paths(&worktree_paths, &head_by_path);
     assert_eq!(infos.len(), 1);
     assert_eq!(infos[0].kind, ui::WorktreeKind::Linked);
     assert_eq!(
-        infos[0].branch_name,
-        Some(SharedString::from("feature-branch"))
+        infos[0].head,
+        Some(WorktreeHead::Branch("feature-branch".into()))
     );
 }
 
@@ -14995,13 +15013,104 @@ fn test_worktree_info_missing_branch_returns_none() {
     let folder_paths = PathList::new(&[PathBuf::from("/projects/myapp")]);
     let worktree_paths = WorktreePaths::from_folder_paths(&folder_paths);
 
-    let branch_by_path: HashMap<PathBuf, SharedString> = HashMap::new();
+    let head_by_path: HashMap<PathBuf, WorktreeHead> = HashMap::new();
 
-    let infos = worktree_info_from_thread_paths(&worktree_paths, &branch_by_path);
+    let infos = worktree_info_from_thread_paths(&worktree_paths, &head_by_path);
     assert_eq!(infos.len(), 1);
     assert_eq!(infos[0].kind, ui::WorktreeKind::Main);
-    assert_eq!(infos[0].branch_name, None);
+    assert_eq!(infos[0].head, None);
     assert_eq!(infos[0].worktree_name, Some(SharedString::from("myapp")));
+}
+
+#[test]
+fn test_apply_worktree_label_mode_for_head_states() {
+    let worktree = |head| ThreadItemWorktreeInfo {
+        worktree_name: Some("checkout".into()),
+        head,
+        kind: ui::WorktreeKind::Linked,
+        ..Default::default()
+    };
+    let labels = |head: Option<WorktreeHead>, mode| {
+        let infos = apply_worktree_label_mode(vec![worktree(head)], mode);
+        (infos[0].worktree_name.clone(), infos[0].head.clone())
+    };
+
+    for head in [Some(WorktreeHead::Detached), None] {
+        assert_eq!(
+            labels(head.clone(), AgentThreadWorktreeLabel::Both),
+            (Some("checkout".into()), head.clone())
+        );
+        assert_eq!(
+            labels(head, AgentThreadWorktreeLabel::Worktree),
+            (Some("checkout".into()), None)
+        );
+    }
+    assert_eq!(
+        labels(
+            Some(WorktreeHead::Detached),
+            AgentThreadWorktreeLabel::Branch
+        ),
+        (None, Some(WorktreeHead::Detached))
+    );
+    assert_eq!(
+        labels(None, AgentThreadWorktreeLabel::Branch),
+        (Some("checkout".into()), None)
+    );
+}
+
+#[gpui::test]
+async fn test_sidebar_worktree_info_for_detached_linked_checkout(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    // Covers discovery through the main repository's worktree list and through
+    // the detached checkout's own snapshot.
+    for opened_path in ["/project", "/detached-worktree"] {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", serde_json::json!({ ".git": {} }))
+            .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            false,
+            git::repository::Worktree {
+                path: PathBuf::from("/detached-worktree"),
+                ref_name: None,
+                sha: "aaa".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+        let project = project::Project::test(fs.clone(), [opened_path.as_ref()], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+        save_thread_metadata_with_main_paths(
+            "detached-thread",
+            "Detached Thread",
+            PathList::new(&[PathBuf::from("/detached-worktree")]),
+            PathList::new(&[PathBuf::from("/project")]),
+            Utc::now(),
+            cx,
+        );
+        sidebar.update(cx, |sidebar, cx| sidebar.update_entries(cx));
+        cx.run_until_parked();
+
+        sidebar.read_with(cx, |sidebar, _cx| {
+            let detached = thread_entry_by_title(sidebar, "Detached Thread")
+                .and_then(|thread| thread.worktrees.first())
+                .unwrap_or_else(|| panic!("no worktree metadata when opening {opened_path}"));
+            assert_eq!(detached.kind, ui::WorktreeKind::Linked);
+            assert_eq!(detached.worktree_name.as_deref(), Some("detached-worktree"));
+            assert_eq!(detached.head, Some(WorktreeHead::Detached));
+        });
+    }
 }
 
 #[gpui::test]

@@ -2279,29 +2279,40 @@ impl FakeFs {
         emit_git_event: bool,
         worktree: Worktree,
     ) {
-        let ref_name = worktree
-            .ref_name
-            .as_ref()
-            .expect("linked worktree must have a ref_name");
-        let branch_name = ref_name
-            .strip_prefix("refs/heads/")
-            .unwrap_or(ref_name.as_ref());
+        let base_directory_name = worktree
+            .branch_name()
+            .map(str::to_string)
+            .unwrap_or_else(|| worktree.directory_name(None));
+        let mut directory_name = base_directory_name.clone();
+        let mut suffix = 1;
+        while self
+            .is_dir(&dot_git.join("worktrees").join(&directory_name))
+            .await
+        {
+            directory_name = format!("{base_directory_name}{suffix}");
+            suffix += 1;
+        }
 
-        // Create ref in git state.
-        self.with_git_state(dot_git, false, |state| {
-            state
-                .refs
-                .insert(ref_name.to_string(), worktree.sha.to_string());
-        })
-        .unwrap();
+        if let Some(ref_name) = &worktree.ref_name {
+            self.with_git_state(dot_git, false, |state| {
+                state
+                    .refs
+                    .insert(ref_name.to_string(), worktree.sha.to_string());
+            })
+            .unwrap();
+        }
 
         // Create .git/worktrees/<name>/ directory with HEAD, commondir, and gitdir.
-        let worktrees_entry_dir = dot_git.join("worktrees").join(branch_name);
+        let worktrees_entry_dir = dot_git.join("worktrees").join(directory_name);
         self.create_dir(&worktrees_entry_dir).await.unwrap();
 
         self.write_file_internal(
             worktrees_entry_dir.join("HEAD"),
-            format!("ref: {ref_name}").into_bytes(),
+            match &worktree.ref_name {
+                Some(ref_name) => format!("ref: {ref_name}"),
+                None => worktree.sha.to_string(),
+            }
+            .into_bytes(),
             false,
         )
         .unwrap();

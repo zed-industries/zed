@@ -34,7 +34,7 @@ use settings::Settings as _;
 use theme::ActiveTheme;
 use ui::{
     AgentThreadStatus, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, ScrollAxes,
-    Scrollbars, Tab, ThreadItem, Tooltip, WithScrollbar, prelude::*,
+    Scrollbars, Tab, ThreadItem, Tooltip, WithScrollbar, WorktreeHead, prelude::*,
     utils::platform_title_bar_height,
 };
 use util::ResultExt;
@@ -154,7 +154,7 @@ pub struct ThreadsArchiveView {
     agent_server_store: WeakEntity<AgentServerStore>,
     restoring: HashSet<ThreadId>,
     archived_thread_ids: HashSet<ThreadId>,
-    archived_branch_names: HashMap<ThreadId, HashMap<PathBuf, String>>,
+    archived_worktree_heads: HashMap<ThreadId, HashMap<PathBuf, WorktreeHead>>,
     _load_branch_names_task: Task<()>,
     thread_filter: ThreadFilter,
 }
@@ -228,7 +228,7 @@ impl ThreadsArchiveView {
             agent_server_store,
             restoring: HashSet::default(),
             archived_thread_ids: HashSet::default(),
-            archived_branch_names: HashMap::default(),
+            archived_worktree_heads: HashMap::default(),
             _load_branch_names_task: Task::ready(()),
             thread_filter: ThreadFilter::All,
         };
@@ -400,11 +400,11 @@ impl ThreadsArchiveView {
     fn load_archived_branch_names(&mut self, cx: &mut Context<Self>) {
         let task = ThreadMetadataStore::global(cx)
             .read(cx)
-            .get_all_archived_branch_names(cx);
+            .get_all_archived_worktree_heads(cx);
         self._load_branch_names_task = cx.spawn(async move |this, cx| {
-            if let Some(branch_names) = task.await.log_err() {
+            if let Some(worktree_heads) = task.await.log_err() {
                 this.update(cx, |this, cx| {
-                    this.archived_branch_names = branch_names;
+                    this.archived_worktree_heads = worktree_heads;
                     cx.notify();
                 })
                 .log_err();
@@ -645,19 +645,11 @@ impl ThreadsArchiveView {
 
                 let is_archived = thread.archived;
 
-                let branch_names_for_thread: HashMap<PathBuf, SharedString> = self
-                    .archived_branch_names
-                    .get(&thread.thread_id)
-                    .map(|map| {
-                        map.iter()
-                            .map(|(k, v)| (k.clone(), SharedString::from(v.clone())))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
                 let worktrees = worktree_info_from_thread_paths(
                     &thread.worktree_paths,
-                    &branch_names_for_thread,
+                    self.archived_worktree_heads
+                        .get(&thread.thread_id)
+                        .unwrap_or(&HashMap::default()),
                 );
 
                 let archived_color = Color::Custom(cx.theme().colors().icon_muted.opacity(0.6));

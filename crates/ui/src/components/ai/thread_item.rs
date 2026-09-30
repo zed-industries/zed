@@ -23,13 +23,50 @@ pub enum WorktreeKind {
     Linked,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WorktreeHead {
+    Branch(SharedString),
+    Detached,
+}
+
 #[derive(Clone, Default)]
 pub struct ThreadItemWorktreeInfo {
     pub worktree_name: Option<SharedString>,
-    pub branch_name: Option<SharedString>,
+    /// `None` when the head state is unknown, e.g. for a closed project.
+    pub head: Option<WorktreeHead>,
     pub full_path: SharedString,
     pub highlight_positions: Vec<usize>,
     pub kind: WorktreeKind,
+}
+
+impl ThreadItemWorktreeInfo {
+    fn display_labels(
+        &self,
+        show_main_worktree_name: bool,
+    ) -> Option<(Option<SharedString>, Option<SharedString>)> {
+        match self.kind {
+            WorktreeKind::Main => match &self.head {
+                Some(WorktreeHead::Branch(branch_name)) => Some((
+                    if show_main_worktree_name {
+                        self.worktree_name.clone()
+                    } else {
+                        None
+                    },
+                    Some(branch_name.clone()),
+                )),
+                _ => None,
+            },
+            WorktreeKind::Linked => {
+                let head_label = self.head.as_ref().map(|head| match head {
+                    WorktreeHead::Branch(branch_name) => branch_name.clone(),
+                    WorktreeHead::Detached => "Detached HEAD".into(),
+                });
+
+                (self.worktree_name.is_some() || head_label.is_some())
+                    .then(|| (self.worktree_name.clone(), head_label))
+            }
+        }
+    }
 }
 
 #[derive(IntoElement, RegisterComponent)]
@@ -252,6 +289,7 @@ impl RenderOnce for ThreadItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let color = cx.theme().colors();
         let raw_bg = self.base_bg.unwrap_or(color.surface_background);
+        let show_main_worktree_name = self.worktrees.len() > 1;
         // The fade gradient paints a solid color over the title to blend it into
         // the row background, but a transparent window has no opaque surface to
         // fade into, so it renders as a visible patch; truncate the title instead.
@@ -405,14 +443,17 @@ impl RenderOnce for ThreadItem {
             AgentThreadStatus::Error | AgentThreadStatus::WaitingForConfirmation
         );
 
-        let linked_worktrees: Vec<ThreadItemWorktreeInfo> = self
+        let worktrees: Vec<_> = self
             .worktrees
             .into_iter()
-            .filter(|wt| wt.kind == WorktreeKind::Linked)
-            .filter(|wt| wt.worktree_name.is_some() || wt.branch_name.is_some())
+            .filter_map(|worktree| {
+                let (worktree_name, branch_name) =
+                    worktree.display_labels(show_main_worktree_name)?;
+                Some((worktree, worktree_name, branch_name))
+            })
             .collect();
 
-        let has_worktree = !linked_worktrees.is_empty();
+        let has_worktree = !worktrees.is_empty();
 
         let has_metadata = has_project_name
             || has_project_paths
@@ -489,122 +530,168 @@ impl RenderOnce for ThreadItem {
                     h_flex()
                         .gap_1p5()
                         .child(icon_container()) // Icon Spacing
-                        .when(self.archived, |this| {
-                            this.child(
-                                Icon::new(IconName::Archive).size(IconSize::XSmall).color(
-                                    Color::Custom(cx.theme().colors().icon_muted.opacity(0.5)),
-                                ),
-                            )
-                        })
-                        .when(
-                            has_project_name || has_project_paths || has_worktree,
-                            |this| {
-                                this.when_some(self.project_name, |this, name| {
+                        .child(
+                            h_flex()
+                                .min_w_0()
+                                .gap_1()
+                                .when(self.archived, |this| {
                                     this.child(
-                                        Label::new(name).size(LabelSize::Small).color(Color::Muted),
+                                        Icon::new(IconName::Archive).size(IconSize::XSmall).color(
+                                            Color::Custom(
+                                                cx.theme().colors().icon_muted.opacity(0.5),
+                                            ),
+                                        ),
                                     )
                                 })
                                 .when(
-                                    has_project_name && (has_project_paths || has_worktree),
+                                    has_project_name || has_project_paths || has_worktree,
+                                    |this| {
+                                        this.when_some(self.project_name, |this, name| {
+                                            this.child(
+                                                Label::new(name)
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            )
+                                        })
+                                        .when(
+                                            has_project_name && (has_project_paths || has_worktree),
+                                            |this| this.child(dot_separator()),
+                                        )
+                                        .when_some(project_paths, |this, paths| {
+                                            this.child(
+                                                Label::new(paths)
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            )
+                                        })
+                                        .when(has_project_paths && has_worktree, |this| {
+                                            this.child(dot_separator())
+                                        })
+                                        .children(
+                                            worktrees.into_iter().enumerate().map(
+                                                |(
+                                                    index,
+                                                    (worktree, worktree_name, branch_name),
+                                                )| {
+                                                    let has_real_branch = matches!(
+                                                        worktree.head,
+                                                        Some(WorktreeHead::Branch(_))
+                                                    );
+                                                    let worktree_label =
+                                                        worktree_name.map(|name| {
+                                                            if worktree
+                                                                .highlight_positions
+                                                                .is_empty()
+                                                            {
+                                                                Label::new(name)
+                                                                    .size(LabelSize::Small)
+                                                                    .color(Color::Muted)
+                                                                    .truncate()
+                                                                    .into_any_element()
+                                                            } else {
+                                                                HighlightedLabel::new(
+                                                                    name,
+                                                                    worktree
+                                                                        .highlight_positions
+                                                                        .clone(),
+                                                                )
+                                                                .size(LabelSize::Small)
+                                                                .color(Color::Muted)
+                                                                .truncate()
+                                                                .into_any_element()
+                                                            }
+                                                        });
+
+                                                    let branch_label = branch_name.map(|branch| {
+                                                        Label::new(branch)
+                                                            .size(LabelSize::Small)
+                                                            .color(Color::Muted)
+                                                            .truncate()
+                                                            .into_any_element()
+                                                    });
+
+                                                    let show_separator = worktree_label.is_some()
+                                                        && branch_label.is_some();
+                                                    // The git icons' SVGs have built-in side
+                                                    // padding, which makes the gap after a
+                                                    // preceding `•` look wider than the one
+                                                    // before it.
+                                                    let offset_leading_icon = index == 0
+                                                        && (has_project_name || has_project_paths)
+                                                        && (worktree_label.is_some()
+                                                            || has_real_branch);
+
+                                                    h_flex()
+                                                        .min_w_0()
+                                                        .gap_1()
+                                                        .when(offset_leading_icon, |this| {
+                                                            this.ml_neg_0p5()
+                                                        })
+                                                        .when_some(worktree_label, |this, label| {
+                                                            this.child(
+                                                                h_flex()
+                                                                    .min_w_0()
+                                                                    .gap_0p5()
+                                                                    .child(
+                                                                        Icon::new(
+                                                                            IconName::GitWorktree,
+                                                                        )
+                                                                        .size(IconSize::XSmall)
+                                                                        .color(Color::Muted),
+                                                                    )
+                                                                    .child(label),
+                                                            )
+                                                        })
+                                                        .when(show_separator, |this| {
+                                                            this.child(
+                                                                dot_separator().flex_shrink_0(),
+                                                            )
+                                                        })
+                                                        .when_some(branch_label, |this, label| {
+                                                            this.child(
+                                                                h_flex()
+                                                                    .min_w_0()
+                                                                    .gap_0p5()
+                                                                    .when(has_real_branch, |this| {
+                                                                        this.child(
+                                                                            Icon::new(
+                                                                                IconName::GitBranch,
+                                                                            )
+                                                                            .size(IconSize::XSmall)
+                                                                            .color(Color::Muted),
+                                                                        )
+                                                                    })
+                                                                    .child(label),
+                                                            )
+                                                        })
+                                                },
+                                            ),
+                                        )
+                                    },
+                                )
+                                .when(
+                                    (has_project_name || has_project_paths || has_worktree)
+                                        && (has_diff_stats || has_timestamp),
                                     |this| this.child(dot_separator()),
                                 )
-                                .when_some(project_paths, |this, paths| {
+                                .when(has_diff_stats, |this| {
+                                    this.child(DiffStat::new(
+                                        diff_stat_id,
+                                        added_count,
+                                        removed_count,
+                                    ))
+                                })
+                                .when(has_diff_stats && has_timestamp, |this| {
+                                    this.child(dot_separator())
+                                })
+                                .when(has_timestamp, |this| {
                                     this.child(
-                                        Label::new(paths)
+                                        Label::new(timestamp.clone())
                                             .size(LabelSize::Small)
                                             .color(Color::Muted),
                                     )
-                                })
-                                .when(has_project_paths && has_worktree, |this| {
-                                    this.child(dot_separator())
-                                })
-                                .children(
-                                    linked_worktrees.into_iter().map(|wt| {
-                                        let worktree_label = wt.worktree_name.clone().map(|name| {
-                                            if wt.highlight_positions.is_empty() {
-                                                Label::new(name)
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted)
-                                                    .truncate()
-                                                    .into_any_element()
-                                            } else {
-                                                HighlightedLabel::new(
-                                                    name,
-                                                    wt.highlight_positions.clone(),
-                                                )
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted)
-                                                .truncate()
-                                                .into_any_element()
-                                            }
-                                        });
-
-                                        // When only the branch is shown, lead with a branch icon;
-                                        // otherwise keep the worktree icon (which "covers" both the
-                                        // worktree and any accompanying branch).
-                                        let chip_icon = if wt.worktree_name.is_none()
-                                            && wt.branch_name.is_some()
-                                        {
-                                            IconName::GitBranch
-                                        } else {
-                                            IconName::GitWorktree
-                                        };
-
-                                        let branch_label = wt.branch_name.map(|branch| {
-                                            Label::new(branch)
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted)
-                                                .truncate()
-                                                .into_any_element()
-                                        });
-
-                                        let show_separator =
-                                            worktree_label.is_some() && branch_label.is_some();
-
-                                        h_flex()
-                                            .min_w_0()
-                                            .gap_0p5()
-                                            .child(
-                                                Icon::new(chip_icon)
-                                                    .size(IconSize::XSmall)
-                                                    .color(Color::Muted),
-                                            )
-                                            .when_some(worktree_label, |this, label| {
-                                                this.child(label)
-                                            })
-                                            .when(show_separator, |this| {
-                                                this.child(
-                                                    Label::new("/")
-                                                        .size(LabelSize::Small)
-                                                        .color(separator_color)
-                                                        .flex_shrink_0(),
-                                                )
-                                            })
-                                            .when_some(branch_label, |this, label| {
-                                                this.child(label)
-                                            })
-                                    }),
-                                )
-                            },
-                        )
-                        .when(
-                            (has_project_name || has_project_paths || has_worktree)
-                                && (has_diff_stats || has_timestamp),
-                            |this| this.child(dot_separator()),
-                        )
-                        .when(has_diff_stats, |this| {
-                            this.child(DiffStat::new(diff_stat_id, added_count, removed_count))
-                        })
-                        .when(has_diff_stats && has_timestamp, |this| {
-                            this.child(dot_separator())
-                        })
-                        .when(has_timestamp, |this| {
-                            this.child(
-                                Label::new(timestamp.clone())
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                        }),
+                                }),
+                        ),
                 )
             })
             .when(show_tooltip, |this| {
@@ -711,7 +798,7 @@ impl Component for ThreadItem {
                                 full_path: "link-agent-panel".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,
-                                branch_name: None,
+                                head: None,
                             }]),
                     )
                     .into_any_element(),
@@ -739,7 +826,7 @@ impl Component for ThreadItem {
                                 full_path: "my-project".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,
-                                branch_name: None,
+                                head: None,
                             }])
                             .added(42)
                             .removed(17)
@@ -758,7 +845,7 @@ impl Component for ThreadItem {
                                 full_path: "/worktrees/my-project/zed".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,
-                                branch_name: Some("feature-branch".into()),
+                                head: Some(WorktreeHead::Branch("feature-branch".into())),
                             }])
                             .added(42)
                             .removed(17)
@@ -777,7 +864,9 @@ impl Component for ThreadItem {
                                 full_path: "/worktrees/my-project/zed".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,
-                                branch_name: Some("fix-very-long-branch-name-here".into()),
+                                head: Some(WorktreeHead::Branch(
+                                    "fix-very-long-branch-name-here".into(),
+                                )),
                             }])
                             .added(108)
                             .removed(53)
@@ -786,7 +875,7 @@ impl Component for ThreadItem {
                     .into_any_element(),
             ),
             single_example(
-                "Main Worktree (hidden) + Changes + Timestamp",
+                "Main Worktree Branch + Changes + Timestamp",
                 container()
                     .child(
                         ThreadItem::new("ti-5e", "Main worktree branch with diff stats")
@@ -796,7 +885,7 @@ impl Component for ThreadItem {
                                 full_path: "/projects/zed".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Main,
-                                branch_name: Some("sidebar-show-branch-name".into()),
+                                head: Some(WorktreeHead::Branch("sidebar-show-branch-name".into())),
                             }])
                             .added(23)
                             .removed(8)
@@ -817,7 +906,7 @@ impl Component for ThreadItem {
                                 full_path: "/worktrees/very-long-worktree-name/zed".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,
-                                branch_name: None,
+                                head: None,
                             }])
                             .timestamp("1h"),
                     )
@@ -834,7 +923,7 @@ impl Component for ThreadItem {
                                 full_path: "/worktrees/jade-glen/zed".into(),
                                 highlight_positions: vec![0, 1, 2, 3],
                                 kind: WorktreeKind::Linked,
-                                branch_name: Some("fix-scrolling".into()),
+                                head: Some(WorktreeHead::Branch("fix-scrolling".into())),
                             }])
                             .timestamp("3d"),
                     )
@@ -852,14 +941,14 @@ impl Component for ThreadItem {
                                     full_path: "/worktrees/jade-glen/zed".into(),
                                     highlight_positions: Vec::new(),
                                     kind: WorktreeKind::Linked,
-                                    branch_name: None,
+                                    head: None,
                                 },
                                 ThreadItemWorktreeInfo {
                                     worktree_name: Some("fawn-otter".into()),
                                     full_path: "/worktrees/fawn-otter/zed-slides".into(),
                                     highlight_positions: Vec::new(),
                                     kind: WorktreeKind::Linked,
-                                    branch_name: None,
+                                    head: None,
                                 },
                             ])
                             .timestamp("2h"),
@@ -878,14 +967,14 @@ impl Component for ThreadItem {
                                     full_path: "/worktrees/jade-glen/zed".into(),
                                     highlight_positions: Vec::new(),
                                     kind: WorktreeKind::Linked,
-                                    branch_name: Some("fix".into()),
+                                    head: Some(WorktreeHead::Branch("fix".into())),
                                 },
                                 ThreadItemWorktreeInfo {
                                     worktree_name: Some("fawn-otter".into()),
                                     full_path: "/worktrees/fawn-otter/zed-slides".into(),
                                     highlight_positions: Vec::new(),
                                     kind: WorktreeKind::Linked,
-                                    branch_name: Some("main".into()),
+                                    head: Some(WorktreeHead::Branch("main".into())),
                                 },
                             ])
                             .timestamp("15m"),
@@ -904,7 +993,7 @@ impl Component for ThreadItem {
                                 full_path: "/worktrees/jade-glen/zed".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,
-                                branch_name: Some("feature-branch".into()),
+                                head: Some(WorktreeHead::Branch("feature-branch".into())),
                             }])
                             .timestamp("1d"),
                     )
@@ -925,7 +1014,7 @@ impl Component for ThreadItem {
                                 full_path: "/worktrees/jade-glen/zed".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,
-                                branch_name: Some("feature".into()),
+                                head: Some(WorktreeHead::Branch("feature".into())),
                             }])
                             .timestamp("2mo"),
                     )
@@ -943,7 +1032,7 @@ impl Component for ThreadItem {
                                 full_path: "/worktrees/my-worktree/zed".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,
-                                branch_name: Some("main".into()),
+                                head: Some(WorktreeHead::Branch("main".into())),
                             }])
                             .added(15)
                             .removed(4)
@@ -1050,5 +1139,50 @@ mod tests {
                 .map(|quad| quad.background)
                 .collect()
         })
+    }
+
+    #[test]
+    fn test_thread_item_worktree_display_labels() {
+        let main = ThreadItemWorktreeInfo {
+            worktree_name: Some("zed".into()),
+            head: Some(WorktreeHead::Branch("main".into())),
+            ..Default::default()
+        };
+        assert_eq!(
+            main.display_labels(false),
+            Some((None, Some("main".into())))
+        );
+        assert_eq!(
+            main.display_labels(true),
+            Some((Some("zed".into()), Some("main".into())))
+        );
+
+        let main_without_branch = ThreadItemWorktreeInfo {
+            worktree_name: Some("zed".into()),
+            ..Default::default()
+        };
+        assert_eq!(main_without_branch.display_labels(false), None);
+
+        let linked = ThreadItemWorktreeInfo {
+            worktree_name: Some("feature".into()),
+            head: Some(WorktreeHead::Branch("feature-branch".into())),
+            kind: WorktreeKind::Linked,
+            ..Default::default()
+        };
+        assert_eq!(
+            linked.display_labels(false),
+            Some((Some("feature".into()), Some("feature-branch".into())))
+        );
+
+        let detached = ThreadItemWorktreeInfo {
+            worktree_name: Some("detached".into()),
+            head: Some(WorktreeHead::Detached),
+            kind: WorktreeKind::Linked,
+            ..Default::default()
+        };
+        assert_eq!(
+            detached.display_labels(false),
+            Some((Some("detached".into()), Some("Detached HEAD".into())))
+        );
     }
 }

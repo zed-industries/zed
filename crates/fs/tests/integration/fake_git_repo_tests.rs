@@ -122,6 +122,66 @@ async fn test_fake_worktree_lifecycle(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_linked_worktree_admin_names_are_unique(cx: &mut TestAppContext) {
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project", json!({ ".git": {} })).await;
+    let repo = fs
+        .open_repo(Path::new("/project/.git"), None)
+        .expect("should open fake repo");
+
+    let expected_worktrees = [
+        ("/a/review", None, "aaa111"),
+        ("/b/review", None, "bbb222"),
+        ("/c/review", Some("review"), "ccc333"),
+    ];
+    for (path, branch_name, sha) in expected_worktrees {
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            false,
+            git::repository::Worktree {
+                path: PathBuf::from(path),
+                ref_name: branch_name.map(|name| format!("refs/heads/{name}").into()),
+                sha: sha.into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+    }
+
+    let worktrees = repo.worktrees().await.unwrap();
+    for (path, branch_name, sha) in expected_worktrees {
+        assert!(
+            worktrees.iter().any(|worktree| {
+                worktree.path == Path::new(path)
+                    && worktree.branch_name() == branch_name
+                    && worktree.sha.as_ref() == sha
+            }),
+            "missing worktree at {path}"
+        );
+    }
+
+    repo.remove_worktree(PathBuf::from("/a/review"), false)
+        .await
+        .unwrap();
+
+    let worktrees = repo.worktrees().await.unwrap();
+    assert!(
+        worktrees
+            .iter()
+            .all(|worktree| worktree.path != Path::new("/a/review"))
+    );
+    for path in ["/b/review", "/c/review"] {
+        assert!(
+            worktrees
+                .iter()
+                .any(|worktree| worktree.path == Path::new(path)),
+            "removing one worktree dropped {path}"
+        );
+    }
+}
+
+#[gpui::test]
 async fn test_checkpoints(executor: BackgroundExecutor) {
     let fs = FakeFs::new(executor);
     fs.insert_tree(

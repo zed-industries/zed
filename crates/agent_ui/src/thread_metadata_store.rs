@@ -24,7 +24,7 @@ use gpui::{AppContext as _, Entity, Global, Subscription, Task, TaskExt};
 pub use project::WorktreePaths;
 use project::{AgentId, linked_worktree_short_name};
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
-use ui::{App, Context, SharedString, ThreadItemWorktreeInfo, WorktreeKind};
+use ui::{App, Context, SharedString, ThreadItemWorktreeInfo, WorktreeHead, WorktreeKind};
 use util::ResultExt as _;
 use workspace::{PathList, SerializedWorkspaceLocation, WorkspaceDb};
 
@@ -373,7 +373,7 @@ impl ThreadMetadata {
 /// name is prefixed for disambiguation (e.g. `project:feature`).
 pub fn worktree_info_from_thread_paths<S: std::hash::BuildHasher>(
     worktree_paths: &WorktreePaths,
-    branch_names: &std::collections::HashMap<PathBuf, SharedString, S>,
+    heads: &std::collections::HashMap<PathBuf, WorktreeHead, S>,
 ) -> Vec<ThreadItemWorktreeInfo> {
     let mut infos: Vec<ThreadItemWorktreeInfo> = Vec::new();
     let mut linked_short_names: Vec<(SharedString, SharedString)> = Vec::new();
@@ -395,7 +395,7 @@ pub fn worktree_info_from_thread_paths<S: std::hash::BuildHasher>(
                 full_path: SharedString::from(folder_path.display().to_string()),
                 highlight_positions: Vec::new(),
                 kind: WorktreeKind::Linked,
-                branch_name: branch_names.get(folder_path).cloned(),
+                head: heads.get(folder_path).cloned(),
             });
         } else {
             let Some(name) = folder_path.file_name() else {
@@ -406,7 +406,7 @@ pub fn worktree_info_from_thread_paths<S: std::hash::BuildHasher>(
                 full_path: SharedString::from(folder_path.display().to_string()),
                 highlight_positions: Vec::new(),
                 kind: WorktreeKind::Main,
-                branch_name: branch_names.get(folder_path).cloned(),
+                head: heads.get(folder_path).cloned(),
             });
         }
     }
@@ -1119,12 +1119,12 @@ impl ThreadMetadataStore {
         })
     }
 
-    pub fn get_all_archived_branch_names(
+    pub fn get_all_archived_worktree_heads(
         &self,
         cx: &App,
-    ) -> Task<anyhow::Result<HashMap<ThreadId, HashMap<PathBuf, String>>>> {
+    ) -> Task<anyhow::Result<HashMap<ThreadId, HashMap<PathBuf, WorktreeHead>>>> {
         let db = self.db.clone();
-        cx.background_spawn(async move { db.get_all_archived_branch_names() })
+        cx.background_spawn(async move { db.get_all_archived_worktree_heads() })
     }
 
     fn update_archived(&mut self, thread_id: ThreadId, archived: bool, cx: &mut Context<Self>) {
@@ -1679,23 +1679,26 @@ impl ThreadMetadataDb {
         .map(|count| count.unwrap_or(0) > 0)
     }
 
-    pub fn get_all_archived_branch_names(
+    pub fn get_all_archived_worktree_heads(
         &self,
-    ) -> anyhow::Result<HashMap<ThreadId, HashMap<PathBuf, String>>> {
-        let rows = self.select::<(ThreadId, String, String)>(
+    ) -> anyhow::Result<HashMap<ThreadId, HashMap<PathBuf, WorktreeHead>>> {
+        let rows = self.select::<(ThreadId, String, Option<String>)>(
             "SELECT t.thread_id, a.worktree_path, a.branch_name \
              FROM thread_archived_worktrees t \
              JOIN archived_git_worktrees a ON a.id = t.archived_worktree_id \
-             WHERE a.branch_name IS NOT NULL \
              ORDER BY a.id ASC",
         )?()?;
 
-        let mut result: HashMap<ThreadId, HashMap<PathBuf, String>> = HashMap::default();
+        let mut result: HashMap<ThreadId, HashMap<PathBuf, WorktreeHead>> = HashMap::default();
         for (thread_id, worktree_path, branch_name) in rows {
+            let head = match branch_name {
+                Some(name) => WorktreeHead::Branch(name.into()),
+                None => WorktreeHead::Detached,
+            };
             result
                 .entry(thread_id)
                 .or_default()
-                .insert(PathBuf::from(worktree_path), branch_name);
+                .insert(PathBuf::from(worktree_path), head);
         }
         Ok(result)
     }

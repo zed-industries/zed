@@ -60,7 +60,7 @@ use ui::{
     AgentThreadStatus, CommonAnimationExt, ContextMenu, ContextMenuEntry, Divider, GradientFade,
     HighlightedLabel, KeyBinding, PopoverMenu, PopoverMenuHandle, ProjectEmptyState, ScrollAxes,
     Scrollbars, Tab, ThreadItem, ThreadItemWorktreeInfo, TintColor, Tooltip, WithScrollbar,
-    prelude::*, render_modifiers, right_click_menu,
+    WorktreeHead, prelude::*, render_modifiers, right_click_menu,
 };
 use unicode_segmentation::UnicodeSegmentation as _;
 use util::ResultExt as _;
@@ -702,14 +702,14 @@ fn apply_worktree_label_mode(
         AgentThreadWorktreeLabel::Both => {}
         AgentThreadWorktreeLabel::Worktree => {
             for wt in &mut worktrees {
-                wt.branch_name = None;
+                wt.head = None;
             }
         }
         AgentThreadWorktreeLabel::Branch => {
             for wt in &mut worktrees {
-                // Fall back to showing the worktree name when no branch is
-                // known; an empty chip would be worse than a mismatched icon.
-                if wt.branch_name.is_some() {
+                // Fall back to showing the worktree name when the head is
+                // unknown; an empty chip would be worse than a mismatched icon.
+                if wt.head.is_some() {
                     wt.worktree_name = None;
                 }
             }
@@ -1465,23 +1465,30 @@ impl Sidebar {
         let path_detail_map: HashMap<PathBuf, usize> =
             all_paths.into_iter().zip(path_details).collect();
 
-        let mut branch_by_path: HashMap<PathBuf, SharedString> = HashMap::new();
+        let mut head_by_path: HashMap<PathBuf, WorktreeHead> = HashMap::new();
         for ws in &workspaces {
             let project = ws.read(cx).project().read(cx);
             for repo in project.repositories(cx).values() {
                 let snapshot = repo.read(cx).snapshot();
                 if let Some(branch) = &snapshot.branch {
-                    branch_by_path.insert(
+                    head_by_path.insert(
                         snapshot.work_directory_abs_path.to_path_buf(),
-                        SharedString::from(Arc::<str>::from(branch.name())),
+                        WorktreeHead::Branch(branch.name().to_string().into()),
+                    );
+                } else if snapshot.head_commit.is_some() && snapshot.branch_list_error.is_none() {
+                    head_by_path.insert(
+                        snapshot.work_directory_abs_path.to_path_buf(),
+                        WorktreeHead::Detached,
                     );
                 }
                 for linked_wt in snapshot.linked_worktrees() {
                     if let Some(branch) = linked_wt.branch_name() {
-                        branch_by_path.insert(
+                        head_by_path.insert(
                             linked_wt.path.clone(),
-                            SharedString::from(Arc::<str>::from(branch)),
+                            WorktreeHead::Branch(branch.to_string().into()),
                         );
+                    } else if !linked_wt.is_bare {
+                        head_by_path.insert(linked_wt.path.clone(), WorktreeHead::Detached);
                     }
                 }
             }
@@ -1509,7 +1516,7 @@ impl Sidebar {
             let make_terminal_entry =
                 |metadata: TerminalThreadMetadata, workspace: ThreadEntryWorkspace| {
                     let worktrees =
-                        worktree_info_from_thread_paths(&metadata.worktree_paths, &branch_by_path);
+                        worktree_info_from_thread_paths(&metadata.worktree_paths, &head_by_path);
                     let has_notification =
                         live_notified_terminal_ids.contains(&metadata.terminal_id);
                     TerminalEntry {
@@ -1615,7 +1622,7 @@ impl Sidebar {
                     |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> Arc<ThreadEntry> {
                         let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
                         let worktrees =
-                            worktree_info_from_thread_paths(&row.worktree_paths, &branch_by_path);
+                            worktree_info_from_thread_paths(&row.worktree_paths, &head_by_path);
                         // Start drafts as `WithContent`; the post-processing
                         // pass below downgrades them to `Empty` if no draft
                         // label can be derived.
@@ -5882,6 +5889,20 @@ impl Sidebar {
     }
 
     fn mru_entries_for_switcher(&self, cx: &App) -> Vec<ThreadSwitcherEntry> {
+        let worktree_label_mode = cx.flag_value::<AgentThreadWorktreeLabelFlag>();
+        let switcher_worktrees = |worktrees: &[ThreadItemWorktreeInfo]| {
+            apply_worktree_label_mode(
+                worktrees
+                    .iter()
+                    .cloned()
+                    .map(|mut wt| {
+                        wt.highlight_positions = Vec::new();
+                        wt
+                    })
+                    .collect(),
+                worktree_label_mode,
+            )
+        };
         let mut current_header_label: Option<SharedString> = None;
         let mut current_header_key: Option<ProjectGroupKey> = None;
         let mut entries: Vec<ThreadSwitcherEntry> = self
@@ -5924,15 +5945,7 @@ impl Sidebar {
                         metadata: thread.metadata.clone(),
                         workspace,
                         project_name: current_header_label.clone(),
-                        worktrees: thread
-                            .worktrees
-                            .iter()
-                            .cloned()
-                            .map(|mut wt| {
-                                wt.highlight_positions = Vec::new();
-                                wt
-                            })
-                            .collect(),
+                        worktrees: switcher_worktrees(&thread.worktrees),
                         diff_stats: thread.diff_stats,
                         is_draft: thread.draft.is_some(),
                         is_title_generating: thread.is_title_generating,
@@ -5947,15 +5960,7 @@ impl Sidebar {
                         metadata: terminal.metadata.clone(),
                         workspace: terminal.workspace.clone(),
                         project_name: current_header_label.clone(),
-                        worktrees: terminal
-                            .worktrees
-                            .iter()
-                            .cloned()
-                            .map(|mut wt| {
-                                wt.highlight_positions = Vec::new();
-                                wt
-                            })
-                            .collect(),
+                        worktrees: switcher_worktrees(&terminal.worktrees),
                         notified: self
                             .contents
                             .is_terminal_notified(terminal.metadata.terminal_id),
