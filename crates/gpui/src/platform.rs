@@ -119,6 +119,18 @@ impl WindowVisibility {
     }
 }
 
+/// Controls whether the application participates in the system's foreground UI.
+///
+/// Only has an effect on macOS; other platforms ignore this setting.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum ActivationPolicy {
+    /// Participate in foreground application UI, such as the Dock and menu bar on macOS.
+    #[default]
+    Regular,
+    /// Run without foreground application UI while retaining the ability to open windows.
+    Accessory,
+}
+
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 pub(crate) use test::*;
 
@@ -290,6 +302,8 @@ pub trait Platform: 'static {
     }
     fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<OsString>);
     fn activate(&self, ignoring_other_apps: bool);
+    /// Sets the initial or current activation policy. Has no effect outside macOS.
+    fn set_activation_policy(&self, _policy: ActivationPolicy) {}
     fn hide(&self);
     fn hide_other_apps(&self);
     fn unhide_other_apps(&self);
