@@ -19,7 +19,7 @@ impl RenderOnce for DeltaIllustration {
             .justify_center()
             .rounded_t_md()
             .overflow_hidden()
-            .bg(cx.theme().colors().editor_background)
+            .bg(gpui::black().opacity(0.2))
             .child(
                 svg()
                     .absolute()
@@ -32,7 +32,6 @@ impl RenderOnce for DeltaIllustration {
                 h_flex()
                     .absolute()
                     .inset_0()
-                    .items_center()
                     .justify_center()
                     .px(rems_from_px(64_f32))
                     .child(
