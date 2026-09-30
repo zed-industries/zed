@@ -191,7 +191,8 @@ async fn run_command(
 
 #[cfg(target_os = "linux")]
 fn main() {
-    gpui_platform::linux(gpui::WindowingModes::all(), None)
+    gpui_platform::linux(gpui::WindowingModes::all())
+        .with_windowing(WindowingRequest::Headless)
         .with_quit_mode(QuitMode::Explicit)
         .run(|cx| {
             let todos = cx.new(|_| Todos {

@@ -121,7 +121,10 @@ impl WindowVisibility {
 
 /// Controls whether the application participates in the system's foreground UI.
 ///
-/// Only has an effect on macOS; other platforms ignore this setting.
+/// Only has an effect on macOS; other platforms ignore this setting. There,
+/// [`App::request_windowing`] sets it: `Accessory` while headless and `Regular` while windowed.
+/// Set it directly with [`App::set_activation_policy`] for the one case that doesn't cover: an
+/// accessory app that shows windows, such as a menu bar utility.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ActivationPolicy {
     /// Participate in foreground application UI, such as the Dock and menu bar on macOS.
@@ -295,6 +298,9 @@ pub trait Platform: 'static {
     fn quit(&self);
     /// Switches a capable platform between headless and windowed modes. See
     /// [`App::request_windowing`].
+    /// Sets the windowing mode the platform starts in. Called before `run`. See
+    /// [`Application::with_windowing`].
+    fn set_initial_windowing(&self, _request: WindowingRequest) {}
     fn request_windowing(&self, _request: WindowingRequest) -> Task<anyhow::Result<()>> {
         Task::ready(Err(anyhow::anyhow!(
             "this platform cannot switch between headless and windowed modes"

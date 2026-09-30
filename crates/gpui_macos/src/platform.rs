@@ -33,10 +33,11 @@ use dispatch2::DispatchQueue;
 use futures::channel::oneshot;
 use gpui::{
     Action, ActivationPolicy, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem,
-    CursorStyle, ForegroundExecutor, KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu,
-    PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task, ThermalState,
-    WindowAppearance, WindowKind, WindowParams, popup::PopupNotSupportedError,
+    CursorStyle, ForegroundExecutor, GraphicalEnvironment, KeyContext, Keymap, Menu, MenuItem,
+    OsMenu, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task,
+    ThermalState, WindowAppearance, WindowKind, WindowParams, WindowingRequest,
+    popup::PopupNotSupportedError,
 };
 use gpui_util::{ResultExt, new_std_command};
 use itertools::Itertools;
@@ -208,6 +209,15 @@ pub(crate) struct MacPlatformState {
     /// Mirrors `[NSCursor setHiddenUntilMouseMoves:]` state, which AppKit doesn't expose.
     cursor_visible: Arc<AtomicBool>,
     system_notifications: crate::system_notifications::SystemNotificationState,
+}
+
+/// The activation policy that stands for a windowing mode: an app is headless while it has no
+/// Dock icon or menu bar.
+fn activation_policy_for(request: &WindowingRequest) -> ActivationPolicy {
+    match request {
+        WindowingRequest::Headless => ActivationPolicy::Accessory,
+        WindowingRequest::Windowed(_) => ActivationPolicy::Regular,
+    }
 }
 
 fn native_activation_policy(policy: ActivationPolicy) -> NSApplicationActivationPolicy {
@@ -667,6 +677,35 @@ impl Platform for MacPlatform {
                 app.setActivationPolicy_(native_activation_policy(policy));
             }
         }
+    }
+
+    fn set_initial_windowing(&self, request: WindowingRequest) {
+        self.set_activation_policy(activation_policy_for(&request));
+    }
+
+    fn request_windowing(&self, request: WindowingRequest) -> Task<Result<()>> {
+        let state = self.0.lock();
+        if state.headless {
+            return Task::ready(Err(anyhow!(
+                "a platform created headless has no application to switch windowing modes"
+            )));
+        }
+        let policy = activation_policy_for(&request);
+        if state.activation_policy == policy {
+            return Task::ready(Err(match request {
+                WindowingRequest::Headless => anyhow!("already headless"),
+                WindowingRequest::Windowed(_) => anyhow!("already windowed"),
+            }));
+        }
+        drop(state);
+        self.set_activation_policy(policy);
+        Task::ready(Ok(()))
+    }
+
+    fn graphical_environment(&self) -> Option<GraphicalEnvironment> {
+        let state = self.0.lock();
+        (!state.headless && state.activation_policy == ActivationPolicy::Regular)
+            .then(GraphicalEnvironment::detect)
     }
 
     fn hide(&self) {
