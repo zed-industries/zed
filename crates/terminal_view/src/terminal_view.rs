@@ -9,10 +9,10 @@ use editor::{
     ui_scrollbar_settings_from_raw,
 };
 use gpui::{
-    Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, ExternalPaths,
-    FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
-    Pixels, Point as GpuiPoint, Render, ScrollWheelEvent, Styled, Subscription, Task, TaskExt,
-    WeakEntity, actions, anchored, deferred, div,
+    Action, AnyElement, App, ClipboardEntry, Corners, DismissEvent, Entity, EventEmitter,
+    ExternalPaths, FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton,
+    MouseDownEvent, Pixels, Point as GpuiPoint, Rems, Render, ScrollWheelEvent, Styled,
+    Subscription, Task, TaskExt, WeakEntity, actions, anchored, deferred, div,
 };
 use menu;
 use persistence::TerminalDb;
@@ -33,9 +33,10 @@ use std::{
 };
 use task::TaskId;
 use terminal::{
-    Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Modes, Paste, PasteText, Point, Range,
-    ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop,
-    Search, ShowCharacterPalette, TaskState, TaskStatus, Terminal, TerminalBounds, ToggleViMode,
+    Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Modes, MouseInputMode, Paste,
+    PasteText, Point, Range, ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp,
+    ScrollToBottom, ScrollToTop, Search, ShowCharacterPalette, TaskState, TaskStatus, Terminal,
+    TerminalBounds, ToggleViMode,
     terminal_settings::{CursorShape, TerminalSettings},
 };
 use terminal_element::TerminalElement;
@@ -138,6 +139,14 @@ pub struct TerminalView {
     cursor_shape: CursorShape,
     blink_manager: Entity<BlinkManager>,
     mode: TerminalMode,
+    /// Corner radii for the terminal's background, for when it's embedded in a
+    /// container with rounded corners.
+    ///
+    /// GPUI can't clip children to rounded corners, so without this the square
+    /// background paints over the container's corners. Only the background is
+    /// rounded, terminal content isn't clipped.
+    background_corner_radii: Option<Corners<Rems>>,
+    read_only: bool,
     // Explicit override for whether workspace-specific context menu actions are shown.
     // When `None`, visibility is derived from `mode` (hidden for embedded terminals).
     show_workspace_actions: Option<bool>,
@@ -290,6 +299,8 @@ impl TerminalView {
             hover: None,
             hover_tooltip_update: Task::ready(()),
             mode: TerminalMode::Standalone,
+            background_corner_radii: None,
+            read_only: false,
             show_workspace_actions: None,
             workspace_id,
             show_breadcrumbs: TerminalSettings::get_global(cx).toolbar.breadcrumbs,
@@ -317,6 +328,35 @@ impl TerminalView {
             max_lines_when_unfocused,
         };
         cx.notify();
+    }
+
+    /// Rounds the background without clipping terminal content to the corners.
+    pub fn set_background_corner_radii(
+        &mut self,
+        corner_radii: Option<Corners<Rems>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.background_corner_radii = corner_radii;
+        cx.notify();
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    /// Fixes the view's input policy at construction, without restricting producer output
+    /// or local navigation.
+    pub fn with_read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    fn mouse_input_mode(&self) -> MouseInputMode {
+        if self.read_only {
+            MouseInputMode::LocalSelection
+        } else {
+            MouseInputMode::ReportToTerminal
+        }
     }
 
     /// Explicitly override whether workspace-specific context menu actions (e.g. creating or
@@ -371,6 +411,9 @@ impl TerminalView {
 
     /// Sets the marked (pre-edit) text from the IME.
     pub(crate) fn set_marked_text(&mut self, text: String, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
         if text.is_empty() {
             return self.clear_marked_text(cx);
         }
@@ -395,7 +438,7 @@ impl TerminalView {
 
     /// Commits (sends) the given text to the PTY. Called by InputHandler::replace_text_in_range.
     pub(crate) fn commit_text(&mut self, text: &str, cx: &mut Context<Self>) {
-        if !text.is_empty() {
+        if !self.read_only && !text.is_empty() {
             self.terminal.update(cx, |term, _| {
                 term.input(text.to_string().into_bytes());
             });
@@ -543,7 +586,7 @@ impl TerminalView {
                 })
                 .action("Copy", Box::new(Copy))
                 .when(
-                    !matches!(self.mode, TerminalMode::Embedded { .. }),
+                    !self.read_only && !matches!(self.mode, TerminalMode::Embedded { .. }),
                     |menu| {
                         menu.action("Paste", Box::new(Paste))
                             .action("Paste Text", Box::new(PasteText))
@@ -551,14 +594,16 @@ impl TerminalView {
                 )
                 .action("Select All", Box::new(SelectAll))
                 .when(
-                    !matches!(self.mode, TerminalMode::Embedded { .. }),
+                    !self.read_only && !matches!(self.mode, TerminalMode::Embedded { .. }),
                     |menu| menu.action("Clear", Box::new(Clear)),
                 )
                 .when(
                     assistant_enabled && !matches!(self.mode, TerminalMode::Embedded { .. }),
                     |menu| {
                         menu.separator()
-                            .action("Inline Assist", Box::new(InlineAssist::default()))
+                            .when(!self.read_only, |menu| {
+                                menu.action("Inline Assist", Box::new(InlineAssist::default()))
+                            })
                             .when(has_selection && self.shows_workspace_actions(), |menu| {
                                 menu.action("Add to Agent Thread", Box::new(AddSelectionToThread))
                             })
@@ -633,6 +678,9 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only {
+            return;
+        }
         if self
             .terminal
             .read(cx)
@@ -657,6 +705,9 @@ impl TerminalView {
     }
 
     fn rerun_task(&mut self, _: &RerunTask, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
         let task = self
             .terminal
             .read(cx)
@@ -667,6 +718,9 @@ impl TerminalView {
     }
 
     fn clear(&mut self, _: &Clear, _: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
         self.scroll_top = px(0.);
         self.terminal.update(cx, |term, _| term.clear());
         cx.notify();
@@ -711,6 +765,7 @@ impl TerminalView {
             term.scroll_wheel(
                 event,
                 TerminalSettings::get_global(cx).scroll_multiplier.max(0.01),
+                self.mouse_input_mode(),
             )
         });
     }
@@ -910,6 +965,9 @@ impl TerminalView {
 
     ///Attempt to paste the clipboard into the terminal
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
         let Some(clipboard) = cx.read_from_clipboard() else {
             return;
         };
@@ -944,6 +1002,9 @@ impl TerminalView {
 
     ///Attempt to paste the clipboard text into the terminal
     fn paste_text(&mut self, _: &PasteText, _: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
         let Some(clipboard) = cx.read_from_clipboard() else {
             return;
         };
@@ -963,6 +1024,9 @@ impl TerminalView {
     }
 
     pub fn add_paths_to_terminal(&self, paths: &[PathBuf], window: &mut Window, cx: &mut App) {
+        if self.read_only {
+            return;
+        }
         let mut text = paths
             .iter()
             .filter_map(|path| Some(format!(" {}", shlex::try_quote(path.to_str()?).ok()?)))
@@ -975,6 +1039,9 @@ impl TerminalView {
     }
 
     fn send_text(&mut self, text: &SendText, _: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
         self.clear_bell(cx);
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
         self.terminal.update(cx, |term, _| {
@@ -1085,8 +1152,8 @@ impl TerminalView {
         self.terminal = terminal;
     }
 
-    fn rerun_button(task: &TaskState) -> Option<IconButton> {
-        if !task.spawned_task.show_rerun {
+    fn rerun_button(&self, task: &TaskState) -> Option<IconButton> {
+        if self.read_only || !task.spawned_task.show_rerun {
             return None;
         }
 
@@ -1271,6 +1338,9 @@ impl TerminalView {
     /// updates the cursor locally without sending data to the shell, so there's no
     /// shell output to automatically trigger a re-render.
     fn process_keystroke(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
+        if self.read_only && !self.terminal.read(cx).vi_mode_enabled() {
+            return false;
+        }
         let (handled, vi_mode_enabled) = self.terminal.update(cx, |term, cx| {
             (
                 term.try_keystroke(keystroke, TerminalSettings::get_global(cx).option_as_meta),
@@ -1304,7 +1374,9 @@ impl TerminalView {
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.terminal.update(cx, |terminal, _| {
             terminal.set_cursor_shape(self.cursor_shape);
-            terminal.focus_in();
+            if !self.read_only {
+                terminal.focus_in();
+            }
         });
 
         let should_blink = match TerminalSettings::get_global(cx).blinking {
@@ -1324,7 +1396,9 @@ impl TerminalView {
     fn focus_out(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.blink_manager.update(cx, BlinkManager::disable);
         self.terminal.update(cx, |terminal, _| {
-            terminal.focus_out();
+            if !self.read_only {
+                terminal.focus_out();
+            }
             terminal.set_cursor_shape(CursorShape::Hollow);
         });
         cx.notify();
@@ -1381,7 +1455,11 @@ impl Render for TerminalView {
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                    if !this.terminal.read(cx).mouse_mode(event.modifiers.shift) {
+                    if !this
+                        .terminal
+                        .read(cx)
+                        .mouse_mode(event.modifiers.shift, this.mouse_input_mode())
+                    {
                         let had_selection = this.terminal.read(cx).last_content.selection.is_some();
                         if !had_selection {
                             this.terminal.update(cx, |terminal, _| {
@@ -1407,6 +1485,12 @@ impl Render for TerminalView {
                     .id("terminal-view-container")
                     .size_full()
                     .bg(cx.theme().colors().editor_background)
+                    .when_some(self.background_corner_radii, |this, radii| {
+                        this.rounded_tl(radii.top_left)
+                            .rounded_tr(radii.top_right)
+                            .rounded_bl(radii.bottom_left)
+                            .rounded_br(radii.bottom_right)
+                    })
                     .child(TerminalElement::new(
                         terminal_handle,
                         terminal_view_handle,
@@ -1482,15 +1566,15 @@ impl Item for TerminalView {
                 TaskStatus::Running => (
                     IconName::PlayFilled,
                     Color::Disabled,
-                    TerminalView::rerun_button(terminal_task),
+                    self.rerun_button(terminal_task),
                 ),
                 TaskStatus::Unknown => (
                     IconName::Warning,
                     Color::Warning,
-                    TerminalView::rerun_button(terminal_task),
+                    self.rerun_button(terminal_task),
                 ),
                 TaskStatus::Completed { success } => {
-                    let rerun_button = TerminalView::rerun_button(terminal_task);
+                    let rerun_button = self.rerun_button(terminal_task);
 
                     if *success {
                         (IconName::Check, Color::Success, rerun_button)
@@ -1591,6 +1675,9 @@ impl Item for TerminalView {
         window: &mut Window,
         cx: &mut App,
     ) -> bool {
+        if self.read_only {
+            return false;
+        }
         let Some(project) = self.project.upgrade() else {
             return false;
         };
@@ -2233,7 +2320,7 @@ mod tests {
     ) {
         let (project, _workspace, window_handle) = init_test_with_window(cx).await;
         let (_pane, terminal, _terminal_view) =
-            add_display_only_terminal(&project, window_handle, true, cx);
+            add_display_only_terminal(&project, window_handle, true, false, cx);
 
         let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
         cx.update(|window, cx| {
@@ -2254,11 +2341,168 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn read_only_blocks_input_actions_and_preserves_output(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        cx.update(load_default_keymap);
+        let rerun_count = Rc::new(std::cell::Cell::new(0));
+        cx.update(|cx| {
+            cx.on_action({
+                let rerun_count = rerun_count.clone();
+                move |_: &zed_actions::Rerun, _| rerun_count.set(rerun_count.get() + 1)
+            });
+        });
+        let (pane, terminal, terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, true, cx);
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        for output in [
+            b"provider output".as_slice(),
+            b"\x1b[?1049hprovider alternate-screen output".as_slice(),
+        ] {
+            let content = cx.update(|window, cx| {
+                terminal.update(cx, |terminal, cx| {
+                    terminal.write_output(output, cx);
+                    terminal.sync(window, cx);
+                    terminal.get_content()
+                })
+            });
+            cx.simulate_keystrokes("a enter ctrl-v shift-up");
+            cx.update(|_, cx| {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string("clipboard input".into()));
+            });
+
+            let actions: Vec<Box<dyn Action>> = vec![
+                Box::new(SendText("direct input".into())),
+                Box::new(SendKeystroke("enter".into())),
+                Box::new(Paste),
+                Box::new(editor::actions::Paste),
+                Box::new(PasteText),
+                Box::new(Clear),
+                Box::new(ShowCharacterPalette),
+                Box::new(RerunTask),
+            ];
+            for action in actions {
+                cx.update(|window, cx| window.dispatch_action(action, cx));
+                cx.run_until_parked();
+            }
+            cx.update(|window, cx| {
+                let paths = ExternalPaths(vec![PathBuf::from(util::path!("/root.txt"))].into());
+                assert!(!pane.update(cx, |pane, cx| {
+                    terminal_view.update(cx, |view, cx| view.handle_drop(pane, &paths, window, cx))
+                }));
+                terminal_view.update(cx, |view, cx| {
+                    view.add_paths_to_terminal(paths.paths(), window, cx);
+                });
+                terminal.update(cx, |terminal, cx| {
+                    terminal.sync(window, cx);
+                    assert!(terminal.take_input_log().is_empty());
+                    assert!(terminal.take_pty_write_log().is_empty());
+                    assert_eq!(terminal.get_content(), content);
+                });
+            });
+        }
+        assert_eq!(rerun_count.get(), 0);
+    }
+
+    #[gpui::test]
+    async fn read_only_preserves_vi_navigation_without_enabling_input(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        let (_pane, terminal, _terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, true, cx);
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        cx.update(|window, cx| {
+            terminal.update(cx, |terminal, cx| {
+                terminal.write_output(b"first line\nsecond line\n", cx);
+                terminal.sync(window, cx);
+            });
+            window.dispatch_action(Box::new(ToggleViMode), cx);
+        });
+        cx.run_until_parked();
+        let cursor = terminal.read_with(&cx, |terminal, _| {
+            assert!(terminal.vi_mode_enabled());
+            terminal.last_content.cursor.point
+        });
+        cx.update(|window, cx| {
+            window.dispatch_action(Box::new(SendKeystroke("k".into())), cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            terminal.read_with(&cx, |terminal, _| terminal.last_content.cursor.point.line),
+            cursor.line - 1,
+        );
+        cx.simulate_keystrokes("v l");
+        assert!(
+            terminal
+                .read_with(&cx, |terminal, _| terminal
+                    .last_content
+                    .selection_text
+                    .clone())
+                .is_some_and(|text| !text.is_empty()),
+        );
+        cx.simulate_keystrokes("y");
+        assert!(
+            cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+                .is_some_and(|text| !text.is_empty()),
+        );
+        cx.simulate_keystrokes("i");
+        assert!(!terminal.read_with(&cx, |terminal, _| terminal.vi_mode_enabled()));
+        cx.simulate_keystrokes("a enter");
+        cx.update(|window, cx| {
+            window.dispatch_action(Box::new(SendKeystroke("enter".into())), cx);
+        });
+        cx.run_until_parked();
+        assert!(
+            terminal
+                .update(&mut cx, |terminal, _| terminal.take_input_log())
+                .is_empty()
+        );
+    }
+
+    #[gpui::test]
+    async fn read_only_mouse_selection_and_focus_do_not_report_input(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        let (_pane, terminal, _terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, true, cx);
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        cx.update(|window, cx| {
+            terminal.update(cx, |terminal, cx| {
+                terminal.write_output(b"\x1b[?1003h\x1b[?1006h\x1b[?1004hhello world\n", cx);
+                terminal.sync(window, cx);
+                terminal.take_pty_write_log();
+            });
+            window.blur(cx);
+        });
+        cx.run_until_parked();
+        let bounds = terminal.read_with(&cx, |terminal, _| terminal.last_content.terminal_bounds);
+        let start =
+            bounds.bounds.origin + gpui::point(bounds.cell_width * 0.1, bounds.line_height * 0.5);
+        let end =
+            bounds.bounds.origin + gpui::point(bounds.cell_width * 5.1, bounds.line_height * 0.5);
+        cx.simulate_mouse_move(start, None, gpui::Modifiers::default());
+        cx.simulate_mouse_down(start, MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_move(end, Some(MouseButton::Left), gpui::Modifiers::default());
+        cx.simulate_mouse_up(end, MouseButton::Left, gpui::Modifiers::default());
+        cx.update(|window, cx| window.dispatch_action(Box::new(Copy), cx));
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text())),
+            Some("hello".into()),
+        );
+        cx.update(|window, cx| window.blur(cx));
+        cx.run_until_parked();
+        assert!(
+            terminal
+                .update(&mut cx, |terminal, _| terminal.take_pty_write_log())
+                .is_empty()
+        );
+    }
+
+    #[gpui::test]
     async fn shift_up_scrolls_history_in_normal_screen(cx: &mut TestAppContext) {
         let (project, _workspace, window_handle) = init_test_with_window(cx).await;
         cx.update(load_default_keymap);
         let (_pane, terminal, _terminal_view) =
-            add_display_only_terminal(&project, window_handle, true, cx);
+            add_display_only_terminal(&project, window_handle, true, false, cx);
 
         let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
         cx.update(|window, cx| {
@@ -2303,7 +2547,7 @@ mod tests {
         let (project, _workspace, window_handle) = init_test_with_window(cx).await;
         cx.update(load_default_keymap);
         let (_pane, terminal, _terminal_view) =
-            add_display_only_terminal(&project, window_handle, true, cx);
+            add_display_only_terminal(&project, window_handle, true, false, cx);
 
         let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
         cx.update(|window, cx| {
@@ -2335,7 +2579,7 @@ mod tests {
         let (project, _workspace, window_handle) = init_test_with_window(cx).await;
         cx.update(load_default_keymap);
         let (_pane, terminal, _terminal_view) =
-            add_display_only_terminal(&project, window_handle, true, cx);
+            add_display_only_terminal(&project, window_handle, true, false, cx);
 
         let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
         cx.update(|window, cx| {
@@ -2362,7 +2606,7 @@ mod tests {
             });
         });
         let (_pane, terminal, _terminal_view) =
-            add_display_only_terminal(&project, window_handle, true, cx);
+            add_display_only_terminal(&project, window_handle, true, false, cx);
 
         let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
         cx.update(|window, cx| {
@@ -2597,10 +2841,11 @@ mod tests {
         );
     }
 
-    fn add_display_only_terminal(
+    pub(super) fn add_display_only_terminal(
         project: &Entity<Project>,
         window_handle: gpui::WindowHandle<MultiWorkspace>,
         focus: bool,
+        read_only: bool,
         cx: &mut TestAppContext,
     ) -> (Entity<Pane>, Entity<Terminal>, Entity<TerminalView>) {
         let project = project.clone();
@@ -2629,6 +2874,7 @@ mod tests {
                         window,
                         cx,
                     )
+                    .with_read_only(read_only)
                 });
 
                 active_pane.update(cx, |pane, cx| {
@@ -2653,7 +2899,7 @@ mod tests {
     }
 
     /// Creates a worktree with 1 file /root.txt and returns the project, workspace, and window handle.
-    async fn init_test_with_window(
+    pub(super) async fn init_test_with_window(
         cx: &mut TestAppContext,
     ) -> (
         Entity<Project>,
@@ -2853,7 +3099,7 @@ mod tests {
             .unwrap();
 
         let (active_pane, terminal, terminal_view) =
-            add_display_only_terminal(&project, window_handle, false, cx);
+            add_display_only_terminal(&project, window_handle, false, false, cx);
 
         let tab_item = window_handle
             .update(cx, |_, window, cx| {

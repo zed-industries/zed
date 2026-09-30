@@ -1,21 +1,52 @@
 #!/usr/bin/env node --redirect-warnings=/dev/null
 
 const { execFileSync } = require("child_process");
+const { parseArgs } = require("util");
+const { releaseNotesSection, releaseNotesEntries } = require("./lib/release-notes");
 
-main();
+const GPUI_PREFIX_PATTERN = /^- \[GPUI\]\s*/i;
 
-async function main() {
-  let version = process.argv[2];
-  let channel = process.argv[3];
-  let parts = version.split(".");
+const USAGE = [
+  "Usage: draft-release-notes <version> {stable|preview} [--gpui]",
+  "",
+  "By default, release notes entries prefixed with `- [GPUI]` are excluded.",
+  "With --gpui, only those entries are included, with the prefix removed.",
+].join("\n");
 
-  if (
-    process.argv.length != 4 ||
-    parts.length != 3 ||
-    parts.find((part) => isNaN(part)) != null ||
-    (channel != "stable" && channel != "preview")
-  ) {
-    console.log("Usage: draft-release-notes <version> {stable|preview}");
+function parseArguments() {
+  let values, positionals;
+  try {
+    ({ values, positionals } = parseArgs({
+      allowPositionals: true,
+      options: { gpui: { type: "boolean", default: false } },
+    }));
+  } catch (e) {
+    return { error: e.message };
+  }
+
+  let [version, channel, ...rest] = positionals;
+  if (version == null || channel == null || rest.length > 0) {
+    return { error: "Expected exactly two positional arguments: <version> {stable|preview}" };
+  }
+
+  let parts = version.split(".").map((part) => Number(part));
+  if (parts.length != 3 || parts.some((part) => !Number.isInteger(part))) {
+    return { error: `Invalid version "${version}", expected <major>.<minor>.<patch>` };
+  }
+
+  if (channel != "stable" && channel != "preview") {
+    return { error: `Invalid channel "${channel}", expected "stable" or "preview"` };
+  }
+
+  return { version, channel, parts, gpui: values.gpui };
+}
+
+function main() {
+  let { error, version, channel, parts, gpui } = parseArguments();
+  if (error) {
+    console.error(error);
+    console.error("");
+    console.error(USAGE);
     process.exit(1);
   }
 
@@ -61,7 +92,8 @@ async function main() {
 
   for (const commit of newCommits) {
     let link = "https://github.com/zed-industries/zed/pull/" + commit.pr;
-    let notes = commit.releaseNotes;
+    let filteredNotes = filterReleaseNotes(commit.releaseNotes, gpui);
+    let notes = filteredNotes;
     if (commit.pr == "") {
       link = "https://github.com/zed-industries/zed/commits/" + commit.hash;
     } else if (!notes.includes("zed-industries/zed/issues")) {
@@ -70,7 +102,7 @@ async function main() {
 
     if (commit.releaseNotes == "") {
       missing.push("- MISSING " + commit.firstLine + " " + link);
-    } else if (commit.releaseNotes.startsWith("- N/A")) {
+    } else if (filteredNotes == "" || filteredNotes.startsWith("- N/A")) {
       skipped.push("- N/A " + commit.firstLine + " " + link);
     } else {
       releaseNotes.push(notes);
@@ -83,6 +115,16 @@ async function main() {
   } else {
     console.log(releaseNotes.join("\n") + "\n");
   }
+}
+
+// Entries prefixed with `- [GPUI]` describe changes for GPUI users. They are kept
+// (with the prefix removed) only when drafting GPUI release notes, and dropped otherwise.
+function filterReleaseNotes(releaseNotes, gpui) {
+  return releaseNotes
+    .split("\n")
+    .filter((line) => GPUI_PREFIX_PATTERN.test(line) == gpui)
+    .map((line) => (gpui ? line.replace(GPUI_PREFIX_PATTERN, "- ") : line))
+    .join("\n");
 }
 
 function getCommits(oldTag, newTag) {
@@ -98,10 +140,7 @@ function getCommits(oldTag, newTag) {
       let [hash, firstLine] = commit.split("\n")[0].split("|||");
       let cherryPick = firstLine.match(/\(cherry-pick #([0-9]+)\)/)?.[1] || "";
       let pr = firstLine.match(/\(#(\d+)\)$/)?.[1] || "";
-      let releaseNotes = (commit.split(/Release notes:.*\n/i)[1] || "")
-        .split("\n\n")[0]
-        .trim()
-        .replace(/\n(?![\n-])/g, " ");
+      let releaseNotes = releaseNotesEntries(releaseNotesSection(commit)).join("\n");
 
       if (releaseNotes.includes("<public_issue_number_if_exists>")) {
         releaseNotes = "";
@@ -117,4 +156,8 @@ function getCommits(oldTag, newTag) {
     });
 
   return pullRequestNumbers;
+}
+
+if (require.main === module) {
+  main();
 }

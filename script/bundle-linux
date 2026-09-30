@@ -43,6 +43,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -n "${RUSTFLAGS+x}" || -n "${CARGO_ENCODED_RUSTFLAGS+x}" ]]; then
+    echo "Unset RUSTFLAGS and CARGO_ENCODED_RUSTFLAGS; put extra flags in target rustflags in .cargo/config.toml so bundle flags are preserved." >&2
+    exit 1
+fi
+
 export ZED_BUNDLE=true
 
 channel=$(<crates/zed/RELEASE_CHANNEL)
@@ -74,20 +79,10 @@ fi
 export CC=${CC:-$(which clang)}
 
 # Build binary in release mode
-# We need lld to link libwebrtc.a successfully on aarch64-linux.
-# NOTE: Since RUSTFLAGS env var overrides all .cargo/config.toml rustflags
-# (see https://github.com/rust-lang/cargo/issues/5376), the
-# [target.aarch64-unknown-linux-gnu] section in config.toml has no effect here.
-if [[ "$(uname -m)" == "aarch64" ]]; then
-    export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-fuse-ld=lld -C link-args=-Wl,--disable-new-dtags,-rpath,\$ORIGIN/../lib"
-else
-    export RUSTFLAGS="${RUSTFLAGS:-} -C link-args=-Wl,--disable-new-dtags,-rpath,\$ORIGIN/../lib"
-fi
 cargo --config .cargo/bundle-config.toml build --release --target "${target_triple}" --package zed --package cli
 # Build remote_server in separate invocation to prevent feature unification from other crates
 # from influencing dynamic libraries required by it.
 if [[ "$remote_server_triple" == "$musl_triple" ]]; then
-    export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static"
     musl_cc_var="CC_$(echo "$remote_server_triple" | tr '-' '_')"
     export "$musl_cc_var"=musl-gcc
 fi

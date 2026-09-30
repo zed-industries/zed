@@ -17,7 +17,7 @@ use cloud_llm_client::{
 };
 use db::AppDatabase;
 use edit_prediction_types::EditPredictionRequestTrigger;
-use feature_flags::{FeatureFlag as _, FeatureFlagAppExt as _, FeatureFlagsSettings};
+use feature_flags::FeatureFlagsSettings;
 use futures::{
     AsyncReadExt, FutureExt, StreamExt,
     channel::{mpsc, oneshot},

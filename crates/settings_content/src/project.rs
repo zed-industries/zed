@@ -128,33 +128,68 @@ pub struct WorktreeSettingsContent {
     #[serde(default)]
     pub prevent_sharing_in_public_channels: bool,
 
-    /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
-    /// `file_scan_inclusions`.
+    /// Exclude files matching these glob patterns from file scans, file searches,
+    /// and the project file tree. Takes precedence over `file_scan_inclusions`.
     ///
-    /// A `"..."` entry expands to the value being overridden, so
-    /// `["**/node_modules", "..."]` adds to the inherited globs instead of
-    /// replacing them. Leave `"..."` out to replace them.
+    /// Default:
     ///
-    /// Default: [
-    ///   "**/.git",
-    ///   "**/.svn",
-    ///   "**/.hg",
-    ///   "**/.jj",
-    ///   "**/CVS",
-    ///   "**/.DS_Store",
-    ///   "**/Thumbs.db",
-    ///   "**/.classpath",
-    ///   "**/.settings"
-    /// ]
+    /// ```json
+    /// {
+    ///   "file_scan_exclusions": [
+    ///     "**/.git",
+    ///     "**/.svn",
+    ///     "**/.hg",
+    ///     "**/.jj",
+    ///     "**/.sl",
+    ///     "**/.repo",
+    ///     "**/CVS",
+    ///     "**/.DS_Store",
+    ///     "**/Thumbs.db",
+    ///     "**/.classpath",
+    ///     "**/.settings"
+    ///   ]
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add patterns without repeating Zed's defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "file_scan_exclusions": ["**/node_modules", "..."]
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
     pub file_scan_exclusions: Option<SplicingVec>,
 
-    /// Always include files that match these globs when scanning for files, even if they're
-    /// ignored by git. This setting is overridden by `file_scan_exclusions`.
-    /// Default: [
-    ///  ".env*",
-    ///  "docker-compose.*.yml",
-    /// ]
-    pub file_scan_inclusions: Option<Vec<String>>,
+    /// Include files matching these glob patterns when scanning, even if ignored
+    /// by Git. Note that broad patterns can slow file scanning.
+    /// `file_scan_exclusions` takes precedence.
+    ///
+    /// Default:
+    ///
+    /// ```json
+    /// {
+    ///   "file_scan_inclusions": [".env*"]
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add patterns without repeating Zed's defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "file_scan_inclusions": ["**/build/**", "..."]
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
+    pub file_scan_inclusions: Option<SplicingVec>,
 
     /// When to scan content of linked directories.
     ///
@@ -176,15 +211,61 @@ pub struct WorktreeSettingsContent {
     /// Default: ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]
     pub private_files: Option<ExtendingVec<String>>,
 
-    /// Treat the files matching these globs as hidden files. You can hide hidden files in the project panel.
-    /// Default: ["**/.*"]
-    pub hidden_files: Option<Vec<String>>,
+    /// Treat files and folders matching these glob patterns as hidden, including
+    /// files inside matching folders. To hide these entries, run
+    /// `project panel: toggle hide hidden` from the command palette or set
+    /// `project_panel.hide_hidden` to `true`.
+    ///
+    /// Default:
+    ///
+    /// ```json
+    /// {
+    ///   "hidden_files": ["**/.*"]
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add patterns without repeating Zed's defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "hidden_files": ["**/*.log", "..."],
+    ///   "project_panel": {
+    ///     "hide_hidden": true
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
+    pub hidden_files: Option<SplicingVec>,
 
-    /// Treat the files matching these globs as read-only. These files can be opened and viewed,
-    /// but cannot be edited. This is useful for generated files, build outputs, or files from
-    /// external dependencies that should not be modified directly.
-    /// Default: []
-    pub read_only_files: Option<Vec<String>>,
+    /// Treat files matching these glob patterns as read-only when opened. You can
+    /// view but not edit them, which is useful for build outputs, external
+    /// dependencies, or generated files.
+    ///
+    /// Default:
+    ///
+    /// ```json
+    /// {
+    ///   "read_only_files": []
+    /// }
+    /// ```
+    ///
+    /// Use `"..."` to add patterns without repeating Zed's defaults. In project
+    /// settings, it extends the user or parent configuration value. Omit
+    /// `"..."` to replace the inherited list.
+    ///
+    /// ```json
+    /// {
+    ///   "read_only_files": ["**/build/**", "..."]
+    /// }
+    /// ```
+    ///
+    /// Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
+    pub read_only_files: Option<SplicingVec>,
 }
 
 #[with_fallible_options]
@@ -955,7 +1036,7 @@ pub enum GitHostingProviderKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{REST_OF_FILE_SCAN_EXCLUSIONS, merge_from::MergeFrom};
+    use crate::merge_from::MergeFrom;
 
     fn exclusions(globs: &[&str]) -> WorktreeSettingsContent {
         WorktreeSettingsContent {
@@ -974,10 +1055,7 @@ mod tests {
         let defaults = exclusions(&["**/.git", "**/.DS_Store"]);
 
         let mut extended = defaults.clone();
-        extended.merge_from(&exclusions(&[
-            "**/node_modules",
-            REST_OF_FILE_SCAN_EXCLUSIONS,
-        ]));
+        extended.merge_from(&exclusions(&["**/node_modules", SplicingVec::REST]));
         assert_eq!(
             extended.file_scan_exclusions.unwrap().0,
             vec!["**/node_modules", "**/.git", "**/.DS_Store"]
@@ -994,8 +1072,8 @@ mod tests {
     #[test]
     fn test_file_scan_exclusions_splice_each_layer() {
         let mut settings = exclusions(&["**/.git"]);
-        settings.merge_from(&exclusions(&[REST_OF_FILE_SCAN_EXCLUSIONS, "**/target"]));
-        settings.merge_from(&exclusions(&[REST_OF_FILE_SCAN_EXCLUSIONS, "**/dist"]));
+        settings.merge_from(&exclusions(&[SplicingVec::REST, "**/target"]));
+        settings.merge_from(&exclusions(&[SplicingVec::REST, "**/dist"]));
 
         assert_eq!(
             settings.file_scan_exclusions.unwrap().0,
@@ -1006,14 +1084,11 @@ mod tests {
     #[test]
     fn test_file_scan_exclusions_splice_edge_cases() {
         let mut repeated = exclusions(&["**/.git"]);
-        repeated.merge_from(&exclusions(&[
-            REST_OF_FILE_SCAN_EXCLUSIONS,
-            REST_OF_FILE_SCAN_EXCLUSIONS,
-        ]));
+        repeated.merge_from(&exclusions(&[SplicingVec::REST, SplicingVec::REST]));
         assert_eq!(repeated.file_scan_exclusions.unwrap().0, vec!["**/.git"]);
 
         let mut relisted = exclusions(&["**/.git", "**/.DS_Store"]);
-        relisted.merge_from(&exclusions(&["**/.git", REST_OF_FILE_SCAN_EXCLUSIONS]));
+        relisted.merge_from(&exclusions(&["**/.git", SplicingVec::REST]));
         assert_eq!(
             relisted.file_scan_exclusions.unwrap().0,
             vec!["**/.git", "**/.DS_Store"]
@@ -1024,7 +1099,7 @@ mod tests {
         assert!(cleared.file_scan_exclusions.unwrap().0.is_empty());
 
         let mut unchanged = exclusions(&["**/.git", "**/.DS_Store"]);
-        unchanged.merge_from(&exclusions(&[REST_OF_FILE_SCAN_EXCLUSIONS]));
+        unchanged.merge_from(&exclusions(&[SplicingVec::REST]));
         assert_eq!(
             unchanged.file_scan_exclusions.unwrap().0,
             vec!["**/.git", "**/.DS_Store"]
@@ -1034,7 +1109,7 @@ mod tests {
     #[test]
     fn test_file_scan_exclusions_splice_without_a_base_layer() {
         let mut settings = WorktreeSettingsContent::default();
-        settings.merge_from(&exclusions(&[REST_OF_FILE_SCAN_EXCLUSIONS, "**/target"]));
+        settings.merge_from(&exclusions(&[SplicingVec::REST, "**/target"]));
 
         // `Option::merge_from` replaces a `None` base outright rather than
         // splicing, so the sentinel survives here. `assets/settings/default.json`
@@ -1042,7 +1117,234 @@ mod tests {
         // unwraps it, so no glob is ever compiled from this state.
         assert_eq!(
             settings.file_scan_exclusions.unwrap().0,
-            vec![REST_OF_FILE_SCAN_EXCLUSIONS, "**/target"]
+            vec![SplicingVec::REST, "**/target"]
+        );
+    }
+
+    fn inclusions(globs: &[&str]) -> WorktreeSettingsContent {
+        WorktreeSettingsContent {
+            file_scan_inclusions: Some(SplicingVec::from(
+                globs
+                    .iter()
+                    .map(|glob| glob.to_string())
+                    .collect::<Vec<_>>(),
+            )),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_file_scan_inclusions_splice_each_layer() {
+        let mut settings = inclusions(&[".env*"]);
+        settings.merge_from(&inclusions(&[SplicingVec::REST, "**/*.user"]));
+        assert_eq!(settings, inclusions(&[".env*", "**/*.user"]));
+
+        settings.merge_from(&inclusions(&["**/*.project", SplicingVec::REST]));
+        assert_eq!(
+            settings,
+            inclusions(&["**/*.project", ".env*", "**/*.user"])
+        );
+    }
+
+    #[test]
+    fn test_file_scan_inclusions_replace_and_clear() {
+        let mut settings = inclusions(&[".env*"]);
+        settings.merge_from(&inclusions(&["**/*.user"]));
+        assert_eq!(settings, inclusions(&["**/*.user"]));
+
+        settings.merge_from(&inclusions(&["**/*.project"]));
+        assert_eq!(settings, inclusions(&["**/*.project"]));
+
+        settings.merge_from(&inclusions(&[]));
+        assert_eq!(settings, inclusions(&[]));
+
+        settings.merge_from(&inclusions(&[SplicingVec::REST, "**/*.next"]));
+        assert_eq!(settings, inclusions(&["**/*.next"]));
+    }
+
+    #[test]
+    fn test_file_scan_inclusions_splice_preserves_first_occurrence() {
+        let inherited = inclusions(&[".env*", "**/*.user"]);
+        let mut settings = inherited.clone();
+        settings.merge_from(&WorktreeSettingsContent::default());
+        assert_eq!(settings, inherited);
+
+        settings.merge_from(&inclusions(&[SplicingVec::REST, SplicingVec::REST]));
+        assert_eq!(settings, inherited);
+
+        settings.merge_from(&inclusions(&[
+            "**/*.user",
+            SplicingVec::REST,
+            ".env*",
+            "**/*.project",
+            SplicingVec::REST,
+            "**/*.project",
+        ]));
+        assert_eq!(
+            settings,
+            inclusions(&["**/*.user", ".env*", "**/*.project"])
+        );
+
+        settings.merge_from(&inclusions(&["**/*.project", "**/*.user", "**/*.project"]));
+        assert_eq!(settings, inclusions(&["**/*.project", "**/*.user"]));
+    }
+
+    fn hidden_files(globs: &[&str]) -> WorktreeSettingsContent {
+        WorktreeSettingsContent {
+            hidden_files: Some(SplicingVec::from(
+                globs
+                    .iter()
+                    .map(|glob| glob.to_string())
+                    .collect::<Vec<_>>(),
+            )),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_hidden_files_splice_each_layer() {
+        let mut settings = hidden_files(&["**/.*"]);
+        settings.merge_from(&hidden_files(&[SplicingVec::REST, "**/*.user"]));
+        assert_eq!(settings, hidden_files(&["**/.*", "**/*.user"]));
+
+        settings.merge_from(&hidden_files(&["**/*.project", SplicingVec::REST]));
+        assert_eq!(
+            settings,
+            hidden_files(&["**/*.project", "**/.*", "**/*.user"])
+        );
+
+        settings.merge_from(&hidden_files(&[
+            "**/*.before",
+            SplicingVec::REST,
+            "**/*.after",
+        ]));
+        assert_eq!(
+            settings,
+            hidden_files(&[
+                "**/*.before",
+                "**/*.project",
+                "**/.*",
+                "**/*.user",
+                "**/*.after",
+            ])
+        );
+    }
+
+    #[test]
+    fn test_hidden_files_replace_and_clear() {
+        let mut settings = hidden_files(&["**/.*"]);
+        settings.merge_from(&hidden_files(&["**/*.user"]));
+        assert_eq!(settings, hidden_files(&["**/*.user"]));
+
+        settings.merge_from(&hidden_files(&["**/*.project"]));
+        assert_eq!(settings, hidden_files(&["**/*.project"]));
+
+        settings.merge_from(&hidden_files(&[]));
+        assert_eq!(settings, hidden_files(&[]));
+
+        settings.merge_from(&hidden_files(&[SplicingVec::REST, "**/*.next"]));
+        assert_eq!(settings, hidden_files(&["**/*.next"]));
+    }
+
+    #[test]
+    fn test_hidden_files_splice_preserves_first_occurrence() {
+        let inherited = hidden_files(&["**/.*", "**/*.user"]);
+        let mut settings = inherited.clone();
+        settings.merge_from(&WorktreeSettingsContent::default());
+        assert_eq!(settings, inherited);
+
+        settings.merge_from(&hidden_files(&[SplicingVec::REST]));
+        assert_eq!(settings, inherited);
+
+        settings.merge_from(&hidden_files(&[SplicingVec::REST, SplicingVec::REST]));
+        assert_eq!(settings, inherited);
+
+        settings.merge_from(&hidden_files(&[
+            "**/*.user",
+            SplicingVec::REST,
+            "**/.*",
+            "**/*.project",
+            SplicingVec::REST,
+            "**/*.project",
+        ]));
+        assert_eq!(
+            settings,
+            hidden_files(&["**/*.user", "**/.*", "**/*.project"])
+        );
+
+        settings.merge_from(&hidden_files(&[
+            "**/*.project",
+            "**/*.user",
+            "**/*.project",
+        ]));
+        assert_eq!(settings, hidden_files(&["**/*.project", "**/*.user"]));
+    }
+
+    fn read_only_files(globs: &[&str]) -> WorktreeSettingsContent {
+        WorktreeSettingsContent {
+            read_only_files: Some(SplicingVec::from(
+                globs
+                    .iter()
+                    .map(|glob| glob.to_string())
+                    .collect::<Vec<_>>(),
+            )),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_read_only_files_splice_rest_of_list() {
+        let inherited = read_only_files(&["**/*.lock"]);
+        let mut extended = inherited.clone();
+        extended.merge_from(&read_only_files(&["**/generated/**", SplicingVec::REST]));
+        assert_eq!(extended, read_only_files(&["**/generated/**", "**/*.lock"]));
+
+        let mut replaced = inherited;
+        replaced.merge_from(&read_only_files(&["**/generated/**"]));
+        assert_eq!(replaced, read_only_files(&["**/generated/**"]));
+    }
+
+    #[test]
+    fn test_read_only_files_splice_each_layer() {
+        let mut settings = read_only_files(&[]);
+        settings.merge_from(&read_only_files(&[SplicingVec::REST, "**/*.lock"]));
+        settings.merge_from(&read_only_files(&[SplicingVec::REST, "**/generated/**"]));
+        settings.merge_from(&read_only_files(&[SplicingVec::REST, "**/vendor/**"]));
+        assert_eq!(
+            settings,
+            read_only_files(&["**/*.lock", "**/generated/**", "**/vendor/**"])
+        );
+    }
+
+    #[test]
+    fn test_read_only_files_splice_edge_cases() {
+        let inherited = read_only_files(&["**/*.gen.rs", "**/*.lock"]);
+        let mut repeated = inherited.clone();
+        repeated.merge_from(&read_only_files(&[SplicingVec::REST, SplicingVec::REST]));
+        assert_eq!(repeated, inherited);
+
+        let mut relisted = inherited.clone();
+        relisted.merge_from(&read_only_files(&["**/*.lock", SplicingVec::REST]));
+        assert_eq!(relisted, read_only_files(&["**/*.lock", "**/*.gen.rs"]));
+
+        let mut cleared = inherited.clone();
+        cleared.merge_from(&read_only_files(&[]));
+        assert_eq!(cleared, read_only_files(&[]));
+
+        let mut unchanged = inherited.clone();
+        unchanged.merge_from(&read_only_files(&[SplicingVec::REST]));
+        assert_eq!(unchanged, inherited);
+        unchanged.merge_from(&WorktreeSettingsContent::default());
+        assert_eq!(unchanged, inherited);
+    }
+
+    #[test]
+    fn test_read_only_files_splice_without_a_base_layer() {
+        let mut settings = WorktreeSettingsContent::default();
+        settings.merge_from(&read_only_files(&[SplicingVec::REST, "**/generated/**"]));
+        assert_eq!(
+            settings,
+            read_only_files(&[SplicingVec::REST, "**/generated/**"])
         );
     }
 

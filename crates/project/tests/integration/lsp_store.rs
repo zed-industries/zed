@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -6,22 +7,146 @@ use std::{
 
 use collections::HashMap;
 use fs::{FakeFs, Fs};
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use gpui::{Entity, TestAppContext};
-use language::{Buffer, CodeLabel, FakeLspAdapter, HighlightId, LocalFile, rust_lang};
+use language::{
+    Buffer, CodeLabel, DiagnosticSourceKind, FakeLspAdapter, HighlightId, LocalFile, rust_lang,
+};
 use lsp::{LanguageServerId, LanguageServerName, Uri};
 use parking_lot::Mutex;
 use project::{
-    Project,
+    DiagnosticSummary, Event, Project,
     lsp_store::{
         log_store::{TestRpcLogHeaderState, TestRpcRequestTracker},
         *,
     },
 };
 use serde_json::json;
-use util::path;
+use unindent::Unindent;
+use util::{path, rel_path::rel_path};
 
 use crate::init_test;
+
+#[gpui::test]
+async fn test_diagnostic_batches_skip_paths_without_worktrees(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    for skipped_index in 0..=2 {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({ "a.rs": "one", "b.rs": "two" }))
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/dir"))], cx).await;
+        let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+        let buffer_a = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let worktree_id =
+            buffer_a.read_with(cx, |buffer, cx| buffer.file().unwrap().worktree_id(cx));
+        let server_id = LanguageServerId(0);
+
+        for message in [Some("error"), None] {
+            cx.run_until_parked();
+            project.read_with(cx, |project, cx| {
+                assert_eq!(
+                    project.get_open_buffer(&(worktree_id, rel_path("b.rs")).into(), cx),
+                    None
+                );
+            });
+            let mut events = cx.events(&project);
+            let mut paths = vec![path!("/dir/a.rs"), path!("/dir/b.rs")];
+            paths.insert(skipped_index, path!("/outside.rs"));
+            let updates = paths
+                .into_iter()
+                .map(|path| DocumentDiagnosticsUpdate {
+                    diagnostics: lsp::PublishDiagnosticsParams {
+                        uri: Uri::from_file_path(path).unwrap(),
+                        version: None,
+                        diagnostics: message
+                            .into_iter()
+                            .map(|message| lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 0),
+                                    lsp::Position::new(0, 3),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                message: lsp::DiagnosticMessage::from(message),
+                                ..lsp::Diagnostic::default()
+                            })
+                            .collect(),
+                    },
+                    result_id: None,
+                    registration_id: None,
+                    server_id,
+                    disk_based_sources: Cow::Borrowed(&[]),
+                })
+                .collect();
+            lsp_store.update(cx, |lsp_store, cx| {
+                lsp_store
+                    .merge_lsp_diagnostics(
+                        DiagnosticSourceKind::Pushed,
+                        updates,
+                        |_, _, _| false,
+                        cx,
+                    )
+                    .unwrap();
+            });
+            cx.run_until_parked();
+
+            project.read_with(cx, |project, cx| {
+                assert_eq!(
+                    project.diagnostic_summary(false, cx),
+                    DiagnosticSummary {
+                        error_count: if message.is_some() { 2 } else { 0 },
+                        warning_count: 0,
+                    },
+                    "skipped update at index {skipped_index}, message {message:?}"
+                );
+            });
+            let diagnostic_events = std::iter::from_fn(|| events.next().now_or_never().flatten())
+                .filter_map(|event| match event {
+                    Event::DiagnosticsUpdated {
+                        language_server_id,
+                        paths,
+                    } => Some((language_server_id, paths)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                diagnostic_events,
+                vec![(
+                    server_id,
+                    vec![
+                        (worktree_id, rel_path("a.rs")).into(),
+                        (worktree_id, rel_path("b.rs")).into(),
+                    ],
+                )],
+                "skipped update at index {skipped_index}, message {message:?}"
+            );
+
+            let buffer_b = project
+                .update(cx, |project, cx| {
+                    project.open_local_buffer(path!("/dir/b.rs"), cx)
+                })
+                .await
+                .unwrap();
+            for buffer in [&buffer_a, &buffer_b] {
+                buffer.read_with(cx, |buffer, _| {
+                    assert_eq!(
+                        buffer
+                            .buffer_diagnostics(Some(server_id))
+                            .iter()
+                            .map(|entry| entry.diagnostic.message.to_string())
+                            .collect::<Vec<_>>(),
+                        message.into_iter().collect::<Vec<_>>()
+                    );
+                });
+            }
+        }
+    }
+}
 
 #[gpui::test]
 async fn test_removing_invisible_worktree_cleans_reused_lsp_bookkeeping(cx: &mut TestAppContext) {
@@ -473,6 +598,114 @@ fn test_multi_len_chars_normalization() {
             vec![(0..6, HighlightId::new(1))],
         )
     );
+}
+
+#[test]
+fn test_completion_label_snippet_normalization() {
+    for line_ending in ["\n", "\r\n", "\r"] {
+        let text = "
+            #[cfg(test)]
+            mod tests {
+                use super::*;
+
+                #[test]
+                fn test_name() {
+
+                }
+            }"
+        .unindent()
+        .replace('\n', line_ending);
+        let name_start = text.find("test_name").expect("snippet has a test name");
+        let text_len = text.len();
+        let mut label = CodeLabel::new(
+            text,
+            0..text_len,
+            vec![
+                (0..12, HighlightId::new(1)),
+                (name_start..name_start + 9, HighlightId::TABSTOP_REPLACE_ID),
+            ],
+        );
+
+        ensure_uniform_list_compatible_label(&mut label);
+
+        assert_eq!(
+            label,
+            CodeLabel::new(
+                "#[cfg(test)] mod tests { use super::*; #[test] fn test_name() { } }".to_string(),
+                0..67,
+                vec![
+                    (0..12, HighlightId::new(1)),
+                    (50..59, HighlightId::TABSTOP_REPLACE_ID),
+                ],
+            ),
+            "line ending: {line_ending:?}",
+        );
+    }
+}
+
+#[test]
+fn test_completion_label_unicode_normalization() {
+    for line_ending in ["\n", "\r\n", "\r"] {
+        let text = "
+            héllo {
+                🦀value: 世界,
+            }"
+        .unindent()
+        .replace('\n', line_ending);
+        let value_start = text.find("🦀value").expect("label has a value");
+        let type_start = text.find("世界").expect("label has a type");
+        let text_len = text.len();
+        let mut label = CodeLabel::new(
+            text,
+            value_start..value_start + 9,
+            vec![
+                (0..text_len, HighlightId::new(0)),
+                (0..6, HighlightId::new(1)),
+                (
+                    value_start..value_start + 9,
+                    HighlightId::TABSTOP_REPLACE_ID,
+                ),
+                (type_start..type_start + 6, HighlightId::new(2)),
+            ],
+        );
+
+        ensure_uniform_list_compatible_label(&mut label);
+
+        assert_eq!(
+            label,
+            CodeLabel::new(
+                "héllo { 🦀value: 世界, }".to_string(),
+                9..18,
+                vec![
+                    (0..29, HighlightId::new(0)),
+                    (0..6, HighlightId::new(1)),
+                    (9..18, HighlightId::TABSTOP_REPLACE_ID),
+                    (20..26, HighlightId::new(2)),
+                ],
+            ),
+            "line ending: {line_ending:?}",
+        );
+    }
+}
+
+#[test]
+fn test_completion_label_whitespace_normalization() {
+    for line_ending in ["\n", "\r\n", "\r", "\n\r", "\r\r\n"] {
+        for before in ["", " ", " \t "] {
+            for after in ["", " ", " \t "] {
+                let mut label = CodeLabel::plain(format!("{before}{line_ending}{after}"), None);
+                ensure_uniform_list_compatible_label(&mut label);
+                assert_eq!(label, CodeLabel::plain(" ".to_string(), None));
+            }
+        }
+    }
+
+    for text in ["", " ", " \t ", "héllo  世界", "héllo\t世界"] {
+        let mut label = CodeLabel::plain(text.to_string(), None);
+        let expected = label.clone();
+        ensure_uniform_list_compatible_label(&mut label);
+        assert_eq!(label, expected);
+    }
 }
 
 #[test]
