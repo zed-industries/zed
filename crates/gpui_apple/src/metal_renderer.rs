@@ -22,7 +22,6 @@ use metal::{
     CAMetalLayer, CommandQueue, MTLGPUFamily, MTLPixelFormat, MTLResourceOptions, NSRange,
     NSUInteger,
 };
-use objc::{self, msg_send, sel, sel_impl};
 use parking_lot::Mutex;
 
 use std::{cell::Cell, ffi::c_void, mem, mem::MaybeUninit, ops::Range, ptr, slice, sync::Arc};
@@ -159,20 +158,21 @@ impl MetalRenderer {
         Self::new_internal(device, Some(layer), !transparent, instance_buffer_pool)
     }
 
-    /// Creates a renderer for a CAMetalLayer owned by a platform view.
-    ///
-    /// # Safety
-    ///
-    /// `layer` must point to a live CAMetalLayer and must only be used from the
-    /// thread on which its owning view may be accessed.
-    pub unsafe fn from_layer(
+    /// Creates a renderer for a CAMetalLayer owned by a platform view, such as
+    /// the backing layer UIKit creates for a view whose `layerClass` is
+    /// `CAMetalLayer`. The renderer retains the layer.
+    pub fn from_layer(
         instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
-        layer: *mut CAMetalLayer,
+        layer: &objc2_quartz_core::CAMetalLayer,
         transparent: bool,
     ) -> Self {
         let device = Self::create_device();
-        let retained_layer: *mut CAMetalLayer = unsafe { msg_send![layer, retain] };
-        let layer = unsafe { metal::MetalLayer::from_ptr(retained_layer) };
+        // Both types bind the same Objective-C class, so this only changes which
+        // Rust wrapper views the live layer. `to_owned` retains it.
+        let layer = unsafe {
+            metal::MetalLayerRef::from_ptr(ptr::from_ref(layer).cast_mut().cast::<CAMetalLayer>())
+        }
+        .to_owned();
         Self::configure_layer(&layer, &device, transparent);
         Self::new_internal(device, Some(layer), !transparent, instance_buffer_pool)
     }
