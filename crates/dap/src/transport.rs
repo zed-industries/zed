@@ -375,7 +375,11 @@ impl TransportDelegate {
                 .body
                 .clone()
                 .and_then(|body| serde_json::from_value::<ErrorResponse>(body).ok())
-                .and_then(|response| response.error.map(|msg| msg.format))
+                .and_then(|response| {
+                    response
+                        .error
+                        .map(|msg| interpolate_message(&msg.format, msg.variables.as_ref()))
+                })
                 .or_else(|| response.message.clone())
             {
                 anyhow::bail!(error_message);
@@ -467,6 +471,42 @@ impl TransportDelegate {
         let mut log_handlers = self.log_handlers.lock();
         log_handlers.push((kind, Box::new(f)));
     }
+}
+
+//{name} placeholders that must be filled here
+fn interpolate_message(format: &str, variables: Option<&serde_json::Value>) -> String {
+    let Some(vars) = variables.and_then(|value| value.as_object()) else {
+        return format.to_string();
+    };
+
+    let mut out = String::with_capacity(format.len());
+    let mut rest = format;
+
+    loop {
+        let Some(start) = rest.find('{') else {
+            out.push_str(rest);
+            break;
+        };
+
+        out.push_str(&rest[..start]);
+        let placeholder = &rest[start..];
+
+        let Some(end) = placeholder.find('}') else {
+            out.push_str(placeholder);
+            break;
+        };
+
+        let name = &placeholder[1..end];
+        match vars.get(name) {
+            Some(serde_json::Value::String(value)) => out.push_str(value),
+            Some(value) => out.push_str(&value.to_string()),
+            None => out.push_str(&placeholder[..=end]),
+        }
+
+        rest = &placeholder[end + 1..];
+    }
+
+    out
 }
 
 pub struct TcpTransport {
@@ -1016,5 +1056,52 @@ impl Transport for FakeTransport {
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeTransport {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_interpolate_message() {
+        let vars = json!({ "msg": "boom", "name": "zed", "number": 42, "enabled": true });
+
+        assert_eq!(interpolate_message("{msg}", Some(&vars)), "boom");
+        assert_eq!(
+            interpolate_message("{name} says {msg}, {name}", Some(&vars)),
+            "zed says boom, zed"
+        );
+        assert_eq!(
+            interpolate_message("{number} {enabled}", Some(&vars)),
+            "42 true"
+        );
+
+        // and the unknown ones are left as is here
+        assert_eq!(interpolate_message("hi {nope}", Some(&vars)), "hi {nope}");
+        assert_eq!(interpolate_message("hi {name}", None), "hi {name}");
+        assert_eq!(interpolate_message("oops {msg", Some(&vars)), "oops {msg");
+    }
+
+    #[test]
+    fn test_process_response_interpolates_error_variables() {
+        let response = Response {
+            seq: 1,
+            request_seq: 1,
+            success: false,
+            command: "launch".into(),
+            body: Some(json!({
+                "error": {
+                    "id": 1,
+                    "format": "{response_message}",
+                    "variables": { "response_message": "use binary option" }
+                }
+            })),
+            message: Some("cancelled".into()),
+        };
+
+        let error = TransportDelegate::process_response(response).unwrap_err();
+        assert_eq!(error.to_string(), "use binary option");
     }
 }
