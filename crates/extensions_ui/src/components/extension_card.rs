@@ -13,15 +13,18 @@ type ContextMenuBuilder = Box<
 >;
 type ExtensionCardActions = [Option<Button>; 3];
 
-/// The status of a published extension as shown on its card.
+/// Local state of a published extension, derived from the `ExtensionStore`.
 #[derive(Clone)]
-enum RemoteExtensionStatus {
-    Store(ExtensionStatus),
-    /// A dev extension with the same id is installed and takes its place.
+enum PublishedExtensionState {
+    /// A dev extension with the same id is installed locally and takes
+    /// precedence, so the published version can't be installed or managed.
+    /// This replaces the store status, which would describe the dev extension.
     OverriddenByDevExtension,
+    /// Managed by the store like any other extension.
+    Store(ExtensionStatus),
 }
 
-impl RemoteExtensionStatus {
+impl PublishedExtensionState {
     fn new(extension_id: &str, extension_store: &ExtensionStore) -> Self {
         if extension_store.is_dev_extension(extension_id) {
             Self::OverriddenByDevExtension
@@ -54,7 +57,7 @@ enum ExtensionCardSource {
     Dev,
     Installed,
     Remote {
-        status: RemoteExtensionStatus,
+        state: PublishedExtensionState,
         download_count: u64,
     },
 }
@@ -63,7 +66,7 @@ impl ExtensionCardSource {
     fn installed_version(&self, latest_version: &Arc<str>) -> Option<Arc<str>> {
         match self {
             Self::Remote {
-                status: RemoteExtensionStatus::Store(ExtensionStatus::Installed(installed_version)),
+                state: PublishedExtensionState::Store(ExtensionStatus::Installed(installed_version)),
                 ..
             } if installed_version != latest_version => Some(installed_version.clone()),
             _ => None,
@@ -85,7 +88,7 @@ impl ExtensionCardSource {
         matches!(
             self,
             Self::Remote {
-                status: RemoteExtensionStatus::OverriddenByDevExtension,
+                state: PublishedExtensionState::OverriddenByDevExtension,
                 ..
             }
         )
@@ -118,8 +121,8 @@ impl ExtensionCard {
         extension_store: &ExtensionStore,
         cx: &App,
     ) -> Self {
-        let status = RemoteExtensionStatus::new(&extension.id, extension_store);
-        Self::remote(extension, status, cx)
+        let state = PublishedExtensionState::new(&extension.id, extension_store);
+        Self::remote(extension, state, cx)
     }
 
     fn manifest(
@@ -150,8 +153,8 @@ impl ExtensionCard {
         }
     }
 
-    fn remote(extension: &ExtensionMetadata, status: RemoteExtensionStatus, cx: &App) -> Self {
-        let actions = Self::actions_for_remote_extension(extension, &status, cx);
+    fn remote(extension: &ExtensionMetadata, state: PublishedExtensionState, cx: &App) -> Self {
+        let actions = Self::actions_for_remote_extension(extension, &state, cx);
         let details = ExtensionCardDetails {
             id: extension.id.clone(),
             name: extension.manifest.name.clone().into(),
@@ -162,7 +165,7 @@ impl ExtensionCard {
             repository_icon: IconName::Link,
             provided_features: provided_feature_labels(extension.manifest.provides.iter().copied()),
             source: ExtensionCardSource::Remote {
-                status,
+                state,
                 download_count: extension.download_count,
             },
         };
@@ -305,7 +308,7 @@ impl ExtensionCard {
 
     fn actions_for_remote_extension(
         extension: &ExtensionMetadata,
-        status: &RemoteExtensionStatus,
+        state: &PublishedExtensionState,
         cx: &App,
     ) -> ExtensionCardActions {
         let is_configurable = extension
@@ -313,15 +316,15 @@ impl ExtensionCard {
             .provides
             .contains(&ExtensionProvides::ContextServers);
 
-        let status = match status {
-            RemoteExtensionStatus::OverriddenByDevExtension => {
+        let status = match state {
+            PublishedExtensionState::OverriddenByDevExtension => {
                 return [
                     None,
                     None,
                     Some(Self::install_button(&extension.id).disabled(true)),
                 ];
             }
-            RemoteExtensionStatus::Store(status) => status,
+            PublishedExtensionState::Store(status) => status,
         };
 
         match status {
@@ -511,7 +514,7 @@ impl Component for ExtensionCard {
                         482_391,
                         [ExtensionProvides::Languages],
                     ),
-                    RemoteExtensionStatus::Store(ExtensionStatus::NotInstalled),
+                    PublishedExtensionState::Store(ExtensionStatus::NotInstalled),
                     cx,
                 )
                 .into_any_element(),
@@ -531,7 +534,7 @@ impl Component for ExtensionCard {
                             ExtensionProvides::ContextServers,
                         ],
                     ),
-                    RemoteExtensionStatus::Store(ExtensionStatus::Installed("0.5.1".into())),
+                    PublishedExtensionState::Store(ExtensionStatus::Installed("0.5.1".into())),
                     cx,
                 )
                 .into_any_element(),
@@ -550,7 +553,7 @@ impl Component for ExtensionCard {
                             ExtensionProvides::LanguageServers,
                         ],
                     ),
-                    RemoteExtensionStatus::Store(ExtensionStatus::Installed("0.3.1".into())),
+                    PublishedExtensionState::Store(ExtensionStatus::Installed("0.3.1".into())),
                     cx,
                 )
                 .into_any_element(),
@@ -575,7 +578,7 @@ impl Component for ExtensionCard {
                         36_512,
                         [ExtensionProvides::Themes],
                     ),
-                    RemoteExtensionStatus::OverriddenByDevExtension,
+                    PublishedExtensionState::OverriddenByDevExtension,
                     cx,
                 )
                 .into_any_element(),
