@@ -12,7 +12,7 @@ use semver::Version;
 use serde::Deserialize;
 use settings::Settings as _;
 use smol::io::AsyncReadExt;
-use ui::{AnnouncementToast, ListBulletItem, prelude::*};
+use ui::{AnnouncementToast, DeltaIllustration, ListBulletItem, prelude::*};
 use util::{ResultExt as _, maybe};
 use workspace::{
     Workspace,
@@ -257,8 +257,9 @@ impl EventEmitter<SuppressEvent> for AnnouncementToastNotification {}
 impl Notification for AnnouncementToastNotification {}
 
 impl Render for AnnouncementToastNotification {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        AnnouncementToast::new()
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let toast = AnnouncementToast::new()
+            .illustration(DeltaIllustration::new())
             .heading(self.content.heading.clone())
             .description(self.content.description.clone())
             .bullet_items(
@@ -287,7 +288,14 @@ impl Render for AnnouncementToastNotification {
             .dismiss_on_click(cx.listener(|this, _, _window, cx| {
                 telemetry::event!("Delta Announcement Dismiss");
                 this.dismiss(cx);
-            }))
+            }));
+
+        div()
+            .self_end()
+            .flex_none()
+            .w(rems_from_px(560_f32))
+            .max_w((window.viewport_size().width - window.rem_size() * 1.5).max(px(0.)))
+            .child(toast)
     }
 }
 

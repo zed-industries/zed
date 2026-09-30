@@ -1,0 +1,13 @@
+<svg width="560" height="200" viewBox="0 0 560 200" preserveAspectRatio="none" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse">
+      <path d="M-2 2L2-2M0 8L8 0M6 10L10 6" stroke="black" stroke-width="1" opacity="0.15"/>
+    </pattern>
+  </defs>
+  <rect x="43" y="11" width="474" height="31" fill="url(#hatch)"/>
+  <rect x="43" y="158" width="474" height="31" fill="url(#hatch)"/>
+  <rect x="11" y="43" width="31" height="114" fill="url(#hatch)"/>
+  <rect x="518" y="43" width="31" height="114" fill="url(#hatch)"/>
+  <rect x="10.5" y="10.5" width="539" height="179" stroke="black" opacity="0.7"/>
+  <path d="M10 42.5H550M10 157.5H550M42.5 10V190M517.5 10V190" stroke="black" opacity="0.7"/>
+</svg>
