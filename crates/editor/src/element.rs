@@ -8420,7 +8420,6 @@ impl Element for EditorElement {
     fn request_layout(
         &mut self,
         _: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
@@ -8495,7 +8494,6 @@ impl Element for EditorElement {
     fn prepaint(
         &mut self,
         _: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -9117,7 +9115,6 @@ impl Element for EditorElement {
                     if renderer_widths_changed {
                         return self.prepaint(
                             None,
-                            _inspector_id,
                             bounds,
                             request_layout,
                             window,
@@ -9258,7 +9255,6 @@ impl Element for EditorElement {
                             });
                             return self.prepaint(
                                 None,
-                                _inspector_id,
                                 bounds,
                                 request_layout,
                                 window,
@@ -10021,7 +10017,6 @@ impl Element for EditorElement {
     fn paint(
         &mut self,
         _: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<gpui::Pixels>,
         _: &mut Self::RequestLayoutState,
         layout: &mut Self::PrepaintState,

@@ -1175,6 +1175,10 @@ pub struct Window {
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
+    /// The identity of the element whose `request_layout`, `prepaint` or `paint` is
+    /// currently running. `Drawable` publishes it for the duration of the call, so an
+    /// element can reach its own state without being handed a token it did not build.
+    pub(crate) inspector_element_id: Option<crate::InspectorElementId>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
@@ -2035,6 +2039,7 @@ impl Window {
             layout_engine: Some(TaffyLayoutEngine::new()),
             root: None,
             element_id_stack: SmallVec::default(),
+            inspector_element_id: None,
             text_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
@@ -6957,6 +6962,39 @@ impl Window {
         }))
     }
 
+    /// Publishes `inspector_element_id` as the identity of the element being laid out or
+    /// painted, returning the previous value so the caller can put it back once the
+    /// element returns.
+    pub(crate) fn set_inspector_element_id(
+        &mut self,
+        inspector_element_id: Option<crate::InspectorElementId>,
+    ) -> Option<crate::InspectorElementId> {
+        std::mem::replace(&mut self.inspector_element_id, inspector_element_id)
+    }
+
+    /// Runs `f` with mutable access to the inspector state of the element the runtime is
+    /// currently laying out or painting, if that element is the one selected in the
+    /// inspector.
+    ///
+    /// Elements use this form: the runtime publishes each element's identity around its
+    /// lifecycle call, so the element reaches its own state without being handed a token.
+    /// `with_inspector_state` is the explicit-identity form, used by the inspector panel to
+    /// read the element the user selected.
+    ///
+    /// This is public so that an element defined outside the `gpui` crate can still read its
+    /// own inspector state; register a viewer for such a state with
+    /// `App::register_inspector_element`. Like the rest of the inspector, it exists only when
+    /// the `inspector` feature or debug assertions are enabled.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn with_current_inspector_state<T: 'static, R>(
+        &mut self,
+        cx: &mut App,
+        f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
+    ) -> Option<R> {
+        let inspector_id = self.inspector_element_id.clone();
+        self.with_inspector_state(inspector_id.as_ref(), cx, f)
+    }
+
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) fn inspector_enabled(&self) -> bool {
         self.inspector.is_some()
@@ -7009,17 +7047,16 @@ impl Window {
     pub fn insert_inspector_hitbox(
         &mut self,
         hitbox_id: HitboxId,
-        inspector_id: Option<&crate::InspectorElementId>,
         cx: &App,
     ) {
         self.invalidator.debug_assert_paint_or_prepaint();
         if !self.is_inspector_picking(cx) {
             return;
         }
-        if let Some(inspector_id) = inspector_id {
+        if let Some(inspector_id) = self.inspector_element_id.clone() {
             self.next_frame
                 .inspector_hitboxes
-                .insert(hitbox_id, inspector_id.clone());
+                .insert(hitbox_id, inspector_id);
         }
     }
 
@@ -9323,5 +9360,137 @@ mod inspector_tests {
             }
         })
         .expect("closed inspector has no bookkeeping and no style overrides");
+    }
+
+    /// Demonstrates the API that replaced the `inspector_id` parameter: an element reads
+    /// its own inspector state through `Window::with_current_inspector_state`, which
+    /// resolves the identity the runtime published for it while it is being drawn.
+    ///
+    /// Like `with_inspector_state`, that helper only reports for the element the inspector
+    /// has selected, so the probe is selected first - the step picking performs - and the
+    /// test checks the helper is silent before that and reaches the probe's state after.
+    #[gpui::test]
+    fn element_reaches_its_own_inspector_state(cx: &mut TestAppContext) {
+        #[derive(Clone, Default)]
+        struct Reached(Rc<RefCell<Vec<bool>>>);
+
+        struct Probe {
+            reached: Reached,
+            location: &'static std::panic::Location<'static>,
+        }
+
+        #[track_caller]
+        fn probe(reached: &Reached) -> Probe {
+            Probe {
+                reached: reached.clone(),
+                location: std::panic::Location::caller(),
+            }
+        }
+
+        impl Element for Probe {
+            type RequestLayoutState = ();
+            type PrepaintState = ();
+
+            fn id(&self) -> Option<ElementId> {
+                Some(ElementId::Name("probe".into()))
+            }
+
+            fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+                Some(self.location)
+            }
+
+            fn request_layout(
+                &mut self,
+                _: Option<&GlobalElementId>,
+                window: &mut Window,
+                cx: &mut App,
+            ) -> (LayoutId, Self::RequestLayoutState) {
+                (window.request_layout(Style::default(), [], cx), ())
+            }
+
+            fn prepaint(
+                &mut self,
+                _: Option<&GlobalElementId>,
+                _: Bounds<Pixels>,
+                _: &mut Self::RequestLayoutState,
+                _: &mut Window,
+                _: &mut App,
+            ) -> Self::PrepaintState {
+            }
+
+            fn paint(
+                &mut self,
+                _: Option<&GlobalElementId>,
+                _: Bounds<Pixels>,
+                _: &mut Self::RequestLayoutState,
+                _: &mut Self::PrepaintState,
+                window: &mut Window,
+                cx: &mut App,
+            ) {
+                // The form an element author uses: no token in hand, just the ambient
+                // state of the element the runtime is drawing.
+                let reached = window
+                    .with_current_inspector_state::<(), _>(cx, |_, _| ())
+                    .is_some();
+                self.reached.0.borrow_mut().push(reached);
+            }
+        }
+
+        impl IntoElement for Probe {
+            type Element = Self;
+
+            fn into_element(self) -> Self::Element {
+                self
+            }
+        }
+
+        struct ProbeView {
+            reached: Reached,
+        }
+
+        impl Render for ProbeView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().id("probe-root").child(probe(&self.reached))
+            }
+        }
+
+        let reached = Reached::default();
+        let window = cx.add_window({
+            let reached = reached.clone();
+            move |_, _| ProbeView { reached }
+        });
+        cx.update_window(window.into(), |_, window, cx| {
+            window.toggle_inspector(cx);
+            // `add_window` already drew a frame with the inspector closed.
+            reached.0.borrow_mut().clear();
+
+            window.draw(cx).clear(cx);
+            assert_eq!(
+                reached.0.borrow().as_slice(),
+                &[false],
+                "nothing is selected yet, so the probe reaches no state"
+            );
+
+            // Select the probe the way picking would, then draw again.
+            let selected = window
+                .rendered_frame
+                .next_inspector_instance_ids
+                .keys()
+                .find(|path| path.global_id.0.contains(&ElementId::Name("probe".into())))
+                .cloned()
+                .map(|path| InspectorElementId { path, instance_id: 0 })
+                .expect("the probe has an inspector identity");
+            let inspector = window.inspector.as_ref().expect("open inspector").clone();
+            inspector.update(cx, |inspector, _cx| inspector.select(selected, window));
+
+            reached.0.borrow_mut().clear();
+            window.draw(cx).clear(cx);
+            assert_eq!(
+                reached.0.borrow().as_slice(),
+                &[true],
+                "the selected element reaches its own state through the published identity"
+            );
+        })
+        .expect("draw the probe");
     }
 }

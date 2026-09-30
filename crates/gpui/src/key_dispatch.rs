@@ -622,7 +622,7 @@ impl DispatchTree {
 mod tests {
     use crate::{
         self as gpui, AppContext, DispatchResult, Element, ElementId, GlobalElementId,
-        InspectorElementId, Keystroke, LayoutId, Style,
+        Keystroke, LayoutId, Style,
     };
     use core::panic;
     use smallvec::SmallVec;
@@ -691,7 +691,6 @@ mod tests {
         fn request_layout(
             &mut self,
             _: Option<&GlobalElementId>,
-            _: Option<&InspectorElementId>,
             window: &mut Window,
             cx: &mut App,
         ) -> (LayoutId, Self::RequestLayoutState) {
@@ -701,7 +700,6 @@ mod tests {
         fn prepaint(
             &mut self,
             _: Option<&GlobalElementId>,
-            _: Option<&InspectorElementId>,
             _: Bounds<Pixels>,
             _: &mut Self::RequestLayoutState,
             window: &mut Window,
@@ -713,7 +711,6 @@ mod tests {
         fn paint(
             &mut self,
             _: Option<&GlobalElementId>,
-            _: Option<&InspectorElementId>,
             _: Bounds<Pixels>,
             _: &mut Self::RequestLayoutState,
             _: &mut Self::PrepaintState,
@@ -1177,7 +1174,6 @@ mod tests {
             fn request_layout(
                 &mut self,
                 _: Option<&GlobalElementId>,
-                _: Option<&InspectorElementId>,
                 window: &mut Window,
                 cx: &mut App,
             ) -> (LayoutId, Self::RequestLayoutState) {
@@ -1187,7 +1183,6 @@ mod tests {
             fn prepaint(
                 &mut self,
                 _: Option<&GlobalElementId>,
-                _: Option<&InspectorElementId>,
                 _: Bounds<Pixels>,
                 _: &mut Self::RequestLayoutState,
                 window: &mut Window,
@@ -1199,7 +1194,6 @@ mod tests {
             fn paint(
                 &mut self,
                 _: Option<&GlobalElementId>,
-                _: Option<&InspectorElementId>,
                 _: Bounds<Pixels>,
                 _: &mut Self::RequestLayoutState,
                 _: &mut Self::PrepaintState,

@@ -19,7 +19,7 @@ use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
     Display, Element, ElementId, Entity, EntityId, ExternalDragPayload, ExternalDragPayloadSource,
     FileDropEvent, FocusHandle, Global, GlobalElementId, Hitbox, HitboxBehavior, HitboxId,
-    InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton,
+    IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton,
     KeyboardClickEvent, LayoutId, LongPressEvent, ModifiersChangedEvent, MouseButton,
     MouseClickEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MousePressureEvent,
     MouseUpEvent, OngoingScroll, Overflow, ParentElement, PinchEvent, Pixels, Point, Render,
@@ -1922,7 +1922,6 @@ impl Element for Div {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -1935,7 +1934,6 @@ impl Element for Div {
         let layout_id = window.with_image_cache(image_cache, |window| {
             self.interactivity.request_layout(
                 global_id,
-                inspector_id,
                 window,
                 cx,
                 |style, window, cx| {
@@ -1958,7 +1956,6 @@ impl Element for Div {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -2012,7 +2009,6 @@ impl Element for Div {
 
         self.interactivity.prepaint(
             global_id,
-            inspector_id,
             bounds,
             content_size,
             window,
@@ -2053,7 +2049,6 @@ impl Element for Div {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
@@ -2068,7 +2063,6 @@ impl Element for Div {
         window.with_image_cache(image_cache, |window| {
             self.interactivity.paint(
                 global_id,
-                inspector_id,
                 bounds,
                 hitbox.as_ref(),
                 window,
@@ -2203,14 +2197,12 @@ impl Interactivity {
     pub fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
         f: impl FnOnce(Style, &mut Window, &mut App) -> LayoutId,
     ) -> LayoutId {
         #[cfg(any(feature = "inspector", debug_assertions))]
-        window.with_inspector_state(
-            _inspector_id,
+        window.with_current_inspector_state(
             cx,
             |inspector_state: &mut Option<DivInspectorState>, _window| {
                 if let Some(inspector_state) = inspector_state {
@@ -2296,7 +2288,6 @@ impl Interactivity {
     pub fn prepaint<R>(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
         window: &mut Window,
@@ -2306,8 +2297,7 @@ impl Interactivity {
         self.content_size = content_size;
 
         #[cfg(any(feature = "inspector", debug_assertions))]
-        window.with_inspector_state(
-            _inspector_id,
+        window.with_current_inspector_state(
             cx,
             |inspector_state: &mut Option<DivInspectorState>, _window| {
                 if let Some(inspector_state) = inspector_state {
@@ -2501,7 +2491,6 @@ impl Interactivity {
     pub fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         hitbox: Option<&Hitbox>,
         window: &mut Window,
@@ -2612,7 +2601,6 @@ impl Interactivity {
                                             #[cfg(any(feature = "inspector", debug_assertions))]
                                             window.insert_inspector_hitbox(
                                                 _hitbox.id,
-                                                _inspector_id,
                                                 cx,
                                             );
 
@@ -4121,30 +4109,27 @@ where
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        self.element.request_layout(id, inspector_id, window, cx)
+        self.element.request_layout(id, window, cx)
     }
 
     fn prepaint(
         &mut self,
         id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         state: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> E::PrepaintState {
         self.element
-            .prepaint(id, inspector_id, bounds, state, window, cx)
+            .prepaint(id, bounds, state, window, cx)
     }
 
     fn paint(
         &mut self,
         id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
@@ -4153,7 +4138,6 @@ where
     ) {
         self.element.paint(
             id,
-            inspector_id,
             bounds,
             request_layout,
             prepaint,
@@ -4804,7 +4788,6 @@ mod tests {
         fn request_layout(
             &mut self,
             _id: Option<&GlobalElementId>,
-            _inspector_id: Option<&InspectorElementId>,
             window: &mut Window,
             cx: &mut App,
         ) -> (LayoutId, Self::RequestLayoutState) {
@@ -4814,7 +4797,6 @@ mod tests {
         fn prepaint(
             &mut self,
             _id: Option<&GlobalElementId>,
-            _inspector_id: Option<&InspectorElementId>,
             _bounds: Bounds<Pixels>,
             _request_layout: &mut Self::RequestLayoutState,
             window: &mut Window,
@@ -4826,7 +4808,6 @@ mod tests {
         fn paint(
             &mut self,
             _id: Option<&GlobalElementId>,
-            _inspector_id: Option<&InspectorElementId>,
             _bounds: Bounds<Pixels>,
             _request_layout: &mut Self::RequestLayoutState,
             _prepaint: &mut Self::PrepaintState,
