@@ -33,12 +33,145 @@ use crate::AgentTool;
 use feature_flags::{
     CreateThreadToolFeatureFlag, FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag,
 };
-use gpui::App;
+use gpui::{App, Entity};
 use language_model::LanguageModelRequestTool;
+use project::{Project, ProjectPath, Worktree};
+use prompt_store::ProjectContext;
 use serde::{
     Deserialize, Deserializer,
     de::{DeserializeOwned, Error as _},
 };
+use std::path::{Path, PathBuf};
+use util::path_list::PathList;
+
+/// The project roots an agent session is allowed to touch.
+///
+/// `None` is the unscoped case: every operation passes through untouched, so
+/// callers apply a scope unconditionally (`None` => skip, `Some` => filter).
+#[derive(Clone, Debug, Default)]
+pub struct ProjectScope(Option<PathList>);
+
+impl ProjectScope {
+    pub fn unscoped() -> Self {
+        Self(None)
+    }
+
+    pub fn from_roots(roots: PathList) -> Self {
+        Self(Some(roots))
+    }
+
+    pub fn roots(&self) -> Option<&PathList> {
+        self.0.as_ref()
+    }
+
+    pub fn is_unscoped(&self) -> bool {
+        self.0.is_none()
+    }
+
+    /// Whether an absolute path is inside the scope.
+    ///
+    /// A scope entry may be a whole project root or any directory within one,
+    /// so containment is a component-wise prefix test against the entries.
+    /// Always `true` when unscoped.
+    pub fn contains(&self, abs_path: &Path) -> bool {
+        match self.0.as_ref() {
+            None => true,
+            Some(roots) => roots.paths().iter().any(|root| abs_path.starts_with(root)),
+        }
+    }
+
+    /// Whether a worktree is *relevant* to the scope, i.e. at least one scope
+    /// entry lies inside it. This decides whether a worktree takes part in
+    /// enumeration at all; individual results are still filtered with
+    /// [`Self::contains`], since a scope entry may itself be a subdirectory.
+    pub fn intersects_worktree(&self, worktree: &Entity<Worktree>, cx: &App) -> bool {
+        match self.0.as_ref() {
+            None => true,
+            Some(roots) => {
+                let abs_path = worktree.read(cx).abs_path();
+                roots
+                    .paths()
+                    .iter()
+                    .any(|root| root.starts_with(&*abs_path))
+            }
+        }
+    }
+
+    /// Project roots that are entirely outside this scope.
+    ///
+    /// Skills and rules are discovered per root and non-recursively, so a root
+    /// is only dropped when no scope entry lies inside it. Empty when unscoped.
+    pub fn excluded_roots(&self, project: &Project, cx: &App) -> Vec<PathBuf> {
+        let Some(roots) = self.0.as_ref() else {
+            return Vec::new();
+        };
+        project
+            .visible_worktrees(cx)
+            .filter(|worktree| {
+                let abs_path = worktree.read(cx).abs_path();
+                !roots
+                    .paths()
+                    .iter()
+                    .any(|root| root.starts_with(&*abs_path))
+            })
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+            .collect()
+    }
+
+    /// Resolve an agent-supplied path against the project, returning `None`
+    /// when the resolved path lands outside the scope. Equivalent to
+    /// `Project::find_project_path` when unscoped.
+    pub fn resolve_project_path(
+        &self,
+        project: &Project,
+        path: impl AsRef<Path>,
+        cx: &App,
+    ) -> Option<ProjectPath> {
+        if self.is_unscoped() {
+            return project.find_project_path(path, cx);
+        }
+        let project_path = project.find_project_path(path, cx)?;
+        let abs_path = project.absolute_path(&project_path, cx)?;
+        self.contains(&abs_path).then_some(project_path)
+    }
+
+    /// Derive a scoped [`ProjectContext`] for the system prompt from the
+    /// project-wide one: keep worktrees the scope intersects, and drop any
+    /// skill whose file lives under an entirely out-of-scope root. Global
+    /// (`~/.agents/skills`) and built-in (`<built-in>`) skills never match an
+    /// excluded root, so they survive. Returns `None` when unscoped.
+    pub fn scoped_project_context(
+        &self,
+        base: &ProjectContext,
+        project: &Project,
+        cx: &App,
+    ) -> Option<ProjectContext> {
+        let roots = self.0.as_ref()?;
+        let excluded_roots = self.excluded_roots(project, cx);
+        let worktrees = base
+            .worktrees
+            .iter()
+            .filter(|worktree| {
+                roots
+                    .paths()
+                    .iter()
+                    .any(|root| root.starts_with(&*worktree.abs_path))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let skills = base
+            .skills()
+            .iter()
+            .filter(|skill| {
+                !excluded_roots
+                    .iter()
+                    .any(|root| Path::new(&skill.location).starts_with(root))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        Some(ProjectContext::new(worktrees).with_skills(skills))
+    }
+}
 
 /// Deserialize a value that may have been provided as a JSON-encoded string
 /// instead of the structured value. Some models occasionally stringify nested
@@ -288,5 +421,41 @@ mod tests {
             );
         }
         assert!(tool_allowed_in_restricted_mode("some_mcp_tool"));
+    }
+
+    #[test]
+    fn project_scope_passes_through_when_unscoped() {
+        let scope = ProjectScope::unscoped();
+        assert!(scope.is_unscoped());
+        assert!(scope.roots().is_none());
+        assert!(scope.contains(Path::new("/root/a/file.txt")));
+        assert!(scope.contains(Path::new("/elsewhere/file.txt")));
+    }
+
+    #[test]
+    fn project_scope_filters_to_its_roots() {
+        let scope = ProjectScope::from_roots(PathList::new(&[
+            PathBuf::from("/root/a"),
+            PathBuf::from("/root/b"),
+        ]));
+        assert!(!scope.is_unscoped());
+        assert!(scope.contains(Path::new("/root/a")));
+        assert!(scope.contains(Path::new("/root/a/src/main.rs")));
+        assert!(scope.contains(Path::new("/root/b/nested/file.txt")));
+        assert!(!scope.contains(Path::new("/root/c/file.txt")));
+        // `starts_with` is component-wise, so a sibling whose name merely shares
+        // a prefix with an in-scope root must not match.
+        assert!(!scope.contains(Path::new("/root/ab/file.txt")));
+    }
+
+    #[test]
+    fn project_scope_accepts_subpath_entries() {
+        let scope = ProjectScope::from_roots(PathList::new(&[PathBuf::from("/root/a/crates")]));
+        assert!(scope.contains(Path::new("/root/a/crates")));
+        assert!(scope.contains(Path::new("/root/a/crates/foo/Cargo.toml")));
+        assert!(!scope.contains(Path::new("/root/a")));
+        assert!(!scope.contains(Path::new("/root/a/other")));
+        // A sibling that merely shares a name prefix must not match.
+        assert!(!scope.contains(Path::new("/root/a/crates-extra/x")));
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
-    AgentTool, ContextServerRegistry, ListDirectoryTool, ListDirectoryToolInput, Template,
-    Templates, Thread, ToolCallEventStream, ToolInput, WriteFileTool, WriteFileToolInput,
+    AgentTool, ContextServerRegistry, ListDirectoryTool, ListDirectoryToolInput, ProjectScope,
+    Template, Templates, Thread, ToolCallEventStream, ToolInput, WriteFileTool, WriteFileToolInput,
 };
 use Role::*;
 use anyhow::{Context as _, Result};
@@ -249,6 +249,7 @@ impl WriteToolTest {
 
         let tool = Arc::new(WriteFileTool::new(
             self.project.clone(),
+            ProjectScope::unscoped(),
             thread.downgrade(),
             action_log,
             language_registry,

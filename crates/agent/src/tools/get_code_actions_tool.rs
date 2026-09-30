@@ -8,7 +8,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::symbol_locator::{CodeActionStore, PendingCodeActions, SymbolLocator};
-use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use crate::{AgentTool, ProjectScope, ToolCallEventStream, ToolInput};
 
 /// Gets the list of available code actions at a symbol location from the language server.
 ///
@@ -25,13 +25,19 @@ pub struct GetCodeActionsToolInput {
 
 pub struct GetCodeActionsTool {
     project: Entity<Project>,
+    scope: ProjectScope,
     code_action_store: CodeActionStore,
 }
 
 impl GetCodeActionsTool {
-    pub fn new(project: Entity<Project>, code_action_store: CodeActionStore) -> Self {
+    pub fn new(
+        project: Entity<Project>,
+        scope: ProjectScope,
+        code_action_store: CodeActionStore,
+    ) -> Self {
         Self {
             project,
+            scope,
             code_action_store,
         }
     }
@@ -66,12 +72,24 @@ impl AgentTool for GetCodeActionsTool {
         cx: &mut App,
     ) -> Task<Result<String, String>> {
         let project = self.project.clone();
+        let scope = self.scope.clone();
         let store = self.code_action_store.clone();
         cx.spawn(async move |cx| {
             let input = input
                 .recv()
                 .await
                 .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+
+            project.read_with(cx, |project, cx| {
+                scope
+                    .resolve_project_path(project, &input.symbol.file_path, cx)
+                    .ok_or_else(|| {
+                        format!(
+                            "Path '{}' isn't in this project or is outside the session's workspace scope.",
+                            input.symbol.file_path
+                        )
+                    })
+            })?;
 
             let resolved = input.symbol.resolve(&project, cx).await?;
 

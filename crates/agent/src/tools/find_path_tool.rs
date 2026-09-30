@@ -1,4 +1,4 @@
-use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use crate::{AgentTool, ProjectScope, ToolCallEventStream, ToolInput};
 use acp_thread::MentionUri;
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::{Result, anyhow};
@@ -90,11 +90,12 @@ const RESULTS_PER_PAGE: usize = 50;
 
 pub struct FindPathTool {
     project: Entity<Project>,
+    scope: ProjectScope,
 }
 
 impl FindPathTool {
-    pub fn new(project: Entity<Project>) -> Self {
-        Self { project }
+    pub fn new(project: Entity<Project>, scope: ProjectScope) -> Self {
+        Self { project, scope }
     }
 }
 
@@ -127,12 +128,13 @@ impl AgentTool for FindPathTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
         let project = self.project.clone();
+        let scope = self.scope.clone();
         cx.spawn(async move |cx| {
             let input = input.recv().await.map_err(|e| FindPathToolOutput::Error {
                 error: e.to_string(),
             })?;
 
-            let search_paths_task = cx.update(|cx| search_paths(&input.glob, project, cx));
+            let search_paths_task = cx.update(|cx| search_paths(&input.glob, project, scope, cx));
 
             let matches = futures::select! {
                 result = search_paths_task.fuse() => result.map_err(|e| FindPathToolOutput::Error { error: e.to_string() })?,
@@ -179,7 +181,12 @@ impl AgentTool for FindPathTool {
     }
 }
 
-fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Result<Vec<PathBuf>>> {
+fn search_paths(
+    glob: &str,
+    project: Entity<Project>,
+    scope: ProjectScope,
+    cx: &mut App,
+) -> Task<Result<Vec<PathBuf>>> {
     let path_style = project.read(cx).path_style(cx);
     let path_matcher = match PathMatcher::new(
         [
@@ -194,6 +201,7 @@ fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Resu
     let snapshots: Vec<_> = project
         .read(cx)
         .worktrees(cx)
+        .filter(|worktree| scope.intersects_worktree(worktree, cx))
         .map(|worktree| worktree.read(cx).snapshot())
         .collect();
 
@@ -202,7 +210,12 @@ fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Resu
         for snapshot in snapshots {
             for entry in snapshot.entries(false, 0) {
                 if path_matcher.is_match(&snapshot.root_name().join(&entry.path)) {
-                    results.push(snapshot.absolutize(&entry.path));
+                    let abs_path = snapshot.absolutize(&entry.path);
+                    // A scope entry may be a subdirectory of a worktree, so
+                    // filter the individual results, not just the worktrees.
+                    if scope.contains(&abs_path) {
+                        results.push(abs_path);
+                    }
                 }
             }
         }
@@ -242,7 +255,14 @@ mod test {
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
 
         let matches = cx
-            .update(|cx| search_paths("root/**/car*", project.clone(), cx))
+            .update(|cx| {
+                search_paths(
+                    "root/**/car*",
+                    project.clone(),
+                    ProjectScope::unscoped(),
+                    cx,
+                )
+            })
             .await
             .unwrap();
         assert_eq!(
@@ -254,7 +274,7 @@ mod test {
         );
 
         let matches = cx
-            .update(|cx| search_paths("**/car*", project.clone(), cx))
+            .update(|cx| search_paths("**/car*", project.clone(), ProjectScope::unscoped(), cx))
             .await
             .unwrap();
         assert_eq!(

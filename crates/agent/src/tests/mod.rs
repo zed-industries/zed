@@ -249,6 +249,7 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
         &self,
         _label: String,
         model: Option<AgentModelId>,
+        _workspace: Option<Vec<String>>,
         _cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         self.subagent_models.borrow_mut().push(model);
@@ -296,6 +297,7 @@ impl crate::ThreadEnvironment for MultiTerminalEnvironment {
         &self,
         _label: String,
         _model: Option<AgentModelId>,
+        _workspace: Option<Vec<String>>,
         _cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         unimplemented!()
@@ -380,7 +382,11 @@ async fn test_terminal_tool_timeout_kills_handle(cx: &mut TestAppContext) {
     let handle = environment.terminal_handle.clone().unwrap();
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::TerminalTool::new(project, environment));
+    let tool = Arc::new(crate::TerminalTool::new(
+        project,
+        ProjectScope::unscoped(),
+        environment,
+    ));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
     let task = cx.update(|cx| {
@@ -448,7 +454,11 @@ async fn test_terminal_tool_without_timeout_does_not_kill_handle(cx: &mut TestAp
     let handle = environment.terminal_handle.clone().unwrap();
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::TerminalTool::new(project, environment));
+    let tool = Arc::new(crate::TerminalTool::new(
+        project,
+        ProjectScope::unscoped(),
+        environment,
+    ));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
     let _task = cx.update(|cx| {
@@ -2650,6 +2660,7 @@ async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext
         .update(cx, |thread, cx| {
             thread.add_tool(crate::TerminalTool::new(
                 thread.project().clone(),
+                ProjectScope::unscoped(),
                 environment,
             ));
             thread.send(ClientUserMessageId::new(), ["run a command"], cx)
@@ -2946,6 +2957,7 @@ async fn test_truncate_while_terminal_tool_running(cx: &mut TestAppContext) {
         .update(cx, |thread, cx| {
             thread.add_tool(crate::TerminalTool::new(
                 thread.project().clone(),
+                ProjectScope::unscoped(),
                 environment,
             ));
             thread.send(message_id.clone(), ["run a command"], cx)
@@ -3018,6 +3030,7 @@ async fn test_cancel_multiple_concurrent_terminal_tools(cx: &mut TestAppContext)
         .update(cx, |thread, cx| {
             thread.add_tool(crate::TerminalTool::new(
                 thread.project().clone(),
+                ProjectScope::unscoped(),
                 environment.clone(),
             ));
             thread.send(ClientUserMessageId::new(), ["run multiple commands"], cx)
@@ -3142,6 +3155,7 @@ async fn test_terminal_tool_stopped_via_terminal_card_button(cx: &mut TestAppCon
         .update(cx, |thread, cx| {
             thread.add_tool(crate::TerminalTool::new(
                 thread.project().clone(),
+                ProjectScope::unscoped(),
                 environment,
             ));
             thread.send(ClientUserMessageId::new(), ["run a command"], cx)
@@ -3243,6 +3257,7 @@ async fn test_terminal_tool_timeout_expires(cx: &mut TestAppContext) {
         .update(cx, |thread, cx| {
             thread.add_tool(crate::TerminalTool::new(
                 thread.project().clone(),
+                ProjectScope::unscoped(),
                 environment,
             ));
             thread.send(
@@ -5603,7 +5618,11 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
         });
 
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
+        let tool = Arc::new(crate::TerminalTool::new(
+            project.clone(),
+            ProjectScope::unscoped(),
+            environment,
+        ));
         let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
         let task = cx.update(|cx| {
@@ -5656,7 +5675,11 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
         });
 
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
+        let tool = Arc::new(crate::TerminalTool::new(
+            project.clone(),
+            ProjectScope::unscoped(),
+            environment,
+        ));
         let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
         let task = cx.update(|cx| {
@@ -5715,7 +5738,11 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
         });
 
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
+        let tool = Arc::new(crate::TerminalTool::new(
+            project.clone(),
+            ProjectScope::unscoped(),
+            environment,
+        ));
         let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
         let _task = cx.update(|cx| {
@@ -5763,7 +5790,11 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
         });
 
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
+        let tool = Arc::new(crate::TerminalTool::new(
+            project.clone(),
+            ProjectScope::unscoped(),
+            environment,
+        ));
         let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
         let task = cx.update(|cx| {
@@ -5815,6 +5846,7 @@ async fn test_spawn_agent_tool_forwards_explicit_model(cx: &mut TestAppContext) 
                     message: "prompt".to_string(),
                     session_id: None,
                     model: Some("fake-corp/cheap-model".to_string()),
+                    workspace: None,
                 }),
                 event_stream,
                 cx,
@@ -5848,6 +5880,7 @@ async fn test_spawn_agent_tool_rejects_model_when_resuming(cx: &mut TestAppConte
                     message: "prompt".to_string(),
                     session_id: Some(acp::SessionId::new("subagent-id")),
                     model: Some("fake-corp/other-model".to_string()),
+                    workspace: None,
                 }),
                 event_stream,
                 cx,
@@ -5916,6 +5949,7 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
         message: "subagent task prompt".to_string(),
         session_id: None,
         model: None,
+        workspace: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),
@@ -6056,6 +6090,7 @@ async fn test_subagent_tool_output_does_not_include_thinking(cx: &mut TestAppCon
         message: "subagent task prompt".to_string(),
         session_id: None,
         model: None,
+        workspace: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),
@@ -6213,6 +6248,7 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
         message: "subagent task prompt".to_string(),
         session_id: None,
         model: None,
+        workspace: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),
@@ -6346,6 +6382,7 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
         message: "do the first task".to_string(),
         session_id: None,
         model: None,
+        workspace: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),
@@ -6416,6 +6453,7 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
         message: "do the follow-up task".to_string(),
         session_id: Some(subagent_session_id.clone()),
         model: None,
+        workspace: None,
     };
     let resume_tool_use = LanguageModelToolUse {
         id: "subagent_2".into(),
@@ -6517,7 +6555,8 @@ async fn test_subagent_thread_inherits_parent_thread_properties(cx: &mut TestApp
         )
     });
 
-    let subagent_thread = cx.new(|cx| Thread::new_subagent(&parent_thread, None, cx));
+    let subagent_thread =
+        cx.new(|cx| Thread::new_subagent(&parent_thread, None, ProjectScope::unscoped(), cx));
     subagent_thread.read_with(cx, |subagent_thread, cx| {
         assert!(subagent_thread.is_subagent());
         assert_eq!(subagent_thread.depth(), 1);
@@ -6588,7 +6627,8 @@ async fn test_subagent_thread_model_selection(cx: &mut TestAppContext) {
         )
     });
 
-    let subagent_thread = cx.new(|cx| Thread::new_subagent(&parent_thread, None, cx));
+    let subagent_thread =
+        cx.new(|cx| Thread::new_subagent(&parent_thread, None, ProjectScope::unscoped(), cx));
     let explicit_selection = LanguageModelSelection {
         provider: LanguageModelProviderSetting("fake-corp".to_string()),
         model: "explicit-model".to_string(),
@@ -6596,8 +6636,14 @@ async fn test_subagent_thread_model_selection(cx: &mut TestAppContext) {
         effort: None,
         speed: None,
     };
-    let explicit_subagent_thread =
-        cx.new(|cx| Thread::new_subagent(&parent_thread, Some(&explicit_selection), cx));
+    let explicit_subagent_thread = cx.new(|cx| {
+        Thread::new_subagent(
+            &parent_thread,
+            Some(&explicit_selection),
+            ProjectScope::unscoped(),
+            cx,
+        )
+    });
 
     subagent_thread.read_with(cx, |subagent_thread, _cx| {
         assert_eq!(
@@ -6681,7 +6727,8 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
         thread
     });
     let deep_subagent_thread = cx.new(|cx| {
-        let mut thread = Thread::new_subagent(&deep_parent_thread, None, cx);
+        let mut thread =
+            Thread::new_subagent(&deep_parent_thread, None, ProjectScope::unscoped(), cx);
         thread.add_default_tools(environment, cx);
         thread
     });
@@ -6943,7 +6990,7 @@ async fn test_parent_cancel_stops_subagent(cx: &mut TestAppContext) {
         )
     });
 
-    let subagent = cx.new(|cx| Thread::new_subagent(&parent, None, cx));
+    let subagent = cx.new(|cx| Thread::new_subagent(&parent, None, ProjectScope::unscoped(), cx));
 
     parent.update(cx, |thread, _cx| {
         thread.register_running_subagent(subagent.downgrade());
@@ -7386,6 +7433,7 @@ async fn test_subagent_error_propagation(cx: &mut TestAppContext) {
         message: "subagent task prompt".to_string(),
         session_id: None,
         model: None,
+        workspace: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),
@@ -7513,6 +7561,7 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
     #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::EditFileTool::new(
         project.clone(),
+        ProjectScope::unscoped(),
         thread.downgrade(),
         action_log,
         language_registry,
@@ -7565,7 +7614,11 @@ async fn test_delete_path_tool_deny_rule_blocks_deletion(cx: &mut TestAppContext
     let action_log = cx.new(|_cx| action_log::ActionLog::new(project.clone()));
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::DeletePathTool::new(project, action_log));
+    let tool = Arc::new(crate::DeletePathTool::new(
+        project,
+        ProjectScope::unscoped(),
+        action_log,
+    ));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
     let task = cx.update(|cx| {
@@ -7617,7 +7670,7 @@ async fn test_move_path_tool_denies_if_destination_denied(cx: &mut TestAppContex
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::MovePathTool::new(project));
+    let tool = Arc::new(crate::MovePathTool::new(project, ProjectScope::unscoped()));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
     let task = cx.update(|cx| {
@@ -7673,7 +7726,7 @@ async fn test_move_path_tool_denies_if_source_denied(cx: &mut TestAppContext) {
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::MovePathTool::new(project));
+    let tool = Arc::new(crate::MovePathTool::new(project, ProjectScope::unscoped()));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
     let task = cx.update(|cx| {
@@ -7731,7 +7784,7 @@ async fn test_copy_path_tool_deny_rule_blocks_copy(cx: &mut TestAppContext) {
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::CopyPathTool::new(project));
+    let tool = Arc::new(crate::CopyPathTool::new(project, ProjectScope::unscoped()));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
     let task = cx.update(|cx| {
@@ -7839,6 +7892,7 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
     #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::EditFileTool::new(
         project,
+        ProjectScope::unscoped(),
         thread.downgrade(),
         action_log,
         language_registry,
@@ -7907,6 +7961,7 @@ async fn test_edit_file_tool_allow_still_prompts_for_local_settings(cx: &mut Tes
     #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::EditFileTool::new(
         project,
+        ProjectScope::unscoped(),
         thread.downgrade(),
         action_log,
         language_registry,
@@ -9324,7 +9379,7 @@ impl SubagentCompactionTest {
             acp_thread: acp_thread.downgrade(),
         };
         let handle = cx
-            .update(|cx| environment.create_subagent_thread("subagent".to_string(), None, cx))
+            .update(|cx| environment.create_subagent_thread("subagent".to_string(), None, None, cx))
             .unwrap();
         let thread = agent.read_with(cx, |agent, _| {
             agent.sessions.get(&handle.id()).unwrap().thread.clone()

@@ -4,7 +4,7 @@ use super::tool_permissions::{
     sensitive_settings_kind,
 };
 use crate::{
-    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
+    AgentTool, ProjectScope, ToolCallEventStream, ToolInput, ToolPermissionDecision,
     authorize_with_sensitive_settings, decide_permission_for_paths,
 };
 use agent_client_protocol::schema::v1 as acp;
@@ -50,11 +50,12 @@ pub struct CopyPathToolInput {
 
 pub struct CopyPathTool {
     project: Entity<Project>,
+    scope: ProjectScope,
 }
 
 impl CopyPathTool {
-    pub fn new(project: Entity<Project>) -> Self {
-        Self { project }
+    pub fn new(project: Entity<Project>, scope: ProjectScope) -> Self {
+        Self { project, scope }
     }
 }
 
@@ -89,6 +90,7 @@ impl AgentTool for CopyPathTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
         let project = self.project.clone();
+        let scope = self.scope.clone();
         cx.spawn(async move |cx| {
             let input = input.recv().await.map_err(|e| e.to_string())?;
             let paths = vec![input.source_path.clone(), input.destination_path.clone()];
@@ -176,8 +178,8 @@ impl AgentTool for CopyPathTool {
                     global_source_path
                 } else {
                     project.read_with(cx, |project, cx| {
-                        let project_path = project.find_project_path(&input.source_path, cx).ok_or_else(|| {
-                            format!("Source path {} was not found in the project.", input.source_path)
+                        let project_path = scope.resolve_project_path(project, &input.source_path, cx).ok_or_else(|| {
+                            format!("Source path {} was not found in the project or is outside the session's workspace scope.", input.source_path)
                         })?;
                         project.entry_for_path(&project_path, cx).ok_or_else(|| {
                             format!("Source path {} was not found in the project.", input.source_path)
@@ -193,9 +195,9 @@ impl AgentTool for CopyPathTool {
                     global_destination_path
                 } else {
                     project.read_with(cx, |project, cx| {
-                        let project_path = project.find_project_path(&input.destination_path, cx).ok_or_else(|| {
+                        let project_path = scope.resolve_project_path(project, &input.destination_path, cx).ok_or_else(|| {
                             format!(
-                                "Destination path {} was outside the project.",
+                                "Destination path {} was outside the project or the session's workspace scope.",
                                 input.destination_path
                             )
                         })?;
@@ -229,19 +231,23 @@ impl AgentTool for CopyPathTool {
             }
 
             let copy_task = project.update(cx, |project, cx| {
-                match project
-                    .find_project_path(&input.source_path, cx)
+                match scope
+                    .resolve_project_path(project, &input.source_path, cx)
                     .and_then(|project_path| project.entry_for_path(&project_path, cx))
                 {
-                    Some(entity) => match project.find_project_path(&input.destination_path, cx) {
-                        Some(project_path) => Ok(project.copy_entry(entity.id, project_path, cx)),
-                        None => Err(format!(
-                            "Destination path {} was outside the project.",
-                            input.destination_path
-                        )),
-                    },
+                    Some(entity) => {
+                        match scope.resolve_project_path(project, &input.destination_path, cx) {
+                            Some(project_path) => {
+                                Ok(project.copy_entry(entity.id, project_path, cx))
+                            }
+                            None => Err(format!(
+                                "Destination path {} was outside the project or the session's workspace scope.",
+                                input.destination_path
+                            )),
+                        }
+                    }
                     None => Err(format!(
-                        "Source path {} was not found in the project.",
+                        "Source path {} was not found in the project or is outside the session's workspace scope.",
                         input.source_path
                     )),
                 }
@@ -302,7 +308,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(CopyPathTool::new(project));
+        let tool = Arc::new(CopyPathTool::new(project, ProjectScope::unscoped()));
         let input_path = PathBuf::from("~")
             .join(".agents")
             .join("skills")
@@ -368,7 +374,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(CopyPathTool::new(project));
+        let tool = Arc::new(CopyPathTool::new(project, ProjectScope::unscoped()));
         let destination_path = PathBuf::from("~")
             .join(".agents")
             .join("skills")
@@ -450,7 +456,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(CopyPathTool::new(project));
+        let tool = Arc::new(CopyPathTool::new(project, ProjectScope::unscoped()));
 
         let input = CopyPathToolInput {
             source_path: "project/link_to_external".into(),
@@ -507,7 +513,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(CopyPathTool::new(project));
+        let tool = Arc::new(CopyPathTool::new(project, ProjectScope::unscoped()));
 
         let input = CopyPathToolInput {
             source_path: "project/link_to_external".into(),
@@ -559,7 +565,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(CopyPathTool::new(project));
+        let tool = Arc::new(CopyPathTool::new(project, ProjectScope::unscoped()));
 
         let input = CopyPathToolInput {
             source_path: "project/link_to_external".into(),
@@ -638,7 +644,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(CopyPathTool::new(project));
+        let tool = Arc::new(CopyPathTool::new(project, ProjectScope::unscoped()));
 
         let input = CopyPathToolInput {
             source_path: "project/link_to_external".into(),

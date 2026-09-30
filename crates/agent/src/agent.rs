@@ -844,7 +844,11 @@ impl NativeAgent {
             // model — without this, the catalog and tool would drift out
             // of sync until the session was reopened.
             thread.add_tool(SkillTool::with_body_resolver(
-                skills_resolver_for_project(weak.clone(), project_id),
+                skills_resolver_for_project(
+                    weak.clone(),
+                    project_id,
+                    thread.workspace_scope().clone(),
+                ),
                 skill_body_resolver_for_project(project.clone(), self.fs.clone()),
             ));
         });
@@ -3228,11 +3232,75 @@ pub struct NativeThreadEnvironment {
     acp_thread: WeakEntity<AcpThread>,
 }
 
+/// Resolve a subagent's requested `workspace` entries against the parent's
+/// scope. Each entry names a directory inside the project — an absolute path, a
+/// worktree root name, or a path relative to a worktree root such as
+/// `<root-name>/crates` — and is resolved with the same rules the file tools
+/// use for their paths. `None` inherits the parent's scope; a subagent may
+/// narrow the scope but never widen it.
+fn resolve_workspace_scope(
+    parent_scope: &ProjectScope,
+    requested: Option<Vec<String>>,
+    project: &Entity<Project>,
+    cx: &App,
+) -> Result<ProjectScope> {
+    let Some(requested) = requested else {
+        return Ok(parent_scope.clone());
+    };
+    anyhow::ensure!(
+        !requested.is_empty(),
+        "`workspace` must name at least one directory inside the project"
+    );
+
+    let project_ref = project.read(cx);
+    let worktrees = project_ref.visible_worktrees(cx).collect::<Vec<_>>();
+    let available_roots = || {
+        worktrees
+            .iter()
+            .map(|worktree| worktree.read(cx).root_name().as_unix_str().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let mut roots = Vec::with_capacity(requested.len());
+    for raw in &requested {
+        let project_path = project_ref.find_project_path(raw, cx).ok_or_else(|| {
+            anyhow!(
+                "`workspace` entry `{raw}` is not a path inside this project. \
+                 Available roots: {}",
+                available_roots()
+            )
+        })?;
+        anyhow::ensure!(
+            matches!(
+                project_ref.entry_for_path(&project_path, cx),
+                Some(entry) if entry.is_dir()
+            ),
+            "`workspace` entry `{raw}` is not a directory in this project"
+        );
+        let abs_path = project_ref
+            .absolute_path(&project_path, cx)
+            .ok_or_else(|| {
+                anyhow!("`workspace` entry `{raw}` could not be resolved to an absolute path")
+            })?;
+
+        // A subagent may narrow the parent's scope, never widen it.
+        anyhow::ensure!(
+            parent_scope.contains(&abs_path),
+            "`workspace` entry `{raw}` is outside the parent session's scope"
+        );
+        roots.push(abs_path);
+    }
+
+    Ok(ProjectScope::from_roots(PathList::new(&roots)))
+}
+
 impl NativeThreadEnvironment {
     pub(crate) fn create_subagent_thread(
         &self,
         label: String,
         model: Option<AgentModelId>,
+        workspace: Option<Vec<String>>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         let model = if let Some(model_id) = model {
@@ -3262,8 +3330,16 @@ impl NativeThreadEnvironment {
             ));
         }
 
+        let workspace_scope = resolve_workspace_scope(
+            parent_thread.workspace_scope(),
+            workspace,
+            &parent_thread.project,
+            cx,
+        )?;
+
         let subagent_thread: Entity<Thread> = cx.new(|cx| {
-            let mut thread = Thread::new_subagent(&parent_thread_entity, model.as_ref(), cx);
+            let mut thread =
+                Thread::new_subagent(&parent_thread_entity, model.as_ref(), workspace_scope, cx);
             thread.set_title(label.into(), cx);
             thread
         });
@@ -3459,9 +3535,10 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         &self,
         label: String,
         model: Option<AgentModelId>,
+        workspace: Option<Vec<String>>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
-        self.create_subagent_thread(label, model, cx)
+        self.create_subagent_thread(label, model, workspace, cx)
     }
 
     fn resume_subagent(
@@ -3767,16 +3844,35 @@ fn select_catalog_skills(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadi
 pub fn skills_resolver_for_project(
     weak_agent: WeakEntity<NativeAgent>,
     project_id: EntityId,
+    scope: ProjectScope,
 ) -> impl Fn(&App) -> Arc<Vec<Skill>> + Send + Sync + 'static {
     move |cx: &App| {
         weak_agent
             .upgrade()
             .and_then(|agent| {
-                agent
-                    .read(cx)
-                    .projects
-                    .get(&project_id)
-                    .map(|state| Arc::new(apply_skill_overrides(&state.skills)))
+                let agent = agent.read(cx);
+                let state = agent.projects.get(&project_id)?;
+                let mut skills = apply_skill_overrides(&state.skills);
+                if let Some(roots) = scope.roots() {
+                    let excluded_roots: Vec<PathBuf> = state
+                        .project
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                        .filter(|abs_path| {
+                            !roots.paths().iter().any(|root| abs_path.starts_with(root))
+                        })
+                        .collect();
+                    // A skill is dropped when its file lives under an out-of-scope
+                    // project root. Global (`~/.agents/skills`) and built-in
+                    // (`<built-in>`) skills are never under a project root.
+                    skills.retain(|skill| {
+                        !excluded_roots
+                            .iter()
+                            .any(|root| skill.skill_file_path.starts_with(root))
+                    });
+                }
+                Some(Arc::new(skills))
             })
             .unwrap_or_else(|| Arc::new(Vec::new()))
     }
@@ -4008,6 +4104,7 @@ mod internal_tests {
                 environment.create_subagent_thread(
                     "subagent".to_string(),
                     Some(AgentModelId::from("fake-corp/subagent-model".to_string())),
+                    None,
                     cx,
                 )
             })
@@ -4023,6 +4120,55 @@ mod internal_tests {
             // intentionally filtered while the model selection is applied.
             assert_eq!(thread.speed(), None);
         });
+    }
+
+    #[gpui::test]
+    async fn test_resolve_workspace_scope_accepts_relative_path(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "crates": { "foo": { "Cargo.toml": "" } },
+                "other.txt": ""
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let root_abs = cx.read(|cx| {
+            project
+                .read(cx)
+                .visible_worktrees(cx)
+                .next()
+                .expect("project should have one worktree")
+                .read(cx)
+                .abs_path()
+                .to_path_buf()
+        });
+
+        let scope = cx
+            .update(|cx| {
+                resolve_workspace_scope(
+                    &ProjectScope::unscoped(),
+                    Some(vec!["root/crates".to_string()]),
+                    &project,
+                    cx,
+                )
+            })
+            .expect("relative sub-path entry should resolve");
+        assert!(scope.contains(&root_abs.join("crates/foo/Cargo.toml")));
+        assert!(!scope.contains(&root_abs.join("other.txt")));
+
+        let unknown = cx.update(|cx| {
+            resolve_workspace_scope(
+                &ProjectScope::unscoped(),
+                Some(vec!["root/nope".to_string()]),
+                &project,
+                cx,
+            )
+        });
+        assert!(unknown.is_err(), "unknown workspace entry should fail");
     }
 
     #[cfg(target_os = "macos")]
@@ -4062,7 +4208,11 @@ mod internal_tests {
         });
 
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = Arc::new(SandboxedTerminalTool::new(project, environment));
+        let tool = Arc::new(SandboxedTerminalTool::new(
+            project,
+            ProjectScope::unscoped(),
+            environment,
+        ));
         let (event_stream, mut receiver) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.run(
@@ -5828,8 +5978,13 @@ mod internal_tests {
         // test can verify resolution behavior directly without setting
         // up the full tool-call plumbing (`ToolInput`,
         // `ToolCallEventStream`, authorization channel, ...).
-        let resolve =
-            cx.update(|_cx| super::skills_resolver_for_project(agent.downgrade(), project_id));
+        let resolve = cx.update(|_cx| {
+            super::skills_resolver_for_project(
+                agent.downgrade(),
+                project_id,
+                ProjectScope::unscoped(),
+            )
+        });
 
         // Sanity check: before any skills exist, the resolver returns an
         // empty list — NOT the snapshot that `Thread::new` would have
@@ -5960,8 +6115,13 @@ mod internal_tests {
         let project_id = project.entity_id();
 
         // Sanity check: resolving against the parent's project sees the skill.
-        let parent_resolve =
-            cx.update(|_cx| super::skills_resolver_for_project(agent.downgrade(), project_id));
+        let parent_resolve = cx.update(|_cx| {
+            super::skills_resolver_for_project(
+                agent.downgrade(),
+                project_id,
+                ProjectScope::unscoped(),
+            )
+        });
         cx.update(|cx| {
             let all = parent_resolve(cx);
             let parent_skills: Vec<_> = all
@@ -5988,8 +6148,9 @@ mod internal_tests {
 
         // Build the subagent thread the same way
         // `NativeThreadEnvironment::create_subagent_thread` does.
-        let subagent_thread =
-            cx.update(|cx| cx.new(|cx| Thread::new_subagent(&parent_thread, None, cx)));
+        let subagent_thread = cx.update(|cx| {
+            cx.new(|cx| Thread::new_subagent(&parent_thread, None, ProjectScope::unscoped(), cx))
+        });
 
         // Run the subagent through the production registration path.
         // This is what installs the `SkillTool` on the thread.
@@ -6011,8 +6172,13 @@ mod internal_tests {
         // on the same `project_id` the parent used, so it sees the same
         // skill set. We check this by constructing an equivalent resolver
         // against the same project_id and asserting it matches.
-        let subagent_resolve = cx
-            .update(|_cx| super::skills_resolver_for_project(agent.downgrade(), parent_project_id));
+        let subagent_resolve = cx.update(|_cx| {
+            super::skills_resolver_for_project(
+                agent.downgrade(),
+                parent_project_id,
+                ProjectScope::unscoped(),
+            )
+        });
         cx.update(|cx| {
             let all = subagent_resolve(cx);
             let subagent_skills: Vec<_> = all
@@ -7527,10 +7693,10 @@ mod internal_tests {
         };
 
         let first_subagent = cx
-            .update(|cx| environment.create_subagent_thread("first".to_string(), None, cx))
+            .update(|cx| environment.create_subagent_thread("first".to_string(), None, None, cx))
             .unwrap();
         let second_subagent = cx
-            .update(|cx| environment.create_subagent_thread("second".to_string(), None, cx))
+            .update(|cx| environment.create_subagent_thread("second".to_string(), None, None, cx))
             .unwrap();
         cx.run_until_parked();
 

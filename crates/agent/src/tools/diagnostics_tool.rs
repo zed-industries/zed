@@ -1,4 +1,4 @@
-use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use crate::{AgentTool, ProjectScope, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema::v1 as acp;
 use futures::{Future, FutureExt as _};
 use gpui::{App, AsyncApp, Entity, Task};
@@ -59,11 +59,12 @@ pub struct DiagnosticsToolInput {
 
 pub struct DiagnosticsTool {
     project: Entity<Project>,
+    scope: ProjectScope,
 }
 
 impl DiagnosticsTool {
-    pub fn new(project: Entity<Project>) -> Self {
-        Self { project }
+    pub fn new(project: Entity<Project>, scope: ProjectScope) -> Self {
+        Self { project, scope }
     }
 }
 
@@ -91,6 +92,7 @@ fn freshness_message(refreshed: bool) -> &'static str {
 /// read cached diagnostics), or `Err` if cancelled by the user.
 async fn pull_diagnostics(
     project: &Entity<Project>,
+    scope: &ProjectScope,
     path: Option<&Path>,
     event_stream: &ToolCallEventStream,
     cx: &mut AsyncApp,
@@ -98,8 +100,11 @@ async fn pull_diagnostics(
     match path {
         Some(path) => {
             let open_buffer_task = project.update(cx, |project, cx| {
-                let Some(project_path) = project.find_project_path(path, cx) else {
-                    return Err(format!("Could not find path {} in project", path.display()));
+                let Some(project_path) = scope.resolve_project_path(project, path, cx) else {
+                    return Err(format!(
+                        "Could not find path {} in the project or the session's workspace scope",
+                        path.display()
+                    ));
                 };
                 Ok(project.open_buffer(project_path, cx))
             })?;
@@ -164,18 +169,26 @@ impl AgentTool for DiagnosticsTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
         let project = self.project.clone();
+        let scope = self.scope.clone();
         cx.spawn(async move |cx| {
             let input = input.recv().await.map_err(|e| e.to_string())?;
 
             match input.path {
                 Some(ref path) if !path.is_empty() => {
-                    let refreshed =
-                        pull_diagnostics(&project, Some(Path::new(path)), &event_stream, cx)
-                            .await?;
+                    let refreshed = pull_diagnostics(
+                        &project,
+                        &scope,
+                        Some(Path::new(path)),
+                        &event_stream,
+                        cx,
+                    )
+                    .await?;
 
                     let open_buffer_task = project.update(cx, |project, cx| {
-                        let Some(project_path) = project.find_project_path(path, cx) else {
-                            return Err(format!("Could not find path {path} in project"));
+                        let Some(project_path) = scope.resolve_project_path(project, path, cx) else {
+                            return Err(format!(
+                                "Could not find path {path} in the project or the session's workspace scope"
+                            ));
                         };
                         Ok(project.open_buffer(project_path, cx))
                     })?;
@@ -216,7 +229,8 @@ impl AgentTool for DiagnosticsTool {
                     }
                 }
                 _ => {
-                    let refreshed = pull_diagnostics(&project, None, &event_stream, cx).await?;
+                    let refreshed =
+                        pull_diagnostics(&project, &scope, None, &event_stream, cx).await?;
 
                     let (output, has_diagnostics) = project.read_with(cx, |project, cx| {
                         let mut output = String::new();

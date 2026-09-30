@@ -2,7 +2,7 @@ use std::fmt::Write;
 use std::sync::Arc;
 
 use super::symbol_locator::{LocationDisplay, SymbolLocator};
-use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use crate::{AgentTool, ProjectScope, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema::v1 as acp;
 use gpui::{App, Entity, SharedString, Task};
 use project::Project;
@@ -22,11 +22,12 @@ pub struct FindReferencesToolInput {
 
 pub struct FindReferencesTool {
     project: Entity<Project>,
+    scope: ProjectScope,
 }
 
 impl FindReferencesTool {
-    pub fn new(project: Entity<Project>) -> Self {
-        Self { project }
+    pub fn new(project: Entity<Project>, scope: ProjectScope) -> Self {
+        Self { project, scope }
     }
 }
 
@@ -59,11 +60,23 @@ impl AgentTool for FindReferencesTool {
         cx: &mut App,
     ) -> Task<Result<String, String>> {
         let project = self.project.clone();
+        let scope = self.scope.clone();
         cx.spawn(async move |cx| {
             let input = input
                 .recv()
                 .await
                 .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+
+            project.read_with(cx, |project, cx| {
+                scope
+                    .resolve_project_path(project, &input.symbol.file_path, cx)
+                    .ok_or_else(|| {
+                        format!(
+                            "Path '{}' isn't in this project or is outside the session's workspace scope.",
+                            input.symbol.file_path
+                        )
+                    })
+            })?;
 
             let resolved = input.symbol.resolve(&project, cx).await?;
 

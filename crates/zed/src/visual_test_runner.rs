@@ -2059,7 +2059,12 @@ fn run_agent_thread_view_test(
     let action_log = cx.update(|cx| cx.new(|_| action_log::ActionLog::new(project.clone())));
 
     // Create the ReadFileTool
-    let tool = Arc::new(agent::ReadFileTool::new(project.clone(), action_log, true));
+    let tool = Arc::new(agent::ReadFileTool::new(
+        project.clone(),
+        agent::ProjectScope::unscoped(),
+        action_log,
+        true,
+    ));
 
     // Create a test event stream to capture tool output
     let (event_stream, mut event_receiver) = agent::ToolCallEventStream::test();

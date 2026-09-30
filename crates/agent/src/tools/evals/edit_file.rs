@@ -1,7 +1,7 @@
 use crate::tools::edit_file_tool::*;
 use crate::{
-    AgentTool, ContextServerRegistry, EditFileTool, GrepTool, GrepToolInput, ReadFileTool,
-    ReadFileToolInput, Template, Templates, Thread, ToolCallEventStream, ToolInput,
+    AgentTool, ContextServerRegistry, EditFileTool, GrepTool, GrepToolInput, ProjectScope,
+    ReadFileTool, ReadFileToolInput, Template, Templates, Thread, ToolCallEventStream, ToolInput,
 };
 use Role::*;
 use anyhow::{Context as _, Result};
@@ -423,6 +423,7 @@ impl EditToolTest {
 
         let tool = Arc::new(EditFileTool::new(
             self.project.clone(),
+            ProjectScope::unscoped(),
             thread.downgrade(),
             action_log,
             language_registry,
