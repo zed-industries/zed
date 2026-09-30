@@ -738,6 +738,41 @@ impl AgentMessage {
         }
         messages
     }
+
+    fn tool_uses(&self) -> impl Iterator<Item = &LanguageModelToolUse> {
+        self.content.iter().filter_map(|content| match content {
+            AgentMessageContent::ToolUse(tool_use) => Some(tool_use),
+            _ => None,
+        })
+    }
+
+    fn has_tool_use(&self, tool_use_id: &LanguageModelToolUseId) -> bool {
+        self.tool_uses().any(|tool_use| &tool_use.id == tool_use_id)
+    }
+
+    fn has_unanswered_tool_use(&self) -> bool {
+        self.tool_uses()
+            .any(|tool_use| !self.tool_results.contains_key(&tool_use.id))
+    }
+
+    fn insert_canceled_tool_results(&mut self) {
+        for content in &self.content {
+            let AgentMessageContent::ToolUse(tool_use) = content else {
+                continue;
+            };
+            self.tool_results
+                .entry(tool_use.id.clone())
+                .or_insert_with(|| LanguageModelToolResult {
+                    tool_use_id: tool_use.id.clone(),
+                    tool_name: tool_use.name.clone(),
+                    is_error: true,
+                    content: vec![LanguageModelToolResultContent::Text(
+                        TOOL_CANCELED_MESSAGE.into(),
+                    )],
+                    output: None,
+                });
+        }
+    }
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1802,6 +1837,11 @@ impl Thread {
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
+        // The thread may have been saved while tools from its last round were
+        // still running. Nothing will answer them now.
+        let mut messages = db_thread.messages;
+        cancel_unanswered_tool_uses(&mut messages);
+
         Self {
             id,
             prompt_id: PromptId::new(),
@@ -1814,7 +1854,7 @@ impl Thread {
             title_generation_error: None,
             pending_summary_generation: None,
             summary: db_thread.detailed_summary,
-            messages: db_thread.messages,
+            messages,
             user_store: project.read(cx).user_store(),
             running_turn: None,
             end_turn_at_next_boundary: false,
@@ -3074,7 +3114,12 @@ impl Thread {
                     let fallback_name = fallback.name().0.clone();
                     this.update(cx, |this, cx| {
                         this.pending_message = None;
+                        // Messages `StartMessage` already pushed stay, as they
+                        // did when it answered their tool uses itself; removing
+                        // them would reuse their tool-call ids in the UI.
+                        cancel_unanswered_tool_uses(&mut this.messages);
                         this.set_model(fallback.clone(), cx);
+                        cx.notify();
                     })?;
                     event_stream.send_retry(acp_thread::RetryStatus {
                         last_error: "Safety filter triggered".into(),
@@ -3361,12 +3406,40 @@ impl Thread {
                 .raw_output(tool_result.output.clone()),
             None,
         );
-        this.update(cx, |this, _cx| {
-            this.pending_message()
-                .tool_results
-                .insert(tool_result.tool_use_id.clone(), tool_result)
+        this.update(cx, |this, cx| {
+            this.insert_tool_result(owning_message_ix, tool_result, cx)
         })?;
         Ok(())
+    }
+
+    /// Records a tool result on the agent message that owns its tool use.
+    ///
+    /// The owning message may already have been flushed when the model started
+    /// another message in the same round, so the result can't simply go on the
+    /// pending message.
+    fn insert_tool_result(
+        &mut self,
+        owning_message_ix: usize,
+        tool_result: LanguageModelToolResult,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(message) = self.messages.get_mut(owning_message_ix)
+            && let Message::Agent(agent_message) = &**message
+            && agent_message.has_tool_use(&tool_result.tool_use_id)
+        {
+            let mut agent_message = agent_message.clone();
+            agent_message
+                .tool_results
+                .insert(tool_result.tool_use_id.clone(), tool_result);
+            *message = Arc::new(Message::Agent(agent_message));
+            // Pushing the message notified observers before this result
+            // existed, and nothing else may change afterwards.
+            cx.notify();
+        } else {
+            self.pending_message()
+                .tool_results
+                .insert(tool_result.tool_use_id.clone(), tool_result);
+        }
     }
 
     fn handle_completion_error(
@@ -3434,7 +3507,9 @@ impl Thread {
 
         match event {
             StartMessage { .. } => {
-                self.flush_pending_message(cx);
+                // Tools from the flushed message may still be running; their
+                // results are recorded on it when they finish.
+                self.push_pending_message(cx);
                 self.pending_message = Some(AgentMessage::default());
             }
             Text(new_text) => self.handle_text_event(new_text, event_stream),
@@ -4072,34 +4147,22 @@ impl Thread {
         self.pending_message.get_or_insert_default()
     }
 
+    /// Pushes the pending message and answers every tool use that is still
+    /// without a result as canceled.
     fn flush_pending_message(&mut self, cx: &mut Context<Self>) {
-        let Some(mut message) = self.pending_message.take() else {
+        self.push_pending_message(cx);
+        if cancel_unanswered_tool_uses(&mut self.messages) {
+            cx.notify();
+        }
+    }
+
+    fn push_pending_message(&mut self, cx: &mut Context<Self>) {
+        let Some(message) = self.pending_message.take() else {
             return;
         };
 
         if message.content.is_empty() {
             return;
-        }
-
-        for content in &message.content {
-            let AgentMessageContent::ToolUse(tool_use) = content else {
-                continue;
-            };
-
-            if !message.tool_results.contains_key(&tool_use.id) {
-                message.tool_results.insert(
-                    tool_use.id.clone(),
-                    LanguageModelToolResult {
-                        tool_use_id: tool_use.id.clone(),
-                        tool_name: tool_use.name.clone(),
-                        is_error: true,
-                        content: vec![LanguageModelToolResultContent::Text(
-                            TOOL_CANCELED_MESSAGE.into(),
-                        )],
-                        output: None,
-                    },
-                );
-            }
         }
 
         self.messages.push(Arc::new(Message::Agent(message)));
@@ -4904,6 +4967,27 @@ impl RunningTurn {
         self.event_stream.send_canceled();
         self._task
     }
+}
+
+/// Answers tool uses still without a result in the trailing agent messages as
+/// canceled, returning whether any message changed.
+///
+/// `StartMessage` pushes a round's earlier messages before their tools finish,
+/// so this covers every agent message since the last non-agent one.
+fn cancel_unanswered_tool_uses(messages: &mut [Arc<Message>]) -> bool {
+    let mut changed = false;
+    for message in messages.iter_mut().rev() {
+        let Message::Agent(agent_message) = &**message else {
+            break;
+        };
+        if agent_message.has_unanswered_tool_use() {
+            let mut agent_message = agent_message.clone();
+            agent_message.insert_canceled_tool_results();
+            *message = Arc::new(Message::Agent(agent_message));
+            changed = true;
+        }
+    }
+    changed
 }
 
 pub(crate) fn messages_to_markdown(messages: &[Arc<Message>]) -> String {

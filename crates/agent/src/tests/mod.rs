@@ -813,6 +813,323 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_tool_result_stays_with_its_message_after_start_message(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        fake,
+        thread,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    thread.update(cx, |thread, _| thread.add_tool(DelayTool));
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Wait a bit"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let tool_use = LanguageModelToolUse {
+        id: "tool_1".into(),
+        name: DelayTool::NAME.into(),
+        raw_input: json!({"ms": 100}).to_string(),
+        input: language_model::LanguageModelToolUseInput::Json(json!({"ms": 100})),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::ToolUse(tool_use.clone()),
+    );
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::StartMessage {
+            message_id: "message_2".into(),
+        },
+    );
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::Text("Waiting.".into()),
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+    assert!(
+        fake.pending_completions().is_empty(),
+        "the next request should wait for the tool"
+    );
+
+    cx.executor().advance_clock(Duration::from_millis(100));
+    cx.run_until_parked();
+
+    let completion = fake.pending_completions().pop().unwrap();
+    assert_eq!(
+        completion.messages[1..],
+        vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["Wait a bit".into()],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::ToolUse(tool_use)],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::ToolResult(LanguageModelToolResult {
+                    tool_use_id: "tool_1".into(),
+                    tool_name: DelayTool::NAME.into(),
+                    is_error: false,
+                    content: vec!["Ding".into()],
+                    output: Some("Ding".into()),
+                })],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec!["Waiting.".into()],
+                cache: true,
+                reasoning_details: None,
+            },
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_late_tool_result_on_pushed_message_notifies_observers(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        fake,
+        thread,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    thread.update(cx, |thread, _| thread.add_tool(DelayTool));
+    // Autosave observes the thread and saves whatever it holds when notified.
+    let observed_markdown = Rc::new(std::cell::RefCell::new(String::new()));
+    let _subscription = cx.update(|cx| {
+        let observed_markdown = observed_markdown.clone();
+        cx.observe(&thread, move |thread, cx| {
+            *observed_markdown.borrow_mut() = thread.read(cx).to_markdown();
+        })
+    });
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Wait a bit"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: DelayTool::NAME.into(),
+            raw_input: json!({"ms": 100}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({"ms": 100})),
+            is_input_complete: true,
+            thought_signature: None,
+        }),
+    );
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::StartMessage {
+            message_id: "message_2".into(),
+        },
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+    assert!(!observed_markdown.borrow().contains("Ding"));
+
+    cx.executor().advance_clock(Duration::from_millis(100));
+    cx.run_until_parked();
+    assert!(
+        observed_markdown
+            .borrow()
+            .contains("**Tool Result**: delay (ID: tool_1)"),
+        "observers should see the late result:\n{}",
+        observed_markdown.borrow()
+    );
+}
+
+#[gpui::test]
+async fn test_refusal_fallback_answers_messages_pushed_by_the_refused_response(
+    cx: &mut TestAppContext,
+) {
+    let ThreadTest { fake, thread, .. } = setup(cx, TestModel::Fake).await;
+    let model = fake.update_model("fake", |model| {
+        model.refusal_fallback_model_id = Some("fallback");
+    });
+    let fallback = fake.model("fallback");
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+        thread.add_tool(DelayTool);
+    });
+
+    let events = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let refused_request = fake.pending_completions_for(&model).pop().unwrap();
+
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::Text("Let me wait.".into()),
+    );
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: DelayTool::NAME.into(),
+            raw_input: json!({"ms": 100}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({"ms": 100})),
+            is_input_complete: true,
+            thought_signature: None,
+        }),
+    );
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::StartMessage {
+            message_id: "message_2".into(),
+        },
+    );
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::Stop(StopReason::Refusal),
+    );
+    cx.run_until_parked();
+
+    let fallback_request = fake.pending_completions_for(&fallback).pop().unwrap();
+    let refused_count = refused_request.messages.len();
+    let contents = |messages: &[LanguageModelRequestMessage]| {
+        messages
+            .iter()
+            .map(|message| (message.role, message.content.clone()))
+            .collect::<Vec<_>>()
+    };
+    // The system prompt names the model, so it differs for the fallback.
+    assert_eq!(
+        contents(&fallback_request.messages[1..refused_count]),
+        contents(&refused_request.messages[1..]),
+        "the fallback request extends the refused request"
+    );
+    let [assistant, tool_results] = &fallback_request.messages[refused_count..] else {
+        panic!(
+            "expected the pushed message and its results, got {:#?}",
+            &fallback_request.messages[refused_count..]
+        );
+    };
+    assert_eq!(assistant.role, Role::Assistant);
+    assert!(assistant.content.iter().any(|content| matches!(
+        content,
+        MessageContent::ToolUse(tool_use) if tool_use.id.to_string() == "tool_1"
+    )));
+    let [MessageContent::ToolResult(result)] = tool_results.content.as_slice() else {
+        panic!("expected one tool result, got {:#?}", tool_results.content);
+    };
+    assert_eq!(result.tool_use_id.to_string(), "tool_1");
+    assert!(result.is_error);
+    assert_eq!(
+        result.content,
+        vec![language_model::LanguageModelToolResultContent::Text(
+            TOOL_CANCELED_MESSAGE.into()
+        )]
+    );
+
+    fake.send_last_text(&fallback, "Hi!");
+    fake.end_last(&fallback);
+    let events = events.collect::<Vec<_>>().await;
+    assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
+}
+
+#[gpui::test]
+async fn test_restored_thread_cancels_tool_uses_saved_while_running(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        fake,
+        thread,
+        project_context,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    thread.update(cx, |thread, _| thread.add_tool(DelayTool));
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Wait a bit"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let tool_use = LanguageModelToolUse {
+        id: "tool_1".into(),
+        name: DelayTool::NAME.into(),
+        raw_input: json!({"ms": 100}).to_string(),
+        input: language_model::LanguageModelToolUseInput::Json(json!({"ms": 100})),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::ToolUse(tool_use.clone()),
+    );
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::StartMessage {
+            message_id: "message_2".into(),
+        },
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    let abandoned_round = [
+        LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec!["Wait a bit".into()],
+            cache: false,
+            reasoning_details: None,
+        },
+        LanguageModelRequestMessage {
+            role: Role::Assistant,
+            content: vec![MessageContent::ToolUse(tool_use)],
+            cache: false,
+            reasoning_details: None,
+        },
+        LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![MessageContent::ToolResult(LanguageModelToolResult {
+                tool_use_id: "tool_1".into(),
+                tool_name: DelayTool::NAME.into(),
+                is_error: true,
+                content: vec![TOOL_CANCELED_MESSAGE.into()],
+                output: None,
+            })],
+            cache: false,
+            reasoning_details: None,
+        },
+    ];
+
+    // Saved while the tool is still running, as autosave may do.
+    let resumed = restore_thread(&thread, &project_context, cx).await;
+    resumed.update(cx, |thread, cx| thread.resume(cx)).unwrap();
+    cx.run_until_parked();
+    let request = fake.pending_completions().pop().unwrap();
+    assert_eq!(request.messages.get(1..4), Some(&abandoned_round[..]));
+
+    let continued = restore_thread(&thread, &project_context, cx).await;
+    continued
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Never mind"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let request = fake.pending_completions().pop().unwrap();
+    assert_eq!(request.messages.get(1..4), Some(&abandoned_round[..]));
+}
+
+#[gpui::test]
 #[cfg_attr(not(feature = "e2e"), ignore)]
 async fn test_basic_tool_calls(cx: &mut TestAppContext) {
     let ThreadTest { thread, .. } = setup(cx, TestModel::Sonnet4).await;
@@ -5259,6 +5576,32 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
         context_server_store,
         fs,
     }
+}
+
+/// Saves `thread` and loads the result as a new thread, as happens across a restart.
+async fn restore_thread(
+    thread: &Entity<Thread>,
+    project_context: &Entity<ProjectContext>,
+    cx: &mut TestAppContext,
+) -> Entity<Thread> {
+    let db_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+    cx.update(|cx| {
+        let thread = thread.read(cx);
+        let project = thread.project.clone();
+        let context_server_registry = thread.context_server_registry.clone();
+        let templates = thread.templates.clone();
+        cx.new(|cx| {
+            Thread::from_db(
+                acp::SessionId::new("restored"),
+                db_thread,
+                project,
+                project_context.clone(),
+                context_server_registry,
+                templates,
+                cx,
+            )
+        })
+    })
 }
 
 #[cfg(test)]
