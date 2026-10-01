@@ -1,0 +1,1743 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "crates.io",
+    "description": "\n__Experimental API documentation for the [crates.io](https://crates.io/)\npackage registry.__\n\nThis document describes the API used by the crates.io website, cargo\nclient, and other third-party tools to interact with the crates.io\nregistry.\n\nBefore using this API, please read the\n[crates.io data access policy](https://crates.io/data-access) and ensure\nthat your use of the API complies with the policy.\n\n__The API is under active development and may change at any time__,\nthough we will try to avoid breaking changes where possible.\n\nSome parts of the API follow the \"Registry Web API\" spec documented\nat <https://doc.rust-lang.org/cargo/reference/registry-web-api.html>\nand can be considered stable.\n\nMost parts of the API do not require authentication. The endpoints\nthat do require authentication are marked as such in the documentation,\nwith some requiring cookie authentication (usable only by the web UI)\nand others requiring API token authentication (usable by cargo and\nother clients).\n",
+    "termsOfService": "https://crates.io/policies",
+    "contact": {
+      "name": "the crates.io team",
+      "email": "help@crates.io"
+    },
+    "license": {
+      "name": "MIT OR Apache-2.0",
+      "url": "https://github.com/rust-lang/crates.io/blob/main/README.md#%EF%B8%8F-license"
+    },
+    "version": "0.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://crates.io"
+    },
+    {
+      "url": "https://staging.crates.io"
+    }
+  ],
+  "paths": {
+    "/api/v1/crates": {
+      "get": {
+        "tags": [
+          "crates"
+        ],
+        "summary": "Returns a list of crates.",
+        "description": "Called in a variety of scenarios in the front end, including:\n- Alphabetical listing of crates\n- List of crates under a specific owner\n- Listing a user's followed crates\n\nWhen sorting by relevance, only the first 1000 results can be accessed, even\nthough `meta.total` may report a higher number of matching crates.",
+        "operationId": "list_crates",
+        "parameters": [
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "The sort order of the crates.\n\nValid values: `alphabetical`, `relevance`, `downloads`,\n`recent-downloads`, `recent-updates`, `new`.\n\nDefaults to `relevance` if `q` is set, otherwise `alphabetical`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "A search query string.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "A string that does not contain null bytes (`\\0`)."
+            }
+          },
+          {
+            "name": "include_yanked",
+            "in": "query",
+            "description": "Set to `yes` to include yanked crates.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "yes"
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "description": "If set, only return crates that belong to this category, or one\nof its subcategories.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "A string that does not contain null bytes (`\\0`)."
+            }
+          },
+          {
+            "name": "all_keywords",
+            "in": "query",
+            "description": "If set, only return crates matching all the given keywords.\n\nThis parameter expects a space-separated list of keywords.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "A string that does not contain null bytes (`\\0`)."
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "description": "If set, only return crates matching the given keyword\n(ignored if `all_keywords` is set).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "A string that does not contain null bytes (`\\0`)."
+            }
+          },
+          {
+            "name": "letter",
+            "in": "query",
+            "description": "If set, only return crates with names that start with the given letter\n(ignored if `all_keywords` or `keyword` are set).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "A string that does not contain null bytes (`\\0`)."
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "description": "If set, only crates owned by the given crates.io user ID are returned\n(ignored if `all_keywords`, `keyword`, or `letter` are set).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "description": "If set, only crates owned by the given crates.io team ID are returned\n(ignored if `all_keywords`, `keyword`, `letter`, or `user_id` are set).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "following",
+            "in": "query",
+            "description": "If set, only crates owned by users the current user follows are returned\n(ignored if `all_keywords`, `keyword`, `letter`, `user_id`,\nor `team_id` are set).\n\nThe exact value of this parameter is ignored, but it must not be empty.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "yes"
+          },
+          {
+            "name": "ids[]",
+            "in": "query",
+            "description": "If set, only crates with the specified names are returned (ignored\nif `all_keywords`, `keyword`, `letter`, `user_id`, `team_id`,\nor `following` are set).",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "description": "A string that does not contain null bytes (`\\0`)."
+              }
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "The page number to request.\n\nThis parameter is mutually exclusive with `seek` and not supported for\nall requests.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "description": "The number of items to request per page.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "seek",
+            "in": "query",
+            "description": "The seek key to request.\n\nThis parameter is mutually exclusive with `page` and not supported for\nall requests.\n\nThe seek key can usually be found in the `meta.next_page` field of\npaginated responses.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Response returned when listing crates.",
+                  "required": [
+                    "crates",
+                    "meta"
+                  ],
+                  "properties": {
+                    "crates": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Crate"
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "description": "Pagination metadata for a crate list response.",
+                      "required": [
+                        "total",
+                        "next_page",
+                        "prev_page"
+                      ],
+                      "properties": {
+                        "next_page": {
+                          "type": "string",
+                          "description": "Query string to the next page of results, if any.",
+                          "example": "?page=3",
+                          "nullable": true
+                        },
+                        "prev_page": {
+                          "type": "string",
+                          "description": "Query string to the previous page of results, if any.",
+                          "example": "?page=1",
+                          "nullable": true
+                        },
+                        "total": {
+                          "type": "integer",
+                          "format": "int64",
+                          "description": "The total number of crates that match the query.",
+                          "example": 123
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {},
+          {
+            "api_token": []
+          },
+          {
+            "cookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/crates/{name}": {
+      "get": {
+        "tags": [
+          "crates"
+        ],
+        "summary": "Gets crate metadata.",
+        "operationId": "find_crate",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Name of the crate",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "description": "Additional data to include in the response.\n\nValid values: `versions`, `keywords`, `categories`, `badges`,\n`downloads`, `default_version`, or `full`.\n\nDefaults to `full` for backwards compatibility.\n\n**Note**: `versions` and `default_version` share the same key `versions`, therefore `default_version` will be ignored if both are provided.\n\nThis parameter expects a comma-separated list of values.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Response returned when getting crate metadata.",
+                  "required": [
+                    "crate",
+                    "versions",
+                    "keywords",
+                    "categories"
+                  ],
+                  "properties": {
+                    "categories": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Category"
+                      },
+                      "description": "The categories of the crate.",
+                      "example": null,
+                      "nullable": true
+                    },
+                    "crate": {
+                      "description": "The crate metadata.",
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/Crate"
+                        }
+                      ]
+                    },
+                    "keywords": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Keyword"
+                      },
+                      "description": "The keywords of the crate.",
+                      "example": null,
+                      "nullable": true
+                    },
+                    "versions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Version"
+                      },
+                      "description": "The versions of the crate.",
+                      "example": null,
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/crates/{name}/owners": {
+      "get": {
+        "tags": [
+          "owners"
+        ],
+        "summary": "Lists crate owners.",
+        "operationId": "list_owners",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Name of the crate",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "users"
+                  ],
+                  "properties": {
+                    "users": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Owner"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "owners"
+        ],
+        "summary": "Adds crate owners.",
+        "description": "Supported owner names:\n- `username` for a crates.io user, with confirmation for ambiguous or mismatched accounts.\n- `crates.io:username` for a crates.io user.\n- `github:username` for a GitHub user.\n- `github:org:team` for a GitHub organization team.",
+        "operationId": "add_owners",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Name of the crate",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "owners"
+                ],
+                "properties": {
+                  "owners": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "List of owner login names to add or remove.\n\nFor users, use `username`, `crates.io:username`, or `github:username`.\nFor GitHub teams, use the format `github:org:team` (e.g., `\"github:rust-lang:owners\"`).",
+                    "example": [
+                      "octocat",
+                      "crates.io:octocat",
+                      "github:octocat",
+                      "github:rust-lang:owners"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "msg",
+                    "ok"
+                  ],
+                  "properties": {
+                    "msg": {
+                      "type": "string",
+                      "description": "A message describing the result of the operation.",
+                      "example": "Crates.io user ghost has been invited to be an owner of crate serde"
+                    },
+                    "ok": {
+                      "type": "boolean",
+                      "example": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_token": []
+          },
+          {
+            "cookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/crates/{name}/{version}": {
+      "get": {
+        "tags": [
+          "versions"
+        ],
+        "summary": "Get crate version metadata.",
+        "operationId": "find_version",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Name of the crate",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "description": "Version number",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "1.0.0"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Response returned when getting crate version metadata.",
+                  "required": [
+                    "version"
+                  ],
+                  "properties": {
+                    "version": {
+                      "$ref": "#/components/schemas/Version"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/trusted_publishing/github_configs": {
+      "get": {
+        "tags": [
+          "trusted_publishing"
+        ],
+        "summary": "List Trusted Publishing configurations for GitHub Actions.",
+        "operationId": "list_trustpub_github_configs",
+        "parameters": [
+          {
+            "name": "crate",
+            "in": "query",
+            "description": "Name of the crate to list Trusted Publishing configurations for.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "description": "User ID to list Trusted Publishing configurations for all crates owned by the user.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "The page number to request.\n\nThis parameter is mutually exclusive with `seek` and not supported for\nall requests.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "description": "The number of items to request per page.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "seek",
+            "in": "query",
+            "description": "The seek key to request.\n\nThis parameter is mutually exclusive with `page` and not supported for\nall requests.\n\nThe seek key can usually be found in the `meta.next_page` field of\npaginated responses.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Response returned when listing GitHub trusted publishing configurations.",
+                  "required": [
+                    "github_configs",
+                    "meta"
+                  ],
+                  "properties": {
+                    "github_configs": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/GitHubConfig"
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "description": "Pagination metadata for a GitHub configuration list response.",
+                      "required": [
+                        "total",
+                        "next_page"
+                      ],
+                      "properties": {
+                        "next_page": {
+                          "type": "string",
+                          "description": "Query string to the next page of results, if any.",
+                          "example": "?seek=abc123",
+                          "nullable": true
+                        },
+                        "total": {
+                          "type": "integer",
+                          "format": "int64",
+                          "description": "The total number of GitHub configs belonging to the crate.",
+                          "example": 42
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookie": []
+          },
+          {
+            "api_token": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "trusted_publishing"
+        ],
+        "summary": "Create a new Trusted Publishing configuration for GitHub Actions.",
+        "operationId": "create_trustpub_github_config",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "github_config"
+                ],
+                "properties": {
+                  "github_config": {
+                    "type": "object",
+                    "required": [
+                      "crate",
+                      "repository_owner",
+                      "repository_name",
+                      "workflow_filename"
+                    ],
+                    "properties": {
+                      "crate": {
+                        "type": "string",
+                        "example": "regex"
+                      },
+                      "environment": {
+                        "type": "string",
+                        "example": null,
+                        "nullable": true
+                      },
+                      "repository_name": {
+                        "type": "string",
+                        "example": "regex"
+                      },
+                      "repository_owner": {
+                        "type": "string",
+                        "example": "rust-lang"
+                      },
+                      "workflow_filename": {
+                        "type": "string",
+                        "example": "ci.yml"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "github_config"
+                  ],
+                  "properties": {
+                    "github_config": {
+                      "$ref": "#/components/schemas/GitHubConfig"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookie": []
+          },
+          {
+            "api_token": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiErrorResponse": {
+        "type": "object",
+        "description": "The JSON envelope returned for API errors.",
+        "required": [
+          "errors"
+        ],
+        "properties": {
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A human-readable API error.",
+              "required": [
+                "detail"
+              ],
+              "properties": {
+                "detail": {
+                  "type": "string",
+                  "description": "A description of the error."
+                }
+              }
+            },
+            "description": "The errors that prevented the request from succeeding."
+          }
+        }
+      },
+      "Category": {
+        "type": "object",
+        "required": [
+          "id",
+          "category",
+          "slug",
+          "description",
+          "created_at",
+          "crates_cnt"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "The name of the category.",
+            "example": "Game development"
+          },
+          "crates_cnt": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The total number of crates that have this category.",
+            "example": 42
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The date and time this category was created.",
+            "example": "2019-12-13T13:46:41Z"
+          },
+          "description": {
+            "type": "string",
+            "description": "A description of the category.",
+            "example": "Libraries for creating games."
+          },
+          "id": {
+            "type": "string",
+            "description": "An opaque identifier for the category.",
+            "example": "game-development"
+          },
+          "parent_categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Category"
+            },
+            "description": "The parent categories of this category.\n\nThis field is only present when the category details are queried,\nbut not when listing categories.",
+            "example": []
+          },
+          "slug": {
+            "type": "string",
+            "description": "The \"slug\" of the category.\n\nSee <https://crates.io/category_slugs>.",
+            "example": "game-development"
+          },
+          "subcategories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Category"
+            },
+            "description": "The subcategories of this category.\n\nThis field is only present when the category details are queried,\nbut not when listing categories.",
+            "example": []
+          }
+        }
+      },
+      "Crate": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "updated_at",
+          "versions",
+          "keywords",
+          "categories",
+          "badges",
+          "created_at",
+          "downloads",
+          "recent_downloads",
+          "default_version",
+          "num_versions",
+          "yanked",
+          "max_version",
+          "newest_version",
+          "max_stable_version",
+          "description",
+          "homepage",
+          "documentation",
+          "repository",
+          "links",
+          "exact_match",
+          "trustpub_only"
+        ],
+        "properties": {
+          "badges": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "deprecated": true,
+            "example": []
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The list of categories belonging to this crate.",
+            "example": null,
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The date and time this crate was created.",
+            "example": "2019-12-13T13:46:41Z"
+          },
+          "default_version": {
+            "type": "string",
+            "description": "The \"default\" version of this crate.\n\nThis version will be displayed by default on the crate's page.",
+            "example": "1.3.0",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of the crate.",
+            "example": "A generic serialization/deserialization framework",
+            "nullable": true
+          },
+          "documentation": {
+            "type": "string",
+            "description": "The URL to the crate's documentation, if set.",
+            "example": "https://docs.rs/serde",
+            "nullable": true
+          },
+          "downloads": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The total number of downloads for this crate.",
+            "example": 123456789
+          },
+          "exact_match": {
+            "type": "boolean",
+            "description": "Whether the crate name was an exact match.",
+            "deprecated": true
+          },
+          "homepage": {
+            "type": "string",
+            "description": "The URL to the crate's homepage, if set.",
+            "example": "https://serde.rs",
+            "nullable": true
+          },
+          "id": {
+            "type": "string",
+            "description": "An opaque identifier for the crate.",
+            "example": "serde"
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The list of keywords belonging to this crate.",
+            "example": null,
+            "nullable": true
+          },
+          "links": {
+            "description": "Links to other API endpoints related to this crate.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CrateLinks"
+              }
+            ]
+          },
+          "max_stable_version": {
+            "type": "string",
+            "description": "The highest version number for this crate that is not a pre-release.",
+            "deprecated": true,
+            "example": "1.3.0",
+            "nullable": true
+          },
+          "max_version": {
+            "type": "string",
+            "description": "The highest version number for this crate.",
+            "deprecated": true,
+            "example": "2.0.0-beta.1"
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of the crate.",
+            "example": "serde"
+          },
+          "newest_version": {
+            "type": "string",
+            "description": "The most recently published version for this crate.",
+            "deprecated": true,
+            "example": "1.2.3"
+          },
+          "num_versions": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The total number of versions for this crate.",
+            "example": 13
+          },
+          "recent_downloads": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The total number of downloads for this crate in the last 90 days.",
+            "example": 456789,
+            "nullable": true
+          },
+          "repository": {
+            "type": "string",
+            "description": "The URL to the crate's repository, if set.",
+            "example": "https://github.com/serde-rs/serde",
+            "nullable": true
+          },
+          "trustpub_only": {
+            "type": "boolean",
+            "description": "Whether this crate can only be published via Trusted Publishing."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The date and time this crate was last updated.",
+            "example": "2019-12-13T13:46:41Z"
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "description": "The list of version IDs belonging to this crate.",
+            "example": null,
+            "nullable": true
+          },
+          "yanked": {
+            "type": "boolean",
+            "description": "Whether all versions of this crate have been yanked."
+          }
+        }
+      },
+      "CrateLinks": {
+        "type": "object",
+        "required": [
+          "version_downloads",
+          "versions",
+          "owners",
+          "owner_team",
+          "owner_user",
+          "reverse_dependencies"
+        ],
+        "properties": {
+          "owner_team": {
+            "type": "string",
+            "description": "The API path to this crate's team owners.",
+            "example": "/api/v1/crates/serde/owner_team"
+          },
+          "owner_user": {
+            "type": "string",
+            "description": "The API path to this crate's user owners.",
+            "example": "/api/v1/crates/serde/owner_user"
+          },
+          "owners": {
+            "type": "string",
+            "description": "The API path to this crate's owners.",
+            "example": "/api/v1/crates/serde/owners"
+          },
+          "reverse_dependencies": {
+            "type": "string",
+            "description": "The API path to this crate's reverse dependencies.",
+            "example": "/api/v1/crates/serde/reverse_dependencies"
+          },
+          "version_downloads": {
+            "type": "string",
+            "description": "The API path to this crate's download statistics.",
+            "example": "/api/v1/crates/serde/downloads"
+          },
+          "versions": {
+            "type": "string",
+            "description": "The API path to this crate's versions.",
+            "example": "/api/v1/crates/serde/versions",
+            "nullable": true
+          }
+        }
+      },
+      "GitHubConfig": {
+        "type": "object",
+        "required": [
+          "id",
+          "crate",
+          "repository_owner",
+          "repository_owner_id",
+          "repository_name",
+          "workflow_filename",
+          "environment",
+          "created_at"
+        ],
+        "properties": {
+          "crate": {
+            "type": "string",
+            "example": "regex"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "environment": {
+            "type": "string",
+            "example": null,
+            "nullable": true
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32",
+            "example": 42
+          },
+          "repository_name": {
+            "type": "string",
+            "example": "regex"
+          },
+          "repository_owner": {
+            "type": "string",
+            "example": "rust-lang"
+          },
+          "repository_owner_id": {
+            "type": "integer",
+            "format": "int32",
+            "example": 5430905
+          },
+          "workflow_filename": {
+            "type": "string",
+            "example": "ci.yml"
+          }
+        }
+      },
+      "Keyword": {
+        "type": "object",
+        "required": [
+          "id",
+          "keyword",
+          "created_at",
+          "crates_cnt"
+        ],
+        "properties": {
+          "crates_cnt": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The total number of crates that have this keyword.",
+            "example": 42
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The date and time this keyword was created.",
+            "example": "2017-01-06T14:23:11Z"
+          },
+          "id": {
+            "type": "string",
+            "description": "An opaque identifier for the keyword.",
+            "example": "http"
+          },
+          "keyword": {
+            "type": "string",
+            "description": "The keyword itself.",
+            "example": "http"
+          }
+        }
+      },
+      "Owner": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A user owner.",
+            "required": [
+              "id",
+              "login",
+              "url",
+              "name",
+              "avatar",
+              "github_username_matches",
+              "kind"
+            ],
+            "properties": {
+              "avatar": {
+                "type": "string",
+                "description": "The user's avatar URL.",
+                "example": "https://avatars2.githubusercontent.com/u/1234567?v=4",
+                "nullable": true
+              },
+              "github_username_matches": {
+                "type": "boolean",
+                "description": "Whether a linked GitHub username exactly matches the crates.io username."
+              },
+              "id": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The opaque identifier for the user.",
+                "example": 42
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "user"
+                ]
+              },
+              "login": {
+                "type": "string",
+                "description": "The crates.io username.",
+                "example": "ghost"
+              },
+              "name": {
+                "type": "string",
+                "description": "The user's display name.",
+                "example": "Kate Morgan",
+                "nullable": true
+              },
+              "url": {
+                "type": "string",
+                "description": "The URL to the user's GitHub profile.",
+                "deprecated": true,
+                "example": "https://github.com/ghost"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A team owner.",
+            "required": [
+              "id",
+              "login",
+              "url",
+              "name",
+              "avatar",
+              "kind"
+            ],
+            "properties": {
+              "avatar": {
+                "type": "string",
+                "description": "The team's avatar URL.",
+                "example": "https://avatars2.githubusercontent.com/u/1234567?v=4",
+                "nullable": true
+              },
+              "id": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The opaque identifier for the team.",
+                "example": 42
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "team"
+                ]
+              },
+              "login": {
+                "type": "string",
+                "description": "The team's login name.",
+                "example": "github:rust-lang:crates-io"
+              },
+              "name": {
+                "type": "string",
+                "description": "The team's display name.",
+                "example": "Crates.io team",
+                "nullable": true
+              },
+              "url": {
+                "type": "string",
+                "description": "The URL to the team's GitHub profile.",
+                "example": "https://github.com/rust-lang",
+                "nullable": true
+              }
+            }
+          }
+        ],
+        "description": "A user or team that owns a crate."
+      },
+      "TrustpubData": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "repository",
+              "run_id",
+              "sha",
+              "provider"
+            ],
+            "properties": {
+              "provider": {
+                "type": "string",
+                "enum": [
+                  "github"
+                ]
+              },
+              "repository": {
+                "type": "string",
+                "description": "Repository (e.g. \"octo-org/octo-repo\")"
+              },
+              "run_id": {
+                "type": "string",
+                "description": "Workflow run ID"
+              },
+              "sha": {
+                "type": "string",
+                "description": "SHA of the commit"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "project_path",
+              "job_id",
+              "sha",
+              "provider"
+            ],
+            "properties": {
+              "job_id": {
+                "type": "string",
+                "description": "Job ID"
+              },
+              "project_path": {
+                "type": "string",
+                "description": "Project path (e.g. \"rust-lang/cargo\")"
+              },
+              "provider": {
+                "type": "string",
+                "enum": [
+                  "gitlab"
+                ]
+              },
+              "sha": {
+                "type": "string",
+                "description": "SHA of the commit"
+              }
+            }
+          }
+        ],
+        "description": "Data structure containing trusted publisher information extracted from JWT claims"
+      },
+      "User": {
+        "type": "object",
+        "required": [
+          "id",
+          "login",
+          "name",
+          "avatar",
+          "url",
+          "github_username_matches",
+          "created_at"
+        ],
+        "properties": {
+          "avatar": {
+            "type": "string",
+            "description": "The user's avatar URL, if set.",
+            "example": "https://avatars2.githubusercontent.com/u/1234567?v=4",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The date and time the user was created.\n\nFor users created before June 19, 2026, the creation time will be the\ntime the user's GitHub account was created. If the GitHub account was\ndeleted before June 19, 2026, this field will be empty.",
+            "nullable": true
+          },
+          "github_username_matches": {
+            "type": "boolean",
+            "description": "Whether a linked GitHub username exactly matches the crates.io username."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32",
+            "description": "An opaque identifier for the user.",
+            "example": 42
+          },
+          "login": {
+            "type": "string",
+            "description": "The user's login name.",
+            "example": "ghost"
+          },
+          "name": {
+            "type": "string",
+            "description": "The user's display name, if set.",
+            "example": "Kate Morgan",
+            "nullable": true
+          },
+          "url": {
+            "type": "string",
+            "description": "The user's GitHub profile URL.",
+            "deprecated": true,
+            "example": "https://github.com/ghost"
+          }
+        }
+      },
+      "Version": {
+        "type": "object",
+        "required": [
+          "id",
+          "crate",
+          "num",
+          "dl_path",
+          "readme_path",
+          "updated_at",
+          "created_at",
+          "downloads",
+          "features",
+          "yanked",
+          "yank_message",
+          "lib_links",
+          "license",
+          "links",
+          "crate_size",
+          "published_by",
+          "audit_actions",
+          "checksum",
+          "rust_version",
+          "has_lib",
+          "bin_names",
+          "edition",
+          "description",
+          "homepage",
+          "documentation",
+          "repository",
+          "trustpub_data",
+          "linecounts"
+        ],
+        "properties": {
+          "audit_actions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "action",
+                "user",
+                "time"
+              ],
+              "properties": {
+                "action": {
+                  "type": "string",
+                  "description": "The action that was performed.",
+                  "example": "publish"
+                },
+                "time": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "The date and time the action was performed.",
+                  "example": "2019-12-13T13:46:41Z"
+                },
+                "user": {
+                  "description": "The user who performed the action.",
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/User"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "A list of actions performed on this version."
+          },
+          "bin_names": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "nullable": true
+            },
+            "description": "The names of the binaries provided by this version, if any.",
+            "example": [],
+            "nullable": true
+          },
+          "checksum": {
+            "type": "string",
+            "description": "The SHA256 checksum of the compressed crate file encoded as a\nhexadecimal string.",
+            "example": "e8dfc9d19bdbf6d17e22319da49161d5d0108e4188e8b680aef6299eed22df60"
+          },
+          "crate": {
+            "type": "string",
+            "description": "The name of the crate.",
+            "example": "serde"
+          },
+          "crate_size": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The size of the compressed crate file in bytes.",
+            "example": 1234
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The date and time this version was created.",
+            "example": "2019-12-13T13:46:41Z"
+          },
+          "description": {
+            "type": "string",
+            "description": "The description of this version of the crate.",
+            "example": "A generic serialization/deserialization framework",
+            "nullable": true
+          },
+          "dl_path": {
+            "type": "string",
+            "description": "The API path to download the crate.",
+            "example": "/api/v1/crates/serde/1.0.0/download"
+          },
+          "documentation": {
+            "type": "string",
+            "description": "The URL to the crate's documentation, if set.",
+            "example": "https://docs.rs/serde",
+            "nullable": true
+          },
+          "downloads": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The total number of downloads for this version.",
+            "example": 123456
+          },
+          "edition": {
+            "type": "string",
+            "description": "The Rust Edition used to compile this version, if set.",
+            "example": "2021",
+            "nullable": true
+          },
+          "features": {
+            "type": "object",
+            "description": "The features defined by this version.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "has_lib": {
+            "type": "boolean",
+            "description": "Whether this version can be used as a library.",
+            "example": true,
+            "nullable": true
+          },
+          "homepage": {
+            "type": "string",
+            "description": "The URL to the crate's homepage, if set.",
+            "example": "https://serde.rs",
+            "nullable": true
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32",
+            "description": "An opaque identifier for the version.",
+            "example": 42
+          },
+          "lib_links": {
+            "type": "string",
+            "description": "The name of the native library this version links with, if any.",
+            "example": "git2",
+            "nullable": true
+          },
+          "license": {
+            "type": "string",
+            "description": "The license of this version of the crate.",
+            "example": "MIT",
+            "nullable": true
+          },
+          "linecounts": {
+            "type": "object",
+            "description": "Line count statistics for this version.\n\nStatus: **Unstable**\n\nThis field may be `null` until the version has been analyzed, which\nhappens in an asynchronous background job.",
+            "additionalProperties": {},
+            "nullable": true
+          },
+          "links": {
+            "description": "Links to other API endpoints related to this version.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/VersionLinks"
+              }
+            ]
+          },
+          "num": {
+            "type": "string",
+            "description": "The version number.",
+            "example": "1.0.0"
+          },
+          "published_by": {
+            "nullable": true,
+            "description": "The user who published this version.\n\nThis field may be `null` if the version was published before crates.io\nstarted recording this information.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/User"
+              }
+            ]
+          },
+          "readme_path": {
+            "type": "string",
+            "description": "The API path to download the crate's README file as HTML code.",
+            "example": "/api/v1/crates/serde/1.0.0/readme"
+          },
+          "repository": {
+            "type": "string",
+            "description": "The URL to the crate's repository, if set.",
+            "example": "https://github.com/serde-rs/serde",
+            "nullable": true
+          },
+          "rust_version": {
+            "type": "string",
+            "description": "The minimum version of the Rust compiler required to compile\nthis version, if set.",
+            "example": "1.31",
+            "nullable": true
+          },
+          "trustpub_data": {
+            "nullable": true,
+            "description": "Information about the trusted publisher that published this version, if any.\n\nStatus: **Unstable**\n\nThis field is filled if the version was published via trusted publishing\n(e.g., GitHub Actions) rather than a regular API token.\n\nThe exact structure of this field depends on the `provider` field\ninside it.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TrustpubData"
+              }
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The date and time this version was last updated (i.e. yanked or unyanked).",
+            "example": "2019-12-13T13:46:41Z"
+          },
+          "yank_message": {
+            "type": "string",
+            "description": "The message given when this version was yanked, if any.",
+            "example": "Security vulnerability",
+            "nullable": true
+          },
+          "yanked": {
+            "type": "boolean",
+            "description": "Whether this version has been yanked.",
+            "example": false
+          }
+        }
+      },
+      "VersionLinks": {
+        "type": "object",
+        "required": [
+          "dependencies",
+          "version_downloads",
+          "authors"
+        ],
+        "properties": {
+          "authors": {
+            "type": "string",
+            "description": "The API path to download this version's authors.",
+            "deprecated": true,
+            "example": "/api/v1/crates/serde/1.0.0/authors"
+          },
+          "dependencies": {
+            "type": "string",
+            "description": "The API path to download this version's dependencies.",
+            "example": "/api/v1/crates/serde/1.0.0/dependencies"
+          },
+          "version_downloads": {
+            "type": "string",
+            "description": "The API path to download this version's download numbers.",
+            "example": "/api/v1/crates/serde/1.0.0/downloads"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "api_token": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "authorization",
+        "description": "The API token is used to authenticate requests from cargo and other clients."
+      },
+      "cookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "cargo_session",
+        "description": "The session cookie is used by the web UI to authenticate users."
+      }
+    }
+  }
+}

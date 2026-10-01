@@ -1,6 +1,7 @@
 #![allow(clippy::disallowed_methods, reason = "tooling is exempt")]
 
 pub mod crate_graph;
+pub mod crates_io_client;
 pub mod publish_plan;
 pub mod validation;
 
@@ -22,6 +23,8 @@ pub enum GpuiCommand {
         /// Original Cargo package name
         crate_name: String,
     },
+    /// Update the OpenAPI spec the crates.io client in `tooling/crates_io_client` is generated from
+    UpdateCratesIoClient,
 }
 
 #[derive(Parser)]
@@ -44,9 +47,9 @@ struct PublishGpuiArgs {
 }
 
 pub fn run_gpui(command: GpuiCommand) -> Result<()> {
-    let graph = crate_graph::load_workspace_graph()?;
     match command {
         GpuiCommand::Plan(args) => {
+            let graph = crate_graph::load_workspace_graph()?;
             let plan = publish_plan::build_publish_plan(&graph)?;
             validation::validate(&plan)?;
             println!(
@@ -64,6 +67,7 @@ pub fn run_gpui(command: GpuiCommand) -> Result<()> {
             }
         }
         GpuiCommand::Why { crate_name } => {
+            let graph = crate_graph::load_workspace_graph()?;
             let explanation = crate_graph::explain_crate(&graph, &crate_name)?;
             println!(
                 "Why `{crate_name}` is in the GPUI publish list (A -> B means A depends on B):"
@@ -80,6 +84,7 @@ pub fn run_gpui(command: GpuiCommand) -> Result<()> {
                 println!("  {} -> {}", link.from().name(), link.to().name());
             }
         }
+        GpuiCommand::UpdateCratesIoClient => crates_io_client::run_update_crates_io_client()?,
     }
     Ok(())
 }

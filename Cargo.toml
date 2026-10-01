@@ -264,6 +264,7 @@ members = [
     #
 
     "tooling/compliance",
+    "tooling/crates_io_client",
     "tooling/perf",
     "tooling/xtask",
 ]
