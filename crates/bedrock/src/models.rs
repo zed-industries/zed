@@ -666,9 +666,9 @@ impl ConverseModel {
             Self::ClaudeFable5 | Self::ClaudeOpus5 | Self::ClaudeOpus4_8 | Self::ClaudeSonnet5 => {
                 true
             }
-            Self::Custom { thinking, .. } => thinking
-                .as_ref()
-                .is_some_and(|thinking| thinking.has_xhigh),
+            Self::Custom { thinking, .. } => {
+                thinking.as_ref().is_some_and(|thinking| thinking.has_xhigh)
+            }
             _ => false,
         }
     }
