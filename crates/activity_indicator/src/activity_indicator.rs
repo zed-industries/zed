@@ -4,11 +4,10 @@ use extension_host::{ExtensionOperation, ExtensionStore};
 use futures::StreamExt;
 use gpui::{
     App, Context, Entity, EventEmitter, InteractiveElement as _, ParentElement as _, Render,
-    SharedString, Styled, Window, actions,
+    SharedString, Styled, Task, Window, actions,
 };
 use language::{
-    BinaryStatus, LanguageRegistry, LanguageServerId, LanguageServerName,
-    LanguageServerStatusUpdate, ServerHealth,
+    BinaryStatus, LanguageServerId, LanguageServerName, LanguageServerStatusUpdate, ServerHealth,
 };
 use project::{
     LanguageServerProgress, LspStoreEvent, ProgressToken, Project, ProjectEnvironmentEvent,
@@ -27,6 +26,7 @@ use util::truncate_and_trailoff;
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
 const GIT_OPERATION_DELAY: Duration = Duration::from_millis(0);
+pub const DEFERRED_SCAN_MESSAGE_TIMEOUT: Duration = Duration::from_secs(10);
 
 actions!(
     activity_indicator,
@@ -48,6 +48,18 @@ pub struct ActivityIndicator {
     project: Entity<Project>,
     context_menu_handle: PopoverMenuHandle<ContextMenu>,
     fs_jobs: Vec<fs::JobInfo>,
+    deferred_scan_message: DeferredScanMessage,
+}
+
+#[derive(Default)]
+enum DeferredScanMessage {
+    #[default]
+    Undetected,
+    Pending,
+    Shown {
+        _dismiss_timer: Task<()>,
+    },
+    Dismissed,
 }
 
 #[derive(Debug)]
@@ -78,28 +90,11 @@ struct Content {
 impl ActivityIndicator {
     pub fn new(
         workspace: &mut Workspace,
-        languages: Arc<LanguageRegistry>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<ActivityIndicator> {
         let project = workspace.project().clone();
         let this = cx.new(|cx| {
-            let mut status_events = languages.language_server_binary_statuses();
-            cx.spawn(async move |this, cx| {
-                while let Some((name, binary_status)) = status_events.next().await {
-                    this.update(cx, |this: &mut ActivityIndicator, cx| {
-                        this.statuses.retain(|s| s.name != name);
-                        this.statuses.push(ServerStatus {
-                            name,
-                            status: LanguageServerStatusUpdate::Binary(binary_status),
-                        });
-                        cx.notify();
-                    })?;
-                }
-                anyhow::Ok(())
-            })
-            .detach();
-
             let fs = project.read(cx).fs().clone();
             let mut job_events = fs.subscribe_to_jobs();
             cx.spawn(async move |this, cx| {
@@ -107,11 +102,17 @@ impl ActivityIndicator {
                     this.update(cx, |this: &mut ActivityIndicator, cx| {
                         match job_event {
                             fs::JobEvent::Started { info } => {
-                                this.fs_jobs.retain(|j| j.id != info.id);
+                                this.fs_jobs.retain(|job| job.id != info.id);
                                 this.fs_jobs.push(info);
                             }
+                            fs::JobEvent::Updated { id, message } => {
+                                if let Some(job) = this.fs_jobs.iter_mut().find(|job| job.id == id)
+                                {
+                                    job.message = message;
+                                }
+                            }
                             fs::JobEvent::Completed { id } => {
-                                this.fs_jobs.retain(|j| j.id != id);
+                                this.fs_jobs.retain(|job| job.id != id);
                             }
                         }
                         cx.notify();
@@ -134,7 +135,7 @@ impl ActivityIndicator {
                             let status = match &status_update.status {
                                 Some(proto::status_update::Status::Binary(binary_status)) => {
                                     if let Some(binary_status) =
-                                        proto::ServerBinaryStatus::from_i32(*binary_status)
+                                        proto::ServerBinaryStatus::try_from(*binary_status).ok()
                                     {
                                         let binary_status = match binary_status {
                                             proto::ServerBinaryStatus::None => BinaryStatus::None,
@@ -168,7 +169,7 @@ impl ActivityIndicator {
                                 }
                                 Some(proto::status_update::Status::Health(health_status)) => {
                                     if let Some(health) =
-                                        proto::ServerHealth::from_i32(*health_status)
+                                        proto::ServerHealth::try_from(*health_status).ok()
                                     {
                                         let health = match health {
                                             proto::ServerHealth::Ok => ServerHealth::Ok,
@@ -215,12 +216,28 @@ impl ActivityIndicator {
             )
             .detach();
 
-            Self {
+            cx.subscribe(
+                &project,
+                |this, _, event: &project::Event, cx| match event {
+                    project::Event::WorktreeAdded(_)
+                    | project::Event::WorktreeRemoved(_)
+                    | project::Event::WorktreeUpdatedEntries(..) => {
+                        this.update_deferred_scan_status(cx);
+                    }
+                    _ => {}
+                },
+            )
+            .detach();
+
+            let mut this = Self {
                 statuses: Vec::new(),
                 project: project.clone(),
                 context_menu_handle: PopoverMenuHandle::default(),
                 fs_jobs: Vec::new(),
-            }
+                deferred_scan_message: DeferredScanMessage::default(),
+            };
+            this.update_deferred_scan_status(cx);
+            this
         });
 
         cx.subscribe_in(&this, window, move |_, _, event, window, cx| match event {
@@ -334,7 +351,45 @@ impl ActivityIndicator {
         self.project.read(cx).peek_environment_error(cx)
     }
 
+    fn update_deferred_scan_status(&mut self, cx: &mut Context<Self>) {
+        let has_deferred_scan_dirs = self.project.read(cx).visible_worktrees(cx).any(|worktree| {
+            let worktree = worktree.read(cx);
+            worktree.deferred_scan_dir_count() > 0
+                && worktree.as_local().is_none_or(|local_worktree| {
+                    local_worktree.settings().file_scan_depth.is_some()
+                })
+        });
+        match &self.deferred_scan_message {
+            DeferredScanMessage::Undetected if has_deferred_scan_dirs => {
+                self.deferred_scan_message = DeferredScanMessage::Pending;
+                cx.notify();
+            }
+            DeferredScanMessage::Pending | DeferredScanMessage::Shown { .. }
+                if !has_deferred_scan_dirs =>
+            {
+                self.deferred_scan_message = DeferredScanMessage::Undetected;
+                cx.notify();
+            }
+            DeferredScanMessage::Dismissed if !has_deferred_scan_dirs => {
+                self.deferred_scan_message = DeferredScanMessage::Undetected;
+            }
+            _ => {}
+        }
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn message_to_render(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        self.content_to_render(cx).map(|content| content.message)
+    }
+
     fn content_to_render(&mut self, cx: &mut Context<Self>) -> Option<Content> {
+        if let Some(content) = self.primary_content(cx) {
+            return Some(content);
+        }
+        self.deferred_scan_content(cx)
+    }
+
+    fn primary_content(&mut self, cx: &mut Context<Self>) -> Option<Content> {
         // Show if any direnv calls failed
         if let Some(message) = self.pending_environment_error(cx) {
             return Some(Content {
@@ -377,7 +432,7 @@ impl ActivityIndicator {
                 return Some(Content {
                     icon: ActivityIcon::LoadingSpinner,
                     message,
-                    on_click: Some(Arc::new(Self::toggle_language_server_work_context_menu)),
+                    on_click: None,
                     tooltip_message: None,
                 });
             }
@@ -640,12 +695,36 @@ impl ActivityIndicator {
         None
     }
 
-    fn toggle_language_server_work_context_menu(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.context_menu_handle.toggle(window, cx);
+    fn deferred_scan_content(&mut self, cx: &mut Context<Self>) -> Option<Content> {
+        if !matches!(
+            self.deferred_scan_message,
+            DeferredScanMessage::Pending | DeferredScanMessage::Shown { .. }
+        ) {
+            return None;
+        }
+        if matches!(self.deferred_scan_message, DeferredScanMessage::Pending) {
+            self.deferred_scan_message = DeferredScanMessage::Shown {
+                _dismiss_timer: cx.spawn(async move |this, cx| {
+                    cx.background_executor()
+                        .timer(DEFERRED_SCAN_MESSAGE_TIMEOUT)
+                        .await;
+                    this.update(cx, |this, cx| {
+                        this.deferred_scan_message = DeferredScanMessage::Dismissed;
+                        cx.notify();
+                    })
+                    .ok();
+                }),
+            };
+        }
+        Some(Content {
+            icon: ActivityIcon::Icon(IconName::Info),
+            message: "Partial file index".to_string(),
+            tooltip_message: Some("Directories outside of git repositories and deeper than the `file_scan_depth` setting will be indexed on demand.".to_string()),
+            on_click: Some(Arc::new(|this, _, cx| {
+                this.deferred_scan_message = DeferredScanMessage::Dismissed;
+                cx.notify();
+            })),
+        })
     }
 }
 
@@ -659,15 +738,16 @@ impl Render for ActivityIndicator {
             .id("activity-indicator")
             .on_action(cx.listener(Self::show_error_message))
             .on_action(cx.listener(Self::dismiss_message));
+
         let Some(content) = self.content_to_render(cx) else {
             return result;
         };
+
         let activity_indicator = cx.entity().downgrade();
         let truncate_content = content.message.len() > MAX_MESSAGE_LEN;
-
         let has_click_handler = content.on_click.is_some();
 
-        result.gap_2().child(
+        result.child(
             PopoverMenu::new("activity-indicator-popover")
                 .trigger(
                     Button::new("activity-indicator-trigger", {
@@ -678,6 +758,7 @@ impl Render for ActivityIndicator {
                         }
                     })
                     .label_size(LabelSize::Small)
+                    .tab_index(0isize)
                     .map(|this| match content.icon {
                         ActivityIcon::LoadingSpinner => this.loading(true),
                         ActivityIcon::Icon(icon_name) => this.start_icon(
@@ -705,10 +786,9 @@ impl Render for ActivityIndicator {
                 .when(!has_click_handler, |this| {
                     this.menu(move |window, cx| {
                         let strong_this = activity_indicator.upgrade()?;
-                        let mut has_work = false;
+                        let mut has_cancellable_work = false;
                         let menu = ContextMenu::build(window, cx, |mut menu, _, cx| {
                             for work in strong_this.read(cx).pending_language_server_work(cx) {
-                                has_work = true;
                                 let activity_indicator = activity_indicator.clone();
                                 let mut title = work
                                     .progress
@@ -717,16 +797,21 @@ impl Render for ActivityIndicator {
                                     .unwrap_or(work.progress_token.to_string());
 
                                 if work.progress.is_cancellable {
+                                    has_cancellable_work = true;
                                     let language_server_id = work.language_server_id;
                                     let token = work.progress_token.clone();
-                                    let title = SharedString::from(title);
+                                    let title = SharedString::from(format!("Cancel {title}"));
                                     menu = menu.custom_entry(
                                         move |_, _| {
                                             h_flex()
                                                 .w_full()
-                                                .justify_between()
+                                                .gap_1()
+                                                .child(
+                                                    Icon::new(IconName::Close)
+                                                        .color(Color::Muted)
+                                                        .size(IconSize::Small),
+                                                )
                                                 .child(Label::new(title.clone()))
-                                                .child(Icon::new(IconName::XCircle))
                                                 .into_any_element()
                                         },
                                         move |_, cx| {
@@ -760,7 +845,7 @@ impl Render for ActivityIndicator {
                             }
                             menu
                         });
-                        has_work.then_some(menu)
+                        has_cancellable_work.then_some(menu)
                     })
                 }),
         )

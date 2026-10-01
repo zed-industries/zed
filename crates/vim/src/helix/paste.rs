@@ -1,4 +1,4 @@
-use editor::{ToOffset, movement};
+use editor::movement;
 use gpui::{Action, Context, Window};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -92,7 +92,7 @@ impl Vim {
                     // Pasting before means pasting before the whole selection.
                     let display_point = if line_mode {
                         if action.before {
-                            movement::line_beginning(&display_map, sel.start, false)
+                            movement::line_beginning(&display_map, sel.start)
                         } else {
                             if sel.start == sel.end {
                                 movement::right(
@@ -120,27 +120,16 @@ impl Vim {
                         sel.end
                     };
                     let point = display_point.to_point(&display_map);
-                    let anchor = if action.before {
-                        display_map.buffer_snapshot().anchor_after(point)
-                    } else {
-                        display_map.buffer_snapshot().anchor_before(point)
-                    };
+                    let snapshot = display_map.buffer_snapshot();
+                    new_selections
+                        .push(snapshot.anchor_before(point)..snapshot.anchor_after(point));
                     edits.push((point..point, to_insert.repeat(count)));
-                    new_selections.push((anchor, to_insert.len() * count));
                 }
 
                 editor.edit(edits, cx);
 
-                let snapshot = editor.buffer().read(cx).snapshot(cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.select_ranges(new_selections.into_iter().map(|(anchor, len)| {
-                        let offset = anchor.to_offset(&snapshot);
-                        if action.before {
-                            offset.saturating_sub_usize(len)..offset
-                        } else {
-                            offset..(offset + len)
-                        }
-                    }));
+                    s.select_ranges(new_selections);
                 })
             });
         });
@@ -203,6 +192,42 @@ mod test {
         cx.write_to_clipboard(ClipboardItem::new_string("X".to_string()));
         cx.simulate_keystrokes("p");
         cx.assert_state("«Xˇ»\n«Xˇ»\n«Xˇ»\nend", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_system_clipboard_crlf_paste_at_end_of_buffer(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("ˇ", Mode::HelixNormal);
+
+        cx.write_to_clipboard(ClipboardItem::new_string("a\r\nb".to_string()));
+        cx.simulate_keystrokes("p");
+
+        cx.assert_state("«a\nbˇ»", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_paste_in_expanded_deleted_hunk(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("ˇkept\n", Mode::HelixNormal);
+        cx.set_head_text("kept\ndeleted\n");
+        cx.update_editor(|editor, window, cx| {
+            editor.expand_all_diff_hunks(&editor::actions::ExpandAllDiffHunks, window, cx);
+        });
+
+        cx.write_to_clipboard(ClipboardItem::new_string("replacement text".to_string()));
+        cx.simulate_keystrokes("j p");
+
+        let buffer_text = cx.update_editor(|editor, _window, cx| {
+            let buffer = editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("test editor should contain one buffer");
+            buffer.read(cx).snapshot().text()
+        });
+        assert_eq!(buffer_text, "kept\n");
     }
 
     #[gpui::test]

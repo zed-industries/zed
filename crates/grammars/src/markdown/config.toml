@@ -14,6 +14,7 @@ brackets = [
     { start = "'", end = "'", close = false, newline = false },
     { start = "`", end = "`", close = false, newline = false },
     { start = "*", end = "*", close = false, newline = false, surround = true },
+    { start = "~", end = "~", close = false, newline = false, surround = true },
 ]
 rewrap_prefixes = [
     "[-*+]\\s+",

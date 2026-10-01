@@ -1,10 +1,11 @@
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
+use chrono::{DateTime, Utc};
 use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
 use http_client::{Host, HttpClient, Url};
 use log::Level;
-use semver::Version;
+use semver::{Version, VersionReq};
 use serde::Deserialize;
 use smol::io::BufReader;
 use smol::{fs, lock::Mutex};
@@ -12,7 +13,7 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::{
     env::{self, consts},
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     io,
     net::{IpAddr, Ipv4Addr},
     path::{Path, PathBuf},
@@ -252,10 +253,18 @@ impl NodeRuntime {
     }
 
     pub async fn npm_package_latest_version(&self, name: &str) -> Result<Version> {
-        let http = self.0.lock().await.http.clone();
-        let output = self
-            .instance()
+        self.npm_package_latest_version_with_requirement(name, None)
             .await
+    }
+
+    pub async fn npm_package_latest_version_with_requirement(
+        &self,
+        name: &str,
+        version_requirement: Option<&VersionReq>,
+    ) -> Result<Version> {
+        let http = self.0.lock().await.http.clone();
+        let instance = self.instance().await;
+        let output = instance
             .run_npm_subcommand(
                 None,
                 http.proxy(),
@@ -273,11 +282,24 @@ impl NodeRuntime {
             )
             .await?;
 
-        let mut info: NpmInfo = serde_json::from_slice(&output.stdout)?;
-        info.dist_tags
-            .latest
-            .or_else(|| info.versions.pop())
-            .with_context(|| format!("no version found for npm package {name}"))
+        let info: NpmInfo = deserialize_npm_info_from_response(&output.stdout).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to parse npm info response: {e}\nstdout: {}",
+                String::from_utf8_lossy(&output.stdout)
+            )
+        })?;
+        let before = npm_config_before(instance.as_ref(), http.proxy())
+            .await
+            .context("getting npm before config")
+            .log_err()
+            .flatten();
+        let latest_dist_tag = info.dist_tags.latest.clone();
+        let selected_version =
+            select_npm_package_version(name, info, before.as_deref(), version_requirement)?;
+        log::debug!(
+            "selected latest npm package version package={name:?} version_requirement={version_requirement:?} before={before:?} dist_tag_latest={latest_dist_tag:?} selected={selected_version}"
+        );
+        Ok(selected_version)
     }
 
     pub async fn npm_install_packages(
@@ -289,6 +311,11 @@ impl NodeRuntime {
             return Ok(());
         }
 
+        log::debug!(
+            "installing npm packages directory={} packages={packages:?}",
+            directory.display()
+        );
+
         let packages: Vec<_> = packages
             .iter()
             .map(|(name, version)| format!("{name}@{version}"))
@@ -298,6 +325,7 @@ impl NodeRuntime {
             .iter()
             .map(|p| p.as_str())
             .chain([
+                "--no-package-lock",
                 "--save-exact",
                 "--fetch-retry-mintimeout",
                 "2000",
@@ -314,6 +342,23 @@ impl NodeRuntime {
         Ok(())
     }
 
+    pub async fn npm_install_latest_packages(
+        &self,
+        directory: &Path,
+        package_names: &[&str],
+    ) -> Result<()> {
+        // Let npm apply user config such as `before` and `min-release-age` during resolution.
+        log::debug!(
+            "installing latest npm packages directory={} packages={package_names:?}",
+            directory.display()
+        );
+        let packages = package_names
+            .iter()
+            .map(|package_name| (*package_name, "latest"))
+            .collect::<Vec<_>>();
+        self.npm_install_packages(directory, &packages).await
+    }
+
     pub async fn should_install_npm_package(
         &self,
         package_name: &str,
@@ -325,6 +370,10 @@ impl NodeRuntime {
         // or in the instances where we fail to parse package.json data,
         // we attempt to install the package.
         if fs::metadata(local_executable_path).await.is_err() {
+            log::debug!(
+                "npm package cache miss package={package_name:?} reason=missing-executable executable={}",
+                local_executable_path.display()
+            );
             return true;
         }
 
@@ -334,13 +383,33 @@ impl NodeRuntime {
             .log_err()
             .flatten()
         else {
+            log::debug!(
+                "npm package cache miss package={package_name:?} reason=missing-installed-version package_dir={}",
+                local_package_directory.display()
+            );
             return true;
         };
 
-        match version_strategy {
-            VersionStrategy::Pin(pinned_version) => &installed_version != pinned_version,
-            VersionStrategy::Latest(latest_version) => &installed_version < latest_version,
-        }
+        let version_strategy_label = match &version_strategy {
+            VersionStrategy::Pin(version) => format!("pin:{version}"),
+            VersionStrategy::Latest(version) => format!("latest:{version}"),
+        };
+        let should_install =
+            should_install_npm_package_version(&installed_version, version_strategy);
+        log::debug!(
+            "npm package cache check package={package_name:?} installed={installed_version} strategy={version_strategy_label} should_install={should_install}"
+        );
+        should_install
+    }
+}
+
+fn should_install_npm_package_version(
+    installed_version: &Version,
+    version_strategy: VersionStrategy<'_>,
+) -> bool {
+    match version_strategy {
+        VersionStrategy::Pin(pinned_version) => installed_version != pinned_version,
+        VersionStrategy::Latest(latest_version) => installed_version < latest_version,
     }
 }
 
@@ -355,11 +424,150 @@ pub struct NpmInfo {
     #[serde(default)]
     dist_tags: NpmInfoDistTags,
     versions: Vec<Version>,
+    #[serde(default, deserialize_with = "deserialize_npm_info_time")]
+    time: HashMap<String, String>,
+}
+
+/// Parse NpmInfo from npm info --json output, handling both v11 and >= v12 formats.
+fn deserialize_npm_info_from_response(data: &[u8]) -> Result<NpmInfo, serde_json::Error> {
+    let value: serde_json::Value = serde_json::from_slice(data)?;
+
+    // npm >= 12 returns an array with one object: [ { ... } ]
+    if let serde_json::Value::Array(arr) = &value {
+        if arr.len() == 1 {
+            return NpmInfo::deserialize(&arr[0]);
+        }
+    }
+
+    // npm <= v11 returns a bare JSON object: { ... }
+    NpmInfo::deserialize(value)
 }
 
 #[derive(Debug, Deserialize, Default)]
 pub struct NpmInfoDistTags {
     latest: Option<Version>,
+}
+
+// Some registries put non-string values in the `time` map: JFrog Artifactory emits
+// `"unpublished": null`, and npm itself reports `unpublished` as an object when a
+// package has had versions unpublished. Only version keys map to the RFC 3339 strings
+// we read, so keep the string entries and drop the rest rather than failing to parse
+// the entire `npm info` response (which would block language server installation).
+fn deserialize_npm_info_time<'de, D>(deserializer: D) -> Result<HashMap<String, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let entries = HashMap::<String, serde_json::Value>::deserialize(deserializer)?;
+    Ok(entries
+        .into_iter()
+        .filter_map(|(key, value)| match value {
+            serde_json::Value::String(value) => Some((key, value)),
+            _ => None,
+        })
+        .collect())
+}
+
+#[derive(Debug, Deserialize)]
+struct NpmConfig {
+    #[serde(default)]
+    before: Option<String>,
+}
+
+async fn npm_config_before(
+    node_runtime: &dyn NodeRuntimeTrait,
+    proxy: Option<&Url>,
+) -> Result<Option<String>> {
+    // `npm config get before` renders Date values for display. The JSON config output keeps the
+    // computed cutoff in the same ISO format used by `npm info --json` release times.
+    let output = node_runtime
+        .run_npm_subcommand(None, proxy, "config", &["list", "--json"])
+        .await?;
+    let config: NpmConfig = serde_json::from_slice(&output.stdout)?;
+    Ok(config
+        .before
+        .filter(|before| !before.trim().is_empty() && before != "null"))
+}
+
+fn select_npm_package_version(
+    package_name: &str,
+    mut info: NpmInfo,
+    before: Option<&str>,
+    version_requirement: Option<&VersionReq>,
+) -> Result<Version> {
+    if let Some(version_requirement) = version_requirement {
+        info.versions
+            .retain(|version| version_requirement.matches(version));
+        info.versions.sort();
+        info.dist_tags.latest = info
+            .dist_tags
+            .latest
+            .take()
+            .filter(|version| version_requirement.matches(version));
+    }
+
+    if let Some(before) = before
+        && !info.time.is_empty()
+    {
+        let before_timestamp = DateTime::parse_from_rfc3339(before)
+            .with_context(|| format!("parsing npm before config timestamp {before:?}"))?
+            .with_timezone(&Utc);
+        let latest_version = info.dist_tags.latest.as_ref();
+
+        if let Some(version) = latest_version
+            && npm_version_was_published_before(version, &info.time, &before_timestamp)?
+        {
+            return Ok(version.clone());
+        }
+
+        for version in info.versions.iter().rev() {
+            if is_allowed_npm_version_before(
+                version,
+                latest_version,
+                &info.time,
+                &before_timestamp,
+                version_requirement.is_some(),
+            )? {
+                return Ok(version.clone());
+            }
+        }
+
+        bail!("no version found for npm package {package_name} before {before}");
+    }
+
+    info.dist_tags
+        .latest
+        .or_else(|| info.versions.pop())
+        .with_context(|| format!("no version found for npm package {package_name}"))
+}
+
+fn is_allowed_npm_version_before(
+    version: &Version,
+    latest_version: Option<&Version>,
+    published_at_by_version: &HashMap<String, String>,
+    before: &DateTime<Utc>,
+    allow_prereleases: bool,
+) -> Result<bool> {
+    if (!allow_prereleases && !version.pre.is_empty())
+        || latest_version.is_some_and(|latest_version| version > latest_version)
+    {
+        return Ok(false);
+    }
+
+    npm_version_was_published_before(version, published_at_by_version, before)
+}
+
+fn npm_version_was_published_before(
+    version: &Version,
+    published_at_by_version: &HashMap<String, String>,
+    before: &DateTime<Utc>,
+) -> Result<bool> {
+    let Some(published_at) = published_at_by_version.get(&version.to_string()) else {
+        return Ok(false);
+    };
+    let published_at = DateTime::parse_from_rfc3339(published_at)
+        .with_context(|| format!("parsing npm release timestamp for version {version}"))?
+        .with_timezone(&Utc);
+    Ok(&published_at <= before)
 }
 
 #[async_trait::async_trait]
@@ -510,6 +718,8 @@ impl ManagedNodeRuntime {
             log::info!("Extracted Node.js to {}", node_containing_dir.display())
         }
 
+        _ = fs::remove_dir_all(node_dir.join("cache")).await;
+
         // Note: Not in the `if !valid {}` so we can populate these for existing installations
         _ = fs::create_dir(node_dir.join("cache")).await;
         _ = fs::write(node_dir.join("blank_user_npmrc"), []).await;
@@ -621,7 +831,7 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
             subcommand,
             args,
         );
-        let command_env = npm_command_env(Some(&node_binary));
+        let command_env = npm_command_env(&node_binary);
 
         Ok(NpmCommand {
             path: node_binary,
@@ -639,6 +849,173 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
     }
 }
 
+/// A system Node.js executable whose version has been checked.
+///
+/// Discovery does not require npm, initialize a cache, or download a runtime.
+#[derive(Debug, Clone)]
+pub struct SystemNode {
+    path: PathBuf,
+    version: Version,
+}
+
+/// A failure to locate or validate a system Node.js executable.
+#[derive(Debug, thiserror::Error)]
+pub enum NodeDiscoveryError {
+    #[error("Could not read the current directory while looking for Node.js: {0}")]
+    CurrentDirectory(#[source] io::Error),
+    #[error(
+        "Node.js executable {path:?} was not found. Install Node.js {minimum} or newer, or configure its executable path.",
+        minimum = SystemNode::MIN_VERSION,
+    )]
+    NotFound {
+        path: PathBuf,
+        #[source]
+        source: which::Error,
+    },
+    #[error(
+        "Could not run Node.js at {path:?}: {source}. Check that the configured executable can run."
+    )]
+    Probe {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error(
+        "Node.js at {path:?} failed its version check ({status}). Check the Node.js installation.\nstdout: {stdout}\nstderr: {stderr}",
+        status = .output.status,
+        stdout = String::from_utf8_lossy(&.output.stdout),
+        stderr = String::from_utf8_lossy(&.output.stderr),
+    )]
+    UnsuccessfulExit { path: PathBuf, output: Output },
+    #[error(
+        "Node.js at {path:?} reported an invalid version: {output:?}. Configure a Node.js {minimum} or newer executable.",
+        minimum = SystemNode::MIN_VERSION,
+    )]
+    InvalidVersion {
+        path: PathBuf,
+        output: String,
+        #[source]
+        source: semver::Error,
+    },
+    #[error(
+        "Node.js at {path:?} is too old ({version}). Install Node.js {minimum} or newer, or configure a newer executable.",
+        minimum = SystemNode::MIN_VERSION,
+    )]
+    TooOld { path: PathBuf, version: Version },
+}
+
+impl SystemNode {
+    const MIN_VERSION: Version = Version::new(22, 0, 0);
+
+    /// Finds and validates Node.js using an explicit executable or search path.
+    ///
+    /// An explicit executable takes precedence and never falls back to another
+    /// candidate on failure. Otherwise the first executable named `node` in
+    /// `search_path` is checked, preserving PATH order even if it is too old.
+    /// `None` disables PATH lookup; it does not read the process's PATH.
+    ///
+    /// A configured basename is also looked up in `search_path`; use `./name`
+    /// to select one in the current directory. Relative paths containing
+    /// separators are resolved against that directory. On Windows, lookup
+    /// honors PATHEXT, including batch-file wrappers.
+    ///
+    /// The caller must finish loading its login-shell environment before calling
+    /// this method. The version probe inherits that environment, with PATH
+    /// replaced by `search_path` when supplied. Discovery does not launch a login
+    /// shell to obtain the environment.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed failure if lookup or execution fails, the version cannot
+    /// be parsed, or the executable reports a version older than 22.0.0.
+    pub async fn discover(
+        configured_path: Option<PathBuf>,
+        search_path: Option<OsString>,
+    ) -> std::result::Result<Self, NodeDiscoveryError> {
+        let path = smol::unblock({
+            let search_path = search_path.clone();
+            move || {
+                find_node_path(
+                    configured_path.as_deref(),
+                    search_path.as_deref(),
+                    Path::new("."),
+                )
+            }
+        })
+        .await?;
+        let mut command = util::command::new_command(&path);
+        command.arg("--version").kill_on_drop(true);
+        if let Some(search_path) = search_path {
+            command.env("PATH", search_path);
+        }
+        let output = command
+            .output()
+            .await
+            .map_err(|source| NodeDiscoveryError::Probe {
+                path: path.clone(),
+                source,
+            })?;
+        let version = check_node_version(&path, output)?;
+        Ok(Self { path, version })
+    }
+
+    /// Returns the absolute executable path without resolving symlinks.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Returns the version reported by the executable.
+    pub fn version(&self) -> &Version {
+        &self.version
+    }
+}
+
+fn find_node_path(
+    configured_path: Option<&Path>,
+    search_path: Option<&OsStr>,
+    directory: &Path,
+) -> std::result::Result<PathBuf, NodeDiscoveryError> {
+    let path = configured_path.unwrap_or_else(|| Path::new("node"));
+    let path = which::which_in(path, search_path, directory).map_err(|source| {
+        NodeDiscoveryError::NotFound {
+            path: path.to_path_buf(),
+            source,
+        }
+    })?;
+    // The cwd may have been deleted even when Node's absolute path still works.
+    // Only relative results need it, but those must be anchored before launch
+    // so the command cannot search PATH a second time.
+    std::path::absolute(directory.join(path)).map_err(NodeDiscoveryError::CurrentDirectory)
+}
+
+fn check_node_version(
+    path: &Path,
+    output: Output,
+) -> std::result::Result<Version, NodeDiscoveryError> {
+    if !output.status.success() {
+        return Err(NodeDiscoveryError::UnsuccessfulExit {
+            path: path.to_path_buf(),
+            output,
+        });
+    }
+    let version_string = String::from_utf8_lossy(&output.stdout);
+    let version =
+        Version::parse(version_string.trim().trim_start_matches('v')).map_err(|source| {
+            NodeDiscoveryError::InvalidVersion {
+                path: path.to_path_buf(),
+                output: version_string.into_owned(),
+                source,
+            }
+        })?;
+    if version < SystemNode::MIN_VERSION {
+        return Err(NodeDiscoveryError::TooOld {
+            path: path.to_path_buf(),
+            version,
+        });
+    }
+    Ok(version)
+}
+
 #[derive(Debug, Clone)]
 pub struct SystemNodeRuntime {
     node: PathBuf,
@@ -647,33 +1024,13 @@ pub struct SystemNodeRuntime {
 }
 
 impl SystemNodeRuntime {
-    const MIN_VERSION: semver::Version = Version::new(22, 0, 0);
     async fn new(node: PathBuf, npm: PathBuf) -> Result<Self> {
-        let output = util::command::new_command(&node)
-            .arg("--version")
-            .output()
-            .await
-            .with_context(|| format!("running node from {:?}", node))?;
-        if !output.status.success() {
-            anyhow::bail!(
-                "failed to run node --version. stdout: {}, stderr: {}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            );
-        }
-        let version_str = String::from_utf8_lossy(&output.stdout);
-        let version = semver::Version::parse(version_str.trim().trim_start_matches('v'))?;
-        if version < Self::MIN_VERSION {
-            anyhow::bail!(
-                "node at {} is too old. want: {}, got: {}",
-                node.to_string_lossy(),
-                Self::MIN_VERSION,
-                version
-            )
-        }
-
+        let node = SystemNode::discover(Some(node), env::var_os("PATH"))
+            .await?
+            .path;
         let scratch_dir = paths::data_dir().join("node");
         fs::create_dir(&scratch_dir).await.ok();
+        _ = fs::remove_dir_all(scratch_dir.join("cache")).await;
         fs::create_dir(scratch_dir.join("cache")).await.ok();
 
         Ok(Self {
@@ -759,7 +1116,7 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
             subcommand,
             args,
         );
-        let command_env = npm_command_env(Some(&self.node));
+        let command_env = npm_command_env(&self.node);
 
         Ok(NpmCommand {
             path: self.npm.clone(),
@@ -804,6 +1161,53 @@ pub async fn read_package_installed_version(
     file.read_to_string(&mut contents).await?;
     let package_json: PackageJson = serde_json::from_str(&contents)?;
     Ok(Some(package_json.version))
+}
+
+pub async fn read_package_executable(
+    node_module_directory: PathBuf,
+    name: &str,
+) -> Result<PathBuf> {
+    let package_directory = node_module_directory.join(name);
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Bin {
+        Path(String),
+        Named(HashMap<String, String>),
+    }
+
+    #[derive(Deserialize)]
+    struct PackageJson {
+        bin: Option<Bin>,
+    }
+
+    let package_json_path = package_directory.join("package.json");
+    let mut file = fs::File::open(&package_json_path)
+        .await
+        .with_context(|| format!("opening {}", package_json_path.display()))?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).await?;
+    let package_json: PackageJson = serde_json::from_str(&contents)
+        .with_context(|| format!("parsing {}", package_json_path.display()))?;
+
+    let relative_path = match package_json.bin {
+        Some(Bin::Path(path)) => path,
+        Some(Bin::Named(bins)) => {
+            let unscoped_name = name.rsplit('/').next().unwrap_or(name);
+            let path = if bins.len() == 1 {
+                bins.values().next()
+            } else {
+                bins.get(unscoped_name)
+            };
+            path.with_context(|| {
+                format!("npm package {name} declares no executable named {unscoped_name}")
+            })?
+            .clone()
+        }
+        None => bail!("npm package {name} declares no executable"),
+    };
+
+    Ok(package_directory.join(relative_path))
 }
 
 #[derive(Clone)]
@@ -900,12 +1304,10 @@ fn build_npm_command_args(
     command_args
 }
 
-fn npm_command_env(node_binary: Option<&Path>) -> HashMap<String, String> {
+pub fn npm_command_env(node_binary: &Path) -> HashMap<String, String> {
     let mut command_env = HashMap::new();
-    if let Some(node_binary) = node_binary {
-        let env_path = path_with_node_binary_prepended(node_binary).unwrap_or_default();
-        command_env.insert("PATH".into(), env_path.to_string_lossy().into_owned());
-    }
+    let env_path = path_with_node_binary_prepended(node_binary).unwrap_or_default();
+    command_env.insert("PATH".into(), env_path.to_string_lossy().into_owned());
 
     if let Ok(node_ca_certs) = env::var(NODE_CA_CERTS_ENV_VAR) {
         if !node_ca_certs.is_empty() {
@@ -934,11 +1336,77 @@ fn npm_command_env(node_binary: Option<&Path>) -> HashMap<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{
+        env, fs,
+        path::{Path, PathBuf},
+        process::{ExitStatus, Output},
+    };
 
+    use anyhow::{Result, bail};
     use http_client::Url;
+    use semver::{Version, VersionReq};
 
-    use super::{build_npm_command_args, proxy_argument};
+    use super::{
+        NodeDiscoveryError, NpmInfo, VersionStrategy, build_npm_command_args, check_node_version,
+        deserialize_npm_info_from_response, find_node_path, proxy_argument,
+        select_npm_package_version, should_install_npm_package_version,
+    };
+
+    #[test]
+    fn test_node_lookup_distinguishes_basenames_and_relative_paths() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let binary_directory = directory.path().join("bin");
+        fs::create_dir(&binary_directory)?;
+        let filename = format!("node{}", env::consts::EXE_SUFFIX);
+        let node = binary_directory.join(&filename);
+        fs::write(&node, b"not executed by lookup tests")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&node, fs::Permissions::from_mode(0o755))?;
+        }
+        for (configured_path, search_path) in [
+            (PathBuf::from(&filename), Some(binary_directory.as_os_str())),
+            (Path::new("bin").join(&filename), None),
+        ] {
+            assert_eq!(
+                find_node_path(Some(&configured_path), search_path, directory.path())?,
+                node
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_node_version_validation() -> Result<()> {
+        let path = Path::new("node");
+        for (stdout, expected) in [
+            ("v22.0.0\n", Version::new(22, 0, 0)),
+            (" \t22.1.0\r\n", Version::new(22, 1, 0)),
+        ] {
+            assert_eq!(check_node_version(path, node_output(stdout))?, expected);
+        }
+        for version in ["21.7.3", "22.0.0-rc.1"] {
+            let error = check_node_version(path, node_output(&format!("v{version}\n")))
+                .expect_err("unsupported version");
+            assert!(
+                matches!(&error, NodeDiscoveryError::TooOld { path: actual_path, version: actual_version }
+                    if actual_path == path && actual_version == &Version::parse(version)?)
+            );
+            assert!(
+                error
+                    .to_string()
+                    .contains("Install Node.js 22.0.0 or newer")
+            );
+        }
+        let stdout = "not node\n";
+        assert!(matches!(
+            check_node_version(path, node_output(stdout)),
+            Err(NodeDiscoveryError::InvalidVersion { path: actual_path, output, .. })
+                if actual_path == path && output == stdout
+        ));
+        Ok(())
+    }
 
     // Map localhost to 127.0.0.1
     // NodeRuntime without environment information can not parse `localhost` correctly.
@@ -1020,5 +1488,393 @@ mod tests {
                 "--yes".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn test_latest_version_strategy_accepts_newer_installed_versions() -> Result<()> {
+        let target_version = Version::parse("2.0.0")?;
+
+        assert!(!should_install_npm_package_version(
+            &Version::parse("2.0.0")?,
+            VersionStrategy::Latest(&target_version)
+        ));
+        assert!(should_install_npm_package_version(
+            &Version::parse("1.0.0")?,
+            VersionStrategy::Latest(&target_version)
+        ));
+        assert!(!should_install_npm_package_version(
+            &Version::parse("3.0.0")?,
+            VersionStrategy::Latest(&target_version)
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_select_npm_package_version_uses_dist_tag_without_before() -> Result<()> {
+        let info: NpmInfo = serde_json::from_str(
+            r#"{
+                "dist-tags": { "latest": "3.0.0" },
+                "versions": ["1.0.0", "2.0.0", "3.0.0"],
+                "time": {
+                    "1.0.0": "2024-01-01T00:00:00.000Z",
+                    "2.0.0": "2024-02-01T00:00:00.000Z",
+                    "3.0.0": "2024-03-01T00:00:00.000Z"
+                }
+            }"#,
+        )?;
+
+        assert_eq!(
+            select_npm_package_version("test-package", info, None, None)?,
+            Version::parse("3.0.0")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_npm_info_skips_non_string_time_entries() -> Result<()> {
+        // Registries such as JFrog Artifactory include `"unpublished": null` in `time`;
+        // parsing must tolerate this rather than rejecting the whole response.
+        let info: NpmInfo = serde_json::from_str(
+            r#"{
+                "dist-tags": { "latest": "2.0.0" },
+                "versions": ["1.0.0", "2.0.0"],
+                "time": {
+                    "unpublished": null,
+                    "created": "2024-01-01T00:00:00.000Z",
+                    "modified": "2024-02-01T00:00:00.000Z",
+                    "1.0.0": "2024-01-01T00:00:00.000Z",
+                    "2.0.0": "2024-02-01T00:00:00.000Z"
+                }
+            }"#,
+        )?;
+
+        assert_eq!(
+            select_npm_package_version(
+                "test-package",
+                info,
+                Some("2024-02-15T00:00:00.000Z"),
+                None
+            )?,
+            Version::parse("2.0.0")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_select_npm_package_version_uses_latest_before_npm_before_config() -> Result<()> {
+        let info: NpmInfo = serde_json::from_str(
+            r#"{
+                "dist-tags": { "latest": "3.0.0" },
+                "versions": ["1.0.0", "2.0.0", "3.0.0"],
+                "time": {
+                    "1.0.0": "2024-01-01T00:00:00.000Z",
+                    "2.0.0": "2024-02-01T00:00:00.000Z",
+                    "3.0.0": "2024-03-01T00:00:00.000Z"
+                }
+            }"#,
+        )?;
+
+        assert_eq!(
+            select_npm_package_version(
+                "test-package",
+                info,
+                Some("2024-02-15T00:00:00.000Z"),
+                None
+            )?,
+            Version::parse("2.0.0")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_select_npm_package_version_keeps_allowed_latest_dist_tag() -> Result<()> {
+        let info: NpmInfo = serde_json::from_str(
+            r#"{
+                "dist-tags": { "latest": "2.0.0" },
+                "versions": ["1.0.0", "2.0.0", "3.0.0"],
+                "time": {
+                    "1.0.0": "2024-01-01T00:00:00.000Z",
+                    "2.0.0": "2024-02-01T00:00:00.000Z",
+                    "3.0.0": "2024-03-01T00:00:00.000Z"
+                }
+            }"#,
+        )?;
+
+        assert_eq!(
+            select_npm_package_version(
+                "test-package",
+                info,
+                Some("2024-02-15T00:00:00.000Z"),
+                None
+            )?,
+            Version::parse("2.0.0")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_select_npm_package_version_keeps_allowed_prerelease_latest_dist_tag() -> Result<()> {
+        let info: NpmInfo = serde_json::from_str(
+            r#"{
+                "dist-tags": { "latest": "2.0.0-beta.1" },
+                "versions": ["1.0.0", "2.0.0-beta.1"],
+                "time": {
+                    "1.0.0": "2024-01-01T00:00:00.000Z",
+                    "2.0.0-beta.1": "2024-02-01T00:00:00.000Z"
+                }
+            }"#,
+        )?;
+
+        assert_eq!(
+            select_npm_package_version(
+                "test-package",
+                info,
+                Some("2024-02-15T00:00:00.000Z"),
+                None
+            )?,
+            Version::parse("2.0.0-beta.1")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_select_npm_package_version_ignores_prereleases_before_cutoff() -> Result<()> {
+        let info: NpmInfo = serde_json::from_str(
+            r#"{
+                "dist-tags": { "latest": "2.0.0" },
+                "versions": ["1.0.0", "2.0.0-beta.1", "2.0.0"],
+                "time": {
+                    "1.0.0": "2024-01-01T00:00:00.000Z",
+                    "2.0.0-beta.1": "2024-02-01T00:00:00.000Z",
+                    "2.0.0": "2024-03-01T00:00:00.000Z"
+                }
+            }"#,
+        )?;
+
+        assert_eq!(
+            select_npm_package_version(
+                "test-package",
+                info,
+                Some("2024-02-15T00:00:00.000Z"),
+                None
+            )?,
+            Version::parse("1.0.0")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_select_npm_package_version_ignores_versions_above_latest_dist_tag() -> Result<()> {
+        let info: NpmInfo = serde_json::from_str(
+            r#"{
+                "dist-tags": { "latest": "2.0.0" },
+                "versions": ["1.0.0", "2.0.0", "3.0.0"],
+                "time": {
+                    "1.0.0": "2024-01-01T00:00:00.000Z",
+                    "2.0.0": "2024-03-01T00:00:00.000Z",
+                    "3.0.0": "2024-02-01T00:00:00.000Z"
+                }
+            }"#,
+        )?;
+
+        assert_eq!(
+            select_npm_package_version(
+                "test-package",
+                info,
+                Some("2024-02-15T00:00:00.000Z"),
+                None
+            )?,
+            Version::parse("1.0.0")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_select_npm_package_version_errors_when_no_version_matches_before() -> Result<()> {
+        let info: NpmInfo = serde_json::from_str(
+            r#"{
+                "dist-tags": { "latest": "2.0.0" },
+                "versions": ["1.0.0", "2.0.0"],
+                "time": {
+                    "1.0.0": "2024-01-01T00:00:00.000Z",
+                    "2.0.0": "2024-02-01T00:00:00.000Z"
+                }
+            }"#,
+        )?;
+
+        let Err(error) = select_npm_package_version(
+            "test-package",
+            info,
+            Some("2023-12-01T00:00:00.000Z"),
+            None,
+        ) else {
+            bail!("expected cutoff to reject all package versions");
+        };
+        assert_eq!(
+            error.to_string(),
+            "no version found for npm package test-package before 2023-12-01T00:00:00.000Z"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_select_npm_package_version_selects_latest_matching_requirement() -> Result<()> {
+        let info: NpmInfo = serde_json::from_str(
+            r#"{
+                "dist-tags": { "latest": "7.0.0" },
+                "versions": ["6.0.3", "7.0.0", "5.9.3", "6.0.2"]
+            }"#,
+        )?;
+        let version_requirement = VersionReq::parse("^6")?;
+
+        assert_eq!(
+            select_npm_package_version("test-package", info, None, Some(&version_requirement))?,
+            Version::parse("6.0.3")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_select_npm_package_version_applies_before_to_matching_versions() -> Result<()> {
+        let info: NpmInfo = serde_json::from_str(
+            r#"{
+                "dist-tags": { "latest": "7.0.0" },
+                "versions": ["6.0.3", "7.0.0", "6.0.2"],
+                "time": {
+                    "6.0.2": "2024-02-01T00:00:00.000Z",
+                    "6.0.3": "2024-03-01T00:00:00.000Z",
+                    "7.0.0": "2024-04-01T00:00:00.000Z"
+                }
+            }"#,
+        )?;
+        let version_requirement = VersionReq::parse("^6")?;
+
+        assert_eq!(
+            select_npm_package_version(
+                "test-package",
+                info,
+                Some("2024-02-15T00:00:00.000Z"),
+                Some(&version_requirement),
+            )?,
+            Version::parse("6.0.2")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_select_npm_package_version_allows_requested_prerelease_before_cutoff() -> Result<()> {
+        let info: NpmInfo = serde_json::from_str(
+            r#"{
+                "dist-tags": { "latest": "7.0.0" },
+                "versions": ["7.1.0-beta.1", "7.1.0-beta.2", "7.0.0"],
+                "time": {
+                    "7.0.0": "2024-01-01T00:00:00.000Z",
+                    "7.1.0-beta.1": "2024-02-01T00:00:00.000Z",
+                    "7.1.0-beta.2": "2024-03-01T00:00:00.000Z"
+                }
+            }"#,
+        )?;
+        let version_requirement = VersionReq::parse(">=7.1.0-beta.1, <7.1.0")?;
+
+        assert_eq!(
+            select_npm_package_version(
+                "test-package",
+                info,
+                Some("2024-02-15T00:00:00.000Z"),
+                Some(&version_requirement),
+            )?,
+            Version::parse("7.1.0-beta.1")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_select_npm_package_version_errors_without_matching_version() -> Result<()> {
+        let info: NpmInfo = serde_json::from_str(
+            r#"{
+                "dist-tags": { "latest": "7.0.0" },
+                "versions": ["5.9.3", "7.0.0"]
+            }"#,
+        )?;
+        let version_requirement = VersionReq::parse("^6")?;
+
+        let error =
+            select_npm_package_version("test-package", info, None, Some(&version_requirement))
+                .expect_err("expected version requirement to reject all package versions");
+        assert_eq!(
+            error.to_string(),
+            "no version found for npm package test-package"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_pinned_version_strategy_replaces_different_installed_version() -> Result<()> {
+        let pinned_version = Version::parse("6.0.3")?;
+
+        assert!(!should_install_npm_package_version(
+            &pinned_version,
+            VersionStrategy::Pin(&pinned_version)
+        ));
+        assert!(should_install_npm_package_version(
+            &Version::parse("7.0.0")?,
+            VersionStrategy::Pin(&pinned_version)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_deserialize_npm_info_npm11_format() -> Result<()> {
+        let json = r#"{
+            "dist-tags": { "latest": "3.0.0" },
+            "versions": ["1.0.0", "2.0.0", "3.0.0"]
+        }"#;
+
+        let info = deserialize_npm_info_from_response(json.as_bytes())?;
+        assert_eq!(info.dist_tags.latest, Some(Version::parse("3.0.0")?));
+        assert_eq!(
+            info.versions,
+            vec![
+                Version::parse("1.0.0")?,
+                Version::parse("2.0.0")?,
+                Version::parse("3.0.0")?
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_deserialize_npm_v12_format() -> Result<()> {
+        let json = r#"[
+            {
+                "dist-tags": { "latest": "3.0.0" },
+                "versions": ["1.0.0", "2.0.0", "3.0.0"]
+            }
+        ]"#;
+
+        let info = deserialize_npm_info_from_response(json.as_bytes())?;
+        assert_eq!(info.dist_tags.latest, Some(Version::parse("3.0.0")?));
+        assert_eq!(
+            info.versions,
+            vec![
+                Version::parse("1.0.0")?,
+                Version::parse("2.0.0")?,
+                Version::parse("3.0.0")?
+            ]
+        );
+        Ok(())
+    }
+
+    fn node_output(stdout: &str) -> Output {
+        #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt;
+        #[cfg(windows)]
+        use std::os::windows::process::ExitStatusExt;
+        Output {
+            status: ExitStatus::from_raw(0),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        }
     }
 }

@@ -16,6 +16,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
+use std::time::Duration;
 use std::{cmp::Reverse, sync::Arc};
 use ui::{
     DecoratedIcon, IconDecoration, IconDecorationKind, ListItem, ListItemSpacing, Tooltip,
@@ -29,6 +30,7 @@ use workspace::{
 };
 
 const PANEL_WIDTH_REMS: f32 = 28.;
+const POPOVER_DELAY: Duration = Duration::from_millis(300);
 
 /// Toggles the tab switcher interface.
 #[derive(PartialEq, Clone, Deserialize, JsonSchema, Default, Action)]
@@ -54,6 +56,8 @@ actions!(
 pub struct TabSwitcher {
     picker: Entity<Picker<TabSwitcherDelegate>>,
     init_modifiers: Option<Modifiers>,
+    visible: bool,
+    _show_task: Option<Task<()>>,
 }
 
 impl ModalView for TabSwitcher {}
@@ -169,6 +173,17 @@ impl TabSwitcher {
         } else {
             window.modifiers().modified().then_some(window.modifiers())
         };
+        let has_modifiers = init_modifiers.is_some();
+        let _show_task = has_modifiers.then(|| {
+            cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor().timer(POPOVER_DELAY).await;
+                this.update_in(cx, |this, _window, cx| {
+                    this.visible = true;
+                    cx.notify();
+                })
+                .ok();
+            })
+        });
         Self {
             picker: cx.new(|cx| {
                 if is_global {
@@ -176,8 +191,11 @@ impl TabSwitcher {
                 } else {
                     Picker::nonsearchable_list(delegate, window, cx)
                 }
+                .initial_width(rems(PANEL_WIDTH_REMS))
             }),
             init_modifiers,
+            visible: !has_modifiers,
+            _show_task,
         }
     }
 
@@ -194,8 +212,12 @@ impl TabSwitcher {
             self.init_modifiers = None;
             if self.picker.read(cx).delegate.matches.is_empty() {
                 cx.emit(DismissEvent)
-            } else {
+            } else if self.visible {
                 window.dispatch_action(menu::Confirm.boxed_clone(), cx);
+            } else {
+                self.picker.update(cx, |picker, cx| {
+                    picker.delegate.confirm(false, window, cx);
+                });
             }
         }
     }
@@ -224,12 +246,16 @@ impl Focusable for TabSwitcher {
 
 impl Render for TabSwitcher {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let picker = self.picker.clone();
         v_flex()
             .key_context("TabSwitcher")
             .w(rems(PANEL_WIDTH_REMS))
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::handle_close_selected_item))
-            .child(self.picker.clone())
+            .when(self.visible, |el| el.child(picker.clone()))
+            .when(!self.visible, |el| {
+                el.child(div().size_0().overflow_hidden().child(picker.clone()))
+            })
     }
 }
 
@@ -274,7 +300,9 @@ impl TabMatch {
                 let project = project.read(cx);
                 let entry = project.entry_for_path(&path, cx)?;
                 let git_status = project
-                    .project_path_git_status(&path, cx)
+                    .git_store()
+                    .read(cx)
+                    .display_status_for_project_path(&path, cx)
                     .map(|status| status.summary())
                     .unwrap_or_default();
                 Some(entry_git_aware_label_color(
@@ -466,7 +494,11 @@ impl TabSwitcherDelegate {
 
         let selected_item_id = self.selected_item_id();
         self.matches = matches;
-        self.selected_index = self.compute_selected_index(selected_item_id, window, cx);
+        self.selected_index = if query.is_empty() {
+            self.compute_selected_index(selected_item_id, window, cx)
+        } else {
+            0
+        }
     }
 
     fn update_matches(
@@ -525,7 +557,11 @@ impl TabSwitcherDelegate {
             a_score.cmp(&b_score)
         });
 
-        self.selected_index = self.compute_selected_index(selected_item_id, window, cx);
+        self.selected_index = if query.is_empty() {
+            self.compute_selected_index(selected_item_id, window, cx)
+        } else {
+            0
+        }
     }
 
     fn selected_item_id(&self) -> Option<EntityId> {
@@ -709,6 +745,10 @@ impl TabSwitcherDelegate {
 impl PickerDelegate for TabSwitcherDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "tab switcher"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search all tabs…".into()
     }
@@ -822,6 +862,8 @@ impl PickerDelegate for TabSwitcherDelegate {
             selected: true,
             preview: tab_match.preview,
             deemphasized: false,
+            max_title_len: Some(usize::MAX),
+            truncate_title_middle: true,
         };
         let label = tab_match.item.tab_content(params, window, cx);
 
@@ -866,7 +908,7 @@ impl PickerDelegate for TabSwitcherDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .inset(true)
                 .toggle_state(selected)
-                .child(h_flex().w_full().child(label))
+                .child(h_flex().w_full().min_w_0().overflow_hidden().child(label))
                 .start_slot::<DecoratedIcon>(icon)
                 .map(|el| {
                     if self.selected_index == ix {

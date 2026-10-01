@@ -46,18 +46,17 @@
   function: (identifier) @function.call)
 
 (decorator
-  "@" @punctuation.special)
-
-(decorator
-  "@" @punctuation.special
+  "@" @function.decorator
   [
     (identifier) @function.decorator
     (attribute
+      object: (identifier) @function.decorator
       attribute: (identifier) @function.decorator)
     (call
       function: (identifier) @function.decorator.call)
     (call
       (attribute
+        object: (identifier) @function.decorator.call
         attribute: (identifier) @function.decorator.call))
   ])
 
@@ -90,6 +89,16 @@
         name: (identifier) @variable.parameter) ; Default parameters
       (typed_default_parameter
         name: (identifier) @variable.parameter) ; Typed default parameters
+      (list_splat_pattern
+        (identifier) @variable.parameter) ; List splat parameters (*args)
+      (dictionary_splat_pattern
+        (identifier) @variable.parameter) ; Dictionary splat parameters (**kwargs)
+      (typed_parameter
+        (list_splat_pattern
+          (identifier) @variable.parameter)) ; Typed list splat parameters
+      (typed_parameter
+        (dictionary_splat_pattern
+          (identifier) @variable.parameter)) ; Typed dictionary splat parameters
     ]))
 
 ; Keyword arguments
@@ -114,13 +123,13 @@
 ((call
   function: (identifier) @function.builtin)
   (#any-of? @function.builtin
-    "abs" "all" "any" "ascii" "bin" "bool" "breakpoint" "bytearray" "bytes" "callable" "chr"
-    "classmethod" "compile" "complex" "delattr" "dict" "dir" "divmod" "enumerate" "eval" "exec"
-    "filter" "float" "format" "frozenset" "getattr" "globals" "hasattr" "hash" "help" "hex" "id"
-    "input" "int" "isinstance" "issubclass" "iter" "len" "list" "locals" "map" "max" "memoryview"
-    "min" "next" "object" "oct" "open" "ord" "pow" "print" "property" "range" "repr" "reversed"
-    "round" "set" "setattr" "slice" "sorted" "staticmethod" "str" "sum" "super" "tuple" "type"
-    "vars" "zip" "__import__"))
+    "abs" "aiter" "all" "anext" "any" "ascii" "bin" "bool" "breakpoint" "bytearray" "bytes"
+    "callable" "chr" "classmethod" "compile" "complex" "delattr" "dict" "dir" "divmod" "enumerate"
+    "eval" "exec" "filter" "float" "format" "frozenset" "getattr" "globals" "hasattr" "hash" "help"
+    "hex" "id" "input" "int" "isinstance" "issubclass" "iter" "len" "list" "locals" "map" "max"
+    "memoryview" "min" "next" "object" "oct" "open" "ord" "pow" "print" "property" "range" "repr"
+    "reversed" "round" "set" "setattr" "sentinel" "slice" "sorted" "staticmethod" "str" "sum"
+    "super" "tuple" "type" "vars" "zip" "__import__"))
 
 ; Literals
 [
@@ -247,7 +256,6 @@
   "&"
   "%"
   "%="
-  "@"
   "^"
   "+"
   "->"
@@ -271,6 +279,9 @@
   "^="
   "|="
 ] @operator
+
+(binary_operator
+  operator: "@" @operator)
 
 [
   "and"
@@ -325,8 +336,19 @@
 ] @keyword.definition
 
 (decorator
-  (identifier) @attribute.builtin
-  (#any-of? @attribute.builtin "classmethod" "staticmethod" "property"))
+  "@" @attribute.builtin
+  (identifier) @attribute.builtin @_decorator
+  (#any-of? @_decorator "classmethod" "staticmethod" "property"))
+
+(attribute
+  attribute: (identifier) @attribute.special
+  (#any-of? @attribute.special
+    "__all__" "__annotations__" "__bases__" "__builtins__" "__class__" "__closure__" "__code__"
+    "__debug__" "__defaults__" "__dict__" "__doc__" "__file__" "__func__" "__globals__"
+    "__kwdefaults__" "__match_args__" "__members__" "__metaclass__" "__methods__" "__module__"
+    "__mro__" "__mro_entries__" "__name__" "__qualname__" "__post_init__" "__self__" "__signature__"
+    "__slots__" "__subclasses__" "__version__" "__weakref__" "__wrapped__" "__classcell__"
+    "__spec__" "__path__" "__package__" "__future__" "__traceback__"))
 
 ; Builtin types as identifiers
 [
@@ -341,6 +363,26 @@
     (binary_operator
       left: (identifier) @type.builtin))
   (#any-of? @type.builtin
-    "bool" "bytearray" "bytes" "complex" "dict" "float" "frozenset" "int" "list" "memoryview"
-    "object" "range" "set" "slice" "str" "tuple")
+    "bool" "bytearray" "bytes" "complex" "dict" "float" "frozenset" "frozendict" "int" "list"
+    "memoryview" "object" "range" "set" "slice" "str" "tuple")
 ]
+
+((identifier) @type.class.builtin
+  (#any-of? @type.class.builtin
+    ; Exceptions
+    "BaseException" "Exception" "ArithmeticError" "BufferError" "LookupError" "AssertionError"
+    "AttributeError" "EOFError" "FloatingPointError" "GeneratorExit" "ImportError"
+    "ModuleNotFoundError" "IndexError" "KeyError" "KeyboardInterrupt" "MemoryError" "NameError"
+    "NotImplementedError" "OSError" "OverflowError" "RecursionError" "ReferenceError" "RuntimeError"
+    "StopIteration" "StopAsyncIteration" "SyntaxError" "IndentationError" "TabError" "SystemError"
+    "SystemExit" "TypeError" "UnboundLocalError" "UnicodeError" "UnicodeEncodeError"
+    "UnicodeDecodeError" "UnicodeTranslateError" "ValueError" "ZeroDivisionError" "EnvironmentError"
+    "IOError" "WindowsError" "BlockingIOError" "ChildProcessError" "ConnectionError"
+    "BrokenPipeError" "ConnectionAbortedError" "ConnectionRefusedError" "ConnectionResetError"
+    "FileExistsError" "FileNotFoundError" "InterruptedError" "IsADirectoryError"
+    "NotADirectoryError" "PermissionError" "ProcessLookupError" "TimeoutError" "ExceptionGroup"
+    "BaseExceptionGroup"
+    ; Warnings
+    "Warning" "UserWarning" "DeprecationWarning" "PendingDeprecationWarning" "SyntaxWarning"
+    "RuntimeWarning" "FutureWarning" "ImportWarning" "UnicodeWarning" "EncodingWarning"
+    "BytesWarning" "ResourceWarning"))

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct User {
     pub id: String,
     pub legacy_user_id: i32,
+    pub username: String,
     pub github_login: String,
     pub avatar_url: String,
     pub name: Option<String>,
@@ -43,14 +44,14 @@ pub struct FuzzySearchUsersResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct FuzzySearchChannelMembersByGithubLoginBody {
+pub struct FuzzySearchChannelMembersBody {
     pub channel_id: i32,
     pub query: String,
     pub limit: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct FuzzySearchChannelMembersByGithubLoginResponse {
+pub struct FuzzySearchChannelMembersResponse {
     pub channel_members: Vec<ChannelMember>,
     pub users: Vec<User>,
 }

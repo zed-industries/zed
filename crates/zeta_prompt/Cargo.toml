@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/zeta_prompt.rs"
+doctest = false
 
 [dependencies]
 anyhow.workspace = true
