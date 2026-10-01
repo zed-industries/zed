@@ -996,9 +996,7 @@ impl Platform for MacPlatform {
 
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
         let observer = ThermalObserver::new(&self.foreground_executor(), callback);
-        // Drop the previous observer after unlocking: it owns the previous callback.
-        let previous = self.0.lock().thermal_observer.replace(observer);
-        drop(previous);
+        self.0.lock().thermal_observer = Some(observer);
     }
 
     fn on_system_sleep(&self, callback: Box<dyn FnMut()>) {

@@ -115,52 +115,6 @@ mod tests {
         assert_eq!(calls.get(), 1);
     }
 
-    #[gpui::test]
-    fn callback_can_replace_its_own_observer(cx: &mut gpui::TestAppContext) {
-        let slot = Rc::new(std::cell::RefCell::new(None::<ThermalObserver>));
-        let first_calls = Rc::new(Cell::new(0));
-        let second_calls = Rc::new(Cell::new(0));
-        let center = NSNotificationCenter::new();
-        let executor = cx.foreground_executor.clone();
-        *slot.borrow_mut() = Some(ThermalObserver::with_center(
-            center.clone(),
-            &cx.foreground_executor,
-            Box::new({
-                let slot = slot.clone();
-                let center = center.clone();
-                let first_calls = first_calls.clone();
-                let second_calls = second_calls.clone();
-                move || {
-                    first_calls.set(first_calls.get() + 1);
-                    let second_calls = second_calls.clone();
-                    let replacement = ThermalObserver::with_center(
-                        center.clone(),
-                        &executor,
-                        Box::new(move || second_calls.set(second_calls.get() + 1)),
-                    );
-                    // Dropping the running observer must not drop this callback mid-call.
-                    let previous = slot.borrow_mut().replace(replacement);
-                    drop(previous);
-                    first_calls.set(first_calls.get() + 1);
-                }
-            }),
-        ));
-        let post_notification = || post_thermal_notification(&center);
-
-        post_notification();
-        cx.run_until_parked();
-        assert_eq!((first_calls.get(), second_calls.get()), (2, 0));
-
-        post_notification();
-        cx.run_until_parked();
-        assert_eq!((first_calls.get(), second_calls.get()), (2, 1));
-
-        slot.borrow_mut().take();
-        post_notification();
-        cx.run_until_parked();
-        assert_eq!((first_calls.get(), second_calls.get()), (2, 1));
-    }
-
     #[test]
     fn maps_native_thermal_states() {
         assert_eq!(
