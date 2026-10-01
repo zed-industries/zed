@@ -1707,16 +1707,17 @@ impl Window {
             let mut deferred_force_render = false;
             move |request_frame_options| {
                 #[cfg(feature = "profiler")]
-                let _foreground_turn = profiler::journal::foreground_turn();
-                #[cfg(feature = "profiler")]
-                let window_id = handle.window_id();
-                #[cfg(feature = "profiler")]
-                profiler::journal::record_platform_signal(profiler::journal::PlatformSignal {
-                    window_id,
-                    signal_at: request_frame_options.signal_at,
-                    handled_at: Instant::now(),
-                    source: request_frame_options.signal_source,
-                });
+                let (_foreground_turn, window_id) = {
+                    let foreground_turn = profiler::journal::foreground_turn();
+                    let window_id = handle.window_id();
+                    profiler::journal::record_platform_signal(profiler::journal::PlatformSignal {
+                        window_id,
+                        signal_at: request_frame_options.signal_at,
+                        handled_at: Instant::now(),
+                        source: request_frame_options.signal_source,
+                    });
+                    (foreground_turn, window_id)
+                };
                 // This must be checked before accessing App: if this request
                 // arrived re-entrantly while a draw is on this thread's stack
                 // (e.g. via a nested message pump in the Windows window
@@ -1736,11 +1737,7 @@ impl Window {
                     log::debug!("deferring re-entrant window draw request");
                     deferred_force_render |= request_frame_options.force_render;
                     #[cfg(feature = "profiler")]
-                    profiler::journal::record_frame_skipped(
-                        window_id,
-                        Instant::now(),
-                        profiler::journal::FrameSkipReason::ReentrantDraw,
-                    );
+                    profiler::journal::record_reentrant_frame_skipped(window_id, Instant::now());
                     return;
                 }
                 // Take the deferred flag first: `||` short-circuits, and leaving

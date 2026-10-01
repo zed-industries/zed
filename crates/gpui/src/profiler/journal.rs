@@ -152,7 +152,7 @@ pub struct PlatformSignal {
     pub source: crate::FrameRequestSource,
 }
 
-/// Why a frame callback did not draw a new frame.
+/// Why a completed frame request did not draw a new frame.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum FrameSkipReason {
     /// The callback completed without needing a new render.
@@ -161,11 +161,9 @@ pub enum FrameSkipReason {
     InactiveFrameRateLimit,
     /// Thermal throttling deferred drawing.
     ThermalFrameRateLimit,
-    /// A nested callback returned while an enclosing draw was still running.
-    ReentrantDraw,
 }
 
-/// A frame callback that returned without drawing a new frame.
+/// A completed frame request that returned without drawing a new frame.
 #[derive(Debug, Copy, Clone)]
 pub struct FrameSkipped {
     /// The window whose callback returned.
@@ -293,8 +291,13 @@ pub enum ForegroundJournalEntry {
     FrameState(FrameStateChange),
     /// A callback entering the foreground; not work or an interval boundary.
     PlatformSignal(PlatformSignal),
-    /// A reentrant callback; the enclosing draw still owns its boundary.
-    ReentrantFrameSkipped(FrameSkipped),
+    /// A nested frame request deferred while an enclosing draw was still running.
+    ReentrantFrameSkipped {
+        /// The window whose nested frame request was deferred.
+        window_id: WindowId,
+        /// When the nested frame request was deferred.
+        at: Instant,
+    },
     /// One or more logical entries were unavailable at this point in the
     /// stream. Consumers must not infer interval boundaries across this gap.
     Discontinuity {
@@ -320,7 +323,7 @@ pub struct FrameSnapshot {
     /// are retained so occupancy can apportion folded poll time to reporting
     /// windows narrower than the interval.
     pub small_polls: Vec<SmallPollFlush>,
-    /// Entries lost to the interval's event cap, plus ring losses reported
+    /// Events lost to the interval's event cap, plus ring losses reported
     /// via [`IntervalSealer::note_lost`].
     pub dropped_events: u64,
     /// Whether the journal had an unobserved gap during this interval.
@@ -644,10 +647,6 @@ impl ForegroundJournalWriter {
     }
 
     fn record_frame_skipped(&mut self, skipped: FrameSkipped) {
-        if skipped.reason == FrameSkipReason::ReentrantDraw {
-            self.record_entry(ForegroundJournalEntry::ReentrantFrameSkipped(skipped));
-            return;
-        }
         // Even a no-render callback can schedule or invalidate the next frame.
         // Skipping does not establish that the window's pending demand is met.
         self.record_entry(ForegroundJournalEntry::Boundary(
@@ -1035,6 +1034,12 @@ pub(crate) fn record_present(timing: PresentTiming, frame: Option<FrameTiming>) 
 
 pub(crate) fn record_platform_signal(signal: PlatformSignal) {
     with_journal(|journal| journal.record_platform_signal(signal));
+}
+
+pub(crate) fn record_reentrant_frame_skipped(window_id: WindowId, at: Instant) {
+    with_journal(|journal| {
+        journal.record_entry(ForegroundJournalEntry::ReentrantFrameSkipped { window_id, at });
+    });
 }
 
 pub(crate) fn record_frame_skipped(window_id: WindowId, at: Instant, reason: FrameSkipReason) {
@@ -1429,7 +1434,7 @@ impl IntervalSealer {
                 // dirty timing, but the sealer has no use for them.
                 ForegroundJournalEntry::FrameState(_)
                 | ForegroundJournalEntry::PlatformSignal(_)
-                | ForegroundJournalEntry::ReentrantFrameSkipped(_) => {}
+                | ForegroundJournalEntry::ReentrantFrameSkipped { .. } => {}
                 ForegroundJournalEntry::Discontinuity { lost } => self.note_lost(lost),
             }
         }
@@ -1596,21 +1601,18 @@ mod tests {
             handled_at: start + Duration::from_millis(5),
             source: crate::FrameRequestSource::LocalSchedule,
         });
-        record_frame_skipped(
-            window_id,
-            start + Duration::from_millis(6),
-            FrameSkipReason::ReentrantDraw,
-        );
+        record_reentrant_frame_skipped(window_id, start + Duration::from_millis(6));
         let entries = collector.collect_unseen().entries;
         assert!(matches!(
             entries.as_slice(),
             [
                 ForegroundJournalEntry::PlatformSignal(_),
-                ForegroundJournalEntry::ReentrantFrameSkipped(FrameSkipped {
-                    reason: FrameSkipReason::ReentrantDraw,
-                    ..
-                })
+                ForegroundJournalEntry::ReentrantFrameSkipped {
+                    window_id: skipped_window_id,
+                    at,
+                }
             ]
+            if *skipped_window_id == window_id && *at == start + Duration::from_millis(6)
         ));
         assert!(sealer.push_entries(entries).is_empty());
 
@@ -2778,7 +2780,7 @@ mod tests {
                 }
                 ForegroundJournalEntry::FrameState(_)
                 | ForegroundJournalEntry::PlatformSignal(_)
-                | ForegroundJournalEntry::ReentrantFrameSkipped(_) => {}
+                | ForegroundJournalEntry::ReentrantFrameSkipped { .. } => {}
                 ForegroundJournalEntry::Discontinuity { lost } => {
                     dropped_events += lost;
                     journal_discontinuous = true;
