@@ -1,10 +1,10 @@
-//! An append-only conversation log that renders byte-stable requests.
+//! An append-only conversation log that creates byte-stable requests.
 //!
 //! Preserved thinking and prompt caching require each request to extend what
 //! was already sent. [`SessionLog`] owns the conversation: hosts may only
 //! append user input and tool results, the log records assistant output
 //! exactly as it streamed (signatures, redacted thinking, reasoning details
-//! included), and [`SessionLog::render_request`] is a pure function of it.
+//! included), and [`SessionLog::create_request`] is a pure function of it.
 
 use std::fmt;
 use std::sync::Arc;
@@ -28,7 +28,7 @@ pub struct SessionConfig {
     pub prompt_cache_key: Option<String>,
     /// `None` omits the system message.
     pub system_prompt: Option<String>,
-    /// Rendered in this order.
+    /// Sent in this order.
     pub tools: Vec<LanguageModelRequestTool>,
 }
 
@@ -36,7 +36,7 @@ pub struct SessionConfig {
 ///
 /// Each field is copied into the [`LanguageModelRequest`] field of the same
 /// name. `tool_choice`, `stop`, `compact_at_tokens`, and `max_output_tokens` always
-/// render as their defaults.
+/// take their defaults.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RoundParameters {
     pub intent: Option<CompletionIntent>,
@@ -270,7 +270,7 @@ impl SessionLog {
         }
     }
 
-    /// Renders the request for the next round.
+    /// Creates the request for the next round.
     ///
     /// Each assistant message is followed by a user message holding the
     /// results of its tool uses. Tool uses without a result are omitted, since
@@ -280,7 +280,7 @@ impl SessionLog {
     /// are marked for caching. Marking more than the last message is
     /// deliberate: the previous user message lets this request read the cache
     /// entry the previous round wrote.
-    pub fn render_request(&self, parameters: &RoundParameters) -> LanguageModelRequest {
+    pub fn create_request(&self, parameters: &RoundParameters) -> LanguageModelRequest {
         let mut messages = Vec::new();
         if let Some(system_prompt) = &self.config.system_prompt {
             messages.push(LanguageModelRequestMessage {
@@ -322,10 +322,10 @@ impl SessionLog {
                         })
                         .collect();
                     for message in &output.messages {
-                        render_assistant_message(message, &results, &mut messages);
+                        push_assistant_message(message, &results, &mut messages);
                     }
                 }
-                // Rendered after the assistant message whose tool use it answers.
+                // Sent after the assistant message whose tool use it answers.
                 SessionLogEntry::ToolResult(_) => {}
             }
         }
@@ -362,7 +362,7 @@ impl SessionLog {
 
 /// Pushes `message` without its unanswered tool uses, then a user message
 /// with the results that answer its tool uses, in submission order.
-fn render_assistant_message(
+fn push_assistant_message(
     message: &AssistantMessage,
     results: &[&LanguageModelToolResult],
     messages: &mut Vec<LanguageModelRequestMessage>,
@@ -549,7 +549,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn render_request_matches_expected_request() {
+    fn create_request_matches_expected_request() {
         let log = full_log();
         let parameters = RoundParameters {
             intent: Some(CompletionIntent::ToolResults),
@@ -561,7 +561,7 @@ mod tests {
         };
 
         assert_eq!(
-            log.render_request(&parameters),
+            log.create_request(&parameters),
             LanguageModelRequest {
                 thread_id: Some("thread".into()),
                 prompt_cache_key: Some("cache-key".into()),
@@ -621,7 +621,7 @@ mod tests {
     }
 
     #[test]
-    fn unpaired_tool_use_is_not_rendered_but_text_is() {
+    fn unpaired_tool_use_is_omitted_but_text_is_kept() {
         let mut log = SessionLog::new(config_without_system_prompt());
         log.append(user_text("Read the file"));
         run_round(
@@ -634,7 +634,7 @@ mod tests {
         log.append(user_text("Never mind"));
 
         assert_eq!(
-            log.render_request(&RoundParameters::default()).messages,
+            log.create_request(&RoundParameters::default()).messages,
             vec![
                 LanguageModelRequestMessage {
                     role: Role::User,
@@ -659,7 +659,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_results_render_after_the_message_that_owns_them() {
+    fn tool_results_follow_the_message_that_owns_them() {
         let mut log = SessionLog::new(config_without_system_prompt());
         log.append(user_text("Read both files"));
         run_round(
@@ -687,7 +687,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            log.render_request(&RoundParameters::default()).messages,
+            log.create_request(&RoundParameters::default()).messages,
             vec![
                 LanguageModelRequestMessage {
                     role: Role::User,
@@ -744,7 +744,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_tool_result_renders_placeholder() {
+    fn empty_tool_result_sends_placeholder() {
         let mut log = SessionLog::new(config_without_system_prompt());
         log.append(user_text("Run it"));
         run_round(
@@ -759,7 +759,7 @@ mod tests {
         })
         .unwrap();
 
-        let request = log.render_request(&RoundParameters::default());
+        let request = log.create_request(&RoundParameters::default());
         let Some(MessageContent::ToolResult(result)) = request
             .messages
             .last()
@@ -1005,8 +1005,8 @@ mod tests {
                 })]
             );
             assert_eq!(
-                log.render_request(&RoundParameters::default()),
-                before.render_request(&RoundParameters::default())
+                log.create_request(&RoundParameters::default()),
+                before.create_request(&RoundParameters::default())
             );
             assert_eq!(
                 log.begin_round(provider(), model()),
