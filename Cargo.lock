@@ -6149,7 +6149,6 @@ dependencies = [
  "parking_lot",
  "path",
  "pretty_assertions",
- "proto",
  "semver",
  "serde",
  "serde_json",
