@@ -234,6 +234,7 @@ mod tests {
     #[gpui::test]
     async fn test_ask_user_returns_selected_option(cx: &mut TestAppContext) {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let tool_call_id = event_stream.tool_call_id().clone();
         let tool = Arc::new(AskUserTool);
         let task = cx.update(|cx| {
             tool.run(
@@ -248,6 +249,7 @@ mod tests {
         });
 
         let request = event_rx.expect_elicitation().await;
+        assert_eq!(request.tool_call_id, tool_call_id);
         assert_eq!(request.message, "Which approach?");
         assert!(request.schema.properties.contains_key(CHOICE_FIELD));
         assert!(!request.schema.properties.contains_key(OTHER_FIELD));

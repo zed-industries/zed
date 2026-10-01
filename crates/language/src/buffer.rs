@@ -3,24 +3,25 @@ pub mod row_chunk;
 
 pub use bracket_ranges::BracketMatch;
 
+pub use crate::{
+    CaptureId, Grammar, HighlightId, HighlightMap, Language, LanguageRegistry,
+    diagnostic_set::DiagnosticSet, proto,
+};
 use crate::{
-    ByteContent, DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig,
-    PLAIN_TEXT, RunnableTag, TextObject, TreeSitterOptions, analyze_byte_content,
+    DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig, PLAIN_TEXT,
+    RunnableTag, TextObject, TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{AutoIndentMode, LanguageSettings},
     outline::OutlineItem,
-    row_chunk::RowChunks,
+    row_chunk::{RowChunkId, RowChunks},
     runnable::{self, RunnableRange},
     syntax_map::{
         MAX_BYTES_TO_QUERY, SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures,
         SyntaxMapMatch, SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
+        flattened_highlight_regions,
     },
     text_diff::text_diff,
     unified_diff_with_offsets,
-};
-pub use crate::{
-    Grammar, HighlightId, HighlightMap, Language, LanguageRegistry, diagnostic_set::DiagnosticSet,
-    proto,
 };
 
 use anyhow::{Context as _, Result};
@@ -28,6 +29,7 @@ use clock::Lamport;
 pub use clock::ReplicaId;
 use collections::HashMap;
 use encoding_rs::Encoding;
+use file_content::{ByteContent, decode_byte_header};
 use fs::MTime;
 use futures::channel::oneshot;
 use futures_lite::future::yield_now;
@@ -35,14 +37,14 @@ use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, SharedString, StyledText,
     Task, TextStyle,
 };
+use language_core::highlight_cache::{ChunkHighlightCache, ResolvedHighlights};
 
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
-use settings::WorktreeId;
+use settings::{SettingsStore, WorktreeId};
 use smallvec::SmallVec;
 use std::{
     any::Any,
-    borrow::Cow,
     cell::Cell,
     cmp::{self, Ordering, Reverse},
     collections::{BTreeMap, BTreeSet},
@@ -115,6 +117,7 @@ pub struct Buffer {
     was_dirty_before_starting_transaction: Option<bool>,
     reload_task: Option<Task<Result<()>>>,
     language: Option<Arc<Language>>,
+    content_language_detection_enabled: bool,
     autoindent_requests: Vec<Arc<AutoindentRequest>>,
     wait_for_autoindent_txs: Vec<oneshot::Sender<()>>,
     pending_autoindent: Option<Task<()>>,
@@ -138,6 +141,8 @@ pub struct Buffer {
     change_bits: Vec<rc::Weak<Cell<bool>>>,
     modeline: Option<Arc<ModelineSettings>>,
     _subscriptions: Vec<gpui::Subscription>,
+    resolved_settings: Option<Arc<LanguageSettings>>,
+    _settings_observer: Option<gpui::Subscription>,
     tree_sitter_data: Arc<TreeSitterData>,
     encoding: &'static Encoding,
     has_bom: bool,
@@ -147,21 +152,25 @@ pub struct Buffer {
 #[derive(Debug)]
 pub struct TreeSitterData {
     chunks: RowChunks,
-    brackets_by_chunks: Mutex<HashMap<usize, Vec<BracketMatch>>>,
+    brackets_by_chunks: Mutex<HashMap<RowChunkId, Vec<BracketMatch>>>,
+    highlights_by_chunks: ChunkHighlightCache,
 }
 
-const MAX_ROWS_IN_A_CHUNK: u32 = 50;
+pub(crate) const MAX_ROWS_IN_A_CHUNK: u32 = 50;
+pub(crate) const MAX_BYTES_TO_HIGHLIGHT_IN_A_CHUNK: usize = 4 * MAX_BYTES_TO_QUERY;
 
 impl TreeSitterData {
     fn clear(&mut self, snapshot: &text::BufferSnapshot) {
         self.chunks = RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK);
         self.brackets_by_chunks.get_mut().clear();
+        self.highlights_by_chunks.clear();
     }
 
     fn new(snapshot: &text::BufferSnapshot) -> Self {
         Self {
             chunks: RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK),
             brackets_by_chunks: Mutex::new(HashMap::default()),
+            highlights_by_chunks: ChunkHighlightCache::default(),
         }
     }
 
@@ -194,6 +203,7 @@ pub struct BufferSnapshot {
     non_text_state_update_count: usize,
     pub capability: Capability,
     modeline: Option<Arc<ModelineSettings>>,
+    resolved_settings: Option<Arc<LanguageSettings>>,
 }
 
 /// The kind and amount of indentation in a particular line. For now,
@@ -336,6 +346,8 @@ pub enum BufferEvent {
     LanguageChanged(bool),
     /// The buffer's syntax trees were updated.
     Reparsed,
+    /// The buffer's resolved language settings were changed.
+    SettingsChanged,
     /// The buffer's diagnostics were updated.
     DiagnosticsUpdated,
     /// The buffer gained or lost editing capabilities.
@@ -464,6 +476,8 @@ pub trait LocalFile: File {
 pub enum AutoindentMode {
     /// Indent each line of inserted text.
     EachLine,
+    /// Autoindent multiline edits, but only apply syntax-triggered outdents to single-line edits.
+    PreserveSingleLine,
     /// Apply the same indentation adjustment to all of the lines
     /// in a given insertion.
     Block {
@@ -498,6 +512,7 @@ struct AutoindentRequestEntry {
     old_row: Option<u32>,
     indent_size: IndentSize,
     original_indent_column: Option<u32>,
+    only_explicit_outdents: bool,
 }
 
 #[derive(Debug)]
@@ -505,6 +520,7 @@ struct IndentSuggestion {
     basis_row: u32,
     delta: Ordering,
     within_error: bool,
+    explicit_outdent: bool,
 }
 
 struct BufferChunkHighlights<'a> {
@@ -512,6 +528,13 @@ struct BufferChunkHighlights<'a> {
     next_capture: Option<SyntaxMapCapture<'a>>,
     stack: Vec<(usize, HighlightId)>,
     highlight_maps: Vec<HighlightMap>,
+}
+
+type HighlightRun = (Range<usize>, HighlightId);
+
+struct CachedChunkHighlightsIter {
+    runs: Vec<HighlightRun>,
+    ix: usize,
 }
 
 /// An iterator that yields chunks of a buffer's text, along with their
@@ -528,6 +551,7 @@ pub struct BufferChunks<'a> {
     unnecessary_depth: usize,
     underline: bool,
     highlights: Option<BufferChunkHighlights<'a>>,
+    cached_highlights: Option<CachedChunkHighlightsIter>,
 }
 
 /// A chunk of a buffer's text, along with its syntax highlight and
@@ -962,7 +986,7 @@ pub enum AutoIndentExclusion {
 
 impl Buffer {
     /// Create a new buffer with the given base text.
-    pub fn local<T: Into<String>>(base_text: T, cx: &Context<Self>) -> Self {
+    pub fn local<T: Into<String>>(base_text: T, cx: &mut Context<Self>) -> Self {
         Self::build(
             TextBuffer::new(
                 ReplicaId::LOCAL,
@@ -971,6 +995,7 @@ impl Buffer {
             ),
             None,
             Capability::ReadWrite,
+            cx,
         )
     }
 
@@ -978,7 +1003,7 @@ impl Buffer {
     pub fn local_normalized(
         base_text_normalized: Rope,
         line_ending: LineEnding,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         Self::build(
             TextBuffer::new_normalized(
@@ -989,6 +1014,7 @@ impl Buffer {
             ),
             None,
             Capability::ReadWrite,
+            cx,
         )
     }
 
@@ -998,11 +1024,13 @@ impl Buffer {
         replica_id: ReplicaId,
         capability: Capability,
         base_text: impl Into<String>,
+        cx: &mut Context<Self>,
     ) -> Self {
         Self::build(
             TextBuffer::new(replica_id, remote_id, base_text.into()),
             None,
             capability,
+            cx,
         )
     }
 
@@ -1013,10 +1041,11 @@ impl Buffer {
         capability: Capability,
         message: proto::BufferState,
         file: Option<Arc<dyn File>>,
+        cx: &mut Context<Self>,
     ) -> Result<Self> {
         let buffer_id = BufferId::new(message.id).context("Could not deserialize buffer_id")?;
         let buffer = TextBuffer::new(replica_id, buffer_id, message.base_text);
-        let mut this = Self::build(buffer, file, capability);
+        let mut this = Self::build(buffer, file, capability, cx);
         this.text.set_line_ending(proto::deserialize_line_ending(
             rpc::proto::LineEnding::try_from(message.line_ending)
                 .ok()
@@ -1113,12 +1142,17 @@ impl Buffer {
     }
 
     /// Builds a [`Buffer`] with the given underlying [`TextBuffer`], diff base, [`File`] and [`Capability`].
-    pub fn build(buffer: TextBuffer, file: Option<Arc<dyn File>>, capability: Capability) -> Self {
+    pub fn build(
+        buffer: TextBuffer,
+        file: Option<Arc<dyn File>>,
+        capability: Capability,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let saved_mtime = file.as_ref().and_then(|file| file.disk_state().mtime());
         let snapshot = buffer.snapshot();
         let syntax_map = Mutex::new(SyntaxMap::new(&snapshot));
         let tree_sitter_data = TreeSitterData::new(snapshot);
-        Self {
+        let mut this = Self {
             saved_mtime,
             tree_sitter_data: Arc::new(tree_sitter_data),
             saved_version: buffer.version(),
@@ -1144,6 +1178,7 @@ impl Buffer {
             wait_for_autoindent_txs: Default::default(),
             pending_autoindent: Default::default(),
             language: None,
+            content_language_detection_enabled: false,
             remote_selections: Default::default(),
             diagnostics: Default::default(),
             diagnostics_timestamp: Lamport::MIN,
@@ -1155,10 +1190,36 @@ impl Buffer {
             change_bits: Default::default(),
             modeline: None,
             _subscriptions: Vec::new(),
+            resolved_settings: None,
+            _settings_observer: Some(cx.observe_global::<SettingsStore>(|this, cx| {
+                this.refresh_resolved_settings(cx);
+            })),
             encoding: encoding_rs::UTF_8,
             has_bom: false,
             reload_with_encoding_txns: HashMap::default(),
+        };
+        this.resolved_settings = this.compute_resolved_settings(cx);
+        this
+    }
+
+    fn compute_resolved_settings(&self, cx: &App) -> Option<Arc<LanguageSettings>> {
+        cx.try_global::<SettingsStore>()?;
+        Some(LanguageSettings::resolve_uncached(self, None, cx))
+    }
+
+    fn refresh_resolved_settings(&mut self, cx: &mut Context<Self>) {
+        let resolved = self.compute_resolved_settings(cx);
+        if resolved.as_deref() != self.resolved_settings.as_deref() {
+            self.resolved_settings = resolved;
+            self.non_text_state_update_count += 1;
+            self.was_changed();
+            cx.emit(BufferEvent::SettingsChanged);
+            cx.notify();
         }
+    }
+
+    pub(crate) fn resolved_settings(&self) -> Option<&Arc<LanguageSettings>> {
+        self.resolved_settings.as_ref()
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1192,6 +1253,7 @@ impl Buffer {
                 non_text_state_update_count: 0,
                 capability: Capability::ReadOnly,
                 modeline,
+                resolved_settings: None,
             }
         }
     }
@@ -1219,6 +1281,7 @@ impl Buffer {
             non_text_state_update_count: 0,
             capability: Capability::ReadOnly,
             modeline: None,
+            resolved_settings: None,
         }
     }
 
@@ -1250,6 +1313,7 @@ impl Buffer {
             non_text_state_update_count: 0,
             capability: Capability::ReadOnly,
             modeline: None,
+            resolved_settings: None,
         }
     }
 
@@ -1281,6 +1345,7 @@ impl Buffer {
             non_text_state_update_count: self.non_text_state_update_count,
             capability: self.capability,
             modeline: self.modeline.clone(),
+            resolved_settings: self.resolved_settings.clone(),
         }
     }
 
@@ -1293,10 +1358,11 @@ impl Buffer {
                     merged_operations: Default::default(),
                 }),
                 language: self.language.clone(),
+                content_language_detection_enabled: self.content_language_detection_enabled,
                 has_conflict: self.has_conflict,
                 has_unsaved_edits: Cell::new(self.has_unsaved_edits.get_mut().clone()),
                 _subscriptions: vec![cx.subscribe(&this, Self::on_base_buffer_event)],
-                ..Self::build(self.text.branch(), self.file.clone(), self.capability())
+                ..Self::build(self.text.branch(), self.file.clone(), self.capability(), cx)
             };
             if let Some(language_registry) = self.language_registry() {
                 branch.set_language_registry(language_registry);
@@ -1476,6 +1542,14 @@ impl Buffer {
         self.has_bom = has_bom;
     }
 
+    pub fn set_content_language_detection_enabled(&mut self, enabled: bool) {
+        self.content_language_detection_enabled = enabled;
+    }
+
+    pub fn content_language_detection_enabled(&self) -> bool {
+        self.content_language_detection_enabled
+    }
+
     /// Assign a language to the buffer.
     pub fn set_language_async(&mut self, language: Option<Arc<Language>>, cx: &mut Context<Self>) {
         self.set_language_(language, cfg!(any(test, feature = "test-support")), cx);
@@ -1498,7 +1572,9 @@ impl Buffer {
         }
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().clear(&self.text);
+        Self::invalidate_tree_sitter_data(&mut self.tree_sitter_data, self.text.snapshot());
         let old_language = std::mem::replace(&mut self.language, language);
+        self.refresh_resolved_settings(cx);
         self.was_changed();
         self.reparse(cx, may_block);
         let has_fresh_language =
@@ -1534,9 +1610,14 @@ impl Buffer {
     }
 
     /// Assign the buffer [`ModelineSettings`].
-    pub fn set_modeline(&mut self, modeline: Option<ModelineSettings>) -> bool {
+    pub fn set_modeline(
+        &mut self,
+        modeline: Option<ModelineSettings>,
+        cx: &mut Context<Self>,
+    ) -> bool {
         if modeline.as_ref() != self.modeline.as_deref() {
             self.modeline = modeline.map(Arc::new);
+            self.refresh_resolved_settings(cx);
             true
         } else {
             false
@@ -1616,7 +1697,7 @@ impl Buffer {
             let bytes = load_bytes_task.await?;
 
             anyhow::ensure!(
-                analyze_byte_content(&bytes) != ByteContent::Binary,
+                decode_byte_header(&bytes).1 != ByteContent::Binary,
                 "Binary files are not supported"
             );
 
@@ -1722,6 +1803,7 @@ impl Buffer {
 
         self.file = Some(new_file);
         if file_changed {
+            self.refresh_resolved_settings(cx);
             self.was_changed();
             self.non_text_state_update_count += 1;
             if was_dirty != self.is_dirty() {
@@ -2061,7 +2143,11 @@ impl Buffer {
                     if let Some(old_row) = entry.old_row {
                         old_to_new_rows.insert(old_row, new_row);
                     }
-                    row_ranges.push((new_row..new_end_row, entry.original_indent_column));
+                    row_ranges.push((
+                        new_row..new_end_row,
+                        entry.original_indent_column,
+                        entry.only_explicit_outdents,
+                    ));
                 }
 
                 // Build a map containing the suggested indentation for each of the edited lines
@@ -2113,7 +2199,7 @@ impl Buffer {
                 // if they differ from the old suggestion for that line.
                 let mut language_indent_sizes = language_indent_sizes_by_new_row.iter().peekable();
                 let mut language_indent_size = IndentSize::default();
-                for (row_range, original_indent_column) in row_ranges {
+                for (row_range, original_indent_column, only_explicit_outdents) in row_ranges {
                     let new_edited_row_range = if request.is_block_mode {
                         row_range.start..row_range.start + 1
                     } else {
@@ -2149,7 +2235,8 @@ impl Buffer {
                                     suggested_indent != *old_indentation
                                         && (!suggestion.within_error || *was_within_error)
                                 },
-                            ) {
+                            ) && (!only_explicit_outdents || suggestion.explicit_outdent)
+                            {
                                 indent_sizes.insert(
                                     new_row,
                                     (suggested_indent, request.ignore_empty_lines),
@@ -2966,6 +3053,9 @@ impl Buffer {
                     }
 
                     AutoindentRequestEntry {
+                        only_explicit_outdents: matches!(mode, AutoindentMode::PreserveSingleLine)
+                            && old_start.row == old_end.row
+                            && !new_text.contains('\n'),
                         original_indent_column,
                         old_row: if first_line_is_new {
                             None
@@ -3038,6 +3128,7 @@ impl Buffer {
                 old_row: None,
                 indent_size: before_edit.language_indent_size_at(range.start, cx),
                 original_indent_column: None,
+                only_explicit_outdents: false,
             })
             .collect();
         self.autoindent_requests.push(Arc::new(AutoindentRequest {
@@ -3474,6 +3565,7 @@ impl Buffer {
 
             snapshot.text = new_text.snapshot.clone();
             snapshot.syntax = syntax;
+            snapshot.tree_sitter_data = Arc::new(TreeSitterData::new(&snapshot.text));
 
             EditedBufferSnapshot {
                 text: new_text,
@@ -3975,24 +4067,28 @@ impl BufferSnapshot {
                     basis_row: prev_row,
                     delta: Ordering::Equal,
                     within_error: within_error && !from_regex,
+                    explicit_outdent: true,
                 })
             } else if indent_from_prev_row {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Greater,
                     within_error: within_error && !from_regex,
+                    explicit_outdent: false,
                 })
             } else if outdent_to_row < prev_row {
                 Some(IndentSuggestion {
                     basis_row: outdent_to_row,
                     delta: Ordering::Equal,
                     within_error: within_error && !from_regex,
+                    explicit_outdent: true,
                 })
             } else if outdent_from_prev_row {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Less,
                     within_error: within_error && !from_regex,
+                    explicit_outdent: true,
                 })
             } else if config.auto_indent_using_last_non_empty_line || !self.is_line_blank(prev_row)
             {
@@ -4000,6 +4096,7 @@ impl BufferSnapshot {
                     basis_row: prev_row,
                     delta: Ordering::Equal,
                     within_error: within_error && !from_regex,
+                    explicit_outdent: false,
                 })
             } else {
                 None
@@ -4059,7 +4156,18 @@ impl BufferSnapshot {
 
         let mut syntax = None;
         if language_aware.tree_sitter {
-            syntax = Some(self.get_highlights(range.clone()));
+            match self.cached_highlight_runs(range.clone()) {
+                Some(runs) => {
+                    return BufferChunks::with_cached_highlights(
+                        self.text.as_rope(),
+                        range,
+                        runs,
+                        language_aware.diagnostics,
+                        self,
+                    );
+                }
+                None => syntax = Some(self.get_highlights(range.clone())),
+            }
         }
         BufferChunks::new(
             self.text.as_rope(),
@@ -4068,6 +4176,102 @@ impl BufferSnapshot {
             language_aware.diagnostics,
             Some(self),
         )
+    }
+
+    pub(crate) fn cached_highlight_runs(&self, range: Range<usize>) -> Option<Vec<HighlightRun>> {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            static DISABLE_HIGHLIGHT_CACHE: std::sync::LazyLock<bool> =
+                std::sync::LazyLock::new(|| {
+                    std::env::var_os("ZED_DISABLE_HIGHLIGHT_CACHE").is_some()
+                });
+            if *DISABLE_HIGHLIGHT_CACHE {
+                return None;
+            }
+        }
+        self.language.as_ref()?.grammar()?;
+        if range.is_empty() {
+            return Some(Vec::new());
+        }
+        let mut runs = Vec::<HighlightRun>::new();
+        for chunk in self
+            .tree_sitter_data
+            .chunks
+            .applicable_chunks(&[range.to_point(self)])
+        {
+            let chunk_range = chunk.anchor_range().to_offset(self);
+            if chunk_range.end <= range.start || chunk_range.start >= range.end {
+                continue;
+            }
+            if chunk_range.len() > MAX_BYTES_TO_HIGHLIGHT_IN_A_CHUNK {
+                return None;
+            }
+            let chunk_highlights = match self.tree_sitter_data.highlights_by_chunks.get(chunk.id) {
+                Some(chunk_highlights) => chunk_highlights,
+                None => {
+                    let chunk_highlights = self.compute_chunk_highlights(chunk_range);
+                    self.tree_sitter_data
+                        .highlights_by_chunks
+                        .insert(chunk.id, chunk_highlights.clone());
+                    chunk_highlights
+                }
+            };
+            for (run_range, highlight_id) in chunk_highlights.runs.iter() {
+                if run_range.end <= range.start {
+                    continue;
+                }
+                if run_range.start >= range.end {
+                    break;
+                }
+                match runs.last_mut() {
+                    Some((last_range, last_highlight_id))
+                        if last_highlight_id == highlight_id
+                            && last_range.end == run_range.start =>
+                    {
+                        last_range.end = run_range.end;
+                    }
+                    _ => runs.push((run_range.clone(), *highlight_id)),
+                }
+            }
+        }
+        Some(runs)
+    }
+
+    fn compute_chunk_highlights(&self, range: Range<usize>) -> ResolvedHighlights {
+        let captures = self.syntax.captures(range.clone(), &self.text, |grammar| {
+            grammar
+                .highlights_config
+                .as_ref()
+                .map(|config| &config.query)
+        });
+        let sources = captures
+            .grammars()
+            .iter()
+            .map(|&grammar| (Arc::clone(grammar), grammar.highlight_map()))
+            .collect::<SmallVec<[(Arc<Grammar>, HighlightMap); 2]>>();
+        let mut runs = Vec::<(Range<usize>, HighlightId)>::new();
+        for region in flattened_highlight_regions(captures, range) {
+            let highlight_id = region.stack.iter().rev().find_map(|capture| {
+                let (_, highlight_map) = sources.get(capture.grammar_index)?;
+                highlight_map.get(capture.capture_id)
+            });
+            let Some(highlight_id) = highlight_id else {
+                continue;
+            };
+            match runs.last_mut() {
+                Some((last_range, last_highlight_id))
+                    if *last_highlight_id == highlight_id
+                        && last_range.end == region.range.start =>
+                {
+                    last_range.end = region.range.end;
+                }
+                _ => runs.push((region.range, highlight_id)),
+            }
+        }
+        ResolvedHighlights {
+            sources,
+            runs: runs.into(),
+        }
     }
 
     pub fn highlighted_text_for_range<T: ToOffset>(
@@ -4166,6 +4370,10 @@ impl BufferSnapshot {
         self.modeline.as_ref()
     }
 
+    pub(crate) fn resolved_settings(&self) -> Option<&Arc<LanguageSettings>> {
+        self.resolved_settings.as_ref()
+    }
+
     /// Returns the main [`Language`].
     pub fn language(&self) -> Option<&Arc<Language>> {
         self.language.as_ref()
@@ -4183,7 +4391,7 @@ impl BufferSnapshot {
         &'a self,
         position: D,
         cx: &'a App,
-    ) -> Cow<'a, LanguageSettings> {
+    ) -> Arc<LanguageSettings> {
         LanguageSettings::for_buffer_snapshot(self, Some(position.to_offset(self)), cx)
     }
 
@@ -4214,7 +4422,12 @@ impl BufferSnapshot {
             let mut range = None;
             loop {
                 let child_range = cursor.node().byte_range();
-                if !child_range.contains(&offset) {
+                let contains_offset = child_range.contains(&offset)
+                // `Range::contains` is end-exclusive, which rejects every node at EOF
+                // (including the root). Accept the end boundary only at the buffer's end,
+                // so mid-buffer behavior is unchanged.
+                    || (child_range.end == offset && offset == text.len());
+                if !contains_offset {
                     break;
                 }
 
@@ -5419,6 +5632,7 @@ impl Clone for BufferSnapshot {
             non_text_state_update_count: self.non_text_state_update_count,
             capability: self.capability,
             modeline: self.modeline.clone(),
+            resolved_settings: self.resolved_settings.clone(),
         }
     }
 }
@@ -5441,16 +5655,40 @@ impl<'a> BufferChunks<'a> {
         diagnostics: bool,
         buffer_snapshot: Option<&'a BufferSnapshot>,
     ) -> Self {
-        let mut highlights = None;
-        if let Some((captures, highlight_maps)) = syntax {
-            highlights = Some(BufferChunkHighlights {
-                captures,
-                next_capture: None,
-                stack: Default::default(),
-                highlight_maps,
-            })
-        }
+        let highlights = syntax.map(|(captures, highlight_maps)| BufferChunkHighlights {
+            captures,
+            next_capture: None,
+            stack: Vec::new(),
+            highlight_maps,
+        });
+        Self::init(text, range, highlights, None, diagnostics, buffer_snapshot)
+    }
 
+    fn with_cached_highlights(
+        text: &'a Rope,
+        range: Range<usize>,
+        runs: Vec<HighlightRun>,
+        diagnostics: bool,
+        buffer_snapshot: &'a BufferSnapshot,
+    ) -> Self {
+        Self::init(
+            text,
+            range,
+            None,
+            Some(CachedChunkHighlightsIter { runs, ix: 0 }),
+            diagnostics,
+            Some(buffer_snapshot),
+        )
+    }
+
+    fn init(
+        text: &'a Rope,
+        range: Range<usize>,
+        highlights: Option<BufferChunkHighlights<'a>>,
+        cached_highlights: Option<CachedChunkHighlightsIter>,
+        diagnostics: bool,
+        buffer_snapshot: Option<&'a BufferSnapshot>,
+    ) -> Self {
         let diagnostic_endpoints = diagnostics.then(|| Vec::new().into_iter().peekable());
         let chunks = text.chunks_in_range(range.clone());
 
@@ -5466,6 +5704,7 @@ impl<'a> BufferChunks<'a> {
             unnecessary_depth: 0,
             underline: true,
             highlights,
+            cached_highlights,
         };
         this.initialize_diagnostic_endpoints();
         this
@@ -5475,7 +5714,33 @@ impl<'a> BufferChunks<'a> {
     pub fn seek(&mut self, range: Range<usize>) {
         let old_range = std::mem::replace(&mut self.range, range.clone());
         self.chunks.set_range(self.range.clone());
-        if let Some(highlights) = self.highlights.as_mut() {
+        if let Some(cached) = self.cached_highlights.as_mut() {
+            if old_range.start <= self.range.start && old_range.end >= self.range.end {
+                cached.ix = cached
+                    .runs
+                    .partition_point(|(run_range, _)| run_range.end <= range.start);
+            } else if let Some(snapshot) = self.buffer_snapshot {
+                if let Some(runs) = snapshot.cached_highlight_runs(self.range.clone()) {
+                    cached.runs = runs;
+                    cached.ix = 0;
+                } else {
+                    let (captures, highlight_maps) = snapshot.get_highlights(self.range.clone());
+                    self.cached_highlights = None;
+                    self.highlights = Some(BufferChunkHighlights {
+                        captures,
+                        next_capture: None,
+                        stack: Vec::new(),
+                        highlight_maps,
+                    });
+                }
+            } else {
+                debug_assert!(
+                    false,
+                    "Attempted to seek on a language-aware buffer iterator without associated buffer snapshot"
+                );
+            }
+            self.initialize_diagnostic_endpoints();
+        } else if let Some(highlights) = self.highlights.as_mut() {
             if old_range.start <= self.range.start && old_range.end >= self.range.end {
                 // Reuse existing highlights stack, as the new range is a subrange of the old one.
                 highlights
@@ -5486,8 +5751,8 @@ impl<'a> BufferChunks<'a> {
                 {
                     let next_capture_end = capture.node.end_byte();
                     if range.start < next_capture_end
-                        && let Some(capture_id) =
-                            highlights.highlight_maps[capture.grammar_index].get(capture.index)
+                        && let Some(capture_id) = highlights.highlight_maps[capture.grammar_index]
+                            .get(CaptureId(capture.index))
                     {
                         highlights.stack.push((next_capture_end, capture_id));
                     }
@@ -5498,7 +5763,7 @@ impl<'a> BufferChunks<'a> {
                 *highlights = BufferChunkHighlights {
                     captures,
                     next_capture: None,
-                    stack: Default::default(),
+                    stack: Vec::new(),
                     highlight_maps,
                 };
             } else {
@@ -5622,8 +5887,8 @@ impl<'a> Iterator for BufferChunks<'a> {
                     next_capture_start = capture.node.start_byte();
                     break;
                 } else {
-                    let highlight_id =
-                        highlights.highlight_maps[capture.grammar_index].get(capture.index);
+                    let highlight_id = highlights.highlight_maps[capture.grammar_index]
+                        .get(CaptureId(capture.index));
                     if let Some(highlight_id) = highlight_id {
                         highlights
                             .stack
@@ -5631,6 +5896,21 @@ impl<'a> Iterator for BufferChunks<'a> {
                     }
                     highlights.next_capture = highlights.captures.next();
                 }
+            }
+        }
+
+        if let Some(cached) = self.cached_highlights.as_mut() {
+            while cached
+                .runs
+                .get(cached.ix)
+                .is_some_and(|(run_range, _)| run_range.end <= self.range.start)
+            {
+                cached.ix += 1;
+            }
+            if let Some((run_range, _)) = cached.runs.get(cached.ix)
+                && self.range.start < run_range.start
+            {
+                next_capture_start = run_range.start;
             }
         }
 
@@ -5666,6 +5946,13 @@ impl<'a> Iterator for BufferChunks<'a> {
             {
                 chunk_end = chunk_end.min(*parent_capture_end);
                 highlight_id = Some(*parent_highlight_id);
+            }
+            if let Some(cached) = self.cached_highlights.as_ref()
+                && let Some((run_range, run_highlight_id)) = cached.runs.get(cached.ix)
+                && run_range.start <= chunk_start
+            {
+                chunk_end = chunk_end.min(run_range.end);
+                highlight_id = Some(*run_highlight_id);
             }
             let bit_start = chunk_start - self.chunks.offset();
             let bit_end = chunk_end - self.chunks.offset();
@@ -5899,7 +6186,7 @@ pub(crate) fn contiguous_ranges(
     })
 }
 
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct CharClassifier {
     scope: Option<LanguageScope>,
     scope_context: Option<CharScopeContext>,

@@ -19,6 +19,7 @@ use ui::scrollbars::ShowScrollbar;
 pub struct EditorSettings {
     pub cursor_blink: bool,
     pub cursor_shape: Option<CursorShape>,
+    pub cursor_animation: CursorAnimationSettings,
     pub current_line_highlight: CurrentLineHighlight,
     pub selection_highlight: bool,
     pub rounded_selection: bool,
@@ -51,6 +52,7 @@ pub struct EditorSettings {
     pub search_wrap: bool,
     pub search: SearchSettings,
     pub auto_signature_help: bool,
+    pub language_detection: bool,
     pub show_signature_help_after_edits: bool,
     pub go_to_definition_fallback: GoToDefinitionFallback,
     pub go_to_definition_scroll_strategy: GoToDefinitionScrollStrategy,
@@ -70,6 +72,11 @@ pub struct EditorSettings {
     pub diff_view_style: DiffViewStyle,
     pub minimum_split_diff_width: f32,
     pub file_diff: FileDiffSettings,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct CursorAnimationSettings {
+    pub enabled: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -208,6 +215,7 @@ impl EditorSettings {
 impl Settings for EditorSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let editor = content.editor.clone();
+        let cursor_animation = editor.cursor_animation.unwrap();
         let scrollbar = editor.scrollbar.unwrap();
         let minimap = editor.minimap.unwrap();
         let gutter = editor.gutter.unwrap();
@@ -220,6 +228,9 @@ impl Settings for EditorSettings {
         Self {
             cursor_blink: editor.cursor_blink.unwrap(),
             cursor_shape: editor.cursor_shape.map(Into::into),
+            cursor_animation: CursorAnimationSettings {
+                enabled: cursor_animation.enabled.unwrap(),
+            },
             current_line_highlight: editor.current_line_highlight.unwrap(),
             selection_highlight: editor.selection_highlight.unwrap(),
             rounded_selection: editor.rounded_selection.unwrap(),
@@ -302,6 +313,7 @@ impl Settings for EditorSettings {
                 search_on_type: search.search_on_type.unwrap(),
             },
             auto_signature_help: editor.auto_signature_help.unwrap(),
+            language_detection: editor.language_detection.unwrap(),
             show_signature_help_after_edits: editor.show_signature_help_after_edits.unwrap(),
             go_to_definition_fallback: editor.go_to_definition_fallback.unwrap(),
             go_to_definition_scroll_strategy: editor.go_to_definition_scroll_strategy.unwrap(),

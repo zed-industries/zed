@@ -15,6 +15,16 @@ use std::time::Duration;
 use scheduler::Instant;
 use serde::Serialize;
 
+#[cfg(not(target_family = "wasm"))]
+mod monitor;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) use monitor::HangMonitor;
+#[cfg(not(target_family = "wasm"))]
+pub use monitor::{HangMonitorConfig, HangMonitorError, HangMonitorPoll, HangMonitorPollReason};
+
+/// Version of the power/visibility-aware measurement rules.
+pub const MEASUREMENT_VERSION: u32 = 2;
+
 use super::SerializedLocation;
 use super::journal::{
     ForegroundEvent, ForegroundJournal, ForegroundJournalCollector, ForegroundJournalEntry,
@@ -40,11 +50,28 @@ pub struct HangIncident {
     /// The interval the hangs occurred in, including all non-hang foreground
     /// work recorded alongside them.
     pub snapshot: FrameSnapshot,
-    /// The events that blocked the foreground for at least the detector's
-    /// threshold, longest first. When the incident was triggered by the
-    /// frame budget alone, no event crossed the threshold and this instead
+    /// Which detection rule qualified the interval.
+    pub trigger: HangTrigger,
+    /// For [`HangTrigger::Threshold`], the events that blocked the foreground
+    /// for at least the detector's threshold, longest first. For
+    /// [`HangTrigger::Budget`], no event crossed the threshold and this instead
     /// holds every event in the interval, longest first.
     pub contributors: Vec<ForegroundEvent>,
+}
+
+/// The detection rule that qualified an interval as a [`HangIncident`].
+///
+/// Recorded explicitly so consumers can separate the two classes without
+/// re-deriving them from `stall_ms`, which stops working whenever the
+/// detector's thresholds change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HangTrigger {
+    /// A single event blocked the foreground for at least the hang threshold.
+    Threshold,
+    /// No single event crossed the threshold, but the interval's total
+    /// foreground spend reached the frame budget.
+    Budget,
 }
 
 impl HangDetector {
@@ -94,10 +121,14 @@ impl HangDetector {
 /// locations as plain data, contributor count capped by the converter.
 #[derive(Debug, Clone, Serialize)]
 pub struct SerializedHangIncident {
+    /// Identifies the rules used to exclude interrupted measurements.
+    pub measurement_version: u32,
     /// `"startup"` when the active window began before the first observed
     /// newly drawn frame finished platform submission (see
     /// [`HangDetector::first_present_at`]), otherwise `"steady"`.
     pub phase: &'static str,
+    /// `"threshold"` or `"budget"` (see [`HangTrigger`]).
+    pub trigger: HangTrigger,
     /// When the incident's active window started, in milliseconds since app
     /// startup: the sealing frame's first invalidation, or the earliest
     /// contributor's start when nothing was pending a repaint. Foreground
@@ -114,7 +145,7 @@ pub struct SerializedHangIncident {
     /// For presentation-sealed incidents, how long the submitted frame had
     /// been dirty, in milliseconds.
     pub dirty_to_present_ms: Option<f64>,
-    /// What closed the incident: `"present"` or `"idle"`. This labels the
+    /// What closed the incident: `"present"`, `"idle"`, or `"power_transition"`. This labels the
     /// boundary, not the hang's cause — the cause is the first contributor.
     pub sealed_by: &'static str,
     /// Fraction of the active window the foreground spent working,
@@ -250,6 +281,8 @@ impl SerializedHangIncident {
                 Some(first_present_at) if active_start >= first_present_at => "steady",
                 _ => "startup",
             },
+            measurement_version: MEASUREMENT_VERSION,
+            trigger: incident.trigger,
             start_ms: since_startup(active_start),
             active_ms: as_millis(active),
             stall_ms: incident
@@ -261,11 +294,12 @@ impl SerializedHangIncident {
                 IntervalBoundary::Presented(presented) => {
                     presented.dirty_to_present_duration().map(as_millis)
                 }
-                IntervalBoundary::Idle { .. } => None,
+                IntervalBoundary::Idle { .. } | IntervalBoundary::PowerTransition { .. } => None,
             },
             sealed_by: match snapshot.boundary {
                 IntervalBoundary::Presented(_) => "present",
                 IntervalBoundary::Idle { .. } => "idle",
+                IntervalBoundary::PowerTransition { .. } => "power_transition",
             },
             busy_fraction: (busy_fraction * 1000.0).round() / 1000.0,
             event_count: snapshot.events.len(),
@@ -407,7 +441,7 @@ impl HangIncident {
             .filter(|event| event.duration() >= threshold)
             .copied()
             .collect();
-        if contributors.is_empty() {
+        let trigger = if contributors.is_empty() {
             if snapshot.journal_discontinuous {
                 return None;
             }
@@ -416,10 +450,14 @@ impl HangIncident {
                 return None;
             }
             contributors = snapshot.events.clone();
-        }
+            HangTrigger::Budget
+        } else {
+            HangTrigger::Threshold
+        };
         contributors.sort_by_key(|event| std::cmp::Reverse(event.duration()));
         Some(Self {
             snapshot,
+            trigger,
             contributors,
         })
     }
@@ -449,7 +487,9 @@ mod tests {
         InputTiming, IntervalBoundary, PollSummary, PresentedFrame, SmallPollFlush,
         install_test_foreground_journal, record_present,
     };
-    use super::{HangDetector, HangIncident, SerializedHangContributor, SerializedHangIncident};
+    use super::{
+        HangDetector, HangIncident, HangTrigger, SerializedHangContributor, SerializedHangIncident,
+    };
 
     actions!(hang_test, [HangyAction]);
 
@@ -567,6 +607,7 @@ mod tests {
         let serialized = SerializedHangIncident::convert(startup, &incident, 1, Some(at(50)));
 
         assert_eq!(serialized.phase, "steady");
+        assert_eq!(serialized.trigger, HangTrigger::Threshold);
         // The frame's first invalidation anchors the active window, not the
         // interval start or the first contributor.
         assert_eq!(serialized.start_ms, 100.0);
@@ -593,6 +634,110 @@ mod tests {
                 ..
             } if start_ms == 150.0 && duration_ms == 150.0
         ));
+    }
+
+    #[test]
+    fn hang_monitor_polls_on_its_interval_and_on_flush() {
+        use super::{HangMonitor, HangMonitorPollReason};
+
+        let (journal, _guard) = install_test_foreground_journal(64, 4);
+        // Each monitor reports on its own channel, which disconnects once the
+        // monitor's thread has exited and dropped its callback.
+        let spawn_monitor = |journal, interval| {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let monitor = HangMonitor::spawn(
+                HangDetector::new(journal, HANG_THRESHOLD, FRAME_BUDGET),
+                interval,
+                move |poll| {
+                    if !poll.incidents.is_empty() {
+                        sender.send((poll.reason, poll.incidents.len())).ok();
+                    }
+                },
+            )
+            .expect("spawn monitor thread");
+            (monitor, receiver)
+        };
+
+        let (monitor, receiver) = spawn_monitor(journal.clone(), Duration::from_millis(10));
+        simulate_blocked_foreground_poll(HANG_THRESHOLD * 2);
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(10)).ok(),
+            Some((HangMonitorPollReason::Interval, 1)),
+        );
+        drop(monitor);
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(10)),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected),
+        );
+
+        // An interval longer than the test isolates the flush path.
+        let (monitor, receiver) = spawn_monitor(journal, Duration::from_secs(3600));
+        simulate_blocked_foreground_poll(HANG_THRESHOLD * 2);
+        let flushed = monitor.request_flush().expect("monitor thread is running");
+        futures::executor::block_on(flushed).expect("flush completes");
+        assert_eq!(
+            receiver.try_recv().ok(),
+            Some((HangMonitorPollReason::Flush, 1)),
+        );
+
+        drop(monitor);
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(10)),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected),
+        );
+    }
+
+    #[gpui::test]
+    fn app_flushes_its_hang_monitor_on_shutdown(cx: &mut TestAppContext) {
+        use super::{HangMonitorConfig, HangMonitorPollReason};
+
+        // The monitor runs on a real OS thread, so shutdown has to park until it
+        // finishes the flush, and its completion wakes the scheduler from that thread.
+        cx.executor().allow_parking();
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        cx.update(|cx| {
+            cx.start_hang_monitor(
+                HangMonitorConfig {
+                    threshold: HANG_THRESHOLD,
+                    frame_budget: FRAME_BUDGET,
+                    // Longer than the test, so only shutdown can poll.
+                    interval: Duration::from_secs(3600),
+                },
+                move |poll| {
+                    sender.send(poll.reason).ok();
+                },
+            )
+            .expect("start hang monitor");
+        });
+        assert!(receiver.try_recv().is_err());
+
+        cx.update(|cx| cx.shutdown());
+        assert_eq!(receiver.try_recv().ok(), Some(HangMonitorPollReason::Flush));
+    }
+
+    #[gpui::test]
+    fn starting_the_hang_monitor_twice_is_rejected(cx: &mut TestAppContext) {
+        use super::{HangMonitorConfig, HangMonitorError};
+
+        let config = HangMonitorConfig {
+            threshold: HANG_THRESHOLD,
+            frame_budget: FRAME_BUDGET,
+            interval: Duration::from_secs(3600),
+        };
+        cx.update(|cx| {
+            cx.start_hang_monitor(config, |_| {})
+                .expect("start hang monitor");
+            let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                cx.start_hang_monitor(config, |_| {})
+            }));
+            // Debug builds also assert, so misuse is caught during development.
+            if cfg!(debug_assertions) {
+                assert!(second.is_err());
+            } else {
+                assert!(matches!(second, Ok(Err(HangMonitorError::AlreadyStarted))));
+            }
+        });
     }
 
     #[test]
@@ -755,12 +900,14 @@ mod tests {
 
         let incident = HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET)
             .expect("foreground spend exceeded the frame budget");
+        assert_eq!(incident.trigger, HangTrigger::Budget);
         assert_eq!(incident.contributors.len(), 3);
         assert_eq!(
             incident.contributors[0].duration(),
             Duration::from_millis(8)
         );
         let serialized = SerializedHangIncident::convert(startup, &incident, 8, Some(startup));
+        assert_eq!(serialized.trigger, HangTrigger::Budget);
         assert_eq!(serialized.stall_ms, 8.0);
         assert_eq!(serialized.dirty_to_present_ms, Some(150.0));
         assert_eq!(serialized.sealed_by, "present");
@@ -1112,9 +1259,10 @@ mod tests {
         });
         draw_window(cx);
 
-        let mut injected: Vec<(HangKind, Duration)> = Vec::new();
+        let mut injections: Vec<Injection> = Vec::new();
         for _ in 0..rng.random_range(1..=4) {
             let duration = HANG_THRESHOLD + Duration::from_millis(rng.random_range(5..25));
+            let started = scheduler::Instant::now();
             let kind = match rng.random_range(0..4) {
                 0 => {
                     controls.render.set(Some(duration));
@@ -1141,7 +1289,11 @@ mod tests {
                     HangKind::Poll
                 }
             };
-            injected.push((kind, duration));
+            injections.push(Injection {
+                kind,
+                duration,
+                window: started..scheduler::Instant::now(),
+            });
 
             // Innocent interleaved activity that must not confuse detection.
             if rng.random_bool(0.5) {
@@ -1161,47 +1313,51 @@ mod tests {
             .flat_map(|incident| incident.contributors.iter().copied())
             .collect();
 
-        for kind in [
-            HangKind::Render,
-            HangKind::Input,
-            HangKind::Action,
-            HangKind::Poll,
-        ] {
-            let expected: Vec<Duration> = injected
-                .iter()
-                .filter(|(injected_kind, _)| *injected_kind == kind)
-                .map(|(_, duration)| *duration)
-                .collect();
-            let observed: Vec<Duration> = contributors
-                .iter()
-                .filter(|event| matches_kind(event, kind) && event.duration() >= HANG_THRESHOLD)
-                .map(|event| event.duration())
-                .collect();
-            assert_all_matched(kind, expected, observed);
+        for injection in &injections {
+            assert_detected_once(injection, &contributors);
         }
     }
 
-    /// Every injected hang must be covered by a distinct observed contributor
-    /// at least as long as the injected sleep (sleeps never wake early).
-    fn assert_all_matched(
+    struct Injection {
         kind: HangKind,
-        mut expected: Vec<Duration>,
-        mut observed: Vec<Duration>,
-    ) {
+        duration: Duration,
+        window: std::ops::Range<scheduler::Instant>,
+    }
+
+    /// Exactly one contributor of the injected kind must fall inside the
+    /// injection's window, and it must be at least as long as the injected
+    /// sleep (sleeps never wake early). Contributors outside every window are
+    /// ignored: on a loaded machine, uninjected work can legitimately exceed
+    /// the threshold, and reporting it is correct.
+    fn assert_detected_once(injection: &Injection, contributors: &[ForegroundEvent]) {
+        let Injection {
+            kind,
+            duration,
+            window,
+        } = injection;
+        let matches: Vec<&ForegroundEvent> = contributors
+            .iter()
+            .filter(|event| {
+                matches_kind(event, *kind)
+                    && window.start <= event.start_time()
+                    && event.end_time() <= window.end
+            })
+            .collect();
         assert_eq!(
-            observed.len(),
-            expected.len(),
-            "expected every observed {kind:?} hang to correspond to one injection; \
-             expected {expected:?}, observed {observed:?}"
+            matches.len(),
+            1,
+            "expected injected {kind:?} hang of {duration:?} to be reported exactly once; \
+             observed {:?}",
+            matches
+                .iter()
+                .map(|event| event.duration())
+                .collect::<Vec<_>>(),
         );
-        expected.sort_unstable_by(|a, b| b.cmp(a));
-        observed.sort_unstable_by(|a, b| b.cmp(a));
-        let mut observed = observed.into_iter();
-        for expected_duration in expected {
-            let matched = observed.find(|observed| *observed >= expected_duration);
+        if let Some(event) = matches.first() {
             assert!(
-                matched.is_some(),
-                "injected {kind:?} hang of {expected_duration:?} was not detected"
+                event.duration() >= *duration,
+                "injected {kind:?} hang of {duration:?} was reported as {:?}",
+                event.duration(),
             );
         }
     }

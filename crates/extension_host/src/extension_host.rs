@@ -197,6 +197,15 @@ pub enum ExtensionOperation {
     Remove,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExtensionStatus {
+    NotInstalled,
+    Installing,
+    Upgrading,
+    Installed(Arc<str>),
+    Removing,
+}
+
 #[derive(Clone)]
 pub enum Event {
     ExtensionsUpdated,
@@ -558,6 +567,27 @@ impl ExtensionStore {
 
     pub fn installed_extensions(&self) -> &BTreeMap<Arc<str>, ExtensionIndexEntry> {
         &self.extension_index.extensions
+    }
+
+    /// Returns the status of the extension, where outstanding operations take
+    /// precedence over the installed state.
+    pub fn extension_status(&self, extension_id: &str) -> ExtensionStatus {
+        match self.outstanding_operations.get(extension_id) {
+            Some(ExtensionOperation::Install) => ExtensionStatus::Installing,
+            Some(ExtensionOperation::Remove) => ExtensionStatus::Removing,
+            Some(ExtensionOperation::Upgrade) => ExtensionStatus::Upgrading,
+            None => match self.extension_index.extensions.get(extension_id) {
+                Some(extension) => ExtensionStatus::Installed(extension.manifest.version.clone()),
+                None => ExtensionStatus::NotInstalled,
+            },
+        }
+    }
+
+    pub fn is_dev_extension(&self, extension_id: &str) -> bool {
+        self.extension_index
+            .extensions
+            .get(extension_id)
+            .is_some_and(|extension| extension.dev)
     }
 
     pub fn dev_extensions(&self) -> impl Iterator<Item = &Arc<ExtensionManifest>> {
@@ -1797,7 +1827,7 @@ impl ExtensionStore {
                         let config = fs.load(&language_config_path).await.with_context(|| {
                             format!("loading language config from {language_config_path:?}")
                         })?;
-                        ::toml::from_str::<LanguageConfig>(&config).map_err(anyhow::Error::from)
+                        LanguageConfig::from_toml(&config).map_err(anyhow::Error::from)
                     }
                 };
                 let query_files = async {
@@ -2335,7 +2365,7 @@ async fn load_plugin_language(
         let config_path = language_path.join(LanguageConfig::FILE_NAME);
         async move {
             let contents = fs.load(&config_path).await?;
-            toml::from_str::<LanguageConfig>(&contents).map_err(anyhow::Error::from)
+            LanguageConfig::from_toml(&contents).map_err(anyhow::Error::from)
         }
     };
     let context_provider = {

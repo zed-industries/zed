@@ -2,7 +2,7 @@ use anthropic::ANTHROPIC_API_URL;
 use anyhow::{Context as _, anyhow};
 use gpui::BackgroundExecutor;
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use language_model::{ANTHROPIC_PROVIDER_ID, LanguageModel};
+use language_model::{ANTHROPIC_PROVIDER_ID, LanguageModel, LanguageModelRegistry};
 use std::env;
 use std::sync::Arc;
 use util::ResultExt;
@@ -51,11 +51,7 @@ impl AnthropicEventType {
     }
 }
 
-pub fn report_anthropic_event(
-    model: &Arc<dyn LanguageModel>,
-    event: AnthropicEventData,
-    cx: &gpui::App,
-) {
+pub fn report_anthropic_event(model: &LanguageModel, event: AnthropicEventData, cx: &gpui::App) {
     let reporter = AnthropicEventReporter::new(model, cx);
     reporter.report(event);
 }
@@ -69,12 +65,15 @@ pub struct AnthropicEventReporter {
 }
 
 impl AnthropicEventReporter {
-    pub fn new(model: &Arc<dyn LanguageModel>, cx: &gpui::App) -> Self {
+    pub fn new(model: &LanguageModel, cx: &gpui::App) -> Self {
         Self {
             http_client: cx.http_client(),
             executor: cx.background_executor().clone(),
-            api_key: model.api_key(cx),
-            is_anthropic: model.provider_id() == ANTHROPIC_PROVIDER_ID,
+            api_key: LanguageModelRegistry::read_global(cx)
+                .provider_for_model(model)
+                .ok()
+                .and_then(|provider| provider.api_key(model, cx)),
+            is_anthropic: model.provider_id == ANTHROPIC_PROVIDER_ID,
         }
     }
 

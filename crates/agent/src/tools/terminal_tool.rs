@@ -2583,10 +2583,7 @@ mod tests {
 
     #[test]
     fn test_terminal_tool_input_schema_mentions_forbidden_substitutions() {
-        let schema = <TerminalTool as crate::AgentTool>::input_schema(
-            language_model::LanguageModelToolSchemaFormat::JsonSchema,
-        );
-        let schema_json = serde_json::to_value(schema).expect("schema should serialize");
+        let schema_json = <TerminalTool as crate::AgentTool>::input_schema().to_value();
         let schema_text = schema_json.to_string();
 
         assert!(
@@ -2628,10 +2625,7 @@ mod tests {
 
     #[test]
     fn test_terminal_tool_input_schema_mentions_head_and_tail_parameters() {
-        let schema = <TerminalTool as crate::AgentTool>::input_schema(
-            language_model::LanguageModelToolSchemaFormat::JsonSchema,
-        );
-        let schema_json = serde_json::to_value(schema).expect("schema should serialize");
+        let schema_json = <TerminalTool as crate::AgentTool>::input_schema().to_value();
         let schema_text = schema_json.to_string();
 
         assert!(schema_text.contains("head_lines"));

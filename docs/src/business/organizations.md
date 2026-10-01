@@ -58,4 +58,4 @@ Removing a member ends their access to the organization's subscription, billing,
 
 ## Organization Dashboard
 
-The dashboard shows your members, roles, and billing. Owners and admins have full access. Billing Managers have billing access. Members have no dashboard access.
+The dashboard shows your members, roles, and billing. Owners and admins have full access. Billing Managers have [billing](../account/billing.md) access. Members have no dashboard access.
