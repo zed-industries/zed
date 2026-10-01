@@ -4,14 +4,14 @@
 mod example_support;
 
 use gpui::{
-    Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder, PathStyle, Pixels,
-    Point, Render, StrokeOptions, Window, WindowOptions, canvas, div, linear_color_stop,
-    linear_gradient, point, prelude::*, px, quad, rgb, size,
+    Background, Bounds, ColorSpace, Context, LineJoin, MouseDownEvent, Path, PathBuilder,
+    PathStyle, Pixels, Point, Render, StrokeOptions, Window, WindowOptions, canvas, div,
+    linear_color_stop, linear_gradient, point, prelude::*, px, quad, rgb, size,
 };
 use gpui_platform::application;
 
 struct PaintingViewer {
-    default_lines: Vec<(Path<Pixels>, Background)>,
+    default_lines: Vec<(Path, Background)>,
     background_quads: Vec<(Bounds<Pixels>, Background)>,
     lines: Vec<Vec<Point<Pixels>>>,
     start: Point<Pixels>,
@@ -69,7 +69,7 @@ impl PaintingViewer {
         builder.line_to(point(px(130.), px(130.)));
         builder.line_to(point(px(50.), px(130.)));
         builder.close();
-        let path = builder.build().unwrap();
+        let path = builder.build();
         let red = rgb(0xFF0000).alpha(0.5);
         lines.push((path, red.into()));
 
@@ -80,7 +80,7 @@ impl PaintingViewer {
         builder.line_to(point(px(230.), px(130.)));
         builder.line_to(point(px(150.), px(130.)));
         builder.close();
-        let path = builder.build().unwrap();
+        let path = builder.build();
         let blue = rgb(0x0000FF).alpha(0.5);
         lines.push((path, blue.into()));
 
@@ -91,7 +91,7 @@ impl PaintingViewer {
         builder.line_to(point(px(330.), px(130.)));
         builder.line_to(point(px(250.), px(130.)));
         builder.close();
-        let path = builder.build().unwrap();
+        let path = builder.build();
         let green = rgb(0x00FF00).alpha(0.5);
         lines.push((path, green.into()));
 
@@ -102,7 +102,7 @@ impl PaintingViewer {
         builder.line_to(point(px(430.), px(130.)));
         builder.line_to(point(px(350.), px(130.)));
         builder.close();
-        let path = builder.build().unwrap();
+        let path = builder.build();
         let black = rgb(0x000000).alpha(0.5);
         lines.push((path, black.into()));
 
@@ -126,7 +126,7 @@ impl PaintingViewer {
             point(center.x + radius, center.y),
         );
         builder.close();
-        let path = builder.build().unwrap();
+        let path = builder.build();
         let red1 = rgb(0xFF0000).alpha(0.5);
         lines.push((path, red1.into()));
 
@@ -149,18 +149,18 @@ impl PaintingViewer {
             point(center.x + radius, center.y),
         );
         builder.close();
-        let path = builder.build().unwrap();
+        let path = builder.build();
         let red2 = rgb(0xFF0000).alpha(0.5);
         lines.push((path, red2.into()));
 
         // draw a Rust logo
-        let mut builder = lyon::path::Path::svg_builder();
-        lyon::extra::rust_logo::build_logo_path(&mut builder);
+        let mut builder = lyon_path::Path::svg_builder();
+        lyon_extra::rust_logo::build_logo_path(&mut builder);
         // move down the Path
         let mut builder: PathBuilder = builder.into();
         builder.translate(point(px(10.), px(200.)));
         builder.scale(0.9);
-        let path = builder.build().unwrap();
+        let path = builder.build();
         lines.push((path, gpui::black().into()));
 
         // draw a lightening bolt ⚡
@@ -174,7 +174,7 @@ impl PaintingViewer {
             ],
             false,
         );
-        let path = builder.build().unwrap();
+        let path = builder.build();
         lines.push((path, rgb(0x1d4ed8).into()));
 
         // draw a ⭐
@@ -190,7 +190,7 @@ impl PaintingViewer {
         builder.line_to(point(px(270.), px(260.)));
         builder.line_to(point(px(330.), px(260.)));
         builder.line_to(point(px(350.), px(200.)));
-        let path = builder.build().unwrap();
+        let path = builder.build();
         lines.push((
             path,
             linear_gradient(
@@ -221,7 +221,7 @@ impl PaintingViewer {
             square_bounds.top_right() + point(px(0.0), vertical_offset),
         );
         builder.line_to(square_bounds.bottom_left());
-        let path = builder.build().unwrap();
+        let path = builder.build();
         lines.push((
             path,
             linear_gradient(
@@ -268,14 +268,16 @@ impl PaintingViewer {
             builder.arc_to(center, px(0.), false, false, end);
             builder.line_to(pie_center);
             builder.close();
-            let path = builder.build().unwrap();
+            let path = builder.build();
             lines.push((path, color.into()));
         }
 
         // draw a wave
-        let options = StrokeOptions::default()
-            .with_line_width(1.)
-            .with_line_join(lyon::path::LineJoin::Bevel);
+        let options = StrokeOptions {
+            line_width: 1.,
+            line_join: LineJoin::Bevel,
+            ..Default::default()
+        };
         let mut builder = PathBuilder::stroke(px(1.)).with_style(PathStyle::Stroke(options));
         builder.move_to(point(px(40.), px(420.)));
         for i in 1..50 {
@@ -284,7 +286,7 @@ impl PaintingViewer {
                 px(420.0 + (i as f32 * 10.0).sin() * 40.0),
             ));
         }
-        let path = builder.build().unwrap();
+        let path = builder.build();
         lines.push((path, gpui::green().into()));
 
         Self {
@@ -299,6 +301,57 @@ impl PaintingViewer {
 
     fn clear(&mut self, cx: &mut Context<Self>) {
         self.lines.clear();
+        cx.notify();
+    }
+
+    /// Fill the canvas with a deterministic scribble, for benchmarking.
+    fn stress_scribble(&mut self, cx: &mut Context<Self>) {
+        self.lines.clear();
+        let mut state: u32 = 0x9E3779B9;
+        let mut random = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state as f32 / u32::MAX as f32
+        };
+        for _ in 0..30 {
+            let mut x = 40.0 + random() * 860.0;
+            let mut y = 80.0 + random() * 440.0;
+            let mut angle = random() * std::f32::consts::TAU;
+            let mut points = Vec::with_capacity(121);
+            points.push(point(px(x), px(y)));
+            for _ in 0..120 {
+                angle += (random() - 0.5) * 1.2;
+                x += angle.cos() * 12.0;
+                y += angle.sin() * 12.0;
+                if !(40.0..=900.0).contains(&x) {
+                    angle = std::f32::consts::PI - angle;
+                    x = x.clamp(40.0, 900.0);
+                }
+                if !(80.0..=520.0).contains(&y) {
+                    angle = -angle;
+                    y = y.clamp(80.0, 520.0);
+                }
+                points.push(point(px(x), px(y)));
+            }
+            self.lines.push(points);
+        }
+        cx.notify();
+    }
+
+    /// Fill the canvas with a grid of strokes, for benchmarking.
+    fn stress_grid(&mut self, cx: &mut Context<Self>) {
+        self.lines.clear();
+        for i in 0..55 {
+            let y = 80.0 + i as f32 * 8.0;
+            self.lines
+                .push(vec![point(px(40.0), px(y)), point(px(900.0), px(y))]);
+        }
+        for i in 0..108 {
+            let x = 40.0 + i as f32 * 8.0;
+            self.lines
+                .push(vec![point(px(x), px(80.0)), point(px(x), px(520.0))]);
+        }
         cx.notify();
     }
 }
@@ -349,6 +402,8 @@ impl Render for PaintingViewer {
                                 cx,
                                 move |this, _| this.dashed = !dashed,
                             ))
+                            .child(button("Scribble", cx, |this, cx| this.stress_scribble(cx)))
+                            .child(button("Grid", cx, |this, cx| this.stress_grid(cx)))
                             .child(button("Clear", cx, |this, cx| this.clear(cx))),
                     ),
             )
@@ -393,9 +448,7 @@ impl Render for PaintingViewer {
                                         }
                                     }
 
-                                    if let Ok(path) = builder.build() {
-                                        window.paint_path(path, gpui::black());
-                                    }
+                                    window.paint_path(builder.build(), gpui::black());
                                 }
                             },
                         )

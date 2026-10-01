@@ -233,7 +233,7 @@ impl Render for GradientViewer {
 
                     builder.line_to(square_bounds.bottom_right());
                     builder.line_to(square_bounds.bottom_left());
-                    let path = builder.build().unwrap();
+                    let path = builder.build();
                     window.paint_path(
                         path,
                         linear_gradient(

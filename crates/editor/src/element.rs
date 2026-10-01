@@ -11141,15 +11141,13 @@ impl CursorLayout {
         if let Some(corners) = self.animated_corners {
             let mut builder = gpui::PathBuilder::fill();
             builder.add_polygon(&corners, true);
-            if let Ok(path) = builder.build() {
-                if let Some(name) = &mut self.cursor_name {
-                    name.paint(window, cx);
-                }
-                window.paint_path(path, self.color);
+            if let Some(name) = &mut self.cursor_name {
+                name.paint(window, cx);
+            }
+            window.paint_path(builder.build(), self.color);
 
-                if !animated_corners_overlap_target(bounds, &corners) {
-                    return;
-                }
+            if !animated_corners_overlap_target(bounds, &corners) {
+                return;
             }
         } else {
             //Draw background or border quad
@@ -11328,9 +11326,7 @@ impl HighlightedRange {
         }
         builder.line_to(first_top_right - top_curve_width);
 
-        if let Ok(path) = builder.build() {
-            window.paint_path(path, self.color);
-        }
+        window.paint_path(builder.build(), self.color);
     }
 }
 

@@ -117,9 +117,7 @@ impl Divider {
                     };
                     builder.move_to(start);
                     builder.line_to(end);
-                    if let Ok(line) = builder.build() {
-                        window.paint_path(line, self.color.hsla(cx));
-                    }
+                    window.paint_path(builder.build(), self.color.hsla(cx));
                 },
             )
             .absolute()

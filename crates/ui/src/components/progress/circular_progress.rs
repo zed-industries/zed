@@ -117,9 +117,7 @@ impl RenderOnce for CircularProgress {
                 );
                 bg_builder.close();
 
-                if let Ok(path) = bg_builder.build() {
-                    window.paint_path(path, bg_color);
-                }
+                window.paint_path(bg_builder.build(), bg_color);
 
                 // Draw progress arc if there's any progress
                 let progress = (current_value / max_value).clamp(0.0, 1.0);
@@ -171,9 +169,7 @@ impl RenderOnce for CircularProgress {
                         );
                     }
 
-                    if let Ok(path) = progress_builder.build() {
-                        window.paint_path(path, progress_color);
-                    }
+                    window.paint_path(progress_builder.build(), progress_color);
                 }
             },
         )

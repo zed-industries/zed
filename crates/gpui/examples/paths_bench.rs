@@ -14,7 +14,7 @@ const DEFAULT_WINDOW_WIDTH: Pixels = px(1024.0);
 const DEFAULT_WINDOW_HEIGHT: Pixels = px(768.0);
 
 struct PaintingViewer {
-    default_lines: Vec<(Path<Pixels>, Background)>,
+    default_lines: Vec<(Path, Background)>,
     _painting: bool,
 }
 
@@ -37,7 +37,7 @@ impl PaintingViewer {
             builder.line_to(point(px(270.), px(160.)));
             builder.line_to(point(px(330.), px(160.)));
             builder.line_to(point(px(350.), px(100.)));
-            let path = builder.build().unwrap();
+            let path = builder.build();
             lines.push((
                 path,
                 linear_gradient(
