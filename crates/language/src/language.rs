@@ -334,7 +334,7 @@ pub struct CachedLspAdapter {
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     language_ids: HashMap<LanguageName, String>,
-    pub enabled_by_default: bool,
+    opt_in_languages: HashSet<LanguageName>,
     pub adapter: Arc<dyn LspAdapter>,
     cached_binary: Arc<ServerBinaryCache>,
 }
@@ -352,7 +352,7 @@ impl Debug for CachedLspAdapter {
                 &self.disk_based_diagnostics_progress_token,
             )
             .field("language_ids", &self.language_ids)
-            .field("enabled_by_default", &self.enabled_by_default)
+            .field("opt_in_languages", &self.opt_in_languages)
             .finish_non_exhaustive()
     }
 }
@@ -363,14 +363,14 @@ impl CachedLspAdapter {
         let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources();
         let disk_based_diagnostics_progress_token = adapter.disk_based_diagnostics_progress_token();
         let language_ids = adapter.language_ids();
-        let enabled_by_default = adapter.enabled_by_default();
+        let opt_in_languages = adapter.opt_in_languages();
 
         Arc::new(CachedLspAdapter {
             name,
             disk_based_diagnostic_sources,
             disk_based_diagnostics_progress_token,
             language_ids,
-            enabled_by_default,
+            opt_in_languages,
             adapter,
             cached_binary: Default::default(),
         })
@@ -378,6 +378,12 @@ impl CachedLspAdapter {
 
     pub fn name(&self) -> LanguageServerName {
         self.adapter.name()
+    }
+
+    /// Returns whether the language server only starts for the given language
+    /// when it is explicitly listed in the `language_servers` setting.
+    pub fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        self.opt_in_languages.contains(language)
     }
 
     pub async fn get_language_server_command(
@@ -660,10 +666,11 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         HashMap::default()
     }
 
-    /// Whether the `...` wildcard in the `language_servers` setting includes this
-    /// language server. If `false`, it only starts when listed explicitly.
-    fn enabled_by_default(&self) -> bool {
-        true
+    /// Languages for which the `...` wildcard in the `language_servers` setting
+    /// does not include this language server, so that it only starts when
+    /// listed explicitly.
+    fn opt_in_languages(&self) -> HashSet<LanguageName> {
+        HashSet::default()
     }
 
     /// Support custom initialize params.
@@ -933,7 +940,7 @@ pub struct FakeLspAdapter {
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub disk_based_diagnostics_sources: Vec<String>,
     pub language_server_binary: LanguageServerBinary,
-    pub enabled_by_default: bool,
+    pub opt_in_languages: HashSet<LanguageName>,
 
     pub capabilities: lsp::ServerCapabilities,
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
@@ -1561,7 +1568,7 @@ impl Default for FakeLspAdapter {
                 arguments: vec![],
                 env: Default::default(),
             },
-            enabled_by_default: true,
+            opt_in_languages: HashSet::default(),
             label_for_completion: None,
         }
     }
@@ -1664,8 +1671,8 @@ impl LspAdapter for FakeLspAdapter {
         label_for_completion(item, language)
     }
 
-    fn enabled_by_default(&self) -> bool {
-        self.enabled_by_default
+    fn opt_in_languages(&self) -> HashSet<LanguageName> {
+        self.opt_in_languages.clone()
     }
 
     fn is_extension(&self) -> bool {

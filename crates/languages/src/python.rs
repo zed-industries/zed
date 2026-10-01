@@ -1,7 +1,7 @@
 use anyhow::Result;
 use anyhow::{Context as _, ensure};
 use async_trait::async_trait;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::future::BoxFuture;
 use futures::lock::OwnedMutexGuard;
 use futures::{AsyncBufReadExt, StreamExt as _};
@@ -372,6 +372,10 @@ impl LspAdapter for TyLspAdapter {
         Self::SERVER_NAME
     }
 
+    fn opt_in_languages(&self) -> HashSet<LanguageName> {
+        HashSet::from_iter([LanguageName::new_static("Python")])
+    }
+
     async fn label_for_completion(
         &self,
         item: &lsp::CompletionItem,
@@ -663,6 +667,10 @@ impl PyrightLspAdapter {
 impl LspAdapter for PyrightLspAdapter {
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
+    }
+
+    fn opt_in_languages(&self) -> HashSet<LanguageName> {
+        HashSet::from_iter([LanguageName::new_static("Python")])
     }
 
     async fn initialization_options(
@@ -1814,6 +1822,10 @@ const BINARY_DIR: &str = if cfg!(target_os = "windows") {
 impl LspAdapter for PyLspAdapter {
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
+    }
+
+    fn opt_in_languages(&self) -> HashSet<LanguageName> {
+        HashSet::from_iter([LanguageName::new_static("Python")])
     }
 
     async fn process_completions(&self, items: &mut [lsp::CompletionItem]) {

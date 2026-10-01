@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::future::join_all;
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use itertools::Itertools as _;
@@ -873,6 +873,14 @@ impl LspAdapter for TypeScriptLspAdapter {
             (LanguageName::new_static("TypeScript"), "typescript".into()),
             (LanguageName::new_static("JavaScript"), "javascript".into()),
             (LanguageName::new_static("TSX"), "typescriptreact".into()),
+        ])
+    }
+
+    fn opt_in_languages(&self) -> HashSet<LanguageName> {
+        HashSet::from_iter([
+            LanguageName::new_static("TypeScript"),
+            LanguageName::new_static("JavaScript"),
+            LanguageName::new_static("TSX"),
         ])
     }
 }
