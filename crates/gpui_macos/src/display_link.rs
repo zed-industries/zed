@@ -274,14 +274,9 @@ fn unsubscribe(display_id: CGDirectDisplayID, subscriber_id: SubscriberId) {
         let Some(entry) = registry.displays.get_mut(&display_id) else {
             return;
         };
-        entry.subscribers.retain(|subscriber| {
-            if subscriber.id == subscriber_id {
-                subscriber.signal.take();
-                false
-            } else {
-                true
-            }
-        });
+        entry
+            .subscribers
+            .retain(|subscriber| subscriber.id != subscriber_id);
         if entry.subscribers.is_empty() && entry.running {
             entry.running = false;
             Some(entry.link.clone())
