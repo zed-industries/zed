@@ -505,6 +505,7 @@ watch = { path = "crates/watch" }
 web_search = { path = "crates/web_search" }
 web_search_providers = { path = "crates/web_search_providers" }
 which_key = { path = "crates/which_key" }
+windows_resources = { path = "crates/windows_resources" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 x_ai = { path = "crates/x_ai" }
@@ -571,6 +572,8 @@ aws-sdk-bedrockruntime = { version = "1.112.0", default-features = false, featur
     "behavior-version-latest",
     "rt-tokio",
 ] }
+aws-sdk-kinesis = { version = "1.51", default-features = false }
+aws-sdk-s3 = { version = "1.15", default-features = false }
 aws-sigv4 = { version = "1.4.0", features = ["http1"] }
 aws-smithy-runtime-api = { version = "1.9.2", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
@@ -580,16 +583,17 @@ betlang = "0.1.1"
 bitflags = "2.6.0"
 block2 = "0.6"
 brush-parser = "0.3"
+bytemuck = "1"
 bytes = "1.0"
-cargo_metadata = "0.19"
+cargo_metadata = "0.23"
 cargo_toml = "0.21"
 cbindgen = { version = "0.28.0", default-features = false }
 chardetng = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 ciborium = "0.2"
 clap = { version = "4.4", features = ["derive", "wrap_help"] }
-clap_complete = { version = "4.4" }
-clap_complete_nushell = { version = "4.4" }
+clap_complete = "4.4"
+clap_complete_nushell = "4.4"
 cocoa = "=0.26.0"
 console = "0.16"
 console_error_panic_hook = "0.1.7"
@@ -598,8 +602,10 @@ convert_case = "0.11.0"
 core-foundation = "0.10"
 core-foundation-sys = "0.8.6"
 core-graphics = "0.24"
+core-services = "1"
 core-text = "21"
 core-video = { version = "0.5.2", features = ["metal"] }
+coreaudio-rs = "0.12"
 cpal = "0.17"
 crash-handler = "0.8"
 criterion = { version = "0.8.2", features = ["html_reports"] }
@@ -635,6 +641,7 @@ etagere = "0.2"
 exec = "0.3.1"
 fancy-regex = "0.19"
 flume = "0.12"
+font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "94b0f28166665e8fd2f53ff6d268a14955c82269", package = "zed-font-kit", version = "0.14.1-zed" }
 foreign-types = "0.5"
 fork = "0.4.0"
 futures = "0.3.34"
@@ -678,6 +685,7 @@ imara-diff = "0.2.0"
 indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
 inventory = "0.3.19"
+is_executable = "1.0"
 itertools = "0.14.0"
 js-sys = "0.3"
 jsonschema = { version = "0.51", default-features = false }
@@ -692,8 +700,10 @@ livekit = { version = "0.7.32", features = ["tokio", "rustls-tls-native-roots"] 
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 lru = "0.16"
 lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "f1783e63a7f4eb4397bf51d4148b4895a1f7ab16" }
-mach2 = "0.5"
+mach2 = "0.6"
 markup5ever_rcdom = "0.39"
+mdbook = "=0.4.40"
+merman = { version = "=0.8.0-alpha.5", default-features = false }
 metal = "0.33"
 mime = "0.3.17"
 minidumper = "0.11"
@@ -767,6 +777,8 @@ objc2-screen-capture-kit = { version = "=0.3.2", default-features = false, featu
     "std"
 ] }
 objc2-user-notifications = "0.3"
+octocrab = { version = "0.49", default-features = false }
+oo7 = { version = "0.6", default-features = false }
 open = "5.0.0"
 ordered-float = "5"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
@@ -784,6 +796,7 @@ pet-poetry = { git = "https://github.com/zed-industries/python-environment-tools
 pet-reporter = { git = "https://github.com/zed-industries/python-environment-tools.git", rev = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
 pet-virtualenv = { git = "https://github.com/zed-industries/python-environment-tools.git", rev = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
 piper = "0.2"
+plist = "1.3"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
 proc-macro2 = "1.0.93"
@@ -827,11 +840,12 @@ runtimelib = { version = "1.4.0", default-features = false, features = [
 rust-embed = { version = "8.11", features = ["include-exclude", "compression"] }
 rustc-hash = "2.1.0"
 rustix = { version = "1.1", features = ["fs"] }
-rustls = { version = "0.23.26" }
+rustls = "0.23.26"
 rustls-platform-verifier = "0.7"
 # WARNING: If you change this, you must also publish a new version of zed-scap to crates.io
 scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac", default-features = false, package = "zed-scap", version = "0.0.8-zed" }
 schemars = { version = "1.0", features = ["indexmap2"] }
+sea-orm = "=1.1.10"
 seccompiler = "0.5"
 semver = { version = "1.0", features = ["serde"] }
 serde = { version = "1.0.221", features = ["derive", "rc"] }
@@ -842,16 +856,19 @@ serde_json_lenient = { version = "0.2", features = [
 ] }
 serde_path_to_error = "0.1.17"
 serde_urlencoded = "0.7"
-serde_yaml = "0.9.34"
+serde_yaml = { package = "serde_yaml_ng", version = "0.10" }
 serde_yaml_ng = "0.10"
 sha2 = "0.10"
 shellexpand = "3.1"
-shlex = "1.3.0"
+shlex = "2.0"
+similar = "2.7"
 simplelog = "0.12.2"
 slotmap = "1.0.6"
 smallvec = { version = "1.6", features = ["union", "const_new"] }
+spin = "0.10"
 smol = "2.0"
 sqlformat = "0.2"
+sqlx = "0.8"
 stacksafe = "1.0"
 streaming-iterator = "0.1"
 strsim = "0.11"
@@ -860,7 +877,9 @@ swash = "0.2.6"
 syn = { version = "2.0.101", features = ["full", "extra-traits", "visit-mut"] }
 sys-locale = "0.3.1"
 sysinfo = "0.39"
+taffy = "=0.13.0"
 tempfile = "3.20.0"
+tendril = "0.5"
 thiserror = "2.0.12"
 time = { version = "0.3", features = [
     "macros",
@@ -871,7 +890,7 @@ time = { version = "0.3", features = [
     "local-offset",
 ] }
 tiny_http = "0.12"
-tokio = { version = "1" }
+tokio = "1"
 tokio-rustls = { version = "0.26", default-features = false }
 toml = "0.8"
 toml_edit = { version = "0.22", default-features = false, features = [
@@ -882,6 +901,7 @@ toml_edit = { version = "0.22", default-features = false, features = [
 tower-http = "0.4.4"
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "43623ec9bf0eaaf7113285c46e8a09018f181b18" }
 tracing = "0.1.40"
+tracing-subscriber = "0.3"
 tree-sitter-bash = "0.25.1"
 tree-sitter-c = "0.24.1"
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }
@@ -919,6 +939,9 @@ uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 vte = { version = "0.15.0", features = ["ansi"] }
 walkdir = "2.5"
 wasm-encoder = "0.254"
+# Forked because upstream is unmaintained and its worker bootstrap still calls
+# the wasm-bindgen init function with the positional arguments deprecated in 0.2.93.
+wasm_thread = { git = "https://github.com/zed-industries/wasm_thread", rev = "0cf96c7708dfb97ccf3da50347e25edcf75d6937", version = "0.3", features = ["es_modules"] }
 wasmparser = "0.254"
 wasmtime = { version = "48", default-features = false, features = [
     "anyhow",
@@ -934,6 +957,7 @@ wasm-bindgen = "0.2.120"
 wasm-bindgen-futures = "0.4"
 wasmtime-wasi = { version = "48", default-features = false, features = ["p2"] }
 wax = "0.7"
+web-sys = "0.3"
 web-time = "1.1.0"
 webpki-roots = "1.0.8"
 webrtc-sys = "0.3.23"
@@ -941,10 +965,11 @@ wgpu = "29.0.4"
 which = "8"
 windows-core = "0.62"
 windows-registry = "0.6.0"
+xkbcommon = { version = "0.8", default-features = false }
 yaml-rust2 = "0.8"
 yawc = "0.4.2"
 zeroize = "1.8"
-zstd = "0.11"
+zstd = "0.13"
 
 [workspace.dependencies.windows]
 version = "0.62"

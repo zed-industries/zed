@@ -21,7 +21,7 @@ test-support = ["gpui/test-support", "dep:image"]
 [dependencies]
 gpui.workspace = true
 anyhow.workspace = true
-bytemuck = "1"
+bytemuck.workspace = true
 collections.workspace = true
 cosmic-text = "0.19.0"
 etagere.workspace = true
@@ -40,10 +40,10 @@ wgpu.workspace = true
 
 # Optional: only needed on platforms with multiple font sources (e.g. Linux)
 # WARNING: If you change this, you must also publish a new version of zed-font-kit to crates.io
-font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "94b0f28166665e8fd2f53ff6d268a14955c82269", package = "zed-font-kit", version = "0.14.1-zed", optional = true }
+font-kit = { workspace = true, optional = true }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }
+web-sys = { workspace = true, features = ["HtmlCanvasElement"] }
 wgpu = { workspace = true, features = ["webgl"] }
 
 [dev-dependencies]

@@ -113,7 +113,7 @@ settings = { workspace = true, "features" = ["test-support"] }
 theme = { workspace = true, "features" = ["test-support"] }
 theme_settings.workspace = true
 
-unindent = { workspace = true }
+unindent.workspace = true
 
 zlog.workspace = true
 

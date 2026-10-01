@@ -26,7 +26,7 @@ windows.workspace = true
 tempfile.workspace = true
 
 [build-dependencies]
-windows_resources = { path = "../windows_resources" }
+windows_resources.workspace = true
 
 [package.metadata.docs.rs]
 targets = ["x86_64-pc-windows-msvc"]

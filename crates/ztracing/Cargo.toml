@@ -19,7 +19,7 @@ web = ["dep:async-channel", "dep:js-sys", "dep:wasm-bindgen", "dep:web-sys"]
 zlog.workspace = true
 tracing.workspace = true
 
-tracing-subscriber = "0.3.22"
+tracing-subscriber.workspace = true
 
 ztracing_macro.workspace = true
 
@@ -31,4 +31,4 @@ tracy-client = { version = "0.18.2", optional = true, features = ["enable", "ond
 async-channel = { workspace = true, optional = true }
 js-sys = { workspace = true, optional = true }
 wasm-bindgen = { workspace = true, optional = true }
-web-sys = { version = "0.3", features = ["console", "Performance"], optional = true }
+web-sys = { workspace = true, features = ["console", "Performance"], optional = true }

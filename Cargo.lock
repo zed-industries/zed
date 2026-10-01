@@ -322,7 +322,7 @@ dependencies = [
  "web_search",
  "zed_env_vars",
  "zlog",
- "zstd 0.11.2+zstd.1.5.2",
+ "zstd 0.13.3",
 ]
 
 [[package]]
@@ -538,7 +538,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
- "shlex 1.3.0",
+ "shlex 2.0.1",
  "streaming_diff",
  "task",
  "telemetry",
@@ -2778,15 +2778,6 @@ dependencies = [
 
 [[package]]
 name = "cargo-platform"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e35af189006b9c0f00a064685c727031e3ed2d8020f7ba284d78cc2671bd36ea"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "cargo-platform"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "87a0c0e6148f11f01f32650a2ea02d532b2ad4e81d8bd41e6e565b5adc5e6082"
@@ -2797,26 +2788,12 @@ dependencies = [
 
 [[package]]
 name = "cargo_metadata"
-version = "0.19.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd5eb614ed4c27c5d706420e4320fbe3216ab31fa1c33cd8246ac36dae4479ba"
-dependencies = [
- "camino",
- "cargo-platform 0.1.9",
- "semver",
- "serde",
- "serde_json",
- "thiserror 2.0.17",
-]
-
-[[package]]
-name = "cargo_metadata"
 version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef987d17b0a113becdd19d3d0022d04d7ef41f9efe4f3fb63ac44ba61df3ade9"
 dependencies = [
  "camino",
- "cargo-platform 0.3.2",
+ "cargo-platform",
  "semver",
  "serde",
  "serde_json",
@@ -4299,14 +4276,14 @@ dependencies = [
  "crash-handler",
  "libc",
  "log",
- "mach2 0.5.0",
+ "mach2 0.6.0",
  "minidumper",
  "parking_lot",
  "serde",
  "serde_json",
  "system_specs",
  "windows 0.62.2",
- "zstd 0.11.2+zstd.1.5.2",
+ "zstd 0.13.3",
 ]
 
 [[package]]
@@ -5049,9 +5026,9 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_json_lenient",
- "serde_yaml",
+ "serde_yaml_ng",
  "settings",
- "shlex 1.3.0",
+ "shlex 2.0.1",
  "ui",
  "util",
  "walkdir",
@@ -5411,7 +5388,7 @@ dependencies = [
  "zed_credentials_provider",
  "zeta_prompt",
  "zlog",
- "zstd 0.11.2+zstd.1.5.2",
+ "zstd 0.13.3",
 ]
 
 [[package]]
@@ -7608,7 +7585,7 @@ dependencies = [
  "image",
  "libc",
  "log",
- "mach2 0.5.0",
+ "mach2 0.6.0",
  "metal",
  "objc2 0.6.3",
  "objc2-foundation 0.3.2",
@@ -7897,7 +7874,7 @@ checksum = "790eaa3f2acc0210783d4af5ab8fe019ab07935d8dc0e64324120bbee9b142b7"
 dependencies = [
  "ahash 0.8.12",
  "camino",
- "cargo_metadata 0.23.1",
+ "cargo_metadata",
  "cfg-if",
  "debug-ignore",
  "fixedbitset",
@@ -12232,7 +12209,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bytes 1.11.1",
- "cargo_metadata 0.23.1",
+ "cargo_metadata",
  "cfg-if",
  "chrono",
  "either",
@@ -15358,7 +15335,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "shlex 1.3.0",
+ "shlex 2.0.1",
  "smol",
  "task",
  "telemetry",
@@ -15674,7 +15651,7 @@ dependencies = [
  "strum 0.28.0",
  "tracing",
  "zlog",
- "zstd 0.11.2+zstd.1.5.2",
+ "zstd 0.13.3",
 ]
 
 [[package]]
@@ -18337,7 +18314,7 @@ dependencies = [
  "serde_json",
  "settings",
  "shellexpand",
- "shlex 1.3.0",
+ "shlex 2.0.1",
  "task",
  "terminal",
  "theme",
@@ -19799,7 +19776,7 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
- "mach2 0.5.0",
+ "mach2 0.6.0",
  "nix",
  "path",
  "percent-encoding",
@@ -19810,7 +19787,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_json_lenient",
- "shlex 1.3.0",
+ "shlex 2.0.1",
  "smol",
  "tempfile",
  "unicase",
@@ -22536,7 +22513,7 @@ dependencies = [
  "annotate-snippets",
  "anyhow",
  "backtrace",
- "cargo_metadata 0.19.2",
+ "cargo_metadata",
  "cargo_toml",
  "clap",
  "compliance",

@@ -36,8 +36,4 @@ rand.workspace = true
 web-time.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-# Forked because upstream is unmaintained and its worker bootstrap still calls
-# the wasm-bindgen init function with the positional arguments deprecated in 0.2.93.
-wasm_thread = { git = "https://github.com/zed-industries/wasm_thread", rev = "0cf96c7708dfb97ccf3da50347e25edcf75d6937", version = "0.3", features = [
-    "es_modules",
-], optional = true }
+wasm_thread = { workspace = true, optional = true }
