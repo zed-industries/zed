@@ -564,7 +564,7 @@ impl Editor {
                         let end = selection.end;
                         let selection_is_empty = start == end;
                         let language_scope = buffer.language_scope_at(start);
-                        existing_indent =
+                        let newline_indent =
                             logical_indent_for_newline(&start_point, &buffer, existing_indent);
                         let (delimiter, newline_config) = if let Some(language) = &language_scope {
                             let needs_extra_newline = NewlineConfig::insert_extra_newline_brackets(
@@ -691,7 +691,7 @@ impl Editor {
                                 let capacity_for_delimiter =
                                     delimiter.as_deref().map(str::len).unwrap_or_default();
                                 let existing_indent_len = if preserve_indent {
-                                    existing_indent.len as usize
+                                    newline_indent.len()
                                 } else {
                                     0
                                 };
@@ -706,7 +706,7 @@ impl Editor {
                                 );
                                 new_text.push('\n');
                                 if preserve_indent {
-                                    new_text.extend(existing_indent.chars());
+                                    new_text.push_str(&newline_indent);
                                 }
                                 new_text.extend(additional_indent.chars());
                                 if let Some(delimiter) = &delimiter {
@@ -715,7 +715,7 @@ impl Editor {
                                 if let Some(extra_indent) = extra_line_additional_indent {
                                     new_text.push('\n');
                                     if preserve_indent {
-                                        new_text.extend(existing_indent.chars());
+                                        new_text.push_str(&newline_indent);
                                     }
                                     new_text.extend(extra_indent.chars());
                                 }
@@ -2653,17 +2653,23 @@ fn documentation_delimiter_for_newline(
     }
 }
 
-/// The indentation a line inserted at `start_point` should start at, which is
-/// `existing_indent` unless the cursor sits after the closing delimiter of a
-/// multi-line block comment. See [`language::BufferSnapshot::block_comment_closing_indent`].
+/// Preserve the line's whitespace unless the cursor sits after the closing
+/// delimiter of a multi-line block comment, whose extra indentation belongs to
+/// the comment. See [`language::BufferSnapshot::block_comment_closing_indent`].
 fn logical_indent_for_newline(
     start_point: &Point,
     buffer: &MultiBufferSnapshot,
     existing_indent: IndentSize,
-) -> IndentSize {
+) -> String {
+    let existing_whitespace = || {
+        buffer
+            .chars_at(Point::new(start_point.row, 0))
+            .take(existing_indent.len as usize)
+            .collect()
+    };
     let Some((snapshot, line_range)) = buffer.buffer_line_for_row(MultiBufferRow(start_point.row))
     else {
-        return existing_indent;
+        return existing_whitespace();
     };
     // Columns agree between the multi-buffer and the underlying buffer for a line
     // an excerpt shows in full, which is the case we care about. For a partial
@@ -2672,7 +2678,8 @@ fn logical_indent_for_newline(
     let position = Point::new(line_range.start.row, start_point.column);
     snapshot
         .block_comment_closing_indent(position)
-        .unwrap_or(existing_indent)
+        .map(|indent| indent.chars().collect())
+        .unwrap_or_else(existing_whitespace)
 }
 
 fn list_delimiter_for_newline(

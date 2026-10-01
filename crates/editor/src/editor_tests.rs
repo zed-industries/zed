@@ -6252,6 +6252,37 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_newline_documentation_comments_with_mixed_indentation(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut editor_cx = EditorTestContext::new(cx).await;
+    let language = languages::language(
+        "typescript",
+        tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+    );
+    editor_cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    for auto_indent in [
+        settings::AutoIndentMode::PreserveIndent,
+        settings::AutoIndentMode::SyntaxAware,
+    ] {
+        for extend_comment in [false, true] {
+            update_test_language_settings(cx, &|settings| {
+                settings.defaults.auto_indent = Some(auto_indent);
+                settings.defaults.extend_comment_on_newline = Some(extend_comment);
+            });
+            for indent in ["\t ", " \t"] {
+                editor_cx.set_state(&format!("\t/**\n{indent}* fooˇ\n\t */"));
+                editor_cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+                let delimiter = if extend_comment { "* " } else { "" };
+                editor_cx.assert_editor_state(&format!(
+                    "\t/**\n{indent}* foo\n{indent}{delimiter}ˇ\n\t */"
+                ));
+            }
+        }
+    }
+}
+
+#[gpui::test]
 async fn test_newline_closing_comment_indent_across_languages(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
