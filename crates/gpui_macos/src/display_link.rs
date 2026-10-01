@@ -132,12 +132,14 @@ unsafe extern "C" fn display_link_output_callback(
     _flags_out: *mut i64,
     display_id: *mut c_void,
 ) -> i32 {
-    let signal_at = Instant::now();
+    let signal_at = PlatformFrameSignal::capture(Instant::now);
     let display_id = display_id as usize as CGDirectDisplayID;
     let registry = lock_registry();
     if let Some(entry) = registry.displays.get(&display_id) {
         for subscriber in &entry.subscribers {
-            subscriber.signal.record(signal_at);
+            if let Some(signal_at) = signal_at {
+                subscriber.signal.record(signal_at);
+            }
             subscriber.frame_requests.merge_data(1);
         }
     }

@@ -35,11 +35,11 @@ use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
 use crate::linux::{Globals, Output, WaylandClientStatePtr, get_window};
 use gpui::{
     AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, ExternalDragPayload,
-    FrameRequestSource, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    ResizeEdge, Scene, Size, Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowControls, WindowDecorations, WindowKind, WindowParams,
-    WindowVisibility,
+    FrameRequestSource, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformFrameSignal, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
+    PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
+    WindowKind, WindowParams, WindowVisibility,
     layer_shell::{Anchor, LayerShellNotSupportedError},
     popup::PopupOptions,
     px, size,
@@ -996,12 +996,12 @@ impl WaylandWindowStatePtr {
         self.frame_loop.set(FrameLoop::Parked);
     }
 
-    pub fn frame_callback_fired(&self, signal_at: Instant) {
+    pub fn frame_callback_fired(&self, signal_at: Option<Instant>) {
         // Another wl_surface commit may have carried this callback while a retry
         // timer owned the render-loop wakeup.
         self.state.borrow_mut().pending_frame_callback = None;
         if self.frame_loop.get() == FrameLoop::AwaitingCallback {
-            self.frame(Some(signal_at), FrameRequestSource::NativeCallback);
+            self.frame(signal_at, FrameRequestSource::NativeCallback);
         }
     }
 
@@ -1016,7 +1016,10 @@ impl WaylandWindowStatePtr {
 
     pub fn retry_timer_fired(&self, signal_at: Instant) {
         if self.frame_loop.get() == FrameLoop::RetryScheduled {
-            self.frame(Some(signal_at), FrameRequestSource::LocalSchedule);
+            self.frame(
+                PlatformFrameSignal::capture(|| signal_at),
+                FrameRequestSource::LocalSchedule,
+            );
         }
     }
 
@@ -1028,7 +1031,8 @@ impl WaylandWindowStatePtr {
         match self.frame_loop.get() {
             FrameLoop::Parked => {
                 self.frame_loop.set(FrameLoop::Scheduled);
-                self.scheduled_frame_at.set(Some(Instant::now()));
+                self.scheduled_frame_at
+                    .set(PlatformFrameSignal::capture(Instant::now));
                 self.frame_ping.ping();
             }
             FrameLoop::Ticking => {

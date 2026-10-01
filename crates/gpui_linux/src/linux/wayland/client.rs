@@ -99,7 +99,7 @@ use gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, ExternalDragPayload,
     FileDragPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput,
+    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformFrameSignal, PlatformInput,
     PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta, ScrollWheelEvent, SharedString,
     Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, profiler, px, size,
 };
@@ -1545,7 +1545,9 @@ impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
         drop(state);
 
         if let wl_callback::Event::Done { callback_data } = event {
-            window.frame_callback_fired(frame_callback_signal_at(callback_data));
+            window.frame_callback_fired(PlatformFrameSignal::capture(|| {
+                frame_callback_signal_at(callback_data)
+            }));
         }
     }
 }

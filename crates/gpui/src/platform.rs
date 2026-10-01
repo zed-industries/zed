@@ -820,6 +820,7 @@ pub struct RequestFrameOptions {
     ///
     /// `None` means the captured request time is unavailable.
     /// Coalesced requests carry their first request time, not their delivery time.
+    /// Built-in backends collect timestamps only with the `profiler` feature.
     pub signal_at: Option<Instant>,
     /// Distinguishes native callbacks from local scheduling requests.
     pub signal_source: FrameRequestSource,
@@ -831,8 +832,11 @@ pub struct RequestFrameOptions {
 /// The consumer drains the timestamp before dispatching the request on the UI thread.
 /// Timestamps are encoded relative to `origin` because `Instant` cannot be stored
 /// directly in an atomic integer; `u64::MAX` represents an empty accumulator.
+/// Without the `profiler` feature, this accumulator has no timestamp storage.
 pub struct PlatformFrameSignal {
+    #[cfg(feature = "profiler")]
     origin: Instant,
+    #[cfg(feature = "profiler")]
     first_signal_nanoseconds: std::sync::atomic::AtomicU64,
 }
 
@@ -846,27 +850,55 @@ impl PlatformFrameSignal {
     /// Creates an empty signal accumulator.
     pub fn new() -> Self {
         Self {
+            #[cfg(feature = "profiler")]
             origin: Instant::now(),
+            #[cfg(feature = "profiler")]
             first_signal_nanoseconds: std::sync::atomic::AtomicU64::new(u64::MAX),
         }
     }
 
+    /// Captures a platform request timestamp only when profiling is enabled.
+    ///
+    /// The closure is not invoked in profiler-disabled builds.
+    #[inline]
+    pub fn capture(capture: impl FnOnce() -> Instant) -> Option<Instant> {
+        if cfg!(feature = "profiler") {
+            Some(capture())
+        } else {
+            None
+        }
+    }
+
     /// Records a platform frame request, retaining the first undrained timestamp.
+    #[inline]
     pub fn record(&self, at: Instant) {
-        let nanoseconds = at
-            .saturating_duration_since(self.origin)
-            .as_nanos()
-            .min(u128::from(u64::MAX - 1)) as u64;
-        self.first_signal_nanoseconds
-            .fetch_min(nanoseconds, std::sync::atomic::Ordering::Relaxed);
+        #[cfg(feature = "profiler")]
+        {
+            let nanoseconds = at
+                .saturating_duration_since(self.origin)
+                .as_nanos()
+                .min(u128::from(u64::MAX - 1)) as u64;
+            self.first_signal_nanoseconds
+                .fetch_min(nanoseconds, std::sync::atomic::Ordering::Relaxed);
+        }
+        #[cfg(not(feature = "profiler"))]
+        let _ = at;
     }
 
     /// Drains the first platform frame request time, leaving the accumulator empty.
+    #[inline]
     pub fn take(&self) -> Option<Instant> {
-        let nanoseconds = self
-            .first_signal_nanoseconds
-            .swap(u64::MAX, std::sync::atomic::Ordering::Relaxed);
-        (nanoseconds != u64::MAX).then(|| self.origin + Duration::from_nanos(nanoseconds))
+        #[cfg(feature = "profiler")]
+        {
+            let nanoseconds = self
+                .first_signal_nanoseconds
+                .swap(u64::MAX, std::sync::atomic::Ordering::Relaxed);
+            (nanoseconds != u64::MAX).then(|| self.origin + Duration::from_nanos(nanoseconds))
+        }
+        #[cfg(not(feature = "profiler"))]
+        {
+            None
+        }
     }
 }
 
@@ -3341,10 +3373,12 @@ mod atlas_tests {
 mod frame_signal_tests {
     use super::*;
 
+    #[cfg(feature = "profiler")]
     #[test]
     fn coalesced_signals_retain_the_earliest_until_drained() {
         let signal = PlatformFrameSignal::new();
-        let first = Instant::now();
+        let first =
+            PlatformFrameSignal::capture(Instant::now).expect("profiling captures requests");
         assert_eq!(signal.take(), None);
         signal.record(first + Duration::from_millis(16));
         signal.record(first);
@@ -3354,6 +3388,18 @@ mod frame_signal_tests {
         let next = first + Duration::from_millis(48);
         signal.record(next);
         assert_eq!(signal.take(), Some(next));
+    }
+
+    #[cfg(not(feature = "profiler"))]
+    #[test]
+    fn disabled_profiling_does_not_capture_or_store_timestamps() {
+        let captured = PlatformFrameSignal::capture(|| {
+            panic!("profiler-disabled builds must not evaluate the capture closure");
+        });
+        assert_eq!(captured, None);
+        let signal = PlatformFrameSignal::new();
+        signal.record(Instant::now());
+        assert_eq!(signal.take(), None);
     }
 }
 
