@@ -1817,6 +1817,17 @@ impl PlatformInputHandler {
         })
     }
 
+    /// Returns the text covered by the handler's current selection, or `None`
+    /// when the selection is empty or the handler can't provide its text.
+    pub fn selected_text(&mut self, window: &mut Window, cx: &mut App) -> Option<String> {
+        let selection = self.handler.selected_text_range(true, window, cx)?;
+        if selection.range.is_empty() {
+            return None;
+        }
+        self.handler
+            .text_for_range(selection.range, &mut None, window, cx)
+    }
+
     pub fn ime_candidate_bounds(&mut self) -> Option<Bounds<Pixels>> {
         let marked_range = self.marked_text_range();
         let selection = self.selected_text_range(true)?;

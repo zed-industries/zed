@@ -177,9 +177,11 @@ impl FileFinder {
     }
 
     /// The query to pre-fill the finder with from the user's latest selection,
-    /// when `prefill_query_from_selection` is enabled. The focused pane's item
-    /// (e.g. a terminal in a dock) is consulted before the active center pane's
-    /// item, so the selection next to the focus wins.
+    /// when `prefill_query_from_selection` is enabled. The focused text element
+    /// is consulted first, since it may live outside any pane (e.g. in the agent
+    /// panel). Then the focused pane's item (e.g. a terminal, whose input handler
+    /// doesn't expose its selection) and finally the active center pane's item,
+    /// so the selection next to the focus wins.
     fn seed_query(
         workspace: &mut Workspace,
         window: &mut Window,
@@ -187,6 +189,13 @@ impl FileFinder {
     ) -> Option<String> {
         if !FileFinderSettings::get_global(cx).prefill_query_from_selection {
             return None;
+        }
+
+        if let Some(query) = window
+            .focused_selected_text(cx)
+            .and_then(|selection| sanitize_file_query(&selection))
+        {
+            return Some(query);
         }
 
         let focused_item = workspace.focused_pane(window, cx).read(cx).active_item();

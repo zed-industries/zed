@@ -5222,6 +5222,17 @@ impl Window {
         }
     }
 
+    /// Returns the text selected in the focused element, as reported by the
+    /// input handler it registered with [`Window::handle_input`] in the last
+    /// rendered frame. Returns `None` when nothing is selected or the focused
+    /// element doesn't handle text input.
+    pub fn focused_selected_text(&mut self, cx: &mut App) -> Option<String> {
+        let mut input_handler = self.platform_window.take_input_handler()?;
+        let selected_text = input_handler.selected_text(self, cx);
+        self.platform_window.set_input_handler(input_handler);
+        selected_text
+    }
+
     /// Forwards the focused input handler's [`TextInputConfiguration`] to the
     /// platform window when it differs from the last forwarded value. With no
     /// input handler the default configuration applies, so a field's
