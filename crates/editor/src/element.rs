@@ -1672,6 +1672,12 @@ impl EditorElement {
         )
         .with_thumb_state(thumb_state);
 
+        let thumb_pixels_per_editor_line = MinimapLayout::thumb_pixels_per_editor_line(
+            &layout,
+            total_editor_lines,
+            minimap_line_height,
+        );
+
         minimap_editor.update(cx, |editor, cx| {
             editor.set_scroll_position(point(0., minimap_scroll_top), window, cx)
         });
@@ -1703,7 +1709,7 @@ impl EditorElement {
             minimap_line_height,
             minimap_scroll_top,
             max_scroll_top: total_editor_lines,
-            visible_editor_lines,
+            thumb_pixels_per_editor_line,
         })
     }
 
@@ -6712,36 +6718,17 @@ impl EditorElement {
                         if event.pressed_button == Some(MouseButton::Left)
                             && editor.scroll_manager.is_dragging_minimap()
                         {
-                            let Some(thumb_bounds) = layout.thumb_layout.thumb_bounds else {
-                                return;
-                            };
-
-                            let thumb_scrollable_range =
-                                minimap_hitbox.size.height - thumb_bounds.size.height;
-                            // `max_scroll_top` equals the total lines of the editor (document).
-                            let scrollable_editor_lines =
-                                (layout.max_scroll_top - layout.visible_editor_lines).max(0.);
-
-                            let editor_thumb_scrolling_ratio = if layout.minimap_scroll_top == 0. {
-                                layout.minimap_line_height
-                            } else {
-                                Pixels::from(
-                                    ScrollPixelOffset::from(thumb_scrollable_range)
-                                        / scrollable_editor_lines,
-                                )
-                            };
-
                             let old_position = mouse_position.along(minimap_axis);
                             let new_position = event.position.along(minimap_axis);
-                            if (minimap_hitbox.origin.along(minimap_axis)
-                                ..minimap_hitbox.bottom_right().along(minimap_axis))
-                                .contains(&old_position)
+                            if let Some(pixels_per_line) = layout.thumb_pixels_per_editor_line
+                                && (minimap_hitbox.origin.along(minimap_axis)
+                                    ..minimap_hitbox.bottom_right().along(minimap_axis))
+                                    .contains(&old_position)
                             {
                                 let position =
                                     editor.scroll_position(cx).apply_along(minimap_axis, |p| {
                                         (p + ScrollPixelOffset::from(
-                                            (new_position - old_position)
-                                                / editor_thumb_scrolling_ratio,
+                                            (new_position - old_position) / pixels_per_line,
                                         ))
                                         .max(0.)
                                     });
@@ -10651,7 +10638,7 @@ struct MinimapLayout {
     pub minimap_line_height: Pixels,
     pub thumb_border_style: MinimapThumbBorder,
     pub max_scroll_top: ScrollOffset,
-    pub visible_editor_lines: f64,
+    pub thumb_pixels_per_editor_line: Option<Pixels>,
 }
 
 impl MinimapLayout {
@@ -10674,6 +10661,34 @@ impl MinimapLayout {
             let scroll_percentage = (scroll_position / non_visible_document_lines).clamp(0., 1.);
             scroll_percentage * (document_lines - visible_minimap_lines).max(0.)
         }
+    }
+
+    /// The thumb advances through its oversized track by `thumb_text_unit_size` per editor
+    /// line, while the minimap content underneath scrolls up at the rate implied by
+    /// [`Self::calculate_minimap_top_offset`]. The on-screen movement is the difference.
+    ///
+    /// Returns `None` when the thumb cannot follow the scroll position, i.e. when there is
+    /// nothing to scroll or the thumb fills the whole minimap.
+    fn thumb_pixels_per_editor_line(
+        thumb_layout: &ScrollbarLayout,
+        document_lines: f64,
+        minimap_line_height: Pixels,
+    ) -> Option<Pixels> {
+        let visible_editor_lines =
+            thumb_layout.visible_range.end - thumb_layout.visible_range.start;
+        let visible_minimap_lines = (thumb_layout.hitbox.size.height / minimap_line_height) as f64;
+        let scrollable_editor_lines = document_lines - visible_editor_lines;
+        if scrollable_editor_lines <= 0. {
+            return None;
+        }
+
+        let minimap_scroll_per_editor_line =
+            (document_lines - visible_minimap_lines).max(0.) / scrollable_editor_lines;
+        let pixels_per_line = Pixels::from(
+            ScrollOffset::from(thumb_layout.text_unit_size)
+                - minimap_scroll_per_editor_line * ScrollOffset::from(minimap_line_height),
+        );
+        (pixels_per_line > Pixels::ZERO).then_some(pixels_per_line)
     }
 }
 
