@@ -142,6 +142,15 @@ struct FrameDirtyAccumulator {
     invalidations: u64,
 }
 
+/// Why GPUI capped a window's frame rate.
+#[derive(Clone, Copy)]
+enum FrameRateLimit {
+    /// The window isn't focused.
+    Inactive,
+    /// The system is under thermal pressure.
+    Thermal,
+}
+
 #[derive(Clone)]
 pub(crate) struct WindowInvalidator {
     inner: Rc<RefCell<WindowInvalidatorInner>>,
@@ -1759,15 +1768,16 @@ impl Window {
                 {
                     None
                 } else if !active.get() && !input_rate_tracker.borrow_mut().is_high_rate() {
-                    inactive_frame_interval.map(|interval| (interval, true))
+                    inactive_frame_interval.map(|interval| (interval, FrameRateLimit::Inactive))
                 } else if let Some(ThermalState::Critical | ThermalState::Serious) = thermal_state {
-                    Some((Duration::from_micros(16667), false))
+                    Some((Duration::from_micros(16667), FrameRateLimit::Thermal))
                 } else {
                     None
                 };
 
                 let now = Instant::now();
-                if let Some((min_interval, _inactive_throttle)) = min_frame_interval {
+                #[cfg_attr(not(feature = "profiler"), expect(unused_variables))]
+                if let Some((min_interval, limit)) = min_frame_interval {
                     if let Some(last_frame) = last_frame_time.get()
                         && now.duration_since(last_frame) < min_interval
                     {
@@ -1785,18 +1795,18 @@ impl Window {
                         // idle windows need a wakeup to deliver the retry.
                         invalidator.wake_platform();
                         #[cfg(feature = "profiler")]
-                        {
-                            let reason = if _inactive_throttle {
-                                profiler::journal::FrameSkipReason::InactiveFrameRateLimit
-                            } else {
-                                profiler::journal::FrameSkipReason::ThermalFrameRateLimit
-                            };
-                            profiler::journal::record_frame_skipped(
-                                window_id,
-                                Instant::now(),
-                                reason,
-                            );
-                        }
+                        profiler::journal::record_frame_skipped(
+                            window_id,
+                            Instant::now(),
+                            match limit {
+                                FrameRateLimit::Inactive => {
+                                    profiler::journal::FrameSkipReason::InactiveFrameRateLimit
+                                }
+                                FrameRateLimit::Thermal => {
+                                    profiler::journal::FrameSkipReason::ThermalFrameRateLimit
+                                }
+                            },
+                        );
                         return;
                     }
                 }
@@ -7845,6 +7855,14 @@ mod tests {
                     draws_before
                 })
                 .expect("schedule throttled frame");
+            // Skips only seal retained work, so give the throttled skip some.
+            let input_at = Instant::now();
+            journal::record_input(journal::InputTiming {
+                kind: "test",
+                start: input_at,
+                end: input_at,
+                caused_invalidation: false,
+            });
             collector.collect_unseen();
             platform_window.simulate_frame_request(RequestFrameOptions {
                 signal_at: Some(Instant::now()),

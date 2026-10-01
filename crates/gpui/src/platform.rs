@@ -800,7 +800,6 @@ pub struct A11yCallbacks {
 
 /// The source of a platform frame request's timestamp.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
-#[repr(u8)]
 pub enum FrameRequestSource {
     /// An OS callback or compositor-paced frame request.
     #[default]
@@ -872,6 +871,7 @@ impl PlatformFrameSignal {
 
     /// Records a platform frame request, retaining the first undrained timestamp.
     #[inline]
+    #[cfg_attr(not(feature = "profiler"), expect(unused_variables))]
     pub fn record(&self, at: Instant, source: FrameRequestSource) {
         #[cfg(feature = "profiler")]
         {
@@ -888,8 +888,6 @@ impl PlatformFrameSignal {
                 std::sync::atomic::Ordering::Relaxed,
             );
         }
-        #[cfg(not(feature = "profiler"))]
-        let _ = (at, source);
     }
 
     /// Drains the first platform frame request time and source, leaving the accumulator empty.

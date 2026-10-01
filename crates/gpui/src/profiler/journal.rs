@@ -638,15 +638,29 @@ impl ForegroundJournalWriter {
         }
     }
 
+    /// Publishes a point record that is neither work nor a boundary. Folded
+    /// polls stay folded: publishing them here would let them reach the
+    /// sealer even when [`Self::end_turn`] later discards folded-only work.
+    fn record_marker(&mut self, entry: ForegroundJournalEntry) {
+        self.publisher.publish([entry]);
+    }
+
     fn record_frame_state(&mut self, change: FrameStateChange) {
         self.record_entry(ForegroundJournalEntry::FrameState(change));
     }
 
     fn record_platform_signal(&mut self, signal: PlatformSignal) {
-        self.record_entry(ForegroundJournalEntry::PlatformSignal(signal));
+        self.record_marker(ForegroundJournalEntry::PlatformSignal(signal));
     }
 
+    /// Seals retained work at a frame request that didn't draw. Like idle
+    /// boundaries, skips require a retained event since the last boundary:
+    /// platforms that request a frame every refresh would otherwise seal an
+    /// empty interval, and flush folded polls, on every idle refresh.
     fn record_frame_skipped(&mut self, skipped: FrameSkipped) {
+        if !self.retained_since_boundary {
+            return;
+        }
         // Even a no-render callback can schedule or invalidate the next frame.
         // Skipping does not establish that the window's pending demand is met.
         self.record_entry(ForegroundJournalEntry::Boundary(
@@ -1038,7 +1052,7 @@ pub(crate) fn record_platform_signal(signal: PlatformSignal) {
 
 pub(crate) fn record_reentrant_frame_skipped(window_id: WindowId, at: Instant) {
     with_journal(|journal| {
-        journal.record_entry(ForegroundJournalEntry::ReentrantFrameSkipped { window_id, at });
+        journal.record_marker(ForegroundJournalEntry::ReentrantFrameSkipped { window_id, at });
     });
 }
 
@@ -1424,8 +1438,7 @@ impl IntervalSealer {
                     }
                     if self.is_empty() {
                         self.interval_start = self.interval_start.max(boundary.end_time());
-                    }
-                    if !self.is_empty() || matches!(boundary, IntervalBoundary::FrameSkipped(_)) {
+                    } else {
                         snapshots.push(self.seal(boundary));
                     }
                 }
@@ -1551,6 +1564,12 @@ mod tests {
             let (mut writer, mut collector) = test_journal(ForegroundRunnableCounter::new());
             writer.begin_turn();
             writer.record_frame_pending(window_id, start);
+            writer.record_event(ForegroundEvent::Input(InputTiming {
+                kind: "test",
+                start,
+                end: start + Duration::from_millis(2),
+                caused_invalidation: false,
+            }));
             writer.record_frame_skipped(FrameSkipped {
                 window_id,
                 at,
@@ -1568,7 +1587,7 @@ mod tests {
             );
             assert_eq!(snapshot.interval_end(), at);
             assert_eq!(snapshot.boundary.dirty_at(), None);
-            assert_eq!(snapshot.occupancy(), Duration::ZERO);
+            assert_eq!(snapshot.occupancy(), Duration::from_millis(2));
 
             writer.record_event(ForegroundEvent::Input(InputTiming {
                 kind: "test",
@@ -1586,6 +1605,42 @@ mod tests {
                 "pending demand must still block idle boundaries"
             );
         }
+    }
+
+    /// Platforms that request a frame every refresh skip most of them while
+    /// idle. Those skips seal nothing and leave folded polls folded, so
+    /// end-of-turn idle handling can still discard folded-only work.
+    #[test]
+    fn idle_refreshes_seal_nothing_and_keep_polls_folded() {
+        let start = Instant::now();
+        let window_id = WindowId::from(1);
+        let (mut writer, mut collector) = test_journal(ForegroundRunnableCounter::new());
+        for refresh in 0..3u32 {
+            let at = start + Duration::from_millis(16) * refresh;
+            writer.begin_turn();
+            writer.fold_small_poll(task_timing(at, at + Duration::from_micros(50)));
+            writer.record_platform_signal(PlatformSignal {
+                window_id,
+                signal_at: Some(at),
+                handled_at: at,
+                source: crate::FrameRequestSource::NativeCallback,
+            });
+            writer.record_frame_skipped(FrameSkipped {
+                window_id,
+                at,
+                reason: FrameSkipReason::NoRenderNeeded,
+            });
+            writer.end_turn(at + Duration::from_micros(60));
+        }
+
+        let entries = collector.collect_unseen().entries;
+        assert!(
+            entries
+                .iter()
+                .all(|entry| matches!(entry, ForegroundJournalEntry::PlatformSignal(_))),
+            "expected only platform signals, got {entries:?}"
+        );
+        assert!(IntervalSealer::new(start).push_entries(entries).is_empty());
     }
 
     #[test]
