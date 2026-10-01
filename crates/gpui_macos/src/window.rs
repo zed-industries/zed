@@ -1210,6 +1210,16 @@ impl MacWindow {
             // content view above, and window creation runs on the main thread.
             let tracking_view = &*native_view.cast::<Objc2NSView>();
 
+            if tabbing_identifier.is_none() {
+                // Automatic tabbing stays on for the app once any window opts in, and
+                // a nil identifier falls back to a shared class-based one. Utility windows
+                // without an identifier must remain separate from document windows.
+                let _: () = msg_send![
+                    native_window,
+                    setTabbingMode: NSWindowTabbingModeDisallowed
+                ];
+            }
+
             match kind {
                 WindowKind::Normal | WindowKind::Floating => {
                     if kind == WindowKind::Floating {
@@ -1227,13 +1237,6 @@ impl MacWindow {
                         let _: () = msg_send![native_window, setTabbingIdentifier: tabbing_id];
                     } else {
                         let _: () = msg_send![native_window, setTabbingIdentifier:nil];
-                        // Automatic tabbing stays on for the app once any window opts in, and
-                        // a nil identifier falls back to a shared class-based one, so windows
-                        // without an identifier would otherwise tab with each other.
-                        let _: () = msg_send![
-                            native_window,
-                            setTabbingMode: NSWindowTabbingModeDisallowed
-                        ];
                     }
                 }
                 // `AnchoredPopup` is rejected in `MacPlatform::open_window`, grouped here only

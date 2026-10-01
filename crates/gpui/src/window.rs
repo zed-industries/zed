@@ -1541,6 +1541,7 @@ impl Window {
             tabbing_identifier,
         } = options;
 
+        #[cfg(target_os = "macos")]
         let has_tabbing_identifier = tabbing_identifier.is_some();
         let initial_window_title = titlebar
             .as_ref()
@@ -1578,18 +1579,21 @@ impl Window {
             if joined_existing_group {
                 SystemWindowTabController::set_visible(cx, true);
             }
-        } else if has_tabbing_identifier {
-            // A standalone window is not in a native tab group yet, so `tabbed_windows()`
-            // is `None`. Register it anyway; otherwise Merge All Windows no-ops because
-            // the controller has never heard of this window.
-            let title = initial_window_title
-                .clone()
-                .unwrap_or_else(|| SharedString::from(""));
-            SystemWindowTabController::add_tab(
-                cx,
-                handle.window_id(),
-                vec![SystemWindowTab::new(title, handle)],
-            );
+        } else {
+            #[cfg(target_os = "macos")]
+            if has_tabbing_identifier {
+                // A standalone window is not in a native tab group yet, so `tabbed_windows()`
+                // is `None`. Register it anyway; otherwise Merge All Windows no-ops because
+                // the controller has never heard of this window.
+                let title = initial_window_title
+                    .clone()
+                    .unwrap_or_else(|| SharedString::from(""));
+                SystemWindowTabController::add_tab(
+                    cx,
+                    handle.window_id(),
+                    vec![SystemWindowTab::new(title, handle)],
+                );
+            }
         }
 
         let display_id = platform_window.display().map(|display| display.id());
