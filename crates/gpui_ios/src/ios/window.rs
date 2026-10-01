@@ -13,31 +13,27 @@ use super::events::*;
 use super::text_input::TextInputView;
 use super::{CallbackSlot, IosDisplay, platform::IosPlatformState};
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, DevicePixels, DispatchEventResult, Edges, EditMenuActions,
-    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    Scene, Size, TextInputConfiguration, TextInputStateChange, TouchEvent, TouchId, TouchPhase,
+    AnyWindowHandle, Bounds, Capslock, DevicePixels, DispatchEventResult, Edges, GpuSpecs,
+    Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, Scene, Size,
+    TextInputConfiguration, TextInputStateChange, TouchEvent, TouchId, TouchPhase,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowInsets,
     WindowParams, WindowVisibility, px, size,
 };
 use gpui_apple::metal_renderer::{Context as MetalContext, MetalRenderer};
 use objc2::rc::Retained;
-use objc2::runtime::{AnyClass, AnyObject, Sel};
-use objc2::{
-    ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel,
-};
+use objc2::runtime::AnyClass;
+use objc2::{ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSObjectProtocol, NSSet, NSValue};
 use objc2_quartz_core::CAMetalLayer;
 use objc2_ui_kit::{
     NSValueUIGeometryExtensions, UIKeyboardFrameEndUserInfoKey,
-    UIKeyboardWillChangeFrameNotification, UIKeyboardWillHideNotification,
-    UIResponderStandardEditActions, UIStatusBarStyle,
+    UIKeyboardWillChangeFrameNotification, UIKeyboardWillHideNotification, UIStatusBarStyle,
 };
 use objc2_ui_kit::{
-    UIEditMenuConfiguration, UIEditMenuInteraction, UIEvent, UIScreen, UITouch, UITraitCollection,
-    UITraitEnvironment, UIUserInterfaceStyle, UIView, UIViewAutoresizing, UIViewController,
-    UIWindow, UIWindowScene,
+    UIEvent, UIScreen, UITouch, UITraitCollection, UITraitEnvironment, UIUserInterfaceStyle,
+    UIView, UIViewAutoresizing, UIViewController, UIWindow, UIWindowScene,
 };
 use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, UiKitDisplayHandle, UiKitWindowHandle};
@@ -71,21 +67,6 @@ impl WindowReference {
         // Keep callback storage and native objects alive even if the callback
         // synchronously closes the platform window.
         Some(callback(&window))
-    }
-
-    pub(super) fn dispatch_edit_menu_shortcut(&self, key: &str) {
-        self.with_window(|window| window.dispatch_edit_menu_shortcut(key));
-    }
-
-    pub(super) fn can_perform_action(&self, action: Sel) -> bool {
-        self.with_window(|window| {
-            let actions = window.edit_menu_actions.get();
-            (action == sel!(cut:) && actions.cut)
-                || (action == sel!(copy:) && actions.copy)
-                || (action == sel!(paste:) && actions.paste)
-                || (action == sel!(selectAll:) && actions.select_all)
-        })
-        .unwrap_or(false)
     }
 }
 
@@ -196,32 +177,6 @@ define_class!(
             self.handle_touches(touches, event);
         }
 
-        #[unsafe(method(canPerformAction:withSender:))]
-        fn can_perform_action(&self, action: Sel, _sender: Option<&AnyObject>) -> bool {
-            self.ivars().can_perform_action(action)
-        }
-    }
-
-    unsafe impl UIResponderStandardEditActions for MetalView {
-        #[unsafe(method(cut:))]
-        unsafe fn cut(&self, _sender: Option<&AnyObject>) {
-            self.ivars().dispatch_edit_menu_shortcut("x");
-        }
-
-        #[unsafe(method(copy:))]
-        unsafe fn copy(&self, _sender: Option<&AnyObject>) {
-            self.ivars().dispatch_edit_menu_shortcut("c");
-        }
-
-        #[unsafe(method(paste:))]
-        unsafe fn paste(&self, _sender: Option<&AnyObject>) {
-            self.ivars().dispatch_edit_menu_shortcut("v");
-        }
-
-        #[unsafe(method(selectAll:))]
-        unsafe fn select_all(&self, _sender: Option<&AnyObject>) {
-            self.ivars().dispatch_edit_menu_shortcut("a");
-        }
     }
 );
 
@@ -264,8 +219,6 @@ pub(crate) struct IosWindowState {
     view: Retained<MetalView>,
     /// The hidden text input view for keyboard input
     text_input_view: Retained<TextInputView>,
-    edit_menu_interaction: Option<Retained<UIEditMenuInteraction>>,
-    edit_menu_actions: Cell<EditMenuActions>,
     /// Current bounds in pixels
     bounds: Cell<Bounds<Pixels>>,
     /// Scale factor
@@ -366,17 +319,6 @@ impl IosWindow {
         text_input_view.setUserInteractionEnabled(true);
         view.addSubview(&text_input_view);
 
-        let edit_menu_interaction = if AnyClass::get(c"UIEditMenuInteraction").is_some() {
-            let interaction = UIEditMenuInteraction::initWithDelegate(
-                UIEditMenuInteraction::alloc(main_thread),
-                None,
-            );
-            view.addInteraction(objc2::runtime::ProtocolObject::from_ref(&*interaction));
-            Some(interaction)
-        } else {
-            None
-        };
-
         let pixel_w = (screen_bounds_cg.size.width * scale) as i32;
         let pixel_h = (screen_bounds_cg.size.height * scale) as i32;
         let mut renderer = MetalRenderer::from_layer(
@@ -395,8 +337,6 @@ impl IosWindow {
             view_controller,
             view,
             text_input_view,
-            edit_menu_interaction,
-            edit_menu_actions: Cell::new(EditMenuActions::default()),
             bounds: Cell::new(screen_bounds),
             scale_factor: Cell::new(scale_factor),
             input_handler: CallbackSlot::default(),
@@ -642,22 +582,6 @@ impl IosWindowState {
         self.input_handler.with(callback)
     }
 
-    fn dispatch_edit_menu_shortcut(&self, key: &str) {
-        let event = PlatformInput::KeyDown(gpui::KeyDownEvent {
-            keystroke: gpui::Keystroke {
-                modifiers: Modifiers {
-                    platform: true,
-                    ..Modifiers::default()
-                },
-                key: key.to_string(),
-                key_char: Some(key.to_string()),
-            },
-            is_held: false,
-            prefer_character_input: false,
-        });
-        self.input_callback.with(|callback| callback(event));
-    }
-
     /// Notify the window when its UIKit scene becomes active or inactive.
     pub fn notify_active_status_change(&self, is_active: bool) {
         log::info!("GPUI iOS: Window active status changed to: {}", is_active);
@@ -735,10 +659,6 @@ impl Drop for IosWindow {
         *self.view.ivars().0.borrow_mut() = Weak::new();
         self.text_input_view.set_window(Weak::new());
         self.text_input_view.removeFromSuperview();
-        if let Some(interaction) = &self.edit_menu_interaction {
-            self.view
-                .removeInteraction(objc2::runtime::ProtocolObject::from_ref(&**interaction));
-        }
     }
 }
 
@@ -814,6 +734,8 @@ impl PlatformWindow for IosWindow {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
+        self.text_input_view
+            .set_input_field(input_handler.focus_id());
         self.input_handler.set(input_handler);
         self.text_input_view.refresh_keyboard();
     }
@@ -961,28 +883,6 @@ impl PlatformWindow for IosWindow {
 
     fn set_keyboard_dismiss_handler(&self, callback: Box<dyn FnMut()>) {
         self.keyboard_dismiss_callback.set(callback);
-    }
-
-    fn show_edit_menu(&self, position: Point<Pixels>, actions: EditMenuActions) -> bool {
-        let Some(interaction) = &self.edit_menu_interaction else {
-            return false;
-        };
-
-        self.edit_menu_actions.set(actions);
-        unsafe {
-            let source_point = CGPoint {
-                x: f64::from(position.x),
-                y: f64::from(position.y),
-            };
-            let configuration = UIEditMenuConfiguration::configurationWithIdentifier_sourcePoint(
-                None,
-                source_point,
-                self.view.mtm(),
-            );
-            interaction.dismissMenu();
-            interaction.presentEditMenuWithConfiguration(&configuration);
-        }
-        true
     }
 
     fn text_input_state_changed(&self, change: TextInputStateChange) {

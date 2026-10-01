@@ -435,15 +435,18 @@ mod tests {
         use crate::PlatformWindow as _;
         let mut installed_handler = test_window.take_input_handler().unwrap();
         assert!(installed_handler.query_accepts_focused_text_input());
-        let second_focus = view.update(cx, |view, cx| {
-            view.focus_handle = cx.focus_handle();
-            cx.notify();
-            view.focus_handle.clone()
-        });
-        cx.update_window(window, |_, window, cx| {
-            window.focus(&second_focus, cx);
-        })
-        .unwrap();
+        assert_eq!(installed_handler.focus_id(), Some(first_focus.id));
+        let second_focus = cx
+            .update_window(window, |_, window, cx| {
+                let second_focus = view.update(cx, |view, cx| {
+                    view.focus_handle = cx.focus_handle();
+                    cx.notify();
+                    view.focus_handle.clone()
+                });
+                window.focus(&second_focus, cx);
+                second_focus
+            })
+            .unwrap();
         assert!(!installed_handler.query_accepts_focused_text_input());
         test_window.set_input_handler(installed_handler);
         cx.update_window(window, |_, window, cx| {
@@ -457,10 +460,17 @@ mod tests {
                 TextInputStateChange::FocusGained,
                 TextInputStateChange::ContentChanged,
                 TextInputStateChange::SelectionChanged,
-                TextInputStateChange::FocusLost,
-                TextInputStateChange::FocusGained,
             ]
         );
+
+        let installed_handler = test_window.take_input_handler().unwrap();
+        assert_eq!(installed_handler.focus_id(), Some(second_focus.id));
+        test_window.set_input_handler(installed_handler);
+        cx.update_window(window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.notify_text_selection_changed(&second_focus);
+        })
+        .unwrap();
 
         view.update(cx, |view, cx| {
             view.accepts_text_input = false;
@@ -482,8 +492,7 @@ mod tests {
                 TextInputStateChange::FocusGained,
                 TextInputStateChange::ContentChanged,
                 TextInputStateChange::SelectionChanged,
-                TextInputStateChange::FocusLost,
-                TextInputStateChange::FocusGained,
+                TextInputStateChange::SelectionChanged,
                 TextInputStateChange::FocusLost,
             ]
         );

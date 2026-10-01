@@ -8,9 +8,9 @@
 //! - Touch-based input instead of mouse
 //! - System keyboard handling differs significantly
 
-use super::{CallbackSlot, application::IosApplicationState};
+use super::application::IosApplicationState;
 use super::{IosDisplay, IosWindow};
-use anyhow::{Context as _, anyhow};
+use anyhow::anyhow;
 use futures::channel::oneshot;
 use gpui::{
     Action, AnyWindowHandle, AppLifecyclePhase, BackgroundExecutor, ClipboardItem, CursorStyle,
@@ -18,16 +18,18 @@ use gpui::{
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformWindow, Result, Task, ThermalState, WindowAppearance, WindowParams,
 };
-use gpui_apple::AppleDispatcher;
+use gpui_apple::{
+    AppleDispatcher, keychain,
+    thermal::{self, ThermalObserver},
+};
 use objc2::{MainThreadMarker, MainThreadOnly, rc::Retained};
-use objc2_core_foundation::{CFData, CFDictionary, CFRetained, CFString, CFType, kCFBooleanTrue};
 use objc2_foundation::{NSBundle, NSDictionary, NSString, NSURL};
 use objc2_ui_kit::{
     UIApplication, UIPasteboard, UITraitEnvironment, UIUserInterfaceStyle, UIViewController,
 };
 use std::{
+    cell::RefCell,
     path::{Path, PathBuf},
-    ptr,
     rc::Rc,
     sync::Arc,
 };
@@ -39,7 +41,7 @@ pub(crate) struct IosPlatformState {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<dyn PlatformTextSystem>,
-    thermal_state_callback: CallbackSlot<Box<dyn FnMut()>>,
+    thermal_observer: RefCell<Option<ThermalObserver>>,
 }
 
 impl Default for IosPlatform {
@@ -52,14 +54,14 @@ impl IosPlatform {
     pub fn new() -> Self {
         let dispatcher = Arc::new(AppleDispatcher::new());
 
-        let text_system: Arc<dyn PlatformTextSystem> = Arc::new(super::IosTextSystem::new());
+        let text_system: Arc<dyn PlatformTextSystem> = Arc::new(gpui_apple::AppleTextSystem::new());
 
         Self(Rc::new(IosPlatformState {
             application: IosApplicationState::default(),
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher),
             text_system,
-            thermal_state_callback: CallbackSlot::default(),
+            thermal_observer: RefCell::new(None),
         }))
     }
 
@@ -379,117 +381,20 @@ impl Platform for IosPlatform {
         let url = url.to_string();
         let username = username.to_string();
         let password = password.to_vec();
-        self.background_executor().spawn(async move {
-            unsafe {
-                use objc2_security::*;
-
-                let url = CFString::from_str(&url);
-                let username = CFString::from_str(&username);
-                let password = CFData::from_bytes(&password);
-
-                let query_attributes = CFDictionary::<CFString, CFType>::from_slices(
-                    &[kSecClass, kSecAttrServer],
-                    &[kSecClassInternetPassword, &url],
-                );
-                let updated_attributes = CFDictionary::<CFString, CFType>::from_slices(
-                    &[kSecAttrAccount, kSecValueData],
-                    &[&username, &password],
-                );
-
-                let mut operation = "updating";
-                let mut status =
-                    SecItemUpdate(query_attributes.as_opaque(), updated_attributes.as_opaque());
-                if status == errSecItemNotFound {
-                    operation = "creating";
-                    let new_item_attributes = CFDictionary::<CFString, CFType>::from_slices(
-                        &[kSecClass, kSecAttrServer, kSecAttrAccount, kSecValueData],
-                        &[kSecClassInternetPassword, &url, &username, &password],
-                    );
-                    status = SecItemAdd(new_item_attributes.as_opaque(), ptr::null_mut());
-                }
-                anyhow::ensure!(
-                    status == errSecSuccess,
-                    "{operation} password failed: {status}"
-                );
-            }
-            Ok(())
-        })
+        self.background_executor()
+            .spawn(async move { Ok(keychain::write_credentials(&url, &username, &password)?) })
     }
 
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let url = url.to_string();
-        self.background_executor().spawn(async move {
-            let url = CFString::from_str(&url);
-
-            unsafe {
-                use objc2_security::*;
-                let cf_true = kCFBooleanTrue.context("Core Foundation true value unavailable")?;
-                let attributes = CFDictionary::<CFString, CFType>::from_slices(
-                    &[
-                        kSecClass,
-                        kSecAttrServer,
-                        kSecReturnAttributes,
-                        kSecReturnData,
-                    ],
-                    &[kSecClassInternetPassword, &url, cf_true, cf_true],
-                );
-
-                let mut result: *const CFType = ptr::null();
-                let status = SecItemCopyMatching(attributes.as_opaque(), &mut result);
-                match status {
-                    status if status == errSecSuccess => {}
-                    status if status == errSecItemNotFound || status == errSecUserCanceled => {
-                        return Ok(None);
-                    }
-                    _ => anyhow::bail!("reading password failed: {status}"),
-                }
-
-                let result = std::ptr::NonNull::new(result.cast_mut())
-                    .context("keychain returned no item")?;
-                let result = CFRetained::from_raw(result)
-                    .downcast::<CFDictionary>()
-                    .map_err(|_| anyhow!("keychain item was not a dictionary"))?;
-                // SecItemCopyMatching returns a CFType-keyed/value dictionary when
-                // kSecReturnAttributes is set. Validate each value's concrete type.
-                let result = result.cast_unchecked::<CFType, CFType>();
-                let username = result
-                    .get(kSecAttrAccount)
-                    .context("account was missing from keychain item")?;
-                let username = username
-                    .downcast::<CFString>()
-                    .map_err(|_| anyhow!("account was not a string"))?;
-                let password = result
-                    .get(kSecValueData)
-                    .context("password was missing from keychain item")?;
-                let password = password
-                    .downcast::<CFData>()
-                    .map_err(|_| anyhow!("password was not data"))?;
-
-                Ok(Some((username.to_string(), password.to_vec())))
-            }
-        })
+        self.background_executor()
+            .spawn(async move { Ok(keychain::read_credentials(&url)?) })
     }
 
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
         let url = url.to_string();
-        self.background_executor().spawn(async move {
-            unsafe {
-                use objc2_security::*;
-
-                let url = CFString::from_str(&url);
-                let query_attributes = CFDictionary::<CFString, CFType>::from_slices(
-                    &[kSecClass, kSecAttrServer],
-                    &[kSecClassInternetPassword, &url],
-                );
-
-                let status = SecItemDelete(query_attributes.as_opaque());
-                anyhow::ensure!(
-                    status == errSecSuccess || status == errSecItemNotFound,
-                    "deleting password failed: {status}"
-                );
-            }
-            Ok(())
-        })
+        self.background_executor()
+            .spawn(async move { Ok(keychain::delete_credentials(&url)?) })
     }
 
     fn on_keyboard_layout_change(&self, _callback: Box<dyn FnMut()>) {
@@ -497,15 +402,12 @@ impl Platform for IosPlatform {
     }
 
     fn thermal_state(&self) -> ThermalState {
-        // iOS provides thermal state via ProcessInfo
-        // For now, return nominal
-        ThermalState::Nominal
+        thermal::thermal_state()
     }
 
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
-        self.0.thermal_state_callback.set(callback);
-        // In a full implementation, we would register for
-        // NSProcessInfoThermalStateDidChangeNotification
+        let observer = ThermalObserver::new(&self.0.foreground_executor, callback);
+        self.0.thermal_observer.replace(Some(observer));
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {

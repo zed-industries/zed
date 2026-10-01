@@ -4,7 +4,7 @@ use gpui::{
     TextInputStateChange, px,
 };
 use objc2::rc::{Retained, Weak};
-use objc2::runtime::{AnyObject, ProtocolObject, Sel};
+use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{
@@ -104,6 +104,7 @@ define_class!(
 
 pub(super) struct TextInputIvars {
     window: WindowReference,
+    input_field: Cell<Option<gpui::FocusId>>,
     configuration: RefCell<TextInputConfiguration>,
     delegate: RefCell<Weak<ProtocolObject<dyn UITextInputDelegate>>>,
     marked_style: RefCell<Option<Retained<NSDictionary<NSAttributedStringKey, AnyObject>>>>,
@@ -166,10 +167,6 @@ define_class!(
             }
         }
 
-        #[unsafe(method(canPerformAction:withSender:))]
-        fn can_perform_action(&self, action: Sel, _sender: Option<&AnyObject>) -> bool {
-            self.ivars().window.can_perform_action(action)
-        }
     }
 
     unsafe impl UIKeyInput for TextInputView {
@@ -443,22 +440,13 @@ define_class!(
         }
     }
 
-    unsafe impl UIResponderStandardEditActions for TextInputView {
-        #[unsafe(method(cut:))]
-        unsafe fn cut(&self, _sender: Option<&AnyObject>) { self.ivars().window.dispatch_edit_menu_shortcut("x"); }
-        #[unsafe(method(copy:))]
-        unsafe fn copy(&self, _sender: Option<&AnyObject>) { self.ivars().window.dispatch_edit_menu_shortcut("c"); }
-        #[unsafe(method(paste:))]
-        unsafe fn paste(&self, _sender: Option<&AnyObject>) { self.ivars().window.dispatch_edit_menu_shortcut("v"); }
-        #[unsafe(method(selectAll:))]
-        unsafe fn select_all(&self, _sender: Option<&AnyObject>) { self.ivars().window.dispatch_edit_menu_shortcut("a"); }
-    }
 );
 
 impl TextInputView {
     pub(super) fn new(frame: CGRect, main_thread: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(main_thread).set_ivars(TextInputIvars {
             window: WindowReference::default(),
+            input_field: Cell::new(None),
             configuration: RefCell::new(TextInputConfiguration::default()),
             delegate: RefCell::new(Weak::default()),
             marked_style: RefCell::new(None),
@@ -537,6 +525,16 @@ impl TextInputView {
         self.refresh_keyboard();
     }
 
+    pub(super) fn set_input_field(&self, field: Option<gpui::FocusId>) {
+        // Taking the handler during draw must not clear this identity: the
+        // replacement adapter can still represent the same focused document.
+        if self.ivars().input_field.replace(field) != field && field.is_some() {
+            self.ivars().content_changed.set(true);
+            self.ivars().selection_changed.set(true);
+            self.set_keyboard_visible(true);
+        }
+    }
+
     pub(super) fn refresh_keyboard(&self) {
         if self.ivars().update_pending.replace(true) {
             return;
@@ -565,7 +563,10 @@ impl TextInputView {
                 self.ivars().selection_changed.set(true);
                 self.set_keyboard_visible(true);
             }
-            TextInputStateChange::FocusLost => self.set_keyboard_visible(false),
+            TextInputStateChange::FocusLost => {
+                self.ivars().input_field.set(None);
+                self.set_keyboard_visible(false);
+            }
             TextInputStateChange::SelectionChanged | TextInputStateChange::ContentChanged => {
                 if self.ivars().native_edit.get() {
                     return;
@@ -751,6 +752,38 @@ pub(super) mod tests {
             *delegate.ivars().borrow(),
             ["text-will", "selection-will", "selection-did", "text-did"]
         );
+
+        let mut fields = slotmap::SlotMap::<gpui::FocusId, ()>::with_key();
+        let first_field = fields.insert(());
+        let second_field = fields.insert(());
+        delegate.ivars().borrow_mut().clear();
+        view.set_input_field(Some(first_field));
+        view.reconcile_text_input(sel!(reconcileTextInput));
+        assert_eq!(
+            *delegate.ivars().borrow(),
+            ["text-will", "selection-will", "selection-did", "text-did"]
+        );
+
+        view.set_keyboard_visible(false);
+        view.reconcile_text_input(sel!(reconcileTextInput));
+        delegate.ivars().borrow_mut().clear();
+        view.set_input_field(Some(first_field));
+        view.refresh_keyboard();
+        view.reconcile_text_input(sel!(reconcileTextInput));
+        assert!(!view.ivars().keyboard_desired.get());
+        assert!(delegate.ivars().borrow().is_empty());
+
+        view.set_input_field(Some(second_field));
+        assert!(view.ivars().keyboard_desired.get());
+        view.reconcile_text_input(sel!(reconcileTextInput));
+        assert_eq!(
+            *delegate.ivars().borrow(),
+            ["text-will", "selection-will", "selection-did", "text-did"]
+        );
+        view.state_changed(TextInputStateChange::FocusLost);
+        assert_eq!(view.ivars().input_field.get(), None);
+        assert!(!view.ivars().keyboard_desired.get());
+
         drop(delegate);
         assert!(view.inputDelegate().is_none());
         view.setMarkedText_selectedRange(Some(&text), NSRange::new(1, 2));

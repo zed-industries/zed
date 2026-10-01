@@ -880,19 +880,6 @@ pub enum TextInputStateChange {
     ContentChanged,
 }
 
-/// Standard editing actions offered by a platform-native text selection menu.
-#[derive(Debug, Copy, Clone, Default, Eq, PartialEq)]
-pub struct EditMenuActions {
-    /// Whether the current selection can be cut.
-    pub cut: bool,
-    /// Whether the current selection can be copied.
-    pub copy: bool,
-    /// Whether clipboard contents can be pasted.
-    pub paste: bool,
-    /// Whether all text can be selected.
-    pub select_all: bool,
-}
-
 #[expect(missing_docs)]
 pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<Pixels>;
@@ -1080,13 +1067,6 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 
     /// Sets the handler for a user-requested soft-keyboard dismissal.
     fn set_keyboard_dismiss_handler(&self, _callback: Box<dyn FnMut()>) {}
-
-    /// Presents the platform-native text editing menu when supported.
-    ///
-    /// Returns whether the platform accepted the request.
-    fn show_edit_menu(&self, _position: Point<Pixels>, _actions: EditMenuActions) -> bool {
-        false
-    }
 
     /// Inform the operating system that the text input state has changed
     fn text_input_state_changed(&self, _change: TextInputStateChange) {}
@@ -1716,6 +1696,14 @@ impl PlatformInputHandler {
     pub(crate) fn with_focus(mut self, focus_id: crate::FocusId) -> Self {
         self.focus_id = Some(focus_id);
         self
+    }
+
+    /// Identifies the input field registered through [`Window::handle_input`].
+    ///
+    /// This identity survives adapter replacement during repaint. Backends can
+    /// use it to detect a field change without restarting the keyboard session.
+    pub fn focus_id(&self) -> Option<crate::FocusId> {
+        self.focus_id
     }
 
     pub fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<UTF16Selection> {

@@ -603,7 +603,6 @@ core-foundation = "0.10"
 core-foundation-sys = "0.8.6"
 core-graphics = "0.24"
 core-text = "21"
-core-video = { version = "0.5.2", features = ["metal"] }
 cpal = "0.17"
 crash-handler = "0.8"
 criterion = { version = "0.8.2", features = ["html_reports"] }
@@ -717,10 +716,8 @@ objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
     "objc2-core-foundation",
     "NSText",
     "UIApplication",
-    "UIEditMenuInteraction",
     "UIEvent",
     "UIGeometry",
-    "UIInteraction",
     "UIInterface",
     "UIOpenURLContext",
     "UIPasteboard",

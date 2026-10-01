@@ -5,7 +5,6 @@ mod display;
 mod events;
 mod platform;
 mod text_input;
-mod text_system;
 mod window;
 
 use std::cell::{Cell, RefCell};
@@ -50,7 +49,6 @@ impl<T> CallbackSlot<T> {
 
 pub(crate) use display::*;
 pub use platform::*;
-pub(crate) use text_system::*;
 pub use window::set_status_bar_style;
 pub(crate) use window::*;
 

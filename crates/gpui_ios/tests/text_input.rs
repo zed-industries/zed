@@ -7,7 +7,6 @@ mod text_input;
 #[cfg(target_os = "ios")]
 mod window {
     use gpui::PlatformInputHandler;
-    use objc2::runtime::Sel;
     use std::{cell::RefCell, rc::Weak};
 
     pub(crate) struct IosWindowState;
@@ -30,14 +29,6 @@ mod window {
             callback: impl FnOnce(&IosWindowState) -> R,
         ) -> Option<R> {
             self.0.borrow().upgrade().map(|window| callback(&window))
-        }
-
-        pub(crate) fn can_perform_action(&self, _action: Sel) -> bool {
-            false
-        }
-
-        pub(crate) fn dispatch_edit_menu_shortcut(&self, _key: &str) {
-            panic!("the smoke test must not dispatch edit-menu shortcuts");
         }
     }
 }
