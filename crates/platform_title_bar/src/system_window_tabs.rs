@@ -102,7 +102,11 @@ impl SystemWindowTabs {
                             )]
                         };
 
+                        let has_multiple_tabs = tabs.len() > 1;
                         SystemWindowTabController::add_tab(cx, handle.window_id(), tabs);
+                        if has_multiple_tabs {
+                            SystemWindowTabController::set_visible(cx, true);
+                        }
                     }
                 });
             });
