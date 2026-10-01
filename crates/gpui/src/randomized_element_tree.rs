@@ -1699,8 +1699,8 @@ mod tests {
     #[derive(Debug, PartialEq)]
     struct SceneSnapshot {
         quads: Vec<QuadSnapshot>,
-        /// Every other primitive kind, formatted without the per-window atlas tile and
-        /// path IDs, which differ between two windows drawing the same scene.
+        /// Every other primitive kind, formatted without the per-window atlas tile
+        /// IDs, which differ between two windows drawing the same scene.
         other_primitives: Vec<String>,
         element_ids: BTreeSet<u64>,
     }
@@ -1718,12 +1718,9 @@ mod tests {
                         .iter()
                         .map(|underline| format!("{underline:?}")),
                 )
-                .chain(scene.paths.iter().map(|path| {
-                    format!(
-                        "path {} {:?} {:?} {:?} {:?}",
-                        path.order, path.bounds, path.content_mask, path.color, path.vertices
-                    )
-                }))
+                .chain(scene.path_paints.iter().map(|paint| format!("{paint:?}")))
+                .chain(scene.path_tiles.iter().map(|tile| format!("{tile:?}")))
+                .chain(scene.path_curves.iter().map(|curve| format!("{curve:?}")))
                 .chain(scene.monochrome_sprites.iter().map(|sprite| {
                     format!(
                         "monochrome {} {:?} {:?} {:?} {:?}",
