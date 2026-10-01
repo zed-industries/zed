@@ -35,6 +35,7 @@ core-foundation.workspace = true
 core-foundation-sys.workspace = true
 core-graphics.workspace = true
 core-text.workspace = true
+core-video.workspace = true
 ctor.workspace = true
 dispatch2 = "0.3.1"
 # WARNING: If you change this, you must also publish a new version of zed-font-kit to crates.io
