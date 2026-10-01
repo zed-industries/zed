@@ -26,8 +26,7 @@ use language_model::session::{
     LanguageModelSession, RoundParameters, SessionConfig, SessionInput, UserContent,
 };
 use language_model::{
-    LanguageModelImage, LanguageModelToolResultContent, LanguageModelToolUseId,
-    LanguageModelToolUseInput,
+    LanguageModelToolResultContent, LanguageModelToolUseId, LanguageModelToolUseInput,
 };
 use pretty_assertions::assert_eq;
 
@@ -48,12 +47,19 @@ async fn session_requests_match_thread_requests(
     // Thread may have been created before the settings file loaded, so it
     // can't rely on picking up the default profile.
     cx.run_until_parked();
+    // Otherwise Thread's tool runner replaces successful image results before
+    // request construction, whereas the session's host supplies the results.
+    thread_fake.update_model("fake", |model| model.supports_images = true);
     thread.update(cx, |thread, cx| {
-        thread.add_tool(ScriptedResultTool);
+        thread.refresh_model(&thread_model.provider_id, cx);
+        thread.tools.insert(
+            ScriptedResultTool::NAME.into(),
+            Arc::new(ScriptedResultTool),
+        );
         thread.set_profile(AgentProfileId("test-profile".into()), cx);
     });
     let session_fake = Arc::new(FakeLanguageModelProvider::default());
-    let session_model = session_fake.model("fake");
+    let session_model = session_fake.update_model("fake", |model| model.supports_images = true);
     let mut session = None;
     let mut next_tool_use_id = 0;
 
@@ -258,7 +264,7 @@ enum Segment {
     ToolUse {
         partial_count: usize,
         is_complete: bool,
-        result: String,
+        result: Vec<ScriptedResultPart>,
         is_error: bool,
         /// Sent with every partial and the complete tool use.
         thought_signature: Option<String>,
@@ -268,7 +274,7 @@ enum Segment {
 
 struct ScriptedToolUse {
     id: LanguageModelToolUseId,
-    result: String,
+    result: Vec<ScriptedResultPart>,
     is_error: bool,
 }
 
@@ -397,9 +403,18 @@ impl ScriptedToolUse {
             tool_use_id: self.id.clone(),
             tool_name: ScriptedResultTool::NAME.into(),
             is_error: self.is_error,
-            content: vec![LanguageModelToolResultContent::Text(
-                self.result.as_str().into(),
-            )],
+            content: self
+                .result
+                .iter()
+                .map(|part| match part {
+                    ScriptedResultPart::Text(text) => {
+                        LanguageModelToolResultContent::Text(text.as_str().into())
+                    }
+                    ScriptedResultPart::Image(source) => {
+                        LanguageModelToolResultContent::Image(image(source))
+                    }
+                })
+                .collect(),
             output: None,
         }
     }
@@ -516,7 +531,7 @@ fn segment() -> impl Strategy<Value = Segment> {
         3 => (
             0usize..3,
             prop::bool::weighted(0.8),
-            short_text(),
+            tool_result(),
             prop::bool::weighted(0.2),
             prop::option::of(signature()),
         )
@@ -540,6 +555,20 @@ fn segment() -> impl Strategy<Value = Segment> {
     ]
 }
 
+fn tool_result() -> impl Strategy<Value = Vec<ScriptedResultPart>> {
+    prop_oneof![
+        1 => Just(Vec::new()),
+        1 => (1usize..=3).prop_map(|count| vec![ScriptedResultPart::Text(String::new()); count]),
+        6 => prop::collection::vec(
+            prop_oneof![
+                3 => short_text().prop_map(ScriptedResultPart::Text),
+                1 => "[a-z]{1,4}".prop_map(ScriptedResultPart::Image),
+            ],
+            1..=3,
+        ),
+    ]
+}
+
 fn reasoning_details() -> impl Strategy<Value = serde_json::Value> {
     prop_oneof![
         Just(json!([])),
@@ -554,12 +583,6 @@ fn short_text() -> impl Strategy<Value = String> {
 
 fn signature() -> impl Strategy<Value = String> {
     "signature-[a-z]{1,3}"
-}
-
-fn image(source: &str) -> LanguageModelImage {
-    LanguageModelImage {
-        source: source.to_string().into(),
-    }
 }
 
 /// The session configuration that reproduces Thread's first request.
