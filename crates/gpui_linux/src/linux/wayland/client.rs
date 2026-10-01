@@ -1571,6 +1571,23 @@ impl Dispatch<ext_session_lock_v1::ExtSessionLockV1, ()> for WaylandClientStateP
         let lock = state.globals.session_lock.clone();
         match event {
             ext_session_lock_v1::Event::Locked => lock.borrow_mut().locked = true,
+            // The compositor refused or ended the lock, so the lock surfaces will never be shown.
+            ext_session_lock_v1::Event::Finished => {
+                let windows: Vec<_> = state
+                    .windows
+                    .values()
+                    .filter(|w| w.is_lock_surface())
+                    .cloned()
+                    .collect();
+                drop(state);
+                if let Some(l) = lock.borrow_mut().lock.take() {
+                    l.destroy();
+                }
+                lock.borrow_mut().locked = false;
+                for w in windows {
+                    w.close();
+                }
+            }
             _ => {}
         }
     }

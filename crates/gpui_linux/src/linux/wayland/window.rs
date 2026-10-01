@@ -945,6 +945,13 @@ impl WaylandWindowStatePtr {
         self.state.borrow().surface_state.xdg_surface().cloned()
     }
 
+    pub fn is_lock_surface(&self) -> bool {
+        matches!(
+            self.state.borrow().surface_state,
+            WaylandSurfaceState::SessionLock(_)
+        )
+    }
+
     /// The layer-shell surface backing this window, if it is one. Used to anchor child popups.
     pub fn layer_surface(&self) -> Option<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1> {
         self.state.borrow().surface_state.layer_surface().cloned()
