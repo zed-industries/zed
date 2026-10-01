@@ -1,27 +1,26 @@
 //! Modal implementation for the which-key display.
 
-use gpui::prelude::FluentBuilder;
 use gpui::{
-    App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight,
-    KeybindingKeystroke, ScrollHandle, Subscription, WeakEntity, Window,
+    App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, KeybindingKeystroke,
+    ScrollHandle, Subscription, WeakEntity, Window,
 };
 use settings::Settings;
-use std::collections::HashMap;
+use std::rc::Rc;
 use theme_settings::ThemeSettings;
-use ui::{
-    Divider, DividerColor, DynamicSpacing, LabelSize, WithScrollbar, prelude::*,
-    text_for_keybinding_keystrokes,
-};
+use ui::{DynamicSpacing, prelude::*};
 use workspace::{ModalView, Workspace};
 
-use crate::{bindings_for_which_key, map_pending_keystrokes};
+use crate::{
+    bindings_for_which_key, map_pending_keystrokes,
+    pending_bindings::{PendingBindingRow, PendingBindings, prepare_pending_bindings},
+};
 
 pub struct WhichKeyModal {
     _workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
-    bindings: Vec<(SharedString, SharedString)>,
-    pending_keys: SharedString,
+    bindings: Rc<[PendingBindingRow]>,
+    pending_keys: Rc<[KeybindingKeystroke]>,
     _pending_input_subscription: Subscription,
     _focus_out_subscription: Subscription,
 }
@@ -40,8 +39,8 @@ impl WhichKeyModal {
             _workspace: workspace,
             focus_handle: focus_handle.clone(),
             scroll_handle: ScrollHandle::new(),
-            bindings: Vec::new(),
-            pending_keys: SharedString::new_static(""),
+            bindings: Rc::from([]),
+            pending_keys: Rc::from([]),
             _pending_input_subscription: cx.observe_pending_input(
                 window,
                 |this: &mut Self, window, cx| {
@@ -65,59 +64,18 @@ impl WhichKeyModal {
             cx.emit(DismissEvent);
             return;
         };
-        let mut binding_data = bindings_for_which_key(window, pending_keys)
-            .into_iter()
-            .map(|binding| (binding.remaining_keystrokes, binding.action_name))
-            .collect();
-
-        binding_data = group_bindings(binding_data);
-
-        // Sort bindings from shortest to longest, with groups last
-        // Using stable sort to preserve relative order of equal elements
-        binding_data.sort_by(|(keystrokes_a, action_a), (keystrokes_b, action_b)| {
-            // Groups (actions starting with "+") should go last
-            let is_group_a = action_a.starts_with('+');
-            let is_group_b = action_b.starts_with('+');
-
-            // First, separate groups from non-groups
-            let group_cmp = is_group_a.cmp(&is_group_b);
-            if group_cmp != std::cmp::Ordering::Equal {
-                return group_cmp;
-            }
-
-            // Then sort by keystroke count
-            let keystroke_cmp = keystrokes_a.len().cmp(&keystrokes_b.len());
-            if keystroke_cmp != std::cmp::Ordering::Equal {
-                return keystroke_cmp;
-            }
-
-            // Finally sort by text length, then lexicographically for full stability
-            let text_a = text_for_keybinding_keystrokes(keystrokes_a, cx);
-            let text_b = text_for_keybinding_keystrokes(keystrokes_b, cx);
-            let text_len_cmp = text_a.len().cmp(&text_b.len());
-            if text_len_cmp != std::cmp::Ordering::Equal {
-                return text_len_cmp;
-            }
-            text_a.cmp(&text_b)
-        });
-        binding_data.dedup();
+        self.bindings =
+            prepare_pending_bindings(bindings_for_which_key(window, pending_keys), cx).into();
         let pending_keys = map_pending_keystrokes(pending_keys, cx.keyboard_mapper().as_ref());
-        self.pending_keys = text_for_keybinding_keystrokes(&pending_keys, cx).into();
-        self.bindings = binding_data
-            .into_iter()
-            .map(|(keystrokes, action)| {
-                (
-                    text_for_keybinding_keystrokes(&keystrokes, cx).into(),
-                    action,
-                )
-            })
-            .collect();
+        if self.pending_keys.as_ref() != pending_keys.as_slice() {
+            self.scroll_handle.set_offset(Default::default());
+        }
+        self.pending_keys = pending_keys.into();
     }
 }
 
 impl Render for WhichKeyModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let has_rows = !self.bindings.is_empty();
         let viewport_size = window.viewport_size();
 
         let max_panel_width = px((f32::from(viewport_size.width) * 0.5).min(480.0));
@@ -144,77 +102,6 @@ impl Render for WhichKeyModal {
         let margin_bottom = px(16.);
         let bottom_offset = margin_bottom + status_height;
 
-        // Title section
-        let title_section = {
-            let mut column = v_flex().gap(px(0.)).child(
-                div()
-                    .child(
-                        Label::new(self.pending_keys.clone())
-                            .size(LabelSize::Default)
-                            .weight(FontWeight::MEDIUM)
-                            .color(Color::Accent),
-                    )
-                    .mb(px(2.)),
-            );
-
-            if has_rows {
-                column = column.child(
-                    div()
-                        .child(Divider::horizontal().color(DividerColor::BorderFaded))
-                        .mb(px(2.)),
-                );
-            }
-
-            column
-        };
-
-        let content = h_flex()
-            .items_start()
-            .id("which-key-content")
-            .gap(px(8.))
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll_handle)
-            .h_full()
-            .max_h(max_content_height)
-            .child(
-                // Keystrokes column
-                v_flex()
-                    .gap(px(4.))
-                    .flex_shrink_0()
-                    .children(self.bindings.iter().map(|(keystrokes, _)| {
-                        div()
-                            .child(
-                                Label::new(keystrokes.clone())
-                                    .size(LabelSize::Default)
-                                    .color(Color::Accent),
-                            )
-                            .text_align(gpui::TextAlign::Right)
-                    })),
-            )
-            .child(
-                // Actions column
-                v_flex()
-                    .gap(px(4.))
-                    .flex_1()
-                    .min_w_0()
-                    .children(self.bindings.iter().map(|(_, action_name)| {
-                        let is_group = action_name.starts_with('+');
-                        let label_color = if is_group {
-                            Color::Success
-                        } else {
-                            Color::Default
-                        };
-
-                        div().child(
-                            Label::new(action_name.clone())
-                                .size(LabelSize::Default)
-                                .color(label_color)
-                                .single_line()
-                                .truncate(),
-                        )
-                    })),
-            );
-
         div()
             .id("which-key-buffer-panel-scroll")
             .occlude()
@@ -224,15 +111,14 @@ impl Render for WhichKeyModal {
             .min_w(px(220.))
             .max_w(max_panel_width)
             .elevation_3(cx)
-            .px(px(12.))
-            .child(v_flex().child(title_section).when(has_rows, |el| {
-                el.child(
-                    div()
-                        .max_h(max_content_height)
-                        .child(content)
-                        .vertical_scrollbar_for(&self.scroll_handle, window, cx),
-                )
-            }))
+            .overflow_hidden()
+            .child(PendingBindings::new(
+                "which-key-content",
+                self.pending_keys.clone(),
+                self.bindings.clone(),
+                self.scroll_handle.clone(),
+                max_content_height,
+            ))
     }
 }
 
@@ -247,155 +133,5 @@ impl Focusable for WhichKeyModal {
 impl ModalView for WhichKeyModal {
     fn render_bare(&self) -> bool {
         true
-    }
-}
-
-fn group_bindings(
-    binding_data: Vec<(Vec<KeybindingKeystroke>, SharedString)>,
-) -> Vec<(Vec<KeybindingKeystroke>, SharedString)> {
-    let mut groups: HashMap<
-        Option<KeybindingKeystroke>,
-        Vec<(Vec<KeybindingKeystroke>, SharedString)>,
-    > = HashMap::new();
-
-    // Group bindings by their first keystroke
-    for (remaining_keystrokes, action_name) in binding_data {
-        let first_key = remaining_keystrokes.first().cloned();
-        groups
-            .entry(first_key)
-            .or_default()
-            .push((remaining_keystrokes, action_name));
-    }
-
-    let mut result = Vec::new();
-
-    for (first_key, mut group_bindings) in groups {
-        // Remove duplicates within each group
-        group_bindings.dedup_by_key(|(keystrokes, _)| keystrokes.clone());
-
-        if let Some(first_key) = first_key
-            && group_bindings.len() > 1
-        {
-            // This is a group - create a single entry with just the first keystroke
-            let first_keystroke = vec![first_key];
-            let count = group_bindings.len();
-            result.push((first_keystroke, format!("+{} keybinds", count).into()));
-        } else {
-            // Not a group or empty keystrokes - add all bindings as-is
-            result.append(&mut group_bindings);
-        }
-    }
-
-    result
-}
-
-#[cfg(test)]
-mod tests {
-    #[cfg(target_os = "windows")]
-    use gpui::Modifiers;
-    use gpui::{
-        Action as _, Entity, FocusHandle, InvalidKeystrokeError, KeyBinding, Keystroke,
-        TestAppContext, VisualTestContext, actions,
-    };
-
-    use super::*;
-
-    actions!(
-        which_key_modal_test,
-        [FirstBinding, SecondBinding, ThirdBinding]
-    );
-
-    struct TestView {
-        focus_handle: FocusHandle,
-    }
-
-    impl Render for TestView {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            div()
-                .key_context("WhichKeyModalTest")
-                .track_focus(&self.focus_handle)
-                .on_action(|_: &FirstBinding, _, _| {})
-                .on_action(|_: &SecondBinding, _, _| {})
-                .on_action(|_: &ThirdBinding, _, _| {})
-        }
-    }
-
-    fn setup_modal_test<'a>(
-        cx: &'a mut TestAppContext,
-        bindings: impl IntoIterator<Item = KeyBinding>,
-        pending_keystrokes: &str,
-    ) -> (Entity<WhichKeyModal>, &'a mut VisualTestContext) {
-        cx.update(|cx| cx.bind_keys(bindings));
-        let (test_view, cx) = cx.add_window_view(|_, cx| TestView {
-            focus_handle: cx.focus_handle(),
-        });
-        let focus_handle = test_view.read_with(cx, |test_view, _| test_view.focus_handle.clone());
-        cx.update(|window, cx| {
-            window.focus(&focus_handle, cx);
-            window.activate_window();
-        });
-        cx.simulate_keystrokes(pending_keystrokes);
-        cx.run_until_parked();
-        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
-
-        let modal = cx.update(|window, cx| {
-            cx.new(|cx| WhichKeyModal::new(WeakEntity::new_invalid(), window, cx))
-        });
-        (modal, cx)
-    }
-
-    #[test]
-    fn test_group_bindings_preserves_keybinding_keystrokes() -> Result<(), InvalidKeystrokeError> {
-        #[cfg(target_os = "windows")]
-        let keystroke = KeybindingKeystroke::new(
-            Keystroke::parse("ctrl-$")?,
-            Modifiers::control_shift(),
-            "4".to_owned(),
-        );
-        #[cfg(not(target_os = "windows"))]
-        let keystroke = KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-x")?);
-        let binding_data = vec![(vec![keystroke.clone()], SharedString::from("test action"))];
-
-        let grouped_bindings = group_bindings(binding_data);
-
-        assert_eq!(
-            grouped_bindings,
-            vec![(vec![keystroke], SharedString::from("test action"))]
-        );
-        Ok(())
-    }
-
-    #[gpui::test]
-    fn test_which_key_modal_groups_and_orders_pending_bindings(cx: &mut TestAppContext) {
-        let (modal, cx) = setup_modal_test(
-            cx,
-            [
-                KeyBinding::new("ctrl-b h", FirstBinding, Some("WhichKeyModalTest")),
-                KeyBinding::new("ctrl-b h j", SecondBinding, Some("WhichKeyModalTest")),
-                KeyBinding::new("ctrl-b k", ThirdBinding, Some("WhichKeyModalTest")),
-            ],
-            "ctrl-b",
-        );
-
-        let h = KeybindingKeystroke::from_keystroke(
-            Keystroke::parse("h").expect("valid test keystroke"),
-        );
-        let k = KeybindingKeystroke::from_keystroke(
-            Keystroke::parse("k").expect("valid test keystroke"),
-        );
-        let h_text = cx.update(|_, cx| text_for_keybinding_keystrokes(&[h], cx));
-        let k_text = cx.update(|_, cx| text_for_keybinding_keystrokes(&[k], cx));
-        let expected_bindings = vec![
-            (
-                k_text.into(),
-                command_palette::humanize_action_name(ThirdBinding.name()).into(),
-            ),
-            (h_text.into(), SharedString::from("+2 keybinds")),
-        ];
-
-        assert_eq!(
-            modal.read_with(cx, |modal, _| modal.bindings.clone()),
-            expected_bindings
-        );
     }
 }

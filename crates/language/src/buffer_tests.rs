@@ -1758,7 +1758,9 @@ fn test_bracket_ranges_keep_chunk_spanning_pairs_amid_errors(cx: &mut App) {
 }
 
 #[gpui::test]
-fn test_bracket_ranges_keep_pairs_straddling_a_chunk_boundary_amid_errors(cx: &mut App) {
+async fn test_bracket_ranges_keep_pairs_straddling_a_chunk_boundary_amid_errors(
+    cx: &mut TestAppContext,
+) {
     let mut text = String::from("void outer(void) {\n");
     for index in 0..56 {
         text.push_str(&format!("  int before_{index:02} = 0;\n"));
@@ -1782,7 +1784,10 @@ fn test_bracket_ranges_keep_pairs_straddling_a_chunk_boundary_amid_errors(cx: &m
     text.push_str("  }\n}\n");
 
     let buffer = cx.new(|cx| Buffer::local(text.clone(), cx).with_language(c_lang(), cx));
-    let snapshot = buffer.read(cx).snapshot();
+    buffer
+        .read_with(cx, |buffer, _| buffer.parsing_idle())
+        .await;
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
     assert_has_syntax_errors(&snapshot);
 
     let open_row = snapshot.offset_to_point(if_open_offset).row;
@@ -3431,6 +3436,80 @@ fn test_language_scope_at_with_rust(cx: &mut App) {
         assert_eq!(
             string_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
             &[true, false]
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_language_scope_at_end_of_buffer(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    let make_language = || {
+        Language::new(
+            LanguageConfig {
+                name: "C".into(),
+                brackets: BracketPairConfig {
+                    pairs: vec![
+                        BracketPair {
+                            start: "{".into(),
+                            end: "}".into(),
+                            close: true,
+                            surround: true,
+                            newline: false,
+                        },
+                        BracketPair {
+                            start: "'".into(),
+                            end: "'".into(),
+                            close: true,
+                            surround: true,
+                            newline: false,
+                        },
+                    ],
+                    disabled_scopes_by_bracket_ix: vec![
+                        Vec::new(),
+                        vec!["string".into(), "comment".into()],
+                    ],
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_c::LANGUAGE.into()),
+        )
+        .with_override_query(
+            r#"
+                (comment) @comment.inclusive
+                [(string_literal) (char_literal)] @string
+            "#,
+        )
+        .unwrap()
+    };
+
+    // Comment runs to EOF: the quote pair must be disabled at EOF.
+    cx.new(|cx| {
+        let text = "// it ''";
+        let buffer = Buffer::local(text, cx).with_language(Arc::new(make_language()), cx);
+        let snapshot = buffer.snapshot();
+
+        let eof_config = snapshot.language_scope_at(text.len()).unwrap();
+        assert_eq!(
+            eof_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, false]
+        );
+
+        buffer
+    });
+
+    // Trailing newline: EOF is past the comment, so both pairs stay enabled.
+    cx.new(|cx| {
+        let text = "// it ''\n";
+        let buffer = Buffer::local(text, cx).with_language(Arc::new(make_language()), cx);
+        let snapshot = buffer.snapshot();
+
+        let eof_config = snapshot.language_scope_at(text.len()).unwrap();
+        assert_eq!(
+            eof_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, true]
         );
 
         buffer
@@ -5458,6 +5537,51 @@ fn test_chunk_highlights_follow_edits_and_theme_changes(cx: &mut TestAppContext)
         )],
         "an edit must invalidate the cached highlights"
     );
+}
+
+#[gpui::test]
+async fn test_snapshot_with_edits_refreshes_chunk_highlights(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let language = keyword_and_function_lang();
+    let theme = keyword_and_function_theme();
+    language.set_theme(&theme);
+
+    let keyword = theme_highlight_id(&theme, "keyword");
+    let function = theme_highlight_id(&theme, "function");
+    let row = "fn replacement() {}\n";
+    let text = row.repeat(MAX_ROWS_IN_A_CHUNK as usize + 1);
+
+    for original_text in ["", "fn original() {}"] {
+        let buffer =
+            cx.new(|cx| Buffer::local(original_text, cx).with_language(language.clone(), cx));
+        cx.run_until_parked();
+        let original_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+        let original_highlights =
+            merged_highlight_runs(&original_snapshot, 0..original_snapshot.len());
+
+        let edited = buffer
+            .update(cx, |buffer, cx| {
+                buffer.snapshot_with_edits([(0..buffer.len(), text.clone())], cx)
+            })
+            .await;
+        let snapshot = edited.snapshot();
+        let expected = vec![
+            ("fn".to_string(), keyword),
+            ("replacement".to_string(), function),
+        ];
+
+        assert_eq!(merged_highlight_runs(snapshot, 0..row.len()), expected);
+        let last_row_start = row.len() * MAX_ROWS_IN_A_CHUNK as usize;
+        assert_eq!(
+            merged_highlight_runs(snapshot, last_row_start..snapshot.len()),
+            expected,
+        );
+        assert_eq!(
+            merged_highlight_runs(&original_snapshot, 0..original_snapshot.len()),
+            original_highlights,
+        );
+    }
 }
 
 #[gpui::test]

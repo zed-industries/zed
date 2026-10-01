@@ -4,10 +4,12 @@
   "private": true,
   "main": "index.js",
   "scripts": {
-    "danger": "danger"
+    "danger": "tsc --noEmit && danger"
   },
   "devDependencies": {
+    "@types/node": "24.13.4",
     "danger": "13.0.8",
-    "danger-plugin-pr-hygiene": "0.7.1"
+    "danger-plugin-pr-hygiene": "0.7.1",
+    "typescript": "5.9.3"
   }
 }
