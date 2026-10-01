@@ -972,6 +972,9 @@ impl PlatformWindow for WebWindow {
         self.inner.callbacks.borrow_mut().moved = Some(callback);
     }
 
+    // The only display never changes and has no reported state.
+    fn on_display_changed(&self, _callback: Box<dyn FnMut()>) {}
+
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
         self.inner.callbacks.borrow_mut().should_close = Some(callback);
     }

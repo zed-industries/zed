@@ -119,6 +119,49 @@ impl WindowVisibility {
     }
 }
 
+/// The presentation-relevant state of a display, read through
+/// [`PlatformDisplay::state`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DisplayState {
+    /// Time between the display's refreshes. Variable refresh rate displays
+    /// report their maximum rate. `None` when the platform doesn't report it.
+    pub refresh_interval: Option<Duration>,
+    /// Whether the display is powered and presenting.
+    pub power: DisplayPower,
+}
+
+impl DisplayState {
+    /// The state of a display the platform can tell nothing about.
+    pub const UNKNOWN: Self = Self {
+        refresh_interval: None,
+        power: DisplayPower::Unknown,
+    };
+
+    /// Converts a refresh rate in hertz to [`Self::refresh_interval`],
+    /// rejecting the zero, negative, and non-finite rates platforms use to
+    /// mean "unknown".
+    pub fn refresh_interval_from_hz(hertz: f64) -> Option<Duration> {
+        (hertz.is_finite() && hertz > 0.0).then(|| Duration::from_secs_f64(1.0 / hertz))
+    }
+}
+
+/// Whether a display is presenting, as reported in [`DisplayState::power`].
+///
+/// This describes the display, not any window on it: a window on a display
+/// that is [`DisplayPower::On`] may still be [`WindowVisibility::Hidden`], and
+/// platforms that also report display sleep as window visibility (macOS
+/// occlusion) report both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayPower {
+    /// The display is presenting. Dimmed displays are still presenting.
+    On,
+    /// The display is asleep, in a power-saving mode, or otherwise powered
+    /// off while the system is awake. Nothing drawn for it will be shown.
+    Off,
+    /// The platform doesn't report display power.
+    Unknown,
+}
+
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 pub(crate) use test::*;
 
@@ -415,6 +458,11 @@ pub trait PlatformDisplay: Debug {
 
     /// Get the bounds for this display
     fn bounds(&self) -> Bounds<Pixels>;
+
+    /// The display's current refresh interval and power state. Changes are
+    /// reported to the windows on the display through
+    /// [`PlatformWindow::on_display_changed`].
+    fn state(&self) -> DisplayState;
 
     /// Get the visible bounds for this display, excluding taskbar/dock areas.
     /// This is the usable area where windows can be placed without being obscured.
@@ -1059,6 +1107,11 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_moved(&self, callback: Box<dyn FnMut()>);
+    /// Registers the callback invoked when [`Self::display`] or the
+    /// [`PlatformDisplay::state`] of that display may have changed. Calls may
+    /// be spurious; GPUI rereads both and ignores calls that change neither.
+    /// The callback runs on the main thread outside of any window update.
+    fn on_display_changed(&self, callback: Box<dyn FnMut()>);
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);
@@ -3431,6 +3484,21 @@ mod frame_signal_tests {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn test_refresh_interval_from_hz() {
+        assert_eq!(
+            DisplayState::refresh_interval_from_hz(50.0),
+            Some(Duration::from_millis(20))
+        );
+        assert_eq!(
+            DisplayState::refresh_interval_from_hz(120.0),
+            Some(Duration::from_secs(1) / 120)
+        );
+        for unknown in [0.0, -60.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(DisplayState::refresh_interval_from_hz(unknown), None);
+        }
+    }
 
     #[test]
     fn test_window_button_layout_parse_standard() {

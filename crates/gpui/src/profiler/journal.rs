@@ -25,7 +25,7 @@ use gpui_util::ResultExt;
 use scheduler::Instant;
 
 use super::{ActionTiming, FrameTiming, PresentTiming, TaskTiming};
-use crate::{App, WindowId, WindowVisibility};
+use crate::{App, DisplayId, DisplayState, WindowId, WindowVisibility};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PowerState {
@@ -276,6 +276,19 @@ pub enum FrameStateChange {
         /// The window that closed.
         window_id: WindowId,
         /// When the window closed.
+        at: Instant,
+    },
+    /// The window was created, moved to another display, or its display's
+    /// refresh interval or power changed. Frames presented after `at` are
+    /// paced by this display.
+    DisplayChanged {
+        /// The window whose display changed.
+        window_id: WindowId,
+        /// The display the window is on, if the platform reports one.
+        display_id: Option<DisplayId>,
+        /// The display's refresh interval and power.
+        display_state: DisplayState,
+        /// When the foreground observed the change.
         at: Instant,
     },
 }
@@ -820,14 +833,18 @@ pub(crate) fn observe_power(cx: &App) {
         record_power_transition(PowerState::Suspended);
     })
     .detach();
-    // Visibility notifications delivered during sleep may have been missed.
+    // Visibility and display notifications delivered during sleep may have
+    // been missed.
     cx.on_system_wake(|cx| {
         record_power_transition(PowerState::Awake);
         cx.spawn(async |cx| {
             cx.update(|cx| {
                 for handle in cx.windows() {
                     handle
-                        .update(cx, |_, window, cx| window.refresh_visibility(cx))
+                        .update(cx, |_, window, cx| {
+                            window.refresh_display();
+                            window.refresh_visibility(cx);
+                        })
                         .log_err();
                 }
             });
@@ -1059,6 +1076,22 @@ pub(crate) fn record_frame_pending(window_id: WindowId, dirty_at: Instant) {
 pub(crate) fn record_window_closed(window_id: WindowId) {
     let at = Instant::now();
     with_journal(|journal| journal.record_window_closed(window_id, at));
+}
+
+pub(crate) fn record_window_display(
+    window_id: WindowId,
+    display_id: Option<DisplayId>,
+    display_state: DisplayState,
+) {
+    let at = Instant::now();
+    with_journal(|journal| {
+        journal.record_frame_state(FrameStateChange::DisplayChanged {
+            window_id,
+            display_id,
+            display_state,
+            at,
+        })
+    });
 }
 
 const SLOT_WRITER: usize = 1 << (usize::BITS - 1);

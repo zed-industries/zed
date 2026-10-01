@@ -2,15 +2,31 @@ use crate::ns_string;
 use anyhow::Result;
 use cocoa::{
     appkit::NSScreen,
-    base::{id, nil},
+    base::{BOOL, NO, YES, id, nil},
     foundation::{NSArray, NSDictionary},
 };
 use core_foundation::base::CFRelease;
 use core_foundation::uuid::{CFUUIDGetUUIDBytes, CFUUIDRef};
-use core_graphics::display::{CGDirectDisplayID, CGDisplayBounds, CGGetActiveDisplayList};
-use gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, point, px, size};
+use core_graphics::display::{
+    CGDirectDisplayID, CGDisplay, CGDisplayBounds, CGGetActiveDisplayList,
+};
+use gpui::{
+    Bounds, DisplayId, DisplayPower, DisplayState, Pixels, PlatformDisplay, point, px, size,
+};
 use objc::{msg_send, sel, sel_impl};
+use std::sync::atomic::{AtomicBool, Ordering};
 use uuid::Uuid;
+
+/// Set from `NSWorkspaceScreensDidSleepNotification` and cleared on
+/// `NSWorkspaceScreensDidWakeNotification`. macOS sleeps all displays
+/// together, and `CGDisplayIsAsleep` is not documented to have caught up by
+/// the time the notification is delivered, so the notification is trusted
+/// over it.
+static SCREENS_ASLEEP: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn set_screens_asleep(asleep: bool) {
+    SCREENS_ASLEEP.store(asleep, Ordering::Relaxed);
+}
 
 #[derive(Debug)]
 pub(crate) struct MacDisplay(pub(crate) CGDirectDisplayID);
@@ -103,6 +119,40 @@ impl PlatformDisplay for MacDisplay {
             bytes.byte14,
             bytes.byte15,
         ]))
+    }
+
+    fn state(&self) -> DisplayState {
+        let display = CGDisplay::new(self.0);
+        // `maximumFramesPerSecond` is the ProMotion maximum, where the
+        // display mode's rate is 0 on built-in panels.
+        let screen_hertz = unsafe {
+            let screen = self.get_nsscreen();
+            let supports_maximum: BOOL = if screen == nil {
+                NO
+            } else {
+                msg_send![screen, respondsToSelector: sel!(maximumFramesPerSecond)]
+            };
+            if supports_maximum == YES {
+                let frames_per_second: isize = msg_send![screen, maximumFramesPerSecond];
+                frames_per_second as f64
+            } else {
+                0.0
+            }
+        };
+        let refresh_interval = DisplayState::refresh_interval_from_hz(screen_hertz).or_else(|| {
+            display
+                .display_mode()
+                .and_then(|mode| DisplayState::refresh_interval_from_hz(mode.refresh_rate()))
+        });
+        let power = if SCREENS_ASLEEP.load(Ordering::Relaxed) || display.is_asleep() {
+            DisplayPower::Off
+        } else {
+            DisplayPower::On
+        };
+        DisplayState {
+            refresh_interval,
+            power,
+        }
     }
 
     fn bounds(&self) -> Bounds<Pixels> {
