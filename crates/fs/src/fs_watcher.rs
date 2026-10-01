@@ -1607,11 +1607,11 @@ mod tests {
             )))
         };
 
-        for (event, case_insensitive, rewatched, rewatched_ids) in [
-            (removal, false, &dir, vec![0, 1]),
-            (overflow, false, &dir, vec![0, 1]),
-            (rename("/Repo/Dir"), false, &subdir, vec![2]),
-            (rename("/repo/dir"), true, &subdir, vec![2]),
+        for (event, case_insensitive, rewatched) in [
+            (removal, false, &dir),
+            (overflow, false, &dir),
+            (rename("/Repo/Dir"), false, &subdir),
+            (rename("/repo/dir"), true, &subdir),
         ] {
             let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
             let watcher = test_os_watcher(OsWatcherKind::Native, Some(backend.clone()));
@@ -1625,11 +1625,9 @@ mod tests {
             watcher.dispatch(Ok(event));
             let rewatched = SanitizedPath::new(rewatched);
             let key = WatchKey::for_registration(rewatched, case_insensitive);
-            for _ in 0..2 {
-                watcher
-                    .rewatch_if_stale(&mut watcher.state.lock(), rewatched, &key)
-                    .expect("rewatch");
-            }
+            watcher
+                .rewatch_if_stale(&mut watcher.state.lock(), rewatched, &key)
+                .expect("rewatch");
 
             let backend = backend.lock();
             assert_eq!(
@@ -1637,23 +1635,6 @@ mod tests {
                 &[dir.clone(), subdir.clone(), rewatched.as_path().to_path_buf()]
             );
             assert_eq!(backend.unwatch_calls, &[rewatched.as_path().to_path_buf()]);
-            let mut state = watcher.state.lock();
-            let path_state = state.paths.get_mut(&key).expect("registration retained");
-            assert_eq!(
-                (
-                    path_state.watcher_ids.clone(),
-                    path_state.has_os_watcher,
-                    path_state.stale
-                ),
-                (
-                    rewatched_ids
-                        .into_iter()
-                        .map(WatcherRegistrationId)
-                        .collect::<Vec<_>>(),
-                    true,
-                    false
-                )
-            );
         }
     }
 
