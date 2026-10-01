@@ -1707,8 +1707,18 @@ impl Window {
             let mut deferred_force_render = false;
             move |request_frame_options| {
                 #[cfg(feature = "profiler")]
-                let _foreground_turn = profiler::journal::foreground_turn();
-                // This must be checked before anything else: if this request
+                let (_foreground_turn, window_id) = {
+                    let foreground_turn = profiler::journal::foreground_turn();
+                    let window_id = handle.window_id();
+                    profiler::journal::record_platform_signal(profiler::journal::PlatformSignal {
+                        window_id,
+                        signal_at: request_frame_options.signal_at,
+                        handled_at: Instant::now(),
+                        source: request_frame_options.signal_source,
+                    });
+                    (foreground_turn, window_id)
+                };
+                // This must be checked before accessing App: if this request
                 // arrived re-entrantly while a draw is on this thread's stack
                 // (e.g. via a nested message pump in the Windows window
                 // procedure), drawing would nest draws, and even touching the
@@ -1726,6 +1736,8 @@ impl Window {
                 if draw_in_progress() {
                     log::debug!("deferring re-entrant window draw request");
                     deferred_force_render |= request_frame_options.force_render;
+                    #[cfg(feature = "profiler")]
+                    profiler::journal::record_reentrant_frame_skipped(window_id, Instant::now());
                     return;
                 }
                 // Take the deferred flag first: `||` short-circuits, and leaving
@@ -1747,15 +1759,15 @@ impl Window {
                 {
                     None
                 } else if !active.get() && !input_rate_tracker.borrow_mut().is_high_rate() {
-                    inactive_frame_interval
+                    inactive_frame_interval.map(|interval| (interval, true))
                 } else if let Some(ThermalState::Critical | ThermalState::Serious) = thermal_state {
-                    Some(Duration::from_micros(16667))
+                    Some((Duration::from_micros(16667), false))
                 } else {
                     None
                 };
 
                 let now = Instant::now();
-                if let Some(min_interval) = min_frame_interval {
+                if let Some((min_interval, _inactive_throttle)) = min_frame_interval {
                     if let Some(last_frame) = last_frame_time.get()
                         && now.duration_since(last_frame) < min_interval
                     {
@@ -1772,6 +1784,19 @@ impl Window {
                         // unserved; platforms that stop requesting frames for
                         // idle windows need a wakeup to deliver the retry.
                         invalidator.wake_platform();
+                        #[cfg(feature = "profiler")]
+                        {
+                            let reason = if _inactive_throttle {
+                                profiler::journal::FrameSkipReason::InactiveFrameRateLimit
+                            } else {
+                                profiler::journal::FrameSkipReason::ThermalFrameRateLimit
+                            };
+                            profiler::journal::record_frame_skipped(
+                                window_id,
+                                Instant::now(),
+                                reason,
+                            );
+                        }
                         return;
                     }
                 }
@@ -1795,7 +1820,8 @@ impl Window {
                     || needs_present.get()
                     || input_rate_tracker.borrow_mut().is_high_rate();
 
-                if invalidator.is_dirty() || force_render {
+                let should_draw = invalidator.is_dirty() || force_render;
+                if should_draw {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
@@ -1833,6 +1859,14 @@ impl Window {
                 // source explicitly.
                 if invalidator.is_dirty() || !next_frame_callbacks.borrow().is_empty() {
                     invalidator.wake_platform();
+                }
+                #[cfg(feature = "profiler")]
+                if !should_draw {
+                    profiler::journal::record_frame_skipped(
+                        window_id,
+                        Instant::now(),
+                        profiler::journal::FrameSkipReason::NoRenderNeeded,
+                    );
                 }
             }
         }));
@@ -7706,6 +7740,155 @@ mod tests {
         TouchId, TouchPhase, Underline, UnderlineStyle, Window, WindowAppearance, WindowOptions,
         canvas, div, hsla, point, px, size,
     };
+
+    #[cfg(feature = "profiler")]
+    #[gpui::test]
+    fn test_frame_requests_and_skips_are_journaled(cx: &mut TestAppContext) {
+        use crate::FrameRequestSource;
+        use crate::profiler::journal::{
+            self, ForegroundJournalEntry, FrameSkipReason, IntervalBoundary,
+        };
+        use scheduler::Instant;
+
+        cx.app.borrow_mut().mode = crate::app::GpuiMode::Production;
+        let window = cx.add_window(|_, _| EmptyView);
+        let platform_window = cx.test_window(window.into());
+        platform_window.simulate_frame_request(RequestFrameOptions::default());
+        let (journal, _guard) = journal::install_test_foreground_journal(64, 4);
+        let mut collector = journal.collector();
+
+        for (signal_at, source) in [
+            (Some(Instant::now()), FrameRequestSource::NativeCallback),
+            (Some(Instant::now()), FrameRequestSource::LocalSchedule),
+            (None, FrameRequestSource::NativeCallback),
+        ] {
+            platform_window.simulate_frame_request(RequestFrameOptions {
+                signal_at,
+                signal_source: source,
+                require_presentation: true,
+                ..Default::default()
+            });
+            let entries = collector.collect_unseen().entries;
+            let signal_index = entries
+                .iter()
+                .position(|entry| {
+                    matches!(
+                        entry,
+                        ForegroundJournalEntry::PlatformSignal(signal)
+                            if signal.window_id == window.window_id()
+                                && signal.signal_at == signal_at
+                                && signal.source == source
+                                && signal_at.is_none_or(|at| signal.handled_at >= at)
+                    )
+                })
+                .expect("frame request metadata");
+            let skip_index = entries
+                .iter()
+                .position(|entry| {
+                    matches!(
+                        entry,
+                        ForegroundJournalEntry::Boundary(IntervalBoundary::FrameSkipped(skipped))
+                            if skipped.window_id == window.window_id()
+                                && skipped.reason == FrameSkipReason::NoRenderNeeded
+                    )
+                })
+                .expect("completed no-render boundary");
+            assert!(signal_index < skip_index);
+        }
+    }
+
+    #[cfg(feature = "profiler")]
+    #[gpui::test]
+    fn test_frame_demand_survives_throttling(cx: &mut TestAppContext) {
+        use crate::profiler::journal::{
+            self, ForegroundJournalEntry, FrameSkipReason, IntervalBoundary,
+        };
+        use scheduler::Instant;
+
+        // Test mode draws during effect flushing, bypassing platform frame throttling.
+        cx.app.borrow_mut().mode = crate::app::GpuiMode::Production;
+        let (journal, _guard) = journal::install_test_foreground_journal(256, 4);
+        let mut collector = journal.collector();
+        for initially_dirty in [true, false] {
+            // Keep the throttle closed without depending on short wall-clock deadlines.
+            let window = cx
+                .app
+                .borrow_mut()
+                .open_window(
+                    WindowOptions {
+                        inactive_frame_interval: Some(Duration::from_secs(3600)),
+                        ..Default::default()
+                    },
+                    |_, cx| cx.new(|_| EmptyView),
+                )
+                .expect("open inactive test window");
+            let platform_window = cx.test_window(window.into());
+            platform_window.simulate_active_status_change(false);
+            platform_window.simulate_frame_request(RequestFrameOptions::default());
+            let callback_ran = Rc::new(Cell::new(false));
+            let draws_before = window
+                .update(cx, |_, window, _| {
+                    let draws_before = window
+                        .frame_duration_snapshot()
+                        .draw_duration_histogram
+                        .len();
+                    if initially_dirty {
+                        window.refresh();
+                    }
+                    window.on_next_frame({
+                        let callback_ran = callback_ran.clone();
+                        move |window, _| {
+                            callback_ran.set(true);
+                            window.refresh();
+                        }
+                    });
+                    draws_before
+                })
+                .expect("schedule throttled frame");
+            collector.collect_unseen();
+            platform_window.simulate_frame_request(RequestFrameOptions {
+                signal_at: Some(Instant::now()),
+                ..Default::default()
+            });
+            window
+                .update(cx, |_, window, _| {
+                    assert_eq!(
+                        window
+                            .frame_duration_snapshot()
+                            .draw_duration_histogram
+                            .len(),
+                        draws_before,
+                    );
+                })
+                .expect("inspect deferred frame");
+            assert!(!callback_ran.get());
+            assert!(collector.collect_unseen().entries.iter().any(|entry| {
+                matches!(
+                    entry,
+                    ForegroundJournalEntry::Boundary(IntervalBoundary::FrameSkipped(skipped))
+                        if skipped.window_id == window.window_id()
+                            && skipped.reason == FrameSkipReason::InactiveFrameRateLimit
+                )
+            }));
+            platform_window.simulate_frame_request(RequestFrameOptions {
+                signal_at: Some(Instant::now()),
+                require_presentation: true,
+                ..Default::default()
+            });
+            window
+                .update(cx, |_, window, _| {
+                    assert_eq!(
+                        window
+                            .frame_duration_snapshot()
+                            .draw_duration_histogram
+                            .len(),
+                        draws_before + 1,
+                    );
+                })
+                .expect("inspect presented frame");
+            assert!(callback_ran.get());
+        }
+    }
 
     /// Visibility transitions reach observers exactly once each, with the new
     /// state already stored on the window, and never wake the platform for a
