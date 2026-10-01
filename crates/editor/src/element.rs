@@ -17,7 +17,7 @@ use crate::{
     SelectionDragState, SizingBehavior, SoftWrap, ToPoint,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
-    cursor_animation::{CursorViewport, LogicalCursorPosition},
+    cursor_animation::{CursorViewport, LogicalCursorPosition, animated_corners_overlap_target},
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
         HighlightKey, HighlightedChunk, ToDisplayPoint,
@@ -2094,98 +2094,7 @@ impl EditorElement {
         })?;
 
         let buffer_point = display_point.to_point(&snapshot.display_snapshot);
-
-        // do not show code action for folded line
-        if snapshot.is_line_folded(MultiBufferRow(buffer_point.row)) {
-            return None;
-        }
-
-        // do not show code action for blank line with cursor
-        let line_indent = snapshot
-            .display_snapshot
-            .buffer_snapshot()
-            .line_indent_for_row(MultiBufferRow(buffer_point.row));
-        if line_indent.is_line_blank() {
-            return None;
-        }
-
-        const INLINE_SLOT_CHAR_LIMIT: u32 = 4;
-        const MAX_ALTERNATE_DISTANCE: u32 = 8;
-
-        let is_valid_row = |row_candidate: u32| -> bool {
-            // move to other row if folded row
-            if snapshot.is_line_folded(MultiBufferRow(row_candidate)) {
-                return false;
-            }
-            if buffer_point.row == row_candidate {
-                // move to other row if cursor is in slot
-                if buffer_point.column < INLINE_SLOT_CHAR_LIMIT {
-                    return false;
-                }
-            } else {
-                let candidate_point = MultiBufferPoint {
-                    row: row_candidate,
-                    column: 0,
-                };
-                // move to other row if different excerpt
-                let range = if candidate_point < buffer_point {
-                    candidate_point..buffer_point
-                } else {
-                    buffer_point..candidate_point
-                };
-                if snapshot
-                    .display_snapshot
-                    .buffer_snapshot()
-                    .excerpt_containing(range)
-                    .is_none()
-                {
-                    return false;
-                }
-            }
-            let line_indent = snapshot
-                .display_snapshot
-                .buffer_snapshot()
-                .line_indent_for_row(MultiBufferRow(row_candidate));
-            // use this row if it's blank
-            if line_indent.is_line_blank() {
-                true
-            } else {
-                // use this row if code starts after slot
-                let indent_size = snapshot
-                    .display_snapshot
-                    .buffer_snapshot()
-                    .indent_size_for_line(MultiBufferRow(row_candidate));
-                indent_size.len >= INLINE_SLOT_CHAR_LIMIT
-            }
-        };
-
-        let new_buffer_row = if is_valid_row(buffer_point.row) {
-            Some(buffer_point.row)
-        } else {
-            let max_row = snapshot.display_snapshot.buffer_snapshot().max_point().row;
-            (1..=MAX_ALTERNATE_DISTANCE).find_map(|offset| {
-                let row_above = buffer_point.row.saturating_sub(offset);
-                let row_below = buffer_point.row + offset;
-                if row_above != buffer_point.row && is_valid_row(row_above) {
-                    Some(row_above)
-                } else if row_below <= max_row && is_valid_row(row_below) {
-                    Some(row_below)
-                } else {
-                    None
-                }
-            })
-        }?;
-
-        let new_display_row = snapshot
-            .display_snapshot
-            .point_to_display_point(
-                Point {
-                    row: new_buffer_row,
-                    column: buffer_point.column,
-                },
-                text::Bias::Left,
-            )
-            .row();
+        let new_display_row = snapshot.display_row_for_inline_code_action(buffer_point)?;
 
         let start_y = content_origin.y
             + (((new_display_row.as_f64() - scroll_position.y) as f32) * line_height)
@@ -5519,20 +5428,32 @@ impl EditorElement {
         });
     }
 
-    const DELETED_MARKER_WIDTH_RATIO: f32 = 0.35 / 0.275;
+    const DEFAULT_STRIP_WIDTH_RATIO: f32 = 0.275;
+    const DELETED_MARKER_WIDTH_RATIO: f32 = 0.35 / Self::DEFAULT_STRIP_WIDTH_RATIO;
+    const MIN_DELETED_MARKER_WIDTH_RATIO: f32 = 0.2;
 
     fn gutter_strip_width(line_height: Pixels, cx: &App) -> Pixels {
         match EditorSettings::get_global(cx).gutter.git_gutter_width {
             GitGutterWidth::Custom(width) => px(*width),
-            GitGutterWidth::Default => (0.275 * line_height).floor(),
+            GitGutterWidth::Default => (Self::DEFAULT_STRIP_WIDTH_RATIO * line_height).floor(),
         }
     }
 
     fn deleted_marker_base_width(setting: GitGutterWidth, line_height: Pixels) -> Pixels {
         match setting {
-            GitGutterWidth::Custom(width) => px(*width * Self::DELETED_MARKER_WIDTH_RATIO),
+            GitGutterWidth::Custom(width) => {
+                let scaled_width = px(*width * Self::DELETED_MARKER_WIDTH_RATIO);
+                if scaled_width > Pixels::ZERO {
+                    let default_strip_width = Self::DEFAULT_STRIP_WIDTH_RATIO * line_height;
+                    let boost_factor = (1.0 - *width / f32::from(default_strip_width)).max(0.0);
+                    scaled_width + line_height * Self::MIN_DELETED_MARKER_WIDTH_RATIO * boost_factor
+                } else {
+                    Pixels::ZERO
+                }
+            }
             GitGutterWidth::Default => {
-                (0.275 * line_height * Self::DELETED_MARKER_WIDTH_RATIO).floor()
+                (Self::DEFAULT_STRIP_WIDTH_RATIO * line_height * Self::DELETED_MARKER_WIDTH_RATIO)
+                    .floor()
             }
         }
     }
@@ -11092,6 +11013,8 @@ impl CursorLayout {
     }
 
     pub fn paint(&mut self, origin: gpui::Point<Pixels>, window: &mut Window, cx: &mut App) {
+        let bounds = window.pixel_snap_bounds(self.bounds(origin));
+
         if let Some(corners) = self.animated_corners {
             let mut builder = gpui::PathBuilder::fill();
             builder.add_polygon(&corners, true);
@@ -11100,24 +11023,25 @@ impl CursorLayout {
                     name.paint(window, cx);
                 }
                 window.paint_path(path, self.color);
-                return;
+
+                if !animated_corners_overlap_target(bounds, &corners) {
+                    return;
+                }
             }
-        }
-
-        let bounds = window.pixel_snap_bounds(self.bounds(origin));
-
-        //Draw background or border quad
-        let cursor = if matches!(self.shape, CursorShape::Hollow) {
-            outline(bounds, self.color, BorderStyle::Solid)
         } else {
-            fill(bounds, self.color)
-        };
+            //Draw background or border quad
+            let cursor = if matches!(self.shape, CursorShape::Hollow) {
+                outline(bounds, self.color, BorderStyle::Solid)
+            } else {
+                fill(bounds, self.color)
+            };
 
-        if let Some(name) = &mut self.cursor_name {
-            name.paint(window, cx);
+            if let Some(name) = &mut self.cursor_name {
+                name.paint(window, cx);
+            }
+
+            window.paint_quad(cursor);
         }
-
-        window.paint_quad(cursor);
 
         if let Some(block_text) = &self.block_text {
             block_text
@@ -13682,6 +13606,31 @@ mod tests {
         assert!(
             boosted > px(6.0),
             "boosted={boosted:?} must exceed the raw custom width so the deleted pill stays visible"
+        );
+
+        for line_height in [22.0, 40.0] {
+            let widths = [1.0, 2.0, 3.0, 6.0].map(|width| {
+                EditorElement::deleted_marker_base_width(
+                    GitGutterWidth::Custom(PixelSetting(width)),
+                    px(line_height),
+                )
+            });
+            assert!(
+                widths.windows(2).all(|pair| pair[0] < pair[1]),
+                "widths={widths:?} must grow with the custom setting"
+            );
+            assert!(
+                widths[0] > px(line_height / 8.0),
+                "widths={widths:?} must stay above the vanishing width for line_height={line_height}"
+            );
+        }
+
+        assert_eq!(
+            EditorElement::deleted_marker_base_width(
+                GitGutterWidth::Custom(PixelSetting(0.275 * 40.0)),
+                px(40.0),
+            ),
+            px(14.0),
         );
 
         assert_eq!(

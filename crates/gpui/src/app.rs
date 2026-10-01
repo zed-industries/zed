@@ -21,7 +21,10 @@ use slotmap::SlotMap;
 
 pub use async_context::*;
 #[cfg(feature = "bench-support")]
-pub use bench_context::{BenchAppContext, BenchReport, BenchWindowContext, bench_platform};
+pub use bench_context::{
+    BenchAppContext, BenchMeasurement, BenchReport, BenchWindowContext, CountingAllocator,
+    MetricReport, bench_platform,
+};
 use collections::{FxHashMap, FxHashSet, HashMap, TypeIdHashMap, TypeIdHashSet, VecDeque};
 pub use context::*;
 pub use entity_map::*;
@@ -753,6 +756,8 @@ pub struct App {
     pub(crate) foreground_executor: ForegroundExecutor,
     #[cfg(feature = "profiler")]
     foreground_journal: crate::profiler::journal::ForegroundJournal,
+    #[cfg(all(feature = "profiler", not(target_family = "wasm")))]
+    hang_monitor: Option<crate::profiler::hang::HangMonitor>,
     pub(crate) entities: EntityMap,
     pub(crate) new_entity_observers: SubscriberSet<TypeId, NewEntityListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Box<Window>>>,
@@ -834,7 +839,7 @@ pub struct App {
 
     // We need to ensure the leak detector drops last, after all tasks, callbacks and things have been dropped.
     // Otherwise it may report false positives.
-    #[cfg(any(test, feature = "leak-detection"))]
+    #[cfg(any(test, gpui_leak_detection))]
     _ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
 
@@ -860,7 +865,7 @@ impl App {
         let keyboard_layout = platform.keyboard_layout();
         let keyboard_mapper = platform.keyboard_mapper();
 
-        #[cfg(any(test, feature = "leak-detection"))]
+        #[cfg(any(test, gpui_leak_detection))]
         let _ref_counts = entities.ref_counts_drop_handle();
 
         let app = Rc::new_cyclic(|this| AppCell {
@@ -879,6 +884,8 @@ impl App {
                 foreground_executor,
                 #[cfg(feature = "profiler")]
                 foreground_journal,
+                #[cfg(all(feature = "profiler", not(target_family = "wasm")))]
+                hang_monitor: None,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 loading_assets: Default::default(),
                 asset_source,
@@ -935,7 +942,7 @@ impl App {
                 element_arena: RefCell::new(Arena::new(1024 * 1024)),
                 event_arena: Arena::new(1024 * 1024),
 
-                #[cfg(any(test, feature = "leak-detection"))]
+                #[cfg(any(test, gpui_leak_detection))]
                 _ref_counts,
             }),
         });
@@ -1028,7 +1035,7 @@ impl App {
     /// The returned [`LeakDetectorSnapshot`] can later be passed to
     /// [`assert_no_new_leaks`](Self::assert_no_new_leaks) to verify that no
     /// entities created after the snapshot are still alive.
-    #[cfg(any(test, feature = "leak-detection"))]
+    #[cfg(any(test, gpui_leak_detection))]
     pub fn leak_detector_snapshot(&self) -> LeakDetectorSnapshot {
         self.entities.leak_detector_snapshot()
     }
@@ -1044,10 +1051,21 @@ impl App {
     /// Panics if any new entity handles exist. The panic message lists every
     /// leaked entity with its type name, and includes allocation-site backtraces
     /// when `LEAK_BACKTRACE` is set.
-    #[cfg(any(test, feature = "leak-detection"))]
+    #[cfg(any(test, gpui_leak_detection))]
     pub fn assert_no_new_leaks(&self, snapshot: &LeakDetectorSnapshot) {
         self.entities.assert_no_new_leaks(snapshot)
     }
+
+    /// Without leak detection compiled in, this records nothing.
+    #[cfg(all(feature = "test-support", not(any(test, gpui_leak_detection))))]
+    pub fn leak_detector_snapshot(&self) -> LeakDetectorSnapshot {
+        LeakDetectorSnapshot::default()
+    }
+
+    /// Without leak detection compiled in, this checks nothing. Set
+    /// `GPUI_LEAK_DETECTION` when building to enable it.
+    #[cfg(all(feature = "test-support", not(any(test, gpui_leak_detection))))]
+    pub fn assert_no_new_leaks(&self, _snapshot: &LeakDetectorSnapshot) {}
 
     /// Quit the application gracefully.
     ///
@@ -1055,10 +1073,30 @@ impl App {
     /// [`SHUTDOWN_TIMEOUT`] to complete. WebAssembly runs them asynchronously as best-effort cleanup
     /// because its event-loop thread cannot block.
     pub fn shutdown(&mut self) {
-        let mut futures = Vec::new();
+        // Requested first so the final hang poll overlaps with the quit
+        // handlers. It's awaited alongside them, within `SHUTDOWN_TIMEOUT`.
+        #[cfg(all(feature = "profiler", not(target_family = "wasm")))]
+        let hang_monitor_flush = self
+            .hang_monitor
+            .as_ref()
+            .and_then(|hang_monitor| hang_monitor.request_flush());
+
+        let mut futures: Vec<LocalBoxFuture<'static, ()>> = Vec::new();
 
         for observer in self.quit_observers.remove(&()) {
             futures.push(observer(self));
+        }
+
+        #[cfg(all(feature = "profiler", not(target_family = "wasm")))]
+        if let Some(flushed) = hang_monitor_flush {
+            futures.push(
+                async move {
+                    if flushed.await.is_err() {
+                        log::warn!("hang monitor exited before flushing");
+                    }
+                }
+                .boxed_local(),
+            );
         }
 
         self.windows.clear();
@@ -1154,6 +1192,7 @@ impl App {
         self.pending_effects.push_back(Effect::RefreshWindows);
     }
 
+    #[inline(always)]
     pub(crate) fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
         self.start_update();
         let result = update(self);
@@ -1165,6 +1204,7 @@ impl App {
         self.pending_updates += 1;
     }
 
+    #[inline(never)]
     pub(crate) fn finish_update(&mut self) {
         if !self.flushing_effects && self.pending_updates == 1 {
             self.flushing_effects = true;
@@ -1962,6 +2002,7 @@ impl App {
     /// it has yet to be rendered. Returns `None` if the entity has no
     /// current window, or if that window has been closed, or if it is
     /// already on the update stack.
+    #[inline(always)]
     pub fn with_window<R>(
         &mut self,
         entity_id: EntityId,
@@ -1978,61 +2019,22 @@ impl App {
             .or_insert(window);
     }
 
+    #[inline(always)]
     pub(crate) fn update_window_id<T, F>(&mut self, id: WindowId, update: F) -> Result<T>
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
-        self.update(|cx| {
-            let mut window = cx.windows.get_mut(id)?.take()?;
-
-            let root_view = window.root.clone().unwrap();
-
-            cx.window_update_stack.push(window.handle.id);
-            let result = update(root_view, &mut window, cx);
-            fn trail(id: WindowId, window: Box<Window>, cx: &mut App) -> Option<()> {
-                cx.window_update_stack.pop();
-
-                if window.removed {
-                    cx.end_platform_drag(id);
-                    cx.window_handles.remove(&id);
-                    cx.windows.remove(id);
-                    if let Some(tracked) = cx.tracked_entities.remove(&id) {
-                        for entity_id in tracked {
-                            if let Some(windows) =
-                                cx.window_invalidators_by_entity.get_mut(&entity_id)
-                            {
-                                windows.remove(&id);
-                            }
-                            if cx.current_window_by_entity.get(&entity_id) == Some(&id) {
-                                cx.current_window_by_entity.remove(&entity_id);
-                            }
-                        }
-                    }
-
-                    cx.window_closed_observers.clone().retain(&(), |callback| {
-                        callback(cx, id);
-                        true
-                    });
-
-                    let quit_on_empty = match cx.quit_mode {
-                        QuitMode::Explicit => false,
-                        QuitMode::LastWindowClosed => true,
-                        QuitMode::Default => cfg!(not(target_os = "macos")),
-                    };
-
-                    if quit_on_empty && cx.windows.is_empty() {
-                        cx.quit();
-                    }
-                } else {
-                    cx.windows.get_mut(id)?.replace(window);
-                }
-                Some(())
+        let mut update = Some(update);
+        let mut result = None;
+        self.update_window_erased(id, &mut |arguments| {
+            if let Some((root_view, window, cx)) = arguments {
+                result = Some(update.take().unwrap()(root_view, window, cx));
+            } else {
+                drop(update.take());
+                drop(result.take());
             }
-            trail(id, window, cx)?;
-
-            Some(result)
-        })
-        .context("window not found")
+        });
+        result.context("window not found")
     }
 
     /// Creates an `AsyncApp`, which can be cloned and has a static lifetime
@@ -2050,6 +2052,12 @@ impl App {
         &self.background_executor
     }
 
+    /// Whether this app runs on the deterministic test scheduler. See
+    /// [`BackgroundExecutor::is_test`].
+    pub fn is_test(&self) -> bool {
+        self.background_executor.is_test()
+    }
+
     /// Obtains a reference to the executor, which can be used to spawn futures.
     pub fn foreground_executor(&self) -> &ForegroundExecutor {
         if self.quitting {
@@ -2065,19 +2073,55 @@ impl App {
         self.foreground_journal.clone()
     }
 
+    /// Starts detecting foreground hangs on a dedicated thread.
+    ///
+    /// Nothing is spawned unless the app calls this. The thread polls a
+    /// detector over this app's foreground journal every `config.interval`
+    /// and passes each poll's incidents, including empty polls, to `on_poll`
+    /// on that thread. When the app quits, a final poll with
+    /// [`HangMonitorPollReason::Flush`] runs during shutdown, concurrently
+    /// with quit handlers and within [`SHUTDOWN_TIMEOUT`], so `on_poll` can
+    /// deliver batched results.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the monitor was already started or its thread can't be
+    /// spawned.
+    ///
+    /// [`HangMonitorPollReason::Flush`]: crate::profiler::hang::HangMonitorPollReason::Flush
+    #[cfg(all(feature = "profiler", not(target_family = "wasm")))]
+    pub fn start_hang_monitor(
+        &mut self,
+        config: crate::profiler::hang::HangMonitorConfig,
+        on_poll: impl FnMut(crate::profiler::hang::HangMonitorPoll) + Send + 'static,
+    ) -> Result<(), crate::profiler::hang::HangMonitorError> {
+        use crate::profiler::hang::{HangDetector, HangMonitor, HangMonitorError};
+
+        if self.hang_monitor.is_some() {
+            debug_assert!(false, "the hang monitor was started twice");
+            return Err(HangMonitorError::AlreadyStarted);
+        }
+        let detector = HangDetector::new(
+            self.foreground_journal(),
+            config.threshold,
+            config.frame_budget,
+        );
+        let monitor = HangMonitor::spawn(detector, config.interval, on_poll)
+            .map_err(HangMonitorError::Spawn)?;
+        self.hang_monitor = Some(monitor);
+        Ok(())
+    }
+
     /// Spawns the future returned by the given function on the main thread. The closure will be invoked
     /// with [AsyncApp], which allows the application state to be accessed across await points.
     #[track_caller]
+    #[inline(always)]
     pub fn spawn<AsyncFn, R>(&self, f: AsyncFn) -> Task<R>
     where
         AsyncFn: AsyncFnOnce(&mut AsyncApp) -> R + 'static,
         R: 'static,
     {
-        if self.quitting {
-            debug_panic!("Can't spawn on main thread after on_app_quit")
-        };
-
-        let mut cx = self.to_async();
+        let mut cx = self.prepare_spawn();
 
         self.foreground_executor
             .spawn(async move { f(&mut cx).await }.boxed_local())
@@ -2328,9 +2372,10 @@ impl App {
         })
     }
 
-    /// Register a callback to be invoked when a keystroke is received by the application
-    /// in any window. Note that this fires after all other action and event mechanisms have resolved
-    /// and that this API will not be invoked if the event's propagation is stopped.
+    /// Register a callback to be invoked after a keystroke is resolved in any window,
+    /// including the action that handled it, if any. Keystrokes consumed by an
+    /// interceptor or raw keyboard event handler are not observed.
+    /// Standalone modifiers are observed on release.
     pub fn observe_keystrokes(
         &mut self,
         mut f: impl FnMut(&KeystrokeEvent, &mut Window, &mut App) + 'static,
@@ -2912,6 +2957,90 @@ impl App {
     pub fn init_colors(&mut self) {
         self.set_global(GlobalColors(Arc::new(Colors::default())));
     }
+
+    #[inline(never)]
+    fn update_window_erased(
+        &mut self,
+        window_id: WindowId,
+        update: &mut dyn FnMut(Option<(AnyView, &mut Window, &mut App)>),
+    ) {
+        self.update(|cx| {
+            let Some(mut window) = cx.windows.get_mut(window_id).and_then(Option::take) else {
+                update(None);
+                return;
+            };
+
+            let root_view = window.root.clone().unwrap();
+
+            cx.window_update_stack.push(window.handle.id);
+            update(Some((root_view, &mut window, cx)));
+            fn trail(window_id: WindowId, window: Box<Window>, cx: &mut App) -> Option<()> {
+                cx.window_update_stack.pop();
+
+                if window.removed {
+                    cx.end_platform_drag(window_id);
+                    cx.window_handles.remove(&window_id);
+                    cx.windows.remove(window_id);
+                    if let Some(tracked) = cx.tracked_entities.remove(&window_id) {
+                        for entity_id in tracked {
+                            if let Some(windows) =
+                                cx.window_invalidators_by_entity.get_mut(&entity_id)
+                            {
+                                windows.remove(&window_id);
+                            }
+                            if cx.current_window_by_entity.get(&entity_id) == Some(&window_id) {
+                                cx.current_window_by_entity.remove(&entity_id);
+                            }
+                        }
+                    }
+
+                    cx.window_closed_observers.clone().retain(&(), |callback| {
+                        callback(cx, window_id);
+                        true
+                    });
+
+                    let quit_on_empty = match cx.quit_mode {
+                        QuitMode::Explicit => false,
+                        QuitMode::LastWindowClosed => true,
+                        QuitMode::Default => cfg!(not(target_os = "macos")),
+                    };
+
+                    if quit_on_empty && cx.windows.is_empty() {
+                        cx.quit();
+                    }
+                } else {
+                    cx.windows.get_mut(window_id)?.replace(window);
+                }
+                Some(())
+            }
+            if trail(window_id, window, cx).is_none() {
+                update(None);
+            }
+        });
+    }
+
+    #[inline(never)]
+    fn update_entity_erased(
+        &mut self,
+        handle: &AnyEntity,
+        entity_type: &str,
+        update: &mut dyn FnMut(&mut dyn Any, &mut App),
+    ) {
+        self.update(|cx| {
+            let mut lease = cx.entities.lease_erased(handle, entity_type);
+            update(lease.entity.as_deref_mut().unwrap(), cx);
+            cx.entities.end_lease_erased(handle.entity_id, lease);
+        });
+    }
+
+    #[inline(never)]
+    #[track_caller]
+    fn prepare_spawn(&self) -> AsyncApp {
+        if self.quitting {
+            debug_panic!("Can't spawn on main thread after on_app_quit")
+        };
+        self.to_async()
+    }
 }
 
 impl AppContext for App {
@@ -2953,20 +3082,22 @@ impl AppContext for App {
 
     /// Updates the entity referenced by the given handle. The function is passed a mutable reference to the
     /// entity along with a `Context` for the entity.
+    #[inline(always)]
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> R {
-        self.update(|cx| {
-            let mut entity = cx.entities.lease(handle);
-            let result = update(
-                &mut entity,
+        let mut update = Some(update);
+        let mut result = None;
+        self.update_entity_erased(handle, type_name::<T>(), &mut |entity, cx| {
+            let value = update.take().unwrap()(
+                entity.downcast_mut::<T>().unwrap(),
                 &mut Context::new_context(cx, handle.downgrade()),
             );
-            cx.entities.end_lease(entity);
-            result
-        })
+            result = Some(value);
+        });
+        result.unwrap()
     }
 
     fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> GpuiBorrow<'a, T>
@@ -2976,6 +3107,7 @@ impl AppContext for App {
         GpuiBorrow::new(handle.clone(), self)
     }
 
+    #[inline(always)]
     fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,
@@ -3148,11 +3280,29 @@ pub struct AnyTooltip {
     pub check_visible_and_update: Rc<dyn Fn(Bounds<Pixels>, &mut Window, &mut App) -> bool>,
 }
 
+/// Whether a keystroke should prefer character input or key bindings.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InputPreference {
+    /// Prefer typing text over triggering key bindings.
+    CharacterInput,
+    /// Dispatch key bindings normally, if any match.
+    KeyBindings,
+}
+
 /// A keystroke event, and potentially the associated action
 #[derive(Debug)]
 pub struct KeystrokeEvent {
     /// The keystroke that occurred
     pub keystroke: Keystroke,
+
+    /// Whether this keystroke should prefer character input or key bindings.
+    /// This is [`InputPreference::CharacterInput`] when the platform prefers text for the key
+    /// (e.g. AltGr on Windows) and the focused input accepts text. Interceptors still receive
+    /// these keystrokes and can consume them.
+    ///
+    /// If the keystroke is part of a multi-stroke binding, it still waits as pending input
+    /// even when this is [`InputPreference::CharacterInput`].
+    pub input_preference: InputPreference,
 
     /// The action that was resolved for the keystroke, if any
     pub action: Option<Box<dyn Action>>,
