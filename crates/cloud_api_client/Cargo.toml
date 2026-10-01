@@ -25,11 +25,10 @@ thiserror.workspace = true
 yawc.workspace = true
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
-# Workspace inheritance would re-enable defaults, including blocking synchronization.
-async-lock = { version = "3.4.2", default-features = false }
+async-lock.workspace = true
 
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
-async-lock.workspace = true
+async-lock = { workspace = true, features = ["std"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 futures-lite.workspace = true

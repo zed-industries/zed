@@ -184,7 +184,7 @@ recent_projects.workspace = true
 release_channel.workspace = true
 remote.workspace = true
 repl.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["multipart"] }
 reqwest_client.workspace = true
 rope.workspace = true
 sandbox.workspace = true
@@ -238,7 +238,7 @@ ztracing.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 etw_tracing.workspace = true
-windows.workspace = true
+windows = { workspace = true, features = ["Win32_System_Console", "Win32_System_Pipes"] }
 gpui = { workspace = true, features = ["profiler", "windows-manifest"] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
@@ -246,7 +246,7 @@ windows_resources.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 gpui = { workspace = true, features = ["profiler", "wayland", "x11"] }
-ashpd.workspace = true
+ashpd = { workspace = true, features = ["notification"] }
 image.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.build-dependencies]

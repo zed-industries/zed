@@ -56,7 +56,7 @@ ipc-channel = "0.19"
 parking_lot = { workspace = true, optional = true }
 paths = { workspace = true, optional = true }
 release_channel = { workspace = true, optional = true }
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 util = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }

@@ -35,9 +35,9 @@ core-foundation-sys.workspace = true
 core-graphics.workspace = true
 core-text = { workspace = true, optional = true }
 ctor.workspace = true
-dispatch2.workspace = true
+dispatch2 = { workspace = true, features = ["block2", "objc2"] }
 # WARNING: If you change this, you must also publish a new version of zed-font-kit to crates.io
-font-kit = { workspace = true, optional = true }
+font-kit = { workspace = true, optional = true, features = ["source"] }
 foreign-types.workspace = true
 futures.workspace = true
 gpui_apple.workspace = true

@@ -32,11 +32,11 @@ tracing-subscriber = { workspace = true, optional = true }
 ztracing_macro.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-tracing-tracy = { version = "0.11.4", optional = true, features = ["enable", "ondemand"] }
-tracy-client = { version = "0.18.2", optional = true, features = ["enable", "ondemand"] }
+tracing-tracy = { version = "0.11", optional = true, features = ["ondemand"] }
+tracy-client = { version = "0.18", optional = true, features = ["ondemand"] }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-async-channel = { workspace = true, optional = true }
+async-channel = { workspace = true, features = ["std"], optional = true }
 js-sys = { workspace = true, optional = true }
 wasm-bindgen = { workspace = true, optional = true }
 web-sys = { workspace = true, features = ["console", "Performance"], optional = true }

@@ -68,7 +68,6 @@ web-sys = { workspace = true, features = [
     "KeyboardEvent",
     "Location",
     "MediaQueryList",
-    "MediaQueryListEvent",
     "MouseEvent",
     "Navigator",
     "OffscreenCanvas",

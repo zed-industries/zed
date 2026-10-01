@@ -30,7 +30,7 @@ cli = ["dep:serde_json"]
 
 [dependencies]
 collections.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, optional = true }
 
 [lib]

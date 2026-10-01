@@ -23,7 +23,7 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 inventory.workspace = true
-log.workspace = true
+log = { workspace = true, features = ["kv_unstable_std"] }
 migrator.workspace = true
 paths.workspace = true
 release_channel.workspace = true
