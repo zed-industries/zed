@@ -20,6 +20,3 @@ default = []
 [dependencies]
 quote.workspace = true
 syn.workspace = true
-
-[dev-dependencies]
-settings.workspace = true

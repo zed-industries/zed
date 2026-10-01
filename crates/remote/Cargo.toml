@@ -36,7 +36,7 @@ schemars.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-settings.workspace = true
+settings_content.workspace = true
 smol.workspace = true
 telemetry.workspace = true
 tempfile.workspace = true
@@ -47,5 +47,3 @@ which.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
-fs = { workspace = true, features = ["test-support"] }
-util = { workspace = true, features = ["test-support"] }

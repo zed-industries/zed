@@ -587,7 +587,6 @@ cbindgen = { version = "0.28.0", default-features = false }
 chardetng = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 ciborium = "0.2"
-circular-buffer = "1.0"
 clap = { version = "4.4", features = ["derive", "wrap_help"] }
 clap_complete = { version = "4.4" }
 clap_complete_nushell = { version = "4.4" }
@@ -703,8 +702,7 @@ nanoid = "0.4"
 nbformat = "1.2.0"
 nix = "0.30"
 notify-rust = "4"
-nucleo = "0.5"
-num-format = "0.4.4"
+nucleo = { package = "nucleo-matcher", version = "0.3" }
 objc = "0.2"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [

@@ -24,6 +24,7 @@ base64.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui = { workspace = true, optional = true }
+gpui_util.workspace = true
 parking_lot.workspace = true
 proto.workspace = true
 rand.workspace = true
@@ -33,7 +34,6 @@ serde_json.workspace = true
 sha2.workspace = true
 strum.workspace = true
 tracing = { version = "0.1.34", features = ["log"] }
-util.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]

@@ -17,6 +17,9 @@ anyhow.workspace = true
 dunce.workspace = true
 serde = { workspace = true, optional = true }
 
+[target.'cfg(windows)'.dependencies]
+tendril = "0.5"
+
 [dev-dependencies]
 tempfile.workspace = true
 pretty_assertions.workspace = true
