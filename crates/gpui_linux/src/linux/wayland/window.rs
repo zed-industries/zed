@@ -886,6 +886,8 @@ impl WaylandWindow {
             target_output,
         )?;
 
+        let is_lock_surface = matches!(surface_state, WaylandSurfaceState::SessionLock(_));
+
         if let Some(fractional_scale_manager) = globals.fractional_scale_manager.as_ref() {
             fractional_scale_manager.get_fractional_scale(&surface, &globals.qh, surface.id());
         }
@@ -915,8 +917,11 @@ impl WaylandWindow {
             frame_ping,
         });
 
-        // Kick things off
-        surface.commit();
+        // Kick things off. Committing a lock surface before it has a buffer is a protocol error.
+        // See https://wayland.app/protocols/ext-session-lock-v1#ext_session_lock_surface_v1:error:null_buffer
+        if !is_lock_surface {
+            surface.commit();
+        }
 
         Ok((this, surface.id()))
     }
