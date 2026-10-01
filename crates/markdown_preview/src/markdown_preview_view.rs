@@ -2374,7 +2374,15 @@ mod tests {
             PathStyle::local(),
             cx,
         );
-        assert_resolved_preview_image_path(resolved, image_file.as_path());
+        // On Windows `TempTree` yields a verbatim `\\?\` path, while the URL
+        // round-trip yields the plain form of the same path.
+        match resolved {
+            Some(ImageSource::Resource(Resource::Path(path))) => assert_eq!(
+                std::fs::canonicalize(path.as_ref()).unwrap(),
+                std::fs::canonicalize(&image_file).unwrap()
+            ),
+            _ => panic!("Expected preview image to resolve to a local path"),
+        }
 
         let missing_url =
             url::Url::from_file_path(workspace_directory.join("missing.png")).unwrap();
