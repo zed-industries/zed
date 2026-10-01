@@ -11377,6 +11377,152 @@ mod tests {
     use text::PointUtf16;
     use util::test::sample_text;
 
+    struct MinimapGeometry {
+        document_lines: f64,
+        visible_editor_lines: f64,
+        minimap_line_height: Pixels,
+        minimap_height: Pixels,
+    }
+
+    impl MinimapGeometry {
+        fn visible_minimap_lines(&self) -> f64 {
+            (self.minimap_height / self.minimap_line_height) as f64
+        }
+
+        fn thumb_layout(&self, scroll_position: f64) -> ScrollbarLayout {
+            let bounds = Bounds::new(point(px(0.), px(0.)), size(px(100.), self.minimap_height));
+            let hitbox = Hitbox {
+                id: gpui::HitboxId::placeholder(),
+                bounds,
+                content_mask: gpui::ContentMask { bounds },
+                behavior: HitboxBehavior::Normal,
+            };
+            let minimap_scroll_top = MinimapLayout::calculate_minimap_top_offset(
+                self.document_lines,
+                self.visible_editor_lines,
+                self.visible_minimap_lines(),
+                scroll_position,
+            );
+            ScrollbarLayout::for_minimap(
+                hitbox,
+                self.visible_editor_lines,
+                self.document_lines,
+                self.minimap_line_height,
+                scroll_position,
+                minimap_scroll_top,
+                true,
+            )
+        }
+
+        fn thumb_movement_for_drag(&self, scroll_position: f64, mouse_delta: Pixels) -> Pixels {
+            let layout = self.thumb_layout(scroll_position);
+            let pixels_per_line = self
+                .thumb_pixels_per_editor_line(&layout)
+                .expect("thumb should be draggable");
+
+            let new_scroll_position =
+                scroll_position + ScrollPixelOffset::from(mouse_delta / pixels_per_line);
+
+            let old_top = layout.thumb_bounds.expect("thumb should be shown").origin.y;
+            let new_top = self
+                .thumb_layout(new_scroll_position)
+                .thumb_bounds
+                .expect("thumb should be shown")
+                .origin
+                .y;
+            new_top - old_top
+        }
+
+        fn thumb_pixels_per_editor_line(&self, layout: &ScrollbarLayout) -> Option<Pixels> {
+            MinimapLayout::thumb_pixels_per_editor_line(
+                layout,
+                self.document_lines,
+                self.minimap_line_height,
+            )
+        }
+
+        #[track_caller]
+        fn assert_thumb_follows_drag(&self, scroll_position: f64) {
+            let mouse_delta = px(10.);
+            let movement = self.thumb_movement_for_drag(scroll_position, mouse_delta);
+            assert!(
+                (movement - mouse_delta).abs() < px(0.01),
+                "dragging by {mouse_delta:?} from scroll position {scroll_position} moved the thumb by {movement:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_minimap_thumb_follows_drag_in_short_document() {
+        let geometry = MinimapGeometry {
+            document_lines: 100.,
+            visible_editor_lines: 40.,
+            minimap_line_height: px(2.),
+            minimap_height: px(800.),
+        };
+        geometry.assert_thumb_follows_drag(0.);
+        geometry.assert_thumb_follows_drag(30.);
+    }
+
+    #[test]
+    fn test_minimap_thumb_follows_drag_in_long_document() {
+        let geometry = MinimapGeometry {
+            document_lines: 2000.,
+            visible_editor_lines: 40.,
+            minimap_line_height: px(2.),
+            minimap_height: px(800.),
+        };
+        geometry.assert_thumb_follows_drag(0.);
+        geometry.assert_thumb_follows_drag(500.);
+    }
+
+    #[test]
+    fn test_minimap_thumb_follows_drag_with_minimum_thumb_size() {
+        // 10 visible lines at 2px would be a 20px thumb, which is clamped to
+        // `ScrollbarLayout::MIN_THUMB_SIZE`.
+        let short_document = MinimapGeometry {
+            document_lines: 80.,
+            visible_editor_lines: 10.,
+            minimap_line_height: px(2.),
+            minimap_height: px(200.),
+        };
+        short_document.assert_thumb_follows_drag(0.);
+        short_document.assert_thumb_follows_drag(30.);
+
+        let long_document = MinimapGeometry {
+            document_lines: 2000.,
+            ..short_document
+        };
+        long_document.assert_thumb_follows_drag(0.);
+        long_document.assert_thumb_follows_drag(500.);
+    }
+
+    #[test]
+    fn test_minimap_thumb_not_draggable_without_room_to_move() {
+        let fits_in_editor = MinimapGeometry {
+            document_lines: 30.,
+            visible_editor_lines: 40.,
+            minimap_line_height: px(2.),
+            minimap_height: px(800.),
+        };
+        assert_eq!(
+            fits_in_editor.thumb_pixels_per_editor_line(&fits_in_editor.thumb_layout(0.)),
+            None
+        );
+
+        // The track is only 20px long, so the 25px minimum thumb fills it entirely.
+        let thumb_fills_track = MinimapGeometry {
+            document_lines: 10.,
+            visible_editor_lines: 5.,
+            minimap_line_height: px(2.),
+            minimap_height: px(800.),
+        };
+        assert_eq!(
+            thumb_fills_track.thumb_pixels_per_editor_line(&thumb_fills_track.thumb_layout(0.)),
+            None
+        );
+    }
+
     enum PrimaryNavigationOverlay {}
 
     const PRIMARY_NAVIGATION_OVERLAY_KEY: NavigationOverlayKey =
