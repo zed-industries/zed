@@ -1,7 +1,7 @@
 //! A GPUI entity that streams completions from a [`SessionLog`].
 //!
 //! All conversation logic lives in [`SessionLog`]; [`LanguageModelSession`]
-//! only dispatches the rendered request, folds the streamed output into the
+//! only sends the request the log creates, folds the streamed output into the
 //! log before the host sees it, and cancels rounds the log's mutations
 //! would invalidate.
 
@@ -99,7 +99,7 @@ impl LanguageModelSession {
         self.log.truncate(anchor)
     }
 
-    /// Streams the model's response to the log's rendered request.
+    /// Streams the model's response to the request the log creates.
     ///
     /// Each event is recorded in the log before the returned stream yields
     /// it. A failure to connect arrives as the stream's first item. Dropping
@@ -123,7 +123,7 @@ impl LanguageModelSession {
             self.cancel_round();
         }
 
-        let request = self.log.render_request(&parameters);
+        let request = self.log.create_request(&parameters);
         self.log
             .begin_round(self.model.provider_id.clone(), self.model.id.clone())?;
         let client = self.client.clone();
@@ -221,7 +221,7 @@ mod tests {
     use serde_json::json;
 
     #[gpui::test]
-    fn complete_dispatches_the_rendered_request(cx: &mut TestAppContext) {
+    fn complete_sends_the_created_request(cx: &mut TestAppContext) {
         let (fake, session) = setup(cx);
         let parameters = parameters();
 
@@ -231,9 +231,8 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let rendered =
-            session.read_with(cx, |session, _| session.log().render_request(&parameters));
-        assert_eq!(fake.pending_completions(), vec![rendered]);
+        let created = session.read_with(cx, |session, _| session.log().create_request(&parameters));
+        assert_eq!(fake.pending_completions(), vec![created]);
     }
 
     #[gpui::test]
