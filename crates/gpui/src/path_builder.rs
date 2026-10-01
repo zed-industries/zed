@@ -1,17 +1,14 @@
 use anyhow::Error;
 use etagere::euclid::{Point2D, Vector2D};
-use lyon::geom::Angle;
-use lyon::math::{Vector, vector};
-use lyon::path::traits::SvgPathBuilder;
-use lyon::path::{ArcFlags, Polygon};
-use lyon::tessellation::{
-    BuffersBuilder, FillTessellator, FillVertex, StrokeTessellator, StrokeVertex, VertexBuffers,
-};
+use lyon_path::geom::Angle;
+use lyon_path::math::{Vector, vector};
+use lyon_path::traits::SvgPathBuilder;
+use lyon_path::{ArcFlags, Event, Polygon};
 
-pub use lyon::math::Transform;
-pub use lyon::tessellation::{FillOptions, FillRule, StrokeOptions};
+pub use lyon_path::math::Transform;
+pub use lyon_path::{FillRule, LineCap, LineJoin};
 
-use crate::{Path, Pixels, Point, point, px};
+use crate::{Outline, Path, PathCurve, Pixels, Point, point, px};
 
 /// Style of the PathBuilder
 pub enum PathStyle {
@@ -21,17 +18,57 @@ pub enum PathStyle {
     Fill(FillOptions),
 }
 
+/// How to stroke a path.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StrokeOptions {
+    /// Width of the stroke.
+    pub line_width: f32,
+    /// Shape of the ends of open subpaths and dashes.
+    pub line_cap: LineCap,
+    /// Shape of corners.
+    pub line_join: LineJoin,
+    /// How long a miter join may get, as a multiple of the line width,
+    /// before it is beveled instead.
+    pub miter_limit: f32,
+}
+
+impl Default for StrokeOptions {
+    fn default() -> Self {
+        Self {
+            line_width: 1.0,
+            line_cap: LineCap::Butt,
+            line_join: LineJoin::Miter,
+            miter_limit: 4.0,
+        }
+    }
+}
+
+/// How to fill a path.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FillOptions {
+    /// How overlapping contours combine into the filled region.
+    pub fill_rule: FillRule,
+}
+
+impl Default for FillOptions {
+    fn default() -> Self {
+        Self {
+            fill_rule: FillRule::EvenOdd,
+        }
+    }
+}
+
 /// A [`Path`] builder.
 pub struct PathBuilder {
-    raw: lyon::path::builder::WithSvg<lyon::path::BuilderImpl>,
-    transform: Option<lyon::math::Transform>,
+    raw: lyon_path::builder::WithSvg<lyon_path::BuilderImpl>,
+    transform: Option<lyon_path::math::Transform>,
     /// PathStyle of the PathBuilder
     pub style: PathStyle,
     dash_array: Option<Vec<Pixels>>,
 }
 
-impl From<lyon::path::Builder> for PathBuilder {
-    fn from(builder: lyon::path::Builder) -> Self {
+impl From<lyon_path::Builder> for PathBuilder {
+    fn from(builder: lyon_path::Builder) -> Self {
         Self {
             raw: builder.with_svg(),
             ..Default::default()
@@ -39,8 +76,8 @@ impl From<lyon::path::Builder> for PathBuilder {
     }
 }
 
-impl From<lyon::path::builder::WithSvg<lyon::path::BuilderImpl>> for PathBuilder {
-    fn from(raw: lyon::path::builder::WithSvg<lyon::path::BuilderImpl>) -> Self {
+impl From<lyon_path::builder::WithSvg<lyon_path::BuilderImpl>> for PathBuilder {
+    fn from(raw: lyon_path::builder::WithSvg<lyon_path::BuilderImpl>) -> Self {
         Self {
             raw,
             ..Default::default()
@@ -48,15 +85,15 @@ impl From<lyon::path::builder::WithSvg<lyon::path::BuilderImpl>> for PathBuilder
     }
 }
 
-impl From<lyon::math::Point> for Point<Pixels> {
-    fn from(p: lyon::math::Point) -> Self {
+impl From<lyon_path::math::Point> for Point<Pixels> {
+    fn from(p: lyon_path::math::Point) -> Self {
         point(px(p.x), px(p.y))
     }
 }
 
-impl From<Point<Pixels>> for lyon::math::Point {
+impl From<Point<Pixels>> for lyon_path::math::Point {
     fn from(p: Point<Pixels>) -> Self {
-        lyon::math::point(p.x.0, p.y.0)
+        lyon_path::math::point(p.x.0, p.y.0)
     }
 }
 
@@ -75,7 +112,7 @@ impl From<Point<Pixels>> for Point2D<f32, Pixels> {
 impl Default for PathBuilder {
     fn default() -> Self {
         Self {
-            raw: lyon::path::Path::builder().with_svg(),
+            raw: lyon_path::Path::builder().with_svg(),
             style: PathStyle::Fill(FillOptions::default()),
             transform: None,
             dash_array: None,
@@ -87,7 +124,10 @@ impl PathBuilder {
     /// Creates a new [`PathBuilder`] to build a Stroke path.
     pub fn stroke(width: Pixels) -> Self {
         Self {
-            style: PathStyle::Stroke(StrokeOptions::default().with_line_width(width.0)),
+            style: PathStyle::Stroke(StrokeOptions {
+                line_width: width.0,
+                ..Default::default()
+            }),
             ..Self::default()
         }
     }
@@ -102,7 +142,7 @@ impl PathBuilder {
         Self { style, ..self }
     }
 
-    /// Sets the dash array of the [`PathBuilder`].
+    /// Sets the dash array of the [`PathBuilder`]. Fills ignore it.
     ///
     /// [MDN](https://developer.mozilla.org/en-US/docs/Web/SVG/Reference/Attribute/stroke-dasharray)
     pub fn dash_array(mut self, dash_array: &[Pixels]) -> Self {
@@ -240,8 +280,13 @@ impl PathBuilder {
     }
 
     /// Builds into a [`Path`].
-    #[inline]
-    pub fn build(self) -> Result<Path<Pixels>, Error> {
+    pub fn build(self) -> Result<Path, Error> {
+        let (curves, fill_rule) = self.outline();
+        Ok(Path::from_curves(curves, fill_rule))
+    }
+
+    /// The closed contours to fill, and the rule to fill them by.
+    pub(crate) fn outline(self) -> (Vec<PathCurve>, FillRule) {
         let path = if let Some(transform) = self.transform {
             self.raw.build().transformed(&transform)
         } else {
@@ -249,99 +294,115 @@ impl PathBuilder {
         };
 
         match self.style {
-            PathStyle::Stroke(options) => Self::tessellate_stroke(self.dash_array, &path, &options),
-            PathStyle::Fill(options) => Self::tessellate_fill(&path, &options),
+            PathStyle::Stroke(options) => (
+                Self::stroke_outline(&path, &options, self.dash_array.as_deref()),
+                FillRule::NonZero,
+            ),
+            PathStyle::Fill(options) => (Self::fill_outline(&path), options.fill_rule),
         }
     }
 
-    fn tessellate_fill(
-        path: &lyon::path::Path,
-        options: &FillOptions,
-    ) -> Result<Path<Pixels>, Error> {
-        // Will contain the result of the tessellation.
-        let mut buf: VertexBuffers<lyon::math::Point, u16> = VertexBuffers::new();
-        let mut tessellator = FillTessellator::new();
-
-        // Compute the tessellation.
-        tessellator.tessellate_path(
-            path,
-            options,
-            &mut BuffersBuilder::new(&mut buf, |vertex: FillVertex| vertex.position()),
-        )?;
-
-        Ok(Self::build_path(buf))
-    }
-
-    fn tessellate_stroke(
-        dash_array: Option<Vec<Pixels>>,
-        path: &lyon::path::Path,
+    fn stroke_outline(
+        path: &lyon_path::Path,
         options: &StrokeOptions,
-    ) -> Result<Path<Pixels>, Error> {
-        let path = if let Some(dash_array) = dash_array {
-            let measurements = lyon::algorithms::measure::PathMeasurements::from_path(path, 0.01);
-            let mut sampler = measurements
-                .create_sampler(path, lyon::algorithms::measure::SampleType::Normalized);
-            let mut builder = lyon::path::Path::builder();
-
-            let total_length = sampler.length();
-            let dash_array_len = dash_array.len();
-            let mut pos = 0.;
-            let mut dash_index = 0;
-            while pos < total_length {
-                let dash_length = dash_array[dash_index % dash_array_len].0;
-                let next_pos = (pos + dash_length).min(total_length);
-                if dash_index % 2 == 0 {
-                    let start = pos / total_length;
-                    let end = next_pos / total_length;
-                    sampler.split_range(start..end, &mut builder);
+        dash_array: Option<&[Pixels]>,
+    ) -> Vec<PathCurve> {
+        let outline = skia_path(path)
+            .map(|skia_path| match dash_array {
+                Some(dash_array) => {
+                    let array = dash_array.iter().map(|length| length.0).collect();
+                    match tiny_skia_path::StrokeDash::new(array, 0.0) {
+                        Some(dash) => skia_path
+                            .dash(&dash, STROKE_RESOLUTION_SCALE)
+                            .unwrap_or(skia_path),
+                        // An invalid dash array strokes undashed, as in SVG.
+                        None => skia_path,
+                    }
                 }
-                pos = next_pos;
-                dash_index += 1;
-            }
-
-            &builder.build()
-        } else {
-            path
+                None => skia_path,
+            })
+            .and_then(|skia_path| {
+                skia_path.stroke(
+                    &tiny_skia_path::Stroke {
+                        width: options.line_width,
+                        miter_limit: options.miter_limit,
+                        line_cap: match options.line_cap {
+                            LineCap::Butt => tiny_skia_path::LineCap::Butt,
+                            LineCap::Square => tiny_skia_path::LineCap::Square,
+                            LineCap::Round => tiny_skia_path::LineCap::Round,
+                        },
+                        line_join: match options.line_join {
+                            LineJoin::Miter => tiny_skia_path::LineJoin::Miter,
+                            LineJoin::MiterClip => tiny_skia_path::LineJoin::MiterClip,
+                            LineJoin::Round => tiny_skia_path::LineJoin::Round,
+                            LineJoin::Bevel => tiny_skia_path::LineJoin::Bevel,
+                        },
+                        dash: None,
+                    },
+                    STROKE_RESOLUTION_SCALE,
+                )
+            });
+        let Some(outline) = outline else {
+            return Vec::new();
         };
 
-        // Will contain the result of the tessellation.
-        let mut buf: VertexBuffers<lyon::math::Point, u16> = VertexBuffers::new();
-        let mut tessellator = StrokeTessellator::new();
-
-        // Compute the tessellation.
-        tessellator.tessellate_path(
-            path,
-            options,
-            &mut BuffersBuilder::new(&mut buf, |vertex: StrokeVertex| vertex.position()),
-        )?;
-
-        Ok(Self::build_path(buf))
+        let mut output = Outline::default();
+        let at = |p: tiny_skia_path::Point| point(p.x, p.y);
+        for segment in outline.segments() {
+            match segment {
+                tiny_skia_path::PathSegment::MoveTo(p) => output.move_to(at(p)),
+                tiny_skia_path::PathSegment::LineTo(p) => output.line_to(at(p)),
+                tiny_skia_path::PathSegment::QuadTo(ctrl, p) => output.curve_to(at(p), at(ctrl)),
+                tiny_skia_path::PathSegment::CubicTo(ctrl1, ctrl2, p) => {
+                    output.cubic_to(at(p), at(ctrl1), at(ctrl2))
+                }
+                tiny_skia_path::PathSegment::Close => output.close(),
+            }
+        }
+        output.into_curves()
     }
 
-    /// Builds a [`Path`] from a [`lyon::tessellation::VertexBuffers`].
-    pub fn build_path(buf: VertexBuffers<lyon::math::Point, u16>) -> Path<Pixels> {
-        if buf.vertices.is_empty() {
-            return Path::new(Point::default());
+    /// Convert a lyon path into a fill, closing every subpath.
+    fn fill_outline(path: &lyon_path::Path) -> Vec<PathCurve> {
+        let mut output = Outline::default();
+        let at = |p: lyon_path::math::Point| point(p.x, p.y);
+        for event in path.iter() {
+            match event {
+                Event::Begin { at: p } => output.move_to(at(p)),
+                Event::Line { to, .. } => output.line_to(at(to)),
+                Event::Quadratic { ctrl, to, .. } => output.curve_to(at(to), at(ctrl)),
+                Event::Cubic {
+                    ctrl1, ctrl2, to, ..
+                } => output.cubic_to(at(to), at(ctrl1), at(ctrl2)),
+                Event::End { .. } => output.close(),
+            }
         }
-
-        let first_point = buf.vertices[0];
-
-        let mut path = Path::new(first_point.into());
-        for i in 0..buf.indices.len() / 3 {
-            let i0 = buf.indices[i * 3] as usize;
-            let i1 = buf.indices[i * 3 + 1] as usize;
-            let i2 = buf.indices[i * 3 + 2] as usize;
-
-            let v0 = buf.vertices[i0];
-            let v1 = buf.vertices[i1];
-            let v2 = buf.vertices[i2];
-
-            path.push_triangle(
-                (v0.into(), v1.into(), v2.into()),
-                (point(0., 1.), point(0., 1.), point(0., 1.)),
-            );
-        }
-
-        path
+        output.into_curves()
     }
+}
+
+/// tiny-skia's stroker errs by about `0.25 / scale`. Strokes are expanded in
+/// logical pixels, so 2.0 keeps that within a quarter device pixel on
+/// displays up to 2x.
+const STROKE_RESOLUTION_SCALE: f32 = 2.0;
+
+/// Returns [`None`] for empty geometry.
+fn skia_path(path: &lyon_path::Path) -> Option<tiny_skia_path::Path> {
+    let mut builder = tiny_skia_path::PathBuilder::new();
+    for event in path.iter() {
+        match event {
+            Event::Begin { at } => builder.move_to(at.x, at.y),
+            Event::Line { to, .. } => builder.line_to(to.x, to.y),
+            Event::Quadratic { ctrl, to, .. } => builder.quad_to(ctrl.x, ctrl.y, to.x, to.y),
+            Event::Cubic {
+                ctrl1, ctrl2, to, ..
+            } => builder.cubic_to(ctrl1.x, ctrl1.y, ctrl2.x, ctrl2.y, to.x, to.y),
+            Event::End { close, .. } => {
+                if close {
+                    builder.close();
+                }
+            }
+        }
+    }
+    builder.finish()
 }

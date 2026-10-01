@@ -1529,7 +1529,7 @@ impl WgpuRendererCore {
                         instance_range(range),
                         &mut pass,
                     ),
-                    PrimitiveBatch::Paths(range) => {
+                    PrimitiveBatch::PathTiles(range) => {
                         let paths = &scene.paths[range];
                         if paths.is_empty() {
                             continue;

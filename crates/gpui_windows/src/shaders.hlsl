@@ -67,6 +67,11 @@ struct Background {
     uint pad;
 };
 
+struct PreparedBackgroundColors {
+    nointerpolation float4 color0: COLOR1;
+    nointerpolation float4 color1: COLOR2;
+};
+
 struct PreparedBackground {
     nointerpolation float4 color0: COLOR1;
     nointerpolation float4 color1: COLOR2;
@@ -332,23 +337,37 @@ float quad_sdf(float2 pt, Bounds bounds, Corners corner_radii) {
     return quad_sdf_impl(corner_center_to_point, corner_radius);
 }
 
-PreparedBackground prepare_background(Background background, Bounds bounds) {
+PreparedBackgroundColors prepare_background_colors(Background background) {
+    PreparedBackgroundColors output;
+    output.color1 = float4(0.0, 0.0, 0.0, 0.0);
+
+    if (background.tag == 1) {
+        output.color0 = hsla_to_rgba(background.colors[0].color);
+        output.color1 = hsla_to_rgba(background.colors[1].color);
+        // Interpolating in Oklab means converting the endpoints once rather
+        // than at every stop evaluation.
+        if (background.color_space == 1) {
+            output.color0 = srgb_to_oklab(output.color0);
+            output.color1 = srgb_to_oklab(output.color1);
+        }
+    } else {
+        output.color0 = hsla_to_rgba(background.solid);
+    }
+
+    return output;
+}
+
+PreparedBackground prepare_background_geometry(PreparedBackgroundColors colors,
+                                               Background background, Bounds bounds) {
     PreparedBackground output;
     output.kind = uint2(background.tag, background.color_space);
-    output.color0 = float4(0.0, 0.0, 0.0, 0.0);
-    output.color1 = float4(0.0, 0.0, 0.0, 0.0);
+    output.color0 = colors.color0;
+    output.color1 = colors.color1;
     output.basis = float4(0.0, 0.0, 0.0, 0.0);
     output.pivot = bounds.origin;
 
     switch (background.tag) {
         case 1: {
-            output.color0 = hsla_to_rgba(background.colors[0].color);
-            output.color1 = hsla_to_rgba(background.colors[1].color);
-            if (background.color_space == 1) {
-                output.color0 = srgb_to_oklab(output.color0);
-                output.color1 = srgb_to_oklab(output.color1);
-            }
-
             // -90 degrees to match the CSS gradient angle.
             float radians = (fmod(background.gradient_angle_or_pattern_height, 360.0) - 90.0)
                 * (M_PI_F / 180.0);
@@ -384,7 +403,6 @@ PreparedBackground prepare_background(Background background, Bounds bounds) {
             break;
         }
         case 2: {
-            output.color0 = hsla_to_rgba(background.solid);
             float pattern_height_encoded = background.gradient_angle_or_pattern_height;
             float pattern_width = (pattern_height_encoded / 65535.0) / 255.0;
             float pattern_interval = fmod(pattern_height_encoded, 65535.0) / 255.0;
@@ -399,16 +417,16 @@ PreparedBackground prepare_background(Background background, Bounds bounds) {
             break;
         }
         case 3: {
-            output.color0 = hsla_to_rgba(background.solid);
             output.basis = float4(background.gradient_angle_or_pattern_height, 0.0, 0.0, 0.0);
             break;
         }
-        default:
-            output.color0 = hsla_to_rgba(background.solid);
-            break;
     }
 
     return output;
+}
+
+PreparedBackground prepare_background(Background background, Bounds bounds) {
+    return prepare_background_geometry(prepare_background_colors(background), background, bounds);
 }
 
 // Ordered (Bayer 4x4) dither threshold, remapped to [-1, +1].
@@ -954,101 +972,178 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
 
 /*
 **
-**              Path Rasterization
+**              Path Tiles
 **
 */
 
-struct PathRasterizationSprite {
-    float2 xy_position;
-    float2 st_position;
-    Background color;
+struct PathCurve {
+    float2 p0;
+    float2 p1;
+    float2 a;
+    float2 b;
+    float sign;
+};
+
+struct PathTile {
+    uint order;
+    uint paint;
+    uint curve_start;
+    uint curve_count;
+    float2 top_left;
+    float2 bottom_right;
+    float2 reference;
+    int backdrop;
+};
+
+struct PathPaint {
     Bounds bounds;
+    Bounds content_mask;
+    Background color;
+    uint even_odd;
+    float scale;
 };
 
-StructuredBuffer<PathRasterizationSprite> path_rasterization_sprites: register(t1);
+StructuredBuffer<PathTile> path_tiles: register(t1);
+StructuredBuffer<PathCurve> path_curves: register(t2);
+StructuredBuffer<PathPaint> path_paints: register(t3);
 
-struct PathVertexOutput {
+// Each tile's curves are sorted by leftmost x to within 1/256 logical pixel; see `SORT_STEPS` in
+// path_winding.rs.
+static const float PATH_SORT_SLACK = 2.0 / 256.0;
+
+struct PathTileFragmentInput {
     float4 position: SV_Position;
-    float2 st_position: TEXCOORD0;
-    nointerpolation uint vertex_id: TEXCOORD1;
-    float4 clip_distance: SV_ClipDistance;
+    nointerpolation uint tile_id: TEXCOORD0;
+    PreparedBackgroundColors background;
 };
 
-struct PathFragmentInput {
-    float4 position: SV_Position;
-    float2 st_position: TEXCOORD0;
-    nointerpolation uint vertex_id: TEXCOORD1;
-};
+PathTileFragmentInput path_tile_vertex(uint vertex_id: SV_VertexID, uint tile_id: SV_InstanceID) {
+    uint tile_index = batch_start_index + tile_id;
+    PathTile tile = path_tiles[tile_index];
+    PathPaint paint = path_paints[tile.paint];
 
-PathVertexOutput path_rasterization_vertex(uint vertex_id: SV_VertexID) {
-    PathRasterizationSprite sprite = path_rasterization_sprites[vertex_id];
+    // Neighboring tiles store their shared edge as the same number, so scaling and clipping each
+    // corner on its own gives them bit-identical edges, which the rasterizer neither overlaps nor
+    // leaves gaps between. Interpolating from an origin and a size would not.
+    float2 mask_top_left = paint.content_mask.origin;
+    float2 mask_bottom_right = paint.content_mask.origin + paint.content_mask.size;
+    float2 top_left = clamp(tile.top_left * paint.scale, mask_top_left, mask_bottom_right);
+    float2 bottom_right = clamp(tile.bottom_right * paint.scale, top_left, mask_bottom_right);
+    float2 position = float2(
+        (vertex_id & 1u) != 0u ? bottom_right.x : top_left.x,
+        (vertex_id & 2u) != 0u ? bottom_right.y : top_left.y);
 
-    PathVertexOutput output;
-    output.position = to_device_position_impl(sprite.xy_position);
-    output.st_position = sprite.st_position;
-    output.vertex_id = vertex_id;
-    output.clip_distance = distance_from_clip_rect_impl(sprite.xy_position, sprite.bounds);
-
+    PathTileFragmentInput output;
+    output.position = to_device_position_impl(position);
+    output.tile_id = tile_index;
+    output.background = prepare_background_colors(paint.color);
     return output;
 }
 
-float4 path_rasterization_fragment(PathFragmentInput input): SV_Target {
-    float2 dx = ddx(input.st_position);
-    float2 dy = ddy(input.st_position);
-    PathRasterizationSprite sprite = path_rasterization_sprites[input.vertex_id];
+// Solves a*t^2 + b*t + c = 0 for the root in [0, 1] on a monotone piece.
+float monotone_quadratic_root(float a, float b, float c, float direction) {
+    float discriminant = max(b * b - 4.0 * a * c, 0.0);
+    float denominator = b + direction * sqrt(discriminant);
+    if (denominator == 0.0) {
+        return 0.0;
+    }
+    return saturate(-2.0 * c / denominator);
+}
 
-    Background background = sprite.color;
-    Bounds bounds = sprite.bounds;
+// Coverage estimate adapted from https://github.com/EricLengyel/Slug/blob/be3c13eb7d63f9e8aa5c583e42d92c374cb91d98/SlugPixelShader.hlsl
+// Copyright (c) 2017 Eric Lengyel.
+// Licensed under the MIT license.
 
-    float alpha;
-    if (length(float2(dx.x, dy.x))) {
-        alpha = 1.0;
-    } else {
-        float2 gradient = 2.0 * input.st_position.xx * float2(dx.x, dy.x) - float2(dx.y, dy.y);
-        float f = input.st_position.x * input.st_position.x - input.st_position.y;
-        float distance = f / length(gradient);
-        alpha = saturate(0.5 - distance);
+// Accumulates the curve's winding along the pixel's leftward and upward rays. Like Slug, a crossing
+// within half a pixel of the center counts fractionally. Positions are in logical pixels, so
+// distances are scaled into device pixels for antialiasing.
+void add_curve_winding(PathCurve curve, float2 center, float scale, inout float2 winding,
+                       inout float2 weight) {
+    float half_pixel = 0.5 / scale;
+    float min_x = min(curve.p0.x, curve.p1.x);
+    float max_x = max(curve.p0.x, curve.p1.x);
+
+    if (curve.p0.y <= center.y && center.y < curve.p1.y) {
+        if (max_x <= center.x - half_pixel) {
+            winding.x += curve.sign;
+        } else {
+            float t = monotone_quadratic_root(curve.a.y, curve.b.y, curve.p0.y - center.y, 1.0);
+            float x = (curve.a.x * t + curve.b.x) * t + curve.p0.x;
+            float distance = (center.x - x) * scale;
+            winding.x += curve.sign * saturate(distance + 0.5);
+            weight.x = max(weight.x, saturate(1.0 - 2.0 * abs(distance)));
+        }
     }
 
-    float4 color = background_color(prepare_background(background, bounds), input.position.xy);
-    return float4(color.rgb * color.a * alpha, alpha * color.a);
+    if (min_x <= center.x && center.x < max_x) {
+        float sx = curve.p1.x > curve.p0.x ? 1.0 : -1.0;
+        if (curve.p1.y <= center.y - half_pixel) {
+            winding.y -= curve.sign * sx;
+        } else if (curve.p0.y < center.y + half_pixel) {
+            float t = monotone_quadratic_root(curve.a.x, curve.b.x, curve.p0.x - center.x, sx);
+            float y = (curve.a.y * t + curve.b.y) * t + curve.p0.y;
+            float distance = (center.y - y) * scale;
+            winding.y -= curve.sign * sx * saturate(distance + 0.5);
+            weight.y = max(weight.y, saturate(1.0 - 2.0 * abs(distance)));
+        }
+    }
 }
 
-/*
-**
-**              Path Sprites
-**
-*/
-
-struct PathSprite {
-    Bounds bounds;
-};
-
-struct PathSpriteVertexOutput {
-    float4 position: SV_Position;
-    float2 texture_coords: TEXCOORD0;
-};
-
-StructuredBuffer<PathSprite> path_sprites: register(t1);
-
-PathSpriteVertexOutput path_sprite_vertex(uint vertex_id: SV_VertexID, uint sprite_id: SV_InstanceID) {
-    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
-    PathSprite sprite = path_sprites[sprite_id];
-
-    // Don't apply content mask because it was already accounted for when rasterizing the path
-    float4 device_position = to_device_position(unit_vertex, sprite.bounds);
-
-    float2 screen_position = sprite.bounds.origin + unit_vertex * sprite.bounds.size;
-    float2 texture_coords = screen_position / global_viewport_size;
-
-    PathSpriteVertexOutput output;
-    output.position = device_position;
-    output.texture_coords = texture_coords;
-    return output;
+// The backdrop gives the unlisted curves' winding along a leftward ray from the tile's reference
+// corner. We need it at the current pixel, along both leftward and upward rays. Because paths are
+// closed, chains of unlisted curves can only begin or end where a listed curve does. So, we can
+// compute the winding at the current pixel by correcting the backdrop for each listed endpoint
+// between its ray and the pixel.
+void correct_for_endpoint(float2 endpoint, float step, float2 reference, float2 center,
+                          inout float2 winding) {
+    if (endpoint.x <= reference.x) {
+        winding.x -= step * (float(endpoint.y <= center.y) - float(endpoint.y <= reference.y));
+    }
+    if (endpoint.y <= reference.y && endpoint.x <= center.x) {
+        winding.y += step;
+    }
 }
 
-float4 path_sprite_fragment(PathSpriteVertexOutput input): SV_Target {
-    return t_sprite.Sample(s_sprite, input.texture_coords);
+float4 path_tile_fragment(PathTileFragmentInput input): SV_Target {
+    PathTile tile = path_tiles[input.tile_id];
+    PathPaint paint = path_paints[tile.paint];
+    // Tiles and curves are in logical pixels, so compare in logical pixels: the binner made its
+    // decisions on these same numbers.
+    float2 center = (floor(input.position.xy) + 0.5) / paint.scale;
+    float half_pixel = 0.5 / paint.scale;
+
+    float2 winding = float(tile.backdrop);
+    float2 weight = float2(0.0, 0.0);
+    [loop]
+    for (uint i = 0u; i < tile.curve_count; i++) {
+        PathCurve curve = path_curves[tile.curve_start + i];
+        if (min(curve.p0.x, curve.p1.x) >= center.x + half_pixel + PATH_SORT_SLACK) {
+            break;
+        }
+        if (curve.p0.y < center.y + half_pixel) {
+            add_curve_winding(curve, center, paint.scale, winding, weight);
+            correct_for_endpoint(curve.p0, curve.sign, tile.reference, center, winding);
+            correct_for_endpoint(curve.p1, -curve.sign, tile.reference, center, winding);
+        }
+    }
+
+    // Weight the winding computed by each ray by its nearest crossing's distance from the pixel center,
+    // using the technique of Slug.
+    float coverage = max(
+        abs(dot(winding, weight)) / max(weight.x + weight.y, 1.0 / 65536.0),
+        min(abs(winding.x), abs(winding.y)));
+    coverage = paint.even_odd != 0u
+        ? 1.0 - abs(1.0 - frac(coverage * 0.5) * 2.0)
+        : saturate(coverage);
+
+    if (coverage == 0.0) {
+        return float4(0.0, 0.0, 0.0, 0.0);
+    }
+
+    float4 color = background_color(
+        prepare_background_geometry(input.background, paint.color, paint.bounds),
+        input.position.xy);
+    return float4(color.rgb, color.a * coverage);
 }
 
 /*

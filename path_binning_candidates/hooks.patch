@@ -1,0 +1,173 @@
+--- a/crates/gpui/src/gpui.rs
++++ b/crates/gpui/src/gpui.rs
+@@ -33,6 +33,9 @@
+ mod keymap;
+ mod path_builder;
+ mod path_winding;
++#[cfg(test)]
++#[path = "../../../path_binning_candidates/measure.rs"]
++mod path_binning_measure;
+ mod platform;
+ pub mod prelude;
+ /// Profiling utilities for task, frame, and thread performance tracking.
+--- a/crates/gpui/src/path_winding.rs
++++ b/crates/gpui/src/path_winding.rs
+@@ -295,6 +295,7 @@
+         } = scratch;
+         list_curves(input, &grid, spans, ends, steps);
+         sort_listings(spans, ends, slots);
++        LISTINGS.fetch_add(slots.len(), std::sync::atomic::Ordering::Relaxed);
+         above.clear();
+         current.clear();
+         let mut walk = Walk {
+@@ -318,6 +319,9 @@
+     binned
+ }
+ 
++/// Sweep hook: listings across all paths binned.
++pub(crate) static LISTINGS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
++
+ /// The power-of-two cell size that minimizes the estimated cost of binning
+ /// and shading. A curve is listed in about `1 + extent / s` cells, or once
+ /// when the path fits in one. The GPU visits each listing over about half
+@@ -325,10 +329,37 @@
+ /// pixel it covers. Every cell is walked, and at least `cells - listings` of
+ /// them are empty.
+ fn cell_size(curves: f32, perimeter: f32, size: Point<f32>, scale: f32) -> f32 {
++    // Sweep hook: `PATH_SWEEP=visits_per_listing,min_tile_size,max_grid_cells,forced_cell_size,visits_per_cell`.
++    static FORCED: std::sync::LazyLock<f32> = std::sync::LazyLock::new(|| {
++        let sweep = std::env::var("PATH_SWEEP").unwrap_or_default();
++        sweep.split(',').nth(3).and_then(|value| value.trim().parse().ok()).unwrap_or(0.0)
++    });
++    if *FORCED > 0.0 {
++        let mut cell_size = *FORCED;
++        while ((size.x / cell_size) as usize + 1) * ((size.y / cell_size) as usize + 1)
++            > MAX_GRID_CELLS
++        {
++            cell_size *= 2.0;
++        }
++        return cell_size;
++    }
++    static SWEEP: std::sync::LazyLock<(f32, f32, usize, f32)> = std::sync::LazyLock::new(|| {
++        let sweep = std::env::var("PATH_SWEEP").unwrap_or_default();
++        let values: Vec<Option<f64>> =
++            sweep.split(',').map(|value| value.trim().parse::<f64>().ok()).collect();
++        let field = |index: usize, default: f64| values.get(index).copied().flatten().unwrap_or(default);
++        (
++            field(0, VISITS_PER_LISTING as f64) as f32,
++            field(1, MIN_TILE_SIZE as f64) as f32,
++            field(2, MAX_GRID_CELLS as f64) as usize,
++            field(4, VISITS_PER_CELL as f64) as f32,
++        )
++    });
++    let (visits_per_listing, min_tile_size, max_grid_cells, visits_per_cell) = *SWEEP;
+     let extent = size.x.fast_max(size.y);
+-    let mut cell_size = MIN_TILE_SIZE;
++    let mut cell_size = min_tile_size;
+     // Every cell is counted and walked, so cells are kept few.
+-    while ((size.x / cell_size) as usize + 1) * ((size.y / cell_size) as usize + 1) > MAX_GRID_CELLS
++    while ((size.x / cell_size) as usize + 1) * ((size.y / cell_size) as usize + 1) > max_grid_cells
+     {
+         cell_size *= 2.0;
+     }
+@@ -343,7 +374,7 @@
+         let cells = ((size.x / cell_size) as usize + 1) * ((size.y / cell_size) as usize + 1);
+         let empty_cells = (cells as f32 - listings).fast_max(0.0);
+         let cost =
+-            listings * (VISITS_PER_LISTING + area * scale * scale) + empty_cells * VISITS_PER_CELL;
++            listings * (visits_per_listing + area * scale * scale) + empty_cells * visits_per_cell;
+         if cost < best.0 {
+             best = (cost, cell_size);
+         }
+--- a/crates/gpui/src/scene.rs
++++ b/crates/gpui/src/scene.rs
+@@ -868,7 +868,13 @@
+         };
+         Self {
+             order: 0,
+-            tiles: Arc::new(path.bin(scale_factor)),
++            // Sweep hook: `PATH_BIN_SCALE` bins for a fixed scale, as the old binner did.
++            tiles: Arc::new(path.bin({
++                static BIN_SCALE: std::sync::LazyLock<Option<f32>> = std::sync::LazyLock::new(|| {
++                    std::env::var("PATH_BIN_SCALE").ok()?.parse().ok()
++                });
++                BIN_SCALE.unwrap_or(scale_factor)
++            })),
+             paint,
+         }
+     }
+--- a/crates/gpui/examples/painting.rs
++++ b/crates/gpui/examples/painting.rs
+@@ -374,7 +374,8 @@
+ }
+ 
+ impl Render for PaintingViewer {
+-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
++    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
++        window.request_animation_frame();
+         let default_lines = self.default_lines.clone();
+         let background_quads = self.background_quads.clone();
+         let lines = self.lines.clone();
+@@ -507,9 +508,28 @@
+         cx.open_window(
+             WindowOptions {
+                 focus: true,
++                // Sweep hook: the same logical size at every scale.
++                window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
++                    None,
++                    gpui::size(gpui::px(1200.), gpui::px(800.)),
++                    cx,
++                ))),
+                 ..Default::default()
+             },
+-            |window, cx| cx.new(|cx| PaintingViewer::new(window, cx)),
++            |window, cx| {
++                cx.new(|cx| {
++                    // Sweep hook: `PAINTING_SCENE` picks a scene, redrawn every frame.
++                    let mut viewer = PaintingViewer::new(window, cx);
++                    let scene = std::env::var("PAINTING_SCENE").unwrap_or_default();
++                    viewer.dashed = scene.starts_with("dashed_");
++                    match scene.trim_start_matches("dashed_") {
++                        "scribble" => viewer.stress_scribble(cx),
++                        "grid" => viewer.stress_grid(cx),
++                        _ => {}
++                    }
++                    viewer
++                })
++            },
+         )
+         .unwrap();
+         cx.on_window_closed(|cx, _window_id| {
+--- a/crates/gpui_windows/src/display.rs
++++ b/crates/gpui_windows/src/display.rs
+@@ -201,7 +201,18 @@
+     Uuid::new_v5(&Uuid::NAMESPACE_DNS, &name)
+ }
+ 
++/// Sweep hook: `GPUI_SCALE_FACTOR` replaces every monitor's scale factor.
++pub(crate) fn scale_factor_override() -> Option<f32> {
++    static SCALE_FACTOR: std::sync::LazyLock<Option<f32>> = std::sync::LazyLock::new(|| {
++        std::env::var("GPUI_SCALE_FACTOR").ok()?.parse().ok()
++    });
++    *SCALE_FACTOR
++}
++
+ fn get_scale_factor_for_monitor(monitor: HMONITOR) -> Result<f32> {
++    if let Some(scale_factor) = scale_factor_override() {
++        return Ok(scale_factor);
++    }
+     let mut dpi_x = 0;
+     let mut dpi_y = 0;
+     unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) }?;
+--- a/crates/gpui_windows/src/window.rs
++++ b/crates/gpui_windows/src/window.rs
+@@ -125,7 +125,8 @@
+     ) -> Result<Self> {
+         let scale_factor = {
+             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
+-            monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32
++            crate::display::scale_factor_override()
++                .unwrap_or(monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32)
+         };
+         let origin = logical_point(window_params.x as f32, window_params.y as f32, scale_factor);
+         let logical_size = {
