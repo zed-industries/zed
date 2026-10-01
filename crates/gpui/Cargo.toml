@@ -118,8 +118,10 @@ getrandom = { version = "0.3.4", features = ["wasm_js"] }
 uuid = { workspace = true, features = ["js"] }
 
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 core-video.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation.workspace = true
 objc2-core-video.workspace = true
 # WARNING: If you change this, you must also publish a new version of zed-font-kit to crates.io

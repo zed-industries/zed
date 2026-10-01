@@ -691,6 +691,10 @@ mod tests {
     fn app_flushes_its_hang_monitor_on_shutdown(cx: &mut TestAppContext) {
         use super::{HangMonitorConfig, HangMonitorPollReason};
 
+        // The monitor runs on a real OS thread, so shutdown has to park until it
+        // finishes the flush, and its completion wakes the scheduler from that thread.
+        cx.executor().allow_parking();
+
         let (sender, receiver) = std::sync::mpsc::channel();
         cx.update(|cx| {
             cx.start_hang_monitor(
@@ -1255,9 +1259,10 @@ mod tests {
         });
         draw_window(cx);
 
-        let mut injected: Vec<(HangKind, Duration)> = Vec::new();
+        let mut injections: Vec<Injection> = Vec::new();
         for _ in 0..rng.random_range(1..=4) {
             let duration = HANG_THRESHOLD + Duration::from_millis(rng.random_range(5..25));
+            let started = scheduler::Instant::now();
             let kind = match rng.random_range(0..4) {
                 0 => {
                     controls.render.set(Some(duration));
@@ -1284,7 +1289,11 @@ mod tests {
                     HangKind::Poll
                 }
             };
-            injected.push((kind, duration));
+            injections.push(Injection {
+                kind,
+                duration,
+                window: started..scheduler::Instant::now(),
+            });
 
             // Innocent interleaved activity that must not confuse detection.
             if rng.random_bool(0.5) {
@@ -1304,47 +1313,51 @@ mod tests {
             .flat_map(|incident| incident.contributors.iter().copied())
             .collect();
 
-        for kind in [
-            HangKind::Render,
-            HangKind::Input,
-            HangKind::Action,
-            HangKind::Poll,
-        ] {
-            let expected: Vec<Duration> = injected
-                .iter()
-                .filter(|(injected_kind, _)| *injected_kind == kind)
-                .map(|(_, duration)| *duration)
-                .collect();
-            let observed: Vec<Duration> = contributors
-                .iter()
-                .filter(|event| matches_kind(event, kind) && event.duration() >= HANG_THRESHOLD)
-                .map(|event| event.duration())
-                .collect();
-            assert_all_matched(kind, expected, observed);
+        for injection in &injections {
+            assert_detected_once(injection, &contributors);
         }
     }
 
-    /// Every injected hang must be covered by a distinct observed contributor
-    /// at least as long as the injected sleep (sleeps never wake early).
-    fn assert_all_matched(
+    struct Injection {
         kind: HangKind,
-        mut expected: Vec<Duration>,
-        mut observed: Vec<Duration>,
-    ) {
+        duration: Duration,
+        window: std::ops::Range<scheduler::Instant>,
+    }
+
+    /// Exactly one contributor of the injected kind must fall inside the
+    /// injection's window, and it must be at least as long as the injected
+    /// sleep (sleeps never wake early). Contributors outside every window are
+    /// ignored: on a loaded machine, uninjected work can legitimately exceed
+    /// the threshold, and reporting it is correct.
+    fn assert_detected_once(injection: &Injection, contributors: &[ForegroundEvent]) {
+        let Injection {
+            kind,
+            duration,
+            window,
+        } = injection;
+        let matches: Vec<&ForegroundEvent> = contributors
+            .iter()
+            .filter(|event| {
+                matches_kind(event, *kind)
+                    && window.start <= event.start_time()
+                    && event.end_time() <= window.end
+            })
+            .collect();
         assert_eq!(
-            observed.len(),
-            expected.len(),
-            "expected every observed {kind:?} hang to correspond to one injection; \
-             expected {expected:?}, observed {observed:?}"
+            matches.len(),
+            1,
+            "expected injected {kind:?} hang of {duration:?} to be reported exactly once; \
+             observed {:?}",
+            matches
+                .iter()
+                .map(|event| event.duration())
+                .collect::<Vec<_>>(),
         );
-        expected.sort_unstable_by(|a, b| b.cmp(a));
-        observed.sort_unstable_by(|a, b| b.cmp(a));
-        let mut observed = observed.into_iter();
-        for expected_duration in expected {
-            let matched = observed.find(|observed| *observed >= expected_duration);
+        if let Some(event) = matches.first() {
             assert!(
-                matched.is_some(),
-                "injected {kind:?} hang of {expected_duration:?} was not detected"
+                event.duration() >= *duration,
+                "injected {kind:?} hang of {duration:?} was reported as {:?}",
+                event.duration(),
             );
         }
     }
