@@ -1,5 +1,6 @@
 use super::*;
 use gpui::{App, SharedString, Task};
+use language_model::{LanguageModelImage, LanguageModelToolResultContent};
 use std::future;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -183,49 +184,100 @@ impl AgentTool for StreamingFailingEchoTool {
     }
 }
 
-/// A tool that returns the result its input scripts
+/// A tool that returns the result its input scripts.
 #[derive(JsonSchema, Serialize, Deserialize)]
 pub struct ScriptedResultToolInput {
-    /// The result to return.
-    pub result: String,
+    /// The ordered content parts to return.
+    pub result: Vec<ScriptedResultPart>,
     /// Whether to return the result as an error.
     pub is_error: bool,
 }
 
+#[derive(Clone, Debug, JsonSchema, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScriptedResultPart {
+    Text(String),
+    Image(String),
+}
+
 pub struct ScriptedResultTool;
 
-impl AgentTool for ScriptedResultTool {
-    type Input = ScriptedResultToolInput;
-    type Output = String;
+impl ScriptedResultTool {
+    pub const NAME: &'static str = "scripted_result";
+}
 
-    const NAME: &'static str = "scripted_result";
+// AgentTool's erased adapter wraps its output in a single content part.
+// Like MCP tools, this tool uses AnyAgentTool to return multiple parts.
+impl AnyAgentTool for ScriptedResultTool {
+    fn name(&self) -> SharedString {
+        Self::NAME.into()
+    }
 
-    fn kind() -> acp::ToolKind {
+    fn description(&self) -> SharedString {
+        "Returns the scripted result.".into()
+    }
+
+    fn kind(&self) -> acp::ToolKind {
         acp::ToolKind::Other
     }
 
-    fn initial_title(
-        &self,
-        _input: Result<Self::Input, serde_json::Value>,
-        _cx: &mut App,
-    ) -> SharedString {
+    fn initial_title(&self, _input: serde_json::Value, _cx: &mut App) -> SharedString {
         "Scripted Result".into()
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        let mut schema =
+            language_model::tool_schema::root_schema_for::<ScriptedResultToolInput>().to_value();
+        language_model::tool_schema::normalize_tool_schema(&mut schema);
+        schema
     }
 
     fn run(
         self: Arc<Self>,
-        input: ToolInput<Self::Input>,
+        input: ToolInput<serde_json::Value>,
         _event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<String, String>> {
+    ) -> Task<Result<AgentToolOutput, AgentToolOutput>> {
         cx.spawn(async move |_cx| {
-            let input = input.recv().await.map_err(|error| error.to_string())?;
+            let input: ScriptedResultToolInput =
+                serde_json::from_value(input.recv().await?).map_err(anyhow::Error::from)?;
+            let output = AgentToolOutput {
+                raw_output: serde_json::to_value(&input.result).map_err(anyhow::Error::from)?,
+                llm_output: input
+                    .result
+                    .iter()
+                    .map(|part| match part {
+                        ScriptedResultPart::Text(text) => {
+                            LanguageModelToolResultContent::Text(text.as_str().into())
+                        }
+                        ScriptedResultPart::Image(source) => {
+                            LanguageModelToolResultContent::Image(image(source))
+                        }
+                    })
+                    .collect(),
+            };
             if input.is_error {
-                Err(input.result)
+                Err(output)
             } else {
-                Ok(input.result)
+                Ok(output)
             }
         })
+    }
+
+    fn replay(
+        &self,
+        _input: serde_json::Value,
+        _output: serde_json::Value,
+        _event_stream: ToolCallEventStream,
+        _cx: &mut App,
+    ) -> Result<()> {
+        Ok(())
+    }
+}
+
+pub(super) fn image(source: &str) -> LanguageModelImage {
+    LanguageModelImage {
+        source: source.to_string().into(),
     }
 }
 
