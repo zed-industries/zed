@@ -61,7 +61,8 @@ pub use language_core::{
     serialize_regex,
 };
 pub use language_registry::{
-    LanguageLoader, LanguageName, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
+    LanguageLoader, LanguageName, LanguageRegistration, LanguageServerStatusUpdate, LoadedLanguage,
+    ServerHealth,
 };
 use lsp::{
     CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions, Uri,

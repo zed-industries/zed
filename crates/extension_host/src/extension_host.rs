@@ -1427,21 +1427,7 @@ impl ExtensionStore {
         self.proxy.remove_user_themes(themes_to_remove);
         self.proxy.remove_icon_themes(icon_themes_to_remove);
         self.proxy
-            .remove_languages(&languages_to_remove, &grammars_to_remove);
-
-        // Remove semantic token rules for languages being unloaded.
-        let semantic_token_rules_to_remove = languages_to_remove
-            .iter()
-            .filter(|language| !self.proxy.is_language_registered(language))
-            .chain(languages_to_readd.iter().map(|(name, _)| name))
-            .collect::<Vec<_>>();
-        if !semantic_token_rules_to_remove.is_empty() {
-            SettingsStore::update_global(cx, |store, cx| {
-                for language in semantic_token_rules_to_remove {
-                    store.remove_language_semantic_token_rules(language.as_ref(), cx);
-                }
-            });
-        }
+            .update_languages(&[], &grammars_to_remove, Vec::new());
 
         let mut grammars_to_add = Vec::new();
         let mut themes_to_add = Vec::new();
@@ -1518,6 +1504,10 @@ impl ExtensionStore {
         }
 
         self.proxy.register_grammars(grammars_to_add);
+        let languages_readded = languages_to_readd
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>();
         let languages_to_add = new_index
             .languages
             .iter()
@@ -1526,6 +1516,7 @@ impl ExtensionStore {
             .chain(languages_to_readd)
             .collect::<Vec<_>>();
         let mut semantic_token_rules_paths: Vec<(LanguageName, PathBuf)> = Vec::new();
+        let mut registrations = Vec::new();
         for (language_name, language) in languages_to_add {
             let mut language_path = self.installed_dir.clone();
             language_path.extend([
@@ -1534,12 +1525,12 @@ impl ExtensionStore {
             ]);
             let rules_path = language_path.join(SemanticTokenRules::FILE_NAME);
 
-            let registered = self.proxy.register_language(
-                language_name.clone(),
-                language.grammar.clone(),
-                language.matcher.clone(),
-                language.hidden,
-                Arc::new({
+            registrations.push(language::LanguageRegistration {
+                name: language_name.clone(),
+                grammar_name: language.grammar.clone(),
+                matcher: language.matcher.clone(),
+                hidden: language.hidden,
+                load: Arc::new({
                     let fs = self.fs.clone();
                     let query_files = language.query_files;
                     move || {
@@ -1549,14 +1540,35 @@ impl ExtensionStore {
                             .boxed()
                     }
                 }),
-            );
-            if !registered {
-                continue;
-            }
+            });
 
             semantic_token_rules_paths.push((language_name, rules_path));
         }
-
+        let registered = self
+            .proxy
+            .update_languages(&languages_to_remove, &[], registrations);
+        semantic_token_rules_paths = semantic_token_rules_paths
+            .into_iter()
+            .zip(registered)
+            .filter_map(|(path, registered)| registered.then_some(path))
+            .collect();
+        let semantic_token_rules_to_remove = languages_to_remove
+            .iter()
+            .filter(|language| {
+                !self.proxy.is_language_registered(language)
+                    || semantic_token_rules_paths
+                        .iter()
+                        .any(|(name, _)| name == *language)
+            })
+            .chain(languages_readded.iter())
+            .collect::<Vec<_>>();
+        if !semantic_token_rules_to_remove.is_empty() {
+            SettingsStore::update_global(cx, |store, cx| {
+                for language in semantic_token_rules_to_remove {
+                    store.remove_language_semantic_token_rules(language.as_ref(), cx);
+                }
+            });
+        }
         let fs = self.fs.clone();
         let wasm_host = self.wasm_host.clone();
         let root_dir = self.installed_dir.clone();
