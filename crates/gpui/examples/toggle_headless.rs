@@ -1,35 +1,37 @@
-#[cfg(target_os = "linux")]
+#![cfg_attr(target_family = "wasm", no_main)]
+
+#[cfg(not(target_family = "wasm"))]
 use std::{
     io::{self, BufRead as _},
     sync::mpsc,
     time::Duration,
 };
 
-#[cfg(target_os = "linux")]
+#[cfg(not(target_family = "wasm"))]
 use gpui::{
     AnyWindowHandle, App, AppContext as _, AsyncApp, Context, Entity, GraphicalEnvironment,
     QuitMode, Render, Subscription, TitlebarOptions, Window, WindowOptions, WindowingRequest, div,
     prelude::*,
 };
 
-#[cfg(target_os = "linux")]
+#[cfg(not(target_family = "wasm"))]
 struct Todo {
     message: String,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(not(target_family = "wasm"))]
 struct Todos {
     items: Vec<Entity<Todo>>,
     window: Option<AnyWindowHandle>,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(not(target_family = "wasm"))]
 struct TodoWindow {
     todos: Entity<Todos>,
     _todos_subscription: Subscription,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(not(target_family = "wasm"))]
 impl Render for TodoWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = self
@@ -50,15 +52,25 @@ impl Render for TodoWindow {
             .gap_2()
             .p_4()
             .child("Switchable display todos")
-            .child("Use the terminal: create <message>, ls, close, open, quit")
+            .child("Use the terminal: create [message], ls, close, open, quit")
             .when(rows.is_empty(), |view| {
-                view.child("No todos yet. Type `create buy milk` in the terminal.")
+                view.child("No todos yet. Type `create` in the terminal.")
             })
             .children(rows)
     }
 }
 
-#[cfg(target_os = "linux")]
+/// English, Chinese, Japanese and Korean for a word, then an emoji for it.
+#[cfg(not(target_family = "wasm"))]
+const SAMPLE_TODOS: [&str; 5] = [
+    "milk / 牛奶 / 牛乳 / 우유 🥛",
+    "apple / 苹果 / りんご / 사과 🍎",
+    "cat / 猫 / ねこ / 고양이 🐱",
+    "book / 书 / 本 / 책 📚",
+    "rain / 雨 / あめ / 비 🌧️",
+];
+
+#[cfg(not(target_family = "wasm"))]
 fn describe_todo(index: usize, todo: &Entity<Todo>, cx: &App) -> String {
     let todo_reference: &Todo = todo.read(cx);
     format!(
@@ -69,14 +81,17 @@ fn describe_todo(index: usize, todo: &Entity<Todo>, cx: &App) -> String {
     )
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(not(target_family = "wasm"))]
 fn print_todos(todos: &Entity<Todos>, cx: &App) {
+    if todos.read(cx).items.is_empty() {
+        println!("no todos");
+    }
     for (index, todo) in todos.read(cx).items.iter().enumerate() {
         println!("{}", describe_todo(index, todo, cx));
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(not(target_family = "wasm"))]
 fn open_window(todos: &Entity<Todos>, cx: &mut App) -> anyhow::Result<()> {
     if todos.read(cx).window.is_some() {
         return Ok(());
@@ -95,6 +110,8 @@ fn open_window(todos: &Entity<Todos>, cx: &mut App) -> anyhow::Result<()> {
             _todos_subscription: cx.observe(todos, |_, _, cx| cx.notify()),
         })
     })?;
+    // The window opens behind the terminal otherwise, because the command came from there.
+    handle.update(cx, |_, window, _| window.activate_window())?;
     todos.update(cx, |todos, _| todos.window = Some(handle.into()));
     Ok(())
 }
@@ -122,7 +139,26 @@ fn display_environment(arguments: &str) -> anyhow::Result<GraphicalEnvironment> 
     Ok(environment)
 }
 
-#[cfg(target_os = "linux")]
+/// Builds the environment for `open`: `SESSION=id`, or this process's session when not given.
+#[cfg(target_os = "windows")]
+fn display_environment(arguments: &str) -> anyhow::Result<GraphicalEnvironment> {
+    let mut environment = GraphicalEnvironment::detect();
+    for assignment in arguments.split_whitespace() {
+        let session = assignment
+            .strip_prefix("SESSION=")
+            .ok_or_else(|| anyhow::anyhow!("expected SESSION=id, got {assignment:?}"))?;
+        environment.session_id = Some(session.parse()?);
+    }
+    Ok(environment)
+}
+
+/// Builds the environment for `open`, which carries nothing on this platform.
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_family = "wasm")))]
+fn display_environment(_arguments: &str) -> anyhow::Result<GraphicalEnvironment> {
+    Ok(GraphicalEnvironment::detect())
+}
+
+#[cfg(not(target_family = "wasm"))]
 fn handle_command(
     command: &str,
     todos: &Entity<Todos>,
@@ -132,9 +168,16 @@ fn handle_command(
     match name {
         "ls" => print_todos(todos, cx),
         "create" => {
-            let todo = cx.new(|_| Todo {
-                message: arguments.to_owned(),
-            });
+            // A sample with CJK text and an emoji, so that drawing todos exercises color glyph
+            // rasterization, which uses the GPU devices a switch to windowed mode creates.
+            let count = todos.read(cx).items.len();
+            let sample = SAMPLE_TODOS[count % SAMPLE_TODOS.len()];
+            let message = if arguments.trim().is_empty() {
+                sample.to_owned()
+            } else {
+                format!("{arguments} · {sample}")
+            };
+            let todo = cx.new(|_| Todo { message });
             todos.update(cx, |todos, cx| {
                 todos.items.push(todo);
                 println!("todo added, total {}", todos.items.len());
@@ -161,9 +204,15 @@ fn handle_command(
 }
 
 #[cfg(target_os = "linux")]
-const USAGE: &str = "commands: ls | create <message> | open [DISPLAY=… WAYLAND_DISPLAY=… XDG_RUNTIME_DIR=… XDG_ACTIVATION_TOKEN=…] | close | quit";
+const USAGE: &str = "commands: ls | create [message] | open [DISPLAY=… WAYLAND_DISPLAY=… XDG_RUNTIME_DIR=… XDG_ACTIVATION_TOKEN=…] | close | quit";
 
-#[cfg(target_os = "linux")]
+#[cfg(target_os = "windows")]
+const USAGE: &str = "commands: ls | create [message] | open [SESSION=…] | close | quit";
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_family = "wasm")))]
+const USAGE: &str = "commands: ls | create [message] | open | close | quit";
+
+#[cfg(not(target_family = "wasm"))]
 async fn run_command(
     command: String,
     todos: &Entity<Todos>,
@@ -184,14 +233,24 @@ async fn run_command(
             cx.update(|cx| open_window(todos, cx))?;
         }
     }
-    let compositor = cx.update(|cx| cx.compositor_name());
-    println!("mode: {compositor}");
+    let mode = cx.update(|cx| match cx.graphical_environment() {
+        None => "headless".to_owned(),
+        Some(_) => match cx.compositor_name() {
+            "" => "windowed".to_owned(),
+            compositor => compositor.to_owned(),
+        },
+    });
+    println!("mode: {mode}");
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(not(target_family = "wasm"))]
 fn main() {
-    gpui_platform::linux(gpui::WindowingModes::all())
+    #[cfg(target_os = "linux")]
+    let application = gpui_platform::linux(gpui::WindowingModes::all());
+    #[cfg(not(target_os = "linux"))]
+    let application = gpui_platform::application();
+    application
         .with_windowing(WindowingRequest::Headless)
         .with_quit_mode(QuitMode::Explicit)
         .run(|cx| {
@@ -246,9 +305,4 @@ fn main() {
             })
             .detach();
         });
-}
-
-#[cfg(not(target_os = "linux"))]
-fn main() {
-    eprintln!("the switchable_display example is only supported on Linux");
 }

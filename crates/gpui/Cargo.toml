@@ -133,7 +133,12 @@ scap = { workspace = true, optional = true }
 
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { workspace = true, features = ["Win32_Foundation", "Win32_System_Power"] }
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Power",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_Threading",
+] }
 
 
 [dev-dependencies]
@@ -267,5 +272,5 @@ name = "view_example"
 path = "examples/view_example/view_example_main.rs"
 
 [[example]]
-name = "switchable_display"
-path = "examples/switchable_display.rs"
+name = "toggle_headless"
+path = "examples/toggle_headless.rs"

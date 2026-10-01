@@ -202,12 +202,47 @@ pub struct GraphicalEnvironment {
     pub activation_token: Option<String>,
 }
 
+/// The graphical session to connect to: the Windows session whose desktop windows appear on.
+///
+/// A process can only show windows in its own session, so switching to windowed mode fails if
+/// this names another one, for example when a process started over SSH is asked to show a
+/// window on the desktop.
+#[cfg(target_os = "windows")]
+#[derive(Clone, Debug, Default)]
+pub struct GraphicalEnvironment {
+    /// The session ID, as `ProcessIdToSessionId` reports it. `None` means this process's own
+    /// session.
+    pub session_id: Option<u32>,
+}
+
+#[cfg(target_os = "windows")]
+impl GraphicalEnvironment {
+    /// Returns the environment of this process's session.
+    pub fn detect() -> Self {
+        let mut session_id = 0;
+        // SAFETY: `session_id` is a valid pointer for the call's duration.
+        let result = unsafe {
+            windows::Win32::System::RemoteDesktop::ProcessIdToSessionId(
+                windows::Win32::System::Threading::GetCurrentProcessId(),
+                &mut session_id,
+            )
+        };
+        Self {
+            session_id: result.is_ok().then_some(session_id),
+        }
+    }
+
+    /// Does nothing on this platform: programs inherit the session of the process that
+    /// starts them.
+    pub fn apply_to(&self, _command: &mut std::process::Command) {}
+}
+
 /// The graphical session to connect to. Carries nothing yet on this platform.
-#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "windows")))]
 #[derive(Clone, Debug, Default)]
 pub struct GraphicalEnvironment;
 
-#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "windows")))]
 impl GraphicalEnvironment {
     /// Returns the environment of this process's graphical session.
     pub fn detect() -> Self {
