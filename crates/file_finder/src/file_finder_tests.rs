@@ -4717,6 +4717,7 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
     search_entries
 }
 
+#[cfg(test)]
 fn select_range_in_active_editor(
     workspace: &Entity<Workspace>,
     cx: &mut VisualTestContext,
