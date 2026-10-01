@@ -128,7 +128,7 @@ In this example:
 
 The `"..."` entry acts as a wildcard that includes any registered language server you haven't explicitly mentioned. Servers you list by name keep their position, and `"..."` fills in the remaining ones at that point in the list. Servers prefixed with `!` are excluded entirely. This means that if a new language server extension is installed or a new server is registered for a language, `"..."` will automatically include it. If you want full control over which servers are enabled, omit `"..."` — only the servers you list by name will be used.
 
-Extensions can also mark a language server as disabled by default for some of its languages. Such servers are never included by `"..."`, regardless of your configuration, and only start when you list them by name, e.g. `["my-alternative-server", "..."]`.
+Extensions can also mark a language server as [disabled by default](./extensions/languages.md#opt-in-language-servers) for some of its languages. Such servers are never included by `"..."`, regardless of your configuration, and only start when you list them by name, e.g. `["my-alternative-server", "..."]`.
 
 #### Examples
 
