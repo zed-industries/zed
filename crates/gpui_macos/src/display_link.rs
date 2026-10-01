@@ -62,6 +62,7 @@ use std::{
     collections::{BTreeMap, btree_map},
     ffi::c_void,
     sync::{Arc, Mutex, MutexGuard, PoisonError},
+    time::Duration,
 };
 
 static REGISTRY: Mutex<Registry> = Mutex::new(Registry::new());
@@ -83,10 +84,10 @@ impl Registry {
 struct DisplayEntry {
     link: sys::DisplayLink,
     running: bool,
-    subscribers: Vec<Subscriber>,
+    subscribers: Vec<FrameSubscriber>,
 }
 
-struct Subscriber {
+struct FrameSubscriber {
     id: SubscriberId,
     frame_requests: DispatchRetained<DispatchSource>,
     signal: Arc<PlatformFrameSignal>,
@@ -126,13 +127,26 @@ fn debug_assert_main_thread() {
 
 unsafe extern "C" fn display_link_output_callback(
     _display_link_out: *mut sys::CVDisplayLink,
-    _current_time: *const sys::CVTimeStamp,
+    current_time: *const sys::CVTimeStamp,
     _output_time: *const sys::CVTimeStamp,
     _flags_in: i64,
     _flags_out: *mut i64,
     display_id: *mut c_void,
 ) -> i32 {
-    let signal_at = PlatformFrameSignal::capture(Instant::now);
+    let signal_at = PlatformFrameSignal::capture(|| {
+        // Instant cannot be constructed from Mach ticks, so sample both clock domains.
+        let current_host_time = unsafe { sys::CVGetCurrentHostTime() };
+        let received_at = Instant::now();
+        let host_clock_frequency = unsafe { sys::CVGetHostClockFrequency() };
+        // SAFETY: CoreVideo owns this timestamp for the lifetime of the callback.
+        let current_time = unsafe { current_time.as_ref() };
+        frame_request_instant(
+            current_time,
+            current_host_time,
+            host_clock_frequency,
+            received_at,
+        )
+    });
     let display_id = display_id as usize as CGDirectDisplayID;
     let registry = lock_registry();
     if let Some(entry) = registry.displays.get(&display_id) {
@@ -144,6 +158,32 @@ unsafe extern "C" fn display_link_output_callback(
         }
     }
     0
+}
+
+/// Maps a CoreVideo host timestamp using a paired clock sample.
+///
+/// Invalid timestamps or clock conversions fall back to callback receipt time.
+fn frame_request_instant(
+    timestamp: Option<&sys::CVTimeStamp>,
+    current_host_time: u64,
+    host_clock_frequency: f64,
+    received_at: Instant,
+) -> Instant {
+    let Some(timestamp) = timestamp.filter(|timestamp| {
+        timestamp.version == 0 && timestamp.flags & sys::kCVTimeStampHostTimeValid != 0
+    }) else {
+        return received_at;
+    };
+    if !host_clock_frequency.is_finite() || host_clock_frequency <= 0.0 {
+        return received_at;
+    }
+    current_host_time
+        .checked_sub(timestamp.host_time)
+        .and_then(|elapsed_ticks| {
+            Duration::try_from_secs_f64(elapsed_ticks as f64 / host_clock_frequency).ok()
+        })
+        .and_then(|elapsed| received_at.checked_sub(elapsed))
+        .unwrap_or(received_at)
 }
 
 fn subscribe(
@@ -188,7 +228,7 @@ fn subscribe(
                 anyhow::bail!("display link registry entry vanished for display {display_id}");
             }
         };
-        entry.subscribers.push(Subscriber {
+        entry.subscribers.push(FrameSubscriber {
             id: subscriber_id,
             frame_requests,
             signal,
@@ -430,6 +470,8 @@ mod sys {
     #[link(name = "CoreVideo", kind = "framework")]
     #[allow(improper_ctypes, unknown_lints, clippy::duplicated_attributes)]
     unsafe extern "C" {
+        pub fn CVGetCurrentHostTime() -> u64;
+        pub fn CVGetHostClockFrequency() -> f64;
         pub fn CVDisplayLinkCreateWithActiveCGDisplays(
             display_link_out: *mut *mut CVDisplayLink,
         ) -> i32;
@@ -495,6 +537,96 @@ mod sys {
                 anyhow::ensure!(code == 0, "could not stop display link, code: {}", code);
                 Ok(())
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_timestamp_preserves_request_age_at_different_clock_rates() {
+        let received_at = Instant::now();
+        for (host_time, current_host_time, frequency, age) in [
+            (
+                4_000_000,
+                10_000_000,
+                1_000_000_000.0,
+                Duration::from_millis(6),
+            ),
+            (
+                1_760_000,
+                2_000_000,
+                24_000_000.0,
+                Duration::from_millis(10),
+            ),
+        ] {
+            let timestamp = timestamp(host_time);
+            assert_eq!(
+                frame_request_instant(Some(&timestamp), current_host_time, frequency, received_at),
+                received_at - age,
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_host_timestamps_fall_back_to_receipt_time() {
+        let received_at = Instant::now();
+        let valid = timestamp(1_000);
+        let mut missing_host_time = valid;
+        missing_host_time.flags = 0;
+        let mut unknown_version = valid;
+        unknown_version.version = 1;
+        for timestamp in [None, Some(&missing_host_time), Some(&unknown_version)] {
+            assert_eq!(
+                frame_request_instant(timestamp, 2_000, 1_000_000_000.0, received_at),
+                received_at,
+            );
+        }
+        assert_eq!(
+            frame_request_instant(Some(&valid), 999, 1_000_000_000.0, received_at),
+            received_at,
+        );
+        for frequency in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::MIN_POSITIVE] {
+            assert_eq!(
+                frame_request_instant(Some(&valid), 2_000, frequency, received_at),
+                received_at,
+            );
+        }
+    }
+
+    #[test]
+    fn core_video_host_clock_matches_mach_timebase() {
+        let before = unsafe { mach2::mach_time::mach_absolute_time() };
+        let host_time = unsafe { sys::CVGetCurrentHostTime() };
+        let after = unsafe { mach2::mach_time::mach_absolute_time() };
+        assert!((before..=after).contains(&host_time));
+
+        let mut timebase = mach2::mach_time::mach_timebase_info_data_t { numer: 0, denom: 0 };
+        assert_eq!(
+            unsafe { mach2::mach_time::mach_timebase_info(&mut timebase) },
+            0
+        );
+        assert!(timebase.numer > 0 && timebase.denom > 0);
+        let frequency = unsafe { sys::CVGetHostClockFrequency() };
+        assert!(frequency.is_finite() && frequency > 0.0);
+        let nanoseconds_per_second =
+            frequency * f64::from(timebase.numer) / f64::from(timebase.denom);
+        assert!((nanoseconds_per_second - 1_000_000_000.0).abs() < 1.0);
+    }
+
+    fn timestamp(host_time: u64) -> sys::CVTimeStamp {
+        sys::CVTimeStamp {
+            version: 0,
+            video_time_scale: 0,
+            video_time: 0,
+            host_time,
+            rate_scalar: 0.0,
+            video_refresh_period: 0,
+            smpte_time: sys::CVSMPTETime::default(),
+            flags: sys::kCVTimeStampHostTimeValid,
+            reserved: 0,
         }
     }
 }
