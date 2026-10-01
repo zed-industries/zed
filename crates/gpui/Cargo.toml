@@ -24,6 +24,9 @@ test-support = [
     "wayland",
     "x11",
     "proptest",
+    "dep:futures-concurrency",
+    "dep:postage",
+    "dep:web-time",
 ]
 bench-support = ["profiler", "dep:criterion", "dep:bench_metrics"]
 # Preserve the published feature name while consumers migrate to `bench-support`.
@@ -39,6 +42,8 @@ x11 = [
 ]
 screen-capture = [
     "scap",
+    "dep:objc2-core-foundation",
+    "dep:objc2-core-video",
 ]
 windows-manifest = ["dep:embed-resource"]
 profiler = ["dep:hdrhistogram"]
@@ -61,7 +66,7 @@ ctor.workspace = true
 derive_more.workspace = true
 etagere.workspace = true
 futures.workspace = true
-futures-concurrency.workspace = true
+futures-concurrency = { workspace = true, optional = true }
 gpui_macros.workspace = true
 gpui_shared_string.workspace = true
 http_client.workspace = true
@@ -72,7 +77,7 @@ log.workspace = true
 num_cpus = "1.13"
 parking = "2.0.0"
 parking_lot.workspace = true
-postage.workspace = true
+postage = { workspace = true, optional = true }
 proptest = { workspace = true, optional = true }
 chrono.workspace = true
 profiling.workspace = true
@@ -84,7 +89,6 @@ scheduler.workspace = true
 resvg.workspace = true
 usvg.workspace = true
 ttf-parser = "0.25"
-util_macros.workspace = true
 schemars.workspace = true
 seahash = "4.1"
 serde.workspace = true
@@ -102,10 +106,9 @@ waker-fn = "1.2.0"
 lyon = "1.0"
 pin-project = "1.1.10"
 spin.workspace = true
-pollster.workspace = true
 url.workspace = true
 uuid.workspace = true
-web-time.workspace = true
+web-time = { workspace = true, optional = true }
 heapless.workspace = true
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
@@ -114,6 +117,9 @@ async-channel = { version = "2.5.0", default-features = false }
 
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
 async-channel.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+pollster.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 getrandom = { version = "0.3.4", features = ["wasm_js"] }
@@ -124,8 +130,8 @@ uuid = { workspace = true, features = ["js"] }
 core-video.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-core-foundation.workspace = true
-objc2-core-video.workspace = true
+objc2-core-foundation = { workspace = true, optional = true }
+objc2-core-video = { workspace = true, optional = true }
 log.workspace = true
 objc2 = { workspace = true, optional = true }
 objc2-metal = { version = "0.3", optional = true }
@@ -146,12 +152,16 @@ backtrace.workspace = true
 bench_metrics = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
+futures-concurrency.workspace = true
+postage.workspace = true
+web-time.workspace = true
 gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
 gpui_util.workspace = true
 lyon = { version = "1.0", features = ["extra"] }
 rand.workspace = true
 scheduler = { workspace = true, features = ["test-support"] }
 unicode-segmentation.workspace = true
+util_macros.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 http_client = { workspace = true, features = ["test-support"] }

@@ -13,19 +13,17 @@ name = "auto_update_helper"
 path = "src/auto_update_helper.rs"
 doctest = false
 
-[dependencies]
+[target.'cfg(target_os = "windows")'.dependencies]
 anyhow.workspace = true
 log.workspace = true
 simplelog.workspace = true
-
-[target.'cfg(target_os = "windows")'.dependencies]
 scopeguard = "1.2"
 windows.workspace = true
 
 [target.'cfg(target_os = "windows")'.dev-dependencies]
 tempfile.workspace = true
 
-[build-dependencies]
+[target.'cfg(target_os = "windows")'.build-dependencies]
 windows_resources.workspace = true
 
 [package.metadata.docs.rs]

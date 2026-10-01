@@ -14,17 +14,18 @@ doctest = false
 
 [features]
 default = ["editing"]
-editing = ["dep:tree-sitter", "dep:tree-sitter-json"]
+editing = ["dep:tree-sitter", "dep:tree-sitter-json", "dep:serde_json"]
 
 [dependencies]
 anyhow.workspace = true
 tree-sitter = { workspace = true, features = ["wasm"], optional = true }
 tree-sitter-json = { workspace = true, optional = true }
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, optional = true }
 serde_json_lenient.workspace = true
 serde_path_to_error.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 unindent.workspace = true
 pretty_assertions.workspace = true

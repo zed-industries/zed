@@ -12,7 +12,7 @@ workspace = true
 doctest = false
 
 [features]
-octo-client = ["dep:octocrab", "dep:jsonwebtoken", "dep:tokio"]
+octo-client = ["dep:octocrab", "dep:jsonwebtoken", "dep:serde_json", "dep:tokio"]
 
 [dependencies]
 anyhow.workspace = true
@@ -33,9 +33,10 @@ octocrab = { workspace = true, features = [
 regex.workspace = true
 semver.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
 indoc.workspace = true
+serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }
