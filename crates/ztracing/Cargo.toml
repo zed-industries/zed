@@ -12,14 +12,22 @@ workspace = true
 doctest = false
 
 [features]
+tracing-tracy = ["dep:tracing-tracy", "dep:tracing-subscriber", "dep:zlog"]
 tracy = ["tracing-tracy", "tracy-client"]
-web = ["dep:async-channel", "dep:js-sys", "dep:wasm-bindgen", "dep:web-sys"]
+web = [
+    "dep:async-channel",
+    "dep:js-sys",
+    "dep:tracing-subscriber",
+    "dep:wasm-bindgen",
+    "dep:web-sys",
+    "dep:zlog",
+]
 
 [dependencies]
-zlog.workspace = true
+zlog = { workspace = true, optional = true }
 tracing.workspace = true
 
-tracing-subscriber.workspace = true
+tracing-subscriber = { workspace = true, optional = true }
 
 ztracing_macro.workspace = true
 

@@ -304,7 +304,7 @@ buffer_diff = { path = "crates/buffer_diff" }
 call = { path = "crates/call" }
 call_hierarchy = { path = "crates/call_hierarchy" }
 channel = { path = "crates/channel" }
-cli = { path = "crates/cli" }
+cli = { path = "crates/cli", default-features = false }
 client = { path = "crates/client" }
 clock = { path = "crates/clock" }
 cloud_api_client = { path = "crates/cloud_api_client" }
@@ -433,7 +433,7 @@ outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
 path = { path = "crates/path" }
 paths = { path = "crates/paths" }
-perf = { path = "tooling/perf" }
+perf = { path = "tooling/perf", default-features = false }
 picker = { path = "crates/picker" }
 picker_preview = { path = "crates/picker_preview" }
 platform_title_bar = { path = "crates/platform_title_bar" }

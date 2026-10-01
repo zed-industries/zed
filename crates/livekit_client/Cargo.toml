@@ -17,7 +17,7 @@ doctest = false
 name = "test_app"
 
 [features]
-test-support = ["collections/test-support", "gpui/test-support", "livekit_api/test-support"]
+test-support = ["collections/test-support", "gpui/test-support", "livekit_api/test-support", "dep:nanoid", "dep:postage"]
 
 [dependencies]
 anyhow.workspace = true
@@ -32,9 +32,9 @@ http_client_tls.workspace = true
 image.workspace = true
 livekit_api = { workspace = true, optional = true }
 log.workspace = true
-nanoid.workspace = true
+nanoid = { workspace = true, optional = true }
 parking_lot.workspace = true
-postage.workspace = true
+postage = { workspace = true, optional = true }
 rodio.workspace = true
 serde.workspace = true
 serde_urlencoded.workspace = true
@@ -45,6 +45,8 @@ util.workspace = true
 
 [target.'cfg(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd"))'.dependencies]
 livekit_api.workspace = true
+nanoid.workspace = true
+postage.workspace = true
 
 [target.'cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))'.dependencies]
 libwebrtc.workspace = true
@@ -68,6 +70,8 @@ collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 gpui_platform.workspace = true
 livekit_api = { workspace = true, features = ["test-support"] }
+nanoid.workspace = true
+postage.workspace = true
 simplelog.workspace = true
 
 [build-dependencies]

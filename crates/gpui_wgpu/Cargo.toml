@@ -36,11 +36,16 @@ swash.workspace = true
 unicode-bidi.workspace = true
 unicode-segmentation.workspace = true
 gpui_util.workspace = true
-wgpu.workspace = true
 
 # Optional: only needed on platforms with multiple font sources (e.g. Linux)
 # WARNING: If you change this, you must also publish a new version of zed-font-kit to crates.io
 font-kit = { workspace = true, optional = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+wgpu.workspace = true
+
+[target.'cfg(not(any(target_os = "linux", target_os = "freebsd")))'.dependencies]
+wgpu.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 web-sys = { workspace = true, features = ["HtmlCanvasElement"] }

@@ -16,6 +16,7 @@ doctest = false
 default = ["wayland", "x11"]
 test-support = ["gpui/test-support"]
 wayland = [
+    "dep:accesskit_unix",
     "gpui_wgpu",
     "ashpd/wayland",
 
@@ -32,6 +33,7 @@ wayland = [
     "gpui/wayland",
 ]
 x11 = [
+    "dep:accesskit_unix",
     "gpui_wgpu",
     "ashpd",
 
@@ -51,7 +53,7 @@ screen-capture = [
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 accesskit.workspace = true
-accesskit_unix.workspace = true
+accesskit_unix = { workspace = true, optional = true }
 anyhow.workspace = true
 bytemuck.workspace = true
 collections.workspace = true

@@ -24,11 +24,20 @@ undocumented_unsafe_blocks = "forbid"
 missing_safety_doc = "forbid"
 disallowed_methods = { level = "allow", priority = 1}
 
+[features]
+default = ["cli"]
+cli = ["dep:serde_json"]
+
 [dependencies]
 collections.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, optional = true }
 
 [lib]
 test = false
 doctest = false
+
+[[bin]]
+name = "perf"
+path = "src/main.rs"
+required-features = ["cli"]

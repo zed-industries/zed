@@ -19,8 +19,10 @@ indoc.workspace = true
 libsqlite3-sys.workspace = true
 log.workspace = true
 parking_lot.workspace = true
-pollster.workspace = true
 path.workspace = true
 sqlformat.workspace = true
 thread_local = "1.1.4"
 uuid.workspace = true
+
+[dev-dependencies]
+pollster.workspace = true
