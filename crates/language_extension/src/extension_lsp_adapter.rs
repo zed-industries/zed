@@ -306,12 +306,12 @@ impl LspAdapter for ExtensionLspAdapter {
     }
 
     fn enabled_by_default(&self) -> bool {
-        !self
+        self
             .extension
             .manifest()
             .language_servers
             .get(&self.language_server_id)
-            .is_some_and(|server| server.is_opt_in_for(&self.language_name))
+            .is_none_or(|server| !server.is_opt_in_for(&self.language_name))
     }
 
     async fn initialization_options(
