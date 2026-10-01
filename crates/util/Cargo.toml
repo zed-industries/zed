@@ -26,10 +26,10 @@ dunce.workspace = true
 globset.workspace = true
 itertools.workspace = true
 rand = { workspace = true, optional = true }
-regex.workspace = true
+regex = { workspace = true, features = ["unicode-bool", "unicode-gencat"] }
 rust-embed.workspace = true
-schemars.workspace = true
-serde.workspace = true
+schemars = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 tempfile = { workspace = true, optional = true }
@@ -65,7 +65,7 @@ which.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 which.workspace = true
-windows.workspace = true
+windows = { workspace = true, features = ["Win32_System_JobObjects"] }
 
 [dev-dependencies]
 rand.workspace = true

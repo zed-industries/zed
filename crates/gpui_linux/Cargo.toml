@@ -31,6 +31,7 @@ wayland = [
     "xkbcommon/wayland",
     "open",
     "gpui/wayland",
+    "uuid/v5",
 ]
 x11 = [
     "dep:accesskit_unix",

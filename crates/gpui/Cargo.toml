@@ -63,7 +63,7 @@ collections.workspace = true
 bench_metrics = { workspace = true, optional = true }
 criterion = { workspace = true, optional = true }
 ctor.workspace = true
-derive_more.workspace = true
+derive_more = { workspace = true, features = ["add", "add_assign", "mul", "mul_assign", "not"] }
 etagere.workspace = true
 futures.workspace = true
 futures-concurrency = { workspace = true, optional = true }
@@ -77,28 +77,36 @@ log.workspace = true
 num_cpus = "1.13"
 parking = "2.0.0"
 parking_lot.workspace = true
-postage = { workspace = true, optional = true }
+postage = { workspace = true, features = ["blocking"], optional = true }
 proptest = { workspace = true, optional = true }
-chrono.workspace = true
+chrono = { workspace = true, default-features = true }
 profiling.workspace = true
-rand.workspace = true
+rand = { workspace = true, features = ["small_rng", "thread_rng"] }
 raw-window-handle.workspace = true
-regex.workspace = true
+regex = { workspace = true, default-features = true }
 refineable.workspace = true
 scheduler.workspace = true
 resvg.workspace = true
 usvg.workspace = true
 ttf-parser = "0.25"
-schemars.workspace = true
+schemars = { workspace = true, features = ["derive"] }
 seahash = "4.1"
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 slotmap.workspace = true
 smallvec.workspace = true
 stacksafe = { workspace = true, optional = true }
 strum.workspace = true
 sum_tree.workspace = true
-taffy.workspace = true
+taffy = { workspace = true, features = [
+    "std",
+    "taffy_tree",
+    "flexbox",
+    "grid",
+    "block_layout",
+    "float_layout",
+    "content_size",
+] }
 thiserror.workspace = true
 gpui_util.workspace = true
 hdrhistogram = { workspace = true, optional = true }
@@ -107,16 +115,15 @@ lyon = "1.0"
 pin-project = "1.1.10"
 spin.workspace = true
 url.workspace = true
-uuid.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 web-time = { workspace = true, optional = true }
 heapless.workspace = true
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
-# Workspace inheritance would re-enable defaults, including blocking channel synchronization.
-async-channel = { version = "2.5.0", default-features = false }
+async-channel.workspace = true
 
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
-async-channel.workspace = true
+async-channel = { workspace = true, features = ["std"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 pollster.workspace = true
@@ -145,10 +152,8 @@ libc.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { workspace = true, features = [
-    "Win32_Foundation",
     "Win32_System_Power",
     "Win32_System_RemoteDesktop",
-    "Win32_System_Threading",
     "Win32_System_WindowsProgramming",
 ] }
 
@@ -159,12 +164,12 @@ bench_metrics = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 futures-concurrency.workspace = true
-postage.workspace = true
+postage = { workspace = true, features = ["blocking"] }
 web-time.workspace = true
 gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
 gpui_util.workspace = true
 lyon = { version = "1.0", features = ["extra"] }
-rand.workspace = true
+rand = { workspace = true, default-features = true }
 scheduler = { workspace = true, features = ["test-support"] }
 unicode-segmentation.workspace = true
 util_macros.workspace = true
@@ -176,7 +181,7 @@ reqwest_client = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
 wasm-bindgen.workspace = true
-web-sys = { workspace = true, features = ["console"] }
+web-sys.workspace = true
 
 [build-dependencies]
 embed-resource = { version = "3.0", optional = true }

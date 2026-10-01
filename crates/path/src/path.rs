@@ -8,8 +8,6 @@
 
 #[cfg(windows)]
 use anyhow::Context;
-#[cfg(any(windows, all(unix, not(target_family = "wasm"))))]
-use std::ffi::OsStr;
 #[cfg(all(unix, not(target_family = "wasm")))]
 use std::os::unix::prelude::OsStrExt;
 use std::{

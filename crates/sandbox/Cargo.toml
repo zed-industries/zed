@@ -51,7 +51,7 @@ http_proxy.workspace = true
 log.workspace = true
 # Used only by the `nixos-test` helper binary to parse its check list; gated
 # behind the `nixos-test` feature so normal builds don't pull it in.
-serde = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"], optional = true }
 serde_json = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]

@@ -18,11 +18,11 @@ schemars = ["dep:schemars"]
 
 [dependencies]
 anyhow.workspace = true
-aws-sdk-bedrockruntime = { workspace = true, features = ["behavior-version-latest"] }
+aws-sdk-bedrockruntime.workspace = true
 aws-smithy-types.workspace = true
 futures.workspace = true
 http_client.workspace = true
-schemars = { workspace = true, optional = true }
+schemars = { workspace = true, features = ["derive"], optional = true }
 serde.workspace = true
 serde_json.workspace = true
 strum.workspace = true

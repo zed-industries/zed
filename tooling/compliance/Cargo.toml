@@ -17,7 +17,7 @@ octo-client = ["dep:octocrab", "dep:jsonwebtoken", "dep:serde_json", "dep:tokio"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-derive_more.workspace = true
+derive_more = { workspace = true, features = ["display"] }
 futures.workspace = true
 itertools.workspace = true
 jsonwebtoken = { version = "10.2", features = ["use_pem"], optional = true }
@@ -32,7 +32,7 @@ octocrab = { workspace = true, features = [
 ], optional = true }
 regex.workspace = true
 semver.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 
