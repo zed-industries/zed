@@ -17,6 +17,7 @@ use wayland_client::{
     Proxy,
     protocol::{wl_callback, wl_output, wl_seat, wl_surface},
 };
+use wayland_protocols::ext::session_lock::v1::client::ext_session_lock_surface_v1;
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::xdg_popup;
@@ -141,6 +142,12 @@ pub enum WaylandSurfaceState {
     Xdg(WaylandXdgSurfaceState),
     LayerShell(WaylandLayerSurfaceState),
     Popup(WaylandPopupSurfaceState),
+    SessionLock(WaylandLockSurfaceState),
+}
+
+pub struct WaylandLockSurfaceState {
+    lock_surface: ext_session_lock_surface_v1::ExtSessionLockSurfaceV1,
+    lock: Rc<RefCell<super::client::SessionLock>>,
 }
 
 impl WaylandSurfaceState {
@@ -152,6 +159,39 @@ impl WaylandSurfaceState {
         popup_grab: Option<(u32, wl_seat::WlSeat)>,
         target_output: Option<wl_output::WlOutput>,
     ) -> anyhow::Result<Self> {
+        // For session lock windows, create a lock surface instead of a layer surface
+        if let WindowKind::LayerShell(options) = &params.kind
+            && options.namespace == super::layer_shell::SESSION_LOCK_NAMESPACE
+        {
+            let Some(manager) = globals.session_lock_manager.as_ref() else {
+                return Err(anyhow::anyhow!(
+                    "the compositor doesn't support ext-session-lock-v1"
+                ));
+            };
+            let Some(output) = target_output.as_ref() else {
+                return Err(anyhow::anyhow!(
+                    "a lock surface needs an output (set WindowOptions::display_id)"
+                ));
+            };
+            let mut lock = globals.session_lock.borrow_mut();
+            if lock.lock.is_none() {
+                lock.lock = Some(manager.lock(&globals.qh, ()));
+                lock.locked = false;
+            }
+            let lock_surface = lock.lock.as_ref().unwrap().get_lock_surface(
+                surface,
+                output,
+                &globals.qh,
+                surface.id(),
+            );
+            lock.surfaces += 1;
+            drop(lock);
+            return Ok(WaylandSurfaceState::SessionLock(WaylandLockSurfaceState {
+                lock_surface,
+                lock: globals.session_lock.clone(),
+            }));
+        }
+
         // For layer_shell windows, create a layer surface instead of an xdg surface
         if let WindowKind::LayerShell(options) = &params.kind {
             let Some(layer_shell) = globals.layer_shell.as_ref() else {
@@ -379,6 +419,9 @@ impl WaylandSurfaceState {
             WaylandSurfaceState::Popup(WaylandPopupSurfaceState { xdg_surface, .. }) => {
                 xdg_surface.ack_configure(serial);
             }
+            WaylandSurfaceState::SessionLock(WaylandLockSurfaceState { lock_surface, .. }) => {
+                lock_surface.ack_configure(serial);
+            }
         }
     }
 
@@ -406,7 +449,7 @@ impl WaylandSurfaceState {
             WaylandSurfaceState::Popup(WaylandPopupSurfaceState { xdg_surface, .. }) => {
                 Some(xdg_surface)
             }
-            WaylandSurfaceState::LayerShell(_) => None,
+            WaylandSurfaceState::LayerShell(_) | WaylandSurfaceState::SessionLock(_) => None,
         }
     }
 
@@ -432,6 +475,8 @@ impl WaylandSurfaceState {
             WaylandSurfaceState::Popup(WaylandPopupSurfaceState { xdg_surface, .. }) => {
                 xdg_surface.set_window_geometry(x, y, width, height);
             }
+            // Lock surfaces are sized by the compositor.
+            WaylandSurfaceState::SessionLock(_) => {}
         }
     }
 
@@ -532,6 +577,10 @@ impl WaylandSurfaceState {
                 // Role object before its xdg_surface, as with the toplevel above.
                 xdg_popup.destroy();
                 xdg_surface.destroy();
+            }
+            WaylandSurfaceState::SessionLock(WaylandLockSurfaceState { lock_surface, lock }) => {
+                lock_surface.destroy();
+                lock.borrow_mut().release();
             }
         }
     }
@@ -1337,6 +1386,26 @@ impl WaylandWindowStatePtr {
                 true
             }
             _ => false,
+        }
+    }
+
+    pub fn handle_lock_surface_event(&self, event: ext_session_lock_surface_v1::Event) {
+        if let ext_session_lock_surface_v1::Event::Configure {
+            serial,
+            width,
+            height,
+        } = event
+        {
+            let size = (width > 0 && height > 0).then(|| size(px(width as f32), px(height as f32)));
+            self.state.borrow_mut().in_progress_configure = Some(InProgressConfigure {
+                size,
+                fullscreen: false,
+                maximized: false,
+                resizing: false,
+                visibility: WindowVisibility::Visible,
+                tiling: Tiling::default(),
+            });
+            self.handle_xdg_surface_event(xdg_surface::Event::Configure { serial });
         }
     }
 
