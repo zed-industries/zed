@@ -9515,7 +9515,13 @@ mod tests {
             let draft = panel.ensure_draft(AgentThreadSource::AgentPanel, window, cx);
             assert_eq!(draft.entity_id(), conversation.entity_id());
             assert!(panel.draft_has_content(&conversation, cx));
-            cx.set_global(MaxIdleRetainedThreads(0));
+            AgentSettings::override_global(
+                AgentSettings {
+                    max_idle_retained_threads: 0,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
             panel.new_thread(&NewThread, window, cx);
             panel.cleanup_retained_threads(cx);
             assert!(
