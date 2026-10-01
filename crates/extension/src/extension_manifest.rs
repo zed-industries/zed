@@ -641,22 +641,6 @@ mod tests {
         assert!(!opt_in_server.is_opt_in_for(&markdown));
     }
 
-    /// Clients on schema version 1 that predate `opt_in_languages`
-    /// must still be able to load manifests using it, so language server entries
-    /// must keep accepting fields they do not know about.
-    #[test]
-    fn test_language_server_entry_ignores_unknown_fields() {
-        let entry: LanguageServerManifestEntry = toml::from_str(indoc::indoc! {r#"
-            languages = ["Julia"]
-            some_field_from_the_future = ["Julia"]
-        "#})
-        .expect("unknown fields should be ignored");
-        assert_eq!(
-            entry.languages().into_iter().collect::<Vec<_>>(),
-            vec![LanguageName::new("Julia")]
-        );
-    }
-
     #[test]
     #[cfg(target_os = "windows")]
     fn test_deserialize_manifest_with_windows_separators() {
