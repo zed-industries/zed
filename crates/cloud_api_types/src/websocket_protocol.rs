@@ -4,11 +4,6 @@ use serde::{Deserialize, Serialize};
 /// The version of the Cloud WebSocket protocol.
 pub const PROTOCOL_VERSION: u32 = 0;
 
-/// The Cloud WebSocket protocol version that opts into settings invalidations.
-///
-/// Existing clients keep using version 0 until settings-update delivery is supported.
-pub const SETTINGS_UPDATES_PROTOCOL_VERSION: u32 = 1;
-
 /// The name of the header used to indicate the protocol version in use.
 pub const PROTOCOL_VERSION_HEADER_NAME: &str = "x-zed-protocol-version";
 
