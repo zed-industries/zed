@@ -1,6 +1,6 @@
 use crate::{
-    LanguageModel, LanguageModelId, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderState, ZED_CLOUD_PROVIDER_ID,
+    LanguageModel, LanguageModelCompletionError, LanguageModelId, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderState, ZED_CLOUD_PROVIDER_ID, unavailable_error,
 };
 use collections::{BTreeMap, HashSet};
 use gpui::{App, Context, Entity, EventEmitter, Global, prelude::*};
@@ -46,16 +46,16 @@ impl std::fmt::Debug for ConfigurationError {
 pub struct LanguageModelRegistry {
     /// True if the user has *NO* default model configured in settings
     should_use_fallback: bool,
-    default_model: Option<ConfiguredModel>,
+    default_model: Option<LanguageModel>,
     /// This model is automatically configured by a user's environment after
     /// authenticating all providers. It's only used when `default_model` is not set.
-    available_fallback_model: Option<ConfiguredModel>,
-    inline_assistant_model: Option<ConfiguredModel>,
-    commit_message_model: Option<ConfiguredModel>,
-    thread_summary_model: Option<ConfiguredModel>,
-    compaction_model: Option<ConfiguredModel>,
+    available_fallback_model: Option<LanguageModel>,
+    inline_assistant_model: Option<LanguageModel>,
+    commit_message_model: Option<LanguageModel>,
+    thread_summary_model: Option<LanguageModel>,
+    compaction_model: Option<LanguageModel>,
     providers: BTreeMap<LanguageModelProviderId, Arc<dyn LanguageModelProvider>>,
-    inline_alternatives: Vec<Arc<dyn LanguageModel>>,
+    inline_alternatives: Vec<LanguageModel>,
     /// Set of installed extension IDs that provide language models.
     /// Used to determine which built-in providers should be hidden.
     installed_llm_extension_ids: HashSet<Arc<str>>,
@@ -92,19 +92,15 @@ impl FromStr for SelectedModel {
     }
 }
 
-#[derive(Clone)]
-pub struct ConfiguredModel {
-    pub provider: Arc<dyn LanguageModelProvider>,
-    pub model: Arc<dyn LanguageModel>,
-}
-
-impl ConfiguredModel {
-    pub fn is_same_as(&self, other: &ConfiguredModel) -> bool {
-        self.model.id() == other.model.id() && self.provider.id() == other.provider.id()
+impl LanguageModel {
+    /// Whether `other` is the same model from the same provider, regardless
+    /// of changes to its capabilities.
+    pub fn is_same_as(&self, other: &LanguageModel) -> bool {
+        self.id == other.id && self.provider_id == other.provider_id
     }
 
     pub fn is_provided_by_zed(&self) -> bool {
-        self.provider.id() == ZED_CLOUD_PROVIDER_ID
+        self.provider_id == ZED_CLOUD_PROVIDER_ID
     }
 }
 
@@ -133,26 +129,18 @@ impl LanguageModelRegistry {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    /// Installs a registry whose only provider is a fake, with its model as
+    /// the default, and returns the fake.
     pub fn test(cx: &mut App) -> Arc<crate::fake_provider::FakeLanguageModelProvider> {
         let fake_provider = Arc::new(crate::fake_provider::FakeLanguageModelProvider::default());
         let registry = cx.new(|cx| {
             let mut registry = Self::default();
             registry.register_provider(fake_provider.clone(), cx);
-            let model = fake_provider.provided_models(cx)[0].clone();
-            let configured_model = ConfiguredModel {
-                provider: fake_provider.clone(),
-                model,
-            };
-            registry.set_default_model(Some(configured_model), cx);
+            registry.set_default_model(Some(fake_provider.model("fake")), cx);
             registry
         });
         cx.set_global(GlobalLanguageModelRegistry(registry));
         fake_provider
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn fake_model(&self) -> Arc<dyn LanguageModel> {
-        self.default_model.as_ref().unwrap().model.clone()
     }
 
     pub fn set_should_use_fallback(&mut self, value: bool) {
@@ -258,7 +246,7 @@ impl LanguageModelRegistry {
 
     pub fn configuration_error(
         &self,
-        model: Option<ConfiguredModel>,
+        model: Option<LanguageModel>,
         cx: &App,
     ) -> Option<ConfigurationError> {
         let Some(model) = model else {
@@ -268,8 +256,11 @@ impl LanguageModelRegistry {
             return Some(ConfigurationError::ModelNotFound);
         };
 
-        if !model.provider.is_authenticated(cx) {
-            return Some(ConfigurationError::ProviderNotAuthenticated(model.provider));
+        let Some(provider) = self.provider(&model.provider_id) else {
+            return Some(ConfigurationError::ModelNotFound);
+        };
+        if !provider.is_authenticated(cx) {
+            return Some(ConfigurationError::ProviderNotAuthenticated(provider));
         }
 
         None
@@ -280,10 +271,7 @@ impl LanguageModelRegistry {
         self.providers.values().any(|p| p.is_authenticated(cx))
     }
 
-    pub fn available_models<'a>(
-        &'a self,
-        cx: &'a App,
-    ) -> impl Iterator<Item = Arc<dyn LanguageModel>> + 'a {
+    pub fn available_models<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = LanguageModel> + 'a {
         self.providers
             .values()
             .filter(|provider| provider.is_authenticated(cx))
@@ -292,6 +280,20 @@ impl LanguageModelRegistry {
 
     pub fn provider(&self, id: &LanguageModelProviderId) -> Option<Arc<dyn LanguageModelProvider>> {
         self.providers.get(id).cloned()
+    }
+
+    /// The registered provider that serves `model`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LanguageModelCompletionError::ModelUnavailable`] when no
+    /// provider is registered under the model's provider id.
+    pub fn provider_for_model(
+        &self,
+        model: &LanguageModel,
+    ) -> Result<Arc<dyn LanguageModelProvider>, LanguageModelCompletionError> {
+        self.provider(&model.provider_id)
+            .ok_or_else(|| unavailable_error(model))
     }
 
     pub fn select_default_model(&mut self, model: Option<&SelectedModel>, cx: &mut Context<Self>) {
@@ -344,10 +346,7 @@ impl LanguageModelRegistry {
     ) {
         self.inline_alternatives = alternatives
             .into_iter()
-            .flat_map(|alternative| {
-                self.select_model(&alternative, cx)
-                    .map(|configured_model| configured_model.model)
-            })
+            .flat_map(|alternative| self.select_model(&alternative, cx))
             .collect::<Vec<_>>();
     }
 
@@ -355,17 +354,14 @@ impl LanguageModelRegistry {
         &mut self,
         selected_model: &SelectedModel,
         cx: &mut Context<Self>,
-    ) -> Option<ConfiguredModel> {
-        let provider = self.provider(&selected_model.provider)?;
-        let model = provider
+    ) -> Option<LanguageModel> {
+        self.provider(&selected_model.provider)?
             .provided_models(cx)
-            .iter()
-            .find(|model| model.id() == selected_model.model)?
-            .clone();
-        Some(ConfiguredModel { provider, model })
+            .into_iter()
+            .find(|model| model.id == selected_model.model)
     }
 
-    pub fn set_default_model(&mut self, model: Option<ConfiguredModel>, cx: &mut Context<Self>) {
+    pub fn set_default_model(&mut self, model: Option<LanguageModel>, cx: &mut Context<Self>) {
         match (self.default_model(), model.as_ref()) {
             (Some(old), Some(new)) if old.is_same_as(new) => {}
             (None, None) => {}
@@ -385,19 +381,15 @@ impl LanguageModelRegistry {
             .iter()
             .filter(|provider| provider.is_authenticated(cx))
             .find_map(|provider| {
-                let model = provider
+                provider
                     .default_model(cx)
-                    .or_else(|| provider.recommended_models(cx).first().cloned())?;
-                Some(ConfiguredModel {
-                    provider: provider.clone(),
-                    model,
-                })
+                    .or_else(|| provider.recommended_models(cx).first().cloned())
             });
 
         self.set_fallback_model(fallback_model, cx);
     }
 
-    fn set_fallback_model(&mut self, model: Option<ConfiguredModel>, cx: &mut Context<Self>) {
+    fn set_fallback_model(&mut self, model: Option<LanguageModel>, cx: &mut Context<Self>) {
         if self.default_model.is_none() {
             match (self.available_fallback_model.as_ref(), model.as_ref()) {
                 (Some(old), Some(new)) if old.is_same_as(new) => {}
@@ -410,7 +402,7 @@ impl LanguageModelRegistry {
 
     pub fn set_inline_assistant_model(
         &mut self,
-        model: Option<ConfiguredModel>,
+        model: Option<LanguageModel>,
         cx: &mut Context<Self>,
     ) {
         match (self.inline_assistant_model.as_ref(), model.as_ref()) {
@@ -423,7 +415,7 @@ impl LanguageModelRegistry {
 
     pub fn set_commit_message_model(
         &mut self,
-        model: Option<ConfiguredModel>,
+        model: Option<LanguageModel>,
         cx: &mut Context<Self>,
     ) {
         match (self.commit_message_model.as_ref(), model.as_ref()) {
@@ -436,7 +428,7 @@ impl LanguageModelRegistry {
 
     pub fn set_thread_summary_model(
         &mut self,
-        model: Option<ConfiguredModel>,
+        model: Option<LanguageModel>,
         cx: &mut Context<Self>,
     ) {
         match (self.thread_summary_model.as_ref(), model.as_ref()) {
@@ -447,7 +439,7 @@ impl LanguageModelRegistry {
         self.thread_summary_model = model;
     }
 
-    pub fn set_compaction_model(&mut self, model: Option<ConfiguredModel>, cx: &mut Context<Self>) {
+    pub fn set_compaction_model(&mut self, model: Option<LanguageModel>, cx: &mut Context<Self>) {
         match (self.compaction_model.as_ref(), model.as_ref()) {
             (Some(old), Some(new)) if old.is_same_as(new) => {}
             (None, None) => {}
@@ -456,7 +448,7 @@ impl LanguageModelRegistry {
         self.compaction_model = model;
     }
 
-    pub fn default_model(&self) -> Option<ConfiguredModel> {
+    pub fn default_model(&self) -> Option<LanguageModel> {
         #[cfg(debug_assertions)]
         if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
             return None;
@@ -471,16 +463,13 @@ impl LanguageModelRegistry {
         })
     }
 
-    pub fn default_fast_model(&self, cx: &App) -> Option<ConfiguredModel> {
-        let configured = self.default_model()?;
-        let fast_model = configured.provider.default_fast_model(cx)?;
-        Some(ConfiguredModel {
-            provider: configured.provider,
-            model: fast_model,
-        })
+    pub fn default_fast_model(&self, cx: &App) -> Option<LanguageModel> {
+        let default_model = self.default_model()?;
+        self.provider(&default_model.provider_id)?
+            .default_fast_model(cx)
     }
 
-    pub fn inline_assistant_model(&self) -> Option<ConfiguredModel> {
+    pub fn inline_assistant_model(&self) -> Option<LanguageModel> {
         #[cfg(debug_assertions)]
         if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
             return None;
@@ -491,7 +480,7 @@ impl LanguageModelRegistry {
             .or_else(|| self.default_model())
     }
 
-    pub fn commit_message_model(&self, cx: &App) -> Option<ConfiguredModel> {
+    pub fn commit_message_model(&self, cx: &App) -> Option<LanguageModel> {
         #[cfg(debug_assertions)]
         if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
             return None;
@@ -503,7 +492,7 @@ impl LanguageModelRegistry {
             .or_else(|| self.default_model())
     }
 
-    pub fn thread_summary_model(&self, cx: &App) -> Option<ConfiguredModel> {
+    pub fn thread_summary_model(&self, cx: &App) -> Option<LanguageModel> {
         #[cfg(debug_assertions)]
         if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
             return None;
@@ -518,7 +507,7 @@ impl LanguageModelRegistry {
     /// Returns the configured compaction model without falling back through
     /// `default_fast_model`/`default_model`. Callers that want a fallback to
     /// the thread's primary model should handle `None` themselves.
-    pub fn compaction_model(&self) -> Option<ConfiguredModel> {
+    pub fn compaction_model(&self) -> Option<LanguageModel> {
         #[cfg(debug_assertions)]
         if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
             return None;
@@ -530,7 +519,7 @@ impl LanguageModelRegistry {
     /// The models to use for inline assists. Returns the union of the active
     /// model and all inline alternatives. When there are multiple models, the
     /// user will be able to cycle through results.
-    pub fn inline_alternative_models(&self) -> &[Arc<dyn LanguageModel>] {
+    pub fn inline_alternative_models(&self) -> &[LanguageModel] {
         &self.inline_alternatives
     }
 }
@@ -538,7 +527,7 @@ impl LanguageModelRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
+    use crate::fake_provider::FakeLanguageModelProvider;
 
     #[test]
     fn selected_model_allows_slashes_in_model_id() {
@@ -692,13 +681,7 @@ mod tests {
             let provider = registry.provider(&provider.id()).unwrap();
             let model = provider.default_model(cx).unwrap();
 
-            registry.set_fallback_model(
-                Some(ConfiguredModel {
-                    provider: provider.clone(),
-                    model: model.clone(),
-                }),
-                cx,
-            );
+            registry.set_fallback_model(Some(model.clone()), cx);
 
             assert!(registry.default_model().is_none());
             assert!(registry.inline_assistant_model().is_none());
@@ -706,8 +689,8 @@ mod tests {
             registry.set_should_use_fallback(true);
 
             let default_model = registry.default_model().unwrap();
-            assert_eq!(default_model.model.id(), model.id());
-            assert_eq!(default_model.provider.id(), provider.id());
+            assert_eq!(default_model.id, model.id);
+            assert_eq!(default_model.provider_id, provider.id());
             assert!(
                 registry
                     .inline_assistant_model()
@@ -719,14 +702,9 @@ mod tests {
     #[gpui::test]
     fn test_inline_assistant_model_precedence(cx: &mut App) {
         let registry = cx.new(|_| LanguageModelRegistry::default());
-        let provider = Arc::new(FakeLanguageModelProvider::default());
+        let provider = FakeLanguageModelProvider::default();
         let [inline_model, default_model, fallback_model] =
-            ["inline", "default", "fallback"].map(|model_id| ConfiguredModel {
-                provider: provider.clone(),
-                model: Arc::new(FakeLanguageModel::with_id_and_thinking(
-                    "fake", model_id, model_id, false,
-                )),
-            });
+            ["inline", "default", "fallback"].map(|model_id| provider.model(model_id));
 
         registry.update(cx, |registry, cx| {
             registry.set_should_use_fallback(true);

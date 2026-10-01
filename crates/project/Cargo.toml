@@ -51,6 +51,7 @@ dap.workspace = true
 encoding_rs.workspace = true
 extension.workspace = true
 fancy-regex.workspace = true
+file_content.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true

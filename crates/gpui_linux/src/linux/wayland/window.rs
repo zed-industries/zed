@@ -2151,7 +2151,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
-        self.borrow().renderer.gpu_specs().into()
+        self.borrow().renderer.gpu_specs()
     }
 
     fn play_system_bell(&self) {
