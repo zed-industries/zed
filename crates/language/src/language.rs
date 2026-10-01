@@ -10,7 +10,6 @@ mod available_languages;
 mod buffer;
 mod diagnostic;
 mod diagnostic_set;
-mod file_content;
 mod language_registry;
 
 pub mod language_settings;
@@ -108,9 +107,6 @@ pub use diagnostic::{
     Diagnostic, DiagnosticMessage, DiagnosticSourceKind, RelatedInformation, RelatedLocation,
 };
 pub use diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup};
-pub use file_content::{
-    ByteContent, DecodedText, FILE_ANALYSIS_BYTES, analyze_byte_content, decode_text, encode_text,
-};
 pub use language_registry::{
     BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry, QueryFile,
     QueryFileContents, QueryFiles,
