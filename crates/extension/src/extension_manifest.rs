@@ -50,6 +50,8 @@ impl fmt::Display for SchemaVersion {
 
 impl SchemaVersion {
     pub const ZERO: Self = Self(0);
+    /// The latest schema version supported by Zed.
+    pub const CURRENT: Self = Self(1);
 
     pub fn is_v0(&self) -> bool {
         self == &Self::ZERO
@@ -339,6 +341,10 @@ pub struct LanguageServerManifestEntry {
     pub language_ids: HashMap<LanguageName, String>,
     #[serde(default)]
     pub code_action_kinds: Option<Vec<lsp::CodeActionKind>>,
+    /// Languages (from `languages`) for which this language server is not started
+    /// unless the user explicitly lists it in their `language_servers` setting.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    opt_in_languages: BTreeSet<LanguageName>,
 }
 
 impl LanguageServerManifestEntry {
@@ -356,6 +362,17 @@ impl LanguageServerManifestEntry {
             None
         };
         self.languages.iter().cloned().chain(language)
+    }
+
+    /// Returns the languages for which the language server is disabled by default.
+    pub fn opt_in_languages(&self) -> &BTreeSet<LanguageName> {
+        &self.opt_in_languages
+    }
+
+    /// Returns whether the language server should only be started for the given
+    /// language when the user explicitly enables it.
+    pub fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        self.opt_in_languages.contains(language)
     }
 }
 
@@ -590,6 +607,57 @@ mod tests {
     }
 
     #[test]
+    fn test_deserialize_opt_in_languages() {
+        let manifest: ExtensionManifest = toml::from_str(indoc::indoc! {r#"
+            id = "test-manifest"
+            name = "Test Manifest"
+            version = "0.0.1"
+            schema_version = 1
+
+            [language_servers.default-server]
+            languages = ["Julia"]
+
+            [language_servers.opt-in-server]
+            languages = ["Julia", "Markdown"]
+            opt_in_languages = ["Julia"]
+        "#})
+        .expect("manifest should parse");
+
+        let julia = LanguageName::new("Julia");
+        let markdown = LanguageName::new("Markdown");
+
+        let default_server =
+            &manifest.language_servers[&LanguageServerName::new_static("default-server")];
+        assert!(default_server.opt_in_languages().is_empty());
+        assert!(!default_server.is_opt_in_for(&julia));
+
+        let opt_in_server =
+            &manifest.language_servers[&LanguageServerName::new_static("opt-in-server")];
+        assert_eq!(
+            opt_in_server.languages().into_iter().collect::<Vec<_>>(),
+            vec![julia.clone(), markdown.clone()]
+        );
+        assert!(opt_in_server.is_opt_in_for(&julia));
+        assert!(!opt_in_server.is_opt_in_for(&markdown));
+    }
+
+    /// Clients on schema version 1 that predate `opt_in_languages`
+    /// must still be able to load manifests using it, so language server entries
+    /// must keep accepting fields they do not know about.
+    #[test]
+    fn test_language_server_entry_ignores_unknown_fields() {
+        let entry: LanguageServerManifestEntry = toml::from_str(indoc::indoc! {r#"
+            languages = ["Julia"]
+            some_field_from_the_future = ["Julia"]
+        "#})
+        .expect("unknown fields should be ignored");
+        assert_eq!(
+            entry.languages().into_iter().collect::<Vec<_>>(),
+            vec![LanguageName::new("Julia")]
+        );
+    }
+
+    #[test]
     #[cfg(target_os = "windows")]
     fn test_deserialize_manifest_with_windows_separators() {
         use indoc::indoc;
@@ -603,5 +671,89 @@ mod tests {
         "#};
         let manifest: ExtensionManifest = toml::from_str(&content).expect("manifest should parse");
         assert_eq!(manifest.languages, vec![rel_path_buf("foo/bar")]);
+    }
+}
+
+/// Requirements for the manifest format of the next schema version.
+///
+/// These are skipped while [`SchemaVersion::CURRENT`] is below
+/// `NEXT_SCHEMA_VERSION` and fail once it is bumped, until the manifest
+/// format has been migrated.
+#[cfg(test)]
+mod next_schema_version_tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const NEXT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(2);
+
+    fn is_next_schema_version_supported() -> bool {
+        SchemaVersion::CURRENT >= NEXT_SCHEMA_VERSION
+    }
+
+    fn parse_manifest(language_server: &str) -> Result<ExtensionManifest, toml::de::Error> {
+        toml::from_str(&format!(
+            indoc::indoc! {r#"
+                id = "test-manifest"
+                name = "Test Manifest"
+                version = "0.0.1"
+                schema_version = {}
+
+                [language_servers.my-server]
+                {}
+            "#},
+            NEXT_SCHEMA_VERSION, language_server
+        ))
+    }
+
+    #[test]
+    fn test_language_server_languages_must_not_be_a_list() {
+        if !is_next_schema_version_supported() {
+            return;
+        }
+
+        assert!(
+            parse_manifest(indoc::indoc! {r#"
+                languages = ["Julia", "Markdown"]
+                language_ids = { Julia = "julia" }
+                opt_in_languages = ["Julia"]
+            "#})
+            .is_err(),
+            "`languages`, `language_ids` and `opt_in_languages` must be folded \
+            into a single `languages` map on schema version {NEXT_SCHEMA_VERSION}",
+        );
+    }
+
+    #[test]
+    fn test_language_server_languages_are_a_map() {
+        if !is_next_schema_version_supported() {
+            return;
+        }
+
+        let manifest = parse_manifest(indoc::indoc! {r#"
+            [language_servers.my-server.languages]
+            Julia = { language_id = "julia", enabled_by_default = false }
+            Markdown = {}
+        "#})
+        .unwrap_or_else(|error| {
+            panic!(
+                "language server languages must be a map keyed by language name \
+                on schema version {NEXT_SCHEMA_VERSION}: {error}"
+            )
+        });
+
+        let julia = LanguageName::new("Julia");
+        let markdown = LanguageName::new("Markdown");
+        let entry = &manifest.language_servers[&LanguageServerName::new_static("my-server")];
+        assert_eq!(
+            entry.languages().into_iter().collect::<Vec<_>>(),
+            vec![julia.clone(), markdown.clone()]
+        );
+        assert_eq!(
+            entry.language_ids.get(&julia).map(String::as_str),
+            Some("julia")
+        );
+        assert!(entry.is_opt_in_for(&julia));
+        assert!(!entry.is_opt_in_for(&markdown));
     }
 }

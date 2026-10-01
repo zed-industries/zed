@@ -338,6 +338,7 @@ pub struct CachedLspAdapter {
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     language_ids: HashMap<LanguageName, String>,
+    pub enabled_by_default: bool,
     pub adapter: Arc<dyn LspAdapter>,
     cached_binary: Arc<ServerBinaryCache>,
 }
@@ -355,6 +356,7 @@ impl Debug for CachedLspAdapter {
                 &self.disk_based_diagnostics_progress_token,
             )
             .field("language_ids", &self.language_ids)
+            .field("enabled_by_default", &self.enabled_by_default)
             .finish_non_exhaustive()
     }
 }
@@ -365,12 +367,14 @@ impl CachedLspAdapter {
         let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources();
         let disk_based_diagnostics_progress_token = adapter.disk_based_diagnostics_progress_token();
         let language_ids = adapter.language_ids();
+        let enabled_by_default = adapter.enabled_by_default();
 
         Arc::new(CachedLspAdapter {
             name,
             disk_based_diagnostic_sources,
             disk_based_diagnostics_progress_token,
             language_ids,
+            enabled_by_default,
             adapter,
             cached_binary: Default::default(),
         })
@@ -660,6 +664,12 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         HashMap::default()
     }
 
+    /// Whether the `...` wildcard in the `language_servers` setting includes this
+    /// language server. If `false`, it only starts when listed explicitly.
+    fn enabled_by_default(&self) -> bool {
+        true
+    }
+
     /// Support custom initialize params.
     fn prepare_initialize_params(
         &self,
@@ -927,6 +937,7 @@ pub struct FakeLspAdapter {
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub disk_based_diagnostics_sources: Vec<String>,
     pub language_server_binary: LanguageServerBinary,
+    pub enabled_by_default: bool,
 
     pub capabilities: lsp::ServerCapabilities,
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
@@ -1554,6 +1565,7 @@ impl Default for FakeLspAdapter {
                 arguments: vec![],
                 env: Default::default(),
             },
+            enabled_by_default: true,
             label_for_completion: None,
         }
     }
@@ -1654,6 +1666,10 @@ impl LspAdapter for FakeLspAdapter {
     ) -> Option<CodeLabel> {
         let label_for_completion = self.label_for_completion.as_ref()?;
         label_for_completion(item, language)
+    }
+
+    fn enabled_by_default(&self) -> bool {
+        self.enabled_by_default
     }
 
     fn is_extension(&self) -> bool {

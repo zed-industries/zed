@@ -305,6 +305,15 @@ impl LspAdapter for ExtensionLspAdapter {
             .unwrap_or_default()
     }
 
+    fn enabled_by_default(&self) -> bool {
+        !self
+            .extension
+            .manifest()
+            .language_servers
+            .get(&self.language_server_id)
+            .is_some_and(|server| server.is_opt_in_for(&self.language_name))
+    }
+
     async fn initialization_options(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
