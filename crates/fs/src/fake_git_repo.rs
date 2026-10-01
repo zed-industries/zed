@@ -5,6 +5,7 @@ use anyhow::{Context as _, Result, bail};
 use async_channel::Sender;
 use collections::{HashMap, HashSet};
 use futures::FutureExt as _;
+use futures::channel::oneshot;
 use futures::future::{self, BoxFuture, join_all};
 use git::repository::GitCommitTemplate;
 use git::{
@@ -44,8 +45,8 @@ pub struct FakeGitRepository {
 
 #[derive(Debug, Clone)]
 pub struct FakeCommitSnapshot {
-    pub head_contents: HashMap<RepoPath, String>,
-    pub index_contents: HashMap<RepoPath, String>,
+    pub head_contents: HashMap<RepoPath, Vec<u8>>,
+    pub index_contents: HashMap<RepoPath, Vec<u8>>,
     pub sha: String,
 }
 
@@ -60,12 +61,13 @@ pub struct FakeGitRepositoryState {
     pub commit_history: Vec<FakeCommitSnapshot>,
     pub event_emitter: async_channel::Sender<PathBuf>,
     pub unmerged_paths: HashMap<RepoPath, UnmergedStatus>,
-    pub head_contents: HashMap<RepoPath, String>,
-    pub index_contents: HashMap<RepoPath, String>,
+    pub head_contents: HashMap<RepoPath, Vec<u8>>,
+    pub index_contents: HashMap<RepoPath, Vec<u8>>,
     // everything in commit contents is in oids
     pub merge_base_contents: HashMap<RepoPath, Oid>,
-    pub oids: HashMap<Oid, String>,
+    pub oids: HashMap<Oid, Vec<u8>>,
     pub blames: HashMap<RepoPath, Blame>,
+    pub blames_at_revision: HashMap<(RepoPath, Oid), Blame>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
     /// List of remotes, keys are names and values are URLs
@@ -80,16 +82,19 @@ pub struct FakeGitRepositoryState {
     pub commit_data: HashMap<Oid, FakeCommitDataEntry>,
     pub stash_entries: GitStash,
     pub commit_template: Option<GitCommitTemplate>,
+    pub blob_read_gate: Option<FakeBlobReadGate>,
 }
 
 impl FakeGitRepositoryState {
     pub fn new(event_emitter: async_channel::Sender<PathBuf>) -> Self {
         FakeGitRepositoryState {
             event_emitter,
+            blob_read_gate: None,
             head_contents: Default::default(),
             index_contents: Default::default(),
             unmerged_paths: Default::default(),
             blames: Default::default(),
+            blames_at_revision: Default::default(),
             current_branch_name: Default::default(),
             branches: Default::default(),
             simulated_index_write_error_message: Default::default(),
@@ -107,6 +112,96 @@ impl FakeGitRepositoryState {
             stash_entries: Default::default(),
             commit_template: None,
         }
+    }
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct FakeBlobReadGate(Arc<Mutex<BlobReadGateState>>);
+
+#[derive(Default, Debug)]
+struct BlobReadGateState {
+    open: bool,
+    peak: usize,
+    next_id: u64,
+    waiters: Vec<Waiter>,
+}
+
+#[derive(Debug)]
+struct Waiter {
+    id: u64,
+    oid: Oid,
+    sender: oneshot::Sender<()>,
+}
+
+impl FakeBlobReadGate {
+    async fn wait(&self, oid: Oid) {
+        let (_guard, receiver) = {
+            let mut inner = self.0.lock();
+            if inner.open {
+                return;
+            }
+            let id = inner.next_id;
+            inner.next_id += 1;
+            let (sender, receiver) = oneshot::channel();
+            inner.waiters.push(Waiter { id, oid, sender });
+            inner.peak = inner.peak.max(inner.waiters.len());
+            (
+                WaiterGuard {
+                    state: self.0.clone(),
+                    id,
+                },
+                receiver,
+            )
+        };
+        receiver.await.ok();
+    }
+
+    pub fn peak_concurrent(&self) -> usize {
+        self.0.lock().peak
+    }
+
+    pub fn waiting(&self) -> usize {
+        self.0.lock().waiters.len()
+    }
+
+    pub fn is_waiting(&self, oid: Oid) -> bool {
+        self.0.lock().waiters.iter().any(|waiter| waiter.oid == oid)
+    }
+
+    pub fn release(&self, oid: Oid) -> bool {
+        let mut inner = self.0.lock();
+        let Some(position) = inner.waiters.iter().position(|waiter| waiter.oid == oid) else {
+            return false;
+        };
+        let waiter = inner.waiters.remove(position);
+        drop(inner);
+        waiter.sender.send(()).ok();
+        true
+    }
+
+    pub fn open(&self) {
+        let waiters = {
+            let mut inner = self.0.lock();
+            inner.open = true;
+            std::mem::take(&mut inner.waiters)
+        };
+        for waiter in waiters {
+            waiter.sender.send(()).ok();
+        }
+    }
+}
+
+struct WaiterGuard {
+    state: Arc<Mutex<BlobReadGateState>>,
+    id: u64,
+}
+
+impl Drop for WaiterGuard {
+    fn drop(&mut self) {
+        self.state
+            .lock()
+            .waiters
+            .retain(|waiter| waiter.id != self.id);
     }
 }
 
@@ -168,25 +263,39 @@ impl GitRepository for FakeGitRepository {
         self.with_state_async(false, |state| Ok(state.commit_template.clone()))
     }
 
-    fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<String>> {
-        self.with_state_async(false, move |state| {
-            state.oids.get(&oid).cloned().context("oid does not exist")
-        })
+    fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<Vec<u8>>> {
+        let content_and_gate = self.with_state_async(false, move |state| {
+            Ok((state.oids.get(&oid).cloned(), state.blob_read_gate.clone()))
+        });
+        async move {
+            let (content, gate) = content_and_gate.await?;
+            if let Some(gate) = gate {
+                gate.wait(oid).await;
+            }
+            content.context("oid does not exist")
+        }
         .boxed()
     }
 
     fn load_commit(
         &self,
         _commit: String,
+        _ignore_shallow_boundary: bool,
         _cx: AsyncApp,
     ) -> BoxFuture<'_, Result<git::repository::CommitDiff>> {
-        async { Ok(git::repository::CommitDiff { files: Vec::new() }) }.boxed()
+        async {
+            Ok(git::repository::CommitDiff {
+                files: Vec::new(),
+                is_shallow_boundary: false,
+            })
+        }
+        .boxed()
     }
 
     fn set_index_text(
         &self,
         path: RepoPath,
-        content: Option<String>,
+        content: Option<Vec<u8>>,
         _env: Arc<HashMap<String, String>>,
         _is_executable: bool,
     ) -> BoxFuture<'_, anyhow::Result<()>> {
@@ -217,7 +326,7 @@ impl GitRepository for FakeGitRepository {
                     .filter_map(|path| {
                         let path_in_repo = path.strip_prefix(workdir_path).ok()?;
                         let path_in_repo = RelPath::new(path_in_repo, PathStyle::local()).ok()?;
-                        let content = String::from_utf8(self.fs.read_file_sync(path).ok()?).ok()?;
+                        let content = self.fs.read_file_sync(path).ok()?;
                         Some((RepoPath::from_rel_path(&path_in_repo), content))
                     })
                     .collect::<HashMap<_, _>>()
@@ -259,7 +368,10 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn load_revisions(&self, revisions: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {
+    fn load_revisions(
+        &self,
+        revisions: Vec<String>,
+    ) -> BoxFuture<'_, Result<Vec<Option<Vec<u8>>>>> {
         let fut = self.with_state_async(false, move |state| {
             Ok(revisions
                 .into_iter()
@@ -269,7 +381,14 @@ impl GitRepository for FakeGitRepository {
                     match prefix {
                         "" => state.index_contents.get(&repo_path).cloned(),
                         "HEAD" => state.head_contents.get(&repo_path).cloned(),
-                        _ => None,
+                        _ if state.refs.get("HEAD").map(String::as_str) == Some(prefix) => {
+                            state.head_contents.get(&repo_path).cloned()
+                        }
+                        _ => state
+                            .commit_history
+                            .iter()
+                            .find(|snapshot| snapshot.sha == prefix)
+                            .and_then(|snapshot| snapshot.head_contents.get(&repo_path).cloned()),
                     }
                 })
                 .collect())
@@ -389,7 +508,7 @@ impl GitRepository for FakeGitRepository {
             .collect::<Vec<_>>();
 
         // Load working copy files.
-        let git_files: HashMap<RepoPath, (String, bool)> = self
+        let git_files: HashMap<RepoPath, (Vec<u8>, bool)> = self
             .fs
             .files()
             .iter()
@@ -404,11 +523,7 @@ impl GitRepository for FakeGitRepository {
                         ignore::Match::Whitelist(_) => break,
                     }
                 }
-                let content = self
-                    .fs
-                    .read_file_sync(path)
-                    .ok()
-                    .map(|content| String::from_utf8(content).unwrap())?;
+                let content = self.fs.read_file_sync(path).ok()?;
                 let repo_path = RelPath::new(repo_path, PathStyle::local()).ok()?;
                 Some((RepoPath::from_rel_path(&repo_path), (content, is_ignored)))
             })
@@ -989,6 +1104,20 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn blame_at_revision(
+        &self,
+        path: RepoPath,
+        revision: Oid,
+    ) -> BoxFuture<'_, Result<git::blame::Blame>> {
+        self.with_state_async(false, move |state| {
+            state
+                .blames_at_revision
+                .get(&(path.clone(), revision))
+                .with_context(|| format!("failed to get blame for {path:?} at {revision}"))
+                .cloned()
+        })
+    }
+
     fn stage_paths(
         &self,
         paths: Vec<RepoPath>,
@@ -1003,7 +1132,9 @@ impl GitRepository for FakeGitRepository {
                         .parent()
                         .unwrap()
                         .join(&path.as_std_path());
-                    Box::pin(async move { (path.clone(), self.fs.load(&abs_path).await.ok()) })
+                    Box::pin(
+                        async move { (path.clone(), self.fs.load_bytes(&abs_path).await.ok()) },
+                    )
                 })
                 .collect::<Vec<_>>();
             let contents = join_all(contents).await;
@@ -1040,6 +1171,15 @@ impl GitRepository for FakeGitRepository {
     fn stash_paths(
         &self,
         _paths: Vec<RepoPath>,
+        _message: Option<String>,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        unimplemented!()
+    }
+
+    fn stash_staged(
+        &self,
+        _message: Option<String>,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
@@ -1176,11 +1316,11 @@ impl GitRepository for FakeGitRepository {
         diff: git::repository::DiffStatType,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<git::status::GitDiffStat>> {
-        fn count_lines(s: &str) -> u32 {
-            if s.is_empty() {
+        fn count_lines(bytes: &[u8]) -> u32 {
+            if bytes.is_empty() {
                 0
             } else {
-                s.lines().count() as u32
+                String::from_utf8_lossy(bytes).lines().count() as u32
             }
         }
 
@@ -1200,7 +1340,7 @@ impl GitRepository for FakeGitRepository {
         let path_prefixes = path_prefixes.to_vec();
 
         let workdir_path = self.dot_git_path.parent().unwrap().to_path_buf();
-        let worktree_files: HashMap<RepoPath, String> = self
+        let worktree_files: HashMap<RepoPath, Vec<u8>> = self
             .fs
             .files()
             .iter()
@@ -1209,11 +1349,7 @@ impl GitRepository for FakeGitRepository {
                 if repo_path.starts_with(".git") {
                     return None;
                 }
-                let content = self
-                    .fs
-                    .read_file_sync(path)
-                    .ok()
-                    .and_then(|bytes| String::from_utf8(bytes).ok())?;
+                let content = self.fs.read_file_sync(path).ok()?;
                 let repo_path = RelPath::new(repo_path, PathStyle::local()).ok()?;
                 Some((RepoPath::from_rel_path(&repo_path), content))
             })

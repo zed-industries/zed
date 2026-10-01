@@ -116,6 +116,16 @@ linux() {
     mkdir -p "$HOME/.local/zed$suffix.app"
     tar -xzf "$temp/zed-linux-$arch.tar.gz" -C "$HOME/.local/"
 
+    zed_editor="$HOME/.local/zed$suffix.app/libexec/zed-editor"
+    if [ -f "$zed_editor" ] && command -v ldd >/dev/null 2>&1; then
+        missing="$(ldd "$zed_editor" 2>/dev/null | sed -n 's/^[[:space:]]*\(.*\) => not found$/\1/p')"
+        if [ -n "$missing" ]; then
+            echo "Warning: your system is missing libraries that Zed needs:"
+            echo "$missing" | sed 's/^/    /'
+            echo "Install them with your package manager, or Zed will fail to start."
+        fi
+    fi
+
     # Setup ~/.local directories
     mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
 

@@ -32,13 +32,13 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true
+log.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
 picker.workspace = true
 picker_preview.workspace = true
 project.workspace = true
 regex.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
@@ -60,8 +60,6 @@ gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 lsp.workspace = true
 pretty_assertions.workspace = true
+proto.workspace = true
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
-
-[package.metadata.cargo-machete]
-ignored = ["tracing"]

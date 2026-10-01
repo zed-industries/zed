@@ -8,6 +8,7 @@ license = "GPL-3.0-or-later"
 [lib]
 path = "src/feature_flags_macros.rs"
 proc-macro = true
+doctest = false
 
 [lints]
 workspace = true

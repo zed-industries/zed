@@ -28,6 +28,7 @@ use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
+use platform_title_bar::apply_title_bar_insets;
 use project::{AgentId, AgentServerStore};
 use settings::Settings as _;
 use theme::ActiveTheme;
@@ -618,6 +619,8 @@ impl ThreadsArchiveView {
                 highlight_positions,
             } => {
                 let id = SharedString::from(format!("archive-entry-{}", ix));
+                let color = cx.theme().colors();
+                let button_hover_bg = color.element_background;
 
                 let is_focused = self.selection == Some(ix);
                 let is_hovered = self.hovered_index == Some(ix);
@@ -691,6 +694,7 @@ impl ThreadsArchiveView {
                     base.status(AgentThreadStatus::Running)
                         .action_slot(
                             IconButton::new("cancel-restore", IconName::Close)
+                                .hover_background(button_hover_bg)
                                 .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
                                 .tooltip(Tooltip::text("Cancel Restore"))
@@ -709,6 +713,7 @@ impl ThreadsArchiveView {
                 } else if is_archived {
                     base.action_slot(
                         IconButton::new("delete-thread", IconName::Trash)
+                            .hover_background(button_hover_bg)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .tooltip({
@@ -747,6 +752,7 @@ impl ThreadsArchiveView {
                 } else {
                     base.action_slot(
                         IconButton::new("archive-thread", IconName::Archive)
+                            .hover_background(button_hover_bg)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .tooltip({
@@ -857,7 +863,7 @@ impl ThreadsArchiveView {
             settings::SidebarSide::Left
         );
         let sidebar_on_right = !sidebar_on_left;
-        let not_fullscreen = !window.is_fullscreen();
+        let not_fullscreen = !window.is_fullscreen() && !window.is_simple_fullscreen();
         let traffic_lights = cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
         let left_window_controls = !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
         let right_window_controls =
@@ -869,7 +875,12 @@ impl ThreadsArchiveView {
         h_flex()
             .h(header_height)
             .map(|header| match window.window_decorations() {
-                Decorations::Client { .. } => header.mt(px(-1.)),
+                Decorations::Client { .. } => apply_title_bar_insets(
+                    header,
+                    left_window_controls,
+                    right_window_controls,
+                    false,
+                ),
                 Decorations::Server => header.mt_px().pb_px(),
             })
             .when(left_window_controls, |this| {

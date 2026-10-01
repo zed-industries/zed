@@ -253,125 +253,8 @@ impl Peer {
             }
         };
 
-        let response_channels = connection_state.response_channels.clone();
-        let stream_response_channels = connection_state.stream_response_channels.clone();
-        self.connections
-            .write()
-            .insert(connection_id, connection_state);
-
-        let incoming_rx = incoming_rx.filter_map(move |(incoming, received_at)| {
-            let response_channels = response_channels.clone();
-            let stream_response_channels = stream_response_channels.clone();
-            async move {
-                let message_id = incoming.id;
-                tracing::trace!(?incoming, "incoming message future: start");
-                let _end = util::defer(move || {
-                    tracing::trace!(%connection_id, message_id, "incoming message future: end");
-                });
-
-                if let Some(responding_to) = incoming.responding_to {
-                    tracing::trace!(
-                        %connection_id,
-                        message_id,
-                        responding_to,
-                        "incoming response: received"
-                    );
-                    let response_channel =
-                        response_channels.lock().as_mut()?.remove(&responding_to);
-                    let terminal_stream_response = matches!(
-                        &incoming.payload,
-                        Some(proto::envelope::Payload::Error(_))
-                            | Some(proto::envelope::Payload::EndStream(_))
-                    );
-                    let stream_response_channel = if terminal_stream_response {
-                        stream_response_channels
-                            .lock()
-                            .as_mut()?
-                            .remove(&responding_to)
-                    } else {
-                        stream_response_channels
-                            .lock()
-                            .as_ref()?
-                            .get(&responding_to)
-                            .cloned()
-                    };
-
-                    if let Some(tx) = response_channel {
-                        let requester_resumed = oneshot::channel();
-                        if let Err(error) = tx.send((incoming, received_at, requester_resumed.0)) {
-                            tracing::trace!(
-                                %connection_id,
-                                message_id,
-                                responding_to = responding_to,
-                                ?error,
-                                "incoming response: request future dropped",
-                            );
-                        }
-
-                        tracing::trace!(
-                            %connection_id,
-                            message_id,
-                            responding_to,
-                            "incoming response: waiting to resume requester"
-                        );
-                        let _ = requester_resumed.1.await;
-                        tracing::trace!(
-                            %connection_id,
-                            message_id,
-                            responding_to,
-                            "incoming response: requester resumed"
-                        );
-                    } else if let Some(tx) = stream_response_channel {
-                        let requester_resumed = oneshot::channel();
-                        if let Err(error) = tx.unbounded_send((Ok(incoming), requester_resumed.0)) {
-                            tracing::debug!(
-                                %connection_id,
-                                message_id,
-                                responding_to = responding_to,
-                                ?error,
-                                "incoming stream response: request future dropped",
-                            );
-                            // The consumer has gone away, so drop the bookkeeping
-                            // for this stream rather than letting it accumulate
-                            // every subsequent message until a terminal frame.
-                            if let Some(channels) = stream_response_channels.lock().as_mut() {
-                                channels.remove(&responding_to);
-                            }
-                        } else {
-                            let _ = requester_resumed.1.await;
-                        }
-                    } else {
-                        let message_type = proto::build_typed_envelope(
-                            connection_id.into(),
-                            received_at,
-                            incoming,
-                        )
-                        .map(|p| p.payload_type_name());
-                        tracing::warn!(
-                            %connection_id,
-                            message_id,
-                            responding_to,
-                            message_type,
-                            "incoming response: unknown request"
-                        );
-                    }
-
-                    None
-                } else {
-                    tracing::trace!(%connection_id, message_id, "incoming message: received");
-                    proto::build_typed_envelope(connection_id.into(), received_at, incoming)
-                        .or_else(|| {
-                            tracing::error!(
-                                %connection_id,
-                                message_id,
-                                "unable to construct a typed envelope"
-                            );
-                            None
-                        })
-                }
-            }
-        });
-        (connection_id, handle_io, incoming_rx.boxed())
+        let incoming_rx = self.register_connection(connection_id, connection_state, incoming_rx);
+        (connection_id, handle_io, incoming_rx)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -704,6 +587,134 @@ impl Peer {
         Ok(())
     }
 
+    #[inline(never)]
+    fn register_connection(
+        &self,
+        connection_id: ConnectionId,
+        connection_state: ConnectionState,
+        incoming_rx: mpsc::Receiver<(proto::Envelope, Instant)>,
+    ) -> BoxStream<'static, Box<dyn AnyTypedEnvelope>> {
+        let response_channels = connection_state.response_channels.clone();
+        let stream_response_channels = connection_state.stream_response_channels.clone();
+        self.connections
+            .write()
+            .insert(connection_id, connection_state);
+
+        let incoming_rx = incoming_rx.filter_map(move |(incoming, received_at)| {
+            let response_channels = response_channels.clone();
+            let stream_response_channels = stream_response_channels.clone();
+            async move {
+                let message_id = incoming.id;
+                tracing::trace!(?incoming, "incoming message future: start");
+                let _end = util::defer(move || {
+                    tracing::trace!(%connection_id, message_id, "incoming message future: end");
+                });
+
+                if let Some(responding_to) = incoming.responding_to {
+                    tracing::trace!(
+                        %connection_id,
+                        message_id,
+                        responding_to,
+                        "incoming response: received"
+                    );
+                    let response_channel =
+                        response_channels.lock().as_mut()?.remove(&responding_to);
+                    let terminal_stream_response = matches!(
+                        &incoming.payload,
+                        Some(proto::envelope::Payload::Error(_))
+                            | Some(proto::envelope::Payload::EndStream(_))
+                    );
+                    let stream_response_channel = if terminal_stream_response {
+                        stream_response_channels
+                            .lock()
+                            .as_mut()?
+                            .remove(&responding_to)
+                    } else {
+                        stream_response_channels
+                            .lock()
+                            .as_ref()?
+                            .get(&responding_to)
+                            .cloned()
+                    };
+
+                    if let Some(tx) = response_channel {
+                        let requester_resumed = oneshot::channel();
+                        if let Err(error) = tx.send((incoming, received_at, requester_resumed.0)) {
+                            tracing::trace!(
+                                %connection_id,
+                                message_id,
+                                responding_to = responding_to,
+                                ?error,
+                                "incoming response: request future dropped",
+                            );
+                        }
+
+                        tracing::trace!(
+                            %connection_id,
+                            message_id,
+                            responding_to,
+                            "incoming response: waiting to resume requester"
+                        );
+                        let _ = requester_resumed.1.await;
+                        tracing::trace!(
+                            %connection_id,
+                            message_id,
+                            responding_to,
+                            "incoming response: requester resumed"
+                        );
+                    } else if let Some(tx) = stream_response_channel {
+                        let requester_resumed = oneshot::channel();
+                        if let Err(error) = tx.unbounded_send((Ok(incoming), requester_resumed.0)) {
+                            tracing::debug!(
+                                %connection_id,
+                                message_id,
+                                responding_to = responding_to,
+                                ?error,
+                                "incoming stream response: request future dropped",
+                            );
+                            // The consumer has gone away, so drop the bookkeeping
+                            // for this stream rather than letting it accumulate
+                            // every subsequent message until a terminal frame.
+                            if let Some(channels) = stream_response_channels.lock().as_mut() {
+                                channels.remove(&responding_to);
+                            }
+                        } else {
+                            let _ = requester_resumed.1.await;
+                        }
+                    } else {
+                        let message_type = proto::build_typed_envelope(
+                            connection_id.into(),
+                            received_at,
+                            incoming,
+                        )
+                        .map(|p| p.payload_type_name());
+                        tracing::warn!(
+                            %connection_id,
+                            message_id,
+                            responding_to,
+                            message_type,
+                            "incoming response: unknown request"
+                        );
+                    }
+
+                    None
+                } else {
+                    tracing::trace!(%connection_id, message_id, "incoming message: received");
+                    proto::build_typed_envelope(connection_id.into(), received_at, incoming)
+                        .or_else(|| {
+                            tracing::error!(
+                                %connection_id,
+                                message_id,
+                                "unable to construct a typed envelope"
+                            );
+                            None
+                        })
+                }
+            }
+        });
+        incoming_rx.boxed()
+    }
+
     fn connection_state(&self, connection_id: ConnectionId) -> Result<ConnectionState> {
         let connections = self.connections.read();
         let connection = connections
@@ -829,7 +840,7 @@ mod tests {
                     peer.respond(receipt, proto::Ack {})?
                 } else if let Some(envelope) = envelope.downcast_ref::<TypedEnvelope<proto::Test>>()
                 {
-                    peer.respond(envelope.receipt(), envelope.payload.clone())?
+                    peer.respond(envelope.receipt(), envelope.payload)?
                 } else {
                     panic!("unknown message type");
                 }

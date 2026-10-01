@@ -31,37 +31,51 @@ pub enum SymbolKind {
     TypeParameter,
 }
 
-impl SymbolKind {
-    pub fn from_proto(i32: i32) -> Self {
-        match i32 {
-            1 => SymbolKind::File,
-            2 => SymbolKind::Module,
-            3 => SymbolKind::Namespace,
-            4 => SymbolKind::Package,
-            5 => SymbolKind::Class,
-            6 => SymbolKind::Method,
-            7 => SymbolKind::Property,
-            8 => SymbolKind::Field,
-            9 => SymbolKind::Constructor,
-            10 => SymbolKind::Enum,
-            11 => SymbolKind::Interface,
-            12 => SymbolKind::Function,
-            13 => SymbolKind::Variable,
-            14 => SymbolKind::Constant,
-            15 => SymbolKind::String,
-            16 => SymbolKind::Number,
-            17 => SymbolKind::Boolean,
-            18 => SymbolKind::Array,
-            19 => SymbolKind::Object,
-            20 => SymbolKind::Key,
-            21 => SymbolKind::Null,
-            22 => SymbolKind::EnumMember,
-            23 => SymbolKind::Struct,
-            24 => SymbolKind::Event,
-            25 => SymbolKind::Operator,
-            26 => SymbolKind::TypeParameter,
-            _ => SymbolKind::Null,
+macro_rules! proto_mapping {
+    ($($kind:ident = $value:literal),* $(,)?) => {
+        pub fn to_proto(self) -> i32 {
+            match self {
+                $(Self::$kind => $value,)*
+            }
         }
+
+        pub fn from_proto(value: i32) -> Self {
+            match value {
+                $($value => Self::$kind,)*
+                _ => Self::Null,
+            }
+        }
+    };
+}
+
+impl SymbolKind {
+    proto_mapping! {
+        File = 1,
+        Module = 2,
+        Namespace = 3,
+        Package = 4,
+        Class = 5,
+        Method = 6,
+        Property = 7,
+        Field = 8,
+        Constructor = 9,
+        Enum = 10,
+        Interface = 11,
+        Function = 12,
+        Variable = 13,
+        Constant = 14,
+        String = 15,
+        Number = 16,
+        Boolean = 17,
+        Array = 18,
+        Object = 19,
+        Key = 20,
+        Null = 21,
+        EnumMember = 22,
+        Struct = 23,
+        Event = 24,
+        Operator = 25,
+        TypeParameter = 26,
     }
 }
 

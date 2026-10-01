@@ -318,21 +318,19 @@ impl AnyAgentTool for ContextServerTool {
         format_mcp_initial_title(&self.tool.name, &input).into()
     }
 
-    fn input_schema(
-        &self,
-        format: language_model::LanguageModelToolSchemaFormat,
-    ) -> Result<serde_json::Value> {
+    fn input_schema(&self) -> serde_json::Value {
         let mut schema = self.tool.input_schema.clone();
-        language_model::tool_schema::adapt_schema_to_format(&mut schema, format)?;
-        Ok(match schema {
+        schema = match schema {
             serde_json::Value::Null => {
-                serde_json::json!({ "type": "object", "properties": [] })
+                serde_json::json!({ "type": "object", "properties": {} })
             }
             serde_json::Value::Object(map) if map.is_empty() => {
-                serde_json::json!({ "type": "object", "properties": [] })
+                serde_json::json!({ "type": "object", "properties": {} })
             }
             _ => schema,
-        })
+        };
+        language_model::tool_schema::normalize_tool_schema(&mut schema);
+        schema
     }
 
     fn run(

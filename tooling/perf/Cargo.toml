@@ -6,8 +6,6 @@ edition.workspace = true
 license = "Apache-2.0"
 description = "A tool for measuring Zed test performance, with too many Clippy lints"
 
-[lib]
-
 # Some personal lint preferences :3
 [lints.rust]
 missing_docs = "warn"
@@ -30,3 +28,7 @@ disallowed_methods = { level = "allow", priority = 1}
 collections.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[lib]
+test = false
+doctest = false

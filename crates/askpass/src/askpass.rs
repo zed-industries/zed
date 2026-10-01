@@ -42,8 +42,14 @@ pub enum AskPassResult {
     Timedout,
 }
 
+type PasswordPrompt = (
+    String,
+    oneshot::Sender<EncryptedPassword>,
+    oneshot::Receiver<()>,
+);
+
 pub struct AskPassDelegate {
-    tx: mpsc::UnboundedSender<(String, oneshot::Sender<EncryptedPassword>)>,
+    tx: mpsc::UnboundedSender<PasswordPrompt>,
     executor: BackgroundExecutor,
     _task: Task<()>,
 }
@@ -56,10 +62,26 @@ impl AskPassDelegate {
         + Sync
         + 'static,
     ) -> Self {
-        let (tx, mut rx) = mpsc::unbounded::<(String, oneshot::Sender<_>)>();
+        Self::new_with_cancellation(cx, move |prompt, response_sender, _cancellation, cx| {
+            password_prompt(prompt, response_sender, cx)
+        })
+    }
+
+    pub fn new_with_cancellation(
+        cx: &mut AsyncApp,
+        password_prompt: impl Fn(
+            String,
+            oneshot::Sender<EncryptedPassword>,
+            oneshot::Receiver<()>,
+            &mut AsyncApp,
+        ) + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        let (tx, mut rx) = mpsc::unbounded::<PasswordPrompt>();
         let task = cx.spawn(async move |cx: &mut AsyncApp| {
-            while let Some((prompt, channel)) = rx.next().await {
-                password_prompt(prompt, channel, cx);
+            while let Some((prompt, response_sender, cancellation)) = rx.next().await {
+                password_prompt(prompt, response_sender, cancellation, cx);
             }
         });
         Self {
@@ -69,12 +91,17 @@ impl AskPassDelegate {
         }
     }
 
-    pub fn ask_password(&mut self, prompt: String) -> Task<Option<EncryptedPassword>> {
+    pub fn ask_password(&self, prompt: String) -> Task<Option<EncryptedPassword>> {
         let mut this_tx = self.tx.clone();
         self.executor.spawn(async move {
-            let (tx, rx) = oneshot::channel();
-            this_tx.send((prompt, tx)).await.ok()?;
-            rx.await.ok()
+            let (response_sender, response_receiver) = oneshot::channel();
+            let (cancellation_sender, cancellation_receiver) = oneshot::channel();
+            this_tx
+                .send((prompt, response_sender, cancellation_receiver))
+                .await
+                .ok()?;
+            let _cancellation_sender = cancellation_sender;
+            response_receiver.await.ok()
         })
     }
 }
@@ -98,7 +125,7 @@ impl AskPassSession {
     /// This will create a new AskPassSession.
     /// You must retain this session until the master process exits.
     #[must_use]
-    pub async fn new(executor: BackgroundExecutor, mut delegate: AskPassDelegate) -> Result<Self> {
+    pub async fn new(executor: BackgroundExecutor, delegate: AskPassDelegate) -> Result<Self> {
         #[cfg(target_os = "windows")]
         let secret = std::sync::Arc::new(std::sync::Mutex::new(None));
 
@@ -505,15 +532,23 @@ fn generate_gpg_wrapper_script(
         .context("Failed to shell-escape gpg passphrase prompt")?;
 
     // The wrapper only intervenes when git asks gpg to *sign* (e.g. `gpg -bsau
-    // <key>`); other invocations like `--verify` run unchanged. For signing we
-    // first try plain gpg so gpg-agent/keychain can supply a cached or empty
-    // passphrase silently, and only fall back to asking Zed (loopback mode, fd
-    // 3) when that fails, e.g. the "Inappropriate ioctl for device" case with no
-    // TTY for pinentry.
+    // <key>`); other invocations like `--verify` run unchanged. Signing runs in
+    // three stages, most silent first, so every pinentry configuration works
+    // without Zed getting in the way:
+    //   1. `--pinentry-mode error`: succeeds only via gpg-agent's passphrase
+    //      cache or an unprotected key; guaranteed to never prompt anywhere.
+    //   2. Default pinentry mode: lets the configured pinentry run. GUI
+    //      pinentries (e.g. pinentry-mac reading the macOS Keychain) need no
+    //      TTY and can sign silently or show their native dialog, exactly like
+    //      terminal git; TTY pinentries fail fast ("Inappropriate ioctl for
+    //      device") because git spawns gpg without a TTY.
+    //   3. Loopback mode with the passphrase from Zed's askpass modal (fd 3),
+    //      for setups where gpg cannot prompt at all.
+    //      (e.g. when gpg agent's `pinentry-program` is not configured)
     //
     // git streams the payload on stdin (readable once) and reads the signature
-    // from stdout, so we buffer stdin to replay it into both attempts and buffer
-    // the first attempt's output, forwarding it only if it succeeds. The
+    // from stdout, so we buffer stdin to replay it into each attempt and buffer
+    // each attempt's output, forwarding it only if it succeeds. The
     // passphrase goes to fd 3 via a pipe.
     Ok(format!(
         r#"#!/bin/sh
@@ -533,7 +568,7 @@ if [ -z "${{is_signing}}" ]; then
     exec {gpg_program} "$@"
 fi
 
-# Signing. Buffer stdin (the payload) and the first attempt's output
+# Signing. Buffer stdin (the payload) and each attempt's output
 # so we can retry cleanly on failure without git seeing partial output.
 tmpdir=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmpdir"' EXIT
@@ -542,17 +577,28 @@ signature="$tmpdir/signature"
 status="$tmpdir/status"
 cat > "$payload" || exit 1
 
-# First try letting gpg-agent/keychain supply the passphrase without any
-# interactive pinentry. If that succeeds (cached passphrase)
-# forward its output and we're done, so Zed never shows a modal.
+# Stage 1: fully silent. Only succeeds if gpg-agent already has the passphrase
+# cached or the key is unprotected; `--pinentry-mode error` forbids launching
+# any pinentry, so this can never prompt anywhere.
 if {gpg_program} --pinentry-mode error "$@" < "$payload" > "$signature" 2> "$status"; then
     cat "$status" >&2
     cat "$signature"
     exit 0
 fi
 
-# The silent attempt failed: ask Zed for the passphrase, then hand it to gpg on
-# fd 3 using loopback mode so no pinentry/terminal is required.
+# Stage 2: let gpg launch the configured pinentry, matching terminal git. GUI
+# pinentries work without a TTY and may fetch the passphrase from an OS
+# keychain silently (or show their native dialog); TTY pinentries fail fast
+# with "Inappropriate ioctl for device" since gpg has no TTY here.
+if {gpg_program} "$@" < "$payload" > "$signature" 2> "$status"; then
+    cat "$status" >&2
+    cat "$signature"
+    exit 0
+fi
+
+# Stage 3: gpg cannot obtain the passphrase on its own. Ask Zed for it, then
+# hand it to gpg on fd 3 using loopback mode so no pinentry/terminal is
+# required.
 passphrase=$(printf '%s\0' {prompt} | {askpass_program} --askpass={askpass_socket} 2>/dev/null)
 printf '%s\n' "$passphrase" |
 {gpg_program} --pinentry-mode loopback --passphrase-fd 3 "$@" 3<&0 < "$payload"
@@ -567,4 +613,34 @@ fn find_gpg_program() -> Option<std::path::PathBuf> {
     ["gpg", "gpg2"]
         .into_iter()
         .find_map(|candidate| which::which(candidate).ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    async fn dropping_password_request_cancels_prompt(cx: &mut TestAppContext) {
+        let (prompt_sender, mut prompt_receiver) = mpsc::unbounded();
+        let delegate = AskPassDelegate::new_with_cancellation(
+            &mut cx.to_async(),
+            move |_, response_sender, cancellation, _| {
+                prompt_sender
+                    .unbounded_send((response_sender, cancellation))
+                    .expect("prompt receiver should remain open");
+            },
+        );
+
+        let password_request = delegate.ask_password("Password:".to_string());
+        let (response_sender, cancellation) = prompt_receiver
+            .next()
+            .await
+            .expect("password prompt should be received");
+
+        drop(password_request);
+
+        assert!(cancellation.await.is_err());
+        drop(response_sender);
+    }
 }
