@@ -112,6 +112,15 @@ pub trait EntityInputHandler: 'static + Sized {
     ) -> TextInputConfiguration {
         TextInputConfiguration::default()
     }
+
+    /// See [`InputHandler::text_input_editable_range`] for details
+    fn text_input_editable_range(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Range<usize>> {
+        None
+    }
 }
 
 /// The canonical implementation of [`crate::PlatformInputHandler`]. Call [`Window::handle_input`]
@@ -263,6 +272,15 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
         self.view
             .update(cx, |view, cx| view.text_input_configuration(window, cx))
     }
+
+    fn text_input_editable_range(
+        &mut self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Range<usize>> {
+        self.view
+            .update(cx, |view, cx| view.text_input_editable_range(window, cx))
+    }
 }
 
 #[cfg(test)]
@@ -270,11 +288,12 @@ mod tests {
     use super::*;
     use crate::{
         AnyWindowHandle, AppContext as _, FocusHandle, InteractiveElement as _, IntoElement,
-        ParentElement as _, Render, Styled as _, TestAppContext, TextInputAction, canvas, div,
+        ParentElement as _, Render, Styled as _, TestAppContext, TextInputAction,
+        TextInputStateChange, canvas, div,
     };
 
     #[gpui::test]
-    fn text_input_configuration_forwarded_only_on_change(cx: &mut TestAppContext) {
+    fn text_input_configuration_and_focus_state_are_forwarded_on_change(cx: &mut TestAppContext) {
         let custom = TextInputConfiguration {
             autocorrect: true,
             input_action: TextInputAction::Send,
@@ -301,6 +320,7 @@ mod tests {
             test_window.text_input_configurations(),
             vec![TextInputConfiguration::default()]
         );
+        assert!(test_window.text_input_state_changes().is_empty());
 
         // Focusing the view routes its configuration to the platform.
         cx.update_window(window, |_, window, cx| {
@@ -313,10 +333,15 @@ mod tests {
             test_window.text_input_configurations(),
             vec![TextInputConfiguration::default(), custom.clone()]
         );
+        assert_eq!(
+            test_window.text_input_state_changes(),
+            vec![TextInputStateChange::FocusGained]
+        );
 
         // Redrawing without a change forwards nothing.
         draw(cx);
         assert_eq!(test_window.text_input_configurations().len(), 2);
+        assert_eq!(test_window.text_input_state_changes().len(), 1);
 
         // Changing the configuration forwards the new value.
         let updated = TextInputConfiguration {
@@ -336,6 +361,7 @@ mod tests {
             Some(&updated)
         );
         assert_eq!(test_window.text_input_configurations().len(), 3);
+        assert_eq!(test_window.text_input_state_changes().len(), 1);
 
         // Losing focus reverts the platform to the default configuration.
         cx.update_window(window, |_, window, cx| window.blur(cx))
@@ -346,6 +372,13 @@ mod tests {
             Some(&TextInputConfiguration::default())
         );
         assert_eq!(test_window.text_input_configurations().len(), 4);
+        assert_eq!(
+            test_window.text_input_state_changes(),
+            vec![
+                TextInputStateChange::FocusGained,
+                TextInputStateChange::FocusLost
+            ]
+        );
     }
 
     struct ConfigurationTestView {

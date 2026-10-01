@@ -19,7 +19,7 @@ use language::language_settings::{AllLanguageSettings, CopilotSettings};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16, ToPointUtf16,
     language_settings::{EditPredictionProvider, all_language_settings},
-    point_from_lsp, point_to_lsp,
+    point_to_lsp, range_from_lsp,
 };
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
@@ -1068,14 +1068,9 @@ impl Copilot {
                                 .edits
                                 .into_iter()
                                 .map(|completion| {
-                                    let start = snapshot.clip_point_utf16(
-                                        point_from_lsp(completion.range.start),
-                                        Bias::Left,
-                                    );
-                                    let end = snapshot.clip_point_utf16(
-                                        point_from_lsp(completion.range.end),
-                                        Bias::Left,
-                                    );
+                                    let range = range_from_lsp(completion.range);
+                                    let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                                    let end = snapshot.clip_point_utf16(range.end, Bias::Left);
                                     CopilotEditPrediction {
                                         buffer: buffer_entity.clone(),
                                         range: snapshot.anchor_before(start)
@@ -1124,14 +1119,9 @@ impl Copilot {
                                 .items
                                 .into_iter()
                                 .map(|item| {
-                                    let start = snapshot.clip_point_utf16(
-                                        point_from_lsp(item.range.start),
-                                        Bias::Left,
-                                    );
-                                    let end = snapshot.clip_point_utf16(
-                                        point_from_lsp(item.range.end),
-                                        Bias::Left,
-                                    );
+                                    let range = range_from_lsp(item.range);
+                                    let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                                    let end = snapshot.clip_point_utf16(range.end, Bias::Left);
                                     CopilotEditPrediction {
                                         buffer: buffer_entity.clone(),
                                         range: snapshot.anchor_before(start)

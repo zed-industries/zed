@@ -270,6 +270,14 @@ pub fn deploy_context_menu(
                     "Find All References",
                     Box::new(FindAllReferences::default()),
                 )
+                .action(
+                    "Show Incoming Calls",
+                    Box::new(zed_actions::ShowIncomingCalls),
+                )
+                .action(
+                    "Show Outgoing Calls",
+                    Box::new(zed_actions::ShowOutgoingCalls),
+                )
                 .separator()
                 .action("Rename Symbol", Box::new(Rename))
                 .action("Format Buffer", Box::new(Format))

@@ -485,8 +485,11 @@ impl Editor {
                             self.buffer.read(cx).last_transaction_id(cx)
                         {
                             if transaction_id_prev != Some(transaction_id_now) {
-                                self.selection_history
-                                    .insert_transaction(transaction_id_now, selections);
+                                self.selection_history.insert_transaction(
+                                    transaction_id_now,
+                                    selections,
+                                    self.add_selections_state.clone(),
+                                );
                             }
                         }
 
@@ -1638,10 +1641,14 @@ impl Editor {
             return;
         };
 
-        let extension = buffer
-            .read(cx)
-            .file()
-            .and_then(|file| Some(file.path().extension()?.to_string()));
+        let extension = buffer.read(cx).file().and_then(|file| {
+            Some(
+                std::path::Path::new(file.file_name(cx))
+                    .extension()?
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        });
 
         let event_type = match accepted {
             true => "Edit Prediction Accepted",

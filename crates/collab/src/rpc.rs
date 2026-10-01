@@ -376,6 +376,9 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::OpenUnstagedDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUncommittedDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtExpandMacro>)
+            .add_request_handler(
+                forward_read_only_project_request::<proto::LspExtExpandAbbreviation>,
+            )
             .add_request_handler(forward_read_only_project_request::<proto::LspExtOpenDocs>)
             .add_request_handler(forward_mutating_project_request::<proto::LspExtRunnables>)
             .add_request_handler(
@@ -398,6 +401,7 @@ impl Server {
                 forward_mutating_project_request::<proto::ResolveCompletionDocumentation>,
             )
             .add_request_handler(forward_mutating_project_request::<proto::ApplyCodeAction>)
+            .add_request_handler(forward_mutating_project_request::<proto::ExecuteLspCommand>)
             .add_request_handler(forward_mutating_project_request::<proto::PrepareRename>)
             .add_request_handler(forward_mutating_project_request::<proto::PerformRename>)
             .add_request_handler(forward_mutating_project_request::<proto::ReloadBuffers>)
@@ -417,7 +421,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
             .add_request_handler(lsp_query)
-            .add_message_handler(broadcast_project_message_from_host::<proto::LspQueryResponse>)
+            .add_message_handler(forward_lsp_query_response)
             .add_request_handler(forward_mutating_project_request::<proto::RestartLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::StopLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::LinkedEditingRange>)
@@ -433,6 +437,9 @@ impl Server {
                 broadcast_project_message_from_host::<proto::RefreshDocumentColors>,
             )
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshDocumentLinks>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::RefreshDocumentHighlights>,
+            )
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshFoldingRanges>)
             .add_message_handler(
                 broadcast_project_message_from_host::<proto::RefreshDocumentSymbols>,
@@ -527,7 +534,7 @@ impl Server {
             .add_request_handler(disallow_guest_request::<proto::GitCreateArchiveCheckpoint>)
             .add_request_handler(disallow_guest_request::<proto::GitRestoreArchiveCheckpoint>)
             .add_request_handler(forward_mutating_project_request::<proto::CheckForPushedCommits>)
-            .add_request_handler(forward_mutating_project_request::<proto::ToggleLspLogs>)
+            .add_message_handler(forward_toggle_lsp_logs)
             .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>)
             .add_request_handler(forward_project_search_chunk)
             .add_request_handler(forward_read_only_project_request::<proto::LoadCommitTemplate>);
@@ -2437,6 +2444,22 @@ where
     Ok(())
 }
 
+async fn forward_toggle_lsp_logs(
+    message: proto::ToggleLspLogs,
+    session: MessageContext,
+) -> Result<()> {
+    let project_id = ProjectId::from_proto(message.project_id);
+    let host_connection_id = session
+        .db()
+        .await
+        .host_for_mutating_project_request(project_id, session.connection_id)
+        .await?;
+    session
+        .peer
+        .forward_send(session.connection_id, host_connection_id, message)?;
+    Ok(())
+}
+
 async fn disallow_guest_request<T>(
     _request: T,
     response: Response<T>,
@@ -2467,6 +2490,26 @@ async fn lsp_query(
         forward_mutating_project_request(request, response, session).await
     } else {
         forward_read_only_project_request(request, response, session).await
+    }
+}
+
+async fn forward_lsp_query_response(
+    request: proto::LspQueryResponse,
+    session: MessageContext,
+) -> Result<()> {
+    let project_id = ProjectId::from_proto(request.project_id);
+    session
+        .db()
+        .await
+        .check_user_is_project_host(project_id, session.connection_id)
+        .await?;
+    if let Some(peer_id) = request.peer_id {
+        session
+            .peer
+            .forward_send(session.connection_id, peer_id.into(), request)?;
+        Ok(())
+    } else {
+        broadcast_project_message_from_host(request, session).await
     }
 }
 
