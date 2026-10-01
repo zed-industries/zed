@@ -26,7 +26,7 @@ test-support = [
     "x11",
     "proptest",
 ]
-bench-support = ["profiler", "dep:criterion"]
+bench-support = ["profiler", "dep:criterion", "dep:bench_metrics"]
 # Preserve the published feature name while consumers migrate to `bench-support`.
 bench = ["bench-support"]
 inspector = ["gpui_macros/inspector"]
@@ -53,6 +53,7 @@ backtrace = { workspace = true, optional = true }
 bitflags.workspace = true
 
 collections.workspace = true
+bench_metrics = { workspace = true, optional = true }
 criterion = { workspace = true, optional = true }
 ctor.workspace = true
 derive_more.workspace = true
@@ -117,8 +118,10 @@ getrandom = { version = "0.3.4", features = ["wasm_js"] }
 uuid = { workspace = true, features = ["js"] }
 
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 core-video.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation.workspace = true
 objc2-core-video.workspace = true
 # WARNING: If you change this, you must also publish a new version of zed-font-kit to crates.io
@@ -130,14 +133,17 @@ objc2-metal = { version = "0.3", optional = true }
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))'.dependencies]
 scap = { workspace = true, optional = true }
 
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+libc.workspace = true
 
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { workspace = true, features = ["Win32_Foundation", "Win32_System_Power"] }
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_System_Power", "Win32_System_WindowsProgramming"] }
 
 
 [dev-dependencies]
 backtrace.workspace = true
+bench_metrics = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
