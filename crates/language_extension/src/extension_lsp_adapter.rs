@@ -306,8 +306,7 @@ impl LspAdapter for ExtensionLspAdapter {
     }
 
     fn enabled_by_default(&self) -> bool {
-        self
-            .extension
+        self.extension
             .manifest()
             .language_servers
             .get(&self.language_server_id)
