@@ -4,6 +4,11 @@ use serde::{Deserialize, Serialize};
 /// The version of the Cloud WebSocket protocol.
 pub const PROTOCOL_VERSION: u32 = 0;
 
+/// The Cloud WebSocket protocol version that opts into settings invalidations.
+///
+/// Existing clients keep using version 0 until settings-update delivery is supported.
+pub const SETTINGS_UPDATES_PROTOCOL_VERSION: u32 = 1;
+
 /// The name of the header used to indicate the protocol version in use.
 pub const PROTOCOL_VERSION_HEADER_NAME: &str = "x-zed-protocol-version";
 
@@ -14,6 +19,8 @@ pub enum MessageToClient {
     UserUpdated,
     /// The user's notifications were updated.
     NotificationsUpdated,
+    /// The user's settings were updated and should be refreshed.
+    SettingsUpdated,
 }
 
 impl MessageToClient {
@@ -52,6 +59,15 @@ mod tests {
             b"\x74NotificationsUpdated"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn settings_updated_message_round_trips_with_the_expected_wire_format() -> Result<()> {
+        let message = MessageToClient::SettingsUpdated;
+        let bytes = message.serialize()?;
+        assert_eq!(bytes, b"\x6fSettingsUpdated");
+        assert_eq!(MessageToClient::deserialize(&bytes)?, message);
         Ok(())
     }
 }
