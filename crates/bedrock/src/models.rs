@@ -698,6 +698,16 @@ impl ConverseModel {
         )
     }
 
+    /// Adaptive thinking is always on for these models and cannot be disabled,
+    /// and they reject sampling parameters other than their defaults, so
+    /// requests must omit both the `thinking` opt-out and `temperature`.
+    ///
+    /// <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-fable-5-1.html>
+    /// <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5-5.html>
+    pub fn always_thinks(&self) -> bool {
+        matches!(self, Self::ClaudeFable5_1 | Self::ClaudeOpus5_5)
+    }
+
     pub fn thinking_mode(&self) -> BedrockModelMode {
         if self.supports_adaptive_thinking() {
             BedrockModelMode::AdaptiveThinking {
