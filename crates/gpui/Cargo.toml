@@ -94,14 +94,14 @@ smallvec.workspace = true
 stacksafe = { workspace = true, optional = true }
 strum.workspace = true
 sum_tree.workspace = true
-taffy = "=0.13.0"
+taffy.workspace = true
 thiserror.workspace = true
 gpui_util.workspace = true
 hdrhistogram = { workspace = true, optional = true }
 waker-fn = "1.2.0"
 lyon = "1.0"
 pin-project = "1.1.10"
-spin = "0.10.0"
+spin.workspace = true
 pollster.workspace = true
 url.workspace = true
 uuid.workspace = true
@@ -153,20 +153,20 @@ bench_metrics = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
-gpui_util = { workspace = true }
+gpui_util.workspace = true
 lyon = { version = "1.0", features = ["extra"] }
 rand.workspace = true
 scheduler = { workspace = true, features = ["test-support"] }
-unicode-segmentation = { workspace = true }
+unicode-segmentation.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 http_client = { workspace = true, features = ["test-support"] }
-proptest = { workspace = true }
+proptest.workspace = true
 reqwest_client = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
-wasm-bindgen = { workspace = true }
-web-sys = { version = "0.3", features = ["console"] }
+wasm-bindgen.workspace = true
+web-sys = { workspace = true, features = ["console"] }
 
 [build-dependencies]
 embed-resource = { version = "3.0", optional = true }

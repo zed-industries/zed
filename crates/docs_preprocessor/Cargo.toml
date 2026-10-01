@@ -11,7 +11,7 @@ collections.workspace = true
 jsonschema.workspace = true
 # We are specifically pinning this version of mdbook, as later versions introduce issues with double-nested subdirectories.
 # Ask @maxdeviant about this before bumping.
-mdbook = "= 0.4.40"
+mdbook.workspace = true
 regex.workspace = true
 schemars.workspace = true
 serde.workspace = true

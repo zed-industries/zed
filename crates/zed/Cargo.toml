@@ -241,7 +241,7 @@ windows.workspace = true
 gpui = { workspace = true, features = ["profiler", "windows-manifest"] }
 
 [build-dependencies]
-windows_resources = { path = "../windows_resources" }
+windows_resources.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 gpui = { workspace = true, features = ["profiler", "wayland", "x11"] }

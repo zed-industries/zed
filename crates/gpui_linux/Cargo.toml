@@ -53,7 +53,7 @@ screen-capture = [
 accesskit.workspace = true
 accesskit_unix.workspace = true
 anyhow.workspace = true
-bytemuck = "1"
+bytemuck.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
@@ -70,7 +70,7 @@ url.workspace = true
 uuid.workspace = true
 
 # Always used
-oo7 = { version = "0.6", default-features = false, features = [
+oo7 = { workspace = true, features = [
     "async-std",
     "native_crypto",
 ] }
@@ -82,7 +82,7 @@ raw-window-handle.workspace = true
 ashpd = { workspace = true, optional = true }
 filedescriptor = { version = "0.8.2", optional = true }
 open = { version = "5.2.0", optional = true }
-xkbcommon = { version = "0.8.0", default-features = false, optional = true }
+xkbcommon = { workspace = true, optional = true }
 
 # Screen capture
 scap = { workspace = true, optional = true }
