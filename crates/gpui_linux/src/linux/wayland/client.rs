@@ -77,7 +77,7 @@ use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
 
 use super::{
     display::WaylandDisplay,
-    scroll::KineticScrollController,
+    scroll::{KineticScrollController, KineticScrollTarget},
     window::{ImeInput, WaylandWindowStatePtr},
 };
 
@@ -351,10 +351,12 @@ pub(crate) struct WaylandClientState {
     pub mouse_location: Option<Point<Pixels>>,
     continuous_scroll_delta: Option<Point<Pixels>>,
     discrete_scroll_delta: Option<Point<f32>>,
-    kinetic_scroll: KineticScrollController,
+    kinetic_scroll_controller: KineticScrollController,
+    kinetic_scroll_target: Option<KineticScrollTarget>,
     vertical_modifier: f32,
     horizontal_modifier: f32,
     scroll_event_received: bool,
+    finger_scroll_stopped: bool,
     enter_token: Option<()>,
     button_pressed: Option<MouseButton>,
     mouse_focused_window: Option<WaylandWindowStatePtr>,
@@ -780,6 +782,12 @@ impl WaylandClientState {
             scale,
         );
     }
+
+    fn cancel_kinetic_scroll(&mut self) -> Option<(WaylandWindowStatePtr, PlatformInput)> {
+        let scroll_update = self.kinetic_scroll_controller.cancel_kinetic_scroll()?;
+        let target = self.kinetic_scroll_target.take()?;
+        Some(scroll_update.platform_input(&target))
+    }
 }
 
 #[derive(Clone)]
@@ -1042,11 +1050,13 @@ impl WaylandClient {
             },
             capslock: Capslock { on: false },
             scroll_event_received: false,
+            finger_scroll_stopped: false,
             axis_source: AxisSource::Wheel,
             mouse_location: None,
             continuous_scroll_delta: None,
             discrete_scroll_delta: None,
-            kinetic_scroll: KineticScrollController::new(),
+            kinetic_scroll_controller: KineticScrollController::new(),
+            kinetic_scroll_target: None,
             vertical_modifier: -1.0,
             horizontal_modifier: -1.0,
             button_pressed: None,
@@ -1547,18 +1557,27 @@ impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
         let Some(window) = get_window(&mut state, surface_id) else {
             return;
         };
-        let kinetic_input = if let wl_callback::Event::Done { .. } = event {
-            state.kinetic_scroll.tick(&window)
+        let kinetic_input = if let wl_callback::Event::Done { .. } = event
+            && let Some(target) = state.kinetic_scroll_target.clone()
+            && target.window.ptr_eq(&window)
+        {
+            let scroll_update = state.kinetic_scroll_controller.tick(Instant::now());
+            if scroll_update
+                .is_some_and(|scroll_update| scroll_update.touch_phase == TouchPhase::Ended)
+            {
+                state.kinetic_scroll_target = None;
+            }
+            scroll_update.map(|scroll_update| scroll_update.platform_input(&target))
         } else {
             None
         };
         drop(state);
 
         if let wl_callback::Event::Done { .. } = event {
-            window.frame_callback_fired();
             if let Some((window, input)) = kinetic_input {
                 window.handle_input(input);
             }
+            window.frame_callback_fired();
         }
     }
 }
@@ -1833,6 +1852,10 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
                         gesture_manager.get_pinch_gesture(&pointer, qh, ())
                     },
                 );
+
+                if let Some(hold_gesture) = state.hold_gesture.take() {
+                    hold_gesture.destroy();
+                }
 
                 state.hold_gesture = state.globals.gesture_manager.as_ref().and_then(
                     |gesture_manager: &zwp_pointer_gestures_v1::ZwpPointerGesturesV1| {
@@ -2272,7 +2295,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 }
                 state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
                 state.restore_cursor_after_hide();
-                let kinetic_input = state.kinetic_scroll.cancel();
+                let kinetic_input = state.cancel_kinetic_scroll();
 
                 if let Some(window) = state.mouse_focused_window.clone() {
                     if window.is_blocked() {
@@ -2421,9 +2444,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 if state.axis_source == AxisSource::Wheel {
                     return;
                 }
-                if state.axis_source == AxisSource::Finger {
-                    state.kinetic_scroll.start_finger_scroll();
-                }
                 let axis = if state.modifiers.shift {
                     wl_pointer::Axis::HorizontalScroll
                 } else {
@@ -2505,50 +2525,44 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 }
             }
             wl_pointer::Event::AxisStop { .. } => {
-                if state.axis_source == AxisSource::Finger
-                    && state.kinetic_scroll.stop_finger_scroll()
-                {
+                if state.axis_source == AxisSource::Finger {
                     state.scroll_event_received = true;
+                    state.finger_scroll_stopped = true;
                 }
             }
             wl_pointer::Event::Frame => {
                 if state.scroll_event_received {
                     state.scroll_event_received = false;
+                    let now = Instant::now();
                     let continuous = state.continuous_scroll_delta.take();
                     let discrete = state.discrete_scroll_delta.take();
+                    let mut pending_inputs = Vec::new();
                     if let Some(continuous) = continuous {
-                        let touch_phase = state.kinetic_scroll.touch_phase();
+                        let mut touch_phase = TouchPhase::Moved;
                         if state.axis_source == AxisSource::Finger {
-                            state
-                                .kinetic_scroll
-                                .record_delta(Instant::now(), continuous);
-                        }
-                        let mut kinetic_input = None;
-                        if state.kinetic_scroll.has_pending_stop() {
-                            if let (Some(window), Some(position)) =
-                                (state.mouse_focused_window.clone(), state.mouse_location)
-                            {
-                                let modifiers = state.modifiers;
-                                kinetic_input = state
-                                    .kinetic_scroll
-                                    .finish_pending_stop(window, position, modifiers);
+                            let scroll_update = state
+                                .kinetic_scroll_controller
+                                .finger_scroll(now, continuous);
+                            touch_phase = scroll_update.touch_phase;
+                            if let Some(window) = state.mouse_focused_window.clone() {
+                                state.kinetic_scroll_target = Some(KineticScrollTarget {
+                                    window,
+                                    position: state.mouse_location.unwrap(),
+                                    modifiers: state.modifiers,
+                                });
                             }
                         }
-                        if let Some(window) = state.mouse_focused_window.clone() {
+                        if state.mouse_focused_window.is_some() {
                             let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
                                 position: state.mouse_location.unwrap(),
                                 delta: ScrollDelta::Pixels(continuous),
                                 modifiers: state.modifiers,
                                 touch_phase,
                             });
-                            drop(state);
-                            window.handle_input(input);
-                            if let Some((window, input)) = kinetic_input {
-                                window.handle_input(input);
-                            }
+                            pending_inputs.push(input);
                         }
                     } else if let Some(discrete) = discrete
-                        && let Some(window) = state.mouse_focused_window.clone()
+                        && state.mouse_focused_window.is_some()
                     {
                         let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
                             position: state.mouse_location.unwrap(),
@@ -2556,20 +2570,27 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             modifiers: state.modifiers,
                             touch_phase: TouchPhase::Moved,
                         });
-                        drop(state);
-                        window.handle_input(input);
-                    } else if state.kinetic_scroll.has_pending_stop() {
-                        if let (Some(window), Some(position)) =
-                            (state.mouse_focused_window.clone(), state.mouse_location)
+                        pending_inputs.push(input);
+                    }
+                    if state.finger_scroll_stopped {
+                        state.finger_scroll_stopped = false;
+                        let scroll_update = state.kinetic_scroll_controller.stop_finger_scroll(now);
+                        if let Some(scroll_update) = scroll_update
+                            && state.mouse_focused_window.is_some()
                         {
-                            let modifiers = state.modifiers;
-                            if let Some((window, input)) = state
-                                .kinetic_scroll
-                                .finish_pending_stop(window, position, modifiers)
-                            {
-                                drop(state);
-                                window.handle_input(input);
-                            }
+                            let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+                                position: state.mouse_location.unwrap(),
+                                delta: ScrollDelta::Pixels(scroll_update.displacement),
+                                modifiers: state.modifiers,
+                                touch_phase: scroll_update.touch_phase,
+                            });
+                            pending_inputs.push(input);
+                        }
+                    }
+                    if let Some(window) = state.mouse_focused_window.clone() {
+                        drop(state);
+                        for input in pending_inputs {
+                            window.handle_input(input);
                         }
                     }
                 }
@@ -2619,11 +2640,7 @@ impl Dispatch<zwp_pointer_gesture_pinch_v1::ZwpPointerGesturePinchV1, ()>
                 surface: _,
                 fingers: _,
             } => {
-                if let Some((window, input)) = state.kinetic_scroll.cancel() {
-                    drop(state);
-                    window.handle_input(input);
-                    state = client.borrow_mut();
-                }
+                let kinetic_input = state.cancel_kinetic_scroll();
                 state.pinch_scale = 1.0;
                 let input = PlatformInput::Pinch(PinchEvent {
                     position: state.mouse_location.unwrap_or(point(px(0.0), px(0.0))),
@@ -2632,6 +2649,9 @@ impl Dispatch<zwp_pointer_gesture_pinch_v1::ZwpPointerGesturePinchV1, ()>
                     phase: TouchPhase::Started,
                 });
                 drop(state);
+                if let Some((window, input)) = kinetic_input {
+                    window.handle_input(input);
+                }
                 window.handle_input(input);
             }
             zwp_pointer_gesture_pinch_v1::Event::Update { time: _, scale, .. } => {
@@ -2681,7 +2701,7 @@ impl Dispatch<zwp_pointer_gesture_hold_v1::ZwpPointerGestureHoldV1, ()> for Wayl
         if let zwp_pointer_gesture_hold_v1::Event::Begin { .. } = event {
             let client = this.get_client();
             let mut state = client.borrow_mut();
-            if let Some((window, input)) = state.kinetic_scroll.cancel() {
+            if let Some((window, input)) = state.cancel_kinetic_scroll() {
                 drop(state);
                 window.handle_input(input);
             }
