@@ -305,18 +305,12 @@ impl LspAdapter for ExtensionLspAdapter {
             .unwrap_or_default()
     }
 
-    fn opt_in_languages(&self) -> HashSet<LanguageName> {
-        let is_opt_in = self
-            .extension
+    fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        self.extension
             .manifest()
             .language_servers
             .get(&self.language_server_id)
-            .is_some_and(|server| server.is_opt_in_for(&self.language_name));
-        if is_opt_in {
-            HashSet::from_iter([self.language_name.clone()])
-        } else {
-            HashSet::default()
-        }
+            .is_some_and(|server| server.is_opt_in_for(language))
     }
 
     async fn initialization_options(

@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use futures::future::join_all;
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use itertools::Itertools as _;
@@ -876,12 +876,8 @@ impl LspAdapter for TypeScriptLspAdapter {
         ])
     }
 
-    fn opt_in_languages(&self) -> HashSet<LanguageName> {
-        HashSet::from_iter([
-            LanguageName::new_static("TypeScript"),
-            LanguageName::new_static("JavaScript"),
-            LanguageName::new_static("TSX"),
-        ])
+    fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        matches!(language.as_ref(), "TypeScript" | "JavaScript" | "TSX")
     }
 }
 
