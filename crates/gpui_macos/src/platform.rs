@@ -1,5 +1,5 @@
 use crate::{
-    BoolExt, MacActivity, MacDispatcher, MacDisplay, MacKeyboardLayout, MacKeyboardMapper,
+    AppleActivity, AppleDispatcher, BoolExt, MacDisplay, MacKeyboardLayout, MacKeyboardMapper,
     MacWindow, events::key_to_native, ns_string, pasteboard::Pasteboard, renderer,
     set_active_window_cursor_style,
 };
@@ -230,7 +230,7 @@ fn native_activation_policy(policy: ActivationPolicy) -> NSApplicationActivation
 impl MacPlatform {
     pub fn new(headless: bool) -> Self {
         let marker = MainThreadMarker::new().expect("Mac platform not created on main thread");
-        let dispatcher = Arc::new(MacDispatcher::new());
+        let dispatcher = Arc::new(AppleDispatcher::new());
 
         #[cfg(feature = "font-kit")]
         let text_system = Arc::new(crate::MacTextSystem::new());
@@ -1110,7 +1110,7 @@ impl Platform for MacPlatform {
     }
 
     fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
-        Task::ready(Ok(MacActivity::begin(
+        Task::ready(Ok(AppleActivity::begin(
             reason,
             NSActivityOptions::UserInitiated,
         )))

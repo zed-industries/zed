@@ -76,6 +76,10 @@ pub trait Watcher: Send + Sync {
     fn remove(&self, path: &Path) -> Result<()>;
 }
 
+pub trait ReadSeek: io::Read + io::Seek {}
+
+impl<T: io::Read + io::Seek + ?Sized> ReadSeek for T {}
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum PathEventKind {
     Removed,
@@ -130,7 +134,7 @@ pub trait Fs: Send + Sync {
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
 
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>>;
-    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>>;
+    async fn open_sync(&self, path: &Path) -> Result<Box<dyn ReadSeek + Send + Sync>>;
     async fn load(&self, path: &Path) -> Result<String> {
         Ok(String::from_utf8(self.load_bytes(path).await?)?)
     }
@@ -936,7 +940,7 @@ impl Fs for RealFs {
         Ok(self.trash.lock().insert(entry))
     }
 
-    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
+    async fn open_sync(&self, path: &Path) -> Result<Box<dyn ReadSeek + Send + Sync>> {
         Ok(Box::new(std::fs::File::open(path)?))
     }
 
@@ -3211,7 +3215,7 @@ impl Fs for FakeFs {
         self.remove_file_inner(path, options).await.map(|_| ())
     }
 
-    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
+    async fn open_sync(&self, path: &Path) -> Result<Box<dyn ReadSeek + Send + Sync>> {
         let bytes = self.load_internal(path).await?;
         Ok(Box::new(io::Cursor::new(bytes)))
     }

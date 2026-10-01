@@ -3594,11 +3594,11 @@ impl SubagentHandle for NativeSubagentHandle {
             };
             let discard_partial_output = matches!(
                 &response,
-                Ok(Some(response)) if response.stop_reason == acp_v1::StopReason::Cancelled
+                Ok(Some(acp_thread::SubmissionResponse::LegacyCompleted(response))) if response.stop_reason == acp_v1::StopReason::Cancelled
                     || response.stop_reason == acp_v1::StopReason::Refusal
             );
             let result = match response {
-                Ok(Some(response)) => match response.stop_reason {
+                Ok(Some(acp_thread::SubmissionResponse::LegacyCompleted(response))) => match response.stop_reason {
                     acp_v1::StopReason::Cancelled => Err(anyhow!("User canceled")),
                     acp_v1::StopReason::MaxTokens => Err(anyhow!("The agent reached the maximum number of tokens.")),
                     acp_v1::StopReason::MaxTurnRequests => Err(anyhow!("The agent reached the maximum number of allowed requests between user turns. Try prompting again.")),
@@ -3624,6 +3624,9 @@ impl SubagentHandle for NativeSubagentHandle {
                             .context("No response from subagent")
                     }),
                 },
+                Ok(Some(acp_thread::SubmissionResponse::Accepted(_))) => {
+                    Err(anyhow!("Native subagent returned acceptance instead of turn completion"))
+                }
                 Ok(None) => Err(anyhow!("No response from the agent. You can try messaging again.")),
                 Err(error) => Err(error),
             };
