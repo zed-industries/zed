@@ -1632,7 +1632,11 @@ mod tests {
             let backend = backend.lock();
             assert_eq!(
                 backend.watch_calls,
-                &[dir.clone(), subdir.clone(), rewatched.as_path().to_path_buf()]
+                &[
+                    dir.clone(),
+                    subdir.clone(),
+                    rewatched.as_path().to_path_buf()
+                ]
             );
             assert_eq!(backend.unwatch_calls, &[rewatched.as_path().to_path_buf()]);
         }

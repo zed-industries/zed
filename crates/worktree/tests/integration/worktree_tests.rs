@@ -1684,7 +1684,9 @@ async fn test_root_rescan_keeps_root_watcher_registered(cx: &mut TestAppContext)
 // covered by the root watch and never watched separately.
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 #[gpui::test]
-async fn test_new_directory_scan_does_not_miss_event_before_adding_watcher(cx: &mut TestAppContext) {
+async fn test_new_directory_scan_does_not_miss_event_before_adding_watcher(
+    cx: &mut TestAppContext,
+) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree("/root", json!({})).await;
@@ -1705,7 +1707,9 @@ async fn test_new_directory_scan_does_not_miss_event_before_adding_watcher(cx: &
         .await;
 
     fs.create_file_before_next_watch_add("/root/new-directory", "/root/new-directory/file.txt");
-    fs.create_dir(Path::new("/root/new-directory")).await.unwrap();
+    fs.create_dir(Path::new("/root/new-directory"))
+        .await
+        .unwrap();
 
     wait_for_condition(cx, |cx| {
         tree.read_with(cx, |tree, _| {
