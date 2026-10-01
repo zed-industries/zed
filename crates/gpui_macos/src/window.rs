@@ -3315,14 +3315,18 @@ extern "C" fn step(view: *mut c_void) {
     let mut lock = window_state.lock();
 
     if let Some(mut callback) = lock.request_frame_callback.take() {
-        let signal_at = lock
+        let (signal_at, signal_source) = lock
             .frame_source
             .as_ref()
-            .and_then(WindowFrameSource::take_signal);
+            .and_then(WindowFrameSource::take_signal)
+            .map_or(
+                (None, FrameRequestSource::NativeCallback),
+                |(at, source)| (Some(at), source),
+            );
         drop(lock);
         callback(RequestFrameOptions {
             signal_at,
-            signal_source: FrameRequestSource::NativeCallback,
+            signal_source,
             ..Default::default()
         });
         window_state.lock().request_frame_callback = Some(callback);

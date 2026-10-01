@@ -56,7 +56,7 @@ use core_video::host_time;
 use dispatch2::{
     _dispatch_source_type_data_add, DispatchObject, DispatchQueue, DispatchRetained, DispatchSource,
 };
-use gpui::PlatformFrameSignal;
+use gpui::{FrameRequestSource, PlatformFrameSignal};
 use gpui_util::ResultExt;
 use scheduler::Instant;
 use std::{
@@ -153,7 +153,9 @@ unsafe extern "C" fn display_link_output_callback(
     if let Some(entry) = registry.displays.get(&display_id) {
         for subscriber in &entry.subscribers {
             if let Some(signal_at) = signal_at {
-                subscriber.signal.record(signal_at);
+                subscriber
+                    .signal
+                    .record(signal_at, FrameRequestSource::NativeCallback);
             }
             subscriber.frame_requests.merge_data(1);
         }
@@ -332,7 +334,7 @@ impl WindowFrameSource {
         Ok(())
     }
 
-    pub fn take_signal(&self) -> Option<Instant> {
+    pub fn take_signal(&self) -> Option<(Instant, FrameRequestSource)> {
         self.signal.take()
     }
 

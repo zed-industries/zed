@@ -802,10 +802,10 @@ pub struct A11yCallbacks {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 #[repr(u8)]
 pub enum FrameRequestSource {
-    /// An OS or compositor callback requesting a frame.
+    /// An OS callback or compositor-paced frame request.
     #[default]
     NativeCallback,
-    /// A local refresh timer, retry timer, or queued frame wakeup.
+    /// A refresh timer, retry, queued wakeup, or fallback sleep paced by the app.
     LocalSchedule,
 }
 
@@ -830,14 +830,15 @@ pub struct RequestFrameOptions {
 ///
 /// Producers may record from a platform thread without waiting for the UI thread.
 /// The consumer drains the timestamp before dispatching the request on the UI thread.
-/// Timestamps are encoded relative to `origin` because `Instant` cannot be stored
-/// directly in an atomic integer; `u64::MAX` represents an empty accumulator.
+/// The timestamp offset and source share one atomic word so coalescing cannot
+/// mix a request's time with another request's source. The low bit encodes the
+/// source; the remaining bits encode nanoseconds from `origin`. `u64::MAX` is empty.
 /// Without the `profiler` feature, this accumulator has no timestamp storage.
 pub struct PlatformFrameSignal {
     #[cfg(feature = "profiler")]
     origin: Instant,
     #[cfg(feature = "profiler")]
-    first_signal_nanoseconds: std::sync::atomic::AtomicU64,
+    first_signal: std::sync::atomic::AtomicU64,
 }
 
 impl Default for PlatformFrameSignal {
@@ -853,7 +854,7 @@ impl PlatformFrameSignal {
             #[cfg(feature = "profiler")]
             origin: Instant::now(),
             #[cfg(feature = "profiler")]
-            first_signal_nanoseconds: std::sync::atomic::AtomicU64::new(u64::MAX),
+            first_signal: std::sync::atomic::AtomicU64::new(u64::MAX),
         }
     }
 
@@ -871,29 +872,41 @@ impl PlatformFrameSignal {
 
     /// Records a platform frame request, retaining the first undrained timestamp.
     #[inline]
-    pub fn record(&self, at: Instant) {
+    pub fn record(&self, at: Instant, source: FrameRequestSource) {
         #[cfg(feature = "profiler")]
         {
             let nanoseconds = at
                 .saturating_duration_since(self.origin)
                 .as_nanos()
-                .min(u128::from(u64::MAX - 1)) as u64;
-            self.first_signal_nanoseconds
-                .fetch_min(nanoseconds, std::sync::atomic::Ordering::Relaxed);
+                .min(u128::from((u64::MAX >> 1) - 1)) as u64;
+            let source_bit = match source {
+                FrameRequestSource::NativeCallback => 0,
+                FrameRequestSource::LocalSchedule => 1,
+            };
+            self.first_signal.fetch_min(
+                (nanoseconds << 1) | source_bit,
+                std::sync::atomic::Ordering::Relaxed,
+            );
         }
         #[cfg(not(feature = "profiler"))]
-        let _ = at;
+        let _ = (at, source);
     }
 
-    /// Drains the first platform frame request time, leaving the accumulator empty.
+    /// Drains the first platform frame request time and source, leaving the accumulator empty.
     #[inline]
-    pub fn take(&self) -> Option<Instant> {
+    pub fn take(&self) -> Option<(Instant, FrameRequestSource)> {
         #[cfg(feature = "profiler")]
         {
-            let nanoseconds = self
-                .first_signal_nanoseconds
+            let signal = self
+                .first_signal
                 .swap(u64::MAX, std::sync::atomic::Ordering::Relaxed);
-            (nanoseconds != u64::MAX).then(|| self.origin + Duration::from_nanos(nanoseconds))
+            (signal != u64::MAX).then(|| {
+                let source = match signal & 1 {
+                    0 => FrameRequestSource::NativeCallback,
+                    _ => FrameRequestSource::LocalSchedule,
+                };
+                (self.origin + Duration::from_nanos(signal >> 1), source)
+            })
         }
         #[cfg(not(feature = "profiler"))]
         {
@@ -3376,18 +3389,29 @@ mod frame_signal_tests {
     #[cfg(feature = "profiler")]
     #[test]
     fn coalesced_signals_retain_the_earliest_until_drained() {
-        let signal = PlatformFrameSignal::new();
-        let first =
-            PlatformFrameSignal::capture(Instant::now).expect("profiling captures requests");
-        assert_eq!(signal.take(), None);
-        signal.record(first + Duration::from_millis(16));
-        signal.record(first);
-        signal.record(first + Duration::from_millis(32));
-        assert_eq!(signal.take(), Some(first));
-        assert_eq!(signal.take(), None);
-        let next = first + Duration::from_millis(48);
-        signal.record(next);
-        assert_eq!(signal.take(), Some(next));
+        for (first_source, later_source) in [
+            (
+                FrameRequestSource::NativeCallback,
+                FrameRequestSource::LocalSchedule,
+            ),
+            (
+                FrameRequestSource::LocalSchedule,
+                FrameRequestSource::NativeCallback,
+            ),
+        ] {
+            let signal = PlatformFrameSignal::new();
+            let first =
+                PlatformFrameSignal::capture(Instant::now).expect("profiling captures requests");
+            assert_eq!(signal.take(), None);
+            signal.record(first + Duration::from_millis(16), later_source);
+            signal.record(first, first_source);
+            signal.record(first + Duration::from_millis(32), later_source);
+            assert_eq!(signal.take(), Some((first, first_source)));
+            assert_eq!(signal.take(), None);
+            let next = first + Duration::from_millis(48);
+            signal.record(next, later_source);
+            assert_eq!(signal.take(), Some((next, later_source)));
+        }
     }
 
     #[cfg(not(feature = "profiler"))]
@@ -3398,7 +3422,7 @@ mod frame_signal_tests {
         });
         assert_eq!(captured, None);
         let signal = PlatformFrameSignal::new();
-        signal.record(Instant::now());
+        signal.record(Instant::now(), FrameRequestSource::LocalSchedule);
         assert_eq!(signal.take(), None);
     }
 }
