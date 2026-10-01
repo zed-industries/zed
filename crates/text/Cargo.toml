@@ -19,6 +19,7 @@ test-support = ["rand", "util/test-support"]
 anyhow.workspace = true
 clock.workspace = true
 collections.workspace = true
+gpui_util.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 postage.workspace = true

@@ -6,15 +6,51 @@
 //!
 //! Adapted from Zed's `util::rel_path` module.
 
+#[cfg(windows)]
+use anyhow::Context;
+#[cfg(any(windows, all(unix, not(target_family = "wasm"))))]
+use std::ffi::OsStr;
+#[cfg(all(unix, not(target_family = "wasm")))]
+use std::os::unix::prelude::OsStrExt;
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
 };
+#[cfg(windows)]
+use tendril::fmt::{Format, WTF8};
 
 use crate::rel_path::RelPath;
 
 pub mod abs_path;
 pub mod rel_path;
+
+pub fn try_from_bytes<'a, T>(bytes: &'a [u8]) -> anyhow::Result<T>
+where
+    T: From<&'a Path>,
+{
+    #[cfg(target_family = "wasm")]
+    {
+        std::str::from_utf8(bytes)
+            .map(Path::new)
+            .map(Into::into)
+            .map_err(Into::into)
+    }
+    #[cfg(all(unix, not(target_family = "wasm")))]
+    {
+        Ok(T::from(Path::new(OsStr::from_bytes(bytes))))
+    }
+    #[cfg(windows)]
+    {
+        WTF8::validate(bytes)
+            .then(|| {
+                // Safety: bytes are valid WTF-8 sequence.
+                T::from(Path::new(unsafe {
+                    OsStr::from_encoded_bytes_unchecked(bytes)
+                }))
+            })
+            .with_context(|| format!("Invalid WTF-8 sequence: {bytes:?}"))
+    }
+}
 
 pub trait PathExt {
     fn to_rel_path_buf(&self) -> anyhow::Result<rel_path::RelPathBuf>;

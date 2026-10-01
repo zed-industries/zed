@@ -61,7 +61,6 @@ nix = { workspace = true, features = ["resource", "user"] }
 mach2.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-tendril = "0.5"
 windows.workspace = true
 
 [dev-dependencies]

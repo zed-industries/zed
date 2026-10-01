@@ -5,7 +5,7 @@ use anyhow::{Context as _, Result};
 use collections::HashSet;
 use fs::Fs;
 use gpui::{App, AppContext as _, Entity, Task};
-use language_model::{ApiKey, EnvVar};
+use language_model::{ApiKey, EnvVar, GOOGLE_AI_API_URL};
 use project::{
     Project,
     agent_server_store::{AgentId, AllAgentServersSettings},
@@ -291,7 +291,7 @@ fn api_key_for_gemini_cli(cx: &mut App) -> Task<Result<String>> {
         return Task::ready(Ok(key));
     }
     let credentials_provider = zed_credentials_provider::global(cx);
-    let api_url = google_ai::API_URL.to_string();
+    let api_url = GOOGLE_AI_API_URL.to_string();
     cx.spawn(async move |cx| {
         Ok(
             ApiKey::load_from_system_keychain(&api_url, credentials_provider.as_ref(), cx)

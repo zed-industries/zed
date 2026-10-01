@@ -392,7 +392,6 @@ dependencies = [
  "feature_flags",
  "fs",
  "futures 0.3.34",
- "google_ai",
  "gpui",
  "gpui_tokio",
  "http_client",
@@ -2209,8 +2208,6 @@ dependencies = [
  "cexpr",
  "clang-sys",
  "itertools 0.13.0",
- "log",
- "prettyplease",
  "proc-macro2",
  "quote",
  "regex",
@@ -3028,12 +3025,6 @@ dependencies = [
  "inout",
  "zeroize",
 ]
-
-[[package]]
-name = "circular-buffer"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14c638459986b83c2b885179bd4ea6a2cbb05697b001501a56adb3a3d230803b"
 
 [[package]]
 name = "clang-sys"
@@ -6277,7 +6268,6 @@ dependencies = [
  "language",
  "log",
  "markdown",
- "num-format",
  "paths",
  "picker",
  "project",
@@ -6972,7 +6962,8 @@ dependencies = [
  "fuzzy",
  "gpui",
  "gpui_util",
- "nucleo",
+ "nucleo-matcher",
+ "parking_lot",
  "path",
 ]
 
@@ -7526,7 +7517,6 @@ dependencies = [
  "async-task",
  "backtrace",
  "bench_metrics",
- "bindgen",
  "bitflags 2.13.1",
  "chrono",
  "collections",
@@ -7595,7 +7585,6 @@ dependencies = [
  "web-sys",
  "web-time",
  "windows 0.62.2",
- "zed-font-kit",
  "zed-scap",
 ]
 
@@ -8371,7 +8360,6 @@ dependencies = [
  "async-fs",
  "async-tar",
  "bytes 1.11.1",
- "derive_more",
  "futures 0.3.34",
  "http 1.3.1",
  "http-body 1.0.1",
@@ -8993,7 +8981,6 @@ dependencies = [
  "theme_settings",
  "ui",
  "util",
- "util_macros",
  "workspace",
  "zed_actions",
 ]
@@ -9736,7 +9723,7 @@ dependencies = [
  "collections",
  "futures 0.3.34",
  "gpui_shared_string",
- "http_client",
+ "http 1.3.1",
  "log",
  "partial-json-fixer",
  "pretty_assertions",
@@ -11628,17 +11615,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nucleo"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5262af4c94921c2646c5ac6ff7900c2af9cbb08dc26a797e18130a7019c039d4"
-dependencies = [
- "nucleo-matcher",
- "parking_lot",
- "rayon",
-]
-
-[[package]]
 name = "nucleo-matcher"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11735,16 +11711,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "num-format"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a652d9771a63711fd3c3deb670acfbe5c30a4072e664d7a3bf5a9e1056ac72c3"
-dependencies = [
- "arrayvec",
- "itoa",
 ]
 
 [[package]]
@@ -12308,7 +12274,7 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "serde_json",
- "settings",
+ "settings_content",
 ]
 
 [[package]]
@@ -12472,6 +12438,7 @@ dependencies = [
  "credentials_provider",
  "futures 0.3.34",
  "gpui",
+ "gpui_util",
  "http_client",
  "language_model",
  "log",
@@ -12484,7 +12451,6 @@ dependencies = [
  "sha2",
  "smol",
  "url",
- "util",
 ]
 
 [[package]]
@@ -12812,6 +12778,7 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "tempfile",
+ "tendril",
 ]
 
 [[package]]
@@ -14119,7 +14086,6 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "buffer_diff",
- "circular-buffer",
  "client",
  "clock",
  "collections",
@@ -15231,7 +15197,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "settings",
+ "settings_content",
  "smol",
  "telemetry",
  "tempfile",
@@ -15276,7 +15242,6 @@ dependencies = [
  "anyhow",
  "askpass",
  "async-channel 2.5.0",
- "cargo_toml",
  "clap",
  "client",
  "clock",
@@ -15329,7 +15294,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "thiserror 2.0.17",
- "toml 0.8.23",
+ "toml_edit 0.22.27",
  "unindent",
  "util",
  "uuid",
@@ -15637,6 +15602,7 @@ dependencies = [
  "criterion",
  "ctor",
  "gpui",
+ "gpui_util",
  "heapless",
  "log",
  "rand 0.9.4",
@@ -15697,6 +15663,7 @@ dependencies = [
  "collections",
  "futures 0.3.34",
  "gpui",
+ "gpui_util",
  "parking_lot",
  "proto",
  "rand 0.9.4",
@@ -15706,7 +15673,6 @@ dependencies = [
  "sha2",
  "strum 0.28.0",
  "tracing",
- "util",
  "zlog",
  "zstd 0.11.2+zstd.1.5.2",
 ]
@@ -16727,7 +16693,6 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-json",
  "unindent",
- "util",
 ]
 
 [[package]]
@@ -16735,7 +16700,6 @@ name = "settings_macros"
 version = "0.1.0"
 dependencies = [
  "quote",
- "settings",
  "syn 2.0.117",
 ]
 
@@ -17321,10 +17285,10 @@ dependencies = [
  "libsqlite3-sys",
  "log",
  "parking_lot",
+ "path",
  "pollster 0.4.0",
  "sqlformat",
  "thread_local",
- "util",
  "uuid",
 ]
 
@@ -18393,6 +18357,7 @@ dependencies = [
  "collections",
  "ctor",
  "gpui",
+ "gpui_util",
  "log",
  "parking_lot",
  "postage",
@@ -19565,7 +19530,6 @@ dependencies = [
  "itertools 0.14.0",
  "log",
  "menu",
- "num-format",
  "schemars 1.0.4",
  "serde",
  "settings",
@@ -19849,7 +19813,6 @@ dependencies = [
  "shlex 1.3.0",
  "smol",
  "tempfile",
- "tendril",
  "unicase",
  "url",
  "util_macros",
@@ -22460,6 +22423,7 @@ dependencies = [
  "credentials_provider",
  "futures 0.3.34",
  "gpui",
+ "gpui_util",
  "http_client",
  "language_model",
  "log",
@@ -22472,7 +22436,6 @@ dependencies = [
  "sha2",
  "smol",
  "url",
- "util",
  "x_ai",
 ]
 
