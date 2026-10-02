@@ -3332,6 +3332,15 @@ impl BackgroundScannerState {
             return Some(removed_entry.id);
         }
 
+        let existing_entry = self.snapshot.entry_for_path(path);
+
+        // An excluded symlink can share this inode without representing a rename
+        if let Some(entry) = existing_entry
+            && entry.inode == inode
+        {
+            return Some(entry.id);
+        }
+
         // If an entry with the same inode was removed from the worktree during this scan,
         // then it *might* represent the same file or directory. But the OS might also have
         // re-used the inode for a completely different file or directory.
@@ -3343,7 +3352,7 @@ impl BackgroundScannerState {
             (removed_entry.mtime == Some(mtime) || *removed_entry.path == *path)
                 .then_some(removed_entry.id)
         } else {
-            Some(self.snapshot.entry_for_path(path)?.id)
+            Some(existing_entry?.id)
         }
     }
 
