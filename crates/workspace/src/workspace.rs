@@ -8956,9 +8956,7 @@ impl Workspace {
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
-        if cx.stop_active_drag(window) {
-            self.pending_dock_drag = None;
-            self.previous_dock_drag_coordinates = None;
+        if self.cancel_dock_drag(window, cx) || cx.stop_active_drag(window) {
         } else if let Some((notification_id, _)) = self.notifications.pop() {
             dismiss_app_notification(&notification_id, cx);
         } else {
@@ -8993,6 +8991,20 @@ impl Workspace {
         }
         self.pending_dock_drag = Some((dragged_dock.clone(), new_size));
         self.resize_dock(dragged_dock.position, new_size, window, cx);
+    }
+
+    fn cancel_dock_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some((dragged_dock, _)) = self.pending_dock_drag.take() else {
+            return false;
+        };
+        cx.stop_active_drag(window);
+        self.previous_dock_drag_coordinates = None;
+        self.dock_at_position(dragged_dock.position)
+            .update(cx, |dock, cx| {
+                dock.restore_panel_size_states(&dragged_dock.panel_sizes, window, cx);
+            });
+        self.serialize_workspace(window, cx);
+        true
     }
 
     fn finish_dock_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -9655,6 +9667,11 @@ impl Render for Workspace {
             .items_start()
             .text_color(colors.text)
             .overflow_hidden()
+            .capture_action(cx.listener(|workspace, _: &menu::Cancel, window, cx| {
+                if workspace.cancel_dock_drag(window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
             // Expose the title bar as an ARIA toolbar so region navigation
             // (FocusNextPart) can reach the top bar's controls and assistive
             // technology announces it as a toolbar. The contained controls form
@@ -15893,6 +15910,16 @@ mod tests {
 
                     workspace.resize_dock(position, px(400.), window, cx);
                     workspace.resize_dragged_dock(&dragged_dock, Pixels::ZERO, window, cx);
+                    workspace.cancel(&menu::Cancel, window, cx);
+                    workspace.finish_dock_drag(window, cx);
+                    assert!(dock.read(cx).is_open());
+                    assert_eq!(
+                        workspace.dock_size(&dock.read(cx), window, cx),
+                        initial_size
+                    );
+                    assert!(workspace.pending_dock_drag.is_none());
+
+                    workspace.resize_dragged_dock(&dragged_dock, Pixels::ZERO, window, cx);
                     assert!(dock.read(cx).is_open());
                     workspace.finish_dock_drag(window, cx);
                     assert!(!dock.read(cx).is_open());
@@ -15907,6 +15934,58 @@ mod tests {
                     });
                 }
             }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_cancel_dock_drag_with_pane_focused(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel, window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+            workspace.active_pane().focus_handle(cx).focus(window, cx);
+        });
+        cx.run_until_parked();
+        let (divider, collapsed, initial_size) =
+            workspace.update_in(cx, |workspace, window, cx| {
+                let initial_size = workspace
+                    .dock_size(&workspace.right_dock().read(cx), window, cx)
+                    .expect("right dock has a size");
+                let divider = point(
+                    workspace.bounds.right() - initial_size,
+                    workspace.bounds.center().y,
+                );
+                let collapsed = point(
+                    workspace.bounds.right() - px(1.),
+                    workspace.bounds.center().y,
+                );
+                (divider, collapsed, initial_size)
+            });
+        cx.simulate_mouse_down(divider, MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_move(
+            divider + point(px(10.), px(0.)),
+            MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_move(collapsed, MouseButton::Left, gpui::Modifiers::default());
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(cx.has_active_drag());
+            assert!(workspace.pending_dock_drag.is_some());
+        });
+        cx.dispatch_action(menu::Cancel);
+        cx.run_until_parked();
+        cx.simulate_mouse_up(collapsed, MouseButton::Left, gpui::Modifiers::default());
+        workspace.update_in(cx, |workspace, window, cx| {
+            let dock = workspace.right_dock().read(cx);
+            assert!(dock.is_open());
+            assert!(workspace.pending_dock_drag.is_none());
+            assert_eq!(workspace.dock_size(&dock, window, cx), Some(initial_size));
+            assert!(!cx.has_active_drag());
         });
     }
 

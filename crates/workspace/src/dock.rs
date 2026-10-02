@@ -1028,7 +1028,7 @@ impl Dock {
             .collect()
     }
 
-    pub(crate) fn close_after_drag(
+    pub(crate) fn restore_panel_size_states(
         &mut self,
         states: &[(&'static str, PanelSizeState)],
         window: &mut Window,
@@ -1054,6 +1054,16 @@ impl Dock {
                 });
             }
         });
+        cx.notify();
+    }
+
+    pub(crate) fn close_after_drag(
+        &mut self,
+        states: &[(&'static str, PanelSizeState)],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.restore_panel_size_states(states, window, cx);
         self.set_open(false, window, cx);
         if self
             .active_panel()
