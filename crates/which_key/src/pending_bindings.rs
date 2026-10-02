@@ -66,21 +66,27 @@ fn group_bindings(bindings: Vec<PendingBinding>) -> Vec<PendingBindingRow> {
         // A group row would hide what the next keystroke runs, so a binding that completes on it
         // gets its own row and only the longer bindings collapse. Sorting moves the group row
         // down with the other groups, away from that row.
-        let (completing_bindings, longer_bindings): (Vec<_>, Vec<_>) = bindings
-            .into_iter()
-            .partition(|binding| binding.remaining_keystrokes.len() <= 1);
-        result.extend(completing_bindings.into_iter().map(binding_row));
+        let longer_count = bindings
+            .iter()
+            .filter(|binding| binding.remaining_keystrokes.len() > 1)
+            .count();
 
         if let Some(first_keystroke) = first_keystroke
-            && longer_bindings.len() > 1
+            && longer_count > 1
         {
+            result.extend(
+                bindings
+                    .into_iter()
+                    .filter(|binding| binding.remaining_keystrokes.len() <= 1)
+                    .map(binding_row),
+            );
             result.push(PendingBindingRow {
                 keystrokes: Rc::from([first_keystroke]),
-                action_name: format!("+{} keybinds", longer_bindings.len()).into(),
+                action_name: format!("+{longer_count} keybinds").into(),
                 is_group: true,
             });
         } else {
-            result.extend(longer_bindings.into_iter().map(binding_row));
+            result.extend(bindings.into_iter().map(binding_row));
         }
     }
 
