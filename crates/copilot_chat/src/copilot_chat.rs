@@ -2,7 +2,7 @@ pub mod copilot_oauth;
 mod model;
 pub mod responses;
 
-pub use model::{PROVIDER_ID, PROVIDER_NAME, create_language_model};
+pub use model::{PROVIDER_ID, PROVIDER_NAME, language_model, stream_completion};
 
 use std::sync::Arc;
 
@@ -279,8 +279,14 @@ impl Model {
         self.capabilities.limits.max_context_window_tokens as u64
     }
 
-    pub fn max_output_tokens(&self) -> usize {
-        self.capabilities.limits.max_output_tokens
+    pub fn max_prompt_tokens(&self) -> Option<u64> {
+        let limit = self.capabilities.limits.max_prompt_tokens;
+        (limit > 0).then_some(limit)
+    }
+
+    pub fn max_output_tokens(&self) -> Option<u64> {
+        let limit = self.capabilities.limits.max_output_tokens as u64;
+        (limit > 0).then_some(limit)
     }
 
     pub fn supports_tools(&self) -> bool {
@@ -356,6 +362,8 @@ pub struct Request {
     pub temperature: f32,
     pub model: String,
     pub messages: Vec<ChatMessage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<Tool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -760,7 +768,7 @@ impl CopilotChat {
             Self::get_auth_details(&copilot_chat, &mut cx).await?;
 
         let api_url = configuration.chat_completions_url(&api_endpoint);
-        stream_completion(
+        stream_chat_completion(
             client.clone(),
             oauth_token,
             api_url.into(),
@@ -1075,7 +1083,7 @@ async fn request_models(
     Ok(models)
 }
 
-async fn stream_completion(
+async fn stream_chat_completion(
     client: Arc<dyn HttpClient>,
     oauth_token: String,
     completion_url: Arc<str>,

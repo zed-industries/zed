@@ -14,6 +14,7 @@ workspace = true
 
 [lib]
 path = "src/anthropic.rs"
+doctest = false
 
 [dependencies]
 anyhow.workspace = true
