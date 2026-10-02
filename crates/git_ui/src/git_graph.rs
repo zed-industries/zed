@@ -49,7 +49,7 @@ use zed_actions::{
 use theme::AccentColors;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
-    Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, DiffStat, Divider,
+    Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, DiffStat, Disclosure, Divider,
     HeaderResizeInfo, HighlightedLabel, IndentGuideColors, ListItem, ListItemSpacing,
     RedistributableColumnsState, ScrollableHandle, Table, TableInteractionState,
     TableRenderContext, TableResizeBehavior, Tooltip, WithScrollbar, bind_redistributable_columns,
@@ -1327,6 +1327,8 @@ pub struct GitGraph {
     repo_id: RepositoryId,
     changed_files_scroll_handle: UniformListScrollHandle,
     changed_files_view_mode: ChangedFilesViewMode,
+    commit_details_metadata_collapsed: bool,
+    commit_details_message_collapsed: bool,
     changed_files_expanded_dirs: HashMap<RepoPath, bool>,
     pending_select_sha: Option<Oid>,
     nav_history: Option<ItemNavHistory>,
@@ -1574,6 +1576,8 @@ impl GitGraph {
             repo_id,
             changed_files_scroll_handle: UniformListScrollHandle::new(),
             changed_files_view_mode: ChangedFilesViewMode::default(),
+            commit_details_metadata_collapsed: false,
+            commit_details_message_collapsed: false,
             changed_files_expanded_dirs: HashMap::default(),
             pending_select_sha: None,
             nav_history: None,
@@ -2715,6 +2719,7 @@ impl GitGraph {
         });
 
         let full_sha: SharedString = commit_entry.data.sha.to_string().into();
+        let short_sha: SharedString = full_sha.chars().take(7).collect::<String>().into();
         let ref_names = commit_entry.data.ref_names.clone();
 
         let head_branch_name: Option<SharedString> = repository
@@ -2848,69 +2853,168 @@ impl GitGraph {
                         ),
                     )
                     .child(
-                        v_flex()
-                            .py_1()
-                            .w_full()
-                            .items_center()
-                            .child(avatar)
-                            .child(Label::new(author_name).mt_1p5())
-                            .child(
-                                Label::new(date_string)
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                            ),
-                    )
-                    .children((!ref_names.is_empty()).then(|| {
-                        h_flex().gap_1().flex_wrap().justify_center().children(
-                            ref_names.iter().map(|name| {
-                                let is_head = Self::is_head_ref(name.as_ref(), &head_branch_name);
-                                self.render_ref_chip(name, accent_color, is_head, selected_idx, cx)
-                            }),
-                        )
-                    }))
-                    .child(
-                        v_flex()
-                            .ml_neg_1()
-                            .gap_1p5()
-                            .when(!author_email.is_empty(), |this| {
-                                let copied_state: Entity<CopiedState> = window.use_keyed_state(
-                                    "author-email-copy",
-                                    cx,
-                                    CopiedState::new,
-                                );
-                                let is_copied = copied_state.read(cx).is_copied();
-
-                                let (icon, icon_color, tooltip_label) = if is_copied {
-                                    (IconName::Check, Color::Success, "Email Copied!")
+                        div().absolute().top_2().left_2().child(
+                            Disclosure::new(
+                                "toggle-commit-metadata",
+                                !self.commit_details_metadata_collapsed,
+                            )
+                            .tooltip({
+                                let label = if self.commit_details_metadata_collapsed {
+                                    "Show Commit Details"
                                 } else {
-                                    (IconName::Envelope, Color::Muted, "Copy Email")
+                                    "Hide Commit Details"
                                 };
+                                move |_window, cx: &mut App| Tooltip::simple(label, cx)
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.commit_details_metadata_collapsed =
+                                    !this.commit_details_metadata_collapsed;
+                                cx.notify();
+                            })),
+                        ),
+                    )
+                    .map(|this| {
+                        if self.commit_details_metadata_collapsed {
+                            return this.child(
+                                h_flex()
+                                    .w_full()
+                                    .px_6()
+                                    .gap_1()
+                                    .justify_center()
+                                    .overflow_hidden()
+                                    .child(
+                                        Label::new(author_name).size(LabelSize::Small).truncate(),
+                                    )
+                                    .child(
+                                        Label::new(short_sha)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    ),
+                            );
+                        }
+                        this.child(
+                            v_flex()
+                                .py_1()
+                                .w_full()
+                                .items_center()
+                                .child(avatar)
+                                .child(Label::new(author_name).mt_1p5())
+                                .child(
+                                    Label::new(date_string)
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small),
+                                ),
+                        )
+                        .children((!ref_names.is_empty()).then(|| {
+                            h_flex().gap_1().flex_wrap().justify_center().children(
+                                ref_names.iter().map(|name| {
+                                    let is_head =
+                                        Self::is_head_ref(name.as_ref(), &head_branch_name);
+                                    self.render_ref_chip(
+                                        name,
+                                        accent_color,
+                                        is_head,
+                                        selected_idx,
+                                        cx,
+                                    )
+                                }),
+                            )
+                        }))
+                        .child(
+                            v_flex()
+                                .ml_neg_1()
+                                .gap_1p5()
+                                .when(!author_email.is_empty(), |this| {
+                                    let copied_state: Entity<CopiedState> = window.use_keyed_state(
+                                        "author-email-copy",
+                                        cx,
+                                        CopiedState::new,
+                                    );
+                                    let is_copied = copied_state.read(cx).is_copied();
 
-                                let copy_email = author_email.clone();
-                                let author_email_for_tooltip = author_email.clone();
+                                    let (icon, icon_color, tooltip_label) = if is_copied {
+                                        (IconName::Check, Color::Success, "Email Copied!")
+                                    } else {
+                                        (IconName::Envelope, Color::Muted, "Copy Email")
+                                    };
 
-                                this.child(
-                                    Button::new("author-email-copy", author_email.clone())
+                                    let copy_email = author_email.clone();
+                                    let author_email_for_tooltip = author_email.clone();
+
+                                    this.child(
+                                        Button::new("author-email-copy", author_email.clone())
+                                            .start_icon(
+                                                Icon::new(icon)
+                                                    .size(IconSize::Small)
+                                                    .color(icon_color),
+                                            )
+                                            .label_size(LabelSize::Small)
+                                            .truncate(true)
+                                            .color(Color::Muted)
+                                            .tooltip(move |_, cx| {
+                                                Tooltip::with_meta(
+                                                    tooltip_label,
+                                                    None,
+                                                    author_email_for_tooltip.clone(),
+                                                    cx,
+                                                )
+                                            })
+                                            .on_click(move |_, _, cx| {
+                                                copied_state.update(cx, |state, _cx| {
+                                                    state.mark_copied();
+                                                });
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                                    copy_email.to_string(),
+                                                ));
+                                                let state_id = copied_state.entity_id();
+                                                cx.spawn(async move |cx| {
+                                                    cx.background_executor()
+                                                        .timer(COPIED_STATE_DURATION)
+                                                        .await;
+                                                    cx.update(|cx| {
+                                                        cx.notify(state_id);
+                                                    })
+                                                })
+                                                .detach();
+                                            }),
+                                    )
+                                })
+                                .child({
+                                    let copy_sha = full_sha.clone();
+                                    let copied_state: Entity<CopiedState> =
+                                        window.use_keyed_state("sha-copy", cx, CopiedState::new);
+                                    let is_copied = copied_state.read(cx).is_copied();
+
+                                    let (icon, icon_color, tooltip_label) = if is_copied {
+                                        (IconName::Check, Color::Success, "Commit SHA Copied!")
+                                    } else {
+                                        (IconName::Hash, Color::Muted, "Copy Commit SHA")
+                                    };
+
+                                    Button::new("sha-button", &full_sha)
                                         .start_icon(
                                             Icon::new(icon).size(IconSize::Small).color(icon_color),
                                         )
                                         .label_size(LabelSize::Small)
                                         .truncate(true)
                                         .color(Color::Muted)
-                                        .tooltip(move |_, cx| {
-                                            Tooltip::with_meta(
-                                                tooltip_label,
-                                                None,
-                                                author_email_for_tooltip.clone(),
-                                                cx,
-                                            )
+                                        .tooltip({
+                                            let full_sha = full_sha.clone();
+                                            move |_, cx| {
+                                                Tooltip::with_meta(
+                                                    tooltip_label,
+                                                    None,
+                                                    full_sha.clone(),
+                                                    cx,
+                                                )
+                                            }
                                         })
                                         .on_click(move |_, _, cx| {
                                             copied_state.update(cx, |state, _cx| {
                                                 state.mark_copied();
                                             });
                                             cx.write_to_clipboard(ClipboardItem::new_string(
-                                                copy_email.to_string(),
+                                                copy_sha.to_string(),
                                             ));
                                             let state_id = copied_state.entity_id();
                                             cx.spawn(async move |cx| {
@@ -2922,92 +3026,46 @@ impl GitGraph {
                                                 })
                                             })
                                             .detach();
-                                        }),
-                                )
-                            })
-                            .child({
-                                let copy_sha = full_sha.clone();
-                                let copied_state: Entity<CopiedState> =
-                                    window.use_keyed_state("sha-copy", cx, CopiedState::new);
-                                let is_copied = copied_state.read(cx).is_copied();
-
-                                let (icon, icon_color, tooltip_label) = if is_copied {
-                                    (IconName::Check, Color::Success, "Commit SHA Copied!")
-                                } else {
-                                    (IconName::Hash, Color::Muted, "Copy Commit SHA")
-                                };
-
-                                Button::new("sha-button", &full_sha)
-                                    .start_icon(
-                                        Icon::new(icon).size(IconSize::Small).color(icon_color),
-                                    )
-                                    .label_size(LabelSize::Small)
-                                    .truncate(true)
-                                    .color(Color::Muted)
-                                    .tooltip({
-                                        let full_sha = full_sha.clone();
-                                        move |_, cx| {
-                                            Tooltip::with_meta(
-                                                tooltip_label,
-                                                None,
-                                                full_sha.clone(),
-                                                cx,
-                                            )
-                                        }
-                                    })
-                                    .on_click(move |_, _, cx| {
-                                        copied_state.update(cx, |state, _cx| {
-                                            state.mark_copied();
-                                        });
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            copy_sha.to_string(),
-                                        ));
-                                        let state_id = copied_state.entity_id();
-                                        cx.spawn(async move |cx| {
-                                            cx.background_executor()
-                                                .timer(COPIED_STATE_DURATION)
-                                                .await;
-                                            cx.update(|cx| {
-                                                cx.notify(state_id);
-                                            })
                                         })
-                                        .detach();
-                                    })
-                            })
-                            .when_some(remote.clone(), |this, remote| {
-                                let provider_name = remote.host.name();
-                                let icon = ui::git_hosting_provider_icon(provider_name.as_str());
-                                let parsed_remote = ParsedGitRemote {
-                                    owner: remote.owner.as_ref().into(),
-                                    repo: remote.repo.as_ref().into(),
-                                };
-                                let params = BuildCommitPermalinkParams {
-                                    sha: full_sha.as_ref(),
-                                };
-                                let url = remote
-                                    .host
-                                    .build_commit_permalink(&parsed_remote, params)
-                                    .to_string();
+                                })
+                                .when_some(remote.clone(), |this, remote| {
+                                    let provider_name = remote.host.name();
+                                    let icon =
+                                        ui::git_hosting_provider_icon(provider_name.as_str());
+                                    let parsed_remote = ParsedGitRemote {
+                                        owner: remote.owner.as_ref().into(),
+                                        repo: remote.repo.as_ref().into(),
+                                    };
+                                    let params = BuildCommitPermalinkParams {
+                                        sha: full_sha.as_ref(),
+                                    };
+                                    let url = remote
+                                        .host
+                                        .build_commit_permalink(&parsed_remote, params)
+                                        .to_string();
 
-                                this.child(
-                                    Button::new(
-                                        "view-on-provider",
-                                        format!("View on {}", provider_name),
+                                    this.child(
+                                        Button::new(
+                                            "view-on-provider",
+                                            format!("View on {}", provider_name),
+                                        )
+                                        .start_icon(
+                                            Icon::new(icon)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                        .label_size(LabelSize::Small)
+                                        .truncate(true)
+                                        .color(Color::Muted)
+                                        .on_click(
+                                            move |_, _, cx| {
+                                                cx.open_url(&url);
+                                            },
+                                        ),
                                     )
-                                    .start_icon(
-                                        Icon::new(icon).size(IconSize::Small).color(Color::Muted),
-                                    )
-                                    .label_size(LabelSize::Small)
-                                    .truncate(true)
-                                    .color(Color::Muted)
-                                    .on_click(
-                                        move |_, _, cx| {
-                                            cx.open_url(&url);
-                                        },
-                                    ),
-                                )
-                            }),
-                    ),
+                                }),
+                        )
+                    }),
             )
             .child(Divider::horizontal())
             .child(self.render_commit_message(window, cx))
@@ -3670,6 +3728,8 @@ impl GitGraph {
             .base_text_style
             .line_height_in_pixels(rem_size);
 
+        let collapsed = self.commit_details_message_collapsed;
+
         div()
             // Using grid over flexbox because the structure of this side
             // panel prvents taffy from calculating a concrete width correctly,
@@ -3683,21 +3743,42 @@ impl GitGraph {
             .grid_cols(1)
             .gap_1()
             .child(
-                div()
-                    .relative()
+                h_flex()
                     .w_full()
+                    .gap_1()
                     .child(
-                        div()
-                            .id("commit-message")
-                            .text_sm()
-                            .w_full()
-                            .max_h(line_height * 12.)
-                            .overflow_y_scroll()
-                            .track_scroll(scroll_handle)
-                            .child(MarkdownElement::new(message.clone(), message_style)),
+                        Disclosure::new("toggle-commit-message", !collapsed).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.commit_details_message_collapsed =
+                                    !this.commit_details_message_collapsed;
+                                cx.notify();
+                            },
+                        )),
                     )
-                    .vertical_scrollbar_for(scroll_handle, window, cx),
+                    .child(
+                        Label::new("Message")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
             )
+            .when(!collapsed, |this| {
+                this.child(
+                    div()
+                        .relative()
+                        .w_full()
+                        .child(
+                            div()
+                                .id("commit-message")
+                                .text_sm()
+                                .w_full()
+                                .max_h(line_height * 12.)
+                                .overflow_y_scroll()
+                                .track_scroll(scroll_handle)
+                                .child(MarkdownElement::new(message.clone(), message_style)),
+                        )
+                        .vertical_scrollbar_for(scroll_handle, window, cx),
+                )
+            })
             .into_any_element()
     }
 }
