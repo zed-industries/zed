@@ -19425,6 +19425,48 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_panel_button_closes_zoomed_right_dock(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
+        });
+        panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert!(panel.is_zoomed(window, cx));
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let dock = workspace.right_dock().read(cx);
+            let focus_handle = dock.focus_handle(cx);
+            let action = dock.toggle_action();
+            dock::dispatch_panel_button_action(&focus_handle, action, window, cx);
+        });
+        cx.run_until_parked();
+        workspace.update_in(cx, |workspace, _window, cx| {
+            assert!(
+                !workspace.right_dock().read(cx).is_open(),
+                "Clicking the active panel button should close the zoomed right dock"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_panels_stay_open_after_position_change_and_settings_update(
         cx: &mut gpui::TestAppContext,
     ) {
