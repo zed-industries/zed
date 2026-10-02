@@ -2815,6 +2815,7 @@ mod tests {
             value: label.to_string(),
             tooltip: None,
             location: None,
+            command: None,
         }];
 
         let hint_start = InlayOffset(MultiBufferOffset(100));
@@ -2859,11 +2860,13 @@ mod tests {
                 value: "→ ".to_string(), // 4 bytes (3 + 1)
                 tooltip: None,
                 location: None,
+                command: None,
             },
             InlayHintLabelPart {
                 value: "path".to_string(), // 4 bytes
                 tooltip: None,
                 location: None,
+                command: None,
             },
         ];
 
