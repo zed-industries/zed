@@ -3,7 +3,7 @@ pub mod registry;
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
@@ -34,6 +34,14 @@ use crate::{
 /// Maximum timeout for context server requests
 /// Prevents extremely large timeout values from tying up resources indefinitely.
 const MAX_TIMEOUT_SECS: u64 = 600; // 10 minutes
+
+/// A server whose transport dies is restarted automatically, but only this
+/// many times within [`RESTART_WINDOW`]: a server that rejects every session
+/// (e.g. behind a misbehaving proxy) would otherwise churn the connection on
+/// every request. The window sliding out is the reset — a successful start
+/// proves nothing, since a churning server still accepts `initialize`.
+const MAX_RESTARTS_PER_WINDOW: usize = 3;
+const RESTART_WINDOW: Duration = Duration::from_secs(60);
 
 pub fn init(cx: &mut App) {
     extension::init(cx);
@@ -303,6 +311,7 @@ pub struct ContextServerStore {
     /// `maintain_servers` restart a server when its working directory changes,
     /// since the working directory is not part of `ContextServerConfiguration`.
     server_working_directories: HashMap<ContextServerId, Option<Arc<Path>>>,
+    recent_restarts: HashMap<ContextServerId, Vec<Instant>>,
     needs_server_update: bool,
     ai_disabled: bool,
     _subscriptions: Vec<Subscription>,
@@ -521,6 +530,7 @@ impl ContextServerStore {
             update_servers_task: None,
             context_server_factory,
             server_working_directories: HashMap::default(),
+            recent_restarts: HashMap::default(),
         };
         if maintain_server_loop && !DisableAiSettings::get_global(cx).disable_ai {
             this.available_context_servers_changed(cx);
@@ -741,6 +751,11 @@ impl ContextServerStore {
                 let new_state = match server.clone().start(cx).await {
                     Ok(_) => {
                         debug_assert!(server.client().is_some());
+                        // Not resetting `recent_restarts` here on purpose: an
+                        // initialize succeeding proves nothing about session
+                        // health (a churning server accepts initialize and
+                        // rejects the calls after it). The window expiring is
+                        // the reset.
                         let _transport_watch =
                             Self::watch_transport_shutdown(this.clone(), server.clone(), cx);
                         ContextServerState::Running {
@@ -837,6 +852,34 @@ impl ContextServerStore {
         if !Arc::ptr_eq(running_server, &server) {
             return;
         }
+
+        // Prune the window, then bail out if this server has restarted too
+        // often recently: restarting again would just churn. The server stays
+        // `Running` with a dead client — requests fail fast until the user
+        // intervenes (editing settings restarts it via the normal path).
+        let now = Instant::now();
+        self.recent_restarts
+            .entry(server.id())
+            .or_default()
+            .retain(|instant| now.duration_since(*instant) < RESTART_WINDOW);
+        if self
+            .recent_restarts
+            .get(&server.id())
+            .is_some_and(|restarts| restarts.len() >= MAX_RESTARTS_PER_WINDOW)
+        {
+            log::error!(
+                "{} transport died {} times within {:?}; not restarting again \
+                 until the window elapses",
+                server.id(),
+                MAX_RESTARTS_PER_WINDOW,
+                RESTART_WINDOW
+            );
+            return;
+        }
+        self.recent_restarts
+            .get_mut(&server.id())
+            .expect("entry was just created")
+            .push(now);
 
         log::info!(
             "{} transport died without an auth challenge; restarting",

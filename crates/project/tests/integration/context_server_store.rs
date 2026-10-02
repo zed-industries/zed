@@ -1183,6 +1183,104 @@ async fn test_http_server_restarts_on_non_auth_transport_failure(cx: &mut TestAp
     });
 }
 
+// The automatic restart has a budget: a server whose transport keeps dying
+// (e.g. it rejects every session) must not be restarted on every request.
+// After MAX_RESTARTS_PER_WINDOW deaths within the window the store stops
+// restarting, leaving the server `Running` with a dead client until the user
+// intervenes or the window elapses.
+#[gpui::test]
+async fn test_http_server_stops_restarting_after_repeated_transport_deaths(
+    cx: &mut TestAppContext,
+) {
+    const SERVER_ID: &str = "churning-server";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    set_fake_mcp_http_client(cx, |message| {
+        if message.contains("\"method\":\"initialize\"") {
+            Ok(initialize_response())
+        } else if message.contains("notifications/initialized") {
+            Ok(notification_accepted_response())
+        } else {
+            Err(anyhow::anyhow!("connection reset"))
+        }
+    });
+
+    let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_http_context_server_configuration(&server_id, cx);
+
+    // Each failed request kills the transport and eats one restart from the
+    // budget: the initial start plus MAX_RESTARTS_PER_WINDOW restarts, then
+    // the fourth death must not produce any further status changes.
+    {
+        let _server_events = assert_server_events(
+            &store,
+            std::iter::once(ContextServerStatus::Starting)
+                .chain(std::iter::once(ContextServerStatus::Running))
+                .chain(
+                    [
+                        ContextServerStatus::Stopped,
+                        ContextServerStatus::Starting,
+                        ContextServerStatus::Running,
+                    ]
+                    .into_iter()
+                    .cycle()
+                    .take(3 * 3), // MAX_RESTARTS_PER_WINDOW restarts × 3 events each
+                )
+                .map(|status| (server_id.clone(), status))
+                .collect(),
+            cx,
+        );
+        cx.run_until_parked();
+
+        // Three restarts within the budget, each producing a fresh client.
+        for _ in 0..3 {
+            let client = store.read_with(cx, |store, _| {
+                store
+                    .get_running_server(&server_id)
+                    .expect("server should be running")
+                    .client()
+                    .expect("running server should have a client")
+            });
+            client
+                .request::<context_server::types::requests::ListTools>(())
+                .await
+                .expect_err("request should fail when the transport errors");
+            // Drop our handle so the dead client fully goes away: a lingering
+            // client's input task would compete with its successor for the
+            // shared transport response channel and starve the restart's
+            // initialize handshake.
+            drop(client);
+            cx.run_until_parked();
+        }
+
+        // Budget exhausted: this death produces no status change and no new
+        // client. Dropping the events guard asserts exactly that.
+        let client = store.read_with(cx, |store, _| {
+            store
+                .get_running_server(&server_id)
+                .expect("server should still be running")
+                .client()
+                .expect("server should still have a client")
+        });
+        client
+            .request::<context_server::types::requests::ListTools>(())
+            .await
+            .expect_err("request should fail when the transport errors");
+        drop(client);
+        cx.run_until_parked();
+    }
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Running),
+            "server should stay in its current state once the restart budget is exhausted"
+        );
+    });
+}
+
 // Some streamable-HTTP servers expire sessions aggressively: after the
 // session TTL they answer 400 with an "initialize required" error (or 404,
 // as the spec allows) instead of letting the request hang. The client must
