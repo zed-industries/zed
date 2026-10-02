@@ -10074,194 +10074,7 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
-    async fn test_thread_search_tracks_historical_tool_content_chunks(cx: &mut TestAppContext) {
-        init_test(cx);
-        let (conversation_view, cx) =
-            setup_conversation_view(StubAgentServer::default_response(), cx).await;
-        add_to_workspace(conversation_view.clone(), cx);
-        let thread_view = active_thread(&conversation_view, cx);
-        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
-        let tool_call_id = acp_v1::ToolCallId::new("historical-chunks");
-        let later_tool_call_id = acp_v1::ToolCallId::new("later-tool");
-
-        for (id, text) in [
-            ("historical-chunks", "Original papaya output"),
-            ("later-tool", "Unchanged later output"),
-        ] {
-            let patch: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
-                "toolCallId": id,
-                "title": "Inspect output",
-                "kind": "other",
-                "status": "completed",
-                "content": [{
-                    "type": "content",
-                    "content": {"type": "text", "text": text}
-                }]
-            }))
-            .expect("tool patch should deserialize");
-            thread
-                .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
-                .expect("tool patch should apply");
-        }
-        cx.run_until_parked();
-        let (original_index, original_markdown, later_index, later_markdown, entry_count) = thread
-            .read_with(cx, |thread, _| {
-                let (index, call) = thread.tool_call(&tool_call_id).expect("historical tool");
-                let (later_index, later_call) = thread
-                    .tool_call(&later_tool_call_id)
-                    .expect("interleaved later tool");
-                assert!(index < later_index);
-                assert_eq!(call.content().len(), 1);
-                assert_eq!(later_call.content().len(), 1);
-                (
-                    index,
-                    call.content()[0]
-                        .markdown()
-                        .expect("original Markdown")
-                        .clone(),
-                    later_index,
-                    later_call.content()[0]
-                        .markdown()
-                        .expect("later Markdown")
-                        .clone(),
-                    thread.entries().len(),
-                )
-            });
-        let first_chunk_selector: &'static str =
-            Box::leak(format!("tool-call-output-{original_index}-1").into_boxed_str());
-        let second_chunk_selector: &'static str =
-            Box::leak(format!("tool-call-output-{original_index}-2").into_boxed_str());
-        let later_chunk_selector: &'static str =
-            Box::leak(format!("tool-call-output-{later_index}-1").into_boxed_str());
-
-        thread_view.update_in(cx, |view, window, cx| {
-            view.toggle_search(&crate::ToggleSearch, window, cx);
-        });
-        let search_bar = thread_view
-            .read_with(cx, |view, _| view.thread_search_bar.clone())
-            .expect("thread search should be open");
-        search_bar.update_in(cx, |bar, window, cx| {
-            bar.query_editor.update(cx, |editor, cx| {
-                editor.set_text("mango", window, cx);
-            });
-            bar.update_matches(window, cx);
-        });
-        cx.run_until_parked();
-        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 0);
-
-        let chunk: acp_v2::ToolCallContentChunk = serde_json::from_value(json!({
-            "toolCallId": "historical-chunks",
-            "content": {
-                "type": "content",
-                "content": {"type": "text", "text": "First mango chunk"}
-            }
-        }))
-        .expect("collapsed chunk should deserialize");
-        thread
-            .update(cx, |thread, cx| {
-                thread.append_tool_call_content_chunk(chunk, cx)
-            })
-            .expect("collapsed chunk should append");
-        cx.run_until_parked();
-        cx.executor()
-            .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
-        cx.run_until_parked();
-        assert_eq!(
-            search_bar.read_with(cx, |bar, _| bar.match_count()),
-            0,
-            "appending content must not make a collapsed tool searchable",
-        );
-        thread_view.read_with(cx, |view, cx| {
-            assert!(
-                !view
-                    .entry_view_state
-                    .read(cx)
-                    .is_tool_call_expanded(&tool_call_id)
-            );
-        });
-        assert!(cx.debug_bounds(first_chunk_selector).is_none());
-
-        thread_view.update(cx, |view, cx| {
-            view.entry_view_state.update(cx, |state, _| {
-                state.expand_tool_call(tool_call_id.clone());
-                state.expand_tool_call(later_tool_call_id.clone());
-            });
-            cx.notify();
-        });
-        search_bar.update_in(cx, |bar, window, cx| bar.update_matches(window, cx));
-        cx.run_until_parked();
-        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 1);
-        assert!(cx.debug_bounds(first_chunk_selector).is_some());
-        let first_chunk_markdown = thread.read_with(cx, |thread, _| {
-            let (_, call) = thread.tool_call(&tool_call_id).expect("historical tool");
-            assert_eq!(call.content().len(), 2);
-            call.content()[1]
-                .markdown()
-                .expect("first chunk Markdown")
-                .clone()
-        });
-
-        let chunk: acp_v2::ToolCallContentChunk = serde_json::from_value(json!({
-            "toolCallId": "historical-chunks",
-            "content": {
-                "type": "content",
-                "content": {"type": "text", "text": "Second mango chunk"}
-            }
-        }))
-        .expect("expanded chunk should deserialize");
-        thread
-            .update(cx, |thread, cx| {
-                thread.append_tool_call_content_chunk(chunk, cx)
-            })
-            .expect("expanded chunk should append to the historical tool");
-        cx.run_until_parked();
-        cx.executor()
-            .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
-        cx.run_until_parked();
-        assert_eq!(
-            search_bar.read_with(cx, |bar, _| bar.match_source_ranges()),
-            vec![6..11, 7..12],
-            "the active query must refresh without an explicit update_matches",
-        );
-        assert!(cx.debug_bounds(second_chunk_selector).is_some());
-        assert!(cx.debug_bounds(later_chunk_selector).is_none());
-        thread.read_with(cx, |thread, cx| {
-            assert_eq!(thread.entries().len(), entry_count);
-            let (index, call) = thread.tool_call(&tool_call_id).expect("historical tool");
-            assert_eq!(index, original_index);
-            let markdowns = call
-                .content()
-                .iter()
-                .map(|content| content.markdown().expect("text content Markdown").clone())
-                .collect::<Vec<_>>();
-            assert_eq!(markdowns.len(), 3);
-            assert_eq!(markdowns[0], original_markdown);
-            assert_eq!(markdowns[1], first_chunk_markdown);
-            assert_eq!(
-                markdowns
-                    .iter()
-                    .map(|markdown| markdown.read(cx).source())
-                    .collect::<Vec<_>>(),
-                vec![
-                    "Original papaya output",
-                    "First mango chunk",
-                    "Second mango chunk"
-                ],
-            );
-            for markdown in &markdowns[1..] {
-                assert!(!markdown.read(cx).search_highlights().is_empty());
-            }
-            let (index, later_call) = thread.tool_call(&later_tool_call_id).expect("later tool");
-            assert_eq!(index, later_index);
-            assert_eq!(later_call.content().len(), 1);
-            assert_eq!(later_call.content()[0].markdown(), Some(&later_markdown));
-            assert_eq!(later_markdown.read(cx).source(), "Unchanged later output");
-            assert!(later_markdown.read(cx).search_highlights().is_empty());
-        });
-    }
-
-    #[gpui::test]
-    async fn test_thread_search_tracks_tool_chunks_after_replacement_and_clear(
+    async fn test_thread_search_refreshes_appended_historical_tool_content(
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
@@ -10270,30 +10083,48 @@ pub(crate) mod tests {
         add_to_workspace(conversation_view.clone(), cx);
         let thread_view = active_thread(&conversation_view, cx);
         let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
-        let tool_call_id = acp_v1::ToolCallId::new("replacement-chunks");
-        let patch: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
-            "toolCallId": "replacement-chunks",
-            "title": "Inspect output",
-            "status": "completed",
-            "content": [{
-                "type": "content",
-                "content": {"type": "text", "text": "Original papaya output"}
-            }],
-            "rawOutput": "Original raw mango output"
-        }))
-        .expect("initial tool patch should deserialize");
-        thread
-            .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
-            .expect("initial tool patch should apply");
+        let tool_call_id = acp_v1::ToolCallId::new("historical-chunks");
+        let later_tool_call_id = acp_v1::ToolCallId::new("later-tool");
+        for (id, text) in [
+            ("historical-chunks", "Original mango output"),
+            ("later-tool", "Unchanged later output"),
+        ] {
+            thread
+                .update(cx, |thread, cx| {
+                    thread.upsert_tool_call_patch(
+                        acp_v2::ToolCallUpdate::new(id)
+                            .title("Inspect output")
+                            .status(acp_v2::ToolCallStatus::Completed)
+                            .content(vec![text.into()]),
+                        cx,
+                    )
+                })
+                .expect("tool patch should apply");
+        }
         cx.run_until_parked();
-        let original_index = thread.read_with(cx, |thread, _| {
-            thread.tool_call(&tool_call_id).expect("tool exists").0
-        });
-        let output_selector: &'static str =
-            Box::leak(format!("tool-call-output-{original_index}-0").into_boxed_str());
+        let (original_index, original_markdown, later_index, entry_count) =
+            thread.read_with(cx, |thread, _| {
+                let (index, call) = thread.tool_call(&tool_call_id).expect("historical tool");
+                let (later_index, _) = thread
+                    .tool_call(&later_tool_call_id)
+                    .expect("interleaved later tool");
+                assert!(index < later_index);
+                (
+                    index,
+                    call.content()
+                        .first()
+                        .expect("original output")
+                        .markdown()
+                        .expect("original Markdown")
+                        .clone(),
+                    later_index,
+                    thread.entries().len(),
+                )
+            });
         thread_view.update_in(cx, |view, window, cx| {
             view.entry_view_state.update(cx, |state, _| {
                 state.expand_tool_call(tool_call_id.clone());
+                state.expand_tool_call(later_tool_call_id.clone());
             });
             view.toggle_search(&crate::ToggleSearch, window, cx);
         });
@@ -10302,231 +10133,53 @@ pub(crate) mod tests {
             .expect("thread search should be open");
         search_bar.update_in(cx, |bar, window, cx| {
             bar.query_editor.update(cx, |editor, cx| {
-                editor.set_text("lychee", window, cx);
-            });
-            bar.update_matches(window, cx);
-        });
-        cx.run_until_parked();
-        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 0);
-
-        let patch: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
-            "toolCallId": "replacement-chunks",
-            "content": [{
-                "type": "content",
-                "content": {"type": "text", "text": "Replacement lychee output"}
-            }]
-        }))
-        .expect("replacement should deserialize");
-        thread
-            .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
-            .expect("replacement should apply");
-        let chunk: acp_v2::ToolCallContentChunk = serde_json::from_value(json!({
-            "toolCallId": "replacement-chunks",
-            "content": {
-                "type": "content",
-                "content": {"type": "text", "text": "Appended lychee output"}
-            }
-        }))
-        .expect("chunk after replacement should deserialize");
-        thread
-            .update(cx, |thread, cx| {
-                thread.append_tool_call_content_chunk(chunk, cx)
-            })
-            .expect("chunk should append after replacement");
-        cx.run_until_parked();
-        cx.executor()
-            .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
-        cx.run_until_parked();
-        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 2);
-        thread.read_with(cx, |thread, cx| {
-            let (index, call) = thread.tool_call(&tool_call_id).expect("tool exists");
-            assert_eq!(index, original_index);
-            assert_eq!(
-                call.content()
-                    .iter()
-                    .map(|content| content.markdown().expect("text Markdown").read(cx).source())
-                    .collect::<Vec<_>>(),
-                vec!["Replacement lychee output", "Appended lychee output"],
-            );
-        });
-
-        search_bar.update_in(cx, |bar, window, cx| {
-            bar.query_editor.update(cx, |editor, cx| {
                 editor.set_text("mango", window, cx);
             });
             bar.update_matches(window, cx);
         });
         cx.run_until_parked();
-        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 0);
-        let patch: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
-            "toolCallId": "replacement-chunks",
-            "content": null
-        }))
-        .expect("null clear should deserialize");
-        thread
-            .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
-            .expect("null clear should apply");
-        cx.run_until_parked();
-        cx.executor()
-            .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
-        cx.run_until_parked();
-        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 1);
-
-        let chunk: acp_v2::ToolCallContentChunk = serde_json::from_value(json!({
-            "toolCallId": "replacement-chunks",
-            "content": {
-                "type": "diff",
-                "changes": [{"operation": "modify", "path": "/tmp/chunk-output"}],
-                "patch": {
-                    "format": "git_patch",
-                    "text": "diff --git a//tmp/chunk-output b//tmp/chunk-output\n--- a//tmp/chunk-output\n+++ b//tmp/chunk-output\n@@ -1 +1 @@\n-deleted chunk line\n+durian chunk line\n"
-                }
-            }
-        }))
-        .expect("diff chunk should deserialize");
+        assert_eq!(
+            search_bar.read_with(cx, |bar, _| bar.match_source_ranges()),
+            vec![9..14],
+        );
         thread
             .update(cx, |thread, cx| {
-                thread.append_tool_call_content_chunk(chunk, cx)
+                thread.append_tool_call_content_chunk(
+                    acp_v2::ToolCallContentChunk::new("historical-chunks", "New mango chunk"),
+                    cx,
+                )
             })
-            .expect("diff chunk should append after clear");
+            .expect("chunk should append to the historical tool");
         cx.run_until_parked();
         cx.executor()
             .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
         cx.run_until_parked();
         assert_eq!(
-            search_bar.read_with(cx, |bar, _| bar.match_count()),
-            0,
-            "a structured diff chunk must suppress the original raw fallback",
+            search_bar.read_with(cx, |bar, _| bar.match_source_ranges()),
+            vec![9..14, 4..9],
+            "the active query must refresh without an explicit update_matches",
         );
-        let hunk_buffer = thread_view.read_with(cx, |view, cx| {
-            let (index, call) = thread
-                .read(cx)
-                .tool_call(&tool_call_id)
-                .expect("tool exists");
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(thread.entries().len(), entry_count);
+            let (index, call) = thread.tool_call(&tool_call_id).expect("historical tool");
             assert_eq!(index, original_index);
-            let [acp_thread::ToolCallContent::DiffPatch { source, render }] = call.content() else {
-                panic!("expected only the appended structured diff, not raw output");
+            let [original, appended] = call.content() else {
+                panic!("expected original output and one appended chunk");
             };
-            assert!(
-                source
-                    .patch
-                    .as_ref()
-                    .expect("source patch")
-                    .text
-                    .contains("durian chunk line")
-            );
-            assert!(render.fallback.is_none());
-            assert_eq!(render.files.len(), 1);
-            assert_eq!(render.files[0].hunks.len(), 1);
-            let hunk = &render.files[0].hunks[0];
-            let editor = view
-                .entry_view_state
-                .read(cx)
-                .entry(original_index)
-                .and_then(|entry| entry.editor_for_patch_hunk(&hunk.buffer))
-                .expect("appended diff should have a display editor");
-            assert!(editor.read(cx).read_only(cx));
-            assert!(
-                editor
-                    .read(cx)
-                    .buffer()
-                    .read(cx)
-                    .snapshot(cx)
-                    .diff_hunks()
-                    .next()
-                    .is_some()
-            );
-            hunk.buffer.clone()
-        });
-        assert!(cx.debug_bounds(output_selector).is_some());
-        for query in ["deleted chunk line", "durian chunk line"] {
-            search_bar.update_in(cx, |bar, window, cx| {
-                bar.query_editor.update(cx, |editor, cx| {
-                    editor.set_text(query, window, cx);
-                });
-                bar.update_matches(window, cx);
-            });
-            cx.run_until_parked();
-            assert_eq!(
-                search_bar.read_with(cx, |bar, _| bar.match_count()),
-                1,
-                "{query}"
-            );
-            search_bar.update_in(cx, |bar, window, cx| {
-                bar.select_next_match(&super::thread_search_bar::SelectNextThreadMatch, window, cx);
-            });
-            let selected_text = thread_view.update(cx, |view, cx| {
-                let editor = view
-                    .entry_view_state
-                    .read(cx)
-                    .entry(original_index)
-                    .and_then(|entry| entry.editor_for_patch_hunk(&hunk_buffer))
-                    .expect("appended diff editor");
-                editor.update(cx, |editor, cx| {
-                    let selection = editor.selections.newest_anchor().range();
-                    editor
-                        .buffer()
-                        .read(cx)
-                        .snapshot(cx)
-                        .text_for_range(selection)
-                        .collect::<String>()
-                })
-            });
-            assert_eq!(selected_text, query);
-        }
-        assert!(search_bar.read_with(cx, |bar, _| {
-            bar.is_patch_buffer_subscribed(hunk_buffer.entity_id())
-        }));
-
-        let patch: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
-            "toolCallId": "replacement-chunks",
-            "content": []
-        }))
-        .expect("empty clear should deserialize");
-        thread
-            .update(cx, |thread, cx| thread.upsert_tool_call_patch(patch, cx))
-            .expect("empty clear should apply");
-        cx.run_until_parked();
-        cx.executor()
-            .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
-        cx.run_until_parked();
-        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 0);
-        assert!(!search_bar.read_with(cx, |bar, _| {
-            bar.is_patch_buffer_subscribed(hunk_buffer.entity_id())
-        }));
-        thread_view.read_with(cx, |view, cx| {
-            assert!(
-                view.entry_view_state
-                    .read(cx)
-                    .entry(original_index)
-                    .and_then(|entry| entry.editor_for_patch_hunk(&hunk_buffer))
-                    .is_none()
-            );
-            let (index, call) = thread
-                .read(cx)
-                .tool_call(&tool_call_id)
-                .expect("tool exists");
-            assert_eq!(index, original_index);
-            let [raw_content] = call.content() else {
-                panic!("clearing appended content must restore only the original raw output");
+            assert_eq!(original.markdown(), Some(&original_markdown));
+            assert_eq!(original_markdown.read(cx).source(), "Original mango output");
+            let appended = appended.markdown().expect("appended Markdown").read(cx);
+            assert_eq!(appended.source(), "New mango chunk");
+            assert_eq!(appended.search_highlights(), &[4..9]);
+            let (index, later_call) = thread.tool_call(&later_tool_call_id).expect("later tool");
+            assert_eq!(index, later_index);
+            let [later_content] = later_call.content() else {
+                panic!("appending to the older tool must leave the later tool unchanged");
             };
-            assert_eq!(
-                raw_content
-                    .markdown()
-                    .expect("raw fallback Markdown")
-                    .read(cx)
-                    .source(),
-                "Original raw mango output",
-            );
+            let later_markdown = later_content.markdown().expect("later Markdown").read(cx);
+            assert_eq!(later_markdown.source(), "Unchanged later output");
+            assert!(later_markdown.search_highlights().is_empty());
         });
-        search_bar.update_in(cx, |bar, window, cx| {
-            bar.query_editor.update(cx, |editor, cx| {
-                editor.set_text("mango", window, cx);
-            });
-            bar.update_matches(window, cx);
-        });
-        cx.run_until_parked();
-        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 1);
     }
 
     #[gpui::test]
