@@ -37,8 +37,9 @@ pub use crate::settings::{
     observe_buffer_font_size_adjustment, reset_agent_buffer_font_size, reset_agent_ui_font_size,
     reset_buffer_font_size, reset_git_commit_buffer_font_size, reset_markdown_preview_font_size,
     reset_ui_font_size, set_icon_theme, set_mode, set_theme, setup_ui_font,
+    ui_line_height_from_settings,
 };
-pub use theme::UiDensity;
+pub use theme::{UiDensity, UiLineHeight};
 
 struct ThemeSettingsProviderImpl;
 

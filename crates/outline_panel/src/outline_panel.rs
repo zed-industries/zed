@@ -3028,6 +3028,7 @@ impl OutlinePanel {
         cx: &mut Context<OutlinePanel>,
     ) -> Stateful<Div> {
         let settings = OutlinePanelSettings::get_global(cx);
+        let row_height = ThemeSettings::get_global(cx).ui_line_height();
         let is_deleted = match &rendered_entry {
             PanelEntry::Fs(FsEntry::File(file)) => file.is_deleted,
             _ => false,
@@ -3056,6 +3057,7 @@ impl OutlinePanel {
             .cursor_pointer()
             .child(
                 ListItem::new(item_id)
+                    .when_some(row_height, |this, row_height| this.height(row_height))
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
                     .toggle_state(is_active)
@@ -3064,7 +3066,7 @@ impl OutlinePanel {
                             .child(h_flex().min_w(px(16.)).justify_center().child(icon_element))
                             .child(
                                 h_flex()
-                                    .h_6()
+                                    .h(row_height.unwrap_or(rems_from_px(24_f32)))
                                     .child(label_element)
                                     .ml_1()
                                     .when(is_deleted, |this| this.line_through()),

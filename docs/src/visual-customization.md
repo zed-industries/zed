@@ -49,6 +49,10 @@ If you would like to use distinct themes for light mode/dark mode that can be se
   "ui_font_family": ".SystemUIFont",
   "ui_font_weight": 400, // Font weight in standard CSS units from 100 to 900.
   "ui_font_size": 16,
+  // Row height for panel entries, as a multiple of "ui_font_size":
+  // "comfortable" (1.5), "standard" (1.3) or `{ "custom": 2 }`.
+  // When null, each panel uses its own row height.
+  "ui_line_height": null,
 
   // Buffer Font - Used by editor buffers
   // use ".ZedMono" for the bundled default monospace (currently Lilex)
