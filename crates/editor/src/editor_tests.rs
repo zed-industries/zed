@@ -43185,6 +43185,69 @@ async fn test_paste_image_in_markdown_saves_file_and_inserts_markdown(cx: &mut T
 }
 
 #[gpui::test]
+async fn test_paste_bmp_image_in_markdown_saves_png(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/test", serde_json::json!({"test.md": ""}))
+        .await;
+    let project = Project::test(fs.clone(), [std::path::Path::new("/test")], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/test/test.md", cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_language(Some(markdown_language), cx);
+    });
+
+    let editor_window = cx.add_window(|window, cx| {
+        let editor = build_editor_with_project(
+            project,
+            MultiBuffer::build_from_buffer(buffer, cx),
+            window,
+            cx,
+        );
+        window.focus(&editor.focus_handle(cx), cx);
+        editor
+    });
+    cx.run_until_parked();
+    let mut cx = EditorTestContext::for_editor(editor_window, cx).await;
+
+    let pixels = image::RgbImage::from_pixel(2, 2, image::Rgb([12, 34, 56]));
+    let mut bmp_bytes = Vec::new();
+    image::DynamicImage::ImageRgb8(pixels.clone())
+        .write_to(
+            &mut std::io::Cursor::new(&mut bmp_bytes),
+            image::ImageFormat::Bmp,
+        )
+        .unwrap();
+    let clipboard_image = gpui::Image::from_bytes(gpui::ImageFormat::Bmp, bmp_bytes);
+
+    cx.set_state("ˇ");
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_image(&clipboard_image));
+        editor.paste(&Paste, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(cx.buffer_text(), "![](image.png)");
+    let png_bytes = fs.read_file_sync("/test/image.png").unwrap();
+    let decoded = image::load_from_memory_with_format(&png_bytes, image::ImageFormat::Png).unwrap();
+    assert_eq!(decoded.to_rgb8(), pixels);
+    assert!(fs.read_file_sync("/test/image.bmp").is_err());
+}
+
+#[gpui::test]
 async fn test_paste_multiple_images_in_markdown_increments_filename(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
