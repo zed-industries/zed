@@ -33,9 +33,9 @@ use super::journal::{
 
 /// Detects foreground hangs by polling the journal.
 ///
-/// Detection is post-hoc: a hang is reported once an explicit presentation
-/// or foreground-idle boundary completes its interval. Work that never
-/// yields back to the foreground is not observed until it does.
+/// Detection is post-hoc: a hang is reported once an explicit presentation,
+/// completed frame skip, or foreground-idle boundary completes its interval.
+/// Work that never yields back to the foreground is not observed until it does.
 pub struct HangDetector {
     collector: ForegroundJournalCollector,
     sealer: IntervalSealer,
@@ -145,8 +145,9 @@ pub struct SerializedHangIncident {
     /// For presentation-sealed incidents, how long the submitted frame had
     /// been dirty, in milliseconds.
     pub dirty_to_present_ms: Option<f64>,
-    /// What closed the incident: `"present"`, `"idle"`, or `"power_transition"`. This labels the
-    /// boundary, not the hang's cause — the cause is the first contributor.
+    /// What closed the incident: `"present"`, `"frame_skipped"`, `"idle"`, or
+    /// `"power_transition"`. This labels the boundary, not the hang's cause —
+    /// the cause is the first contributor.
     pub sealed_by: &'static str,
     /// Fraction of the active window the foreground spent working,
     /// `0.0..=1.0`. Low values with a high `dirty_to_present_ms` indicate
@@ -294,10 +295,13 @@ impl SerializedHangIncident {
                 IntervalBoundary::Presented(presented) => {
                     presented.dirty_to_present_duration().map(as_millis)
                 }
-                IntervalBoundary::Idle { .. } | IntervalBoundary::PowerTransition { .. } => None,
+                IntervalBoundary::FrameSkipped(_)
+                | IntervalBoundary::Idle { .. }
+                | IntervalBoundary::PowerTransition { .. } => None,
             },
             sealed_by: match snapshot.boundary {
                 IntervalBoundary::Presented(_) => "present",
+                IntervalBoundary::FrameSkipped(_) => "frame_skipped",
                 IntervalBoundary::Idle { .. } => "idle",
                 IntervalBoundary::PowerTransition { .. } => "power_transition",
             },
@@ -483,8 +487,9 @@ mod tests {
     use crate::profiler::{ActionTiming, FrameTiming, PresentTiming, TaskTiming, YieldTime};
 
     use super::super::journal::{
-        FRAME_DEADLINE, ForegroundEvent, ForegroundJournalEntry, FrameSnapshot, FrameStateChange,
-        InputTiming, IntervalBoundary, PollSummary, PresentedFrame, SmallPollFlush,
+        FRAME_DEADLINE, ForegroundEvent, ForegroundJournalEntry, FrameSkipReason, FrameSkipped,
+        FrameSnapshot, FrameStateChange, InputTiming, IntervalBoundary, IntervalSealer,
+        PlatformSignal, PollSummary, PresentedFrame, SmallPollFlush,
         install_test_foreground_journal, record_present,
     };
     use super::{
@@ -499,6 +504,83 @@ mod tests {
     // Equal to the threshold, mirroring how production wires the detector
     // today.
     const FRAME_BUDGET: Duration = HANG_THRESHOLD;
+
+    #[test]
+    fn completed_skips_preserve_real_hangs_and_serialize_their_boundary() {
+        let startup = scheduler::Instant::now();
+        let at = |ms: u64| startup + Duration::from_millis(ms);
+        let window_id = WindowId::from(1);
+        for discontinuous in [false, true] {
+            for trigger in [HangTrigger::Threshold, HangTrigger::Budget] {
+                let mut sealer = IntervalSealer::new(startup);
+                let mut entries = Vec::new();
+                match trigger {
+                    HangTrigger::Threshold => entries.push(ForegroundJournalEntry::Event(
+                        task_poll_event(at(10), at(30)),
+                    )),
+                    HangTrigger::Budget => entries.extend([
+                        ForegroundJournalEntry::Event(task_poll_event(at(10), at(16))),
+                        ForegroundJournalEntry::Event(task_poll_event(at(20), at(26))),
+                    ]),
+                }
+                if discontinuous {
+                    entries.push(ForegroundJournalEntry::Discontinuity { lost: 1 });
+                }
+                entries.push(ForegroundJournalEntry::Boundary(
+                    IntervalBoundary::FrameSkipped(FrameSkipped {
+                        window_id,
+                        at: at(60),
+                        reason: FrameSkipReason::NoRenderNeeded,
+                    }),
+                ));
+                let snapshots = sealer.push_entries(entries);
+                let [snapshot] = snapshots.as_slice() else {
+                    panic!("expected one snapshot, got {snapshots:?}");
+                };
+                let incident = HangIncident::detect(snapshot.clone(), HANG_THRESHOLD, FRAME_BUDGET);
+                if discontinuous && trigger == HangTrigger::Budget {
+                    assert!(incident.is_none(), "skips must not exempt journal gaps");
+                    continue;
+                }
+                let incident = incident.expect("real work still qualifies across a skip");
+                assert_eq!(incident.trigger, trigger);
+                let serialized = SerializedHangIncident::convert(startup, &incident, 10, None);
+                assert_eq!(serialized.sealed_by, "frame_skipped");
+                assert_eq!(serialized.dirty_to_present_ms, None);
+                assert_eq!(serialized.start_ms, 10.0);
+                assert_eq!(serialized.active_ms, 50.0);
+                assert_eq!(serialized.journal_discontinuous, discontinuous);
+                assert_eq!(serialized.event_count, incident.contributors.len());
+                let json = serde_json::to_value(&serialized).expect("serialize incident");
+                assert_eq!(json["sealed_by"], "frame_skipped");
+                assert!(json["dirty_to_present_ms"].is_null());
+            }
+        }
+    }
+
+    #[test]
+    fn delayed_platform_signals_without_work_are_not_hangs() {
+        let start = scheduler::Instant::now();
+        let window_id = WindowId::from(1);
+        let mut sealer = IntervalSealer::new(start);
+        let snapshots = sealer.push_entries([
+            ForegroundJournalEntry::PlatformSignal(PlatformSignal {
+                window_id,
+                signal_at: Some(start),
+                handled_at: start + Duration::from_secs(5),
+                source: crate::FrameRequestSource::NativeCallback,
+            }),
+            ForegroundJournalEntry::Boundary(IntervalBoundary::FrameSkipped(FrameSkipped {
+                window_id,
+                at: start + Duration::from_secs(6),
+                reason: FrameSkipReason::NoRenderNeeded,
+            })),
+        ]);
+        assert!(
+            snapshots.is_empty(),
+            "a late signal without work seals nothing, got {snapshots:?}"
+        );
+    }
 
     /// A hang that outlives the frame deadline stays in one incident with
     /// the frame it starved: the deadline only unblocks idle boundaries, so

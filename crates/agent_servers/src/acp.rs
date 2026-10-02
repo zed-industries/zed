@@ -4494,6 +4494,22 @@ exit 7
         Arc<std::sync::Mutex<Option<async_channel::Receiver<()>>>>,
         Task<anyhow::Result<()>>,
     ) {
+        connect_fake_agent_with_handle(close_session_gate, None, cx).await
+    }
+
+    async fn connect_fake_agent_with_handle(
+        close_session_gate: Option<async_channel::Receiver<()>>,
+        agent_sender: Option<futures::channel::oneshot::Sender<ConnectionTo<Client>>>,
+        cx: &mut gpui::TestAppContext,
+    ) -> (
+        Rc<AcpConnection>,
+        Entity<project::Project>,
+        Arc<AtomicUsize>,
+        Arc<AtomicUsize>,
+        Arc<std::sync::Mutex<Vec<acp::SessionUpdate>>>,
+        Arc<std::sync::Mutex<Option<async_channel::Receiver<()>>>>,
+        Task<anyhow::Result<()>>,
+    ) {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
@@ -4617,7 +4633,12 @@ exit 7
                 async move |_notif: acp::CancelNotification, _cx| Ok(()),
                 agent_client_protocol::on_receive_notification!(),
             )
-            .connect_to(agent_transport);
+            .connect_with(agent_transport, async move |agent| {
+                if let Some(sender) = agent_sender {
+                    assert!(sender.send(agent).is_ok(), "receive fake agent handle");
+                }
+                futures::future::pending::<Result<(), agent_client_protocol::Error>>().await
+            });
 
         let agent_io_task = cx.background_spawn(agent_future);
 
@@ -4704,6 +4725,172 @@ exit 7
             load_session_gate,
             keep_agent_alive,
         )
+    }
+
+    #[gpui::test]
+    async fn test_permission_rpc_cancellation_does_not_cancel_successor(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (agent_sender, agent_receiver) = futures::channel::oneshot::channel();
+        let (connection, project, _, _, _, _, _keep_agent_alive) =
+            connect_fake_agent_with_handle(None, Some(agent_sender), cx).await;
+        let agent = agent_receiver.await.expect("fake agent handle");
+        let session_id = acp::SessionId::new("permission-session");
+        let thread = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    session_id.clone(),
+                    project,
+                    PathList::new(&[std::path::Path::new("/a")]),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("load permission session");
+        cx.background_executor.allow_parking();
+
+        let timeout = cx
+            .background_executor
+            .timer(std::time::Duration::from_secs(5));
+        let exchange = async {
+            let tool_id = acp::ToolCallId::new("reused-tool");
+            let permission = |option_id: &str| {
+                acp::RequestPermissionRequest::new(
+                    session_id.clone(),
+                    acp::ToolCallUpdate::new(
+                        tool_id.clone(),
+                        acp::ToolCallUpdateFields::default()
+                            .title("Run a command")
+                            .status(acp::ToolCallStatus::Pending),
+                    ),
+                    vec![acp::PermissionOption::new(
+                        option_id.to_owned(),
+                        "Allow once",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )],
+                )
+            };
+            let old = agent.send_request(permission("allow-old"));
+            cx.run_until_parked();
+            let old_id = thread.read_with(cx, |thread, _| {
+                let request = thread
+                    .permission_request_for_tool(&tool_id)
+                    .expect("first permission request");
+                assert_eq!(request.legacy_tool_call_id(), Some(&tool_id));
+                request.id
+            });
+
+            let successor = agent.send_request(permission("allow-successor"));
+            let executor = cx.executor();
+            let dispatcher = executor
+                .dispatcher()
+                .as_test()
+                .expect("deterministic test dispatcher");
+            let drain_sdk = || {
+                for _ in 0..1000 {
+                    if !dispatcher.tick(true) {
+                        return;
+                    }
+                }
+                panic!("SDK dispatch did not drain within bounded ticks");
+            };
+            drain_sdk();
+            let (acknowledgment, mut dispatched) = futures::channel::oneshot::channel();
+            let barrier: ForegroundWork = Box::new(ForegroundBarrier { acknowledgment });
+            assert!(
+                connection.dispatch_tx.unbounded_send(barrier).is_ok(),
+                "enqueue permission setup barrier"
+            );
+            let mut setup_queued = false;
+            for _ in 0..1000 {
+                if dispatched
+                    .try_recv()
+                    .expect("live permission setup barrier")
+                    .is_some()
+                {
+                    setup_queued = true;
+                    break;
+                }
+                assert!(executor.tick(), "permission dispatch must make progress");
+            }
+            assert!(
+                setup_queued,
+                "permission setup queued within bounded dispatch"
+            );
+            thread.read_with(cx, |thread, _| {
+                assert_eq!(
+                    thread
+                        .permission_request_for_tool(&tool_id)
+                        .expect("old request still active before successor setup")
+                        .id,
+                    old_id
+                );
+            });
+
+            // Foreground FIFO puts successor setup before old cancellation cleanup,
+            // and cleanup before the old waiter consumes its superseded outcome.
+            old.cancel().expect("send old RPC cancellation");
+            drain_sdk();
+
+            let error = old
+                .block_task()
+                .await
+                .expect_err("old RPC must exercise RequestCancelled cleanup");
+            assert_eq!(error.code, ErrorCode::RequestCancelled);
+            let successor_id = thread.read_with(cx, |thread, _| {
+                assert!(thread.permission_request(old_id).is_none());
+                let successor_id = thread
+                    .permission_request_for_tool(&tool_id)
+                    .expect("successor survives old RPC cancellation")
+                    .id;
+                assert_ne!(successor_id, old_id);
+                assert_eq!(thread.pending_permission_requests().count(), 1);
+                let (_, call) = thread.tool_call(&tool_id).expect("tool presentation");
+                assert_eq!(call.authorization_id(), Some(successor_id));
+                assert_eq!(
+                    call.status(),
+                    acp_thread::ToolCallStatus::WaitingForConfirmation
+                );
+                successor_id
+            });
+            thread.update(cx, |thread, cx| {
+                thread.authorize_permission_request(
+                    successor_id,
+                    acp_thread::SelectedPermissionOutcome::new(
+                        acp::PermissionOptionId::new("allow-successor"),
+                        acp::PermissionOptionKind::AllowOnce,
+                    ),
+                    cx,
+                );
+            });
+            let response = successor
+                .block_task()
+                .await
+                .expect("successor RPC receives its exact offered choice");
+            assert_eq!(
+                response.outcome,
+                acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(
+                    "allow-successor"
+                ))
+            );
+            thread.read_with(cx, |thread, _| {
+                assert!(thread.permission_request(successor_id).is_none());
+                assert_eq!(thread.pending_permission_requests().count(), 0);
+                let (_, call) = thread.tool_call(&tool_id).expect("tool presentation");
+                assert_eq!(call.authorization_id(), None);
+                assert_eq!(call.status(), acp_thread::ToolCallStatus::InProgress);
+            });
+            thread
+                .update(cx, |thread, cx| thread.send_raw("channel still usable", cx))
+                .await
+                .expect("next SDK prompt succeeds after old RPC cancellation");
+        };
+        futures::pin_mut!(exchange, timeout);
+        if let futures::future::Either::Right(_) = futures::future::select(exchange, timeout).await
+        {
+            panic!("timed out exercising permission RPC supersession and cancellation");
+        }
     }
 
     #[gpui::test]
@@ -5698,24 +5885,24 @@ fn handle_request_permission(
     };
 
     let cancellation = responder.cancellation();
-    let tool_call_id = args.tool_call.tool_call_id.clone();
     cx.spawn(async move |cx| {
-        let result: Result<_, acp::Error> = async {
-            let task = thread
-                .update(cx, |thread, cx| {
-                    thread.request_tool_call_authorization(
-                        args.tool_call,
-                        acp_thread::PermissionOptions::Flat(args.options),
-                        acp_thread::AuthorizationKind::PermissionGrant,
-                        cx,
-                    )
-                })
-                .flatten_acp()?;
-            cancellation
-                .run_until_cancelled(async { Ok(task.await) })
-                .await
-        }
-        .await;
+        let (request_id, task) = match thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization_with_id(
+                    args.tool_call,
+                    acp_thread::PermissionOptions::Flat(args.options),
+                    acp_thread::AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .flatten_acp()
+        {
+            Ok(request) => request,
+            Err(error) => return respond_err(responder, error),
+        };
+        let result = cancellation
+            .run_until_cancelled(async { Ok(task.await) })
+            .await;
 
         match result {
             Ok(outcome) => {
@@ -5727,7 +5914,7 @@ fn handle_request_permission(
                 if e.code == ErrorCode::RequestCancelled {
                     thread
                         .update(cx, |thread, cx| {
-                            thread.cancel_tool_call_authorization(&tool_call_id, cx)
+                            thread.cancel_permission_request(request_id, cx)
                         })
                         .log_err();
                 }

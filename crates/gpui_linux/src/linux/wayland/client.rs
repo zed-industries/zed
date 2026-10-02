@@ -103,8 +103,9 @@ use gpui::{
     FileDragPaths, FileDropEvent, ForegroundExecutor, GraphicalEnvironment, KeyDownEvent,
     KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
-    PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta, ScrollWheelEvent,
-    SharedString, Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, px, size,
+    PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta,
+    ScrollWheelEvent, SharedString, Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams,
+    point, px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -602,13 +603,13 @@ impl WaylandClientStatePtr {
         let this = self.clone();
         if let Err(err) = state.loop_handle.insert_source(
             Timer::from_duration(FRAME_RETRY_INTERVAL),
-            move |_, _, _| {
+            move |deadline, _, _| {
                 let Some(client) = this.0.upgrade() else {
                     return TimeoutAction::Drop;
                 };
                 let window = get_window(&mut client.borrow_mut(), &surface_id);
                 if let Some(window) = window {
-                    window.retry_timer_fired();
+                    window.retry_timer_fired(deadline);
                 }
                 TimeoutAction::Drop
             },
@@ -1627,10 +1628,45 @@ impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
         };
         drop(state);
 
-        if let wl_callback::Event::Done { .. } = event {
-            window.frame_callback_fired();
+        if let wl_callback::Event::Done { callback_data } = event {
+            window.frame_callback_fired(PlatformFrameSignal::capture(|| {
+                frame_callback_signal_at(callback_data)
+            }));
         }
     }
+}
+
+fn frame_callback_signal_at(callback_data: u32) -> Instant {
+    let mut monotonic = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // wl_surface.frame specifies an unspecified epoch. Mutter and Sway use
+    // CLOCK_MONOTONIC, but reject implausible ages for other compositor clocks.
+    let result = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut monotonic) };
+    let received_at = Instant::now();
+    if result != 0 || monotonic.tv_sec < 0 || !(0..1_000_000_000).contains(&monotonic.tv_nsec) {
+        return received_at;
+    }
+    let monotonic_millis =
+        (monotonic.tv_sec as u64 * 1_000 + monotonic.tv_nsec as u64 / 1_000_000) as u32;
+    frame_callback_instant(callback_data, monotonic_millis, received_at)
+}
+
+fn frame_callback_instant(
+    callback_data: u32,
+    monotonic_millis: u32,
+    received_at: Instant,
+) -> Instant {
+    // The wire timestamp wraps every ~49 days. A future timestamp also wraps
+    // when subtracted, so the bound rejects it without guessing another epoch.
+    let age_millis = monotonic_millis.wrapping_sub(callback_data);
+    if age_millis > 60_000 {
+        return received_at;
+    }
+    received_at
+        .checked_sub(Duration::from_millis(u64::from(age_millis)))
+        .unwrap_or(received_at)
 }
 
 pub(crate) fn get_window(
@@ -3080,6 +3116,43 @@ mod tests {
         assert!(wl_output_version(1).is_err());
         assert_eq!(wl_seat_version(5).expect("minimum seat version"), 5);
         assert_eq!(wl_output_version(2).expect("minimum output version"), 2);
+    }
+
+    #[test]
+    fn frame_callback_timestamp_preserves_queue_delay() {
+        let received_at = Instant::now();
+        assert_eq!(
+            frame_callback_instant(1_000, 1_025, received_at),
+            received_at - Duration::from_millis(25),
+        );
+        assert_eq!(
+            frame_callback_instant(1_000, 1_000, received_at),
+            received_at,
+        );
+    }
+
+    #[test]
+    fn frame_callback_timestamp_wraps() {
+        let received_at = Instant::now();
+        assert_eq!(
+            frame_callback_instant(u32::MAX - 9, 15, received_at),
+            received_at - Duration::from_millis(25),
+        );
+    }
+
+    #[test]
+    fn frame_callback_timestamp_rejects_implausible_clock() {
+        let received_at = Instant::now();
+        for (callback_data, monotonic_millis) in [(1_001, 1_000), (0, 60_001), (0, u32::MAX)] {
+            assert_eq!(
+                frame_callback_instant(callback_data, monotonic_millis, received_at),
+                received_at,
+            );
+        }
+        assert_eq!(
+            frame_callback_instant(0, 60_000, received_at),
+            received_at - Duration::from_secs(60),
+        );
     }
 
     #[derive(Clone)]

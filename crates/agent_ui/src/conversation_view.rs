@@ -2,8 +2,8 @@ use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
     AuthRequired, ClientUserMessageId, ElicitationEntryId, ElicitationStatus, ElicitationStore,
     ForegroundActivity, LoadError, MaxOutputTokensError, MentionUri, PermissionOptionChoice,
-    PermissionOptions, PermissionPattern, RetryStatus, SelectedPermissionOutcome, ThreadStatus,
-    ToolCall, ToolCallContent, ToolCallStatus,
+    PermissionOptions, PermissionPattern, PermissionRequest, PermissionRequestId, RetryStatus,
+    SelectedPermissionOutcome, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
@@ -285,7 +285,8 @@ impl ProfileProvider for Entity<agent::Thread> {
 #[derive(Default)]
 pub(crate) struct Conversation {
     threads: HashMap<acp_v1::SessionId, Entity<AcpThread>>,
-    permission_requests: IndexMap<acp_v1::SessionId, Vec<acp_v1::ToolCallId>>,
+    permission_requests: IndexMap<acp_v1::SessionId, Vec<PermissionRequestId>>,
+    permission_selections: HashMap<PermissionRequestId, thread_view::PermissionSelection>,
     elicitation_requests: IndexMap<acp_v1::SessionId, Vec<ElicitationEntryId>>,
     subscriptions: Vec<Subscription>,
     updated_at: Option<Instant>,
@@ -295,29 +296,28 @@ impl Conversation {
     pub fn register_thread(&mut self, thread: Entity<AcpThread>, cx: &mut Context<Self>) {
         let thread_state = thread.read(cx);
         let session_id = thread_state.session_id().clone();
-        for entry in thread_state.entries() {
-            if let AgentThreadEntry::ToolCall(tool_call) = entry
-                && matches!(tool_call.status(), ToolCallStatus::WaitingForConfirmation)
-            {
-                self.add_permission_request(&session_id, &tool_call.id);
-            }
+        for request in thread_state.pending_permission_requests() {
+            self.add_permission_request(&session_id, &request.id);
         }
 
         let subscription = cx.subscribe(&thread, {
             let session_id = session_id.clone();
-            move |this, _thread, event, _cx| {
+            move |this, _thread, event, cx| {
                 match event {
                     AcpThreadEvent::NoticesUpdated => return,
                     AcpThreadEvent::ToolAuthorizationRequested(id) => {
                         this.add_permission_request(&session_id, id);
+                        cx.notify();
                     }
                     AcpThreadEvent::ToolAuthorizationReceived(id) => {
-                        if let Some(tool_calls) = this.permission_requests.get_mut(&session_id) {
-                            tool_calls.retain(|tool_call_id| tool_call_id != id);
-                            if tool_calls.is_empty() {
+                        this.permission_selections.remove(id);
+                        if let Some(requests) = this.permission_requests.get_mut(&session_id) {
+                            requests.retain(|request_id| request_id != id);
+                            if requests.is_empty() {
                                 this.permission_requests.shift_remove(&session_id);
                             }
                         }
+                        cx.notify();
                     }
                     AcpThreadEvent::ElicitationRequested(id) => {
                         this.elicitation_requests
@@ -358,34 +358,121 @@ impl Conversation {
         });
         self.subscriptions.push(subscription);
         self.threads.insert(session_id, thread);
+        cx.notify();
+    }
+
+    fn set_permission_choice(
+        &mut self,
+        session_id: &acp_v1::SessionId,
+        request_id: PermissionRequestId,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .permission_request(session_id, request_id, cx)
+            .and_then(PermissionRequest::legacy_options)
+            .is_none()
+        {
+            return;
+        }
+        self.permission_selections
+            .insert(request_id, thread_view::PermissionSelection::Choice(index));
+        cx.notify();
+    }
+
+    fn toggle_permission_pattern(
+        &mut self,
+        session_id: &acp_v1::SessionId,
+        request_id: PermissionRequestId,
+        pattern_index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(request) = self.permission_request(session_id, request_id, cx) else {
+            return;
+        };
+        let Some(options) = request.legacy_options() else {
+            return;
+        };
+        let pattern_count = match options {
+            PermissionOptions::DropdownWithPatterns { patterns, .. } => patterns.len(),
+            _ => 0,
+        };
+        match self.permission_selections.get_mut(&request_id) {
+            Some(selection @ thread_view::PermissionSelection::SelectedPatterns(_)) => {
+                selection.toggle_pattern(pattern_index);
+            }
+            _ => {
+                self.permission_selections.insert(
+                    request_id,
+                    thread_view::PermissionSelection::SelectedPatterns(
+                        (0..pattern_count).collect(),
+                    ),
+                );
+            }
+        }
+        cx.notify();
     }
 
     fn add_permission_request(
         &mut self,
         session_id: &acp_v1::SessionId,
-        tool_call_id: &acp_v1::ToolCallId,
+        request_id: &PermissionRequestId,
     ) {
         let requests = self
             .permission_requests
             .entry(session_id.clone())
             .or_default();
-        if !requests.contains(tool_call_id) {
-            requests.push(tool_call_id.clone());
+        if !requests.contains(request_id) {
+            requests.push(*request_id);
         }
     }
 
-    pub fn permission_options_for_tool_call<'a>(
+    fn permission_request<'a>(
         &'a self,
         session_id: &acp_v1::SessionId,
-        tool_call_id: acp_v1::ToolCallId,
+        request_id: PermissionRequestId,
         cx: &'a App,
-    ) -> Option<&'a PermissionOptions> {
-        let thread = self.threads.get(session_id)?;
-        let (_, tool_call) = thread.read(cx).tool_call(&tool_call_id)?;
-        if !matches!(tool_call.status(), ToolCallStatus::WaitingForConfirmation) {
-            return None;
+    ) -> Option<&'a PermissionRequest> {
+        self.threads
+            .get(session_id)?
+            .read(cx)
+            .permission_request(request_id)
+    }
+
+    fn pending_permission_request_for_session<'a>(
+        &'a self,
+        session_id: &acp_v1::SessionId,
+        cx: &'a App,
+    ) -> Option<&'a PermissionRequest> {
+        self.permission_requests
+            .get(session_id)?
+            .iter()
+            .find_map(|id| self.permission_request(session_id, *id, cx))
+    }
+
+    fn pending_permission_request<'a>(
+        &'a self,
+        session_id: &acp_v1::SessionId,
+        cx: &'a App,
+    ) -> Option<(acp_v1::SessionId, &'a PermissionRequest)> {
+        if self
+            .threads
+            .get(session_id)?
+            .read(cx)
+            .parent_session_id()
+            .is_some()
+        {
+            return Some((
+                session_id.clone(),
+                self.pending_permission_request_for_session(session_id, cx)?,
+            ));
         }
-        Some(&tool_call.authorization()?.options)
+        self.permission_requests.keys().find_map(|session_id| {
+            Some((
+                session_id.clone(),
+                self.pending_permission_request_for_session(session_id, cx)?,
+            ))
+        })
     }
 
     pub fn pending_tool_call<'a>(
@@ -393,36 +480,22 @@ impl Conversation {
         session_id: &acp_v1::SessionId,
         cx: &'a App,
     ) -> Option<(acp_v1::SessionId, acp_v1::ToolCallId, &'a PermissionOptions)> {
-        let thread = self.threads.get(session_id)?;
-        let is_subagent = thread.read(cx).parent_session_id().is_some();
-        let (result_session_id, thread, tool_id) = if is_subagent {
-            let id = self.permission_requests.get(session_id)?.iter().next()?;
-            (session_id.clone(), thread, id)
-        } else {
-            let (id, tool_calls) = self.permission_requests.first()?;
-            let thread = self.threads.get(id)?;
-            let tool_id = tool_calls.iter().next()?;
-            (id.clone(), thread, tool_id)
-        };
-        let (_, tool_call) = thread.read(cx).tool_call(tool_id)?;
-
-        if !matches!(tool_call.status(), ToolCallStatus::WaitingForConfirmation) {
-            return None;
-        }
+        let (result_session_id, request) = self.pending_permission_request(session_id, cx)?;
         Some((
             result_session_id,
-            tool_id.clone(),
-            &tool_call.authorization()?.options,
+            request.legacy_tool_call_id()?.clone(),
+            request.legacy_options()?,
         ))
     }
 
     pub fn subagents_awaiting_permission(&self, cx: &App) -> Vec<(acp_v1::SessionId, usize)> {
         self.permission_requests
             .iter()
-            .filter_map(|(session_id, tool_call_ids)| {
+            .filter_map(|(session_id, _)| {
                 let thread = self.threads.get(session_id)?;
-                if thread.read(cx).parent_session_id().is_some() && !tool_call_ids.is_empty() {
-                    Some((session_id.clone(), tool_call_ids.len()))
+                let count = self.pending_tool_call_count_for_session(session_id, cx);
+                if thread.read(cx).parent_session_id().is_some() && count > 0 {
+                    Some((session_id.clone(), count))
                 } else {
                     None
                 }
@@ -438,19 +511,28 @@ impl Conversation {
         session_id: &acp_v1::SessionId,
         cx: &App,
     ) -> Option<acp_v1::ToolCallId> {
-        let thread = self.threads.get(session_id)?;
-        let tool_call_id = self.permission_requests.get(session_id)?.iter().next()?;
-        let (_, tool_call) = thread.read(cx).tool_call(tool_call_id)?;
-        if !matches!(tool_call.status(), ToolCallStatus::WaitingForConfirmation) {
-            return None;
-        }
-        Some(tool_call_id.clone())
+        Some(
+            self.pending_permission_request_for_session(session_id, cx)?
+                .legacy_tool_call_id()?
+                .clone(),
+        )
     }
 
-    pub fn pending_tool_call_count_for_session(&self, session_id: &acp_v1::SessionId) -> usize {
+    pub fn pending_tool_call_count_for_session(
+        &self,
+        session_id: &acp_v1::SessionId,
+        cx: &App,
+    ) -> usize {
         self.permission_requests
             .get(session_id)
-            .map(|tool_call_ids| tool_call_ids.len())
+            .map(|ids| {
+                ids.iter()
+                    .filter(|id| {
+                        self.permission_request(session_id, **id, cx)
+                            .is_some_and(|request| request.legacy_tool_call_id().is_some())
+                    })
+                    .count()
+            })
             .unwrap_or(0)
     }
 
@@ -474,12 +556,11 @@ impl Conversation {
         kind: acp_v1::PermissionOptionKind,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let (authorize_session_id, tool_call_id, options) =
-            self.pending_tool_call(session_id, cx)?;
-        let option = permission_option_for_action(options, kind)?;
-        self.authorize_tool_call(
+        let (authorize_session_id, request) = self.pending_permission_request(session_id, cx)?;
+        let option = permission_option_for_action(request.legacy_options()?, kind)?;
+        self.authorize_permission_request(
             authorize_session_id,
-            tool_call_id,
+            request.id,
             SelectedPermissionOutcome::new(option.option_id.clone(), option.kind),
             cx,
         );
@@ -489,28 +570,56 @@ impl Conversation {
     pub fn authorize_with_granularity(
         &mut self,
         session_id: acp_v1::SessionId,
-        tool_call_id: acp_v1::ToolCallId,
-        selection: Option<&thread_view::PermissionSelection>,
+        request_id: PermissionRequestId,
         is_allow: bool,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let options =
-            self.permission_options_for_tool_call(&session_id, tool_call_id.clone(), cx)?;
-        let outcome = resolve_outcome_from_selection(options, selection, is_allow)?;
-        self.authorize_tool_call(session_id, tool_call_id, outcome, cx);
+        let request = self.permission_request(&session_id, request_id, cx)?;
+        let outcome = resolve_outcome_from_selection(
+            request.legacy_options()?,
+            self.permission_selections.get(&request_id),
+            is_allow,
+        )?;
+        self.authorize_permission_request(session_id, request_id, outcome, cx);
         Some(())
     }
 
-    pub fn authorize_tool_call(
+    #[cfg(test)]
+    fn authorize_tool_call(
         &mut self,
         session_id: acp_v1::SessionId,
         tool_call_id: acp_v1::ToolCallId,
         outcome: SelectedPermissionOutcome,
         cx: &mut Context<Self>,
     ) {
+        let Some(request) = self
+            .threads
+            .get(&session_id)
+            .and_then(|thread| thread.read(cx).permission_request_for_tool(&tool_call_id))
+        else {
+            return;
+        };
+        self.authorize_permission_request(session_id, request.id, outcome, cx);
+    }
+
+    pub fn authorize_permission_request(
+        &mut self,
+        session_id: acp_v1::SessionId,
+        request_id: PermissionRequestId,
+        outcome: SelectedPermissionOutcome,
+        cx: &mut Context<Self>,
+    ) {
         let Some(thread) = self.threads.get(&session_id) else {
             return;
         };
+        if thread
+            .read(cx)
+            .permission_request(request_id)
+            .and_then(PermissionRequest::legacy_options)
+            .is_none()
+        {
+            return;
+        }
         let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
         let session_id = thread.read(cx).session_id().clone();
 
@@ -522,7 +631,38 @@ impl Conversation {
         );
 
         thread.update(cx, |thread, cx| {
-            thread.authorize_tool_call(tool_call_id, outcome, cx);
+            thread.authorize_permission_request(request_id, outcome, cx);
+        });
+        cx.notify();
+    }
+
+    fn select_permission_option(
+        &mut self,
+        session_id: &acp_v1::SessionId,
+        request_id: PermissionRequestId,
+        option_id: acp_v2::PermissionOptionId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.threads.get(session_id) else {
+            return;
+        };
+        thread.update(cx, |thread, cx| {
+            thread.select_permission_option(request_id, option_id, cx);
+        });
+        cx.notify();
+    }
+
+    fn cancel_permission_request(
+        &mut self,
+        session_id: &acp_v1::SessionId,
+        request_id: PermissionRequestId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.threads.get(session_id) else {
+            return;
+        };
+        thread.update(cx, |thread, cx| {
+            thread.cancel_permission_request(request_id, cx);
         });
         cx.notify();
     }
@@ -9516,7 +9656,8 @@ pub(crate) mod tests {
 
         let (entry_index, hunk_buffer) = thread.read_with(cx, |thread, _| {
             let (entry_index, call) = thread.tool_call(&tool_call_id).expect("tool exists");
-            assert!(call.authorization().is_some());
+            let request_id = call.authorization_id().expect("authorization exists");
+            assert!(thread.permission_request(request_id).is_some());
             let [acp_thread::ToolCallContent::DiffPatch { render, .. }, ..] = call.content() else {
                 panic!("expected patch content");
             };
@@ -9930,6 +10071,115 @@ pub(crate) mod tests {
         });
         cx.run_until_parked();
         assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 1);
+    }
+
+    #[gpui::test]
+    async fn test_thread_search_refreshes_appended_historical_tool_content(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let tool_call_id = acp_v1::ToolCallId::new("historical-chunks");
+        let later_tool_call_id = acp_v1::ToolCallId::new("later-tool");
+        for (id, text) in [
+            ("historical-chunks", "Original mango output"),
+            ("later-tool", "Unchanged later output"),
+        ] {
+            thread
+                .update(cx, |thread, cx| {
+                    thread.upsert_tool_call_patch(
+                        acp_v2::ToolCallUpdate::new(id)
+                            .title("Inspect output")
+                            .status(acp_v2::ToolCallStatus::Completed)
+                            .content(vec![text.into()]),
+                        cx,
+                    )
+                })
+                .expect("tool patch should apply");
+        }
+        cx.run_until_parked();
+        let (original_index, original_markdown, later_index, entry_count) =
+            thread.read_with(cx, |thread, _| {
+                let (index, call) = thread.tool_call(&tool_call_id).expect("historical tool");
+                let (later_index, _) = thread
+                    .tool_call(&later_tool_call_id)
+                    .expect("interleaved later tool");
+                assert!(index < later_index);
+                (
+                    index,
+                    call.content()
+                        .first()
+                        .expect("original output")
+                        .markdown()
+                        .expect("original Markdown")
+                        .clone(),
+                    later_index,
+                    thread.entries().len(),
+                )
+            });
+        thread_view.update_in(cx, |view, window, cx| {
+            view.entry_view_state.update(cx, |state, _| {
+                state.expand_tool_call(tool_call_id.clone());
+                state.expand_tool_call(later_tool_call_id.clone());
+            });
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        let search_bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread search should be open");
+        search_bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("mango", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            search_bar.read_with(cx, |bar, _| bar.match_source_ranges()),
+            vec![9..14],
+        );
+        thread
+            .update(cx, |thread, cx| {
+                thread.append_tool_call_content_chunk(
+                    acp_v2::ToolCallContentChunk::new("historical-chunks", "New mango chunk"),
+                    cx,
+                )
+            })
+            .expect("chunk should append to the historical tool");
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
+        cx.run_until_parked();
+        assert_eq!(
+            search_bar.read_with(cx, |bar, _| bar.match_source_ranges()),
+            vec![9..14, 4..9],
+            "the active query must refresh without an explicit update_matches",
+        );
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(thread.entries().len(), entry_count);
+            let (index, call) = thread.tool_call(&tool_call_id).expect("historical tool");
+            assert_eq!(index, original_index);
+            let [original, appended] = call.content() else {
+                panic!("expected original output and one appended chunk");
+            };
+            assert_eq!(original.markdown(), Some(&original_markdown));
+            assert_eq!(original_markdown.read(cx).source(), "Original mango output");
+            let appended = appended.markdown().expect("appended Markdown").read(cx);
+            assert_eq!(appended.source(), "New mango chunk");
+            assert_eq!(appended.search_highlights(), &[4..9]);
+            let (index, later_call) = thread.tool_call(&later_tool_call_id).expect("later tool");
+            assert_eq!(index, later_index);
+            let [later_content] = later_call.content() else {
+                panic!("appending to the older tool must leave the later tool unchanged");
+            };
+            let later_markdown = later_content.markdown().expect("later Markdown").read(cx);
+            assert_eq!(later_markdown.source(), "Unchanged later output");
+            assert!(later_markdown.search_highlights().is_empty());
+        });
     }
 
     #[gpui::test]
@@ -12590,8 +12840,11 @@ pub(crate) mod tests {
             );
 
             // Verify the options count (granularity options only, no separate Deny option)
-            if let Some(authorization) = tool_call.authorization() {
-                let options = &authorization.options;
+            if let Some(authorization) = tool_call
+                .authorization_id()
+                .and_then(|id| thread.permission_request(id))
+            {
+                let options = authorization.legacy_options().expect("legacy options");
                 let PermissionOptions::Dropdown(choices) = options else {
                     panic!("Expected dropdown permission options");
                 };
@@ -12688,8 +12941,11 @@ pub(crate) mod tests {
             assert!(tool_call.is_some(), "Expected a tool call entry");
             let tool_call = tool_call.unwrap();
 
-            if let Some(authorization) = tool_call.authorization() {
-                let options = &authorization.options;
+            if let Some(authorization) = tool_call
+                .authorization_id()
+                .and_then(|id| thread.permission_request(id))
+            {
+                let options = authorization.legacy_options().expect("legacy options");
                 let PermissionOptions::Dropdown(choices) = options else {
                     panic!("Expected dropdown permission options");
                 };
@@ -12777,8 +13033,11 @@ pub(crate) mod tests {
             assert!(tool_call.is_some(), "Expected a tool call entry");
             let tool_call = tool_call.unwrap();
 
-            if let Some(authorization) = tool_call.authorization() {
-                let options = &authorization.options;
+            if let Some(authorization) = tool_call
+                .authorization_id()
+                .and_then(|id| thread.permission_request(id))
+            {
+                let options = authorization.legacy_options().expect("legacy options");
                 let PermissionOptions::Dropdown(choices) = options else {
                     panic!("Expected dropdown permission options");
                 };
@@ -12870,8 +13129,11 @@ pub(crate) mod tests {
             assert!(tool_call.is_some(), "Expected a tool call entry");
             let tool_call = tool_call.unwrap();
 
-            if let Some(authorization) = tool_call.authorization() {
-                let options = &authorization.options;
+            if let Some(authorization) = tool_call
+                .authorization_id()
+                .and_then(|id| thread.permission_request(id))
+            {
+                let options = authorization.legacy_options().expect("legacy options");
                 let PermissionOptions::Dropdown(choices) = options else {
                     panic!("Expected dropdown permission options");
                 };
@@ -12963,6 +13225,8 @@ pub(crate) mod tests {
             window.dispatch_action(
                 crate::AuthorizeToolCall {
                     tool_call_id: "action-test-1".to_string(),
+                    request_id: None,
+                    session_id: None,
                     option_id: "allow".to_string(),
                     option_kind: "AllowOnce".to_string(),
                 }
@@ -13042,6 +13306,8 @@ pub(crate) mod tests {
             window.dispatch_action(
                 crate::AuthorizeToolCall {
                     tool_call_id: "pattern-action-test-1".to_string(),
+                    request_id: None,
+                    session_id: None,
                     option_id: pattern_option.option_id.0.to_string(),
                     option_kind: "AllowAlways".to_string(),
                 }
@@ -13107,7 +13373,18 @@ pub(crate) mod tests {
         // Verify default granularity is the last option (index 2 = "Only this time")
         thread_view.read_with(cx, |thread_view, cx| {
             let state = thread_view.active_thread().unwrap();
-            let selected = state.read(cx).permission_selections.get(&tool_call_id);
+            let state = state.read(cx);
+            let request_id = state
+                .thread
+                .read(cx)
+                .permission_request_for_tool(&tool_call_id)
+                .expect("permission request exists")
+                .id;
+            let selected = state
+                .conversation
+                .read(cx)
+                .permission_selections
+                .get(&request_id);
             assert!(
                 selected.is_none(),
                 "Should have no selection initially (defaults to last)"
@@ -13119,6 +13396,8 @@ pub(crate) mod tests {
             window.dispatch_action(
                 crate::SelectPermissionGranularity {
                     tool_call_id: "granularity-test-1".to_string(),
+                    request_id: None,
+                    session_id: None,
                     index: 0,
                 }
                 .boxed_clone(),
@@ -13131,7 +13410,18 @@ pub(crate) mod tests {
         // Verify the selection was updated
         thread_view.read_with(cx, |thread_view, cx| {
             let state = thread_view.active_thread().unwrap();
-            let selected = state.read(cx).permission_selections.get(&tool_call_id);
+            let state = state.read(cx);
+            let request_id = state
+                .thread
+                .read(cx)
+                .permission_request_for_tool(&tool_call_id)
+                .expect("permission request exists")
+                .id;
+            let selected = state
+                .conversation
+                .read(cx)
+                .permission_selections
+                .get(&request_id);
             assert_eq!(
                 selected.and_then(|s| s.choice_index()),
                 Some(0),
@@ -13210,6 +13500,8 @@ pub(crate) mod tests {
             window.dispatch_action(
                 crate::SelectPermissionGranularity {
                     tool_call_id: "allow-granularity-test-1".to_string(),
+                    request_id: None,
+                    session_id: None,
                     index: 1,
                 }
                 .boxed_clone(),
@@ -13645,27 +13937,554 @@ pub(crate) mod tests {
         option_id: &str,
         cx: &mut TestAppContext,
     ) -> Task<acp_thread::RequestPermissionOutcome> {
+        request_test_tool_authorization_with_options(
+            thread,
+            tool_call_id,
+            PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                acp_v1::PermissionOptionId::new(option_id),
+                "Allow",
+                acp_v1::PermissionOptionKind::AllowOnce,
+            )]),
+            cx,
+        )
+        .1
+    }
+
+    fn request_test_tool_authorization_with_options(
+        thread: &Entity<AcpThread>,
+        tool_call_id: &str,
+        options: PermissionOptions,
+        cx: &mut TestAppContext,
+    ) -> (
+        PermissionRequestId,
+        Task<acp_thread::RequestPermissionOutcome>,
+    ) {
         let tool_call_id = acp_v1::ToolCallId::new(tool_call_id);
         let label = format!("Tool {tool_call_id}");
-        let option_id = acp_v1::PermissionOptionId::new(option_id);
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
                 thread
-                    .request_tool_call_authorization(
+                    .request_tool_call_authorization_with_id(
                         acp_v1::ToolCall::new(tool_call_id, label)
                             .kind(acp_v1::ToolKind::Edit)
                             .into(),
-                        PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
-                            option_id,
-                            "Allow",
-                            acp_v1::PermissionOptionKind::AllowOnce,
-                        )]),
+                        options,
                         acp_thread::AuthorizationKind::PermissionGrant,
                         cx,
                     )
-                    .unwrap()
+                    .expect("permission request should succeed")
             })
         })
+    }
+
+    fn select_embedded_child_permission(
+        child_view: &Entity<ThreadView>,
+        with_patterns: bool,
+        cx: &mut VisualTestContext,
+    ) {
+        let handle = child_view.read_with(cx, |view, _| view.permission_dropdown_handle.clone());
+        cx.update(|window, cx| handle.show(window, cx));
+        cx.run_until_parked();
+        assert!(
+            handle.is_deployed(),
+            "the embedded child's dropdown should open"
+        );
+        let choice = cx
+            .debug_bounds("MENU_ITEM-Always for terminal")
+            .expect("the rendered dropdown should offer the terminal-wide choice");
+        cx.simulate_click(choice.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+
+        if with_patterns {
+            for _ in 0..2 {
+                let pattern = cx
+                    .debug_bounds("MENU_ITEM-Always for `sort` commands")
+                    .expect("the rendered persistent dropdown should offer the sort pattern");
+                cx.simulate_click(pattern.center(), gpui::Modifiers::default());
+                cx.run_until_parked();
+            }
+            cx.update(|_, cx| handle.hide(cx));
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_embedded_child_permission_selection_uses_conversation_and_cleans_up(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        cx.update(|_, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        let root_view = active_thread(&conversation_view, cx);
+        let (root, conversation) = root_view.read_with(cx, |view, _| {
+            (view.thread.clone(), view.conversation.clone())
+        });
+        let root_session_id = root.read_with(cx, |thread, _| thread.session_id().clone());
+        let child_session_id = acp_v1::SessionId::new("embedded-permission-child");
+        let child_view = conversation_view.update_in(cx, |view, window, cx| {
+            let child = create_test_acp_thread(
+                Some(root_session_id.clone()),
+                child_session_id.0.as_ref(),
+                Rc::new(StubAgentConnection::new()),
+                view.project.clone(),
+                cx,
+            );
+            conversation.update(cx, |conversation, cx| {
+                conversation.register_thread(child.clone(), cx);
+            });
+            let child_view =
+                view.new_thread_view(child, conversation.clone(), false, None, window, cx);
+            view.as_connected_mut()
+                .expect("conversation should be connected")
+                .threads
+                .insert(child_session_id.clone(), child_view.clone());
+            child_view
+        });
+        let child = child_view.read_with(cx, |view, _| view.thread.clone());
+        let parent_options =
+            ToolPermissionContext::new(TerminalTool::NAME, vec!["cargo build".into()])
+                .build_permission_options();
+        let (parent_id, parent_response) = request_test_tool_authorization_with_options(
+            &root,
+            "unrelated-parent",
+            parent_options,
+            cx,
+        );
+        root.update(cx, |thread, cx| {
+            let mut spawn = acp_v1::ToolCall::new("spawn-child", "Running child")
+                .name("spawn_agent")
+                .kind(acp_v1::ToolKind::Other)
+                .status(acp_v1::ToolCallStatus::InProgress);
+            spawn.meta = Some(acp_v1::Meta::from_iter([(
+                acp_thread::SUBAGENT_SESSION_INFO_META_KEY.into(),
+                serde_json::to_value(acp_thread::SubagentSessionInfo {
+                    session_id: child_session_id.clone(),
+                    message_start_index: 0,
+                    message_end_index: None,
+                })
+                .expect("subagent session info should serialize"),
+            )]));
+            thread
+                .handle_session_update(acp_v1::SessionUpdate::ToolCall(spawn), cx)
+                .expect("running subagent tool should be accepted");
+        });
+        cx.run_until_parked();
+        cx.focus(&root_view);
+        cx.dispatch_action(crate::SelectPermissionGranularity {
+            tool_call_id: "unrelated-parent".into(),
+            request_id: Some(parent_id),
+            session_id: Some(root_session_id.0.to_string()),
+            index: 0,
+        });
+        cx.run_until_parked();
+
+        let mut child_request_ids = HashSet::default();
+        for with_patterns in [false, true] {
+            let command = if with_patterns {
+                "cargo test | sort"
+            } else {
+                "cargo build"
+            };
+            let options = ToolPermissionContext::new(TerminalTool::NAME, vec![command.into()])
+                .build_permission_options();
+            let expected_outcome = if with_patterns {
+                options
+                    .build_outcome_for_checked_patterns(&[0], true)
+                    .expect("the cargo pattern should have an outcome")
+            } else {
+                let PermissionOptions::Dropdown(choices) = &options else {
+                    panic!("single-command permission should use the simple dropdown");
+                };
+                choices
+                    .first()
+                    .expect("terminal-wide choice")
+                    .build_outcome(true)
+            };
+            for resolution in 0..6 {
+                let (request_id, response) = request_test_tool_authorization_with_options(
+                    &child,
+                    "reused-child-tool",
+                    options.clone(),
+                    cx,
+                );
+                assert!(child_request_ids.insert(request_id));
+                cx.run_until_parked();
+                assert!(
+                    cx.debug_bounds("PERMISSION_BUTTONS-embedded-permission-child-Only this time")
+                        .is_some(),
+                    "the running child card should display a fresh default selection in the root"
+                );
+                assert_eq!(
+                    active_thread(&conversation_view, cx),
+                    root_view,
+                    "the child controls must remain embedded, not in a standalone child view"
+                );
+                select_embedded_child_permission(&child_view, with_patterns, cx);
+                conversation.read_with(cx, |conversation, _| {
+                    let selection = conversation
+                        .permission_selections
+                        .get(&request_id)
+                        .expect("embedded controls must write to the shared owner");
+                    if with_patterns {
+                        assert!(
+                            matches!(selection, thread_view::PermissionSelection::SelectedPatterns(checked) if checked == &[0])
+                        );
+                    } else {
+                        assert_eq!(selection.choice_index(), Some(0));
+                    }
+                    assert_eq!(conversation.permission_selections.len(), 2);
+                });
+                let selected_buttons = cx
+                    .debug_bounds(if with_patterns {
+                        "PERMISSION_BUTTONS-embedded-permission-child-Always for selected commands"
+                    } else {
+                        "PERMISSION_BUTTONS-embedded-permission-child-Always for terminal"
+                    })
+                    .expect("the embedded card must render the shared selection");
+
+                match resolution % 3 {
+                    0 => {
+                        cx.simulate_click(
+                            point(
+                                selected_buttons.left() + px(24.0),
+                                selected_buttons.center().y,
+                            ),
+                            gpui::Modifiers::default(),
+                        );
+                        cx.run_until_parked();
+                        let acp_thread::RequestPermissionOutcome::Selected(outcome) =
+                            response.await
+                        else {
+                            panic!("the embedded Allow button should authorize the child request");
+                        };
+                        assert_eq!(outcome.option_id, expected_outcome.option_id);
+                        assert_eq!(outcome.option_kind, expected_outcome.option_kind);
+                        match (&outcome.params, &expected_outcome.params) {
+                            (None, None) => {}
+                            (
+                                Some(acp_thread::SelectedPermissionParams::Terminal { patterns }),
+                                Some(acp_thread::SelectedPermissionParams::Terminal {
+                                    patterns: expected,
+                                }),
+                            ) => assert_eq!(patterns, expected),
+                            _ => panic!(
+                                "the child outcome should contain only the selected patterns"
+                            ),
+                        }
+                    }
+                    1 => {
+                        child.update(cx, |thread, cx| {
+                            thread.cancel_permission_request(request_id, cx);
+                        });
+                        cx.run_until_parked();
+                        assert!(matches!(
+                            response.await,
+                            acp_thread::RequestPermissionOutcome::Cancelled
+                        ));
+                    }
+                    _ => {
+                        let (successor_id, successor_response) =
+                            request_test_tool_authorization_with_options(
+                                &child,
+                                "reused-child-tool",
+                                options.clone(),
+                                cx,
+                            );
+                        assert!(child_request_ids.insert(successor_id));
+                        cx.run_until_parked();
+                        assert!(matches!(
+                            response.await,
+                            acp_thread::RequestPermissionOutcome::Cancelled
+                        ));
+                        conversation.read_with(cx, |conversation, cx| {
+                            assert!(!conversation.permission_selections.contains_key(&request_id));
+                            assert!(
+                                !conversation
+                                    .permission_selections
+                                    .contains_key(&successor_id)
+                            );
+                            assert!(
+                                conversation
+                                    .permission_request(&child_session_id, successor_id, cx)
+                                    .is_some()
+                            );
+                            assert_eq!(conversation.permission_selections.len(), 1);
+                        });
+                        assert!(
+                            cx.debug_bounds(
+                                "PERMISSION_BUTTONS-embedded-permission-child-Only this time"
+                            )
+                            .is_some(),
+                            "a superseding request must not inherit the previous UUID's selection"
+                        );
+                        select_embedded_child_permission(&child_view, with_patterns, cx);
+                        child.update(cx, |thread, cx| {
+                            thread.cancel_permission_request(successor_id, cx);
+                        });
+                        cx.run_until_parked();
+                        assert!(matches!(
+                            successor_response.await,
+                            acp_thread::RequestPermissionOutcome::Cancelled
+                        ));
+                    }
+                }
+                cx.run_until_parked();
+                conversation.read_with(cx, |conversation, cx| {
+                    assert_eq!(conversation.permission_selections.len(), 1);
+                    assert_eq!(
+                        conversation
+                            .permission_selections
+                            .get(&parent_id)
+                            .and_then(|selection| selection.choice_index()),
+                        Some(0),
+                        "child cleanup must leave the unrelated parent's selection intact"
+                    );
+                    assert!(
+                        conversation
+                            .permission_request(&root_session_id, parent_id, cx)
+                            .is_some()
+                    );
+                    assert!(
+                        child_request_ids
+                            .iter()
+                            .all(|id| !conversation.permission_selections.contains_key(id)),
+                        "reused child tool IDs must not accumulate selection entries under old UUIDs"
+                    );
+                    assert_eq!(
+                        conversation.pending_tool_call_count_for_session(&child_session_id, cx),
+                        0
+                    );
+                });
+            }
+        }
+        root.update(cx, |thread, cx| {
+            thread.cancel_permission_request(parent_id, cx);
+        });
+        cx.run_until_parked();
+        assert!(matches!(
+            parent_response.await,
+            acp_thread::RequestPermissionOutcome::Cancelled
+        ));
+        conversation.read_with(cx, |conversation, _| {
+            assert!(conversation.permission_selections.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_dropped_permission_waiter_selection_and_cancel_cleanup(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let options = ToolPermissionContext::new(TerminalTool::NAME, vec!["cargo build".into()])
+            .build_permission_options();
+
+        for cancel in [false, true] {
+            let (request_id, response) = thread.update(cx, |thread, cx| {
+                thread
+                    .request_tool_call_authorization_with_id(
+                        acp_v1::ToolCall::new("dropped-waiter", "Run cargo build")
+                            .kind(acp_v1::ToolKind::Execute)
+                            .into(),
+                        options.clone(),
+                        acp_thread::AuthorizationKind::PermissionGrant,
+                        cx,
+                    )
+                    .expect("permission request should succeed")
+            });
+            drop(response);
+            cx.run_until_parked();
+            conversation_view.update_in(cx, |_, window, cx| {
+                window.dispatch_action(
+                    crate::SelectPermissionGranularity {
+                        tool_call_id: "dropped-waiter".into(),
+                        request_id: Some(request_id),
+                        session_id: Some(session_id.0.to_string()),
+                        index: 0,
+                    }
+                    .boxed_clone(),
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            thread_view.read_with(cx, |view, cx| {
+                assert_eq!(
+                    view.conversation
+                        .read(cx)
+                        .permission_selections
+                        .get(&request_id)
+                        .and_then(|selection| selection.choice_index()),
+                    Some(0)
+                );
+                assert_eq!(
+                    view.conversation
+                        .read(cx)
+                        .pending_tool_call_count_for_session(&session_id, cx),
+                    1
+                );
+            });
+
+            if cancel {
+                thread.update(cx, |thread, cx| {
+                    thread.cancel_permission_request(request_id, cx)
+                });
+            } else {
+                conversation_view.update_in(cx, |_, window, cx| {
+                    window.dispatch_action(AllowOnce.boxed_clone(), cx);
+                });
+            }
+            cx.run_until_parked();
+            thread_view.read_with(cx, |view, cx| {
+                assert!(
+                    !view
+                        .conversation
+                        .read(cx)
+                        .permission_selections
+                        .contains_key(&request_id)
+                );
+                assert!(
+                    view.thread
+                        .read(cx)
+                        .permission_request(request_id)
+                        .is_none()
+                );
+                assert!(
+                    view.thread
+                        .read(cx)
+                        .tool_call(&"dropped-waiter".into())
+                        .expect("tool call remains")
+                        .1
+                        .authorization_id()
+                        .is_none()
+                );
+                assert_eq!(
+                    view.conversation
+                        .read(cx)
+                        .pending_tool_call_count_for_session(&session_id, cx),
+                    0
+                );
+                assert!(
+                    view.conversation
+                        .read(cx)
+                        .pending_tool_call(&session_id, cx)
+                        .is_none()
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_replaced_permission_ignores_captured_actions(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let first_response = request_test_tool_authorization(&thread, "reused-tool", "allow", cx);
+        let first_id = thread.read_with(cx, |thread, _| {
+            thread
+                .permission_request_for_tool(&"reused-tool".into())
+                .expect("first request")
+                .id
+        });
+        let captured_action = crate::AuthorizeToolCall {
+            tool_call_id: "reused-tool".into(),
+            request_id: Some(first_id),
+            session_id: Some(session_id.0.to_string()),
+            option_id: "allow".into(),
+            option_kind: "AllowOnce".into(),
+        };
+        let captured_selection = crate::SelectPermissionGranularity {
+            tool_call_id: "reused-tool".into(),
+            request_id: Some(first_id),
+            session_id: Some(session_id.0.to_string()),
+            index: 0,
+        };
+        cx.run_until_parked();
+        conversation_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(captured_selection.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, cx| {
+            assert!(
+                view.conversation
+                    .read(cx)
+                    .permission_selections
+                    .contains_key(&first_id)
+            );
+        });
+
+        let second_response = request_test_tool_authorization(&thread, "reused-tool", "allow", cx);
+        let second_id = thread.read_with(cx, |thread, _| {
+            assert!(thread.permission_request(first_id).is_none());
+            thread
+                .permission_request_for_tool(&"reused-tool".into())
+                .expect("successor request")
+                .id
+        });
+        assert_ne!(first_id, second_id);
+        assert!(matches!(
+            first_response.await,
+            acp_thread::RequestPermissionOutcome::Cancelled
+        ));
+        cx.run_until_parked();
+        conversation_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(captured_selection.boxed_clone(), cx);
+            window.dispatch_action(captured_action.boxed_clone(), cx);
+        });
+        thread.update(cx, |thread, cx| {
+            thread.cancel_permission_request(first_id, cx)
+        });
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, cx| {
+            let conversation = view.conversation.read(cx);
+            assert!(!conversation.permission_selections.contains_key(&first_id));
+            assert!(!conversation.permission_selections.contains_key(&second_id));
+            assert!(view.thread.read(cx).permission_request(second_id).is_some());
+            assert_eq!(
+                view.conversation
+                    .read(cx)
+                    .pending_tool_call_count_for_session(&session_id, cx),
+                1
+            );
+        });
+
+        conversation_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(
+                crate::AuthorizeToolCall {
+                    request_id: Some(second_id),
+                    ..captured_action.clone()
+                }
+                .boxed_clone(),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert!(matches!(second_response.await,
+            acp_thread::RequestPermissionOutcome::Selected(outcome) if outcome.option_id == "allow".into()));
+        thread_view.read_with(cx, |view, cx| {
+            assert!(
+                view.conversation
+                    .read(cx)
+                    .pending_tool_call(&session_id, cx)
+                    .is_none()
+            );
+        });
     }
 
     #[gpui::test]
@@ -13746,6 +14565,210 @@ pub(crate) mod tests {
                     .pending_tool_call(&session_id, cx)
                     .is_none(),
                 "Expected no pending tool calls after both were authorized"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_late_permission_registration_uses_owner_order_and_counts(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
+        let root_session_id = acp_v1::SessionId::new("root");
+        let child_session_id = acp_v1::SessionId::new("child");
+        let (root, child) = cx.update(|cx| {
+            let root =
+                create_test_acp_thread(None, "root", connection.clone(), project.clone(), cx);
+            let child = create_test_acp_thread(
+                Some(root_session_id.clone()),
+                "child",
+                connection,
+                project,
+                cx,
+            );
+            child.update(cx, |thread, cx| {
+                thread
+                    .handle_session_update(
+                        acp_v1::SessionUpdate::ToolCall(acp_v1::ToolCall::new(
+                            "second",
+                            "Second tool",
+                        )),
+                        cx,
+                    )
+                    .expect("tool presentation should be accepted");
+            });
+            (root, child)
+        });
+        drop(request_test_tool_authorization(
+            &child, "first", "allow", cx,
+        ));
+        drop(request_test_tool_authorization(
+            &child, "second", "allow", cx,
+        ));
+        let (first_id, second_id) = child.read_with(cx, |thread, _| {
+            (
+                thread
+                    .permission_request_for_tool(&"first".into())
+                    .expect("first request")
+                    .id,
+                thread
+                    .permission_request_for_tool(&"second".into())
+                    .expect("second request")
+                    .id,
+            )
+        });
+        let conversation = cx.update(|cx| {
+            cx.new(|cx| {
+                let mut conversation = Conversation::default();
+                conversation.register_thread(root, cx);
+                conversation.register_thread(child.clone(), cx);
+                conversation
+            })
+        });
+        cx.run_until_parked();
+        conversation.read_with(cx, |conversation, cx| {
+            assert_eq!(
+                conversation.pending_tool_call_for_session(&child_session_id, cx),
+                Some("first".into()),
+                "Request order must not come from tool-entry order"
+            );
+            assert_eq!(
+                conversation.pending_tool_call_count_for_session(&child_session_id, cx),
+                2
+            );
+            assert_eq!(
+                conversation.subagents_awaiting_permission(cx),
+                vec![(child_session_id.clone(), 2)]
+            );
+            assert_eq!(
+                conversation
+                    .pending_tool_call(&root_session_id, cx)
+                    .expect("child is discoverable")
+                    .0,
+                child_session_id
+            );
+        });
+        cx.update(|cx| {
+            child.update(cx, |thread, cx| {
+                thread.cancel_permission_request(first_id, cx)
+            });
+            let conversation = conversation.read(cx);
+            assert_eq!(
+                conversation.pending_tool_call_for_session(&child_session_id, cx),
+                Some("second".into())
+            );
+            assert_eq!(
+                conversation.pending_tool_call_count_for_session(&child_session_id, cx),
+                1
+            );
+            assert_eq!(
+                conversation.subagents_awaiting_permission(cx),
+                vec![(child_session_id.clone(), 1)]
+            );
+        });
+        cx.update(|cx| {
+            child.update(cx, |thread, cx| {
+                thread.cancel_permission_request(second_id, cx)
+            });
+            let conversation = conversation.read(cx);
+            assert!(
+                conversation
+                    .pending_tool_call(&root_session_id, cx)
+                    .is_none()
+            );
+            assert_eq!(
+                conversation.pending_tool_call_count_for_session(&child_session_id, cx),
+                0
+            );
+            assert!(conversation.subagents_awaiting_permission(cx).is_empty());
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_interleaved_permission_requests_preserve_session_buckets(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
+        let root_session_id = acp_v1::SessionId::new("root");
+        let child_session_id = acp_v1::SessionId::new("child");
+        let (root, child, conversation) = cx.update(|cx| {
+            let root =
+                create_test_acp_thread(None, "root", connection.clone(), project.clone(), cx);
+            let child = create_test_acp_thread(
+                Some(root_session_id.clone()),
+                "child",
+                connection,
+                project,
+                cx,
+            );
+            let conversation = cx.new(|cx| {
+                let mut conversation = Conversation::default();
+                conversation.register_thread(root.clone(), cx);
+                conversation.register_thread(child.clone(), cx);
+                conversation
+            });
+            (root, child, conversation)
+        });
+        drop(request_test_tool_authorization(
+            &root, "root-a1", "allow", cx,
+        ));
+        drop(request_test_tool_authorization(
+            &child, "child-b1", "allow", cx,
+        ));
+        drop(request_test_tool_authorization(
+            &root, "root-a2", "allow", cx,
+        ));
+        cx.run_until_parked();
+
+        for expected_tool in ["root-a1", "root-a2", "child-b1"] {
+            let (session_id, request_id) = conversation.read_with(cx, |conversation, cx| {
+                let (session_id, request) = conversation
+                    .pending_permission_request(&root_session_id, cx)
+                    .expect("next grouped request");
+                assert_eq!(request.legacy_tool_call_id(), Some(&expected_tool.into()));
+                if expected_tool.starts_with("root") {
+                    assert_eq!(session_id, root_session_id);
+                    assert_eq!(
+                        conversation.pending_tool_call_for_session(&child_session_id, cx),
+                        Some("child-b1".into())
+                    );
+                } else {
+                    assert_eq!(session_id, child_session_id);
+                }
+                (session_id, request.id)
+            });
+            let owner = if session_id == root_session_id {
+                &root
+            } else {
+                &child
+            };
+            cx.update(|cx| {
+                owner.update(cx, |thread, cx| {
+                    thread.cancel_permission_request(request_id, cx)
+                })
+            });
+            cx.run_until_parked();
+        }
+        conversation.read_with(cx, |conversation, cx| {
+            assert!(
+                conversation
+                    .pending_tool_call(&root_session_id, cx)
+                    .is_none()
+            );
+            assert_eq!(
+                conversation.pending_tool_call_count_for_session(&root_session_id, cx),
+                0
+            );
+            assert_eq!(
+                conversation.pending_tool_call_count_for_session(&child_session_id, cx),
+                0
             );
         });
     }
@@ -13994,6 +15017,577 @@ pub(crate) mod tests {
             assert_eq!(returned_session_id, session_id_b);
             assert_eq!(tool_call_id, acp_v1::ToolCallId::new("tc-b"));
         });
+    }
+
+    fn generic_permission_prompt(
+        thread: &Entity<AcpThread>,
+        subject: Option<serde_json::Value>,
+        cx: &mut VisualTestContext,
+    ) -> acp_v2::RequestPermissionRequest {
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().0.to_string());
+        serde_json::from_value(serde_json::json!({
+            "sessionId": session_id,
+            "title": "**Permission title**",
+            "description": "`Permission description`",
+            "subject": subject,
+            "options": [
+                {"optionId": "once", "name": "This time", "kind": "allow_once"},
+                {"optionId": "always", "name": "Remember", "kind": "allow_always"},
+                {"optionId": "reject", "name": "No", "kind": "reject_once"},
+                {"optionId": "reject-always", "name": "Never", "kind": "reject_always"},
+                {"optionId": "custom", "name": "Ask elsewhere", "kind": "_custom"}
+            ],
+            "_meta": {"source": "agent", "opaque": [1, 2]}
+        }))
+        .expect("generic permission fixture should match the SDK schema")
+    }
+
+    fn request_test_generic_permission(
+        thread: &Entity<AcpThread>,
+        request: acp_v2::RequestPermissionRequest,
+        cx: &mut VisualTestContext,
+    ) -> (PermissionRequestId, Task<acp_v2::RequestPermissionOutcome>) {
+        thread.update(cx, |thread, cx| {
+            thread
+                .request_permission(request, cx)
+                .expect("generic permission request")
+        })
+    }
+
+    fn click_generic_permission(
+        request_id: PermissionRequestId,
+        option_id: Option<&str>,
+        cx: &mut VisualTestContext,
+    ) {
+        let selector = match option_id {
+            Some(option_id) => format!("generic-permission-option-{request_id:?}-{option_id}"),
+            None => format!("generic-permission-cancel-{request_id:?}"),
+        };
+        let bounds = cx
+            .debug_bounds(Box::leak(selector.into_boxed_str()))
+            .expect("rendered permission control");
+        cx.simulate_click(bounds.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_generic_permissions_render_without_transcript_anchors(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        for (subject, selector) in [
+            (
+                Some(serde_json::json!({
+                    "type": "command", "command": "echo **literal**", "cwd": "/tmp"
+                })),
+                Some("generic-permission-command-echo **literal**"),
+            ),
+            (None, None),
+            (
+                Some(serde_json::json!({
+                    "type": "_future_subject",
+                    "command": "not a command subject",
+                    "nested": {"approval": true}
+                })),
+                Some("generic-permission-unknown-_future_subject"),
+            ),
+            (
+                Some(serde_json::json!({
+                    "type": "tool_call", "toolCall": {"toolCallId": "unseen-tool"}
+                })),
+                Some("generic-permission-tool-unseen-tool"),
+            ),
+        ] {
+            let request = generic_permission_prompt(&thread, subject, cx);
+            let (request_id, response) =
+                request_test_generic_permission(&thread, request.clone(), cx);
+            cx.run_until_parked();
+            assert!(
+                cx.debug_bounds("generic-permission-title-**Permission title**")
+                    .is_some()
+            );
+            assert!(
+                cx.debug_bounds("generic-permission-description-`Permission description`")
+                    .is_some()
+            );
+            if let Some(selector) = selector {
+                assert!(cx.debug_bounds(selector).is_some());
+            }
+            assert!(
+                cx.debug_bounds("generic-permission-command-not a command subject")
+                    .is_none()
+            );
+            thread_view.update_in(cx, |view, window, cx| {
+                assert!(
+                    view.render_main_agent_awaiting_permission(window, cx)
+                        .is_none()
+                );
+            });
+            for option in &request.options {
+                let selector: &'static str = Box::leak(
+                    format!(
+                        "generic-permission-option-{request_id:?}-{}",
+                        option.option_id
+                    )
+                    .into_boxed_str(),
+                );
+                assert!(
+                    cx.debug_bounds(selector).is_some(),
+                    "every offered option, including unknown kinds, must be selectable"
+                );
+            }
+            thread.read_with(cx, |thread, _| {
+                assert!(thread.entries().is_empty());
+                assert_eq!(
+                    thread
+                        .permission_request(request_id)
+                        .and_then(PermissionRequest::generic_request),
+                    Some(&request)
+                );
+            });
+            click_generic_permission(request_id, None, cx);
+            assert_eq!(response.await, acp_v2::RequestPermissionOutcome::Cancelled);
+            assert!(
+                cx.debug_bounds("generic-permission-title-**Permission title**")
+                    .is_none()
+            );
+        }
+    }
+
+    struct CapturedGenericPermissionCards {
+        thread_view: Entity<ThreadView>,
+        requests: Vec<(PermissionRequestId, acp_v2::RequestPermissionRequest)>,
+    }
+
+    impl Render for CapturedGenericPermissionCards {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            v_flex()
+                .w(px(300.0))
+                .children(self.requests.iter().map(|(request_id, request)| {
+                    self.thread_view.update(cx, |view, cx| {
+                        view.render_generic_permission_card(
+                            view.session_id.clone(),
+                            *request_id,
+                            request,
+                            None,
+                            cx,
+                        )
+                    })
+                }))
+        }
+    }
+
+    #[gpui::test]
+    async fn test_generic_permission_long_choices_fit_narrow_card(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let mut request = generic_permission_prompt(&thread, None, cx).description(None);
+        request.options = [
+            ("once", acp_v2::PermissionOptionKind::AllowOnce),
+            ("permanently", acp_v2::PermissionOptionKind::AllowAlways),
+        ]
+        .into_iter()
+        .map(|(suffix, kind)| {
+            acp_v2::PermissionOption::new(
+                suffix,
+                format!(
+                    "Apply this permission to commands in /a/very/long/project/path — {suffix}"
+                ),
+                kind,
+            )
+        })
+        .collect();
+        let (request_id, response) = request_test_generic_permission(&thread, request.clone(), cx);
+        let original_root = cx.update(|window, _| {
+            window
+                .root::<MultiWorkspace>()
+                .flatten()
+                .expect("workspace root")
+        });
+        cx.replace_root_view(|_, _| CapturedGenericPermissionCards {
+            thread_view: thread_view.clone(),
+            requests: vec![(request_id, request)],
+        });
+        cx.run_until_parked();
+        let card_selector: &'static str =
+            Box::leak(format!("generic-permission-{request_id:?}").into_boxed_str());
+        let card = cx
+            .debug_bounds(card_selector)
+            .expect("narrow permission card");
+        assert_eq!(card.size.width, px(300.0));
+        for option_id in ["once", "permanently"] {
+            let selector: &'static str = Box::leak(
+                format!("generic-permission-option-{request_id:?}-{option_id}").into_boxed_str(),
+            );
+            let option = cx.debug_bounds(selector).expect("long-label choice");
+            assert!(
+                option.left() >= card.left() && option.right() <= card.right(),
+                "{option_id}: {option:?} exceeds {card:?}"
+            );
+        }
+        click_generic_permission(request_id, Some("permanently"), cx);
+        assert_eq!(
+            response.await,
+            acp_v2::RequestPermissionOutcome::Selected(acp_v2::SelectedPermissionOutcome::new(
+                "permanently"
+            ))
+        );
+        drop(original_root);
+    }
+
+    #[gpui::test]
+    async fn test_generic_permission_clicks_target_records_and_ignore_stale_cards(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let request = generic_permission_prompt(
+            &thread,
+            Some(serde_json::json!({
+                "type": "command", "command": "echo identical", "cwd": "/tmp"
+            })),
+            cx,
+        )
+        .description(None);
+        let (first_id, first_response) =
+            request_test_generic_permission(&thread, request.clone(), cx);
+        let (second_id, second_response) =
+            request_test_generic_permission(&thread, request.clone(), cx);
+        cx.run_until_parked();
+        let first_selector: &'static str =
+            Box::leak(format!("generic-permission-option-{first_id:?}-once").into_boxed_str());
+        let second_selector: &'static str =
+            Box::leak(format!("generic-permission-option-{second_id:?}-once").into_boxed_str());
+        let first = cx
+            .debug_bounds(first_selector)
+            .expect("first same-subject request");
+        let second = cx
+            .debug_bounds(second_selector)
+            .expect("second same-subject request");
+        assert!(first.top() < second.top());
+        click_generic_permission(second_id, Some("custom"), cx);
+        let acp_v2::RequestPermissionOutcome::Selected(outcome) = second_response.await else {
+            panic!("explicit unknown-kind option must return a selection");
+        };
+        assert_eq!(outcome.option_id, acp_v2::PermissionOptionId::new("custom"));
+        assert!(thread.read_with(cx, |thread, _| {
+            thread.permission_request(first_id).is_some()
+        }));
+        click_generic_permission(first_id, Some("once"), cx);
+        let acp_v2::RequestPermissionOutcome::Selected(outcome) = first_response.await else {
+            panic!("explicit known-kind option must return a selection");
+        };
+        assert_eq!(outcome.option_id, acp_v2::PermissionOptionId::new("once"));
+
+        let (third_id, third_response) =
+            request_test_generic_permission(&thread, request.clone(), cx);
+        // Keep a resolved request snapshot rendered so stale controls cannot
+        // target a successor with the same subject or offered option IDs.
+        let original_root = cx.update(|window, _| {
+            window
+                .root::<MultiWorkspace>()
+                .flatten()
+                .expect("workspace root")
+        });
+        cx.replace_root_view(|_, _| CapturedGenericPermissionCards {
+            thread_view: thread_view.clone(),
+            requests: vec![(second_id, request.clone()), (third_id, request)],
+        });
+        cx.run_until_parked();
+        click_generic_permission(second_id, Some("once"), cx);
+        click_generic_permission(second_id, None, cx);
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.permission_request(third_id).is_some());
+            assert!(thread.entries().is_empty());
+        });
+        click_generic_permission(third_id, None, cx);
+        assert_eq!(
+            third_response.await,
+            acp_v2::RequestPermissionOutcome::Cancelled
+        );
+        drop(original_root);
+    }
+
+    #[gpui::test]
+    async fn test_legacy_permission_shortcuts_do_not_skip_generic_requests(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let (thread, conversation) = thread_view.read_with(cx, |view, _| {
+            (view.thread.clone(), view.conversation.clone())
+        });
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let request = generic_permission_prompt(&thread, None, cx);
+        let (generic_id, generic_response) = request_test_generic_permission(&thread, request, cx);
+        let options = ToolPermissionContext::new(TerminalTool::NAME, vec!["cargo build".into()])
+            .build_permission_options();
+        let (legacy_id, legacy_response) =
+            request_test_tool_authorization_with_options(&thread, "legacy", options, cx);
+        cx.run_until_parked();
+        cx.focus(&thread_view);
+        cx.dispatch_action(crate::AllowOnce);
+        cx.dispatch_action(crate::AllowAlways);
+        cx.dispatch_action(crate::RejectOnce);
+        cx.dispatch_action(crate::SelectPermissionGranularity {
+            tool_call_id: "".into(),
+            request_id: Some(generic_id),
+            session_id: Some(session_id.0.to_string()),
+            index: 0,
+        });
+        cx.dispatch_action(crate::ToggleCommandPattern {
+            tool_call_id: "".into(),
+            request_id: Some(generic_id),
+            session_id: Some(session_id.0.to_string()),
+            pattern_index: 0,
+        });
+        conversation.update(cx, |conversation, cx| {
+            conversation.set_permission_choice(&session_id, generic_id, 0, cx);
+            conversation.toggle_permission_pattern(&session_id, generic_id, 0, cx);
+        });
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.permission_request(generic_id).is_some());
+            assert!(thread.permission_request(legacy_id).is_some());
+        });
+        conversation.read_with(cx, |conversation, _| {
+            assert!(!conversation.permission_selections.contains_key(&generic_id));
+        });
+        conversation.read_with(cx, |conversation, cx| {
+            assert_eq!(
+                conversation.pending_tool_call_count_for_session(&session_id, cx),
+                1
+            );
+        });
+        let legacy_selector: &'static str =
+            Box::leak(format!("PERMISSION_BUTTONS-{session_id}-Only this time").into_boxed_str());
+        assert!(cx.debug_bounds(legacy_selector).is_some());
+        click_generic_permission(generic_id, None, cx);
+        assert_eq!(
+            generic_response.await,
+            acp_v2::RequestPermissionOutcome::Cancelled
+        );
+        cx.focus(&thread_view);
+        cx.dispatch_action(crate::AllowOnce);
+        cx.run_until_parked();
+        assert!(matches!(
+            legacy_response.await,
+            acp_thread::RequestPermissionOutcome::Selected(_)
+        ));
+    }
+
+    #[gpui::test]
+    async fn test_generic_subagent_permissions_are_visible_and_session_scoped(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let root_view = active_thread(&conversation_view, cx);
+        let (root, conversation) = root_view.read_with(cx, |view, _| {
+            (view.thread.clone(), view.conversation.clone())
+        });
+        let root_session_id = root.read_with(cx, |thread, _| thread.session_id().clone());
+        let child_session_id = acp_v1::SessionId::new("generic-child");
+        let child_view = conversation_view.update_in(cx, |view, window, cx| {
+            let child = create_test_acp_thread(
+                Some(root_session_id.clone()),
+                child_session_id.0.as_ref(),
+                Rc::new(StubAgentConnection::new()),
+                view.project.clone(),
+                cx,
+            );
+            conversation.update(cx, |conversation, cx| {
+                conversation.register_thread(child.clone(), cx);
+            });
+            let child_view =
+                view.new_thread_view(child, conversation.clone(), false, None, window, cx);
+            view.as_connected_mut()
+                .expect("connected")
+                .threads
+                .insert(child_session_id.clone(), child_view.clone());
+            child_view
+        });
+        let child = child_view.read_with(cx, |view, _| view.thread.clone());
+        let root_request = generic_permission_prompt(&root, None, cx).description(None);
+        let child_request = generic_permission_prompt(&child, None, cx).description(None);
+        let (root_id, root_response) = request_test_generic_permission(&root, root_request, cx);
+        let (child_id, child_response) =
+            request_test_generic_permission(&child, child_request.clone(), cx);
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("generic-permission-source-generic-child")
+                .is_some()
+        );
+        root.read_with(cx, |thread, _| assert!(thread.entries().is_empty()));
+        click_generic_permission(child_id, Some("custom"), cx);
+        let acp_v2::RequestPermissionOutcome::Selected(outcome) = child_response.await else {
+            panic!("root must render functional child controls without a spawning tool anchor");
+        };
+        assert_eq!(outcome.option_id, acp_v2::PermissionOptionId::new("custom"));
+        assert!(root.read_with(cx, |thread, _| thread.permission_request(root_id).is_some()));
+
+        let (child_id, child_response) = request_test_generic_permission(&child, child_request, cx);
+        root.update(cx, |thread, cx| {
+            let spawn = acp_v1::ToolCall::new("spawn-child", "Running child")
+                .name("spawn_agent")
+                .status(acp_v1::ToolCallStatus::InProgress)
+                .meta(acp_v1::Meta::from_iter([(
+                    acp_thread::SUBAGENT_SESSION_INFO_META_KEY.into(),
+                    serde_json::to_value(acp_thread::SubagentSessionInfo {
+                        session_id: child_session_id.clone(),
+                        message_start_index: 0,
+                        message_end_index: None,
+                    })
+                    .expect("subagent session context"),
+                )]));
+            thread.upsert_tool_call(spawn, cx).expect("spawning tool");
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("generic-permission-source-generic-child")
+                .is_some()
+        );
+        conversation.read_with(cx, |conversation, cx| {
+            assert_eq!(
+                conversation.pending_tool_call_count_for_session(&child_session_id, cx),
+                0
+            );
+            assert!(conversation.subagents_awaiting_permission(cx).is_empty());
+        });
+        conversation_view.update_in(cx, |view, window, cx| {
+            view.navigate_to_thread(child_session_id, window, cx);
+        });
+        cx.run_until_parked();
+        let root_selector: &'static str =
+            Box::leak(format!("generic-permission-cancel-{root_id:?}").into_boxed_str());
+        assert!(cx.debug_bounds(root_selector).is_none());
+        click_generic_permission(child_id, None, cx);
+        assert_eq!(
+            child_response.await,
+            acp_v2::RequestPermissionOutcome::Cancelled
+        );
+        assert!(root.read_with(cx, |thread, _| thread.permission_request(root_id).is_some()));
+        conversation_view.update_in(cx, |view, window, cx| {
+            view.navigate_to_thread(root_session_id, window, cx);
+        });
+        cx.run_until_parked();
+        click_generic_permission(root_id, None, cx);
+        assert_eq!(
+            root_response.await,
+            acp_v2::RequestPermissionOutcome::Cancelled
+        );
+    }
+
+    #[gpui::test]
+    async fn test_generic_permissions_pending_before_registration_render_without_another_event(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let root_view = active_thread(&conversation_view, cx);
+        let (root, conversation) = root_view.read_with(cx, |view, _| {
+            (view.thread.clone(), view.conversation.clone())
+        });
+        let root_session_id = root.read_with(cx, |thread, _| thread.session_id().clone());
+        let project = conversation_view.read_with(cx, |view, _| view.project.clone());
+        cx.run_until_parked();
+
+        for queued_event in [false, true] {
+            let child_session_id = acp_v1::SessionId::new(if queued_event {
+                "queued-generic-child"
+            } else {
+                "late-generic-child"
+            });
+            let child = cx.update(|_, cx| {
+                create_test_acp_thread(
+                    Some(root_session_id.clone()),
+                    child_session_id.0.as_ref(),
+                    Rc::new(StubAgentConnection::new()),
+                    project.clone(),
+                    cx,
+                )
+            });
+            let request = generic_permission_prompt(&child, None, cx).description(None);
+            let (request_id, response) = if queued_event {
+                cx.update(|_, cx| {
+                    let pending = child.update(cx, |thread, cx| {
+                        thread
+                            .request_permission(request, cx)
+                            .expect("queued request")
+                    });
+                    conversation.update(cx, |conversation, cx| {
+                        conversation.register_thread(child.clone(), cx);
+                    });
+                    pending
+                })
+            } else {
+                let pending = request_test_generic_permission(&child, request, cx);
+                cx.run_until_parked();
+                conversation.update(cx, |conversation, cx| {
+                    conversation.register_thread(child.clone(), cx);
+                });
+                pending
+            };
+            conversation.read_with(cx, |conversation, _| {
+                assert_eq!(
+                    conversation.permission_requests.get(&child_session_id),
+                    Some(&vec![request_id])
+                );
+            });
+            cx.run_until_parked();
+            let selector: &'static str =
+                Box::leak(format!("generic-permission-cancel-{request_id:?}").into_boxed_str());
+            assert!(
+                cx.debug_bounds(selector).is_some(),
+                "hydrated requests must render without focus, navigation, or another thread event"
+            );
+            conversation.read_with(cx, |conversation, _| {
+                assert_eq!(
+                    conversation.permission_requests.get(&child_session_id),
+                    Some(&vec![request_id]),
+                    "queued request events must not duplicate hydrated state"
+                );
+            });
+            click_generic_permission(request_id, Some("custom"), cx);
+            assert_eq!(
+                response.await,
+                acp_v2::RequestPermissionOutcome::Selected(acp_v2::SelectedPermissionOutcome::new(
+                    "custom"
+                ))
+            );
+            assert!(cx.debug_bounds(selector).is_none());
+            child.read_with(cx, |thread, _| {
+                assert!(thread.entries().is_empty());
+                assert_eq!(thread.pending_permission_requests().count(), 0);
+            });
+            let request = generic_permission_prompt(&child, None, cx).description(None);
+            let (later_id, later_response) = request_test_generic_permission(&child, request, cx);
+            cx.run_until_parked();
+            click_generic_permission(later_id, None, cx);
+            assert_eq!(
+                later_response.await,
+                acp_v2::RequestPermissionOutcome::Cancelled
+            );
+        }
+        root.read_with(cx, |thread, _| assert!(thread.entries().is_empty()));
     }
 
     /// Set up a `ConversationView` whose active thread has a single tool call
@@ -14376,6 +15970,8 @@ pub(crate) mod tests {
             window.dispatch_action(
                 crate::AuthorizeToolCall {
                     tool_call_id: "perm-allow".to_string(),
+                    request_id: None,
+                    session_id: None,
                     option_id: "allow".to_string(),
                     option_kind: "AllowOnce".to_string(),
                 }

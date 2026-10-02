@@ -35,6 +35,7 @@ log.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
 raw-window-handle.workspace = true
+scheduler.workspace = true
 smallvec.workspace = true
 uuid.workspace = true
 windows = { workspace = true, features = ["Win32_System_StationsAndDesktops"] }

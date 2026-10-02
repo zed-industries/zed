@@ -270,6 +270,8 @@ pub struct SettingsContent {
 
     pub language_models: Option<AllLanguageModelSettingsContent>,
 
+    pub copilot: Option<CopilotSettingsContent>,
+
     pub outline_panel: Option<OutlinePanelSettingsContent>,
 
     pub project_panel: Option<ProjectPanelSettingsContent>,
@@ -406,7 +408,7 @@ fallible_options::flattened_deserialize!(SettingsContent {
         agent_servers, audio, auto_update, base_keymap, collaboration_panel, debugger, diagnostics,
         git,
         global_lsp_settings, image_viewer, markdown_preview, repl, helix_mode, hide_mouse,
-        journal, log, line_indicator_format, language_models, outline_panel, project_panel,
+        journal, log, line_indicator_format, language_models, copilot, outline_panel, project_panel,
         node, proxy, reduce_motion, server_url, credentials_url, session, telemetry, terminal,
         title_bar, vim_mode, calls, which_key, vim, modeline_lines, feature_flags,
         instrumentation,
@@ -1302,6 +1304,12 @@ pub struct MarkdownPreviewSettingsContent {
     /// The theme to use for the markdown preview.
     /// Falls back to the main editor theme if unset.
     pub theme: Option<ThemeSelection>,
+    /// The weight of headings (H1 through H6) in the markdown preview, in CSS
+    /// units from 100 to 900. Also applies to rendered Markdown cells in
+    /// notebooks, which share the preview typography.
+    ///
+    /// Default: 600
+    pub heading_font_weight: Option<FontWeightContent>,
     /// Whether to automatically open Markdown files in the preview.
     ///
     /// Default: false

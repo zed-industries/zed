@@ -59,10 +59,11 @@ use crate::linux::{
 use crate::linux::{LinuxCommon, LinuxKeyboardLayout, X11Window, modifiers_from_xinput_info};
 
 use gpui::{
-    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, FileDropEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay, PlatformInput,
-    PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta, Size,
-    TouchPhase, WindowButtonLayout, WindowParams, WindowVisibility, point, px,
+    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, FileDropEvent, FrameRequestSource,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay,
+    PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point,
+    RequestFrameOptions, ScrollDelta, Size, TouchPhase, WindowButtonLayout, WindowParams,
+    WindowVisibility, point, px,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 
@@ -804,6 +805,8 @@ impl X11Client {
                     window.refresh(RequestFrameOptions {
                         require_presentation: true,
                         force_render: false,
+                        signal_at: None,
+                        signal_source: FrameRequestSource::NativeCallback,
                     });
                 }
             }
@@ -2063,6 +2066,8 @@ impl X11ClientState {
                             window.refresh(RequestFrameOptions {
                                 require_presentation: false,
                                 force_render: false,
+                                signal_at: PlatformFrameSignal::capture(|| instant),
+                                signal_source: FrameRequestSource::LocalSchedule,
                             });
                         }
                         xcb_connection

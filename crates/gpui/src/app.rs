@@ -850,7 +850,7 @@ pub struct App {
 
     // We need to ensure the leak detector drops last, after all tasks, callbacks and things have been dropped.
     // Otherwise it may report false positives.
-    #[cfg(any(test, feature = "leak-detection"))]
+    #[cfg(any(test, gpui_leak_detection))]
     _ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
 
@@ -876,7 +876,7 @@ impl App {
         let keyboard_layout = platform.keyboard_layout();
         let keyboard_mapper = platform.keyboard_mapper();
 
-        #[cfg(any(test, feature = "leak-detection"))]
+        #[cfg(any(test, gpui_leak_detection))]
         let _ref_counts = entities.ref_counts_drop_handle();
 
         let app = Rc::new_cyclic(|this| AppCell {
@@ -953,7 +953,7 @@ impl App {
                 element_arena: RefCell::new(Arena::new(1024 * 1024)),
                 event_arena: Arena::new(1024 * 1024),
 
-                #[cfg(any(test, feature = "leak-detection"))]
+                #[cfg(any(test, gpui_leak_detection))]
                 _ref_counts,
             }),
         });
@@ -1046,7 +1046,7 @@ impl App {
     /// The returned [`LeakDetectorSnapshot`] can later be passed to
     /// [`assert_no_new_leaks`](Self::assert_no_new_leaks) to verify that no
     /// entities created after the snapshot are still alive.
-    #[cfg(any(test, feature = "leak-detection"))]
+    #[cfg(any(test, gpui_leak_detection))]
     pub fn leak_detector_snapshot(&self) -> LeakDetectorSnapshot {
         self.entities.leak_detector_snapshot()
     }
@@ -1062,10 +1062,21 @@ impl App {
     /// Panics if any new entity handles exist. The panic message lists every
     /// leaked entity with its type name, and includes allocation-site backtraces
     /// when `LEAK_BACKTRACE` is set.
-    #[cfg(any(test, feature = "leak-detection"))]
+    #[cfg(any(test, gpui_leak_detection))]
     pub fn assert_no_new_leaks(&self, snapshot: &LeakDetectorSnapshot) {
         self.entities.assert_no_new_leaks(snapshot)
     }
+
+    /// Without leak detection compiled in, this records nothing.
+    #[cfg(all(feature = "test-support", not(any(test, gpui_leak_detection))))]
+    pub fn leak_detector_snapshot(&self) -> LeakDetectorSnapshot {
+        LeakDetectorSnapshot::default()
+    }
+
+    /// Without leak detection compiled in, this checks nothing. Set
+    /// `GPUI_LEAK_DETECTION` when building to enable it.
+    #[cfg(all(feature = "test-support", not(any(test, gpui_leak_detection))))]
+    pub fn assert_no_new_leaks(&self, _snapshot: &LeakDetectorSnapshot) {}
 
     /// Quit the application gracefully.
     ///
@@ -2097,6 +2108,12 @@ impl App {
     /// Obtains a reference to the executor, which can be used to spawn futures.
     pub fn background_executor(&self) -> &BackgroundExecutor {
         &self.background_executor
+    }
+
+    /// Whether this app runs on the deterministic test scheduler. See
+    /// [`BackgroundExecutor::is_test`].
+    pub fn is_test(&self) -> bool {
+        self.background_executor.is_test()
     }
 
     /// Obtains a reference to the executor, which can be used to spawn futures.

@@ -5548,7 +5548,6 @@ dependencies = [
  "codestral",
  "command_palette_hooks",
  "copilot",
- "copilot_chat",
  "copilot_ui",
  "edit_prediction",
  "edit_prediction_types",
@@ -7684,6 +7683,7 @@ dependencies = [
  "core-foundation-sys",
  "core-graphics 0.24.0",
  "core-text",
+ "core-video",
  "ctor",
  "dispatch2",
  "foreign-types 0.5.0",
@@ -7705,6 +7705,7 @@ dependencies = [
  "parking_lot",
  "pathfinder_geometry",
  "raw-window-handle",
+ "scheduler",
  "semver",
  "smallvec",
  "strum 0.28.0",
@@ -7841,6 +7842,7 @@ dependencies = [
  "parking_lot",
  "rand 0.9.4",
  "raw-window-handle",
+ "scheduler",
  "smallvec",
  "uuid",
  "windows 0.62.2",
@@ -9781,7 +9783,6 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "http_client",
- "language",
  "language_model",
  "language_models_cloud",
  "llama_cpp",
@@ -17162,7 +17163,6 @@ version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523"
 dependencies = [
- "borsh",
  "serde_core",
 ]
 
