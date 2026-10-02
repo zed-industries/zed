@@ -2537,10 +2537,6 @@ impl GitPanel {
             self.toggle_directory(&dir_entry.key, window, cx);
             return;
         }
-        if self.effective_status_entries().len() > 1 {
-            self.open_solo_diff(&menu::SecondaryConfirm, window, cx);
-            return;
-        }
         maybe!({
             let selected_index = self.selected_entry?;
             let entry = self.entries.get(selected_index)?.status_entry()?;
