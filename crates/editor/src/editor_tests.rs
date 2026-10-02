@@ -28708,6 +28708,269 @@ async fn test_on_type_formatting_preserves_cursor_position(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+async fn test_on_type_formatting_preserves_cursor_position_before_single_line_insertion(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                first_trigger_character: ".".to_string(),
+                more_trigger_character: None,
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state("let a = bˇ;\n");
+
+    let mut request =
+        cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(|_, params, _| async move {
+            assert_eq!(params.ch, ".");
+            Ok(Some(vec![lsp::TextEdit {
+                range: lsp::Range::new(lsp::Position::new(0, 10), lsp::Position::new(0, 10)),
+                new_text: "c".to_string(),
+            }]))
+        });
+
+    cx.simulate_keystroke(".");
+    cx.run_until_parked();
+
+    cx.assert_editor_state("let a = b.ˇc;\n");
+    assert!(request.next().await.is_some());
+}
+
+#[gpui::test]
+async fn test_on_type_formatting_newline_cursor_position(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::PreserveIndent);
+    });
+
+    let yaml_language = languages::language("yaml", tree_sitter_yaml::LANGUAGE.into());
+    let mut cx = EditorLspTestContext::new(
+        Arc::into_inner(yaml_language).unwrap(),
+        lsp::ServerCapabilities {
+            document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                first_trigger_character: "\n".to_string(),
+                more_trigger_character: None,
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    let edit = |start: (u32, u32), end: (u32, u32), new_text: &str| lsp::TextEdit {
+        range: lsp::Range::new(
+            lsp::Position::new(start.0, start.1),
+            lsp::Position::new(end.0, end.1),
+        ),
+        new_text: new_text.to_string(),
+    };
+
+    for (initial, position, edits, expected) in [
+        (
+            "items:\n  - itemˇ",
+            (2, 2),
+            vec![edit((2, 2), (2, 2), "- ")],
+            "items:\n  - item\n  - ˇ",
+        ),
+        (
+            "items:\n  - itemˇsuffix",
+            (2, 2),
+            vec![edit((2, 2), (2, 8), "replacement")],
+            "items:\n  - item\n  ˇreplacement",
+        ),
+        (
+            "items:\n  - itemˇ",
+            (2, 2),
+            vec![edit((2, 2), (2, 2), "- \n  - ")],
+            "items:\n  - item\n  ˇ- \n  - ",
+        ),
+        (
+            "items:\n  - itemˇ",
+            (2, 2),
+            vec![edit((1, 0), (2, 2), "  - item\n  - ")],
+            "items:\n  - item\n  - ˇ",
+        ),
+        (
+            "items:\n  - itemˇ",
+            (2, 2),
+            vec![edit((2, 2), (2, 2), "-"), edit((2, 2), (2, 2), " ")],
+            "items:\n  - item\n  - ˇ",
+        ),
+        (
+            "items:\n  - itemˇ",
+            (2, 2),
+            vec![edit((0, 0), (0, 0), "# "), edit((2, 2), (2, 2), "- ")],
+            "# items:\n  - item\n  - ˇ",
+        ),
+        (
+            "items:\n  - itemˇsuffix",
+            (2, 2),
+            vec![edit((2, 2), (2, 2), "- ")],
+            "items:\n  - item\n  - ˇsuffix",
+        ),
+        (
+            "first:\n  - itemˇ\nsecond:\n  - itemˇ",
+            (5, 2),
+            vec![edit((2, 2), (2, 2), "- "), edit((5, 2), (5, 2), "- ")],
+            "first:\n  - item\n  - ˇ\nsecond:\n  - item\n  - ˇ",
+        ),
+    ] {
+        cx.set_state(initial);
+        let mut request =
+            cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(move |_, params, _| {
+                let edits = edits.clone();
+                async move {
+                    assert_eq!(params.ch, "\n");
+                    assert_eq!(
+                        params.text_document_position.position,
+                        lsp::Position::new(position.0, position.1)
+                    );
+                    Ok(Some(edits))
+                }
+            });
+
+        cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+        cx.run_until_parked();
+
+        cx.assert_editor_state(expected);
+        assert!(request.next().await.is_some());
+    }
+}
+
+#[gpui::test]
+async fn test_on_type_formatting_newline_does_not_rewind_over_intervening_edits(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::PreserveIndent);
+    });
+
+    let yaml_language = languages::language("yaml", tree_sitter_yaml::LANGUAGE.into());
+    let mut cx = EditorLspTestContext::new(
+        Arc::into_inner(yaml_language).unwrap(),
+        lsp::ServerCapabilities {
+            document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                first_trigger_character: "\n".to_string(),
+                more_trigger_character: None,
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state("items:\n  - itemˇ");
+
+    let (request_started_tx, request_started_rx) = oneshot::channel();
+    let (respond_tx, respond_rx) = oneshot::channel();
+    let mut request_started_tx = Some(request_started_tx);
+    let mut respond_rx = Some(respond_rx);
+    let _request =
+        cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(move |_, params, _| {
+            assert_eq!(
+                params.text_document_position.position,
+                lsp::Position::new(2, 2)
+            );
+            request_started_tx.take().unwrap().send(()).unwrap();
+            let respond_rx = respond_rx.take().unwrap();
+            async move {
+                respond_rx.await.unwrap();
+                Ok(Some(vec![lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(2, 2), lsp::Position::new(2, 2)),
+                    new_text: "- ".to_string(),
+                }]))
+            }
+        });
+
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    request_started_rx.await.unwrap();
+    cx.simulate_keystroke("x");
+    respond_tx.send(()).unwrap();
+    cx.run_until_parked();
+
+    cx.assert_editor_state("items:\n  - item\n  - xˇ");
+}
+
+#[gpui::test]
+async fn test_on_type_formatting_newline_between_paired_tags(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::PreserveIndent);
+    });
+
+    let xml_language = Language::new(
+        LanguageConfig {
+            name: "XML".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["xml".to_string()],
+                ..Default::default()
+            }
+            .into(),
+            ..Default::default()
+        },
+        None,
+    );
+    let mut cx = EditorLspTestContext::new(
+        xml_language,
+        lsp::ServerCapabilities {
+            document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                first_trigger_character: "\n".to_string(),
+                more_trigger_character: None,
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    for edits in [
+        vec![lsp::TextEdit {
+            range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 0)),
+            new_text: "  \n".to_string(),
+        }],
+        vec![lsp::TextEdit {
+            range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 6)),
+            new_text: "  \n</Foo>".to_string(),
+        }],
+        vec![
+            lsp::TextEdit {
+                range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 0)),
+                new_text: "  ".to_string(),
+            },
+            lsp::TextEdit {
+                range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 0)),
+                new_text: "\n".to_string(),
+            },
+        ],
+    ] {
+        cx.set_state("<Foo>ˇ</Foo>");
+        let mut request =
+            cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(move |_, params, _| {
+                let edits = edits.clone();
+                async move {
+                    assert_eq!(params.ch, "\n");
+                    assert_eq!(
+                        params.text_document_position.position,
+                        lsp::Position::new(1, 0)
+                    );
+                    Ok(Some(edits))
+                }
+            });
+
+        cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+        cx.run_until_parked();
+
+        cx.assert_editor_state("<Foo>\nˇ  \n</Foo>");
+        assert!(request.next().await.is_some());
+    }
+}
+
+#[gpui::test]
 async fn test_on_type_formatting_does_not_rewind_over_intervening_edits(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
