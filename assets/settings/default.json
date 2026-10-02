@@ -1932,7 +1932,6 @@
     "mode": "eager",
     // Copilot-specific settings
     // "copilot": {
-    //   "enterprise_uri": "",
     //   "proxy": "",
     //   "proxy_no_verify": false,
     //   "enable_next_edit_suggestions": true,
@@ -1941,7 +1940,6 @@
     //   "prediction_debounce": 75
     // },
     "copilot": {
-      "enterprise_uri": null,
       "proxy": null,
       "proxy_no_verify": null,
       "enable_next_edit_suggestions": true,
@@ -2639,6 +2637,10 @@
       "format_on_save": "on",
       "language_servers": ["zls", "..."],
     },
+  },
+  // Settings shared by Copilot Chat and edit predictions.
+  "copilot": {
+    "enterprise_uri": null,
   },
   // Different settings for specific language models.
   "language_models": {
