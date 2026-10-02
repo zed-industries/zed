@@ -8,8 +8,8 @@ use gpui::{AnyElement, App, Div, Empty, Entity, Focusable, Hsla, SharedString, W
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use ui::{
-    Button, Checkbox, Color, Icon, IconName, IconSize, Indicator, Label, LabelSize, ToggleState,
-    prelude::*,
+    Button, ButtonSize, Checkbox, Color, Icon, IconName, IconSize, Indicator, Label, LabelSize,
+    ToggleState, prelude::*,
 };
 
 #[derive(Clone)]
@@ -195,11 +195,11 @@ impl ElicitationFormState {
         }
     }
 
-    pub(crate) fn set_single_select(&mut self, field_name: &str, value: String) {
+    pub(crate) fn set_single_select(&mut self, field_name: &str, value: Option<String>) {
         if let Some(ElicitationFieldState::SingleSelect { value: selected }) =
             self.fields.get_mut(field_name)
         {
-            *selected = Some(value);
+            *selected = value;
             self.field_errors.remove(field_name);
         }
     }
@@ -427,8 +427,16 @@ mod tests {
                 },
                 on_single_select_change: {
                     let events = self.events.clone();
-                    Rc::new(move |_, name, value, _| {
-                        events.borrow_mut().push(format!("{name}: {value}"));
+                    let view = cx.entity().downgrade();
+                    Rc::new(move |_, name, value: Option<String>, cx| {
+                        events
+                            .borrow_mut()
+                            .push(format!("{name}: {}", value.as_deref().unwrap_or("clear")));
+                        view.update(cx, |view, cx| {
+                            view.form_state.set_single_select(&name, value);
+                            cx.notify();
+                        })
+                        .expect("test view should exist");
                     })
                 },
                 on_multi_select_change: {
@@ -630,6 +638,94 @@ mod tests {
                 "submit",
             ]
         );
+    }
+
+    #[gpui::test]
+    fn clearing_selected_option_submits_only_other_text(cx: &mut TestAppContext) {
+        init_keyboard_test(cx);
+        let schema = acp::ElicitationSchema::new()
+            .property(
+                "choice",
+                acp::StringPropertySchema::new().enum_values(vec!["first".into(), "second".into()]),
+                false,
+            )
+            .string("other", false);
+        let (view, cx) =
+            cx.add_window_view(|window, cx| TestElicitationView::new(schema.clone(), window, cx));
+        let (other, events) =
+            view.read_with(cx, |view, _| (view.editor("other"), view.events.clone()));
+        cx.update(|window, cx| window.focus(&other.focus_handle(cx), cx));
+
+        press_keys(cx, "shift-tab shift-tab space");
+        assert!(view.read_with(cx, |view, _| matches!(
+            view.form_state.fields.get("choice"),
+            Some(ElicitationFieldState::SingleSelect { value: Some(value) }) if value == "first"
+        )));
+
+        press_keys(cx, "shift-tab enter");
+        assert!(view.read_with(cx, |view, _| matches!(
+            view.form_state.fields.get("choice"),
+            Some(ElicitationFieldState::SingleSelect { value: None })
+        )));
+
+        cx.update(|window, cx| window.focus(&other.focus_handle(cx), cx));
+        cx.simulate_input("Only the other answer");
+        press_keys(cx, "enter");
+        assert_eq!(
+            *events.borrow(),
+            ["choice: first", "choice: clear", "submit"]
+        );
+
+        let content = view.update(cx, |view, cx| {
+            view.form_state
+                .begin_submission(cx)
+                .expect("submission should start")
+                .validate(&schema)
+                .expect("other text should be valid")
+        });
+        assert_eq!(
+            content,
+            BTreeMap::from([(
+                "other".to_string(),
+                acp::ElicitationContentValue::String("Only the other answer".to_string()),
+            )])
+        );
+    }
+
+    #[gpui::test]
+    fn clearing_single_select_keeps_other_question_selection(cx: &mut TestAppContext) {
+        crate::conversation_view::tests::init_test(cx);
+
+        cx.add_window(|window, cx| {
+            let schema = acp::ElicitationSchema::new()
+                .property(
+                    "first_question",
+                    acp::StringPropertySchema::new().enum_values(vec!["first".into()]),
+                    false,
+                )
+                .property(
+                    "second_question",
+                    acp::StringPropertySchema::new().enum_values(vec!["second".into()]),
+                    false,
+                );
+            let mut form_state = ElicitationFormState::new(&schema, window, cx);
+            form_state.set_single_select("first_question", Some("first".into()));
+            form_state.set_single_select("second_question", Some("second".into()));
+            form_state.set_single_select("first_question", None);
+
+            let content = form_state
+                .collect(&schema, cx)
+                .expect("remaining selection should be valid");
+            assert_eq!(
+                content,
+                BTreeMap::from([(
+                    "second_question".to_string(),
+                    acp::ElicitationContentValue::String("second".to_string()),
+                )])
+            );
+
+            Editor::single_line(window, cx)
+        });
     }
 
     #[gpui::test]
@@ -1096,7 +1192,7 @@ mod tests {
                 false,
             );
             let mut form_state = ElicitationFormState::new(&schema, window, cx);
-            form_state.set_single_select("environment", "development".to_string());
+            form_state.set_single_select("environment", Some("development".to_string()));
 
             let errors = form_state
                 .collect(&schema, cx)
@@ -1136,7 +1232,7 @@ mod tests {
             if let Some(ElicitationFieldState::Text(editor)) = form_state.fields.get("age") {
                 editor.update(cx, |editor, cx| editor.set_text("abc", window, cx));
             }
-            form_state.set_single_select("environment", "development".to_string());
+            form_state.set_single_select("environment", Some("development".to_string()));
 
             let errors = form_state
                 .collect(&schema, cx)
@@ -1657,7 +1753,7 @@ fn property_description(property: &acp::ElicitationPropertySchema) -> Option<Sha
 type RespondHandler = Rc<dyn Fn(ElicitationEntryId, &mut Window, &mut App)>;
 type OpenUrlHandler = Rc<dyn Fn(ElicitationEntryId, String, &mut Window, &mut App)>;
 type BooleanHandler = Rc<dyn Fn(ElicitationEntryId, String, bool, &mut App)>;
-type SelectHandler = Rc<dyn Fn(ElicitationEntryId, String, String, &mut App)>;
+type SelectHandler = Rc<dyn Fn(ElicitationEntryId, String, Option<String>, &mut App)>;
 type MultiSelectHandler = Rc<dyn Fn(ElicitationEntryId, String, String, bool, &mut App)>;
 
 #[derive(Clone)]
@@ -1680,7 +1776,7 @@ impl ElicitationCardHandlers {
         on_dismiss_url: impl Fn(ElicitationEntryId, &mut Window, &mut App) + 'static,
         on_open_url: impl Fn(ElicitationEntryId, String, &mut Window, &mut App) + 'static,
         on_boolean_change: impl Fn(ElicitationEntryId, String, bool, &mut App) + 'static,
-        on_single_select_change: impl Fn(ElicitationEntryId, String, String, &mut App) + 'static,
+        on_single_select_change: impl Fn(ElicitationEntryId, String, Option<String>, &mut App) + 'static,
         on_multi_select_change: impl Fn(ElicitationEntryId, String, String, bool, &mut App) + 'static,
     ) -> Self {
         Self {
@@ -1995,10 +2091,46 @@ impl<'a> ElicitationCard<'a> {
         } else {
             Label::new(label).size(LabelSize::Small)
         };
+        let is_single_select_selected = matches!(
+            field,
+            ElicitationFieldState::SingleSelect { value: Some(_) }
+        );
 
         v_flex()
             .gap_1()
-            .child(label)
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .when(
+                        matches!(field, ElicitationFieldState::SingleSelect { .. }),
+                        |this| this.min_h(ButtonSize::Compact.rems()),
+                    )
+                    .child(label)
+                    .when(is_single_select_selected, |this| {
+                        let on_single_select_change = self.handlers.on_single_select_change.clone();
+                        let elicitation_id = self.elicitation.id.clone();
+                        let field_name = field_name.to_string();
+                        this.child(
+                            Button::new(
+                                format!("elicitation-clear-{}-{field_name}", self.entry_ix),
+                                "Clear",
+                            )
+                            .color(Color::Muted)
+                            .size(ButtonSize::Compact)
+                            .label_size(LabelSize::Small)
+                            .tab_index(0_isize)
+                            .on_click(move |_, _, cx| {
+                                on_single_select_change(
+                                    elicitation_id.clone(),
+                                    field_name.clone(),
+                                    None,
+                                    cx,
+                                );
+                            }),
+                        )
+                    }),
+            )
             .when_some(description, |this, description| {
                 this.child(
                     Label::new(description)
@@ -2165,7 +2297,7 @@ impl<'a> ElicitationCard<'a> {
                         on_single_select_change(
                             elicitation_id.clone(),
                             field_name.clone(),
-                            option_value.clone(),
+                            Some(option_value.clone()),
                             cx,
                         );
                     })
