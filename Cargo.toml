@@ -853,6 +853,7 @@ simplelog = "0.12.2"
 slotmap = "1.0.6"
 smallvec = { version = "1.6", features = ["union", "const_new"] }
 smol = "2.0"
+smol_str = "0.3.6"
 sqlformat = "0.2"
 stacksafe = "1.0"
 streaming-iterator = "0.1"
