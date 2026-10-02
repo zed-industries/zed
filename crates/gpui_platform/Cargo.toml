@@ -24,6 +24,11 @@ wayland = ["gpui_linux/wayland"]
 x11 = ["gpui_linux/x11"]
 
 [[bench]]
+name = "focus_cleanup"
+harness = false
+required-features = ["bench-support"]
+
+[[bench]]
 name = "inspector_render"
 harness = false
 required-features = ["bench-support"]
