@@ -1031,6 +1031,7 @@ mod tests {
                 position: settings::SidebarDockPosition::Left,
             },
             thinking_display: Default::default(),
+            image_read_mode: Default::default(),
         };
 
         cx.update(|cx| {

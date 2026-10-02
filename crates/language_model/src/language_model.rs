@@ -19,7 +19,10 @@ pub type CreateProviderSettingsView = Arc<dyn Fn(&mut Window, &mut App) -> AnyVi
 
 pub use crate::api_key::{ApiKey, ApiKeyState};
 pub use crate::registry::*;
-pub use crate::request::{LanguageModelImageExt, gpui_size_to_image_size, image_size_to_gpui};
+pub use crate::request::{
+    DEFAULT_IMAGE_MAX_DIMENSION, LanguageModelImageExt, MAX_IMAGE_BASE64_BYTES,
+    gpui_size_to_image_size, image_size_to_gpui,
+};
 pub use env_var::{EnvVar, env_var};
 
 const BACKGROUND_STREAM_BUFFER_SIZE: usize = 32;
