@@ -14,8 +14,8 @@ use editor::{
     Editor, EditorEvent, EditorSettingsScrollbarProxy, MultiBufferOffset, SelectionEffects,
 };
 use gpui::{
-    App, ClipboardItem, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Global,
-    ImageSource, InteractiveElement, IntoElement, IsZero, Pixels, Render, Resource,
+    Action, App, ClipboardItem, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
+    Global, ImageSource, InteractiveElement, IntoElement, IsZero, Pixels, Render, Resource,
     RetainAllImageCache, ScrollHandle, SharedString, SharedUri, Subscription, Task, WeakEntity,
     Window, point, px,
 };
@@ -1653,6 +1653,14 @@ impl Item for MarkdownPreviewView {
         Some("Markdown Preview Opened")
     }
 
+    fn tab_extra_context_menu_actions(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Vec<(SharedString, Box<dyn Action>)> {
+        vec![("Show Source".into(), Box::new(CloseAndReturnToEditor))]
+    }
+
     fn added_to_workspace(
         &mut self,
         workspace: &mut Workspace,
@@ -3151,6 +3159,27 @@ mod tests {
             editor.read_with(cx, |editor, cx| editor.buffer().read(cx).read(cx).text()),
             "- [x] Finish work\n"
         );
+    }
+
+    #[gpui::test]
+    async fn tab_context_menu_offers_show_source(cx: &mut TestAppContext) {
+        let (multi_workspace, _editor) =
+            open_markdown_file(cx, "note.md", "# Note\n\nBody text\n").await;
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+        cx.run_until_parked();
+
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                let actions = preview.update(cx, |preview, cx| {
+                    preview.tab_extra_context_menu_actions(window, cx)
+                });
+                let [(label, action)] = actions.as_slice() else {
+                    panic!("expected exactly one tab menu action");
+                };
+                assert_eq!(label.as_ref(), "Show Source");
+                assert!(action.as_any().is::<CloseAndReturnToEditor>());
+            })
+            .unwrap();
     }
 
     #[gpui::test]
