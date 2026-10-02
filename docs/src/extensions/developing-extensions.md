@@ -18,6 +18,10 @@ Extensions can provide:
 - [Snippets](./snippets.md)
 - [MCP Servers](./mcp-extensions.md)
 
+Zed automatically assigns your extension to categories on the Extensions page based on the features it provides. An extension that provides multiple features may appear in more than one category.
+
+Note that published extensions must meet our [extension publishing prerequisites](./publishing/prerequisites.md), which include requirements on the features an extension provides.
+
 ## Developing an Extension Locally
 
 Before starting to develop an extension for Zed, be sure to [install Rust via rustup](https://www.rust-lang.org/tools/install).
