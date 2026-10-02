@@ -6992,7 +6992,7 @@ impl ThreadView {
                 .child(self.render_thread_controls(
                     &thread,
                     entry_ix,
-                    Some(entry_ix),
+                    Self::agent_message_copy_index(thread.read(cx).entries(), entry_ix, cx),
                     entry_ix + 1 == total_entries,
                     user_message_index,
                     cx,
@@ -7007,12 +7007,6 @@ impl ThreadView {
         let comments_editor = self.thread_feedback.comments_editor.clone();
 
         let primary = if entry_ix + 1 == total_entries {
-            let last_assistant_index = thread
-                .read(cx)
-                .entries()
-                .iter()
-                .rposition(|entry| matches!(entry, AgentThreadEntry::AssistantMessage(_)));
-
             v_flex()
                 .w_full()
                 .child(primary)
@@ -7020,7 +7014,7 @@ impl ThreadView {
                     this.child(self.render_thread_controls(
                         &thread,
                         entry_ix,
-                        last_assistant_index,
+                        Self::agent_message_copy_index(thread.read(cx).entries(), entry_ix, cx),
                         true,
                         None,
                         cx,
@@ -7236,23 +7230,20 @@ impl ThreadView {
             return Empty.into_any_element();
         }
 
-        let copy_response_index = copy_response_index.filter(|response_index| {
-            Self::has_agent_message_content(thread.read(cx).entries(), *response_index, cx)
-        });
-        let copy_response_button = copy_response_index.map(|response_index| {
-            let thread = thread.clone();
-            CopyButton::new_with_action(("copy_agent_response", entry_ix), move |_window, cx| {
-                let entries = thread.read(cx).entries();
-                let Some(text) = Self::get_agent_message_content(entries, response_index, cx)
-                else {
-                    return false;
-                };
-                cx.write_to_clipboard(ClipboardItem::new_string(text));
-                true
-            })
+        let copy_response_button = CopyButton::new(("copy_agent_response", entry_ix), "")
             .icon_size(IconSize::Small)
             .tooltip_label("Copy This Agent Response")
-        });
+            .disabled(copy_response_index.is_none())
+            .when_some(copy_response_index, |button, response_index| {
+                let thread = thread.clone();
+                button.custom_on_click(move |_, cx| {
+                    let entries = thread.read(cx).entries();
+                    if let Some(text) = Self::get_agent_message_content(entries, response_index, cx)
+                    {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    }
+                })
+            });
 
         let scroll_to_recent_user_prompt = IconButton::new(
             ("scroll_to_recent_user_prompt", entry_ix),
@@ -7393,7 +7384,7 @@ impl ThreadView {
                 },
             )
             .when_some(feedback_buttons, |this, buttons| this.child(buttons))
-            .when_some(copy_response_button, |this, button| this.child(button))
+            .child(copy_response_button)
             .child(scroll_to_recent_user_prompt)
             .when_some(scroll_to_top, |this, button| this.child(button))
             .into_any_element()
@@ -8146,33 +8137,30 @@ impl ThreadView {
             .into_any_element()
     }
 
-    fn has_agent_message_content(
+    fn agent_message_copy_index(
         entries: &[AgentThreadEntry],
         entry_index: usize,
         cx: &App,
-    ) -> bool {
-        if !matches!(
-            entries.get(entry_index),
-            Some(AgentThreadEntry::AssistantMessage(_))
-        ) {
-            return false;
-        }
-
-        let start_index = (0..entry_index)
+    ) -> Option<usize> {
+        entries
+            .get(..=entry_index)?
+            .iter()
+            .enumerate()
             .rev()
-            .find(|&index| matches!(entries.get(index), Some(AgentThreadEntry::UserMessage(_))))
-            .map(|index| index + 1)
-            .unwrap_or(0);
-
-        entries[start_index..=entry_index].iter().any(|entry| {
-            let AgentThreadEntry::AssistantMessage(message) = entry else {
-                return false;
-            };
-            message.chunks.iter().any(|chunk| match chunk {
-                AssistantMessageChunk::Message { block, .. } => block.visible_content(cx),
-                AssistantMessageChunk::Thought { .. } => false,
+            .take_while(|(_, entry)| !matches!(entry, AgentThreadEntry::UserMessage(_)))
+            .find_map(|(index, entry)| match entry {
+                AgentThreadEntry::AssistantMessage(message) => message
+                    .chunks
+                    .iter()
+                    .any(|chunk| match chunk {
+                        AssistantMessageChunk::Message { block, .. } => {
+                            !block.to_markdown(cx).trim().is_empty()
+                        }
+                        AssistantMessageChunk::Thought { .. } => false,
+                    })
+                    .then_some(index),
+                _ => None,
             })
-        })
     }
 
     fn get_agent_message_content(
@@ -13450,53 +13438,101 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_has_agent_message_content_ignores_thought_chunks(cx: &mut gpui::TestAppContext) {
+    fn test_agent_message_copy_index(cx: &mut gpui::TestAppContext) {
         crate::test_support::init_test(cx);
 
         cx.update(|cx| {
             let language_registry =
                 Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-            let thought_content = MessageContent::new(
-                acp_v2::ContentBlock::Text(acp_v2::TextContent::new("private thought")),
-                &language_registry,
-                PathStyle::local(),
-                cx,
-            );
-            let thought_only_entries = vec![AgentThreadEntry::AssistantMessage(AssistantMessage {
-                chunks: vec![AssistantMessageChunk::Thought {
-                    identity: acp_thread::MessageIdentity::Legacy(None),
-                    meta: None,
-                    block: thought_content,
-                }],
+            let mut assistant_message = |chunks: &[(bool, &str)]| {
+                AgentThreadEntry::AssistantMessage(AssistantMessage {
+                    chunks: chunks
+                        .iter()
+                        .map(|&(is_thought, text)| {
+                            let block = MessageContent::new(
+                                acp_v2::ContentBlock::Text(acp_v2::TextContent::new(text)),
+                                &language_registry,
+                                PathStyle::local(),
+                                cx,
+                            );
+                            let identity = acp_thread::MessageIdentity::Legacy(None);
+                            if is_thought {
+                                AssistantMessageChunk::Thought {
+                                    identity,
+                                    meta: None,
+                                    block,
+                                }
+                            } else {
+                                AssistantMessageChunk::Message {
+                                    identity,
+                                    meta: None,
+                                    block,
+                                }
+                            }
+                        })
+                        .collect(),
+                    indented: false,
+                    is_subagent_output: false,
+                })
+            };
+            let thought = assistant_message(&[(true, "private thought")]);
+            let blank = assistant_message(&[(false, " \n\t")]);
+            let first = assistant_message(&[(true, "private thought"), (false, "first part")]);
+            let last = assistant_message(&[(false, "last part")]);
+            let trailing_thought = assistant_message(&[(true, "another private thought")]);
+            let next_turn_thought = assistant_message(&[(true, "next turn private thought")]);
+            let next_turn_last = assistant_message(&[(false, "next turn response")]);
+            let user = AgentThreadEntry::UserMessage(acp_thread::UserMessage {
+                identity: acp_thread::MessageIdentity::Legacy(None),
+                meta: None,
+                client_id: None,
+                is_optimistic: false,
+                content: MessageContent::new(
+                    acp_v2::ContentBlock::Text(acp_v2::TextContent::new("next prompt")),
+                    &language_registry,
+                    PathStyle::local(),
+                    cx,
+                ),
+                checkpoint: None,
                 indented: false,
-                is_subagent_output: false,
-            })];
-            assert!(!ThreadView::has_agent_message_content(
-                &thought_only_entries,
-                0,
-                cx,
-            ));
+            });
+            let non_message = AgentThreadEntry::Elicitation(ElicitationEntryId("request".into()));
 
-            let message_content = MessageContent::new(
-                acp_v2::ContentBlock::Text(acp_v2::TextContent::new("visible response")),
-                &language_registry,
-                PathStyle::local(),
-                cx,
-            );
-            let message_entries = vec![AgentThreadEntry::AssistantMessage(AssistantMessage {
-                chunks: vec![AssistantMessageChunk::Message {
-                    identity: acp_thread::MessageIdentity::Legacy(None),
-                    meta: None,
-                    block: message_content,
-                }],
-                indented: false,
-                is_subagent_output: false,
-            })];
-            assert!(ThreadView::has_agent_message_content(
-                &message_entries,
-                0,
-                cx
-            ));
+            let entries = vec![
+                thought,
+                blank,
+                first,
+                non_message,
+                last,
+                trailing_thought,
+                user,
+                next_turn_thought,
+                AgentThreadEntry::Elicitation(ElicitationEntryId("next request".into())),
+                next_turn_last,
+            ];
+
+            for (entries, entry_index, expected_index, expected_text) in [
+                (&entries[..0], 0, None, None),
+                (&entries[..1], 0, None, None),
+                (&entries[1..2], 0, None, None),
+                (&entries[..3], 2, Some(2), Some("first part")),
+                (&entries[..3], 3, None, None),
+                (&entries[..4], 3, Some(2), Some("first part")),
+                (&entries[..6], 5, Some(4), Some("first part\n\nlast part")),
+                (&entries[..7], 6, None, None),
+                (&entries[..9], 8, None, None),
+                (&entries[..], 9, Some(9), Some("next turn response")),
+                (&entries[..], 5, Some(4), Some("first part\n\nlast part")),
+            ] {
+                let copy_index = ThreadView::agent_message_copy_index(entries, entry_index, cx);
+                assert_eq!(copy_index, expected_index);
+                assert_eq!(
+                    copy_index
+                        .and_then(|index| ThreadView::get_agent_message_content(entries, index, cx))
+                        .as_deref(),
+                    expected_text,
+                );
+            }
         });
     }
 
