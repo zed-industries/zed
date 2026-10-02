@@ -205,41 +205,6 @@ impl<'de> Deserialize<'de> for SharedString {
     where
         D: serde::Deserializer<'de>,
     {
-        struct SharedStringVisitor;
-
-        impl<'de> serde::de::Visitor<'de> for SharedStringVisitor {
-            type Value = SharedString;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a string")
-            }
-
-            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
-                Ok(SharedString::new(value))
-            }
-
-            fn visit_string<E: serde::de::Error>(self, value: String) -> Result<Self::Value, E> {
-                Ok(SharedString::from(value))
-            }
-
-            fn visit_bytes<E: serde::de::Error>(self, value: &[u8]) -> Result<Self::Value, E> {
-                match std::str::from_utf8(value) {
-                    Ok(value) => Ok(SharedString::new(value)),
-                    Err(_) => Err(E::invalid_value(serde::de::Unexpected::Bytes(value), &self)),
-                }
-            }
-
-            fn visit_byte_buf<E: serde::de::Error>(self, value: Vec<u8>) -> Result<Self::Value, E> {
-                match String::from_utf8(value) {
-                    Ok(value) => Ok(SharedString::from(value)),
-                    Err(error) => Err(E::invalid_value(
-                        serde::de::Unexpected::Bytes(&error.into_bytes()),
-                        &self,
-                    )),
-                }
-            }
-        }
-
-        deserializer.deserialize_str(SharedStringVisitor)
+        SmolStr::deserialize(deserializer).map(SharedString)
     }
 }
