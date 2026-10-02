@@ -1175,7 +1175,16 @@ mod tests {
         assert_eq!(first_render_state.keystrokes, vec!["ctrl-b"]);
         assert_eq!(
             first_render_state.bindings,
-            vec![(vec!["h".to_string()], "+2 keybinds".to_string())]
+            vec![
+                (
+                    vec!["h".to_string()],
+                    humanize_action_name(LongerBinding.name()),
+                ),
+                (
+                    vec!["h".to_string(), "j".to_string()],
+                    humanize_action_name(LongestBinding.name()),
+                ),
+            ]
         );
 
         cx.simulate_keystrokes("h");
