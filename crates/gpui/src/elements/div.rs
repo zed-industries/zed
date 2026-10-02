@@ -1390,6 +1390,15 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Set the disabled state reported to assistive technology.
+    ///
+    /// This only changes accessibility metadata; input handlers must enforce
+    /// the disabled state separately.
+    fn aria_disabled(mut self, disabled: bool) -> Self {
+        self.interactivity().aria.disabled = Some(disabled);
+        self
+    }
+
     /// Set the selected state for this element.
     fn aria_selected(mut self, selected: bool) -> Self {
         self.interactivity().aria.selected = Some(selected);
@@ -2108,6 +2117,7 @@ pub(crate) struct AriaProperties {
     pub(crate) label: Option<SharedString>,
     pub(crate) description: Option<SharedString>,
     pub(crate) keyshortcuts: Option<SharedString>,
+    pub(crate) disabled: Option<bool>,
     pub(crate) selected: Option<bool>,
     pub(crate) expanded: Option<bool>,
     pub(crate) toggled: Option<accesskit::Toggled>,
@@ -3539,6 +3549,13 @@ impl Interactivity {
         }
         if let Some(keyshortcuts) = &self.aria.keyshortcuts {
             node.set_keyboard_shortcut(keyshortcuts.to_string());
+        }
+        if let Some(disabled) = self.aria.disabled {
+            if disabled {
+                node.set_disabled();
+            } else {
+                node.clear_disabled();
+            }
         }
         if let Some(selected) = self.aria.selected {
             node.set_selected(selected);
@@ -5260,6 +5277,28 @@ mod tests {
         element.interactivity().write_a11y_info(&mut node);
 
         assert_eq!(node.author_id(), Some("settings.buffer-font-size"));
+    }
+
+    #[test]
+    fn test_aria_disabled_preserves_default_and_can_be_cleared() {
+        for (disabled, initially_disabled, expected_disabled) in [
+            (None, false, false),
+            (None, true, true),
+            (Some(true), false, true),
+            (Some(false), true, false),
+        ] {
+            let element = div()
+                .id("number-field")
+                .when_some(disabled, |this, disabled| this.aria_disabled(disabled));
+            let mut node = accesskit::Node::new(accesskit::Role::SpinButton);
+            if initially_disabled {
+                node.set_disabled();
+            }
+
+            element.write_a11y_info(&mut node);
+
+            assert_eq!(node.is_disabled(), expected_disabled);
+        }
     }
 
     #[test]

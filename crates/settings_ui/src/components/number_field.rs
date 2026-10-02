@@ -277,6 +277,7 @@ pub struct NumberField<T: NumberFieldType = usize> {
     tab_index: Option<isize>,
     aria_label: Option<SharedString>,
     aria_description: Option<SharedString>,
+    disabled: bool,
 }
 
 impl<T: NumberFieldType> NumberField<T> {
@@ -319,6 +320,7 @@ impl<T: NumberFieldType> NumberField<T> {
             tab_index: None,
             aria_label: None,
             aria_description: None,
+            disabled: false,
         }
     }
 
@@ -339,6 +341,11 @@ impl<T: NumberFieldType> NumberField<T> {
 
     pub fn tab_index(mut self, tab_index: isize) -> Self {
         self.tab_index = Some(tab_index);
+        self
+    }
+
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
         self
     }
 
@@ -390,6 +397,67 @@ fn a11y_value_to_field_value<T: NumberFieldType>(value: f64) -> Option<T> {
 
 impl<T: NumberFieldType> RenderOnce for NumberField<T> {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if self.disabled {
+            // Invalidate the retained editor's blur callback before removing it
+            // from the element tree, so disabling cannot commit an old draft.
+            self.on_change_state.write(cx, None);
+            if let Some(editor) = self
+                .edit_editor
+                .read(cx)
+                .as_ref()
+                .and_then(|editor| editor.upgrade())
+            {
+                editor.update(cx, |editor, cx| {
+                    editor.set_read_only(true);
+                    editor.set_text(format!("{}", self.value), window, cx);
+                });
+            }
+            self.last_synced_value.write(cx, Some(self.value));
+
+            let border_color = cx.theme().colors().border_variant;
+            let background = cx.theme().colors().surface_background;
+            let button = |icon| {
+                h_flex()
+                    .p_1p5()
+                    .border_1()
+                    .border_color(border_color)
+                    .bg(background)
+                    .child(Icon::new(icon).size(IconSize::Small).color(Color::Disabled))
+            };
+            return h_flex()
+                .id(self.id.clone())
+                .items_stretch()
+                .role(Role::SpinButton)
+                .aria_disabled(true)
+                .when_some(self.aria_label, |this, label| this.aria_label(label))
+                .when_some(self.aria_description, |this, description| {
+                    this.aria_description(description)
+                })
+                .when_some(a11y_numeric_value(&self.value), |this, value| {
+                    this.aria_numeric_value(value)
+                })
+                .child(button(IconName::Dash).rounded_tl_sm().rounded_bl_sm())
+                .child(
+                    h_flex()
+                        .min_w_16()
+                        .px_1()
+                        .border_y_1()
+                        .border_color(border_color)
+                        .bg(background)
+                        .justify_center()
+                        .child(Label::new((self.format)(&self.value)).color(Color::Disabled)),
+                )
+                .child(button(IconName::Plus).rounded_tr_sm().rounded_br_sm())
+                .into_any_element();
+        }
+        if let Some(editor) = self
+            .edit_editor
+            .read(cx)
+            .as_ref()
+            .and_then(|editor| editor.upgrade())
+        {
+            editor.update(cx, |editor, _| editor.set_read_only(false));
+        }
         // Sync the on_change callback to Entity state so focus_out handlers can access it
         self.sync_on_change_state(cx);
 
@@ -834,6 +902,7 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                         )
                     })
             })
+            .into_any_element()
     }
 }
 
@@ -882,5 +951,172 @@ impl Component for NumberField<usize> {
                 ),
             ])
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::Stateful;
+
+    #[gpui::test]
+    fn number_field_accessibility_tracks_disabled_state(cx: &mut gpui::TestAppContext) {
+        cx.update(crate::test::register_settings);
+        let (view, cx) = cx.add_window_view(|_, _| NumberFieldTestView {
+            value: 1200,
+            mode: NumberFieldMode::Read,
+            disabled: false,
+            changes: 0,
+            editor_state: None,
+            callback_state: None,
+            accessibility_node: None,
+        });
+
+        for mode in [NumberFieldMode::Read, NumberFieldMode::Edit] {
+            for disabled in [false, true, false] {
+                view.update(cx, |view, cx| {
+                    view.mode = mode;
+                    view.disabled = disabled;
+                    cx.notify();
+                });
+                cx.run_until_parked();
+                view.read_with(cx, |view, _| {
+                    let node = view
+                        .accessibility_node
+                        .as_ref()
+                        .expect("accessibility node");
+                    assert_eq!(node.role(), Role::SpinButton);
+                    assert_eq!(node.label(), Some("Maximum Width"));
+                    assert_eq!(node.description(), Some("Maximum Mermaid width in pixels"));
+                    assert_eq!(node.numeric_value(), Some(1200.0));
+                    assert_eq!(node.is_disabled(), disabled);
+                    for action in [
+                        AccessibleAction::Focus,
+                        AccessibleAction::SetValue,
+                        AccessibleAction::Increment,
+                        AccessibleAction::Decrement,
+                    ] {
+                        assert_eq!(node.supports_action(action), !disabled);
+                    }
+                });
+            }
+        }
+    }
+
+    struct NumberFieldTestView {
+        value: usize,
+        mode: NumberFieldMode,
+        disabled: bool,
+        changes: usize,
+        editor_state: Option<Entity<Option<WeakEntity<Editor>>>>,
+        callback_state: Option<Entity<Option<OnChangeCallback<usize>>>>,
+        accessibility_node: Option<gpui::accesskit::Node>,
+    }
+
+    impl Render for NumberFieldTestView {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let field = NumberField::new("number-field", self.value, window, cx)
+                .mode(self.mode, cx)
+                .disabled(self.disabled)
+                .aria_label("Maximum Width")
+                .aria_description("Maximum Mermaid width in pixels")
+                .on_change(cx.listener(|this, value, _, cx| {
+                    this.value = *value;
+                    this.changes += 1;
+                    cx.notify();
+                }));
+            self.editor_state = Some(field.edit_editor.clone());
+            self.callback_state = Some(field.on_change_state.clone());
+            let mut element = field.render(window, cx).into_any_element();
+            let root = element
+                .downcast_mut::<Stateful<Div>>()
+                .expect("number field root");
+            let mut node = gpui::accesskit::Node::new(
+                root.a11y_role().expect("number field accessibility role"),
+            );
+            root.write_a11y_info(&mut node);
+            self.accessibility_node = Some(node);
+            div().child(element)
+        }
+    }
+
+    #[gpui::test]
+    fn disabled_number_field_discards_pending_edit_and_reenables(cx: &mut gpui::TestAppContext) {
+        cx.update(crate::test::register_settings);
+        let (view, cx) = cx.add_window_view(|_, _| NumberFieldTestView {
+            value: 1200,
+            mode: NumberFieldMode::Edit,
+            disabled: false,
+            changes: 0,
+            editor_state: None,
+            callback_state: None,
+            accessibility_node: None,
+        });
+        cx.run_until_parked();
+
+        let editor = view.read_with(cx, |view, cx| {
+            view.editor_state
+                .as_ref()
+                .expect("editor state")
+                .read(cx)
+                .as_ref()
+                .and_then(|editor| editor.upgrade())
+                .expect("number editor")
+        });
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                window.focus(&editor.focus_handle(cx), cx);
+                editor.set_text("9999", window, cx);
+            });
+        });
+        view.update(cx, |view, cx| {
+            view.disabled = true;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(editor.read_with(cx, |editor, cx| editor.read_only(cx)));
+        assert_eq!(editor.read_with(cx, |editor, cx| editor.text(cx)), "1200");
+        assert!(view.read_with(cx, |view, cx| {
+            view.callback_state
+                .as_ref()
+                .expect("callback state")
+                .read(cx)
+                .is_none()
+        }));
+        cx.update(|window, cx| window.blur(cx));
+        cx.run_until_parked();
+        assert_eq!(
+            view.read_with(cx, |view, _| (view.value, view.changes)),
+            (1200, 0)
+        );
+
+        view.update(cx, |view, cx| {
+            view.disabled = false;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let (editor, on_change) = view.read_with(cx, |view, cx| {
+            (
+                view.editor_state
+                    .as_ref()
+                    .expect("editor state")
+                    .read(cx)
+                    .as_ref()
+                    .and_then(|editor| editor.upgrade())
+                    .expect("number editor"),
+                view.callback_state
+                    .as_ref()
+                    .expect("callback state")
+                    .read(cx)
+                    .clone()
+                    .expect("enabled callback"),
+            )
+        });
+        assert!(!editor.read_with(cx, |editor, cx| editor.read_only(cx)));
+        cx.update(|window, cx| on_change(&1300, window, cx));
+        assert_eq!(
+            view.read_with(cx, |view, _| (view.value, view.changes)),
+            (1300, 1)
+        );
     }
 }

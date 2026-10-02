@@ -1316,6 +1316,32 @@ pub enum LineIndicatorFormat {
     Long,
 }
 
+/// Where to align a Mermaid diagram horizontally in the markdown preview.
+#[derive(
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Debug,
+    JsonSchema,
+    MergeFrom,
+    Deserialize,
+    Serialize,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum MermaidAlignment {
+    /// Align the diagram to the left.
+    Left,
+    /// Center the diagram.
+    #[default]
+    Center,
+    /// Align the diagram to the right.
+    Right,
+}
+
 /// The settings for the markdown preview.
 #[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
@@ -1353,6 +1379,36 @@ pub struct MarkdownPreviewSettingsContent {
     ///
     /// Default: 800
     pub max_width: Option<PixelSetting>,
+    /// Whether to constrain top-level Mermaid blocks to `mermaid_max_width`.
+    /// When disabled, no Mermaid-specific maximum width is applied.
+    /// To restore Zed's native layout, disable both Mermaid width options
+    /// and set `mermaid_alignment` to `left`.
+    ///
+    /// Default: false
+    pub limit_mermaid_width: Option<bool>,
+    /// The maximum width, in pixels, of top-level Mermaid blocks when
+    /// `limit_mermaid_width` is enabled and `mermaid_width_follows_diagram`
+    /// is disabled. Has no effect otherwise.
+    ///
+    /// Default: 800
+    pub mermaid_max_width: Option<PixelSetting>,
+    /// Where to align top-level Mermaid diagrams horizontally.
+    ///
+    /// In the default or limited-width layout, this aligns the diagram within
+    /// the Mermaid block. When `mermaid_width_follows_diagram` is enabled,
+    /// it aligns the block itself.
+    ///
+    /// Default: center
+    pub mermaid_alignment: Option<MermaidAlignment>,
+    /// Whether top-level Mermaid blocks follow the rendered diagram's 100%
+    /// natural width, with enough space for controls, instead of using Zed's
+    /// default full-width Mermaid block.
+    ///
+    /// When enabled, this takes precedence over `limit_mermaid_width`.
+    /// Interactive zoom remains within the block.
+    ///
+    /// Default: false
+    pub mermaid_width_follows_diagram: Option<bool>,
 }
 
 /// The settings for the image viewer.

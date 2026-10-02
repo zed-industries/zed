@@ -129,6 +129,25 @@
     // The maximum width, in pixels, of the rendered markdown content when
     // limit_content_width is enabled.
     "max_width": 800,
+    // Whether to constrain top-level Mermaid blocks to `mermaid_max_width`.
+    // When disabled, no Mermaid-specific maximum width is applied.
+    // To restore Zed's native layout, disable both Mermaid width options
+    // and set mermaid_alignment to "left".
+    "limit_mermaid_width": false,
+    // The maximum width, in pixels, of top-level Mermaid blocks when
+    // `limit_mermaid_width` is enabled and `mermaid_width_follows_diagram`
+    // is disabled. Has no effect otherwise.
+    "mermaid_max_width": 800,
+    // Whether top-level Mermaid blocks follow the diagram's 100% natural
+    // width, with enough space for controls, instead of using Zed's default
+    // full-width Mermaid block. This takes precedence over
+    // `limit_mermaid_width`. Interactive zoom remains within the block.
+    "mermaid_width_follows_diagram": false,
+    // Where to align top-level Mermaid diagrams horizontally: "left",
+    // "center", or "right". In the default or limited-width layout this
+    // aligns the diagram within the Mermaid block; when
+    // `mermaid_width_follows_diagram` is enabled, it aligns the block itself.
+    "mermaid_alignment": "center",
   },
   // Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
   //

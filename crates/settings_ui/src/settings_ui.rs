@@ -445,6 +445,23 @@ struct SettingsFieldMetadata {
     display_clear_button: bool,
     confirm_on_focus_out: bool,
     treat_missing_text_as_empty: bool,
+    disabled_when: Option<SettingsDisabledCondition>,
+}
+
+struct SettingsDisabledCondition {
+    pick: fn(&SettingsContent) -> Option<bool>,
+    reason: &'static str,
+}
+
+impl SettingsFieldMetadata {
+    fn disabled_reason(&self, file: &SettingsUiFile, cx: &App) -> Option<&'static str> {
+        let condition = self.disabled_when.as_ref()?;
+        SettingsStore::global(cx)
+            .get_value_from_file(file.to_settings(), condition.pick)
+            .1
+            .unwrap_or(false)
+            .then_some(condition.reason)
+    }
 }
 
 pub fn init(cx: &mut App) {
@@ -640,6 +657,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::PlaySoundWhenAgentDone>(render_dropdown)
         .add_basic_renderer::<settings::ThinkingBlockDisplay>(render_dropdown)
         .add_basic_renderer::<settings::ImageFileSizeUnit>(render_dropdown)
+        .add_basic_renderer::<settings::MermaidAlignment>(render_dropdown)
         .add_basic_renderer::<settings::StatusStyle>(render_dropdown)
         .add_basic_renderer::<settings::GitPanelClickBehavior>(render_dropdown)
         .add_basic_renderer::<settings::GitPanelSortBy>(render_dropdown)
@@ -1414,6 +1432,7 @@ fn render_settings_item_layout(
     modified_in: Option<String>,
     json_path: Option<&'static str>,
     sub_field: bool,
+    disabled_reason: Option<&'static str>,
     cx: &mut Context<'_, SettingsWindow>,
 ) -> Stateful<Div> {
     // Note: the row itself is intentionally not exposed as a labeled group.
@@ -1434,7 +1453,12 @@ fn render_settings_item_layout(
                     h_flex()
                         .w_full()
                         .gap_1()
-                        .child(Label::new(SharedString::new_static(title)))
+                        .child(
+                            Label::new(SharedString::new_static(title))
+                                .when(disabled_reason.is_some(), |label| {
+                                    label.color(Color::Disabled)
+                                }),
+                        )
                         .when_some(reset_fn, |this, reset_to_default| {
                             this.child(
                                 IconButton::new("reset-to-default-btn", IconName::Undo)
@@ -1460,7 +1484,14 @@ fn render_settings_item_layout(
                         .size(LabelSize::Small)
                         .color(Color::Muted)
                         .render_code_spans(),
-                ),
+                )
+                .when_some(disabled_reason.filter(|_| !sub_field), |this, reason| {
+                    this.child(
+                        Label::new(reason)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                }),
         )
         .child(control)
         .when(settings_window.sub_page_stack.is_empty(), |this| {
@@ -1484,8 +1515,12 @@ fn render_settings_item(
 ) -> Stateful<Div> {
     let (found_in_file, _) = setting_item.field.file_set_in(file.clone(), cx);
     let file_set_in = SettingsUiFile::from_settings(found_in_file.clone());
+    let disabled_reason = setting_item
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.disabled_reason(&file, cx));
 
-    let reset_fn = if sub_field {
+    let reset_fn = if sub_field || disabled_reason.is_some() {
         None
     } else {
         setting_item
@@ -1535,6 +1570,7 @@ fn render_settings_item(
         modified_in,
         setting_item.field.json_path(),
         sub_field,
+        disabled_reason,
         cx,
     )
 }
@@ -2501,6 +2537,42 @@ impl SettingsWindow {
                     item_index,
                     json_path,
                 });
+
+                if let SettingsPageItem::DynamicItem(dynamic_item) = item {
+                    // Inactive fields must remain discoverable without changing
+                    // their enabling setting. All variants link to the parent group.
+                    let mut indexed_fields = HashSet::new();
+                    for field in dynamic_item.fields.iter().flatten() {
+                        let json_path = field
+                            .field
+                            .json_path()
+                            .map(|path| path.trim_end_matches('$'));
+                        if !indexed_fields.insert((json_path, field.title)) {
+                            continue;
+                        }
+                        let key_index = key_lut.len();
+                        let parts = [
+                            page.title,
+                            header_str,
+                            dynamic_item.discriminant.title,
+                            field.title,
+                            field.description,
+                        ];
+                        documents.push(SearchDocument {
+                            id: key_index,
+                            words: split_into_words(&parts),
+                        });
+                        for part in parts {
+                            push_candidates(&mut fuzzy_match_candidates, key_index, part);
+                        }
+                        key_lut.push(SearchKeyLUTEntry {
+                            page_index,
+                            header_index,
+                            item_index,
+                            json_path,
+                        });
+                    }
+                }
             }
         }
         self.search_index = Some(Arc::new(SearchIndex {
@@ -4422,14 +4494,21 @@ impl SettingsWindow {
 
         for (page_index, page) in self.pages.iter().enumerate() {
             for (item_index, item) in page.items.iter().enumerate() {
-                let item_json_path = match item {
-                    SettingsPageItem::SettingItem(setting_item) => setting_item.field.json_path(),
-                    SettingsPageItem::DynamicItem(dynamic_item) => {
-                        dynamic_item.discriminant.field.json_path()
+                let matches_path = match item {
+                    SettingsPageItem::SettingItem(setting_item) => {
+                        setting_item.field.json_path() == Some(json_path)
                     }
-                    _ => None,
+                    SettingsPageItem::DynamicItem(dynamic_item) => {
+                        dynamic_item.discriminant.field.json_path() == Some(json_path)
+                            || dynamic_item
+                                .fields
+                                .iter()
+                                .flatten()
+                                .any(|field| field.field.json_path() == Some(json_path))
+                    }
+                    _ => false,
                 };
-                if item_json_path == Some(json_path) {
+                if matches_path {
                     if let Some(navbar_entry_index) = self
                         .navbar_entries
                         .iter()
@@ -4979,7 +5058,7 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
 fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
     field: SettingField<B>,
     file: SettingsUiFile,
-    _metadata: Option<&SettingsFieldMetadata>,
+    metadata: Option<&SettingsFieldMetadata>,
     title: &'static str,
     description: &'static str,
     _window: &mut Window,
@@ -4989,6 +5068,7 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
     let (value, disabled) = value
         .map(|current_value| (*current_value.value, current_value.disabled))
         .unwrap_or((false.into(), false));
+    let disabled_reason = metadata.and_then(|metadata| metadata.disabled_reason(&file, cx));
 
     let toggle_state = if value.into() {
         ToggleState::Selected
@@ -5002,7 +5082,10 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
         .when(!description.is_empty(), |this| {
             this.aria_description(description)
         })
-        .disabled(disabled)
+        .when_some(disabled_reason, |this, reason| {
+            this.aria_description(format!("{description} {reason}"))
+        })
+        .disabled(disabled || disabled_reason.is_some())
         .on_click({
             move |state, window, cx| {
                 telemetry::event!("Settings Change", setting = field.json_path, type = file.setting_type());
@@ -5020,7 +5103,7 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
 fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
     field: SettingField<T>,
     file: SettingsUiFile,
-    _metadata: Option<&SettingsFieldMetadata>,
+    metadata: Option<&SettingsFieldMetadata>,
     title: &'static str,
     description: &'static str,
     window: &mut Window,
@@ -5028,6 +5111,7 @@ fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
 ) -> AnyElement {
     let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
     let value = value.copied().unwrap_or_else(T::min_value);
+    let disabled_reason = metadata.and_then(|metadata| metadata.disabled_reason(&file, cx));
 
     let id = field
         .json_path
@@ -5036,10 +5120,14 @@ fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
 
     NumberField::new(id, value, window, cx)
         .mode(NumberFieldMode::Edit, cx)
+        .disabled(disabled_reason.is_some())
         .tab_index(0_isize)
         .aria_label(title)
         .when(!description.is_empty(), |this| {
             this.aria_description(description)
+        })
+        .when_some(disabled_reason, |this, reason| {
+            this.aria_description(format!("{description} {reason}"))
         })
         .on_change({
             move |value, window, cx| {
@@ -5411,6 +5499,206 @@ pub mod test {
         editor::init(cx);
         menu::init();
         language_model::init(cx);
+    }
+
+    fn settings_window_for_search(
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> SettingsWindow {
+        let app_state = AppState::test(cx);
+        AppState::set_global(app_state, cx);
+        let mut settings = SettingsWindow::test(window, cx);
+        settings.pages = page_data::settings_data(cx);
+        settings.build_filter_table();
+        settings.build_navbar(cx);
+        settings.build_content_handles(window, cx);
+        settings.build_search_index();
+        settings
+    }
+
+    #[gpui::test]
+    fn test_mermaid_width_child_is_searchable_while_disabled(cx: &mut gpui::TestAppContext) {
+        let window = cx.add_empty_window();
+        window.update(|window, cx| {
+            register_settings(cx);
+            let settings = cx.new(|cx| settings_window_for_search(window, cx));
+            settings.update(cx, |settings, cx| {
+                let matches = settings.filter_by_json_path("#markdown_preview.mermaid_max_width");
+                assert_eq!(matches.len(), 1);
+                let index = settings
+                    .search_index
+                    .as_ref()
+                    .expect("settings search index");
+                let entry = &index.key_lut[matches[0]];
+                let SettingsPageItem::DynamicItem(group) =
+                    &settings.pages[entry.page_index].items[entry.item_index]
+                else {
+                    panic!("Mermaid maximum width must belong to its custom-width group");
+                };
+                assert_eq!(group.discriminant.title, "Use Custom Mermaid Width");
+                let selected = SettingsStore::global(cx)
+                    .get_value_from_file(
+                        SettingsUiFile::User.to_settings(),
+                        group.pick_discriminant,
+                    )
+                    .1
+                    .expect("default Mermaid width setting");
+                assert!(group.fields[selected].is_empty());
+                for word in ["mermaid", "maximum", "width"] {
+                    assert!(
+                        index.documents[matches[0]]
+                            .words
+                            .iter()
+                            .any(|value| value == word)
+                    );
+                }
+                let (page_index, item_index) = (entry.page_index, entry.item_index);
+                settings.apply_match_indices(matches.into_iter(), "mermaid maximum width");
+                assert!(settings.filter_table[page_index][item_index]);
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn test_mermaid_width_child_link_does_not_enable_custom_width(cx: &mut gpui::TestAppContext) {
+        let window = cx.add_empty_window();
+        window.update(|window, cx| {
+            register_settings(cx);
+            let settings = cx.new(|cx| settings_window_for_search(window, cx));
+            settings.update(cx, |settings, cx| {
+                let read_preview = |cx: &App| {
+                    SettingsStore::global(cx)
+                        .get_value_from_file(SettingsUiFile::User.to_settings(), |content| {
+                            content.markdown_preview.clone()
+                        })
+                        .1
+                        .expect("default preview settings")
+                };
+                let before = read_preview(cx);
+                assert_eq!(before.limit_mermaid_width, Some(false));
+                assert!(settings.navigate_to_setting(
+                    "markdown_preview.mermaid_max_width",
+                    window,
+                    cx,
+                ));
+                let matches = settings.filter_by_json_path("#markdown_preview.mermaid_max_width");
+                let index = settings
+                    .search_index
+                    .as_ref()
+                    .expect("settings search index");
+                assert_eq!(
+                    settings.navbar_entries[settings.navbar_entry].page_index,
+                    index.key_lut[matches[0]].page_index,
+                );
+                assert_eq!(read_preview(cx), before);
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn test_mermaid_following_disables_custom_width_without_losing_values(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let window = cx.add_empty_window();
+        window.update(|window, cx| {
+            register_settings(cx);
+            let settings_window = cx.new(|cx| settings_window_for_search(window, cx));
+            settings_window.update(cx, |settings_window, cx| {
+                let matches =
+                    settings_window.filter_by_json_path("#markdown_preview.mermaid_max_width");
+                let index = settings_window.search_index.as_ref().expect("search index");
+                let entry = &index.key_lut[matches[0]];
+                let SettingsPageItem::DynamicItem(group) =
+                    &settings_window.pages[entry.page_index].items[entry.item_index]
+                else {
+                    panic!("custom-width group");
+                };
+                let width = &group.fields[1][0];
+                let toggle_field = group
+                    .discriminant
+                    .field
+                    .as_any()
+                    .downcast_ref::<SettingField<bool>>()
+                    .expect("width toggle");
+                let width_field = width
+                    .field
+                    .as_any()
+                    .downcast_ref::<SettingField<settings::PixelSetting>>()
+                    .expect("width value");
+                let set_store = |settings: &SettingsContent, cx: &mut App| {
+                    let json = serde_json::to_string(settings).expect("settings JSON");
+                    cx.update_global::<SettingsStore, _>(|store, cx| {
+                        store.set_user_settings(&json, cx).unwrap();
+                    });
+                };
+
+                for saved_limit in [false, true] {
+                    let mut settings: SettingsContent = serde_json::from_value(serde_json::json!({
+                        "markdown_preview": {
+                            "limit_mermaid_width": saved_limit,
+                            "mermaid_max_width": 1234,
+                            "mermaid_width_follows_diagram": true,
+                            "mermaid_alignment": "right"
+                        }
+                    }))
+                    .expect("test settings");
+                    set_store(&settings, cx);
+                    for item in [&group.discriminant, width] {
+                        assert!(
+                            item.metadata
+                                .as_ref()
+                                .expect("dependency metadata")
+                                .disabled_reason(&SettingsUiFile::User, cx)
+                                .is_some()
+                        );
+                    }
+                    let before = settings.markdown_preview.clone();
+                    (toggle_field.write)(&mut settings, Some(!saved_limit), cx);
+                    (width_field.write)(&mut settings, Some(2200.0_f32.into()), cx);
+                    (toggle_field.write)(&mut settings, None, cx);
+                    (width_field.write)(&mut settings, None, cx);
+                    assert_eq!(settings.markdown_preview, before);
+
+                    settings
+                        .markdown_preview
+                        .as_mut()
+                        .expect("preview settings")
+                        .mermaid_width_follows_diagram = Some(false);
+                    set_store(&settings, cx);
+                    for item in [&group.discriminant, width] {
+                        assert!(
+                            item.metadata
+                                .as_ref()
+                                .expect("dependency metadata")
+                                .disabled_reason(&SettingsUiFile::User, cx)
+                                .is_none()
+                        );
+                    }
+                    let preview = settings
+                        .markdown_preview
+                        .as_ref()
+                        .expect("preview settings");
+                    assert_eq!(preview.limit_mermaid_width, Some(saved_limit));
+                    assert_eq!(preview.mermaid_max_width, Some(1234.0_f32.into()));
+                    assert_eq!(
+                        preview.mermaid_alignment,
+                        Some(settings::MermaidAlignment::Right)
+                    );
+                    assert_eq!(
+                        (group.pick_discriminant)(&settings),
+                        Some(usize::from(saved_limit))
+                    );
+                    (toggle_field.write)(&mut settings, Some(true), cx);
+                    (width_field.write)(&mut settings, Some(2200.0_f32.into()), cx);
+                    let preview = settings
+                        .markdown_preview
+                        .as_ref()
+                        .expect("preview settings");
+                    assert_eq!(preview.limit_mermaid_width, Some(true));
+                    assert_eq!(preview.mermaid_max_width, Some(2200.0_f32.into()));
+                }
+            });
+        });
     }
 
     fn parse(input: &'static str, window: &mut Window, cx: &mut App) -> SettingsWindow {
