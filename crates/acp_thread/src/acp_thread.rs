@@ -1,3 +1,4 @@
+pub mod config_options;
 mod connection;
 pub mod content;
 mod diff;
@@ -3527,7 +3528,7 @@ pub enum AcpThreadEvent {
     Refusal,
     AvailableCommandsUpdated(Vec<acp_v1::AvailableCommand>),
     ModeUpdated(acp_v1::SessionModeId),
-    ConfigOptionsUpdated(Vec<acp_v1::SessionConfigOption>),
+    ConfigOptionsUpdated(Vec<acp_v2::SessionConfigOption>),
     WorkingDirectoriesUpdated,
 }
 
@@ -4298,7 +4299,9 @@ impl AcpThread {
             acp_v1::SessionUpdate::ConfigOptionUpdate(acp_v1::ConfigOptionUpdate {
                 config_options,
                 ..
-            }) => cx.emit(AcpThreadEvent::ConfigOptionsUpdated(config_options)),
+            }) => cx.emit(AcpThreadEvent::ConfigOptionsUpdated(
+                config_options::from_v1(config_options).map_err(acp_v1::Error::from)?,
+            )),
             acp_v1::SessionUpdate::UsageUpdate(update) => {
                 let usage = self.token_usage.get_or_insert_with(Default::default);
                 usage.max_tokens = update.size;
