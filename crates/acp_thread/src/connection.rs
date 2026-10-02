@@ -624,6 +624,26 @@ impl PermissionOptions {
         }
     }
 
+    pub fn option_for_id(
+        &self,
+        id: &acp_v1::PermissionOptionId,
+    ) -> Option<&acp_v1::PermissionOption> {
+        match self {
+            Self::Flat(options) => options.iter().find(|option| &option.option_id == id),
+            Self::Dropdown(choices) | Self::DropdownWithPatterns { choices, .. } => {
+                choices.iter().find_map(|choice| {
+                    if &choice.allow.option_id == id {
+                        Some(&choice.allow)
+                    } else if &choice.deny.option_id == id {
+                        Some(&choice.deny)
+                    } else {
+                        None
+                    }
+                })
+            }
+        }
+    }
+
     pub fn first_option_of_kind(
         &self,
         kind: acp_v1::PermissionOptionKind,
