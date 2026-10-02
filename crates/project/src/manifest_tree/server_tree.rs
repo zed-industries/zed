@@ -253,6 +253,7 @@ impl LanguageServerTree {
         let available_lsp_adapters = self.languages.lsp_adapters(language_name);
         let available_language_servers = available_lsp_adapters
             .iter()
+            .filter(|lsp_adapter| lsp_adapter.enabled_by_default)
             .map(|lsp_adapter| lsp_adapter.name.clone())
             .collect::<Vec<_>>();
 
