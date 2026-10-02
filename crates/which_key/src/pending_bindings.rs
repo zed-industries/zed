@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc};
+use std::rc::Rc;
 
 use gpui::{
     App, AvailableSpace, KeybindingKeystroke, Pixels, RenderOnce, ScrollHandle, Window, size,
@@ -42,11 +42,18 @@ pub(crate) fn prepare_pending_bindings(
 }
 
 fn group_bindings(bindings: Vec<PendingBinding>) -> Vec<PendingBindingRow> {
-    let mut groups: HashMap<Option<KeybindingKeystroke>, Vec<PendingBinding>> = HashMap::new();
+    let mut groups: Vec<Vec<PendingBinding>> = Vec::new();
     for binding in bindings {
-        let group = groups
-            .entry(binding.remaining_keystrokes.first().cloned())
-            .or_default();
+        let first_keystroke = binding.remaining_keystrokes.first();
+        let group = groups.iter_mut().find(|group| {
+            group
+                .first()
+                .is_some_and(|existing| existing.remaining_keystrokes.first() == first_keystroke)
+        });
+        let Some(group) = group else {
+            groups.push(vec![binding]);
+            continue;
+        };
         // Candidates come in precedence order, so the first binding for a sequence is the one
         // dispatch tries first. Dispatch only moves on to the next binding when nothing on the
         // focus path handles the first action. Like GPUI's shortcut display, the popup treats the
@@ -62,7 +69,7 @@ fn group_bindings(bindings: Vec<PendingBinding>) -> Vec<PendingBindingRow> {
     }
 
     let mut result = Vec::new();
-    for (first_keystroke, bindings) in groups {
+    for bindings in groups {
         // A group row would hide what the next keystroke runs, so a binding that completes on it
         // gets its own row and only the longer bindings collapse. Sorting moves the group row
         // down with the other groups, away from that row.
@@ -71,8 +78,11 @@ fn group_bindings(bindings: Vec<PendingBinding>) -> Vec<PendingBindingRow> {
             .filter(|binding| binding.remaining_keystrokes.len() > 1)
             .count();
 
-        if let Some(first_keystroke) = first_keystroke
-            && longer_count > 1
+        if longer_count > 1
+            && let Some(first_keystroke) = bindings
+                .first()
+                .and_then(|binding| binding.remaining_keystrokes.first())
+                .cloned()
         {
             result.extend(
                 bindings
