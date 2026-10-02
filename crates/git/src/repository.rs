@@ -546,7 +546,7 @@ pub enum CommitFileStatus {
     Deleted,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CommitFile {
     pub path: RepoPath,
     pub old_content: Option<Vec<u8>>,

@@ -108,6 +108,10 @@ use zed_actions::{
     workspace::{CopyPath, CopyRelativePath},
 };
 
+mod graph_section;
+
+use graph_section::GraphSection;
+
 const GIT_PANEL_KEY: &str = "GitPanel";
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 // TODO: We should revise this part. It seems the indentation width is not aligned with the one in project panel
@@ -555,6 +559,8 @@ struct SerializedGitPanel {
     /// `None` means the user never toggled it, so the setting decides.
     #[serde(default)]
     commit_editor_collapsed: Option<bool>,
+    #[serde(default)]
+    graph_section_collapsed: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -1184,6 +1190,7 @@ pub struct GitPanel {
     commit_history: CommitHistory,
     focused_history_entry: Option<usize>,
     history_keyboard_nav: bool,
+    graph_section: GraphSection,
     _commit_message_buffer_subscription: Option<Subscription>,
     _repo_subscriptions: Vec<Subscription>,
     _settings_subscription: Subscription,
@@ -1323,6 +1330,9 @@ impl GitPanel {
         let initial_commit_message = active_draft
             .and_then(|draft| draft.message.clone())
             .unwrap_or_default();
+        let graph_section_collapsed = serialized_panel
+            .as_ref()
+            .is_some_and(|panel| panel.graph_section_collapsed);
         let pending_commit_message_restores = serialized_panel
             .map(|panel| panel.commit_messages)
             .unwrap_or_default();
@@ -1521,6 +1531,7 @@ impl GitPanel {
                 commit_history: CommitHistory::Loading,
                 focused_history_entry: None,
                 history_keyboard_nav: false,
+                graph_section: GraphSection::new(!graph_section_collapsed, cx),
                 _commit_message_buffer_subscription: None,
                 _repo_subscriptions: Vec::new(),
                 _settings_subscription,
@@ -1953,6 +1964,7 @@ impl GitPanel {
             .commit_editor_toggled
             .then_some(self.commit_editor_collapsed);
         let commit_messages = self.serialized_commit_messages(cx);
+        let graph_section_collapsed = !self.graph_section.is_expanded;
         let kvp = KeyValueStore::global(cx);
 
         self.pending_serialization = cx.spawn(async move |git_panel, cx| {
@@ -1980,6 +1992,7 @@ impl GitPanel {
                             signoff_enabled,
                             commit_messages,
                             commit_editor_collapsed,
+                            graph_section_collapsed,
                         })?,
                     )
                     .await?;
@@ -5344,6 +5357,7 @@ impl GitPanel {
             if self.active_tab == GitPanelTab::History {
                 self.set_commit_history(CommitHistory::Loading, cx);
             }
+            self.reset_graph_section_for_repository_change(cx);
         }
         self.active_repository = new_active_repository;
         self.reopen_commit_buffer(window, cx);
@@ -9309,6 +9323,14 @@ impl GitPanel {
 
 impl Render for GitPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let compact_graph = GitPanelSettings::get_global(cx).compact_graph;
+        if compact_graph
+            && self.active_tab == GitPanelTab::Changes
+            && self.graph_section.is_expanded
+            && !self.commit_editor_expanded
+        {
+            self.ensure_graph_section_loaded(cx);
+        }
         let project = self.project.read(cx);
         let has_entries = !self.entries.is_empty();
         let has_write_access = self.has_write_access(cx);
@@ -9409,26 +9431,37 @@ impl Render for GitPanel {
                         GitPanelTab::Changes => this
                             .children(self.render_changes_header(window, cx))
                             .when(!self.commit_editor_expanded, |this| {
-                                this.map(|this| {
-                                    if let Some(repo) = self.active_repository.clone()
-                                        && has_entries
-                                    {
-                                        this.child(self.render_entries(
-                                            has_write_access,
-                                            repo,
-                                            window,
-                                            cx,
-                                        ))
-                                    } else {
-                                        this.child(self.render_empty_state(cx).into_any_element())
-                                    }
-                                })
+                                this.child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_h_0()
+                                        .overflow_hidden()
+                                        .child(v_flex().flex_1().min_h_0().map(|this| {
+                                            if let Some(repo) = self.active_repository.clone()
+                                                && has_entries
+                                            {
+                                                this.child(self.render_entries(
+                                                    has_write_access,
+                                                    repo,
+                                                    window,
+                                                    cx,
+                                                ))
+                                            } else {
+                                                this.child(
+                                                    self.render_empty_state(cx).into_any_element(),
+                                                )
+                                            }
+                                        }))
+                                        .when(compact_graph, |this| {
+                                            this.children(self.render_graph_section(window, cx))
+                                        }),
+                                )
                             })
                             .children(self.render_footer(window, cx))
                             .when(self.amend_pending, |this| {
                                 this.child(self.render_pending_amend(cx))
                             })
-                            .when(!self.amend_pending, |this| {
+                            .when(!self.amend_pending && !compact_graph, |this| {
                                 this.children(self.render_previous_commit(window, cx))
                             }),
                         GitPanelTab::History => this.child(self.render_history_tab(window, cx)),
@@ -9444,6 +9477,7 @@ impl Render for GitPanel {
                 )
                 .with_priority(1)
             }))
+            .children(self.render_graph_commit_popover(cx))
     }
 }
 
@@ -12746,6 +12780,7 @@ mod tests {
                 signoff_enabled: false,
                 commit_messages: panel.serialized_commit_messages(cx),
                 commit_editor_collapsed: None,
+                ..Default::default()
             }
         });
 
@@ -12798,6 +12833,7 @@ mod tests {
                     ..Default::default()
                 },
             )]),
+            ..Default::default()
         };
         let mismatched_panel = workspace.update_in(cx, |workspace, window, cx| {
             GitPanel::new_with_serialized_panel(
@@ -12889,6 +12925,7 @@ mod tests {
             signoff_enabled: false,
             commit_messages: panel.serialized_commit_messages(cx),
             commit_editor_collapsed: None,
+            ..Default::default()
         });
         let buffer = repository.read_with(cx, |repository, _| {
             repository.commit_message_buffer().unwrap().clone()
@@ -12985,6 +13022,7 @@ mod tests {
             signoff_enabled: false,
             commit_messages: panel.serialized_commit_messages(cx),
             commit_editor_collapsed: None,
+            ..Default::default()
         });
 
         // Simulate a restart and restore from the serialized state.

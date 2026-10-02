@@ -12,10 +12,10 @@ use git::{
     Oid, RunHook,
     blame::Blame,
     repository::{
-        AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
-        CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets, GRAPH_CHUNK_SIZE,
-        GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
-        PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitFile,
+        CommitOptions, CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets,
+        GRAPH_CHUNK_SIZE, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder,
+        LogSource, PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
         commit_hash_search_query,
     },
     stash::GitStash,
@@ -80,6 +80,8 @@ pub struct FakeGitRepositoryState {
     pub refs: HashMap<String, String>,
     pub graph_commits: Vec<Arc<InitialGraphCommitData>>,
     pub commit_data: HashMap<Oid, FakeCommitDataEntry>,
+    /// Files returned by `load_commit`, keyed by the requested commit.
+    pub commit_files: HashMap<String, Vec<CommitFile>>,
     pub stash_entries: GitStash,
     pub commit_template: Option<GitCommitTemplate>,
     pub blob_read_gate: Option<FakeBlobReadGate>,
@@ -108,6 +110,7 @@ impl FakeGitRepositoryState {
             remotes: HashMap::default(),
             graph_commits: Vec::new(),
             commit_data: Default::default(),
+            commit_files: Default::default(),
             commit_history: Vec::new(),
             stash_entries: Default::default(),
             commit_template: None,
@@ -279,17 +282,16 @@ impl GitRepository for FakeGitRepository {
 
     fn load_commit(
         &self,
-        _commit: String,
+        commit: String,
         _ignore_shallow_boundary: bool,
         _cx: AsyncApp,
     ) -> BoxFuture<'_, Result<git::repository::CommitDiff>> {
-        async {
+        self.with_state_async(false, move |state| {
             Ok(git::repository::CommitDiff {
-                files: Vec::new(),
+                files: state.commit_files.get(&commit).cloned().unwrap_or_default(),
                 is_shallow_boundary: false,
             })
-        }
-        .boxed()
+        })
     }
 
     fn set_index_text(
