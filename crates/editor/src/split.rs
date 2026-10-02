@@ -188,6 +188,14 @@ impl DiffHunkRenderer for SplitLhsDiffHunkRenderer {
         let renderer = splittable.read(cx).rhs_editor.read(cx).diff_hunk_renderer();
         renderer.render_hunk_as_staged(status, cx)
     }
+
+    fn supports_compact_controls(&self, cx: &App) -> bool {
+        let Some(splittable) = self.splittable.upgrade() else {
+            return false;
+        };
+        let renderer = splittable.read(cx).rhs_editor.read(cx).diff_hunk_renderer();
+        renderer.supports_compact_controls(cx)
+    }
 }
 
 fn patches_for_range<F>(
