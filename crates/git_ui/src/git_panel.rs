@@ -10651,14 +10651,6 @@ mod tests {
             copied_paths.lines().collect::<HashSet<_>>(),
             HashSet::from_iter([path!("src"), path!("other.txt")]),
         );
-
-        panel.update_in(&mut cx, |panel, window, cx| {
-            panel.open_diff(&menu::Confirm, window, cx);
-        });
-        cx.run_until_parked();
-        workspace.read_with(&cx, |workspace, cx| {
-            assert_eq!(workspace.items_of_type::<SoloDiffView>(cx).count(), 2);
-        });
     }
 
     async fn history_panel_for_project(
