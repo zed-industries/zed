@@ -1856,6 +1856,9 @@
     "path_style": "file_name_first",
     // Whether to show the stage and restore buttons on diff hunks.
     "show_stage_restore_buttons": true,
+    // Whether to show the stage and restore buttons as compact icons in the gutter
+    // instead of a toolbar over the hunk.
+    "compact_hunk_controls": false,
     // Directory where git worktrees are created, relative to the repository
     // working directory.
     //
