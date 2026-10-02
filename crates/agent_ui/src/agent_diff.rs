@@ -782,6 +782,10 @@ impl DiffHunkRenderer for AgentDiffHunkRenderer {
     fn render_hunk_as_staged(&self, _status: &DiffHunkStatus, _cx: &App) -> bool {
         false
     }
+
+    fn supports_compact_controls(&self, _cx: &App) -> bool {
+        false
+    }
 }
 
 fn render_diff_hunk_controls(
