@@ -1288,7 +1288,6 @@
       "write": {
         "name": "Write",
         "enable_all_context_servers": true,
-        // sorted to keep it diffable to custom profiles
         "tools": {
           "apply_code_action": true,
           "ask_user": false,
@@ -1320,7 +1319,6 @@
         "name": "Ask",
         // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
         // "enable_all_context_servers": true,
-        // sorted to keep it diffable to custom profiles
         "tools": {
           "ask_user": false,
           "create_thread": true,
