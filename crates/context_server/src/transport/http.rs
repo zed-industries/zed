@@ -7,11 +7,10 @@ use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request, Response, http
 use parking_lot::Mutex as SyncMutex;
 use std::{
     pin::{Pin, pin},
-    sync::Arc,
+    sync::{Arc, atomic::AtomicU64},
     time::Duration,
 };
 
-use crate::client::AnyRequest;
 use crate::oauth::{self, OAuthTokenProvider, WwwAuthenticate};
 use crate::transport::Transport;
 use crate::types;
@@ -53,6 +52,12 @@ pub struct HttpTransport {
     /// requires clients to echo this in the `MCP-Protocol-Version` header on
     /// every subsequent request.
     protocol_version: Arc<SyncMutex<Option<String>>>,
+    /// Bumped by `invalidate`, i.e. when a client generation using this
+    /// transport is torn down. SSE reader tasks compare their captured
+    /// generation against this and stop delivering messages once their
+    /// generation is stale — otherwise a stream from a torn-down client could
+    /// still feed responses to the successor.
+    generation: Arc<AtomicU64>,
     executor: BackgroundExecutor,
     response_tx: async_channel::Sender<String>,
     response_rx: async_channel::Receiver<String>,
@@ -125,6 +130,7 @@ impl HttpTransport {
             endpoint,
             session_id: Arc::new(SyncMutex::new(None)),
             protocol_version: Arc::new(SyncMutex::new(None)),
+            generation: Arc::new(AtomicU64::new(0)),
             response_tx,
             response_rx,
             error_tx,
@@ -194,6 +200,34 @@ impl HttpTransport {
         TransportError::AuthRequired { www_authenticate }.into()
     }
 
+    /// Read the whole response body, failing if it delivers no bytes for
+    /// [`RESPONSE_IDLE_TIMEOUT`] instead of hanging until the total request
+    /// deadline.
+    async fn read_body_with_idle_timeout(
+        &self,
+        response: &mut Response<AsyncBody>,
+    ) -> Result<String> {
+        let mut body = Vec::new();
+        let mut chunk = [0u8; 8192];
+        loop {
+            let read = pin!(futures::AsyncReadExt::read(response.body_mut(), &mut chunk));
+            let mut read = read.fuse();
+            let bytes_read = futures::select_biased! {
+                bytes = read => bytes?,
+                _ = self.executor.timer(RESPONSE_IDLE_TIMEOUT).fuse() => {
+                    anyhow::bail!(
+                        "context server response body stalled for {RESPONSE_IDLE_TIMEOUT:?}"
+                    );
+                }
+            };
+            if bytes_read == 0 {
+                break;
+            }
+            body.extend_from_slice(&chunk[..bytes_read]);
+        }
+        Ok(String::from_utf8_lossy(&body).into_owned())
+    }
+
     /// Send a message and handle the response based on content type.
     async fn send_message(&self, message: String) -> Result<()> {
         // The same server instance can be restarted over this transport; a
@@ -201,15 +235,18 @@ impl HttpTransport {
         // observed by the current one.
         *self.auth_challenge.lock() = None;
 
-        let is_notification =
-            !message.contains("\"id\":") || message.contains("notifications/initialized");
-        // Decide initialization structurally from the top-level `method` field:
-        // a substring match could false-positive on a tool call whose arguments
-        // happen to embed the literal `"method":"initialize"` JSON, which —
-        // combined with the session-rejection check below — would tear down a
-        // healthy session.
-        let is_initialize = serde_json::from_str::<AnyRequest>(&message)
-            .is_ok_and(|request| request.method == "initialize");
+        // Classify the message structurally from the parsed JSON: a request
+        // carries an `id`, a notification does not. Substring matching could
+        // false-positive on a tool call whose arguments embed the literal
+        // `"method":"initialize"` JSON, which — combined with the
+        // session-rejection check below — would tear down a healthy session.
+        let parsed = serde_json::from_str::<serde_json::Value>(&message).ok();
+        let is_initialize = parsed.as_ref().is_some_and(|value| {
+            value.get("method").and_then(|method| method.as_str()) == Some("initialize")
+        });
+        let is_notification = parsed
+            .as_ref()
+            .is_some_and(|value| value.get("method").is_some() && value.get("id").is_none());
         if is_initialize {
             // Never present a stale session from a previous generation: the
             // MCP spec requires initialize to start a fresh session, and some
@@ -289,26 +326,7 @@ impl HttpTransport {
                         // read is bounded by an idle timer so a response that
                         // stalls mid-body fails (and tears down the client)
                         // instead of hanging until the total request deadline.
-                        let mut body = Vec::new();
-                        let mut chunk = [0u8; 8192];
-                        loop {
-                            let read =
-                                pin!(futures::AsyncReadExt::read(response.body_mut(), &mut chunk));
-                            let mut read = read.fuse();
-                            let bytes_read = futures::select_biased! {
-                                bytes = read => bytes?,
-                                _ = self.executor.timer(RESPONSE_IDLE_TIMEOUT).fuse() => {
-                                    anyhow::bail!(
-                                        "context server response body stalled for {RESPONSE_IDLE_TIMEOUT:?}"
-                                    );
-                                }
-                            };
-                            if bytes_read == 0 {
-                                break;
-                            }
-                            body.extend_from_slice(&chunk[..bytes_read]);
-                        }
-                        let body = String::from_utf8_lossy(&body).into_owned();
+                        let body = self.read_body_with_idle_timeout(&mut response).await?;
 
                         // Only send non-empty responses
                         if !body.is_empty() {
@@ -338,8 +356,7 @@ impl HttpTransport {
             }
             _ => {
                 let status = response.status().as_u16();
-                let mut error_body = String::new();
-                futures::AsyncReadExt::read_to_string(response.body_mut(), &mut error_body).await?;
+                let error_body = self.read_body_with_idle_timeout(&mut response).await?;
 
                 // A server that has expired our session rejects every request
                 // carrying the old session ID: the MCP streamable-HTTP spec
@@ -378,6 +395,8 @@ impl HttpTransport {
 
         // Spawn a task to handle the SSE stream
         let executor = self.executor.clone();
+        let generation = self.generation.clone();
+        let stream_generation = generation.load(std::sync::atomic::Ordering::SeqCst);
         self.executor
             .spawn(async move {
                 let reader = futures::io::BufReader::new(response.body_mut());
@@ -385,6 +404,11 @@ impl HttpTransport {
 
                 let mut data_buffer = Vec::new();
                 let mut in_message = false;
+                // Captured by reference in a closure below; both fields are
+                // plain values so the closure is a cheap Fn.
+                let stale = || {
+                    generation.load(std::sync::atomic::Ordering::SeqCst) != stream_generation
+                };
 
                 loop {
                     let next_line = pin!(lines.next());
@@ -395,6 +419,12 @@ impl HttpTransport {
                             None => break,
                         },
                         _ = executor.timer(RESPONSE_IDLE_TIMEOUT).fuse() => {
+                            // A stale generation's stream must fail silently:
+                            // its errors are meaningless to the successor.
+                            if stale() {
+                                log::debug!("SSE stream from a stale client generation; discarding");
+                                break;
+                            }
                             if let Err(err) = error_tx
                                 .send(format!(
                                     "SSE stream stalled: no data for {RESPONSE_IDLE_TIMEOUT:?}"
@@ -415,6 +445,18 @@ impl HttpTransport {
 
                                     // Filter out ping messages and empty data
                                     if !message.trim().is_empty() && message != "ping" {
+                                        // Re-check the generation between the
+                                        // line arriving and the send: a line
+                                        // already unblocked when the generation
+                                        // changed must not reach the successor
+                                        // (request ids restart at zero per
+                                        // generation).
+                                        if stale() {
+                                            log::debug!(
+                                                "SSE stream from a stale client generation; discarding"
+                                            );
+                                            break;
+                                        }
                                         if let Err(e) = response_tx.send(message).await {
                                             log::error!("Failed to send SSE message: {}", e);
                                             break;
@@ -475,6 +517,15 @@ impl Transport for HttpTransport {
 
     fn set_protocol_version(&self, version: &str) {
         *self.protocol_version.lock() = Some(version.to_string());
+    }
+
+    fn invalidate(&self) {
+        // A client generation using this transport is torn down: stale SSE
+        // reader tasks stop delivering (see `setup_sse_stream`). Bumping here
+        // — not on initialize — keeps the initialize-era stream of the current
+        // generation valid.
+        self.generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     fn auth_challenge(&self) -> Option<WwwAuthenticate> {
@@ -1008,6 +1059,185 @@ mod tests {
             buf[..len].copy_from_slice(&self.bytes[..len]);
             std::task::Poll::Ready(Ok(len))
         }
+    }
+
+    /// A reader that yields its chunks in order, but pends before every chunk
+    /// after the first until the gate is opened — lets a test interleave with
+    /// the SSE reader task. The gate stores the task's waker so opening it
+    /// actually wakes the task (otherwise the task would never be re-polled
+    /// and the test would pass vacuously).
+    struct Gate {
+        open: std::sync::atomic::AtomicBool,
+        waker: SyncMutex<Option<std::task::Waker>>,
+    }
+
+    impl Gate {
+        fn open(&self) {
+            self.open.store(true, std::sync::atomic::Ordering::SeqCst);
+            if let Some(waker) = self.waker.lock().take() {
+                waker.wake();
+            }
+        }
+    }
+
+    struct GatedChunks {
+        chunks: Vec<&'static [u8]>,
+        gate: Arc<Gate>,
+        index: usize,
+    }
+
+    impl futures::AsyncRead for GatedChunks {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &mut [u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            use std::sync::atomic::Ordering;
+            if self.index >= self.chunks.len() {
+                return std::task::Poll::Pending;
+            }
+            if self.index > 0 && !self.gate.open.load(Ordering::SeqCst) {
+                *self.gate.waker.lock() = Some(cx.waker().clone());
+                return std::task::Poll::Pending;
+            }
+            let chunk = self.chunks[self.index];
+            self.index += 1;
+            let len = chunk.len().min(buf.len());
+            buf[..len].copy_from_slice(&chunk[..len]);
+            std::task::Poll::Ready(Ok(len))
+        }
+    }
+
+    #[gpui::test]
+    async fn test_initialize_omits_and_clears_session_id(cx: &mut TestAppContext) {
+        let captured_session_headers: Arc<SyncMutex<Vec<Option<String>>>> =
+            Arc::new(SyncMutex::new(Vec::new()));
+        let captured = captured_session_headers.clone();
+        let client = make_fake_http_client(move |req| {
+            let captured = captured.clone();
+            Box::pin(async move {
+                let session_header = req
+                    .headers()
+                    .get(HEADER_SESSION_ID)
+                    .map(|value| value.to_str().unwrap().to_string());
+                let mut body = req.into_body();
+                let mut message = String::new();
+                futures::AsyncReadExt::read_to_string(&mut body, &mut message).await?;
+                captured.lock().push(session_header);
+
+                if message.contains("initialize") {
+                    // No session header: initialize starts a fresh session.
+                    json_response(
+                        200,
+                        r#"{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"t","version":"1"}}}"#,
+                    )
+                } else {
+                    Ok(Response::builder()
+                        .status(200)
+                        .header("Content-Type", "application/json")
+                        .header(HEADER_SESSION_ID, "sess-1")
+                        .body(AsyncBody::from(
+                            r#"{"jsonrpc":"2.0","id":1,"result":{}}"#.as_bytes().to_vec(),
+                        ))
+                        .unwrap())
+                }
+            })
+        });
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+            None,
+        );
+
+        // Establish a session: the response carries one, and the next request
+        // must present it.
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.to_string())
+            .await
+            .expect("send should succeed");
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#.to_string())
+            .await
+            .expect("send should succeed");
+        // initialize must not present the session, and its session-less
+        // response must clear the stored id for all later requests.
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}"#.to_string())
+            .await
+            .expect("send should succeed");
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#.to_string())
+            .await
+            .expect("send should succeed");
+
+        assert_eq!(
+            *captured_session_headers.lock(),
+            vec![None, Some("sess-1".to_string()), None, None,],
+            "initialize must omit the session header and a session-less initialize \
+             response must clear the stored session id"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_sse_stream_from_stale_generation_is_discarded(cx: &mut TestAppContext) {
+        let gate = Arc::new(Gate {
+            open: std::sync::atomic::AtomicBool::new(false),
+            waker: SyncMutex::new(None),
+        });
+        let gate_clone = gate.clone();
+        let client = make_fake_http_client(move |_req| {
+            let gate = gate_clone.clone();
+            Box::pin(async move {
+                Ok(Response::builder()
+                    .status(200)
+                    .header("Content-Type", "text/event-stream")
+                    .body(AsyncBody::from_reader(GatedChunks {
+                        chunks: vec![
+                            b"data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"n\":1}}\n\n"
+                                .as_ref(),
+                            b"data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"n\":2}}\n\n"
+                                .as_ref(),
+                        ],
+                        gate,
+                        index: 0,
+                    }))
+                    .unwrap())
+            })
+        });
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+            None,
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.to_string())
+            .await
+            .expect("send should succeed");
+        cx.run_until_parked();
+
+        let mut responses = transport.receive();
+        let first = responses.next().await.expect("first SSE event");
+        assert!(first.contains("\"n\":1"), "unexpected event: {first}");
+
+        // The client generation is torn down (as on a restart or timeout) and
+        // only then does the stale stream deliver its next event — the gate
+        // opening wakes the parked SSE task, so this is a real delivery
+        // attempt. It must be discarded: request ids restart at zero per
+        // generation, so the event could be matched against the successor's
+        // requests.
+        transport.invalidate();
+        gate.open();
+        cx.run_until_parked();
+
+        assert!(
+            futures::poll!(responses.next()).is_pending(),
+            "an SSE event from a stale client generation must be discarded"
+        );
     }
 
     #[gpui::test]

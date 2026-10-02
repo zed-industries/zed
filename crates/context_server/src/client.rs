@@ -366,6 +366,7 @@ impl Client {
             *last_transport_error = Some(reason);
         }
         drop(last_transport_error);
+        self.transport.invalidate();
         self.outbound_tx.close();
         if let Some((input_task, output_task)) = self.io_tasks.lock().take() {
             drop(input_task);

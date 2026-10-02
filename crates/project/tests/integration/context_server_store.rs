@@ -1548,6 +1548,94 @@ async fn test_http_server_restart_clears_stale_auth_challenge(cx: &mut TestAppCo
     });
 }
 
+// A client-level request timeout must tear down the client so the store
+// restarts the HTTP server. This exercises the real timeout path (a server
+// that accepts the request but never answers) rather than a transport send
+// failure.
+#[gpui::test]
+async fn test_request_timeout_restarts_http_server(cx: &mut TestAppContext) {
+    const SERVER_ID: &str = "hung-server";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    set_fake_mcp_http_client(cx, |message| {
+        if message.contains("\"method\":\"initialize\"") {
+            Ok(initialize_response())
+        } else if message.contains("notifications/initialized") {
+            Ok(notification_accepted_response())
+        } else {
+            // An SSE stream that never delivers a response: the request must
+            // hit the client-level timeout.
+            stalled_sse_response()
+        }
+    });
+
+    let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_context_server_configuration(
+        vec![(
+            SERVER_ID.into(),
+            settings::ContextServerSettingsContent::Http {
+                enabled: true,
+                url: "https://mcp.example.com/mcp".to_string(),
+                headers: Default::default(),
+                timeout: Some(1),
+                oauth: None,
+            },
+        )],
+        cx,
+    );
+
+    {
+        let _server_events = assert_server_events(
+            &store,
+            vec![
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+                // Restart after the request timeout.
+                (server_id.clone(), ContextServerStatus::Stopped),
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+            ],
+            cx,
+        );
+        cx.run_until_parked();
+
+        let client = store.read_with(cx, |store, _| {
+            store
+                .get_running_server(&server_id)
+                .expect("server should be running")
+                .client()
+                .expect("running server should have a client")
+        });
+        let request_task = cx.background_executor.spawn(async move {
+            client
+                .request::<context_server::types::requests::ListTools>(())
+                .await
+        });
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(2));
+
+        let error = request_task
+            .await
+            .expect_err("a hung request should hit the client-level timeout");
+        assert!(
+            format!("{:#}", error).contains("timeout"),
+            "unexpected error: {error}"
+        );
+        cx.run_until_parked();
+        // Dropping the events guard asserts no further status change happened.
+    }
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Running),
+            "server should recover via restart after a request timeout"
+        );
+    });
+}
+
 fn set_http_context_server_configuration(server_id: &ContextServerId, cx: &mut TestAppContext) {
     set_context_server_configuration(
         vec![(
@@ -1672,6 +1760,42 @@ fn notification_accepted_response() -> Response<http_client::AsyncBody> {
         .status(202)
         .body(http_client::AsyncBody::empty())
         .unwrap()
+}
+
+/// A reader that yields one chunk of bytes and then stalls forever, used to
+/// simulate a server that accepts a request but never answers it.
+struct StallAfterFirstChunk {
+    bytes: &'static [u8],
+    sent: bool,
+}
+
+impl futures::AsyncRead for StallAfterFirstChunk {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        if self.sent {
+            return std::task::Poll::Pending;
+        }
+        self.sent = true;
+        let len = self.bytes.len().min(buf.len());
+        buf[..len].copy_from_slice(&self.bytes[..len]);
+        std::task::Poll::Ready(Ok(len))
+    }
+}
+
+/// An SSE stream carrying only a keepalive comment: the transport accepts the
+/// response but no JSON-RPC answer ever arrives, so a request on it can only
+/// end via the client-level timeout.
+fn stalled_sse_response() -> Result<Response<http_client::AsyncBody>> {
+    Ok(Response::builder()
+        .status(200)
+        .header("Content-Type", "text/event-stream")
+        .body(http_client::AsyncBody::from_reader(StallAfterFirstChunk {
+            bytes: b": keepalive\n\n",
+            sent: false,
+        }))?)
 }
 
 fn unauthorized_response() -> Response<http_client::AsyncBody> {
