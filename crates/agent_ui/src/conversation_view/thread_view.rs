@@ -3116,6 +3116,7 @@ impl ThreadView {
                 .read(cx)
                 .permission_request_for_tool(&acp_v1::ToolCallId::new(tool_call_id))?
         };
+        request.legacy_options()?;
         Some((session_id, request.id))
     }
 
@@ -3184,9 +3185,9 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let result = self.conversation.update(cx, |conversation, cx| {
+        self.conversation.update(cx, |conversation, cx| {
             conversation.authorize_with_granularity(session_id, request_id, is_allow, cx)
-        });
+        })?;
         if self.should_be_following {
             self.workspace
                 .update(cx, |workspace, cx| {
@@ -3195,7 +3196,7 @@ impl ThreadView {
                 .ok();
         }
         cx.notify();
-        result
+        Some(())
     }
 
     // edits
@@ -3399,6 +3400,17 @@ impl ThreadView {
         let awaiting_permission = self
             .render_main_agent_awaiting_permission(window, cx)
             .or_else(|| self.render_subagents_awaiting_permission(cx));
+        let generic_permissions = self.render_generic_permissions(cx);
+        let awaiting_permission = match (generic_permissions, awaiting_permission) {
+            (Some(generic), Some(legacy)) => Some(
+                v_flex()
+                    .child(generic)
+                    .child(Divider::horizontal().color(DividerColor::Border))
+                    .child(legacy)
+                    .into_any(),
+            ),
+            (generic, legacy) => generic.or(legacy),
+        };
         let has_awaiting_permission = awaiting_permission.is_some();
 
         if changed_buffers.is_empty() && !has_plan && queue_is_empty && !has_awaiting_permission {
@@ -3750,6 +3762,181 @@ impl ThreadView {
             .iter()
             .filter_map(|session_id| tool_calls_by_session.get(session_id).cloned())
             .collect()
+    }
+
+    fn render_generic_permissions(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let conversation = self.conversation.read(cx);
+        let mut cards = Vec::new();
+        for (session_id, request_ids) in &conversation.permission_requests {
+            if self.is_subagent() && session_id != &self.session_id {
+                continue;
+            }
+            let Some(thread) = conversation.threads.get(session_id) else {
+                continue;
+            };
+            let thread = thread.read(cx);
+            for request_id in request_ids {
+                let Some(request) = thread
+                    .permission_request(*request_id)
+                    .and_then(PermissionRequest::generic_request)
+                else {
+                    continue;
+                };
+                let source = if session_id == &self.session_id {
+                    None
+                } else {
+                    Some(format!(
+                        "Subagent: {} ({session_id})",
+                        thread.title().unwrap_or_else(|| "Subagent".into())
+                    ))
+                };
+                cards.push(self.render_generic_permission_card(
+                    session_id.clone(),
+                    *request_id,
+                    request,
+                    source,
+                    cx,
+                ));
+            }
+        }
+        if cards.is_empty() {
+            return None;
+        }
+        Some(
+            v_flex()
+                .id("generic-permissions")
+                .max_h(px(320.0))
+                .overflow_y_scroll()
+                .children(cards)
+                .into_any(),
+        )
+    }
+
+    pub(super) fn render_generic_permission_card(
+        &self,
+        session_id: acp_v1::SessionId,
+        request_id: PermissionRequestId,
+        request: &acp_v2::RequestPermissionRequest,
+        source: Option<String>,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let subject = match &request.subject {
+            Some(acp_v2::RequestPermissionSubject::Command(command)) => Some(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        div()
+                            .debug_selector(|| {
+                                format!("generic-permission-command-{}", command.command)
+                            })
+                            .child(command.command.clone()),
+                    )
+                    .child(format!("Working directory: {}", command.cwd.0.display())),
+            ),
+            Some(acp_v2::RequestPermissionSubject::ToolCall(subject)) => Some(
+                v_flex()
+                    .debug_selector(|| {
+                        format!("generic-permission-tool-{}", subject.tool_call.tool_call_id)
+                    })
+                    .child(format!("Tool call: {}", subject.tool_call.tool_call_id)),
+            ),
+            Some(acp_v2::RequestPermissionSubject::Other(subject)) => Some(
+                v_flex()
+                    .debug_selector(|| format!("generic-permission-unknown-{}", subject.type_))
+                    .child(format!("Unknown permission subject: {}", subject.type_)),
+            ),
+            Some(_) => Some(v_flex().child("Unknown permission subject")),
+            None => None,
+        };
+        v_flex()
+            .id(format!("generic-permission-{request_id:?}"))
+            .debug_selector(|| format!("generic-permission-{request_id:?}"))
+            .p_2()
+            .gap_2()
+            .w_full()
+            .min_w_0()
+            .text_ui_sm(cx)
+            .children(source.map(|source| {
+                div()
+                    .debug_selector(|| format!("generic-permission-source-{session_id}"))
+                    .text_color(cx.theme().colors().text_muted)
+                    .child(source)
+            }))
+            .child(
+                div()
+                    .debug_selector(|| format!("generic-permission-title-{}", request.title))
+                    .child(request.title.clone()),
+            )
+            .children(request.description.as_ref().map(|description| {
+                div()
+                    .debug_selector(|| format!("generic-permission-description-{description}"))
+                    .child(description.clone())
+            }))
+            .children(subject)
+            .child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .gap_1()
+                    .flex_wrap()
+                    .children(request.options.iter().map(|option| {
+                        let option_id = option.option_id.clone();
+                        let session_id = session_id.clone();
+                        div()
+                            .min_w_0()
+                            .max_w_full()
+                            .debug_selector(|| {
+                                format!("generic-permission-option-{request_id:?}-{option_id}")
+                            })
+                            .child(
+                                Button::new(
+                                    format!("generic-permission-option-{request_id:?}-{option_id}"),
+                                    option.name.clone(),
+                                )
+                                .label_size(LabelSize::Small)
+                                .full_width()
+                                .truncate(true)
+                                .tooltip(Tooltip::text(option.name.clone()))
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.conversation.update(cx, |conversation, cx| {
+                                            conversation.select_permission_option(
+                                                &session_id,
+                                                request_id,
+                                                option_id.clone(),
+                                                cx,
+                                            );
+                                        });
+                                        cx.notify();
+                                    },
+                                )),
+                            )
+                    }))
+                    .child(
+                        div()
+                            .debug_selector(|| format!("generic-permission-cancel-{request_id:?}"))
+                            .child(
+                                Button::new(
+                                    format!("generic-permission-cancel-{request_id:?}"),
+                                    "Cancel",
+                                )
+                                .label_size(LabelSize::Small)
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.conversation.update(cx, |conversation, cx| {
+                                            conversation.cancel_permission_request(
+                                                &session_id,
+                                                request_id,
+                                                cx,
+                                            );
+                                        });
+                                        cx.notify();
+                                    },
+                                )),
+                            ),
+                    ),
+            )
+            .into_any()
     }
 
     fn render_subagents_awaiting_permission(&self, cx: &Context<Self>) -> Option<AnyElement> {
@@ -9658,7 +9845,12 @@ impl ThreadView {
         allow_disabled: bool,
         cx: &Context<Self>,
     ) -> Div {
-        match &request.options {
+        let (Some(options), Some(tool_call_id)) =
+            (request.legacy_options(), request.legacy_tool_call_id())
+        else {
+            return div();
+        };
+        match options {
             PermissionOptions::Flat(options) => self.render_permission_buttons_flat(
                 session_id,
                 is_first,
@@ -9676,7 +9868,7 @@ impl ThreadView {
                 entry_ix,
                 session_id,
                 request.id,
-                request.tool_call_id.clone(),
+                tool_call_id.clone(),
                 focus_handle,
                 allow_disabled,
                 cx,
@@ -9692,7 +9884,7 @@ impl ThreadView {
                 entry_ix,
                 session_id,
                 request.id,
-                request.tool_call_id.clone(),
+                tool_call_id.clone(),
                 focus_handle,
                 allow_disabled,
                 cx,

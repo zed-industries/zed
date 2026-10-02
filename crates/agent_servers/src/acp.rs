@@ -4777,7 +4777,7 @@ exit 7
                 let request = thread
                     .permission_request_for_tool(&tool_id)
                     .expect("first permission request");
-                assert_eq!(request.tool_call_id, tool_id);
+                assert_eq!(request.legacy_tool_call_id(), Some(&tool_id));
                 request.id
             });
 
