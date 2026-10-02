@@ -189,6 +189,11 @@ pub enum Thinking {
     },
     Adaptive {
         effort: BedrockAdaptiveThinkingEffort,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        binding_controls_beta: Option<String>,
+    },
+    Reasoning {
+        effort: BedrockAdaptiveThinkingEffort,
     },
     /// Explicitly turns thinking off. Required by Claude Opus 5, where
     /// adaptive thinking runs by default when the `thinking` field is
@@ -199,7 +204,7 @@ pub enum Thinking {
 }
 
 /// Converts the request's thinking configuration into the
-/// `additionalModelRequestFields` entries understood by Anthropic models on
+/// `additionalModelRequestFields` entries understood by the model on
 /// the Converse API.
 fn thinking_request_fields(thinking: &Thinking) -> HashMap<String, Document> {
     let mut fields = HashMap::new();
@@ -221,23 +226,43 @@ fn thinking_request_fields(thinking: &Thinking) -> HashMap<String, Document> {
         Thinking::Enabled {
             budget_tokens: None,
         } => {}
-        Thinking::Adaptive { effort } => {
-            fields.insert(
-                "thinking".to_string(),
-                Document::from(HashMap::from([
-                    ("type".to_string(), Document::String("adaptive".to_string())),
-                    (
-                        "display".to_string(),
-                        Document::String("summarized".to_string()),
-                    ),
-                ])),
-            );
+        Thinking::Adaptive {
+            effort,
+            binding_controls_beta,
+        } => {
+            let mut thinking_fields = HashMap::from([
+                ("type".to_string(), Document::String("adaptive".to_string())),
+                (
+                    "display".to_string(),
+                    Document::String("summarized".to_string()),
+                ),
+            ]);
+            if let Some(beta_header) = binding_controls_beta {
+                // Fable 5.1 binds replayed thinking to the prefix, which Zed can change.
+                thinking_fields.insert(
+                    "block_binding".to_string(),
+                    value_to_aws_document(&serde_json::json!({
+                        "prefix_mismatch_behavior": "drop_block"
+                    })),
+                );
+                fields.insert(
+                    "anthropic_beta".to_string(),
+                    Document::Array(vec![Document::String(beta_header.clone())]),
+                );
+            }
+            fields.insert("thinking".to_string(), Document::Object(thinking_fields));
             fields.insert(
                 "output_config".to_string(),
                 Document::from(HashMap::from([(
                     "effort".to_string(),
                     Document::String(effort.as_str().to_string()),
                 )])),
+            );
+        }
+        Thinking::Reasoning { effort } => {
+            fields.insert(
+                "reasoning".to_string(),
+                value_to_aws_document(&serde_json::json!({"effort": effort.as_str()})),
             );
         }
         Thinking::Disabled => {
@@ -317,6 +342,7 @@ mod tests {
     fn test_adaptive_thinking_serializes_effort_in_output_config() {
         let fields = thinking_request_fields(&Thinking::Adaptive {
             effort: BedrockAdaptiveThinkingEffort::XHigh,
+            binding_controls_beta: None,
         });
 
         let thinking = fields.get("thinking").expect("thinking field");
@@ -358,5 +384,36 @@ mod tests {
             budget_tokens: None,
         });
         assert!(fields.is_empty());
+    }
+
+    #[test]
+    fn test_gpt_6_astra_uses_openai_reasoning_fields() {
+        let fields = thinking_request_fields(&Thinking::Reasoning {
+            effort: BedrockAdaptiveThinkingEffort::High,
+        });
+        assert_eq!(
+            aws_document_to_value(&Document::Object(fields)),
+            serde_json::json!({"reasoning": {"effort": "high"}})
+        );
+    }
+
+    #[test]
+    fn test_adaptive_thinking_binding_controls() {
+        let fields = thinking_request_fields(&Thinking::Adaptive {
+            effort: BedrockAdaptiveThinkingEffort::High,
+            binding_controls_beta: Some("thinking-binding-controls-2026-08-01".into()),
+        });
+        assert_eq!(
+            aws_document_to_value(&Document::Object(fields)),
+            serde_json::json!({
+                "thinking": {
+                    "type": "adaptive",
+                    "display": "summarized",
+                    "block_binding": {"prefix_mismatch_behavior": "drop_block"}
+                },
+                "output_config": {"effort": "high"},
+                "anthropic_beta": ["thinking-binding-controls-2026-08-01"]
+            })
+        );
     }
 }
