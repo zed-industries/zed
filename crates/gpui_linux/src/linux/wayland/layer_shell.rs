@@ -1,5 +1,9 @@
 pub use gpui::layer_shell::*;
 
+/// Layer-shell windows with this namespace are created as `ext-session-lock-v1` lock
+/// surfaces on their output instead. Their other layer-shell options are ignored.
+pub const SESSION_LOCK_NAMESPACE: &str = "gpui-session-lock";
+
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 pub(crate) fn wayland_layer(layer: Layer) -> zwlr_layer_shell_v1::Layer {
