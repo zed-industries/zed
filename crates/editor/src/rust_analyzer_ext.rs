@@ -304,7 +304,7 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
             // Check if the local document exists, otherwise fallback to the online document.
             // Open with the default browser.
             if let Some(local_url) = docs_urls.local
-                && fs::metadata(Path::new(&local_url[8..])).is_ok()
+                && fs::metadata(Path::new(&local_url[7..])).is_ok()
             {
                 cx.open_url(&local_url);
                 return;
