@@ -58,9 +58,8 @@ webrtc-sys.workspace = true
 scap.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-core-foundation.workspace = true
-core-video.workspace = true
-objc2-core-foundation.workspace = true
+objc2-core-foundation = { workspace = true, features = ["CFDictionary", "CFNumber"] }
+objc2-core-video = { workspace = true, features = ["CVBase", "CVPixelBuffer", "CVPixelBufferIOSurface", "CVPixelBufferPool", "CVReturn"] }
 coreaudio-rs = "0.12.1"
 
 [dev-dependencies]
