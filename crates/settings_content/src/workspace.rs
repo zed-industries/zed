@@ -913,6 +913,14 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: false
     pub git_status_indicator: Option<bool>,
+    /// Whether to ask for confirmation when moving files or directories to the trash.
+    ///
+    /// Default: true
+    pub confirm_trash: Option<bool>,
+    /// Whether to ask for confirmation when permanently deleting files or directories.
+    ///
+    /// Default: true
+    pub confirm_delete: Option<bool>,
 }
 
 /// Controls the width of the git diff hunk indicators in the gutter.

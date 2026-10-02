@@ -395,6 +395,24 @@ impl PlatformWindow for TestWindow {
         )
     }
 
+    fn prompt_with_checkbox(
+        &self,
+        _level: crate::PromptLevel,
+        msg: &str,
+        detail: Option<&str>,
+        checkbox_label: Option<&str>,
+        answers: &[PromptButton],
+    ) -> Option<futures::channel::oneshot::Receiver<(usize, bool)>> {
+        Some(
+            self.0
+                .lock()
+                .platform
+                .upgrade()
+                .expect("platform dropped")
+                .prompt_with_checkbox(msg, detail, checkbox_label, answers),
+        )
+    }
+
     fn activate(&self) {
         self.0
             .lock()
