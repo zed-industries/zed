@@ -34,6 +34,7 @@ pub fn register_fake_definition_server(
                 arguments: Vec::new(),
                 env: None,
             },
+            enabled_by_default: true,
             capabilities: lsp::ServerCapabilities {
                 definition_provider: Some(lsp::OneOf::Left(true)),
                 type_definition_provider: Some(lsp::TypeDefinitionProviderCapability::Simple(true)),

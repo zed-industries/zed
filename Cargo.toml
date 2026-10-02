@@ -79,6 +79,7 @@ members = [
     "crates/feature_flags",
     "crates/feature_flags_macros",
     "crates/feedback",
+    "crates/file_content",
     "crates/file_finder",
     "crates/file_icons",
     "crates/fs",
@@ -104,6 +105,7 @@ members = [
     "crates/gpui_wgpu",
     "crates/gpui_windows",
     "crates/grammars",
+    "crates/hang_telemetry",
     "crates/html_to_markdown",
     "crates/http_client",
     "crates/http_client_tls",
@@ -350,6 +352,7 @@ extensions_ui = { path = "crates/extensions_ui" }
 feature_flags = { path = "crates/feature_flags" }
 feature_flags_macros = { path = "crates/feature_flags_macros" }
 feedback = { path = "crates/feedback" }
+file_content = { path = "crates/file_content" }
 file_finder = { path = "crates/file_finder" }
 file_icons = { path = "crates/file_icons" }
 fs = { path = "crates/fs" }
@@ -374,6 +377,7 @@ gpui_web = { path = "crates/gpui_web" }
 gpui_wgpu = { path = "crates/gpui_wgpu" }
 gpui_windows = { path = "crates/gpui_windows", default-features = false }
 grammars = { path = "crates/grammars" }
+hang_telemetry = { path = "crates/hang_telemetry" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
 http_client_tls = { path = "crates/http_client_tls" }
@@ -618,7 +622,9 @@ derive_more = { version = "2.1.1", features = [
     "not",
 ] }
 dialoguer = { version = "0.12", default-features = false }
+diffy = "0.4.2"
 dirs = "6.0"
+dispatch2 = "0.3.1"
 documented = "0.10"
 dotenvy = "0.15.0"
 dunce = "1.0"
@@ -752,6 +758,7 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "objc2-core-foundation",
     "std",
 ] }
+objc2-quartz-core = { version = "=0.3.2", default-features = false, features = ["std", "CALayer", "CAMetalLayer"] }
 objc2-screen-capture-kit = { version = "=0.3.2", default-features = false, features = [
     "block2",
     "dispatch2",
@@ -867,6 +874,7 @@ time = { version = "0.3", features = [
 ] }
 tiny_http = "0.12"
 tokio = { version = "1" }
+tokio-rustls = { version = "0.26", default-features = false }
 toml = "0.8"
 toml_edit = { version = "0.22", default-features = false, features = [
     "display",
@@ -1083,6 +1091,7 @@ command_palette = { codegen-units = 1 }
 command_palette_hooks = { codegen-units = 1 }
 edit_prediction_ui = { codegen-units = 1 }
 feature_flags = { codegen-units = 1 }
+file_content = { codegen-units = 1 }
 file_icons = { codegen-units = 1 }
 image_viewer = { codegen-units = 1 }
 install_cli = { codegen-units = 1 }

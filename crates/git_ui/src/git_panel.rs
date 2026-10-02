@@ -4412,10 +4412,11 @@ impl GitPanel {
             .project
             .read(cx)
             .visible_worktrees(cx)
+            .filter(|worktree| !worktree.read(cx).is_single_file())
             .collect::<Vec<_>>();
 
-        let worktree = if worktrees.len() == 1 {
-            Task::ready(Some(worktrees.first().unwrap().clone()))
+        let worktree = if let [worktree] = worktrees.as_slice() {
+            Task::ready(Some(worktree.clone()))
         } else if worktrees.is_empty() {
             let result = window.prompt(
                 PromptLevel::Warning,
@@ -7711,27 +7712,34 @@ impl GitPanel {
     }
 
     fn render_uninitialized_ui(&self, cx: &mut Context<Self>) -> AnyElement {
-        let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
+        let project = self.project.read(cx);
+        let worktree_count = project.visible_worktrees(cx).count();
+        // `git init` can't run inside a worktree whose root is a single file.
+        let has_directory_worktree = project
+            .visible_worktrees(cx)
+            .any(|worktree| !worktree.read(cx).is_single_file());
         if worktree_count > 0 && self.active_repository.is_none() {
             v_flex()
                 .gap_1()
                 .items_center()
                 .child(Label::new("No Git Repositories").color(Color::Muted))
-                .child(
-                    Button::new("initialize_repository", "Initialize Repository")
-                        .label_size(LabelSize::Small)
-                        .style(ButtonStyle::Outlined)
-                        .tooltip(Tooltip::for_action_title_in(
-                            "git init",
-                            &git::Init,
-                            &self.focus_handle,
-                        ))
-                        .on_click(move |_, _, cx| {
-                            cx.defer(move |cx| {
-                                cx.dispatch_action(&git::Init);
-                            })
-                        }),
-                )
+                .when(has_directory_worktree, |this| {
+                    this.child(
+                        Button::new("initialize_repository", "Initialize Repository")
+                            .label_size(LabelSize::Small)
+                            .style(ButtonStyle::Outlined)
+                            .tooltip(Tooltip::for_action_title_in(
+                                "git init",
+                                &git::Init,
+                                &self.focus_handle,
+                            ))
+                            .on_click(move |_, _, cx| {
+                                cx.defer(move |cx| {
+                                    cx.dispatch_action(&git::Init);
+                                })
+                            }),
+                    )
+                })
                 .into_any_element()
         } else if worktree_count == 0 {
             let focus_handle = self.focus_handle.clone();
@@ -10512,6 +10520,37 @@ mod tests {
         panel.read_with(cx, |panel, _| {
             assert_eq!(panel.commit_history, CommitHistory::Loading);
         });
+    }
+
+    #[gpui::test]
+    async fn test_git_init_ignores_single_file_worktrees(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/demo"), json!({ "plain.txt": "hello" }))
+            .await;
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/demo/plain.txt"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        panel.update_in(cx, |panel, window, cx| panel.git_init(window, cx));
+        cx.run_until_parked();
+
+        assert!(
+            cx.has_pending_prompt(),
+            "git init should ask for a directory instead of running in a single-file worktree"
+        );
+        assert!(
+            !fs.is_dir(Path::new(path!("/demo/plain.txt/.git"))).await,
+            "git init should not run inside a single-file worktree"
+        );
     }
 
     #[test]
