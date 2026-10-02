@@ -30,6 +30,7 @@ pub trait DiffHunkRenderer {
         hunk_range: Range<Anchor>,
         is_created_file: bool,
         line_height: Pixels,
+        row_count: u32,
         editor: &Entity<Editor>,
         window: &mut Window,
         cx: &mut App,
@@ -55,6 +56,7 @@ impl DiffHunkRenderer for DefaultDiffHunkRenderer {
         hunk_range: Range<Anchor>,
         is_created_file: bool,
         line_height: Pixels,
+        row_count: u32,
         editor: &Entity<Editor>,
         window: &mut Window,
         cx: &mut App,
@@ -65,6 +67,7 @@ impl DiffHunkRenderer for DefaultDiffHunkRenderer {
             hunk_range,
             is_created_file,
             line_height,
+            row_count,
             editor,
             window,
             cx,
@@ -82,6 +85,7 @@ impl DiffHunkRenderer for HiddenDiffHunkRenderer {
         _hunk_range: Range<Anchor>,
         _is_created_file: bool,
         _line_height: Pixels,
+        _row_count: u32,
         _editor: &Entity<Editor>,
         _window: &mut Window,
         _cx: &mut App,
@@ -100,6 +104,7 @@ impl DiffHunkRenderer for HiddenUnstagedDiffHunkRenderer {
         _hunk_range: Range<Anchor>,
         _is_created_file: bool,
         _line_height: Pixels,
+        _row_count: u32,
         _editor: &Entity<Editor>,
         _window: &mut Window,
         _cx: &mut App,
@@ -3037,18 +3042,24 @@ pub(crate) fn compact_hunk_controls(cx: &App) -> bool {
     ProjectSettings::get_global(cx).git.compact_hunk_controls
 }
 
-/// The container for a diff hunk's controls: a toolbar on the right side of the
-/// hunk, or a compact vertical stack in the gutter when `git.compact_hunk_controls` is on.
-pub fn diff_hunk_controls_container(line_height: Pixels, cx: &App) -> Div {
+/// The container for a diff hunk's controls: a toolbar on the right side of the hunk, or
+/// compact gutter controls when `git.compact_hunk_controls` is on, in a row for one-row hunks
+/// and stacked otherwise.
+pub fn diff_hunk_controls_container(row_count: u32, line_height: Pixels, cx: &App) -> Div {
     let container = if compact_hunk_controls(cx) {
-        // Restore above stage.
-        v_flex()
-            .flex_col_reverse()
-            .p_px()
-            .gap_px()
-            .border_1()
-            .rounded_sm()
-            .shadow_sm()
+        // A stack taller than a one-line hunk would spill onto the next row, where it can be
+        // covered (e.g. by the next file's header), so lay those controls out in a row instead.
+        // Either way restore comes before stage.
+        if row_count <= 1 {
+            h_flex().flex_row_reverse()
+        } else {
+            v_flex().flex_col_reverse()
+        }
+        .p_px()
+        .gap_px()
+        .border_1()
+        .rounded_sm()
+        .shadow_sm()
     } else {
         h_flex()
             .h(line_height)
@@ -3079,6 +3090,7 @@ impl HunkControlButton {
         if compact_hunk_controls(cx) {
             Self::Icon(
                 IconButton::new(id, icon)
+                    .size(ButtonSize::Compact)
                     .icon_size(IconSize::XSmall)
                     .aria_label(label),
             )
@@ -3134,6 +3146,7 @@ pub fn render_diff_hunk_controls(
     hunk_range: Range<Anchor>,
     is_created_file: bool,
     line_height: Pixels,
+    row_count: u32,
     editor: &Entity<Editor>,
     _window: &mut Window,
     cx: &mut App,
@@ -3166,7 +3179,7 @@ pub fn render_diff_hunk_controls(
         return gpui::Empty.into_any_element();
     }
 
-    diff_hunk_controls_container(line_height, cx)
+    diff_hunk_controls_container(row_count, line_height, cx)
         .when(
             show_stage_restore
                 && ((status.has_secondary_hunk() && supports_staging)

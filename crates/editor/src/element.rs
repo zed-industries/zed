@@ -4846,6 +4846,7 @@ impl EditorElement {
                         multi_buffer_range.clone(),
                         *is_created_file,
                         line_height,
+                        display_row_range.len() as u32,
                         &editor,
                         window,
                         cx,
@@ -13935,8 +13936,14 @@ mod tests {
         assert_eq!(actual, expected, "scale: {scale}, x offset: {x_offset:?}");
     }
 
-    #[gpui::test]
-    async fn test_compact_hunk_controls_in_gutter(cx: &mut TestAppContext) {
+    /// Hovers the line numbers of the hunk on `hunk_row` with compact controls enabled and returns
+    /// the bounds of the controls that appear, the gutter's bounds, and the line height.
+    async fn hover_compact_hunk_controls(
+        state: &str,
+        head_text: &str,
+        hunk_row: u32,
+        cx: &mut TestAppContext,
+    ) -> (Bounds<Pixels>, Bounds<Pixels>, Pixels) {
         init_test(cx, |_| {});
         let mut cx = crate::test::editor_test_context::EditorTestContext::new(cx).await;
         cx.update(|_, cx| {
@@ -13946,8 +13953,8 @@ mod tests {
                 });
             });
         });
-        cx.set_state("oneˇ\nTWO\nthree\n");
-        cx.set_head_text("one\ntwo\nthree\n");
+        cx.set_state(state);
+        cx.set_head_text(head_text);
         cx.update_editor(|editor, window, cx| {
             editor.expand_all_diff_hunks(&crate::actions::ExpandAllDiffHunks, window, cx);
         });
@@ -13963,11 +13970,10 @@ mod tests {
 
         // Hovering the hunk's line numbers, on the way to the controls, reveals them.
         let gutter_bounds = initial.gutter_hitbox.bounds;
-        let hunk_row_y = initial.line_height * 2.5;
         cx.simulate_mouse_move(
             point(
                 gutter_bounds.right() - px(4.),
-                gutter_bounds.top() + hunk_row_y,
+                gutter_bounds.top() + initial.line_height * (hunk_row as f32 + 0.5),
             ),
             None,
             gpui::Modifiers::none(),
@@ -13975,10 +13981,29 @@ mod tests {
         cx.run_until_parked();
         let position_map = position_map(&mut cx);
         let [(row, bounds)] = position_map.diff_hunk_control_bounds.as_slice() else {
-            panic!("expected controls for the modified hunk");
+            panic!("expected controls for the hovered hunk");
         };
-        assert_eq!(*row, DisplayRow(1));
+        assert_eq!(*row, DisplayRow(hunk_row));
         assert!(bounds.left() > gutter_bounds.left());
         assert!(bounds.size.width > px(0.) && bounds.right() <= gutter_bounds.right());
+        (*bounds, gutter_bounds, position_map.line_height)
+    }
+
+    #[gpui::test]
+    async fn test_compact_hunk_controls_in_gutter(cx: &mut TestAppContext) {
+        // A modified line shows as a deleted and an added row, so the controls stack vertically.
+        let (bounds, _, line_height) =
+            hover_compact_hunk_controls("oneˇ\nTWO\nthree\n", "one\ntwo\nthree\n", 1, cx).await;
+        assert!(bounds.size.height > line_height);
+        assert!(bounds.size.height <= line_height * 2.);
+    }
+
+    #[gpui::test]
+    async fn test_compact_hunk_controls_for_one_line_hunk(cx: &mut TestAppContext) {
+        // A one-line hunk lays the controls out in a row so they don't spill onto the next row.
+        let (bounds, _, line_height) =
+            hover_compact_hunk_controls("oneˇ\nnew\nthree\n", "one\nthree\n", 1, cx).await;
+        assert!(bounds.size.height <= line_height);
+        assert!(bounds.size.width > bounds.size.height);
     }
 }
