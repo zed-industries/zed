@@ -762,6 +762,7 @@ impl DiffHunkRenderer for AgentDiffHunkRenderer {
         hunk_range: Range<editor::Anchor>,
         is_created_file: bool,
         line_height: Pixels,
+        _row_count: u32,
         editor: &Entity<Editor>,
         _window: &mut Window,
         cx: &mut App,

@@ -44,6 +44,7 @@ impl DiffHunkRenderer for UnstagedDiffHunkRenderer {
         hunk_range: Range<editor::Anchor>,
         is_created_file: bool,
         line_height: Pixels,
+        row_count: u32,
         editor: &Entity<Editor>,
         _window: &mut Window,
         cx: &mut App,
@@ -56,7 +57,7 @@ impl DiffHunkRenderer for UnstagedDiffHunkRenderer {
         }
         let hunk_range_for_restore = hunk_range.clone();
         let hunk_range = hunk_range.start..hunk_range.start;
-        diff_hunk_controls_container(line_height, cx)
+        diff_hunk_controls_container(row_count, line_height, cx)
             .child(
                 HunkControlButton::new(("stage", row as u64), "Stage", IconName::Plus, cx)
                     .alpha(if status.is_pending() { 0.66 } else { 1.0 })
