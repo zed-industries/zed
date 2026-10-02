@@ -83,4 +83,4 @@ tokio-native-tls = "0.3"
 
 [target.'cfg(not(any(target_os = "windows", target_os = "macos")))'.dependencies]
 rustls-pki-types = "1.12"
-tokio-rustls = { version = "0.26", features = ["tls12", "ring"], default-features = false }
+tokio-rustls = { workspace = true, features = ["tls12", "ring"] }

@@ -870,6 +870,93 @@ async fn test_scan_symlinks_always(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_relative_path_for_external_abs_path(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.scan_symlinks =
+                    Some(settings::ScanSymlinksSetting::Always);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "dir1": {
+                "deps": {},
+                "src": {
+                    "a.rs": "",
+                },
+            },
+            "lib": {
+                "a": {
+                    "deep": {
+                        "d.rs": "",
+                    },
+                    "x.rs": "",
+                },
+                "b": {
+                    "b.rs": "",
+                },
+                "c.rs": "",
+            },
+            "other": {
+                "file.rs": "",
+            },
+        }),
+    )
+    .await;
+
+    fs.create_symlink("/root/dir1/deps/lib".as_ref(), "../../lib".into())
+        .await
+        .unwrap();
+
+    let tree = Worktree::local(
+        Path::new("/root/dir1"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        let snapshot = tree.as_local().unwrap().snapshot();
+        let lookup = |abs_path: &str| {
+            snapshot
+                .relative_path_for_external_abs_path(Path::new(abs_path))
+                .map(|path| path.as_unix_str().to_string())
+        };
+        assert_eq!(
+            lookup("/root/lib/a/x.rs").as_deref(),
+            Some("deps/lib/a/x.rs")
+        );
+        assert_eq!(lookup("/root/lib/c.rs").as_deref(), Some("deps/lib/c.rs"));
+        assert_eq!(
+            lookup("/root/lib/zzz/new.rs").as_deref(),
+            Some("deps/lib/zzz/new.rs")
+        );
+        assert_eq!(
+            lookup("/root/lib/b-x/file.rs").as_deref(),
+            Some("deps/lib/b-x/file.rs")
+        );
+        assert_eq!(lookup("/root/lib").as_deref(), Some("deps/lib"));
+        assert_eq!(lookup("/root/other/file.rs"), None);
+        assert_eq!(lookup("/root/dir1/src/a.rs"), None);
+    });
+}
+
+#[gpui::test]
 async fn test_scan_symlinks_expanded(cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -1573,8 +1660,10 @@ async fn test_root_rescan_keeps_root_watcher_registered(cx: &mut TestAppContext)
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
 
-    // Dropping and re-registering the root watch would open a window in
-    // which filesystem events are lost.
+    // Dropping and re-registering the recursive root watch would open a window
+    // in which filesystem events are lost. Non-recursive watches may have been
+    // lost in the overflow, so the rescan reinstalls the root watch before
+    // reading the root again.
     fs.emit_fs_event("/root", Some(PathEventKind::Rescan));
     tree.flush_fs_events(cx).await;
 
@@ -1583,7 +1672,65 @@ async fn test_root_rescan_keeps_root_watcher_registered(cx: &mut TestAppContext)
         .into_iter()
         .filter(|path| path == Path::new("/root"))
         .count();
-    assert_eq!(root_watch_calls, 1);
+    let expected_root_watch_calls = if cfg!(any(target_os = "windows", target_os = "macos")) {
+        1
+    } else {
+        2
+    };
+    assert_eq!(root_watch_calls, expected_root_watch_calls);
+}
+
+// Native watches are recursive on macOS and Windows, so the new directory is
+// covered by the root watch and never watched separately.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[gpui::test]
+async fn test_new_directory_scan_does_not_miss_event_before_adding_watcher(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/root", json!({})).await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    fs.create_file_before_next_watch_add("/root/new-directory", "/root/new-directory/file.txt");
+    fs.create_dir(Path::new("/root/new-directory"))
+        .await
+        .unwrap();
+
+    wait_for_condition(cx, |cx| {
+        tree.read_with(cx, |tree, _| {
+            tree.entry_for_path(rel_path("new-directory/file.txt"))
+                .is_some()
+        })
+    })
+    .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(""),
+                rel_path("new-directory"),
+                rel_path("new-directory/file.txt"),
+            ]
+        );
+    });
 }
 
 #[gpui::test]
