@@ -798,6 +798,12 @@ pub struct GitPanelSettingsContent {
     /// Default: false
     pub show_count_badge: Option<bool>,
 
+    /// Whether to show a compact, collapsible commit graph below the changes list,
+    /// in place of the last commit row.
+    ///
+    /// Default: false
+    pub compact_graph: Option<bool>,
+
     /// Whether the git panel should open on startup.
     ///
     /// Default: false

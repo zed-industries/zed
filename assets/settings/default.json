@@ -1126,6 +1126,11 @@
     //
     // Default: false
     "show_count_badge": false,
+    // Whether to show a compact, collapsible commit graph below the changes list,
+    // in place of the last commit row.
+    //
+    // Default: false
+    "compact_graph": false,
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
