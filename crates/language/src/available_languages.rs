@@ -1,6 +1,7 @@
 use crate::{LanguageId, LanguageLoader, LanguageMatcher, LanguageName, ManifestName};
 use collections::FxHashMap;
 use globset::GlobSet;
+use gpui::SharedString;
 use smallvec::SmallVec;
 use std::{cell::LazyCell, path::Path, sync::Arc};
 use sum_tree::Bias;
@@ -262,19 +263,20 @@ impl AvailableLanguages {
 
         self.find_best_match(move |language_name, matcher, current_best_match| {
             let path_matches_default_suffix = || {
-                let len =
-                    matcher
-                        .path_suffixes
-                        .iter()
-                        .fold(0, |acc: usize, path_suffix: &String| {
-                            let ext = ".".to_string() + path_suffix;
-                            let matched_suffix_len = path_suffixes
-                                .iter()
-                                .find(|(suffix, _)| suffix.ends_with(&ext) || suffix == path_suffix)
-                                .map(|(suffix, _)| suffix.len());
+                let len = matcher.path_suffixes.iter().fold(
+                    0,
+                    |acc: usize, path_suffix: &SharedString| {
+                        let ext = ".".to_string() + path_suffix;
+                        let matched_suffix_len = path_suffixes
+                            .iter()
+                            .find(|(suffix, _)| {
+                                suffix.ends_with(&ext) || *suffix == path_suffix.as_str()
+                            })
+                            .map(|(suffix, _)| suffix.len());
 
-                            matched_suffix_len.map_or(acc, |len| acc.max(len))
-                        });
+                        matched_suffix_len.map_or(acc, |len| acc.max(len))
+                    },
+                );
                 (len > 0).then_some(len)
             };
 

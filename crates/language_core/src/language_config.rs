@@ -232,7 +232,7 @@ pub struct TaskListConfig {
 pub struct LanguageMatcher {
     /// Given a list of `LanguageConfig`'s, the language of a file can be determined based on the path extension matching any of the `path_suffixes`.
     #[serde(default)]
-    pub path_suffixes: Vec<String>,
+    pub path_suffixes: Vec<SharedString>,
     /// A regex pattern that determines whether the language should be assigned to a file or not.
     #[serde(
         default,
@@ -245,7 +245,7 @@ pub struct LanguageMatcher {
     /// These are matched case-insensitively against the `mode` (emacs) or
     /// `filetype`/`ft` (vim) specified in the modeline.
     #[serde(default)]
-    pub modeline_aliases: Vec<String>,
+    pub modeline_aliases: Vec<SharedString>,
 }
 
 impl Ord for LanguageMatcher {
