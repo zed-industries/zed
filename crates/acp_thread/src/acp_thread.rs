@@ -1571,6 +1571,20 @@ impl ToolCall {
         Ok(())
     }
 
+    fn append_content(
+        &mut self,
+        content: PreparedToolCallContent,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) {
+        self.structured_content.push(ToolCallContent::from_prepared(
+            content,
+            language_registry,
+            cx,
+        ));
+        self.update_raw_output_content(language_registry, cx);
+    }
+
     fn update_raw_output_content(
         &mut self,
         language_registry: &Arc<LanguageRegistry>,
@@ -2928,22 +2942,29 @@ impl PreparedToolCallContent {
     ) -> Result<Vec<Self>> {
         content
             .into_iter()
-            .map(|content| match content {
-                acp_v2::ToolCallContent::Content(content) => Ok(Self::ContentBlock(*content)),
-                acp_v2::ToolCallContent::Diff(diff) => Ok(Self::DiffPatch(diff)),
-                acp_v2::ToolCallContent::Terminal(terminal) => {
-                    let terminal_id = acp_v1::TerminalId::new(terminal.terminal_id.0);
-                    Ok(Self::Terminal {
-                        terminal: terminals
-                            .get(&terminal_id)
-                            .cloned()
-                            .ok_or_else(|| anyhow!("Terminal with id `{terminal_id}` not found"))?,
-                        meta: terminal.meta,
-                    })
-                }
-                other => Ok(Self::Other(other)),
-            })
+            .map(|content| Self::from_v2(content, terminals))
             .collect()
+    }
+
+    fn from_v2(
+        content: acp_v2::ToolCallContent,
+        terminals: &HashMap<acp_v1::TerminalId, Entity<Terminal>>,
+    ) -> Result<Self> {
+        match content {
+            acp_v2::ToolCallContent::Content(content) => Ok(Self::ContentBlock(*content)),
+            acp_v2::ToolCallContent::Diff(diff) => Ok(Self::DiffPatch(diff)),
+            acp_v2::ToolCallContent::Terminal(terminal) => {
+                let terminal_id = acp_v1::TerminalId::new(terminal.terminal_id.0);
+                Ok(Self::Terminal {
+                    terminal: terminals
+                        .get(&terminal_id)
+                        .cloned()
+                        .ok_or_else(|| anyhow!("Terminal with id `{terminal_id}` not found"))?,
+                    meta: terminal.meta,
+                })
+            }
+            other => Ok(Self::Other(other)),
+        }
     }
 }
 
@@ -5276,12 +5297,7 @@ impl AcpThread {
     ) -> Result<()> {
         if let Some(content) = update.content.value() {
             for content in content {
-                if let acp_v2::ToolCallContent::Terminal(terminal) = content {
-                    self.ensure_display_terminal(
-                        acp_v1::TerminalId::new(terminal.terminal_id.0.clone()),
-                        cx,
-                    );
-                }
+                self.ensure_tool_content_terminal(content, cx);
             }
         }
         let id = acp_v1::ToolCallId::new(update.tool_call_id.0.clone());
@@ -5311,6 +5327,53 @@ impl AcpThread {
             self.resolve_locations(id, cx);
         }
         Ok(())
+    }
+
+    pub fn append_tool_call_content_chunk(
+        &mut self,
+        chunk: acp_v2::ToolCallContentChunk,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        // Delivery metadata is not retained as history or promoted into aggregate
+        // tool/content metadata, matching the message-chunk boundary.
+        let acp_v2::ToolCallContentChunk {
+            tool_call_id,
+            content,
+            ..
+        } = chunk;
+        self.ensure_tool_content_terminal(&content, cx);
+        let content = PreparedToolCallContent::from_v2(content, &self.terminals)?;
+        let language_registry = self.project.read(cx).languages().clone();
+        let id = acp_v1::ToolCallId::new(tool_call_id.0.clone());
+
+        if let Some((index, call)) = self.tool_call_mut(&id) {
+            call.append_content(content, &language_registry, cx);
+            cx.emit(AcpThreadEvent::EntryUpdated(index));
+        } else {
+            let mut call = ToolCall::from_patch(
+                id,
+                ToolCallPatch::protocol(acp_v2::ToolCallUpdate::new(tool_call_id)),
+                language_registry.clone(),
+                &self.terminals,
+                cx,
+            )?;
+            call.append_content(content, &language_registry, cx);
+            self.push_entry(AgentThreadEntry::ToolCall(call), cx);
+        }
+        Ok(())
+    }
+
+    fn ensure_tool_content_terminal(
+        &mut self,
+        content: &acp_v2::ToolCallContent,
+        cx: &mut Context<Self>,
+    ) {
+        if let acp_v2::ToolCallContent::Terminal(terminal) = content {
+            self.ensure_display_terminal(
+                acp_v1::TerminalId::new(terminal.terminal_id.0.clone()),
+                cx,
+            );
+        }
     }
 
     fn index_for_tool_call(&self, id: &acp_v1::ToolCallId) -> Option<usize> {
@@ -12999,6 +13062,196 @@ mod tests {
             assert_eq!(call.content()[0].to_markdown(cx), "refilled");
             assert_eq!(call.status(), ToolCallStatus::Completed);
         });
+    }
+
+    #[gpui::test]
+    async fn test_tool_content_chunk_ordering_and_targeting(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let events = events.clone();
+            cx.subscribe(&thread, move |_, event, _| match event {
+                AcpThreadEvent::NewEntry => events.borrow_mut().push(None),
+                AcpThreadEvent::EntryUpdated(index) => events.borrow_mut().push(Some(*index)),
+                _ => {}
+            })
+        });
+        thread.update(cx, |thread, cx| {
+            let first_id = acp_v1::ToolCallId::new("first");
+            let second_id = acp_v1::ToolCallId::new("first-extra");
+            thread
+                .append_tool_call_content_chunk(
+                    acp_v2::ToolCallContentChunk::new("first", "original")
+                        .meta(meta_with_tool_name("delivery_only")),
+                    cx,
+                )
+                .expect("chunk creates a minimal tool");
+            let (_, first) = thread.tool_call(&first_id).expect("first tool");
+            assert_eq!(first.reported_kind, None);
+            assert_eq!(first.reported_status, None);
+            assert_eq!(first.meta, None);
+            let original = first.content()[0]
+                .markdown()
+                .expect("original text")
+                .clone();
+            thread
+                .append_tool_call_content_chunk(
+                    acp_v2::ToolCallContentChunk::new("first-extra", "second"),
+                    cx,
+                )
+                .expect("chunk for distinct ID");
+            thread
+                .append_tool_call_content_chunk(
+                    acp_v2::ToolCallContentChunk::new("first", "historical"),
+                    cx,
+                )
+                .expect("append to the older tool");
+            let (index, first) = thread.tool_call(&first_id).expect("historical tool");
+            assert_eq!(index, 0);
+            assert_eq!(first.content()[0].markdown(), Some(&original));
+            assert_eq!(original.read(cx).source(), "original");
+            assert_eq!(
+                first
+                    .content()
+                    .iter()
+                    .map(|item| item.to_markdown(cx))
+                    .collect::<Vec<_>>(),
+                ["original", "historical"]
+            );
+            let (index, second) = thread.tool_call(&second_id).expect("second tool");
+            assert_eq!(index, 1);
+            assert_eq!(second.content().len(), 1);
+            assert_eq!(second.content()[0].to_markdown(cx), "second");
+            thread
+                .upsert_tool_call_patch(
+                    acp_v2::ToolCallUpdate::new("first")
+                        .content(vec!["replacement".into()])
+                        .raw_output(json!("raw fallback")),
+                    cx,
+                )
+                .expect("snapshot replaces chunks");
+            thread
+                .append_tool_call_content_chunk(
+                    acp_v2::ToolCallContentChunk::new("first", "after replacement"),
+                    cx,
+                )
+                .expect("append after replacement");
+            assert_eq!(
+                thread
+                    .tool_call(&first_id)
+                    .expect("tool")
+                    .1
+                    .content()
+                    .iter()
+                    .map(|item| item.to_markdown(cx))
+                    .collect::<Vec<_>>(),
+                ["replacement", "after replacement"]
+            );
+            thread
+                .upsert_tool_call_patch(
+                    acp_v2::ToolCallUpdate::new("first").content(Vec::new()),
+                    cx,
+                )
+                .expect("clear structured content");
+            assert_eq!(
+                thread.tool_call(&first_id).expect("tool").1.content()[0].to_markdown(cx),
+                "raw fallback"
+            );
+            thread
+                .append_tool_call_content_chunk(
+                    acp_v2::ToolCallContentChunk::new("first", "after clear"),
+                    cx,
+                )
+                .expect("append excludes the raw fallback");
+            let (_, first) = thread.tool_call(&first_id).expect("tool");
+            assert_eq!(first.content().len(), 1);
+            assert_eq!(first.content()[0].to_markdown(cx), "after clear");
+            assert_eq!(first.raw_output, Some(json!("raw fallback")));
+            assert_eq!(thread.entries().len(), 2);
+        });
+        assert_eq!(
+            *events.borrow(),
+            [None, None, Some(0), Some(0), Some(0), Some(0), Some(0)]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_content_chunk_preserves_existing_state(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let id = acp_v1::ToolCallId::new("native");
+        let tool_meta = meta_with_tool_name("tool_name");
+        let (request_id, mut permission) = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization_with_id(
+                    acp_v1::ToolCall::new(id.clone(), "Original")
+                        .status(acp_v1::ToolCallStatus::Completed)
+                        .meta(tool_meta.clone())
+                        .into(),
+                    PermissionOptions::Flat(vec![acp_v1::PermissionOption::new(
+                        "allow",
+                        "Allow",
+                        acp_v1::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .expect("legacy permission request");
+        thread.update(cx, |thread, cx| {
+            let buffer = cx.new(|cx| Buffer::local("native content", cx));
+            let diff = cx.new(|cx| Diff::new(buffer, cx));
+            thread
+                .update_tool_call(
+                    ToolCallUpdateDiff {
+                        id: id.clone(),
+                        diff: diff.clone(),
+                    },
+                    cx,
+                )
+                .expect("native diff ownership");
+            thread.push_assistant_content_block("visible".into(), false, cx);
+            thread.push_assistant_content_block(" buffered".into(), false, cx);
+            let (_, target) = thread
+                .streaming_content_target(None, false, false)
+                .expect("assistant streaming target");
+            thread
+                .append_tool_call_content_chunk(
+                    acp_v2::ToolCallContentChunk::new("native", "appended"),
+                    cx,
+                )
+                .expect("historical native append");
+            let (_, call) = thread.tool_call(&id).expect("native tool");
+            assert_eq!(call.diffs().next(), Some(&diff));
+            assert_eq!(call.content().len(), 2);
+            assert_eq!(call.authorization_id(), Some(request_id));
+            assert_eq!(call.status(), ToolCallStatus::WaitingForConfirmation);
+            assert_eq!(
+                call.reported_status,
+                Some(acp_v2::ToolCallStatus::Completed)
+            );
+            assert_eq!(call.meta.as_ref(), Some(&tool_meta));
+            assert!(thread.streaming_text_buffer.is_some());
+            assert_eq!(target.markdown.read(cx).source(), "visible");
+            thread
+                .append_tool_call_content_chunk(
+                    acp_v2::ToolCallContentChunk::new("new-boundary", "new row"),
+                    cx,
+                )
+                .expect("new row flushes streaming text");
+            assert!(thread.streaming_text_buffer.is_none());
+            assert_eq!(target.markdown.read(cx).source(), "visible buffered");
+        });
+        assert!((&mut permission).now_or_never().is_none());
+        thread.update(cx, |thread, cx| {
+            thread.cancel_permission_request(request_id, cx)
+        });
+        assert!(matches!(
+            permission.await,
+            RequestPermissionOutcome::Cancelled
+        ));
+        cx.run_until_parked();
     }
 
     #[gpui::test]
