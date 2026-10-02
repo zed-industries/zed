@@ -10,6 +10,7 @@ use project::{AgentLocation, ImageItem, Project, WorktreeSettings, image_store};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use std::borrow::Cow;
 use std::path::Path;
 use std::sync::Arc;
 use util::markdown::MarkdownCodeBlock;
@@ -43,6 +44,57 @@ fn resolve_line_range(start_line: Option<u32>, end_line: Option<u32>) -> (u32, u
 /// This format matches what the model expects in the edit tool, where the
 /// line number prefix is `line number + tab` and everything after the tab is
 /// the actual file content to match.
+/// Folds base64 data URIs whose payload exceeds 128 characters to prevent
+/// context bloat and generation token exhaustion.
+fn fold_data_uris(text: &str) -> Cow<'_, str> {
+    const MIN_FOLD_LEN: usize = 128;
+    const PREFIX: &str = "data:";
+    const BASE64_MARKER: &str = ";base64,";
+
+    if !text.contains(BASE64_MARKER) {
+        return Cow::Borrowed(text);
+    }
+
+    let mut result = String::with_capacity(text.len());
+    let mut cursor = 0;
+
+    while let Some(rel_start) = text[cursor..].find(PREFIX) {
+        let start = cursor + rel_start;
+        result.push_str(&text[cursor..start]);
+
+        if let Some(rel_b64) = text[start..].find(BASE64_MARKER) {
+            let b64_end = start + rel_b64 + BASE64_MARKER.len();
+            let payload_end = text[b64_end..]
+                .find(|c: char| {
+                    c.is_ascii_whitespace()
+                        || c == '"'
+                        || c == '\''
+                        || c == ')'
+                        || c == '`'
+                        || c == '>'
+                        || c == '#'
+                })
+                .map(|pos| b64_end + pos)
+                .unwrap_or(text.len());
+
+            let payload_len = payload_end - b64_end;
+            if payload_len >= MIN_FOLD_LEN {
+                result.push_str(&text[start..b64_end]);
+                use std::fmt::Write as _;
+                let _ = write!(result, "[... {payload_len} chars omitted]");
+            } else {
+                result.push_str(&text[start..payload_end]);
+            }
+            cursor = payload_end;
+        } else {
+            result.push_str(PREFIX);
+            cursor = start + PREFIX.len();
+        }
+    }
+    result.push_str(&text[cursor..]);
+    Cow::Owned(result)
+}
+
 fn format_with_line_numbers(text: &str, start_line: u32) -> String {
     if text.is_empty() {
         return String::new();
@@ -50,7 +102,7 @@ fn format_with_line_numbers(text: &str, start_line: u32) -> String {
 
     let mut output = String::with_capacity(text.len() + text.len() / 4);
     write_lines_numbered(&mut output, std::iter::once(text), start_line);
-    output
+    fold_data_uris(&output).into_owned()
 }
 
 /// Streams `cat -n`-style line-numbered output directly into `output` from an
@@ -441,7 +493,7 @@ impl AgentTool for ReadFileTool {
                         buffer.text_for_range(start_anchor..end_anchor),
                         start,
                     );
-                    output
+                    fold_data_uris(&output).into_owned()
                 });
 
                 action_log.update(cx, |log, cx| {
@@ -2041,5 +2093,79 @@ mod test {
             result.is_err(),
             "path outside skills dir should be rejected"
         );
+    }
+    #[gpui::test]
+    async fn test_read_file_folds_large_base64_data_uris(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let small_b64 = "a".repeat(50);
+        let large_b64 = "b".repeat(500);
+        let file_content = format!(
+            r#"<img src="data:image/png;base64,{small_b64}">
+<img src="data:image/png;base64,{large_b64}">
+"#
+        );
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "index.html": file_content
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+
+        // Test whole-file read
+        let tool_clone = tool.clone();
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: "root/index.html".to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
+                tool_clone.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let LanguageModelToolResultContent::Text(text) = result.unwrap() else {
+            panic!("expected text content");
+        };
+
+        // Small base64 stays untouched
+        assert!(text.contains(&format!("data:image/png;base64,{small_b64}")));
+        // Large base64 is folded
+        assert!(text.contains("data:image/png;base64,[... 500 chars omitted]"));
+        assert!(!text.contains(&large_b64));
+
+        // Test ranged read (start_line: 2, end_line: 2)
+        let result_ranged = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: "root/index.html".to_string(),
+                    start_line: Some(2),
+                    end_line: Some(2),
+                };
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let LanguageModelToolResultContent::Text(text_ranged) = result_ranged.unwrap() else {
+            panic!("expected text content");
+        };
+
+        assert!(text_ranged.contains("data:image/png;base64,[... 500 chars omitted]"));
+        assert!(!text_ranged.contains(&large_b64));
     }
 }
