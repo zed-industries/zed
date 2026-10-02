@@ -481,7 +481,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        window.on_mouse_event({
+        window.on_scroll_wheel_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
             let hitbox = layout.hitbox.clone();
@@ -568,6 +568,7 @@ impl EditorElement {
                         });
                     }
                 }
+                event.delta
             }
         });
     }

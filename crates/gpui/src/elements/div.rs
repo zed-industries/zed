@@ -23,8 +23,8 @@ use crate::{
     KeyboardClickEvent, LayoutId, LongPressEvent, ModifiersChangedEvent, MouseButton,
     MouseClickEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MousePressureEvent,
     MouseUpEvent, OngoingScroll, Overflow, ParentElement, PinchEvent, Pixels, Point, Render,
-    ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId,
-    TouchPhase, Visibility, Window, WindowControlArea, point, px, size,
+    ScrollDelta, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
+    TooltipId, TouchPhase, Visibility, Window, WindowControlArea, point, px, size,
 };
 use collections::HashMap;
 use gpui_util::ResultExt;
@@ -389,12 +389,14 @@ impl Interactivity {
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_scroll_wheel(
         &mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
+        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) -> ScrollDelta + 'static,
     ) {
         self.scroll_wheel_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
-                    (listener)(event, window, cx);
+                    (listener)(event, window, cx)
+                } else {
+                    event.delta
                 }
             }));
     }
@@ -1059,7 +1061,7 @@ pub trait InteractiveElement: Sized {
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_scroll_wheel(
         mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
+        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) -> ScrollDelta + 'static,
     ) -> Self {
         self.interactivity().on_scroll_wheel(listener);
         self
@@ -1728,8 +1730,10 @@ pub(crate) type MouseExitListener =
 pub(crate) type FileDropExitListener =
     Box<dyn Fn(&FileDropEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
-pub(crate) type ScrollWheelListener =
-    Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
+pub(crate) type ScrollWheelListener = Box<
+    dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) -> ScrollDelta
+        + 'static,
+>;
 
 pub(crate) type PinchListener =
     Box<dyn Fn(&PinchEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
@@ -2833,8 +2837,8 @@ impl Interactivity {
 
         for listener in self.scroll_wheel_listeners.drain(..) {
             let hitbox = hitbox.clone();
-            window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                listener(event, phase, &hitbox, window, cx);
+            window.on_scroll_wheel_event(move |event, phase, window, cx| {
+                listener(event, phase, &hitbox, window, cx)
             })
         }
 
@@ -3340,11 +3344,8 @@ impl Interactivity {
             let line_height = window.line_height();
             let hitbox = hitbox.clone();
             let current_view = window.current_view();
-            window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                if phase == DispatchPhase::Bubble
-                    && hitbox.should_handle_scroll(window)
-                    && !window.scroll_wheel_taken()
-                {
+            window.on_scroll_wheel_event(move |event, phase, window, cx| {
+                if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
                     let mut delta = event.delta.pixel_delta(line_height);
@@ -3358,6 +3359,14 @@ impl Interactivity {
                             .filter(&mut delta, event.touch_phase);
                     }
 
+                    let x_from_y = overflow.x == Overflow::Scroll
+                        && delta.x.is_zero()
+                        && !restrict_scroll_to_axis
+                        && overflow.y != Overflow::Scroll;
+                    let y_from_x = overflow.y == Overflow::Scroll
+                        && delta.y.is_zero()
+                        && !restrict_scroll_to_axis
+                        && overflow.x != Overflow::Scroll;
                     let mut delta_x = match overflow.x {
                         Overflow::Scroll if !delta.x.is_zero() => delta.x,
                         Overflow::Scroll
@@ -3385,11 +3394,24 @@ impl Interactivity {
                     }
                     scroll_offset.y = (scroll_offset.y + delta_y).clamp(-scroll_max.y, px(0.));
                     scroll_offset.x = (scroll_offset.x + delta_x).clamp(-scroll_max.x, px(0.));
-                    if *scroll_offset != old_scroll_offset {
+                    let moved = *scroll_offset - old_scroll_offset;
+                    if !moved.is_zero() {
                         cx.notify(current_view);
-                        window.take_scroll_wheel();
+                        let mut rest = delta;
+                        if x_from_y {
+                            rest.y -= moved.x;
+                        } else {
+                            rest.x -= moved.x;
+                        }
+                        if y_from_x {
+                            rest.x -= moved.y;
+                        } else {
+                            rest.y -= moved.y;
+                        }
+                        return ScrollDelta::Pixels(rest);
                     }
                 }
+                event.delta
             });
         }
     }
@@ -3798,12 +3820,13 @@ pub(crate) fn register_tooltip_mouse_handlers(
         }
     });
 
-    window.on_mouse_event({
+    window.on_scroll_wheel_event({
         let active_tooltip = active_tooltip.clone();
-        move |_: &ScrollWheelEvent, _phase, window: &mut Window, _cx| {
+        move |event: &ScrollWheelEvent, _phase, window: &mut Window, _cx| {
             if !tooltip_id.is_some_and(|tooltip_id| tooltip_id.is_hovered(window)) {
                 clear_active_tooltip_if_not_hoverable(&active_tooltip, window);
             }
+            event.delta
         }
     });
 }
@@ -5700,7 +5723,10 @@ mod tests {
                     .size(px(100.))
                     .overflow_y_scroll()
                     .track_scroll(&outer)
-                    .on_scroll_wheel(move |_, _, _| outer_saw.set(outer_saw.get() + 1))
+                    .on_scroll_wheel(move |event, _, _| {
+                        outer_saw.set(outer_saw.get() + 1);
+                        event.delta
+                    })
                     .child(
                         div()
                             .id("inner")
@@ -5717,7 +5743,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn the_inner_scroll_container_scrolls_until_its_end(cx: &mut TestAppContext) {
+    fn the_outer_scroll_container_gets_what_the_inner_one_did_not_use(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
         let nested = NestedScroll::new();
         nested.draw(cx);
@@ -5728,11 +5754,11 @@ mod tests {
 
         cx.simulate_event(wheel(-30.));
         assert_eq!(nested.inner.offset().y, px(-50.));
-        assert_eq!(nested.outer.offset().y, px(0.));
+        assert_eq!(nested.outer.offset().y, px(-10.));
 
         cx.simulate_event(wheel(-30.));
         assert_eq!(nested.inner.offset().y, px(-50.));
-        assert_eq!(nested.outer.offset().y, px(-30.));
+        assert_eq!(nested.outer.offset().y, px(-40.));
 
         assert_eq!(nested.outer_saw.get(), 3);
     }

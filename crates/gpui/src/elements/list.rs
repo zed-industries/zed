@@ -10,8 +10,8 @@
 use crate::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
     FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement,
-    Overflow, Pixels, Point, ScrollDelta, ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
-    Window, point, px, size,
+    Overflow, Pixels, Point, ScrollDelta, Size, Style, StyleRefinement, Styled, Window, point, px,
+    size,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -1429,7 +1429,7 @@ impl std::fmt::Debug for ListItem {
 
 /// An offset into the list's items, in terms of the item index and the number
 /// of pixels off the top left of the item.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ListOffset {
     /// The index of an item in the list
     pub item_ix: usize,
@@ -1598,26 +1598,22 @@ impl Element for List {
         let scroll_top = prepaint.layout.scroll_top;
         let hitbox_id = prepaint.hitbox.id;
         let mut accumulated_scroll_delta = ScrollDelta::default();
-        window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-            if phase == DispatchPhase::Bubble
-                && hitbox_id.should_handle_scroll(window)
-                && !window.scroll_wheel_taken()
-            {
-                accumulated_scroll_delta = accumulated_scroll_delta.coalesce(event.delta);
-                let pixel_delta = accumulated_scroll_delta.pixel_delta(px(20.));
-                let before = list_state.logical_scroll_top();
-                list_state.0.borrow_mut().scroll(
-                    &scroll_top,
-                    height,
-                    pixel_delta,
-                    current_view,
-                    window,
-                    cx,
-                );
-                if list_state.logical_scroll_top() != before {
-                    window.take_scroll_wheel();
-                }
+        window.on_scroll_wheel_event(move |event, phase, window, cx| {
+            if phase != DispatchPhase::Bubble || !hitbox_id.should_handle_scroll(window) {
+                return event.delta;
             }
+            accumulated_scroll_delta = accumulated_scroll_delta.coalesce(event.delta);
+            let pixel_delta = accumulated_scroll_delta.pixel_delta(px(20.));
+            let mut state = list_state.0.borrow_mut();
+            let before = state.scroll_top(&state.logical_scroll_top());
+            state.scroll(&scroll_top, height, pixel_delta, current_view, window, cx);
+            let moved = state.scroll_top(&state.logical_scroll_top()) - before;
+            if moved == px(0.) {
+                return event.delta;
+            }
+            let mut rest = event.delta.pixel_delta(px(20.));
+            rest.y += moved;
+            ScrollDelta::Pixels(rest)
         });
 
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
@@ -1732,8 +1728,8 @@ mod test {
 
     use crate::{
         self as gpui, AppContext, Bounds, Context, Element, FollowMode, InteractiveElement,
-        IntoElement, ListState, Render, Styled, TestAppContext, Window, canvas, div, list, point,
-        px, size,
+        IntoElement, ListState, ParentElement, Render, ScrollHandle, StatefulInteractiveElement,
+        Styled, TestAppContext, Window, canvas, div, list, point, px, size,
     };
 
     #[gpui::test]
@@ -1878,6 +1874,54 @@ mod test {
     }
 
     #[gpui::test]
+    fn test_list_passes_the_unused_scroll_to_its_parent(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(5, crate::ListAlignment::Top, px(10.)).measure_all();
+        let outer = ScrollHandle::new();
+
+        struct TestView {
+            state: ListState,
+            outer: ScrollHandle,
+        }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .id("outer")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.outer)
+                    .child(
+                        list(self.state.clone(), |_, _, _| {
+                            div().h(px(20.)).w_full().into_any()
+                        })
+                        .w_full()
+                        .h(px(50.)),
+                    )
+                    .child(div().w_full().h(px(200.)))
+            }
+        }
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+            cx.new(|_| TestView {
+                state: state.clone(),
+                outer: outer.clone(),
+            })
+            .into_any_element()
+        });
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: point(px(50.), px(10.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(-80.))),
+            ..Default::default()
+        });
+
+        let offset = state.logical_scroll_top();
+        assert_eq!((offset.item_ix, offset.offset_in_item), (2, px(10.)));
+        assert_eq!(outer.offset().y, px(-30.));
+    }
+
+    #[gpui::test]
     fn test_child_scroll_handler_can_stop_list_scroll(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
 
@@ -1896,9 +1940,10 @@ mod test {
                     div()
                         .h(px(20.))
                         .w_full()
-                        .on_scroll_wheel(move |_, _, cx| {
+                        .on_scroll_wheel(move |event, _, cx| {
                             child_saw_event.set(true);
                             cx.stop_propagation();
+                            event.delta
                         })
                         .into_any()
                 })
