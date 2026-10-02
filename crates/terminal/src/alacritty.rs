@@ -281,8 +281,15 @@ pub(super) fn toggle_vi_mode(term: &mut AlacrittyTerm) {
     term.toggle_vi_mode();
 }
 
-pub(super) fn vi_motion(term: &mut AlacrittyTerm, motion: ViMotion) {
-    term.vi_motion(motion.to_alacritty());
+pub(super) fn vi_motion(term: &mut AlacrittyTerm, motion: ViMotion, count: usize) {
+    let count = count.min(term.total_lines().saturating_mul(term.columns()));
+    for _ in 0..count {
+        let previous_point = term.vi_mode_cursor.point;
+        term.vi_motion(motion.to_alacritty());
+        if term.vi_mode_cursor.point == previous_point {
+            break;
+        }
+    }
 }
 
 fn alacritty_cursor_style(cursor_shape: SettingsCursorShape) -> AlacCursorStyle {
