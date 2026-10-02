@@ -31,6 +31,8 @@
 //! elements when you need to take manual control of the layout and painting process, such as when using
 //! your own custom layout algorithm or rendering a code editor.
 
+#[cfg(any(feature = "inspector", debug_assertions))]
+use crate::InspectorElementPath;
 use crate::{
     A11ySubtreeBuilder, App, ArenaBox, AvailableSpace, Bounds, Context, DispatchNodeId, ElementId,
     FocusHandle, InspectorElementId, LayoutId, Pixels, Point, Size, Style, Window,
@@ -194,7 +196,7 @@ pub trait ParentElement {
     where
         Self: Sized,
     {
-        self.extend(std::iter::once(child.into_element().into_any()));
+        self.extend(std::iter::once(child.into_any_element()));
         self
     }
 
@@ -297,21 +299,21 @@ impl<E: Element> Drawable<E> {
     fn request_layout(&mut self, window: &mut Window, cx: &mut App) -> LayoutId {
         match mem::take(&mut self.phase) {
             ElementDrawPhase::Start => {
-                let global_id = self.element.id().map(|element_id| {
-                    window.element_id_stack.push(element_id);
-                    GlobalElementId(Arc::from(&*window.element_id_stack))
-                });
+                let global_id = self
+                    .element
+                    .id()
+                    .map(|element_id| prepare_element_id(element_id, window));
 
                 let inspector_id;
                 #[cfg(any(feature = "inspector", debug_assertions))]
                 {
-                    inspector_id = self.element.source_location().map(|source| {
-                        let path = crate::InspectorElementPath {
-                            global_id: GlobalElementId(Arc::from(&*window.element_id_stack)),
-                            source_location: source,
-                        };
-                        window.build_inspector_element_id(path)
-                    });
+                    inspector_id = if window.inspector_enabled() {
+                        self.element
+                            .source_location()
+                            .map(|source| prepare_inspector_id(source, window))
+                    } else {
+                        None
+                    };
                 }
                 #[cfg(not(any(feature = "inspector", debug_assertions)))]
                 {
@@ -789,4 +791,23 @@ impl Element for Empty {
         _cx: &mut App,
     ) {
     }
+}
+
+#[inline(never)]
+fn prepare_element_id(element_id: ElementId, window: &mut Window) -> GlobalElementId {
+    window.element_id_stack.push(element_id);
+    GlobalElementId(Arc::from(&*window.element_id_stack))
+}
+
+#[cfg(any(feature = "inspector", debug_assertions))]
+#[inline(never)]
+fn prepare_inspector_id(
+    source: &'static panic::Location<'static>,
+    window: &mut Window,
+) -> InspectorElementId {
+    let path = InspectorElementPath {
+        global_id: GlobalElementId(Arc::from(&*window.element_id_stack)),
+        source_location: source,
+    };
+    window.build_inspector_element_id(path)
 }

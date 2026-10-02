@@ -136,7 +136,7 @@ fn main() -> Result<(), anyhow::Error> {
         let node = NodeRuntime::new(http_client, None, rx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
-        let fs = Arc::new(RealFs::new(None, cx.background_executor().clone()));
+        let fs = RealFs::new(None, cx.background_executor().clone());
 
 
 

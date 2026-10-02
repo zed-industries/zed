@@ -55,7 +55,7 @@ pub fn load_config(name: &str) -> LanguageConfig {
     )
     .unwrap();
 
-    let config: LanguageConfig = ::toml::from_str(&config_toml)
+    let config = LanguageConfig::from_toml(&config_toml)
         .with_context(|| format!("failed to load config.toml for language {name:?}"))
         .unwrap();
 

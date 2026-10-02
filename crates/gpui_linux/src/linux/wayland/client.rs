@@ -99,7 +99,7 @@ use gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, ExternalDragPayload,
     FileDragPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput,
+    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformFrameSignal, PlatformInput,
     PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta, ScrollWheelEvent, SharedString,
     Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, profiler, px, size,
 };
@@ -260,7 +260,9 @@ impl Globals {
             primary_selection_manager: globals.bind(&qh, 1..=1, ()).ok(),
             shm: globals.bind(&qh, 1..=1, ()).unwrap(),
             seat,
-            wm_base: globals.bind(&qh, 1..=5, ()).unwrap(),
+            // Accept any xdg_wm_base version up to 6, which added the `suspended`
+            // toplevel state; older compositors bind at their own version.
+            wm_base: globals.bind(&qh, 1..=6, ()).unwrap(),
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
@@ -368,10 +370,95 @@ pub(crate) struct WaylandClientState {
     ime_enabled: Option<bool>,
 }
 
-pub struct DragState {
-    data_offer: Option<wl_data_offer::WlDataOffer>,
-    window: Option<WaylandWindowStatePtr>,
+struct DragState<DataOffer = wl_data_offer::WlDataOffer, Window = WaylandWindowStatePtr> {
+    data_offer: Option<DataOffer>,
+    window: Option<Window>,
     position: Point<Pixels>,
+    uri_read_generation: u64,
+}
+
+impl<DataOffer, Window> DragState<DataOffer, Window> {
+    fn begin_uri_read(&mut self) -> u64 {
+        self.invalidate_uri_read();
+        self.uri_read_generation
+    }
+
+    fn invalidate_uri_read(&mut self) {
+        self.uri_read_generation = self.uri_read_generation.wrapping_add(1);
+    }
+
+    fn is_uri_read_current(&self, generation: u64) -> bool {
+        self.uri_read_generation == generation
+    }
+}
+
+trait FileDragDataOffer {
+    fn finish(&self);
+    fn destroy(&self);
+}
+
+impl FileDragDataOffer for wl_data_offer::WlDataOffer {
+    fn finish(&self) {
+        wl_data_offer::WlDataOffer::finish(self);
+    }
+
+    fn destroy(&self) {
+        wl_data_offer::WlDataOffer::destroy(self);
+    }
+}
+
+impl<DataOffer, Window> DragState<DataOffer, Window>
+where
+    DataOffer: FileDragDataOffer + Clone,
+    Window: Clone,
+{
+    fn handle_leave(&mut self) -> Option<(Window, PlatformInput)> {
+        self.invalidate_uri_read();
+        let window = self.window.clone()?;
+        let data_offer = self.data_offer.clone()?;
+        data_offer.destroy();
+        self.data_offer = None;
+        self.window = None;
+        Some((window, PlatformInput::FileDrop(FileDropEvent::Exited {})))
+    }
+
+    fn handle_drop(&mut self) -> Option<(Window, PlatformInput)> {
+        self.invalidate_uri_read();
+        let window = self.window.clone()?;
+        let data_offer = self.data_offer.clone()?;
+        data_offer.finish();
+        data_offer.destroy();
+        self.data_offer = None;
+        self.window = None;
+        Some((
+            window,
+            PlatformInput::FileDrop(FileDropEvent::Submit {
+                position: self.position,
+            }),
+        ))
+    }
+
+    fn complete_uri_read(
+        &mut self,
+        generation: u64,
+        data_offer: DataOffer,
+        window: Window,
+        position: Point<Pixels>,
+        paths: gpui::ExternalPaths,
+    ) -> Option<(Window, PlatformInput)> {
+        if !self.is_uri_read_current(generation) {
+            data_offer.destroy();
+            return None;
+        }
+
+        self.data_offer = Some(data_offer);
+        self.window = Some(window.clone());
+        self.position = position;
+        Some((
+            window,
+            PlatformInput::FileDrop(FileDropEvent::Entered { position, paths }),
+        ))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -471,11 +558,11 @@ impl WaylandClientStatePtr {
         let surface_id = surface_id.clone();
         if let Err(err) = state.loop_handle.insert_source(
             Timer::from_duration(FRAME_RETRY_INTERVAL),
-            move |_, _, this| {
+            move |deadline, _, this| {
                 let client = this.get_client();
                 let window = get_window(&mut client.borrow_mut(), &surface_id);
                 if let Some(window) = window {
-                    window.retry_timer_fired();
+                    window.retry_timer_fired(deadline);
                 }
                 TimeoutAction::Drop
             },
@@ -787,7 +874,7 @@ impl WaylandClient {
 
         let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
-        let (common, main_receiver, wake_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver, power_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
         handle
@@ -809,10 +896,14 @@ impl WaylandClient {
 
         handle
             .insert_source(
-                wake_receiver,
+                power_receiver,
                 |event, _, client: &mut WaylandClientStatePtr| {
-                    if let calloop::channel::Event::Msg(()) = event {
-                        client.get_client().borrow_mut().common.handle_system_wake();
+                    if let calloop::channel::Event::Msg(event) = event {
+                        client
+                            .get_client()
+                            .borrow_mut()
+                            .common
+                            .handle_system_power_event(event);
                     }
                 },
             )
@@ -923,6 +1014,7 @@ impl WaylandClient {
                 data_offer: None,
                 window: None,
                 position: Point::default(),
+                uri_read_generation: 0,
             },
             external_drag: None,
             click: ClickState {
@@ -1452,10 +1544,45 @@ impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
         };
         drop(state);
 
-        if let wl_callback::Event::Done { .. } = event {
-            window.frame_callback_fired();
+        if let wl_callback::Event::Done { callback_data } = event {
+            window.frame_callback_fired(PlatformFrameSignal::capture(|| {
+                frame_callback_signal_at(callback_data)
+            }));
         }
     }
+}
+
+fn frame_callback_signal_at(callback_data: u32) -> Instant {
+    let mut monotonic = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // wl_surface.frame specifies an unspecified epoch. Mutter and Sway use
+    // CLOCK_MONOTONIC, but reject implausible ages for other compositor clocks.
+    let result = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut monotonic) };
+    let received_at = Instant::now();
+    if result != 0 || monotonic.tv_sec < 0 || !(0..1_000_000_000).contains(&monotonic.tv_nsec) {
+        return received_at;
+    }
+    let monotonic_millis =
+        (monotonic.tv_sec as u64 * 1_000 + monotonic.tv_nsec as u64 / 1_000_000) as u32;
+    frame_callback_instant(callback_data, monotonic_millis, received_at)
+}
+
+fn frame_callback_instant(
+    callback_data: u32,
+    monotonic_millis: u32,
+    received_at: Instant,
+) -> Instant {
+    // The wire timestamp wraps every ~49 days. A future timestamp also wraps
+    // when subtracted, so the bound rejects it without guessing another epoch.
+    let age_millis = monotonic_millis.wrapping_sub(callback_data);
+    if age_millis > 60_000 {
+        return received_at;
+    }
+    received_at
+        .checked_sub(Duration::from_millis(u64::from(age_millis)))
+        .unwrap_or(received_at)
 }
 
 pub(crate) fn get_window(
@@ -2595,6 +2722,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     let Some(drag_window) = get_window(&mut state, &surface.id()) else {
                         return;
                     };
+                    let uri_read_generation = state.drag.begin_uri_read();
 
                     const ACTIONS: DndAction = DndAction::Copy;
                     data_offer.set_actions(ACTIONS, ACTIONS);
@@ -2643,20 +2771,20 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                                 data_offer.destroy();
                                 return;
                             }
-
-                            let input = PlatformInput::FileDrop(FileDropEvent::Entered {
-                                position,
-                                paths: gpui::ExternalPaths(paths),
-                            });
-
                             let client = this.get_client();
                             let mut state = client.borrow_mut();
-                            state.drag.data_offer = Some(data_offer);
-                            state.drag.window = Some(drag_window.clone());
-                            state.drag.position = position;
+                            let input = state.drag.complete_uri_read(
+                                uri_read_generation,
+                                data_offer,
+                                drag_window,
+                                position,
+                                gpui::ExternalPaths(paths),
+                            );
 
                             drop(state);
-                            drag_window.handle_input(input);
+                            if let Some((drag_window, input)) = input {
+                                drag_window.handle_input(input);
+                            }
                         })
                         .detach();
                 }
@@ -2673,35 +2801,18 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                 drag_window.handle_input(input);
             }
             wl_data_device::Event::Leave => {
-                let Some(drag_window) = state.drag.window.clone() else {
-                    return;
-                };
-                let data_offer = state.drag.data_offer.clone().unwrap();
-                data_offer.destroy();
-
-                state.drag.data_offer = None;
-                state.drag.window = None;
-
-                let input = PlatformInput::FileDrop(FileDropEvent::Exited {});
+                let input = state.drag.handle_leave();
                 drop(state);
-                drag_window.handle_input(input);
+                if let Some((drag_window, input)) = input {
+                    drag_window.handle_input(input);
+                }
             }
             wl_data_device::Event::Drop => {
-                let Some(drag_window) = state.drag.window.clone() else {
-                    return;
-                };
-                let data_offer = state.drag.data_offer.clone().unwrap();
-                data_offer.finish();
-                data_offer.destroy();
-
-                state.drag.data_offer = None;
-                state.drag.window = None;
-
-                let input = PlatformInput::FileDrop(FileDropEvent::Submit {
-                    position: state.drag.position,
-                });
+                let input = state.drag.handle_drop();
                 drop(state);
-                drag_window.handle_input(input);
+                if let Some((drag_window, input)) = input {
+                    drag_window.handle_input(input);
+                }
             }
             _ => {}
         }
@@ -2903,6 +3014,170 @@ mod tests {
     use std::cell::Cell;
 
     use super::*;
+
+    #[test]
+    fn frame_callback_timestamp_preserves_queue_delay() {
+        let received_at = Instant::now();
+        assert_eq!(
+            frame_callback_instant(1_000, 1_025, received_at),
+            received_at - Duration::from_millis(25),
+        );
+        assert_eq!(
+            frame_callback_instant(1_000, 1_000, received_at),
+            received_at,
+        );
+    }
+
+    #[test]
+    fn frame_callback_timestamp_wraps() {
+        let received_at = Instant::now();
+        assert_eq!(
+            frame_callback_instant(u32::MAX - 9, 15, received_at),
+            received_at - Duration::from_millis(25),
+        );
+    }
+
+    #[test]
+    fn frame_callback_timestamp_rejects_implausible_clock() {
+        let received_at = Instant::now();
+        for (callback_data, monotonic_millis) in [(1_001, 1_000), (0, 60_001), (0, u32::MAX)] {
+            assert_eq!(
+                frame_callback_instant(callback_data, monotonic_millis, received_at),
+                received_at,
+            );
+        }
+        assert_eq!(
+            frame_callback_instant(0, 60_000, received_at),
+            received_at - Duration::from_secs(60),
+        );
+    }
+
+    #[derive(Clone)]
+    struct FakeDataOffer {
+        name: &'static str,
+        finished: Rc<Cell<bool>>,
+        destroyed: Rc<Cell<bool>>,
+    }
+
+    impl FakeDataOffer {
+        fn new(name: &'static str) -> Self {
+            Self {
+                name,
+                finished: Rc::new(Cell::new(false)),
+                destroyed: Rc::new(Cell::new(false)),
+            }
+        }
+    }
+
+    impl FileDragDataOffer for FakeDataOffer {
+        fn finish(&self) {
+            self.finished.set(true);
+        }
+
+        fn destroy(&self) {
+            self.destroyed.set(true);
+        }
+    }
+
+    fn drag_state() -> DragState<FakeDataOffer, &'static str> {
+        DragState {
+            data_offer: None,
+            window: None,
+            position: Point::default(),
+            uri_read_generation: 0,
+        }
+    }
+
+    fn complete_drag_uri_read(
+        drag: &mut DragState<FakeDataOffer, &'static str>,
+        generation: u64,
+        data_offer: FakeDataOffer,
+        window: &'static str,
+    ) -> Option<(&'static str, PlatformInput)> {
+        drag.complete_uri_read(
+            generation,
+            data_offer,
+            window,
+            Point::default(),
+            gpui::ExternalPaths(SmallVec::from_vec(vec![PathBuf::from("/tmp/file")])),
+        )
+    }
+
+    fn record_entered(
+        input: Option<(&'static str, PlatformInput)>,
+        entered_windows: &mut Vec<&'static str>,
+    ) {
+        if let Some((window, PlatformInput::FileDrop(FileDropEvent::Entered { .. }))) = input {
+            entered_windows.push(window);
+        }
+    }
+
+    #[test]
+    fn leave_discards_pending_drag_uri_read() {
+        let mut drag = drag_state();
+        let data_offer = FakeDataOffer::new("A");
+        let generation = drag.begin_uri_read();
+        let mut entered_windows = Vec::new();
+
+        record_entered(drag.handle_leave(), &mut entered_windows);
+        record_entered(
+            complete_drag_uri_read(&mut drag, generation, data_offer.clone(), "window A"),
+            &mut entered_windows,
+        );
+
+        assert!(entered_windows.is_empty());
+        assert!(data_offer.destroyed.get());
+        assert!(drag.data_offer.is_none());
+        assert!(drag.window.is_none());
+    }
+
+    #[test]
+    fn drop_then_leave_discards_pending_drag_uri_read() {
+        let mut drag = drag_state();
+        let data_offer = FakeDataOffer::new("A");
+        let generation = drag.begin_uri_read();
+        let mut entered_windows = Vec::new();
+
+        record_entered(drag.handle_drop(), &mut entered_windows);
+        assert_ne!(drag.uri_read_generation, generation);
+        record_entered(drag.handle_leave(), &mut entered_windows);
+        record_entered(
+            complete_drag_uri_read(&mut drag, generation, data_offer.clone(), "window A"),
+            &mut entered_windows,
+        );
+
+        assert!(entered_windows.is_empty());
+        assert!(!data_offer.finished.get());
+        assert!(data_offer.destroyed.get());
+        assert!(drag.data_offer.is_none());
+        assert!(drag.window.is_none());
+    }
+
+    #[test]
+    fn stale_completion_preserves_newer_drag_destination() {
+        let mut drag = drag_state();
+        let data_offer_a = FakeDataOffer::new("A");
+        let generation_a = drag.begin_uri_read();
+        let mut entered_windows = Vec::new();
+        record_entered(drag.handle_leave(), &mut entered_windows);
+
+        let data_offer_b = FakeDataOffer::new("B");
+        let generation_b = drag.begin_uri_read();
+        record_entered(
+            complete_drag_uri_read(&mut drag, generation_b, data_offer_b.clone(), "window B"),
+            &mut entered_windows,
+        );
+        record_entered(
+            complete_drag_uri_read(&mut drag, generation_a, data_offer_a.clone(), "window A"),
+            &mut entered_windows,
+        );
+
+        assert_eq!(entered_windows, ["window B"]);
+        assert!(data_offer_a.destroyed.get());
+        assert!(!data_offer_b.destroyed.get());
+        assert_eq!(drag.data_offer.as_ref().map(|offer| offer.name), Some("B"));
+        assert_eq!(drag.window, Some("window B"));
+    }
 
     #[derive(Default)]
     struct FakeImeCursorRectangleSink {

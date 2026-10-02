@@ -7,7 +7,7 @@ use crate::{
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
     WriteFileTool, decide_permission_from_settings,
 };
-use acp_thread::{ClientUserMessageId, MentionUri};
+use acp_thread::{AgentModelId, ClientUserMessageId, MentionUri};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 
@@ -267,7 +267,12 @@ impl Message {
             Message::User(message) => message.to_markdown(),
             Message::Agent(message) => message.to_markdown(),
             Message::Resume => "[resume]\n".into(),
-            Message::Compaction(_) => "--- Context Compacted ---\n".into(),
+            Message::Compaction(CompactionInfo::Summary(summary)) => {
+                format!("## Context Compaction (Completed)\n\n{summary}\n\n")
+            }
+            Message::Compaction(CompactionInfo::ProviderNative { .. }) => {
+                "## Context Compaction (Completed)\n\n".into()
+            }
         }
     }
 
@@ -782,7 +787,12 @@ pub trait ThreadEnvironment {
         cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn TerminalHandle>>>;
 
-    fn create_subagent(&self, label: String, cx: &mut App) -> Result<Rc<dyn SubagentHandle>>;
+    fn create_subagent(
+        &self,
+        label: String,
+        model: Option<AgentModelId>,
+        cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>>;
 
     fn resume_subagent(
         &self,
@@ -879,6 +889,7 @@ pub struct AvailableAgent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AvailableModel {
     /// Identifier to pass as the `model` field when creating a thread.
+    /// For `spawn_agent`, use a model from the native Zed agent entry.
     pub id: String,
     /// Human-readable name.
     pub name: SharedString,
@@ -1228,13 +1239,13 @@ enum CompletionError {
 }
 
 pub enum ThreadModel {
-    Ready(Arc<dyn LanguageModel>),
+    Ready(LanguageModel),
     Unresolved(SelectedModel),
     Unset,
 }
 
 impl ThreadModel {
-    fn as_model(&self) -> Option<&Arc<dyn LanguageModel>> {
+    fn as_model(&self) -> Option<&LanguageModel> {
         match self {
             Self::Ready(model) => Some(model),
             Self::Unresolved(_) | Self::Unset => None,
@@ -1296,7 +1307,7 @@ pub struct Thread {
     project_context: Entity<ProjectContext>,
     pub(crate) templates: Arc<Templates>,
     model: ThreadModel,
-    summarization_model: Option<Arc<dyn LanguageModel>>,
+    summarization_model: Option<LanguageModel>,
     thinking_enabled: bool,
     thinking_effort: Option<String>,
     speed: Option<Speed>,
@@ -1321,19 +1332,23 @@ pub struct Thread {
 }
 
 impl Thread {
-    fn prompt_capabilities(model: Option<&dyn LanguageModel>) -> acp::PromptCapabilities {
+    fn prompt_capabilities(model: Option<&LanguageModel>) -> acp::PromptCapabilities {
         let image = model.map_or(true, |model| model.supports_images());
         acp::PromptCapabilities::new()
             .image(image)
             .embedded_context(true)
     }
 
-    pub fn new_subagent(parent_thread: &Entity<Thread>, cx: &mut Context<Self>) -> Self {
+    pub fn new_subagent(
+        parent_thread: &Entity<Thread>,
+        model_selection: Option<&LanguageModelSelection>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let project = parent_thread.read(cx).project.clone();
         let project_context = parent_thread.read(cx).project_context.clone();
         let context_server_registry = parent_thread.read(cx).context_server_registry.clone();
         let templates = parent_thread.read(cx).templates.clone();
-        let model = parent_thread.read(cx).model().cloned();
+        let parent_model = parent_thread.read(cx).model().cloned();
         let parent_action_log = parent_thread.read(cx).action_log().clone();
         let action_log =
             cx.new(|_cx| ActionLog::new(project.clone()).with_linked_action_log(parent_action_log));
@@ -1342,7 +1357,7 @@ impl Thread {
             project_context,
             context_server_registry,
             templates,
-            model,
+            parent_model,
             action_log,
             cx,
         );
@@ -1351,9 +1366,12 @@ impl Thread {
             depth: parent_thread.read(cx).depth() + 1,
         });
         thread.inherit_parent_settings(parent_thread, cx);
-        if let Some(subagent_model) = AgentSettings::get_global(cx).subagent_model.clone() {
+        let model_selection = model_selection
+            .cloned()
+            .or_else(|| AgentSettings::get_global(cx).subagent_model.clone());
+        if let Some(model_selection) = model_selection {
             thread.inherits_parent_model_settings = false;
-            thread.apply_model_selection(&subagent_model, cx);
+            thread.apply_model_selection(&model_selection, cx);
         }
         thread
     }
@@ -1363,7 +1381,7 @@ impl Thread {
         project_context: Entity<ProjectContext>,
         context_server_registry: Entity<ContextServerRegistry>,
         templates: Arc<Templates>,
-        model: Option<Arc<dyn LanguageModel>>,
+        model: Option<LanguageModel>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_internal(
@@ -1382,7 +1400,7 @@ impl Thread {
         project_context: Entity<ProjectContext>,
         context_server_registry: Entity<ContextServerRegistry>,
         templates: Arc<Templates>,
-        model: Option<Arc<dyn LanguageModel>>,
+        model: Option<LanguageModel>,
         action_log: Entity<ActionLog>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1402,7 +1420,7 @@ impl Thread {
             .as_ref()
             .and_then(|model| model.speed);
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
-            watch::channel(Self::prompt_capabilities(model.as_deref()));
+            watch::channel(Self::prompt_capabilities(model.as_ref()));
         let model = match model {
             Some(model) => ThreadModel::Ready(model),
             None => Self::user_configured_model_selection(cx)
@@ -1490,7 +1508,7 @@ impl Thread {
         self.thinking_effort = selection.effort.clone();
         self.speed = selection.speed.filter(|_| model.supports_fast_mode());
         self.prompt_capabilities_tx
-            .send(Self::prompt_capabilities(Some(model.as_ref())))
+            .send(Self::prompt_capabilities(Some(&model)))
             .log_err();
         self.model = ThreadModel::Ready(model);
     }
@@ -1532,7 +1550,7 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> mpsc::UnboundedReceiver<Result<ThreadEvent>> {
         let (tx, rx) = mpsc::unbounded();
-        let stream = ThreadEventStream(tx);
+        let stream = ThreadEventStream::new(tx);
         for (message_ix, message) in self.messages.iter().enumerate() {
             match &**message {
                 Message::User(user_message) => stream.send_user_message(user_message),
@@ -1634,12 +1652,11 @@ impl Thread {
         let Some(tool) = tool else {
             // Tool not found (e.g., MCP server not connected after restart),
             // but still display the saved result if available.
-            // We need to send both ToolCall and ToolCallUpdate events because the UI
-            // only converts raw_output to displayable content in update_fields, not from_acp.
             stream
-                .0
+                .sender
                 .unbounded_send(Ok(ThreadEvent::ToolCall(
                     acp::ToolCall::new(tool_call_id.clone(), tool_use.name.to_string())
+                        .name(tool_use.name.to_string())
                         .status(status)
                         .raw_input(tool_use.input.to_display_json()),
                 )))
@@ -1767,7 +1784,6 @@ impl Thread {
             saved_selection
                 .as_ref()
                 .and_then(|selection| registry.select_model(selection, cx))
-                .map(|configured| configured.model)
         });
 
         let model = match (resolved_saved_model, saved_selection) {
@@ -1775,16 +1791,14 @@ impl Thread {
             (None, Some(selection)) => ThreadModel::Unresolved(selection),
             (None, None) => Self::resolve_profile_model(&profile_id, cx)
                 .or_else(|| {
-                    LanguageModelRegistry::global(cx).update(cx, |registry, _cx| {
-                        registry.default_model().map(|model| model.model)
-                    })
+                    LanguageModelRegistry::global(cx)
+                        .update(cx, |registry, _cx| registry.default_model())
                 })
                 .map_or(ThreadModel::Unset, ThreadModel::Ready),
         };
 
-        let (prompt_capabilities_tx, prompt_capabilities_rx) = watch::channel(
-            Self::prompt_capabilities(model.as_model().map(|model| model.as_ref())),
-        );
+        let (prompt_capabilities_tx, prompt_capabilities_rx) =
+            watch::channel(Self::prompt_capabilities(model.as_model()));
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
@@ -1992,7 +2006,7 @@ impl Thread {
         self.ui_scroll_position = position;
     }
 
-    pub fn model(&self) -> Option<&Arc<dyn LanguageModel>> {
+    pub fn model(&self) -> Option<&LanguageModel> {
         self.model.as_model()
     }
 
@@ -2002,18 +2016,13 @@ impl Thread {
 
     pub(crate) fn ensure_model(
         &mut self,
-        default_model: Option<&Arc<dyn LanguageModel>>,
+        default_model: Option<&LanguageModel>,
         cx: &mut Context<Self>,
     ) {
         let resolved = match &self.model {
             ThreadModel::Ready(_) => return,
-            ThreadModel::Unresolved(selection) => {
-                LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-                    registry
-                        .select_model(selection, cx)
-                        .map(|configured| configured.model)
-                })
-            }
+            ThreadModel::Unresolved(selection) => LanguageModelRegistry::global(cx)
+                .update(cx, |registry, cx| registry.select_model(selection, cx)),
             ThreadModel::Unset => default_model.cloned(),
         };
 
@@ -2022,10 +2031,10 @@ impl Thread {
         }
     }
 
-    pub fn set_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
+    pub fn set_model(&mut self, model: LanguageModel, cx: &mut Context<Self>) {
         let old_usage = self.latest_token_usage();
         self.model = ThreadModel::Ready(model.clone());
-        let new_caps = Self::prompt_capabilities(self.model.as_model().map(|model| model.as_ref()));
+        let new_caps = Self::prompt_capabilities(self.model.as_model());
         let new_usage = self.latest_token_usage();
         if old_usage != new_usage {
             cx.emit(TokenUsageUpdated(new_usage));
@@ -2046,13 +2055,37 @@ impl Thread {
         cx.notify()
     }
 
-    pub fn summarization_model(&self) -> Option<&Arc<dyn LanguageModel>> {
+    /// Re-selects this thread's model from its provider when that provider's
+    /// state changes, so names and capabilities that update after a model is
+    /// created (e.g. a local model finishing loading) reach the thread.
+    pub fn refresh_model(&mut self, provider_id: &LanguageModelProviderId, cx: &mut Context<Self>) {
+        let Some(current) = self.model() else {
+            return;
+        };
+        if &current.provider_id != provider_id {
+            return;
+        }
+        let Some(model) = LanguageModelRegistry::read_global(cx)
+            .provider(provider_id)
+            .into_iter()
+            .flat_map(|provider| provider.provided_models(cx))
+            .find(|model| model.id == current.id)
+        else {
+            return;
+        };
+        if model == *current {
+            return;
+        }
+        self.set_model(model, cx);
+    }
+
+    pub fn summarization_model(&self) -> Option<&LanguageModel> {
         self.summarization_model.as_ref()
     }
 
     pub fn set_summarization_model(
         &mut self,
-        model: Option<Arc<dyn LanguageModel>>,
+        model: Option<LanguageModel>,
         cx: &mut Context<Self>,
     ) {
         self.summarization_model = model.clone();
@@ -2428,6 +2461,16 @@ impl Thread {
         self.cumulative_token_usage
     }
 
+    /// Maximum input after reserving the selected model's output allowance.
+    pub fn input_token_capacity(&self) -> Option<u64> {
+        let model = self.model()?;
+        Some(compaction_input_capacity(
+            model.max_input_tokens(),
+            model.max_total_tokens(),
+            model.max_output_tokens(),
+        ))
+    }
+
     pub fn latest_token_usage(&self) -> Option<acp_thread::TokenUsage> {
         let usage = self.latest_request_token_usage()?;
         let model = self.model()?;
@@ -2468,7 +2511,7 @@ impl Thread {
     fn resolve_profile_model(
         profile_id: &AgentProfileId,
         cx: &mut Context<Self>,
-    ) -> Option<Arc<dyn LanguageModel>> {
+    ) -> Option<LanguageModel> {
         let selection = AgentSettings::get_global(cx)
             .profiles
             .get(profile_id)?
@@ -2495,16 +2538,13 @@ impl Thread {
     fn resolve_model_from_selection(
         selection: &LanguageModelSelection,
         cx: &mut Context<Self>,
-    ) -> Option<Arc<dyn LanguageModel>> {
+    ) -> Option<LanguageModel> {
         let selected = SelectedModel {
             provider: LanguageModelProviderId::from(selection.provider.0.clone()),
             model: LanguageModelId::from(selection.model.clone()),
         };
-        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-            registry
-                .select_model(&selected, cx)
-                .map(|configured| configured.model)
-        })
+        LanguageModelRegistry::global(cx)
+            .update(cx, |registry, cx| registry.select_model(&selected, cx))
     }
 
     pub fn resume(
@@ -2588,7 +2628,7 @@ impl Thread {
         cx.notify();
 
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
-        let event_stream = ThreadEventStream(events_tx);
+        let event_stream = ThreadEventStream::new(events_tx);
         let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
         let task = cx.spawn({
             let event_stream = event_stream.clone();
@@ -2697,7 +2737,7 @@ impl Thread {
         self.cancel(cx).detach();
 
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
-        let event_stream = ThreadEventStream(events_tx);
+        let event_stream = ThreadEventStream::new(events_tx);
         let message_ix = self.messages.len().saturating_sub(1);
         self.clear_summary();
         let tools = self.enabled_tools(cx);
@@ -2759,7 +2799,7 @@ impl Thread {
         let mut attempt = 0;
         let mut intent = CompletionIntent::UserPrompt;
         // Set when a refusal fallback occurs so subsequent iterations use the fallback model.
-        let mut refusal_fallback_model: Option<Arc<dyn LanguageModel>> = None;
+        let mut refusal_fallback_model: Option<LanguageModel> = None;
         loop {
             match Self::perform_compaction_if_needed(
                 this,
@@ -2819,7 +2859,9 @@ impl Thread {
                                             Some(error_message),
                                         )
                                     })?;
-                                    return Err(retry_error);
+                                    return Err(
+                                        retry_error.context("Automatic context compaction failed")
+                                    );
                                 }
                             }
                         }
@@ -2830,7 +2872,7 @@ impl Thread {
                                     Some(error_message),
                                 )
                             })?;
-                            return Err(error);
+                            return Err(error.context("Automatic context compaction failed"));
                         }
                     }
                 }
@@ -2840,15 +2882,16 @@ impl Thread {
             // mid-turn changes (e.g. the user switches model, toggles tools,
             // or changes profile) take effect between tool-call rounds.
             // If a refusal fallback is active, use that model instead.
-            let (model, request) = this.update(cx, |this, cx| {
+            let (model, provider, request) = this.update(cx, |this, cx| {
                 let model = refusal_fallback_model
                     .clone()
                     .or_else(|| this.model().cloned())
                     .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
+                let provider = LanguageModelRegistry::read_global(cx).provider_for_model(&model);
                 this.refresh_turn_tools(cx);
                 let request = this.build_completion_request(intent, cx)?;
                 this.current_request_token_usage = TokenUsage::default();
-                anyhow::Ok((model, request))
+                anyhow::Ok((model, provider, request))
             })??;
 
             telemetry::event!(
@@ -2865,7 +2908,11 @@ impl Thread {
 
             log::debug!("Calling model.stream_completion, attempt {}", attempt);
 
-            let (mut events, mut error) = match model.stream_completion(request, cx).await {
+            let events = match provider {
+                Ok(provider) => provider.stream_completion(&model, request, cx).await,
+                Err(error) => Err(error),
+            };
+            let (mut events, mut error) = match events {
                 Ok(events) => (events.fuse(), None),
                 Err(err) => (stream::empty().boxed().fuse(), Some(err)),
             };
@@ -2990,8 +3037,10 @@ impl Thread {
             })?;
 
             if had_refusal {
-                let maybe_fallback = this.update(cx, |this, cx| -> Option<Arc<dyn LanguageModel>> {
-                    let current_model = refusal_fallback_model.as_ref().or(this.model())?;
+                let maybe_fallback = this.update(cx, |this, cx| -> Option<LanguageModel> {
+                    let current_model = refusal_fallback_model
+                        .as_ref()
+                        .or(this.model())?;
                     let fallback_id = match current_model.refusal_fallback_model_id() {
                         Some(id) => id,
                         None => {
@@ -3170,108 +3219,126 @@ impl Thread {
         this: &WeakEntity<Self>,
         event_stream: &ThreadEventStream,
         mut cancellation_rx: watch::Receiver<bool>,
-        model: Arc<dyn LanguageModel>,
+        model: LanguageModel,
         request: LanguageModelRequest,
         insertion: CompactionInsertion,
         cx: &mut AsyncApp,
     ) -> Result<ControlFlow<()>> {
+        if *cancellation_rx.borrow() {
+            return Ok(ControlFlow::Break(()));
+        }
+
         log::debug!("Running compaction");
         let compaction_id = acp_thread::ContextCompactionId(Uuid::new_v4().to_string().into());
         event_stream.send_context_compaction(
             compaction_id.clone(),
             acp_thread::ContextCompactionStatus::InProgress,
         );
-        let stream = futures::select! {
-            result = model.stream_completion(request, cx).fuse() => result,
-            _ = cancellation_rx.changed().fuse() => {
-                if *cancellation_rx.borrow() {
-                    log::debug!("Compaction cancelled before request started");
-                    return Ok(ControlFlow::Break(()));
-                }
-                return Ok(ControlFlow::Continue(()));
-            }
-        };
-        let mut stream = stream?;
-
-        let mut summary = String::new();
-        loop {
-            let event = futures::select! {
-                event = stream.next().fuse() => event,
+        let result: Result<ControlFlow<()>> = async {
+            let provider =
+                cx.update(|cx| LanguageModelRegistry::read_global(cx).provider_for_model(&model))?;
+            let stream = futures::select! {
+                result = provider.stream_completion(&model, request, cx).fuse() => result,
                 _ = cancellation_rx.changed().fuse() => {
                     if *cancellation_rx.borrow() {
-                        log::debug!("Compaction cancelled while summarizing");
+                        log::debug!("Compaction cancelled before request started");
                         return Ok(ControlFlow::Break(()));
                     }
-                    continue;
+                    return Ok(ControlFlow::Continue(()));
                 }
             };
+            let mut stream = stream?;
 
-            let Some(event) = event else {
-                break;
-            };
+            let mut summary = String::new();
+            loop {
+                let event = futures::select! {
+                    event = stream.next().fuse() => event,
+                    _ = cancellation_rx.changed().fuse() => {
+                        if *cancellation_rx.borrow() {
+                            log::debug!("Compaction cancelled while summarizing");
+                            return Ok(ControlFlow::Break(()));
+                        }
+                        continue;
+                    }
+                };
 
-            match event? {
-                LanguageModelCompletionEvent::Text(text) => {
-                    summary.push_str(&text);
-                    event_stream.send_context_compaction_update(compaction_id.clone(), &text);
+                let Some(event) = event else {
+                    break;
+                };
+
+                match event? {
+                    LanguageModelCompletionEvent::Text(text) => {
+                        summary.push_str(&text);
+                        event_stream.send_context_compaction_update(compaction_id.clone(), &text);
+                    }
+                    LanguageModelCompletionEvent::UsageUpdate(usage) => {
+                        this.update(cx, |this, _cx| {
+                            this.accumulate_token_usage(usage);
+                        })?;
+                    }
+                    LanguageModelCompletionEvent::Stop(_)
+                    | LanguageModelCompletionEvent::Started
+                    | LanguageModelCompletionEvent::Queued { .. }
+                    | LanguageModelCompletionEvent::Thinking { .. }
+                    | LanguageModelCompletionEvent::RedactedThinking { .. }
+                    | LanguageModelCompletionEvent::ReasoningDetails(_)
+                    | LanguageModelCompletionEvent::ToolUse(_)
+                    | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
+                    | LanguageModelCompletionEvent::StartMessage { .. }
+                    | LanguageModelCompletionEvent::Compaction(_) => {}
                 }
-                LanguageModelCompletionEvent::UsageUpdate(usage) => {
-                    this.update(cx, |this, _cx| {
-                        this.accumulate_token_usage(usage);
-                    })?;
-                }
-                LanguageModelCompletionEvent::Stop(_)
-                | LanguageModelCompletionEvent::Started
-                | LanguageModelCompletionEvent::Queued { .. }
-                | LanguageModelCompletionEvent::Thinking { .. }
-                | LanguageModelCompletionEvent::RedactedThinking { .. }
-                | LanguageModelCompletionEvent::ReasoningDetails(_)
-                | LanguageModelCompletionEvent::ToolUse(_)
-                | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
-                | LanguageModelCompletionEvent::StartMessage { .. }
-                | LanguageModelCompletionEvent::Compaction(_) => {}
             }
-        }
 
-        if *cancellation_rx.borrow() {
-            log::debug!("Compaction cancelled after summarizing");
-            return Ok(ControlFlow::Break(()));
-        }
+            if *cancellation_rx.borrow() {
+                log::debug!("Compaction cancelled after summarizing");
+                return Ok(ControlFlow::Break(()));
+            }
 
-        let summary = summary.trim().to_string();
-        if summary.is_empty() {
-            log::warn!("Compaction produced an empty summary");
-            return Err(anyhow::anyhow!("Compaction produced an empty summary"));
-        }
+            let summary = summary.trim().to_string();
+            if summary.is_empty() {
+                log::warn!("Compaction produced an empty summary");
+                return Err(anyhow::anyhow!("Compaction produced an empty summary"));
+            }
 
-        log::debug!("Compaction succeeded:\n{summary}");
-        event_stream.update_context_compaction_status(
-            compaction_id,
-            acp_thread::ContextCompactionStatus::Completed,
-        );
+            log::debug!("Compaction succeeded:\n{summary}");
+            event_stream.update_context_compaction_status(
+                compaction_id.clone(),
+                acp_thread::ContextCompactionStatus::Completed,
+            );
 
-        this.update(cx, |this, cx| {
-            let compaction = Arc::new(Message::Compaction(CompactionInfo::Summary(summary.into())));
-            match insertion {
-                CompactionInsertion::Auto { insertion_ix } => {
-                    if insertion_ix <= this.messages.len() {
-                        this.messages.insert(insertion_ix, compaction);
-                    } else {
+            this.update(cx, |this, cx| {
+                let compaction =
+                    Arc::new(Message::Compaction(CompactionInfo::Summary(summary.into())));
+                match insertion {
+                    CompactionInsertion::Auto { insertion_ix } => {
+                        if insertion_ix <= this.messages.len() {
+                            this.messages.insert(insertion_ix, compaction);
+                        } else {
+                            this.messages.push(compaction);
+                        }
+                    }
+                    CompactionInsertion::Manual { marker_id } => {
+                        this.messages.push(Arc::new(Message::User(UserMessage {
+                            id: marker_id,
+                            content: Arc::from([]),
+                        })));
                         this.messages.push(compaction);
                     }
                 }
-                CompactionInsertion::Manual { marker_id } => {
-                    this.messages.push(Arc::new(Message::User(UserMessage {
-                        id: marker_id,
-                        content: Arc::from([]),
-                    })));
-                    this.messages.push(compaction);
-                }
-            }
-            cx.notify();
-        })?;
+                cx.notify();
+            })?;
 
-        Ok(ControlFlow::Continue(()))
+            Ok(ControlFlow::Continue(()))
+        }
+        .await;
+
+        if result.is_err() {
+            event_stream.update_context_compaction_status(
+                compaction_id,
+                acp_thread::ContextCompactionStatus::Failed,
+            );
+        }
+        result
     }
 
     fn process_tool_result(
@@ -3848,6 +3915,7 @@ impl Thread {
             return Task::ready(None).shared();
         };
         let mut request = LanguageModelRequest {
+            thread_id: Some(self.id.to_string()),
             intent: Some(CompletionIntent::ThreadContextSummarization),
             temperature: AgentSettings::temperature_for_model(&model, cx),
             ..Default::default()
@@ -3865,7 +3933,13 @@ impl Thread {
         let task = cx
             .spawn(async move |this, cx| {
                 let mut summary = String::new();
-                let mut messages = model.stream_completion(request, cx).await.log_err()?;
+                let provider = cx
+                    .update(|cx| LanguageModelRegistry::read_global(cx).provider_for_model(&model))
+                    .log_err()?;
+                let mut messages = provider
+                    .stream_completion(&model, request, cx)
+                    .await
+                    .log_err()?;
                 while let Some(event) = messages.next().await {
                     let event = event.log_err()?;
                     let text = match event {
@@ -3928,7 +4002,7 @@ impl Thread {
 
     fn spawn_title_generation(
         &mut self,
-        model: Arc<dyn LanguageModel>,
+        model: LanguageModel,
         on_generated_title: Option<Box<dyn FnOnce(SharedString, &mut Context<Self>)>>,
         cx: &mut Context<Self>,
     ) {
@@ -3936,7 +4010,7 @@ impl Thread {
         log::debug!("Generating title with model: {:?}", model.name());
 
         let temperature = AgentSettings::temperature_for_model(&model, cx);
-        let request = build_thread_title_request(&self.messages, temperature);
+        let request = build_thread_title_request(&self.id, &self.messages, temperature);
 
         let title_generation = cx.spawn(async move |_this, cx| {
             stream_thread_title(model, request, cx)
@@ -4113,6 +4187,7 @@ impl Thread {
 
         let request = LanguageModelRequest {
             thread_id: Some(self.id.to_string()),
+            prompt_cache_key: None,
             prompt_id: Some(self.prompt_id.to_string()),
             intent: Some(completion_intent),
             messages,
@@ -4127,6 +4202,7 @@ impl Thread {
             thinking_effort: self.thinking_effort.clone(),
             speed: self.speed(),
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         log::debug!("Completion request built successfully");
@@ -4295,6 +4371,19 @@ impl Thread {
         self.running_turn.is_none()
     }
 
+    pub(crate) fn auto_compaction_enabled(&self, cx: &App) -> bool {
+        AgentSettings::get_global(cx).auto_compact.enabled
+            && self.input_token_capacity().is_some_and(|max_input_tokens| {
+                // Models with a small context window don't leave enough headroom for a
+                // compaction pass; the UI warns the user about the token limit instead.
+                max_input_tokens >= MIN_COMPACTION_CONTEXT_WINDOW
+            })
+    }
+
+    pub(crate) fn subagent_partial_output(&self) -> String {
+        subagent_partial_output_from_messages(&self.messages, self.pending_message.as_ref())
+    }
+
     fn build_request_messages(
         &self,
         available_tools: Vec<SharedString>,
@@ -4362,13 +4451,13 @@ impl Thread {
     fn build_compaction_telemetry(
         &self,
         trigger: &'static str,
-        compaction_model: &Arc<dyn LanguageModel>,
+        compaction_model: &LanguageModel,
         cx: &App,
     ) -> Option<CompactionTelemetry> {
         let model = self.model()?;
         let auto_compact = AgentSettings::get_global(cx).auto_compact;
         let max_tokens = model.max_token_count();
-        let max_input_tokens = max_tokens.saturating_sub(model.max_output_tokens().unwrap_or(0));
+        let max_input_tokens = self.input_token_capacity()?;
         let tokens_before = self
             .latest_request_token_usage()
             .map(|usage| total_input_tokens(usage).saturating_add(usage.output_tokens));
@@ -4377,8 +4466,8 @@ impl Thread {
             thread_id: self.id.to_string(),
             parent_thread_id: self.parent_thread_id().map(|id| id.to_string()),
             prompt_id: self.prompt_id.to_string(),
-            model: model.telemetry_id(),
-            compaction_model: compaction_model.telemetry_id(),
+            model: model.telemetry_id.to_string(),
+            compaction_model: compaction_model.telemetry_id.to_string(),
             thinking_effort: self.thinking_effort.clone(),
             max_tokens,
             tokens_before,
@@ -4402,20 +4491,12 @@ impl Thread {
     }
 
     fn compaction_message_target_ix(&self, cx: &App) -> Option<usize> {
-        let auto_compact = AgentSettings::get_global(cx).auto_compact;
-        if !auto_compact.enabled {
+        if !self.auto_compaction_enabled(cx) {
             return None;
         }
 
-        let model = self.model()?;
-        let max_token_count = model.max_token_count();
-        let max_input_tokens =
-            max_token_count.saturating_sub(model.max_output_tokens().unwrap_or(0));
-        // Models with a small context window don't leave enough headroom for a
-        // compaction pass; the UI warns the user about the token limit instead.
-        if max_input_tokens < MIN_COMPACTION_CONTEXT_WINDOW {
-            return None;
-        }
+        let auto_compact = AgentSettings::get_global(cx).auto_compact;
+        let max_input_tokens = self.input_token_capacity()?;
         let (usage_ix, usage) = {
             let this = &self;
             this.messages
@@ -4471,24 +4552,23 @@ impl Thread {
         Some(self.messages.len())
     }
 
-    fn compaction_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn compaction_model(&self, cx: &App) -> Option<LanguageModel> {
         LanguageModelRegistry::read_global(cx)
             .compaction_model()
-            .map(|m| m.model)
             .or_else(|| self.model().cloned())
     }
 
     fn build_compaction_request(
         &self,
         insertion_ix: usize,
-        model: &Arc<dyn LanguageModel>,
+        model: &LanguageModel,
         cx: &App,
     ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
             thread_id: Some(self.id.to_string()),
             prompt_id: Some(self.prompt_id.to_string()),
             intent: Some(CompletionIntent::ThreadContextSummarization),
-            temperature: AgentSettings::temperature_for_model(model, cx),
+            temperature: AgentSettings::temperature_for_model(&model, cx),
             messages: self.build_request_messages_until(Vec::new(), insertion_ix, cx),
             ..Default::default()
         };
@@ -4530,7 +4610,7 @@ impl Thread {
             // provider's requested delay when it gave one, and fall back to
             // exponential backoff when it didn't.
             ProviderRejection { retry_after, .. } => {
-                if error.retry_delay(1).is_none() {
+                if !error.is_transient() {
                     return None;
                 }
                 Some(match retry_after {
@@ -4559,6 +4639,8 @@ impl Thread {
             // Retrying won't help until the user consents to data retention
             // or switches models.
             DataRetentionConsentRequired { .. } => None,
+            // Retrying won't help until the thread picks another model.
+            ModelUnavailable { .. } => None,
             // `Other` includes mid-stream mapping failures that can be caused by
             // a transient malformed or interrupted provider event.
             Other(..) => Some(RetryStrategy::FixedDelay {
@@ -4569,11 +4651,66 @@ impl Thread {
     }
 }
 
+fn subagent_partial_output_from_messages(
+    messages: &[Arc<Message>],
+    pending_message: Option<&AgentMessage>,
+) -> String {
+    let Some(user_message_ix) = messages
+        .iter()
+        .rposition(|message| matches!(&**message, Message::User(_)))
+    else {
+        return String::new();
+    };
+
+    let mut text_messages = pending_message
+        .into_iter()
+        .chain(
+            messages
+                .iter()
+                .skip(user_message_ix + 1)
+                .rev()
+                .filter_map(|message| message.as_agent_message()),
+        )
+        .filter_map(|message| {
+            let characters = message
+                .content
+                .iter()
+                .rev()
+                .filter_map(|content| match content {
+                    AgentMessageContent::Text(text) => Some(text),
+                    _ => None,
+                })
+                .flat_map(|text| text.chars().rev())
+                .take(4096)
+                .collect::<Vec<_>>();
+            if characters.is_empty() {
+                None
+            } else {
+                Some(characters.into_iter().rev().collect::<String>())
+            }
+        })
+        .take(3)
+        .collect::<Vec<_>>();
+    text_messages.reverse();
+    text_messages.join("\n\n")
+}
+
 fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
     usage
         .input_tokens
         .saturating_add(usage.cache_creation_input_tokens)
         .saturating_add(usage.cache_read_input_tokens)
+}
+
+/// Reserves output without subtracting it from an independent input ceiling.
+fn compaction_input_capacity(
+    input_limit: u64,
+    combined_limit: Option<u64>,
+    output_limit: Option<u64>,
+) -> u64 {
+    combined_limit.map_or(input_limit, |combined| {
+        input_limit.min(combined.saturating_sub(output_limit.unwrap_or(0)))
+    })
 }
 
 fn auto_compact_threshold_token_count(
@@ -4855,10 +4992,12 @@ fn retained_user_request_messages_before(
 }
 
 pub fn build_thread_title_request(
+    thread_id: &acp::SessionId,
     messages: &[Arc<Message>],
     temperature: Option<f32>,
 ) -> LanguageModelRequest {
     let mut request = LanguageModelRequest {
+        thread_id: Some(thread_id.to_string()),
         intent: Some(CompletionIntent::ThreadSummarization),
         temperature,
         ..Default::default()
@@ -4874,12 +5013,14 @@ pub fn build_thread_title_request(
 }
 
 pub async fn stream_thread_title(
-    model: Arc<dyn LanguageModel>,
+    model: LanguageModel,
     request: LanguageModelRequest,
     cx: &AsyncApp,
 ) -> Result<String> {
     let mut title = String::new();
-    let mut events = model.stream_completion(request, cx).await?;
+    let provider =
+        cx.update(|cx| LanguageModelRegistry::read_global(cx).provider_for_model(&model))?;
+    let mut events = provider.stream_completion(&model, request, cx).await?;
     while let Some(event) = events.next().await {
         let LanguageModelCompletionEvent::Text(text) = event? else {
             continue;
@@ -5272,23 +5413,33 @@ pub(crate) fn scoped_tool_call_id(
 }
 
 #[derive(Clone)]
-struct ThreadEventStream(mpsc::UnboundedSender<Result<ThreadEvent>>);
+struct ThreadEventStream {
+    sender: mpsc::UnboundedSender<Result<ThreadEvent>>,
+    active_compaction: Rc<RefCell<Option<acp_thread::ContextCompactionId>>>,
+}
 
 impl ThreadEventStream {
+    fn new(sender: mpsc::UnboundedSender<Result<ThreadEvent>>) -> Self {
+        Self {
+            sender,
+            active_compaction: Rc::default(),
+        }
+    }
+
     fn send_user_message(&self, message: &UserMessage) {
-        self.0
+        self.sender
             .unbounded_send(Ok(ThreadEvent::UserMessage(message.clone())))
             .ok();
     }
 
     fn send_text(&self, text: &str) {
-        self.0
+        self.sender
             .unbounded_send(Ok(ThreadEvent::AgentText(text.to_string())))
             .ok();
     }
 
     fn send_thinking(&self, text: &str) {
-        self.0
+        self.sender
             .unbounded_send(Ok(ThreadEvent::AgentThinking(text.to_string())))
             .ok();
     }
@@ -5301,7 +5452,7 @@ impl ThreadEventStream {
         kind: acp::ToolKind,
         input: serde_json::Value,
     ) {
-        self.0
+        self.sender
             .unbounded_send(Ok(ThreadEvent::ToolCall(Self::initial_tool_call(
                 id,
                 tool_name,
@@ -5320,9 +5471,9 @@ impl ThreadEventStream {
         input: serde_json::Value,
     ) -> acp::ToolCall {
         acp::ToolCall::new(id.clone(), title)
+            .name(tool_name)
             .kind(kind)
             .raw_input(input)
-            .meta(acp_thread::meta_with_tool_name(tool_name))
     }
 
     fn update_tool_call_fields(
@@ -5331,7 +5482,7 @@ impl ThreadEventStream {
         fields: acp::ToolCallUpdateFields,
         meta: Option<acp::Meta>,
     ) {
-        self.0
+        self.sender
             .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
                 acp::ToolCallUpdate::new(tool_call_id.clone(), fields)
                     .meta(meta)
@@ -5345,7 +5496,7 @@ impl ThreadEventStream {
         tool_call_id: &acp::ToolCallId,
         outcome: acp_thread::SelectedPermissionOutcome,
     ) {
-        self.0
+        self.sender
             .unbounded_send(Ok(ThreadEvent::ToolCallAuthorizationResolved {
                 tool_call_id: tool_call_id.clone(),
                 outcome,
@@ -5354,7 +5505,9 @@ impl ThreadEventStream {
     }
 
     fn send_retry(&self, status: acp_thread::RetryStatus) {
-        self.0.unbounded_send(Ok(ThreadEvent::Retry(status))).ok();
+        self.sender
+            .unbounded_send(Ok(ThreadEvent::Retry(status)))
+            .ok();
     }
 
     fn send_context_compaction(
@@ -5362,12 +5515,16 @@ impl ThreadEventStream {
         id: acp_thread::ContextCompactionId,
         status: acp_thread::ContextCompactionStatus,
     ) {
-        self.0
+        if status == acp_thread::ContextCompactionStatus::InProgress {
+            self.active_compaction.replace(Some(id.clone()));
+        }
+        self.sender
             .unbounded_send(Ok(ThreadEvent::ContextCompaction(
                 acp_thread::ContextCompaction {
                     id,
                     status,
-                    summary: None,
+                    error: None,
+                    summary: Vec::new(),
                 },
             )))
             .ok();
@@ -5378,7 +5535,7 @@ impl ThreadEventStream {
         id: acp_thread::ContextCompactionId,
         summary_delta: &str,
     ) {
-        self.0
+        self.sender
             .unbounded_send(Ok(ThreadEvent::ContextCompactionUpdate(
                 acp_thread::ContextCompactionUpdate {
                     id,
@@ -5394,7 +5551,12 @@ impl ThreadEventStream {
         id: acp_thread::ContextCompactionId,
         status: acp_thread::ContextCompactionStatus,
     ) {
-        self.0
+        if status != acp_thread::ContextCompactionStatus::InProgress
+            && self.active_compaction.borrow().as_ref() == Some(&id)
+        {
+            self.active_compaction.replace(None);
+        }
+        self.sender
             .unbounded_send(Ok(ThreadEvent::ContextCompactionUpdate(
                 acp_thread::ContextCompactionUpdate {
                     id,
@@ -5406,17 +5568,26 @@ impl ThreadEventStream {
     }
 
     fn send_stop(&self, reason: acp::StopReason) {
-        self.0.unbounded_send(Ok(ThreadEvent::Stop(reason))).ok();
-    }
-
-    fn send_canceled(&self) {
-        self.0
-            .unbounded_send(Ok(ThreadEvent::Stop(acp::StopReason::Cancelled)))
+        self.sender
+            .unbounded_send(Ok(ThreadEvent::Stop(reason)))
             .ok();
     }
 
+    fn send_canceled(&self) {
+        // The bridge stops consuming at Stop, and its entry cancellation scan
+        // may have run before the queued compaction-start event was applied.
+        let compaction_id = self.active_compaction.replace(None);
+        if let Some(compaction_id) = compaction_id {
+            self.update_context_compaction_status(
+                compaction_id,
+                acp_thread::ContextCompactionStatus::Canceled,
+            );
+        }
+        self.send_stop(acp::StopReason::Cancelled);
+    }
+
     fn send_error(&self, error: impl Into<anyhow::Error>) {
-        self.0.unbounded_send(Err(error.into())).ok();
+        self.sender.unbounded_send(Err(error.into())).ok();
     }
 }
 
@@ -5476,7 +5647,7 @@ impl ToolCallEventStream {
         let stream = ToolCallEventStream::new(
             "test_id".into(),
             acp::ToolCallId::new("0:test_id"),
-            ThreadEventStream(events_tx),
+            ThreadEventStream::new(events_tx),
             None,
             cancellation_rx,
             sandbox_grants,
@@ -5497,7 +5668,7 @@ impl ToolCallEventStream {
         let stream = ToolCallEventStream::new(
             "test_id".into(),
             acp::ToolCallId::new("0:test_id"),
-            ThreadEventStream(events_tx),
+            ThreadEventStream::new(events_tx),
             None,
             cancellation_rx,
             Rc::new(RefCell::new(ThreadSandboxGrants::default())),
@@ -5610,7 +5781,7 @@ impl ToolCallEventStream {
 
     pub fn update_diff(&self, diff: Entity<acp_thread::Diff>) {
         self.stream
-            .0
+            .sender
             .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
                 acp_thread::ToolCallUpdateDiff {
                     id: self.tool_call_id.clone(),
@@ -5623,7 +5794,7 @@ impl ToolCallEventStream {
 
     pub fn subagent_spawned(&self, id: acp::SessionId) {
         self.stream
-            .0
+            .sender
             .unbounded_send(Ok(ThreadEvent::SubagentSpawned(id)))
             .ok();
     }
@@ -5821,25 +5992,28 @@ impl ToolCallEventStream {
         };
         cx.spawn(async move |cx| {
             let (response_tx, mut response_rx) = oneshot::channel();
-            if let Err(error) = stream
-                .0
-                .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
-                    ToolCallAuthorization {
-                        tool_call: acp::ToolCallUpdate::new(
-                            tool_call_id.clone(),
-                            // Leave the title untouched so the card keeps
-                            // showing the command (matching the fallback flow).
-                            acp::ToolCallUpdateFields::new(),
-                        )
-                        .meta(acp_thread::meta_with_sandbox_authorization(
-                            sandbox_authorization_details,
-                        )),
-                        options,
-                        response: response_tx,
-                        context: None,
-                        kind: acp_thread::AuthorizationKind::PermissionGrant,
-                    },
-                )))
+            if let Err(error) =
+                stream
+                    .sender
+                    .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                        ToolCallAuthorization {
+                            tool_call: acp::ToolCallUpdate::new(
+                                tool_call_id.clone(),
+                                // Leave the title untouched so the card keeps
+                                // showing the command (matching the fallback flow).
+                                acp::ToolCallUpdateFields::new(),
+                            )
+                            .meta(
+                                acp_thread::meta_with_sandbox_authorization(
+                                    sandbox_authorization_details,
+                                ),
+                            ),
+                            options,
+                            response: response_tx,
+                            context: None,
+                            kind: acp_thread::AuthorizationKind::PermissionGrant,
+                        },
+                    )))
             {
                 log::error!("Failed to send sandbox authorization: {error}");
                 return Err(anyhow!("Failed to send sandbox authorization: {error}"));
@@ -5938,24 +6112,25 @@ impl ToolCallEventStream {
         let tool_call_id = self.tool_call_id.clone();
         cx.spawn(async move |_cx| {
             let (response_tx, response_rx) = oneshot::channel();
-            if let Err(error) = stream
-                .0
-                .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
-                    ToolCallAuthorization {
-                        tool_call: acp::ToolCallUpdate::new(
-                            tool_call_id,
-                            // Leave the title untouched so the card keeps
-                            // showing the command (matching the escalation
-                            // flow).
-                            acp::ToolCallUpdateFields::new(),
-                        )
-                        .meta(acp_thread::meta_with_sandbox_authorization(details)),
-                        options,
-                        response: response_tx,
-                        context: None,
-                        kind: acp_thread::AuthorizationKind::PermissionGrant,
-                    },
-                )))
+            if let Err(error) =
+                stream
+                    .sender
+                    .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                        ToolCallAuthorization {
+                            tool_call: acp::ToolCallUpdate::new(
+                                tool_call_id,
+                                // Leave the title untouched so the card keeps
+                                // showing the command (matching the escalation
+                                // flow).
+                                acp::ToolCallUpdateFields::new(),
+                            )
+                            .meta(acp_thread::meta_with_sandbox_authorization(details)),
+                            options,
+                            response: response_tx,
+                            context: None,
+                            kind: acp_thread::AuthorizationKind::PermissionGrant,
+                        },
+                    )))
             {
                 log::error!("Failed to send Windows-drive sandbox warning: {error}");
                 return Err(anyhow!(
@@ -6210,28 +6385,29 @@ impl ToolCallEventStream {
         let thread = self.thread.clone();
         cx.spawn(async move |cx| {
             let (response_tx, response_rx) = oneshot::channel();
-            if let Err(error) = stream
-                .0
-                .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
-                    ToolCallAuthorization {
-                        // Deliberately leave the tool-call title untouched so
-                        // the card keeps showing the *command* (not the
-                        // failure reason): it's critical the user can see what
-                        // they're approving to run unsandboxed. The reason is
-                        // surfaced separately by the fallback details / warning.
-                        tool_call: acp::ToolCallUpdate::new(
-                            tool_call_id.clone(),
-                            acp::ToolCallUpdateFields::new(),
-                        )
-                        .meta(
-                            acp_thread::meta_with_sandbox_fallback_authorization(details),
-                        ),
-                        options,
-                        response: response_tx,
-                        context: None,
-                        kind: acp_thread::AuthorizationKind::ActionChoice,
-                    },
-                )))
+            if let Err(error) =
+                stream
+                    .sender
+                    .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                        ToolCallAuthorization {
+                            // Deliberately leave the tool-call title untouched so
+                            // the card keeps showing the *command* (not the
+                            // failure reason): it's critical the user can see what
+                            // they're approving to run unsandboxed. The reason is
+                            // surfaced separately by the fallback details / warning.
+                            tool_call: acp::ToolCallUpdate::new(
+                                tool_call_id.clone(),
+                                acp::ToolCallUpdateFields::new(),
+                            )
+                            .meta(
+                                acp_thread::meta_with_sandbox_fallback_authorization(details),
+                            ),
+                            options,
+                            response: response_tx,
+                            context: None,
+                            kind: acp_thread::AuthorizationKind::ActionChoice,
+                        },
+                    )))
             {
                 log::error!("Failed to send sandbox fallback authorization: {error}");
                 return Err(anyhow!(
@@ -6323,17 +6499,18 @@ impl ToolCallEventStream {
             }
 
             let (response_tx, response_rx) = oneshot::channel();
-            if let Err(error) = stream
-                .0
-                .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
-                    ToolCallAuthorization {
-                        tool_call: acp::ToolCallUpdate::new(tool_call_id.clone(), fields),
-                        options,
-                        response: response_tx,
-                        context: None,
-                        kind: acp_thread::AuthorizationKind::ActionChoice,
-                    },
-                )))
+            if let Err(error) =
+                stream
+                    .sender
+                    .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                        ToolCallAuthorization {
+                            tool_call: acp::ToolCallUpdate::new(tool_call_id.clone(), fields),
+                            options,
+                            response: response_tx,
+                            context: None,
+                            kind: acp_thread::AuthorizationKind::ActionChoice,
+                        },
+                    )))
             {
                 log::error!("Failed to send tool call decision prompt: {error}");
                 return Err(anyhow!("Failed to send tool call decision prompt: {error}"));
@@ -6361,14 +6538,14 @@ impl ToolCallEventStream {
         cx: &mut App,
     ) -> Task<Result<acp::CreateElicitationResponse>> {
         let stream = self.stream.clone();
-        let tool_use_id = self.tool_use_id.clone();
+        let tool_call_id = self.tool_call_id.clone();
         cx.spawn(async move |_cx| {
             let (response_tx, response_rx) = oneshot::channel();
             if let Err(error) =
                 stream
-                    .0
+                    .sender
                     .unbounded_send(Ok(ThreadEvent::Elicitation(ElicitationRequest {
-                        tool_call_id: acp::ToolCallId::new(tool_use_id.to_string()),
+                        tool_call_id,
                         message,
                         schema,
                         response: response_tx,
@@ -6431,20 +6608,21 @@ impl ToolCallEventStream {
         };
         cx.spawn(async move |cx| {
             let (response_tx, mut response_rx) = oneshot::channel();
-            if let Err(error) = stream
-                .0
-                .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
-                    ToolCallAuthorization {
-                        tool_call: acp::ToolCallUpdate::new(
-                            tool_call_id.clone(),
-                            acp::ToolCallUpdateFields::new().title(title),
-                        ),
-                        options,
-                        response: response_tx,
-                        context,
-                        kind: acp_thread::AuthorizationKind::PermissionGrant,
-                    },
-                )))
+            if let Err(error) =
+                stream
+                    .sender
+                    .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                        ToolCallAuthorization {
+                            tool_call: acp::ToolCallUpdate::new(
+                                tool_call_id.clone(),
+                                acp::ToolCallUpdateFields::new().title(title),
+                            ),
+                            options,
+                            response: response_tx,
+                            context,
+                            kind: acp_thread::AuthorizationKind::PermissionGrant,
+                        },
+                    )))
             {
                 log::error!("Failed to send tool call authorization: {error}");
                 return Err(anyhow!("Failed to send tool call authorization: {error}"));
@@ -6815,17 +6993,47 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use language_model::LanguageModelToolUseId;
-    use language_model::fake_provider::FakeLanguageModel;
+    use language_model::fake_provider::FakeLanguageModelProvider;
     use serde_json::json;
     use settings::LanguageModelProviderSetting;
     use std::sync::Arc;
 
-    async fn setup_thread_for_test(cx: &mut TestAppContext) -> (Entity<Thread>, ThreadEventStream) {
-        cx.update(|cx| {
+    #[test]
+    fn compaction_capacity_respects_prompt_and_combined_limits() {
+        assert_eq!(
+            compaction_input_capacity(90_000, Some(200_000), Some(16_384)),
+            90_000
+        );
+        assert_eq!(
+            compaction_input_capacity(128_000, Some(128_000), Some(64_000)),
+            64_000
+        );
+        assert_eq!(
+            compaction_input_capacity(90_000, None, Some(64_000)),
+            90_000
+        );
+        assert_eq!(
+            compaction_input_capacity(2_000, Some(2_000), Some(3_000)),
+            0
+        );
+        assert_eq!(
+            compaction_input_capacity(128_000, Some(128_000), None),
+            128_000
+        );
+    }
+
+    async fn setup_thread_for_test(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<Thread>,
+        ThreadEventStream,
+        Arc<FakeLanguageModelProvider>,
+    ) {
+        let fake = cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
 
-            LanguageModelRegistry::test(cx);
+            LanguageModelRegistry::test(cx)
         });
 
         let fs = fs::FakeFs::new(cx.background_executor.clone());
@@ -6850,9 +7058,9 @@ mod tests {
             });
 
             let (event_tx, _event_rx) = mpsc::unbounded();
-            let event_stream = ThreadEventStream(event_tx);
+            let event_stream = ThreadEventStream::new(event_tx);
 
-            (thread, event_stream)
+            (thread, event_stream, fake)
         })
     }
 
@@ -6862,16 +7070,9 @@ mod tests {
         AgentSettings::override_global(settings, cx);
     }
 
-    fn set_registry_compaction_model(cx: &mut App, model: Option<Arc<dyn LanguageModel>>) {
-        use language_model::fake_provider::FakeLanguageModelProvider;
-        use language_model::{ConfiguredModel, LanguageModelProvider};
+    fn set_registry_compaction_model(cx: &mut App, model: Option<LanguageModel>) {
         LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-            let configured = model.map(|m| ConfiguredModel {
-                provider: Arc::new(FakeLanguageModelProvider::default())
-                    as Arc<dyn LanguageModelProvider>,
-                model: m,
-            });
-            registry.set_compaction_model(configured, cx);
+            registry.set_compaction_model(model, cx);
         });
     }
 
@@ -6880,7 +7081,10 @@ mod tests {
         let message = Message::Compaction(CompactionInfo::Summary("Older context".into()));
 
         assert_eq!(message.role(), Role::User);
-        assert_eq!(message.to_markdown(), "--- Context Compacted ---\n");
+        assert_eq!(
+            message.to_markdown(),
+            "## Context Compaction (Completed)\n\nOlder context\n\n"
+        );
 
         let request_messages = message.to_request();
         assert_eq!(request_messages.len(), 1);
@@ -6936,10 +7140,132 @@ mod tests {
             .collect()
     }
 
+    #[test]
+    fn test_subagent_partial_output_filters_non_text() {
+        let tool_use = LanguageModelToolUse {
+            id: LanguageModelToolUseId::from("tool"),
+            name: Arc::from("echo"),
+            raw_input: "{}".to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({})),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        let tool_result = LanguageModelToolResult {
+            tool_use_id: tool_use.id.clone(),
+            tool_name: tool_use.name.clone(),
+            is_error: false,
+            content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                "tool result",
+            ))],
+            output: Some(json!("raw tool result")),
+        };
+        let messages = [
+            user_text_message(ClientUserMessageId::new(), "old task"),
+            agent_text_message("old output"),
+            user_text_message(ClientUserMessageId::new(), "current task"),
+            Arc::new(Message::Agent(AgentMessage {
+                content: vec![
+                    AgentMessageContent::Text("first".to_string()),
+                    AgentMessageContent::Thinking {
+                        text: "hidden thinking".to_string(),
+                        signature: None,
+                    },
+                    AgentMessageContent::Text(" part".to_string()),
+                    AgentMessageContent::RedactedThinking("redacted thinking".to_string()),
+                ],
+                ..AgentMessage::default()
+            })),
+            Arc::new(Message::Resume),
+            summary_compaction("compaction summary"),
+            Arc::new(Message::Agent(AgentMessage {
+                content: vec![AgentMessageContent::ToolUse(tool_use)],
+                tool_results: IndexMap::from_iter([(tool_result.tool_use_id.clone(), tool_result)]),
+                ..AgentMessage::default()
+            })),
+            agent_text_message(""),
+            Arc::new(Message::Agent(AgentMessage {
+                content: vec![AgentMessageContent::Thinking {
+                    text: "more thinking".to_string(),
+                    signature: None,
+                }],
+                ..AgentMessage::default()
+            })),
+            agent_text_message("second part"),
+        ];
+        let pending_message = AgentMessage {
+            content: vec![
+                AgentMessageContent::Text("pending".to_string()),
+                AgentMessageContent::Thinking {
+                    text: "pending thinking".to_string(),
+                    signature: None,
+                },
+                AgentMessageContent::Text(" part".to_string()),
+            ],
+            ..AgentMessage::default()
+        };
+
+        assert_eq!(
+            subagent_partial_output_from_messages(&messages, Some(&pending_message)),
+            "first part\n\nsecond part\n\npending part"
+        );
+        assert_eq!(subagent_partial_output_from_messages(&[], None), "");
+        assert_eq!(
+            subagent_partial_output_from_messages(&[], Some(&pending_message)),
+            ""
+        );
+        let mut messages = messages.to_vec();
+        messages.push(user_text_message(ClientUserMessageId::new(), "next task"));
+        assert_eq!(subagent_partial_output_from_messages(&messages, None), "");
+    }
+
+    #[test]
+    fn test_subagent_partial_output_bounds_messages_and_unicode_characters() {
+        let first = "🦀".repeat(4096);
+        let second_prefix = "🚀".repeat(2048);
+        let second_suffix = "🦀".repeat(2048);
+        let third_prefix = "🌍".repeat(4095);
+        let messages = [
+            user_text_message(ClientUserMessageId::new(), "current task"),
+            agent_text_message("discarded message"),
+            agent_text_message(&format!("discarded prefix{first}")),
+            Arc::new(Message::Agent(AgentMessage {
+                content: vec![
+                    AgentMessageContent::Text(format!("discarded prefix{second_prefix}")),
+                    AgentMessageContent::Thinking {
+                        text: "hidden thinking".to_string(),
+                        signature: None,
+                    },
+                    AgentMessageContent::Text(second_suffix.clone()),
+                ],
+                ..AgentMessage::default()
+            })),
+        ];
+        let pending_message = AgentMessage {
+            content: vec![
+                AgentMessageContent::Text(format!("discarded prefix{third_prefix}")),
+                AgentMessageContent::Thinking {
+                    text: "pending thinking".to_string(),
+                    signature: None,
+                },
+                AgentMessageContent::Text("🦀".to_string()),
+            ],
+            ..AgentMessage::default()
+        };
+
+        let output = subagent_partial_output_from_messages(&messages, Some(&pending_message));
+        assert_eq!(
+            output,
+            format!("{first}\n\n{second_prefix}{second_suffix}\n\n{third_prefix}🦀")
+        );
+        assert_eq!(output.chars().count(), 12_292);
+        assert_eq!(output.len(), 49_156);
+    }
+
     #[gpui::test]
     async fn test_thread_summary_request_uses_compacted_history(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let summary_model = Arc::new(FakeLanguageModel::default());
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let thread_id = thread.read_with(cx, |thread, _| thread.id().to_string());
+        let summary_model = fake.model("summary");
 
         let summary_task = cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -6967,7 +7293,11 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let summary_request = summary_model.pending_completions().pop().unwrap();
+        let summary_request = fake.pending_completions().pop().unwrap();
+        assert_eq!(
+            summary_request.thread_id.as_deref(),
+            Some(thread_id.as_str())
+        );
         assert_eq!(
             summary_request.intent,
             Some(CompletionIntent::ThreadContextSummarization)
@@ -6984,8 +7314,8 @@ mod tests {
             ]
         );
 
-        summary_model.send_completion_stream_text_chunk(&summary_request, "thread summary");
-        summary_model.end_completion_stream(&summary_request);
+        fake.send_text(&summary_model, &summary_request, "thread summary");
+        fake.end_stream(&summary_model, &summary_request);
         assert_eq!(summary_task.await.as_deref(), Some("thread summary"));
     }
 
@@ -7002,8 +7332,10 @@ mod tests {
             agent_text_message("after assistant"),
         ];
 
-        let request = build_thread_title_request(&messages, Some(0.2));
+        let request =
+            build_thread_title_request(&acp::SessionId::new("thread-id"), &messages, Some(0.2));
 
+        assert_eq!(request.thread_id.as_deref(), Some("thread-id"));
         assert_eq!(request.intent, Some(CompletionIntent::ThreadSummarization));
         assert_eq!(request.temperature, Some(0.2));
         assert_eq!(
@@ -7021,13 +7353,13 @@ mod tests {
 
     #[gpui::test]
     async fn test_compaction_threshold_uses_percentage_setting(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let model = Arc::new(FakeLanguageModel::default());
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
         let user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
-                thread.set_model(model, cx);
+                thread.set_model(model.clone(), cx);
                 thread
                     .messages
                     .push(user_text_message(user_message_id.clone(), "below limit"));
@@ -7056,14 +7388,13 @@ mod tests {
 
     #[gpui::test]
     async fn test_compaction_threshold_accounts_for_max_output_tokens(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let model = Arc::new(FakeLanguageModel::default());
-        model.set_max_output_tokens(Some(32_000));
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.update_model("fake", |model| model.max_output_tokens = Some(32_000));
         let user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
-                thread.set_model(model, cx);
+                thread.set_model(model.clone(), cx);
                 thread.messages.push(user_text_message(
                     user_message_id.clone(),
                     "near input limit",
@@ -7119,9 +7450,50 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_compaction_threshold_respects_independent_input_limit(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.update_model("fake", |model| {
+            model.max_token_count = 200_000;
+            model.max_input_tokens = 90_000;
+            model.max_output_tokens = Some(16_384);
+        });
+        let user_message_id = ClientUserMessageId::new();
+
+        cx.update(|cx| {
+            set_auto_compact_settings(
+                cx,
+                agent_settings::AutoCompactSettings {
+                    enabled: true,
+                    threshold: AutoCompactThreshold::Percentage(0.9),
+                },
+            );
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread.messages.push(user_text_message(
+                    user_message_id.clone(),
+                    "near the independent input limit",
+                ));
+                for (input_tokens, expected_target) in [(80_999, None), (81_000, Some(1))] {
+                    thread.request_token_usage.insert(
+                        user_message_id.clone(),
+                        language_model::TokenUsage {
+                            input_tokens,
+                            ..Default::default()
+                        },
+                    );
+
+                    assert_eq!(thread.compaction_message_target_ix(cx), expected_target);
+                    assert_eq!(thread.input_token_capacity(), Some(90_000));
+                    assert_eq!(thread.latest_token_usage().unwrap().max_tokens, 200_000);
+                }
+            });
+        });
+    }
+
+    #[gpui::test]
     async fn test_compaction_threshold_respects_enabled_setting(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let model = Arc::new(FakeLanguageModel::default());
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
         let user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
@@ -7133,7 +7505,7 @@ mod tests {
                 },
             );
             thread.update(cx, |thread, cx| {
-                thread.set_model(model, cx);
+                thread.set_model(model.clone(), cx);
                 thread
                     .messages
                     .push(user_text_message(user_message_id.clone(), "near limit"));
@@ -7152,8 +7524,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_compaction_threshold_respects_token_settings(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let model = Arc::new(FakeLanguageModel::default());
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
         let user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
@@ -7165,7 +7537,7 @@ mod tests {
                 },
             );
             thread.update(cx, |thread, cx| {
-                thread.set_model(model, cx);
+                thread.set_model(model.clone(), cx);
                 thread.messages.push(user_text_message(
                     user_message_id.clone(),
                     "fixed token limit",
@@ -7222,15 +7594,17 @@ mod tests {
 
     #[gpui::test]
     async fn test_compaction_unavailable_for_small_context_window(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let model = Arc::new(FakeLanguageModel::default());
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
         // A context window below the minimum disables auto-compaction.
-        model.set_max_token_count(MIN_COMPACTION_CONTEXT_WINDOW - 1);
+        let model = fake.update_model("fake", |model| {
+            model.max_token_count = MIN_COMPACTION_CONTEXT_WINDOW - 1;
+            model.max_input_tokens = MIN_COMPACTION_CONTEXT_WINDOW - 1;
+        });
         let user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
-                thread.set_model(model, cx);
+                thread.set_model(model.clone(), cx);
                 thread
                     .messages
                     .push(user_text_message(user_message_id.clone(), "near limit"));
@@ -7251,8 +7625,8 @@ mod tests {
     async fn test_compaction_inserts_before_new_user_and_requests_compacted_window(
         cx: &mut TestAppContext,
     ) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let model = Arc::new(FakeLanguageModel::default());
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
         let old_user_message_id = ClientUserMessageId::new();
         let new_user_message_id = ClientUserMessageId::new();
 
@@ -7282,7 +7656,7 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
 
-        let compaction_request = model.pending_completions().pop().unwrap();
+        let compaction_request = fake.pending_completions().pop().unwrap();
         assert_eq!(
             compaction_request.intent,
             Some(CompletionIntent::ThreadContextSummarization)
@@ -7293,11 +7667,11 @@ mod tests {
         assert_eq!(compaction_texts[1], "old assistant");
         assert_eq!(compaction_texts[2], COMPACTION_PROMPT);
 
-        model.send_completion_stream_text_chunk(&compaction_request, "compacted old context");
-        model.end_completion_stream(&compaction_request);
+        fake.send_text(&model, &compaction_request, "compacted old context");
+        fake.end_stream(&model, &compaction_request);
         cx.run_until_parked();
 
-        let final_request = model.pending_completions().pop().unwrap();
+        let final_request = fake.pending_completions().pop().unwrap();
         assert_eq!(final_request.intent, Some(CompletionIntent::UserPrompt));
         assert_eq!(
             request_texts_after_system(&final_request.messages),
@@ -7308,8 +7682,8 @@ mod tests {
             ]
         );
 
-        model.send_completion_stream_text_chunk(&final_request, "answer");
-        model.end_completion_stream(&final_request);
+        fake.send_text(&model, &final_request, "answer");
+        fake.end_stream(&model, &final_request);
         cx.run_until_parked();
 
         cx.update(|cx| {
@@ -7327,11 +7701,13 @@ mod tests {
 
     #[gpui::test]
     async fn test_manual_compact_forces_summary(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let model = Arc::new(FakeLanguageModel::default());
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
         // A context window below the minimum and no recorded token usage would
         // both disable *automatic* compaction. Manual compaction forces it anyway.
-        model.set_max_token_count(MIN_COMPACTION_CONTEXT_WINDOW - 1);
+        let model = fake.update_model("fake", |model| {
+            model.max_token_count = MIN_COMPACTION_CONTEXT_WINDOW - 1;
+            model.max_input_tokens = MIN_COMPACTION_CONTEXT_WINDOW - 1;
+        });
         let user_message_id = ClientUserMessageId::new();
         let compact_message_id = ClientUserMessageId::new();
 
@@ -7356,7 +7732,7 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
 
-        let compaction_request = model.pending_completions().pop().unwrap();
+        let compaction_request = fake.pending_completions().pop().unwrap();
         assert_eq!(
             compaction_request.intent,
             Some(CompletionIntent::ThreadContextSummarization)
@@ -7367,14 +7743,14 @@ mod tests {
         assert_eq!(compaction_texts[1], "old assistant");
         assert_eq!(compaction_texts[2], COMPACTION_PROMPT);
 
-        model.send_completion_stream_text_chunk(&compaction_request, "summary of old context");
-        model.end_completion_stream(&compaction_request);
+        fake.send_text(&model, &compaction_request, "summary of old context");
+        fake.end_stream(&model, &compaction_request);
         cx.run_until_parked();
 
         // The compaction summary is appended after a zero-content user message
         // marker, and no follow-up model turn is requested — `/compact` only
         // compacts.
-        assert!(model.pending_completions().is_empty());
+        assert!(fake.pending_completions().is_empty());
         cx.update(|cx| {
             thread.read_with(cx, |thread, _cx| {
                 assert!(matches!(&*thread.messages[0], Message::User(_)));
@@ -7408,8 +7784,8 @@ mod tests {
     /// rewind marker (or a partial summary) dangling at the end of the thread.
     #[gpui::test]
     async fn test_manual_compact_cancelled_leaves_no_marker(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let model = Arc::new(FakeLanguageModel::default());
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
 
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -7430,7 +7806,7 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
         // The compaction request is in flight but hasn't streamed a summary.
-        assert_eq!(model.pending_completions().len(), 1);
+        assert_eq!(fake.pending_completions().len(), 1);
 
         cx.update(|cx| thread.update(cx, |thread, cx| thread.cancel(cx)))
             .await;
@@ -7447,8 +7823,8 @@ mod tests {
     /// the thread untouched — no marker, no compaction.
     #[gpui::test]
     async fn test_manual_compact_empty_summary_leaves_no_marker(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let model = Arc::new(FakeLanguageModel::default());
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
 
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -7469,9 +7845,9 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
 
-        let request = model.pending_completions().pop().unwrap();
+        let request = fake.pending_completions().pop().unwrap();
         // End the stream without emitting any summary text.
-        model.end_completion_stream(&request);
+        fake.end_stream(&model, &request);
         cx.run_until_parked();
 
         // An error is surfaced, and the thread is left exactly as it was. The
@@ -7495,8 +7871,8 @@ mod tests {
     /// issues no model request and adds no marker.
     #[gpui::test]
     async fn test_manual_compact_noop_on_empty_thread(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let model = Arc::new(FakeLanguageModel::default());
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
         cx.update(|cx| thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx)));
 
         let _events = cx
@@ -7508,7 +7884,7 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
 
-        assert!(model.pending_completions().is_empty());
+        assert!(fake.pending_completions().is_empty());
         thread.read_with(cx, |thread, _cx| {
             assert!(thread.messages.is_empty());
         });
@@ -7519,7 +7895,7 @@ mod tests {
     /// a compacted thread doesn't surface an empty `/compact` bubble.
     #[gpui::test]
     async fn test_manual_compact_marker_replays_as_empty_user_message(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let (thread, _event_stream, _) = setup_thread_for_test(cx).await;
         let marker_id = ClientUserMessageId::new();
 
         let mut replay_events = cx.update(|cx| {
@@ -7564,9 +7940,9 @@ mod tests {
     /// to the configured model rather than the thread's primary model.
     #[gpui::test]
     async fn test_compaction_uses_configured_compaction_model(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let thread_model = Arc::new(FakeLanguageModel::default());
-        let compaction_model = Arc::new(FakeLanguageModel::default());
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let thread_model = fake.model("fake");
+        let compaction_model = fake.model("compaction");
 
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -7576,7 +7952,8 @@ mod tests {
                     .push(user_text_message(ClientUserMessageId::new(), "old user"));
                 thread.messages.push(agent_text_message("old assistant"));
             });
-            set_registry_compaction_model(cx, Some(compaction_model.clone()));
+            let compaction_model = compaction_model.clone();
+            set_registry_compaction_model(cx, Some(compaction_model));
         });
 
         let _events = cx
@@ -7589,12 +7966,12 @@ mod tests {
         cx.run_until_parked();
 
         assert_eq!(
-            thread_model.pending_completions().len(),
+            fake.pending_completions_for(&thread_model).len(),
             0,
             "thread's primary model should not have been used for compaction"
         );
-        let request = compaction_model
-            .pending_completions()
+        let request = fake
+            .pending_completions_for(&compaction_model)
             .pop()
             .expect("compaction model should have received the request");
         assert_eq!(
@@ -7610,8 +7987,8 @@ mod tests {
             assert_eq!(telemetry.model, compaction_model.telemetry_id());
         });
 
-        compaction_model.send_completion_stream_text_chunk(&request, "summary");
-        compaction_model.end_completion_stream(&request);
+        fake.send_text(&compaction_model, &request, "summary");
+        fake.end_stream(&compaction_model, &request);
         cx.run_until_parked();
     }
 
@@ -7621,8 +7998,8 @@ mod tests {
     /// model — not the one the user tried to configure.
     #[gpui::test]
     async fn test_compaction_falls_back_when_compaction_model_unavailable(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let thread_model = Arc::new(FakeLanguageModel::default());
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let thread_model = fake.model("fake");
 
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -7654,8 +8031,8 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
 
-        let request = thread_model
-            .pending_completions()
+        let request = fake
+            .pending_completions_for(&thread_model)
             .pop()
             .expect("thread model should have received the fallback request");
         assert_eq!(
@@ -7671,8 +8048,8 @@ mod tests {
             assert_eq!(telemetry.model, thread_model.telemetry_id());
         });
 
-        thread_model.send_completion_stream_text_chunk(&request, "summary");
-        thread_model.end_completion_stream(&request);
+        fake.send_text(&thread_model, &request, "summary");
+        fake.end_stream(&thread_model, &request);
         cx.run_until_parked();
     }
 
@@ -7680,9 +8057,9 @@ mod tests {
     /// `agent.compaction_model`.
     #[gpui::test]
     async fn test_auto_compaction_uses_compaction_model(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let thread_model = Arc::new(FakeLanguageModel::default());
-        let compaction_model = Arc::new(FakeLanguageModel::default());
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let thread_model = fake.model("fake");
+        let compaction_model = fake.model("compaction");
         let old_user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
@@ -7707,7 +8084,8 @@ mod tests {
                     threshold: agent_settings::AutoCompactThreshold::Percentage(0.5),
                 },
             );
-            set_registry_compaction_model(cx, Some(compaction_model.clone()));
+            let compaction_model = compaction_model.clone();
+            set_registry_compaction_model(cx, Some(compaction_model));
         });
 
         // The auto-compact gate fires inside `run_turn` when we kick off a
@@ -7722,9 +8100,9 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
 
-        assert_eq!(thread_model.pending_completions().len(), 0);
-        let request = compaction_model
-            .pending_completions()
+        assert_eq!(fake.pending_completions_for(&thread_model).len(), 0);
+        let request = fake
+            .pending_completions_for(&compaction_model)
             .pop()
             .expect("compaction model should have received the auto-compaction request");
         assert_eq!(
@@ -7732,15 +8110,15 @@ mod tests {
             Some(CompletionIntent::ThreadContextSummarization)
         );
 
-        compaction_model.send_completion_stream_text_chunk(&request, "summary");
-        compaction_model.end_completion_stream(&request);
+        fake.send_text(&compaction_model, &request, "summary");
+        fake.end_stream(&compaction_model, &request);
         cx.run_until_parked();
     }
 
     #[gpui::test]
     async fn test_compaction_usage_counts_toward_cumulative_usage(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let model = Arc::new(FakeLanguageModel::default());
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
         let old_user_message_id = ClientUserMessageId::new();
         let new_user_message_id = ClientUserMessageId::new();
         let prior_usage = TokenUsage {
@@ -7784,13 +8162,14 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
 
-        let compaction_request = model.pending_completions().pop().unwrap();
+        let compaction_request = fake.pending_completions().pop().unwrap();
         assert_eq!(
             compaction_request.intent,
             Some(CompletionIntent::ThreadContextSummarization)
         );
 
-        model.send_completion_stream_event(
+        fake.send_event(
+            &model,
             &compaction_request,
             LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
                 input_tokens: 40,
@@ -7798,12 +8177,13 @@ mod tests {
                 ..Default::default()
             }),
         );
-        model.send_completion_stream_event(
+        fake.send_event(
+            &model,
             &compaction_request,
             LanguageModelCompletionEvent::UsageUpdate(compaction_usage),
         );
-        model.send_completion_stream_text_chunk(&compaction_request, "compacted old context");
-        model.end_completion_stream(&compaction_request);
+        fake.send_text(&model, &compaction_request, "compacted old context");
+        fake.end_stream(&model, &compaction_request);
         cx.run_until_parked();
 
         let expected_after_compaction = prior_usage + compaction_usage;
@@ -7816,14 +8196,15 @@ mod tests {
             );
         });
 
-        let final_request = model.pending_completions().pop().unwrap();
+        let final_request = fake.pending_completions().pop().unwrap();
         assert_eq!(final_request.intent, Some(CompletionIntent::UserPrompt));
 
-        model.send_completion_stream_event(
+        fake.send_event(
+            &model,
             &final_request,
             LanguageModelCompletionEvent::UsageUpdate(final_usage),
         );
-        model.end_completion_stream(&final_request);
+        fake.end_stream(&model, &final_request);
         cx.run_until_parked();
 
         thread.read_with(cx, |thread, _cx| {
@@ -7840,7 +8221,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_replay_emits_context_compaction(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let (thread, _event_stream, _) = setup_thread_for_test(cx).await;
         let user_message_id = ClientUserMessageId::new();
 
         let mut replay_events = cx.update(|cx| {
@@ -7889,7 +8270,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_native_compaction_boundary(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let (thread, _event_stream, _) = setup_thread_for_test(cx).await;
 
         let request_messages = cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -7920,7 +8301,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_retained_users_truncate_oldest(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let (thread, _event_stream, _) = setup_thread_for_test(cx).await;
         let mut long_text = "START".to_string();
         long_text.push_str(&"x".repeat(COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET));
         long_text.push_str("END");
@@ -8019,7 +8400,7 @@ mod tests {
         cx.update(|cx| {
             let mut subagents = Vec::new();
             for _ in 0..count {
-                let subagent = cx.new(|cx| Thread::new_subagent(parent, cx));
+                let subagent = cx.new(|cx| Thread::new_subagent(parent, None, cx));
                 parent.update(cx, |thread, _cx| {
                     thread.register_running_subagent(subagent.downgrade());
                 });
@@ -8517,7 +8898,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_replay_tool_call_replays_image_content(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let (thread, _event_stream, _) = setup_thread_for_test(cx).await;
 
         let registered_tool_use_id = LanguageModelToolUseId::from("registered_tool_id");
         let missing_tool_use_id = LanguageModelToolUseId::from("missing_tool_id");
@@ -8586,53 +8967,91 @@ mod tests {
             })
         });
 
+        let registered_tool_call_id = scoped_tool_call_id(0, &registered_tool_use_id).to_string();
+        let missing_tool_call_id = scoped_tool_call_id(0, &missing_tool_use_id).to_string();
+        let mut tool_names_by_id = HashMap::default();
         let mut tool_use_ids_with_image_content = HashSet::default();
         while let Some(event) = replay_events.next().await {
             let event = event.unwrap();
-            if let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) =
-                event
-                && let Some(content) = &update.fields.content
-                && content.iter().any(|content| {
-                    matches!(
-                        content,
-                        acp::ToolCallContent::Content(acp::Content {
-                            content: acp::ContentBlock::Image(_),
-                            ..
+            match event {
+                ThreadEvent::ToolCall(tool_call) => {
+                    tool_names_by_id.insert(tool_call.tool_call_id.to_string(), tool_call.name);
+                }
+                ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update))
+                    if update.fields.content.as_ref().is_some_and(|content| {
+                        content.iter().any(|content| {
+                            matches!(
+                                content,
+                                acp::ToolCallContent::Content(acp::Content {
+                                    content: acp::ContentBlock::Image(_),
+                                    ..
+                                })
+                            )
                         })
-                    )
-                })
-            {
-                tool_use_ids_with_image_content.insert(update.tool_call_id.to_string());
+                    }) =>
+                {
+                    tool_use_ids_with_image_content.insert(update.tool_call_id.to_string());
+                }
+                _ => {}
             }
         }
 
         // Both tool uses live in the message pushed above, at index 0 (see
         // `scoped_tool_call_id`).
-        assert!(
-            tool_use_ids_with_image_content
-                .contains(&scoped_tool_call_id(0, &registered_tool_use_id).to_string())
+        assert!(tool_use_ids_with_image_content.contains(&registered_tool_call_id));
+        assert!(tool_use_ids_with_image_content.contains(&missing_tool_call_id));
+        assert_eq!(
+            tool_names_by_id
+                .get(&registered_tool_call_id)
+                .and_then(Option::as_deref),
+            Some(ReplayImageTool::NAME)
         );
-        assert!(
-            tool_use_ids_with_image_content
-                .contains(&scoped_tool_call_id(0, &missing_tool_use_id).to_string())
+        assert_eq!(
+            tool_names_by_id
+                .get(&missing_tool_call_id)
+                .and_then(Option::as_deref),
+            Some("missing_image_tool")
         );
     }
 
     #[gpui::test]
+    async fn test_refresh_model_picks_up_provider_capability_changes(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
+        let provider_id = model.provider_id.clone();
+        let model_changes = Rc::new(std::cell::Cell::new(0));
+        let _subscription = cx.update(|cx| {
+            thread.update(cx, |thread, cx| thread.set_model(model, cx));
+            let model_changes = model_changes.clone();
+            cx.subscribe(&thread, move |_, _: &ModelChanged, _| {
+                model_changes.set(model_changes.get() + 1)
+            })
+        });
+
+        thread.update(cx, |thread, cx| thread.refresh_model(&provider_id, cx));
+        assert_eq!(model_changes.get(), 0, "an unchanged model is not re-set");
+
+        fake.update_model("fake", |model| model.supports_images = true);
+        thread.update(cx, |thread, cx| {
+            thread.refresh_model(&LanguageModelProviderId::from("other".to_string()), cx);
+            assert!(!thread.model().unwrap().supports_images());
+
+            thread.refresh_model(&provider_id, cx);
+            assert!(thread.model().unwrap().supports_images());
+        });
+        assert_eq!(model_changes.get(), 1);
+    }
+
+    #[gpui::test]
     async fn test_set_model_propagates_to_subagents(cx: &mut TestAppContext) {
-        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let (parent, _event_stream, fake) = setup_thread_for_test(cx).await;
         let subagents = setup_parent_with_subagents(cx, &parent, 2);
 
-        let new_model: Arc<dyn LanguageModel> = Arc::new(FakeLanguageModel::with_id_and_thinking(
-            "test-provider",
-            "new-model",
-            "New Model",
-            false,
-        ));
+        let new_model = fake.model("new-model");
 
         cx.update(|cx| {
             parent.update(cx, |thread, cx| {
-                thread.set_model(new_model, cx);
+                thread.set_model(new_model.clone(), cx);
             });
 
             for subagent in &subagents {
@@ -8648,20 +9067,14 @@ mod tests {
 
     #[gpui::test]
     async fn test_set_summarization_model_propagates_to_subagents(cx: &mut TestAppContext) {
-        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let (parent, _event_stream, fake) = setup_thread_for_test(cx).await;
         let subagents = setup_parent_with_subagents(cx, &parent, 2);
 
-        let summary_model: Arc<dyn LanguageModel> =
-            Arc::new(FakeLanguageModel::with_id_and_thinking(
-                "test-provider",
-                "summary-model",
-                "Summary Model",
-                false,
-            ));
+        let summary_model = fake.model("summary-model");
 
         cx.update(|cx| {
             parent.update(cx, |thread, cx| {
-                thread.set_summarization_model(Some(summary_model), cx);
+                thread.set_summarization_model(Some(summary_model.clone()), cx);
             });
 
             for subagent in &subagents {
@@ -8677,7 +9090,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_set_thinking_enabled_propagates_to_subagents(cx: &mut TestAppContext) {
-        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let (parent, _event_stream, _) = setup_thread_for_test(cx).await;
         let subagents = setup_parent_with_subagents(cx, &parent, 2);
 
         cx.update(|cx| {
@@ -8707,7 +9120,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_set_thinking_effort_propagates_to_subagents(cx: &mut TestAppContext) {
-        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let (parent, _event_stream, _) = setup_thread_for_test(cx).await;
         let subagents = setup_parent_with_subagents(cx, &parent, 2);
 
         cx.update(|cx| {
@@ -8739,7 +9152,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_subagent_inherits_settings_at_creation(cx: &mut TestAppContext) {
-        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let (parent, _event_stream, _) = setup_thread_for_test(cx).await;
 
         cx.update(|cx| {
             parent.update(cx, |thread, cx| {
@@ -8763,7 +9176,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_set_speed_propagates_to_subagents(cx: &mut TestAppContext) {
-        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let (parent, _event_stream, _) = setup_thread_for_test(cx).await;
         let subagents = setup_parent_with_subagents(cx, &parent, 2);
 
         cx.update(|cx| {
@@ -8783,7 +9196,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_dropped_subagent_does_not_panic(cx: &mut TestAppContext) {
-        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let (parent, _event_stream, _) = setup_thread_for_test(cx).await;
         let subagents = setup_parent_with_subagents(cx, &parent, 1);
 
         // Drop the subagent so the WeakEntity can no longer be upgraded
@@ -8803,7 +9216,7 @@ mod tests {
     async fn test_handle_tool_use_json_parse_error_adds_tool_use_to_content(
         cx: &mut TestAppContext,
     ) {
-        let (thread, event_stream) = setup_thread_for_test(cx).await;
+        let (thread, event_stream, _) = setup_thread_for_test(cx).await;
 
         let tool_use_id = LanguageModelToolUseId::from("test_tool_id");
         let tool_name: Arc<str> = Arc::from("test_tool");
