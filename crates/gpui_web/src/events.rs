@@ -162,7 +162,6 @@ impl WebWindowInner {
             self.register_input(),
             self.register_paste(),
             self.register_composition_start(),
-            self.register_composition_update(),
             self.register_composition_end(),
             self.register_focus(),
             self.register_blur(),
@@ -836,93 +835,95 @@ impl WebWindowInner {
     /// synchronous callback — the editor resolves its selection through
     /// anchors, so the freshly-fetched offsets are exact, and nothing can
     /// run between the query and the edit below.
+    fn import_ime_mirror_input(&self, composing: bool) {
+        let new_value = self.ime_mirror.value();
+        let old_value = self.ime_mirror.stored_text();
+        if new_value == old_value {
+            return;
+        }
+
+        let old_units: Vec<u16> = old_value.encode_utf16().collect();
+        let new_units: Vec<u16> = new_value.encode_utf16().collect();
+
+        // A prefix/suffix diff is ambiguous when the inserted text
+        // shares characters with what follows it (inserting "pactor "
+        // before "pact" also reads as inserting "or pact" four units
+        // later). The edit's true position is not ambiguous: the browser
+        // leaves the caret at the end of an IME edit, so the suffix is
+        // anchored as "everything after the post-edit caret", and the
+        // prefix is capped to fit. Greedy matching is only a fallback
+        // for edits where the anchored suffix doesn't verify.
+        let post_edit_caret = self
+            .ime_mirror
+            .selection_start()
+            .map(|caret| caret as usize);
+        let anchored_suffix_length = post_edit_caret
+            .map(|caret| new_units.len().saturating_sub(caret))
+            .filter(|&suffix_length| {
+                suffix_length <= old_units.len()
+                    && old_units[old_units.len() - suffix_length..]
+                        == new_units[new_units.len() - suffix_length..]
+            });
+        let suffix_length = anchored_suffix_length.unwrap_or_else(|| {
+            old_units
+                .iter()
+                .rev()
+                .zip(new_units.iter().rev())
+                .take_while(|(old_unit, new_unit)| old_unit == new_unit)
+                .count()
+        });
+        let prefix_length = old_units
+            .iter()
+            .zip(&new_units)
+            .take_while(|(old_unit, new_unit)| old_unit == new_unit)
+            .count()
+            .min(old_units.len() - suffix_length)
+            .min(new_units.len() - suffix_length);
+
+        let inserted_text =
+            String::from_utf16_lossy(&new_units[prefix_length..new_units.len() - suffix_length]);
+        let replaced_old_end = old_units.len() - suffix_length;
+
+        // The edit's shape relative to the element's pre-edit selection.
+        // The element is private to the IME and these syncs, so the
+        // stored selection is exact.
+        let (element_selection_start, element_selection_end) = self.ime_mirror.stored_selection();
+        let removed_before_selection =
+            (element_selection_start as usize).saturating_sub(prefix_length);
+        let removed_after_selection =
+            replaced_old_end.saturating_sub(element_selection_end as usize);
+
+        let applied = self.with_input_handler(|handler| {
+            let Some(selection) = handler.selected_text_range(false) else {
+                return false;
+            };
+            let range = selection
+                .range
+                .start
+                .saturating_sub(removed_before_selection)
+                ..selection.range.end + removed_after_selection;
+            if composing {
+                handler.replace_and_mark_text_in_range(Some(range), &inserted_text, None);
+            } else {
+                handler.replace_text_in_range(Some(range), &inserted_text);
+            }
+            true
+        });
+        if applied != Some(true) {
+            return;
+        }
+
+        self.ime_mirror.adopt_element_state();
+    }
+
     fn register_input(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("input", move |event: JsValue| {
             let event: web_sys::InputEvent = event.unchecked_into();
-
-            // Composition text is delivered through the composition events;
-            // the mirror is reconciled once on compositionend.
-            if this.is_composing.get() || event.is_composing() {
-                return;
-            }
-
-            let new_value = this.ime_mirror.value();
-            let old_value = this.ime_mirror.stored_text();
-            if new_value == old_value {
-                return;
-            }
-
-            let old_units: Vec<u16> = old_value.encode_utf16().collect();
-            let new_units: Vec<u16> = new_value.encode_utf16().collect();
-
-            // A prefix/suffix diff is ambiguous when the inserted text
-            // shares characters with what follows it (inserting "pactor "
-            // before "pact" also reads as inserting "or pact" four units
-            // later). The edit's true position is not ambiguous: the browser
-            // leaves the caret at the end of an IME edit, so the suffix is
-            // anchored as "everything after the post-edit caret", and the
-            // prefix is capped to fit. Greedy matching is only a fallback
-            // for edits where the anchored suffix doesn't verify.
-            let post_edit_caret = this
-                .ime_mirror
-                .selection_start()
-                .map(|caret| caret as usize);
-            let anchored_suffix_length = post_edit_caret
-                .map(|caret| new_units.len().saturating_sub(caret))
-                .filter(|&suffix_length| {
-                    suffix_length <= old_units.len()
-                        && old_units[old_units.len() - suffix_length..]
-                            == new_units[new_units.len() - suffix_length..]
-                });
-            let suffix_length = anchored_suffix_length.unwrap_or_else(|| {
-                old_units
-                    .iter()
-                    .rev()
-                    .zip(new_units.iter().rev())
-                    .take_while(|(old_unit, new_unit)| old_unit == new_unit)
-                    .count()
-            });
-            let prefix_length = old_units
-                .iter()
-                .zip(&new_units)
-                .take_while(|(old_unit, new_unit)| old_unit == new_unit)
-                .count()
-                .min(old_units.len() - suffix_length)
-                .min(new_units.len() - suffix_length);
-
-            let inserted_text = String::from_utf16_lossy(
-                &new_units[prefix_length..new_units.len() - suffix_length],
-            );
-            let replaced_old_end = old_units.len() - suffix_length;
-
-            // The edit's shape relative to the element's pre-edit selection.
-            // The element is private to the IME and these syncs, so the
-            // stored selection is exact.
-            let (element_selection_start, element_selection_end) =
-                this.ime_mirror.stored_selection();
-            let removed_before_selection =
-                (element_selection_start as usize).saturating_sub(prefix_length);
-            let removed_after_selection =
-                replaced_old_end.saturating_sub(element_selection_end as usize);
-
-            let applied = this.with_input_handler(|handler| {
-                let Some(selection) = handler.selected_text_range(false) else {
-                    return false;
-                };
-                let range = selection
-                    .range
-                    .start
-                    .saturating_sub(removed_before_selection)
-                    ..selection.range.end + removed_after_selection;
-                handler.replace_text_in_range(Some(range), &inserted_text);
-                true
-            });
-            if applied != Some(true) {
-                return;
-            }
-
-            this.ime_mirror.adopt_element_state();
+            // Composition updates can describe text the browser has not yet
+            // changed (or text committed before composition began). Import the
+            // actual textarea edit instead of inserting compositionupdate.data.
+            this.import_ime_mirror_input(this.is_composing.get() || event.is_composing());
         })
     }
 
@@ -1016,8 +1017,8 @@ impl WebWindowInner {
         self.listen_input("beforeinput", move |event: JsValue| {
             let event: web_sys::InputEvent = event.unchecked_into();
 
-            // During composition the composition{update,end} handlers own
-            // the text.
+            // During composition, leave the browser's edit in the mirror;
+            // the input handler imports its actual change.
             if this.is_composing.get() || event.is_composing() {
                 return;
             }
@@ -1133,40 +1134,14 @@ impl WebWindowInner {
         })
     }
 
-    fn register_composition_update(self: &Rc<Self>) -> EventListenerHandle {
-        let this = Rc::clone(self);
-        self.listen_input("compositionupdate", move |event: JsValue| {
-            let event: web_sys::CompositionEvent = event.unchecked_into();
-            let data = event.data().unwrap_or_default();
-            this.is_composing.set(true);
-            this.with_input_handler(|handler| {
-                handler.replace_and_mark_text_in_range(None, &data, None);
-            });
-        })
-    }
-
     fn register_composition_end(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
-        self.listen_input("compositionend", move |event: JsValue| {
-            let event: web_sys::CompositionEvent = event.unchecked_into();
-            let data = event.data().unwrap_or_default();
+        self.listen_input("compositionend", move |_event: JsValue| {
             this.is_composing.set(false);
+            this.import_ime_mirror_input(false);
             this.with_input_handler(|handler| {
-                // Only commit the final text when a marked range still
-                // exists. When a caret move ended the composition, the
-                // editor has already unmarked (keeping the composed text as
-                // committed content); inserting `data` at the selection
-                // would duplicate the word at the new caret position.
-                if handler.marked_text_range().is_some() {
-                    handler.replace_text_in_range(None, &data);
-                }
                 handler.unmark_text();
             });
-            // Adopt the element's post-composition state as the mirror
-            // baseline without writing anything: the browser applied the
-            // commit to the element itself, and a write here would restart
-            // the IME mid-commit. The deferred sync reconciles any
-            // app-side divergence afterwards.
             this.ime_mirror.adopt_element_state();
             this.schedule_ime_mirror_sync();
         })
