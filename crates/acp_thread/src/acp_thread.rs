@@ -1054,10 +1054,51 @@ pub struct PermissionRequestId(Uuid);
 #[derive(Debug)]
 pub struct PermissionRequest {
     pub id: PermissionRequestId,
-    pub tool_call_id: acp_v1::ToolCallId,
-    pub options: PermissionOptions,
-    pub kind: AuthorizationKind,
-    respond_tx: oneshot::Sender<RequestPermissionOutcome>,
+    data: PermissionRequestData,
+}
+
+#[derive(Debug)]
+enum PermissionRequestData {
+    LegacyTool {
+        tool_call_id: acp_v1::ToolCallId,
+        options: PermissionOptions,
+        kind: AuthorizationKind,
+        respond_tx: oneshot::Sender<RequestPermissionOutcome>,
+    },
+    Generic {
+        request: acp_v2::RequestPermissionRequest,
+        respond_tx: oneshot::Sender<acp_v2::RequestPermissionOutcome>,
+    },
+}
+
+impl PermissionRequest {
+    pub fn legacy_tool_call_id(&self) -> Option<&acp_v1::ToolCallId> {
+        match &self.data {
+            PermissionRequestData::LegacyTool { tool_call_id, .. } => Some(tool_call_id),
+            PermissionRequestData::Generic { .. } => None,
+        }
+    }
+
+    pub fn legacy_options(&self) -> Option<&PermissionOptions> {
+        match &self.data {
+            PermissionRequestData::LegacyTool { options, .. } => Some(options),
+            PermissionRequestData::Generic { .. } => None,
+        }
+    }
+
+    pub fn legacy_kind(&self) -> Option<AuthorizationKind> {
+        match &self.data {
+            PermissionRequestData::LegacyTool { kind, .. } => Some(*kind),
+            PermissionRequestData::Generic { .. } => None,
+        }
+    }
+
+    pub fn generic_request(&self) -> Option<&acp_v2::RequestPermissionRequest> {
+        match &self.data {
+            PermissionRequestData::LegacyTool { .. } => None,
+            PermissionRequestData::Generic { request, .. } => Some(request),
+        }
+    }
 }
 
 struct ToolCallPatch {
@@ -3833,6 +3874,13 @@ impl AcpThread {
     }
 
     fn has_pending_turn_action(&self) -> bool {
+        if self
+            .permission_requests
+            .values()
+            .any(|request| request.generic_request().is_some())
+        {
+            return true;
+        }
         for entry in self.entries.iter().rev() {
             match entry {
                 AgentThreadEntry::UserMessage(_) => return false,
@@ -4900,6 +4948,8 @@ impl AcpThread {
         for id in removed_requests {
             self.resolve_permission_request(id, RequestPermissionOutcome::Cancelled, cx);
         }
+        // Unanchored prompts cannot remain valid across a transcript rollback.
+        self.cancel_generic_permission_requests(cx);
     }
 
     pub fn push_context_compaction(
@@ -5409,6 +5459,88 @@ impl AcpThread {
         self.permission_requests.values()
     }
 
+    pub fn request_permission(
+        &mut self,
+        request: acp_v2::RequestPermissionRequest,
+        cx: &mut Context<Self>,
+    ) -> Result<(PermissionRequestId, Task<acp_v2::RequestPermissionOutcome>)> {
+        anyhow::ensure!(
+            acp_v1::SessionId::new(request.session_id.0.clone()) == self.session_id,
+            "Permission request belongs to a different session"
+        );
+        anyhow::ensure!(
+            !request.options.is_empty(),
+            "Permission request has no offered options"
+        );
+        let mut option_ids = HashSet::default();
+        anyhow::ensure!(
+            request
+                .options
+                .iter()
+                .all(|option| option_ids.insert(&option.option_id)),
+            "Permission request has duplicate option IDs"
+        );
+
+        let (respond_tx, receiver) = oneshot::channel();
+        let id = PermissionRequestId(Uuid::new_v4());
+        self.permission_requests.insert(
+            id,
+            PermissionRequest {
+                id,
+                data: PermissionRequestData::Generic {
+                    request,
+                    respond_tx,
+                },
+            },
+        );
+        cx.emit(AcpThreadEvent::ToolAuthorizationRequested(id));
+        Ok((
+            id,
+            cx.spawn(async move |_, _| {
+                receiver
+                    .await
+                    .unwrap_or(acp_v2::RequestPermissionOutcome::Cancelled)
+            }),
+        ))
+    }
+
+    pub fn select_permission_option(
+        &mut self,
+        id: PermissionRequestId,
+        option_id: acp_v2::PermissionOptionId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(request) = self
+            .permission_request(id)
+            .and_then(PermissionRequest::generic_request)
+        else {
+            return;
+        };
+        if !request
+            .options
+            .iter()
+            .any(|option| option.option_id == option_id)
+        {
+            log::debug!("Permission choice is not an offered option");
+            return;
+        }
+        let Some(PermissionRequest {
+            data: PermissionRequestData::Generic { respond_tx, .. },
+            ..
+        }) = self.take_permission_request(id, cx)
+        else {
+            return;
+        };
+        if respond_tx
+            .send(acp_v2::RequestPermissionOutcome::Selected(
+                acp_v2::SelectedPermissionOutcome::new(option_id),
+            ))
+            .is_err()
+        {
+            log::debug!("Permission request closed before the outcome was delivered");
+        }
+    }
+
     pub fn request_tool_call_authorization(
         &mut self,
         tool_call: acp_v1::ToolCallUpdate,
@@ -5456,10 +5588,12 @@ impl AcpThread {
             id,
             PermissionRequest {
                 id,
-                tool_call_id,
-                options,
-                respond_tx: tx,
-                kind,
+                data: PermissionRequestData::LegacyTool {
+                    tool_call_id,
+                    options,
+                    respond_tx: tx,
+                    kind,
+                },
             },
         );
         cx.emit(AcpThreadEvent::ToolAuthorizationRequested(id));
@@ -5499,8 +5633,8 @@ impl AcpThread {
         let Some(request) = self.permission_requests.get(&id) else {
             return;
         };
-        let tool_call_id = request.tool_call_id.clone();
-        if let Some((_, call)) = self.tool_call_mut(&tool_call_id)
+        if let Some(tool_call_id) = request.legacy_tool_call_id().cloned()
+            && let Some((_, call)) = self.tool_call_mut(&tool_call_id)
             && call.authorization_id() == Some(id)
         {
             call.set_local_status(ToolCallStatus::Canceled);
@@ -5529,16 +5663,26 @@ impl AcpThread {
         mut outcome: SelectedPermissionOutcome,
         cx: &mut Context<Self>,
     ) {
-        let Some(request) = self.permission_requests.get(&id) else {
+        let Some(PermissionRequest {
+            data:
+                PermissionRequestData::LegacyTool {
+                    options,
+                    tool_call_id,
+                    kind,
+                    ..
+                },
+            ..
+        }) = self.permission_requests.get(&id)
+        else {
             return;
         };
-        let Some(option) = request.options.option_for_id(&outcome.option_id) else {
+        let Some(option) = options.option_for_id(&outcome.option_id) else {
             log::debug!("Permission choice is not an offered option");
             return;
         };
         outcome.option_kind = option.kind;
-        let tool_call_id = request.tool_call_id.clone();
-        let kind = request.kind;
+        let tool_call_id = tool_call_id.clone();
+        let kind = *kind;
         let Some((_, call)) = self.tool_call_mut(&tool_call_id) else {
             return;
         };
@@ -5567,19 +5711,49 @@ impl AcpThread {
         outcome: RequestPermissionOutcome,
         cx: &mut Context<Self>,
     ) {
-        let Some(request) = self.permission_requests.shift_remove(&id) else {
+        let Some(request) = self.take_permission_request(id, cx) else {
             return;
         };
-        if let Some((index, call)) = self.tool_call_mut(&request.tool_call_id)
+        let delivered = match request.data {
+            PermissionRequestData::LegacyTool { respond_tx, .. } => {
+                respond_tx.send(outcome).is_ok()
+            }
+            PermissionRequestData::Generic { respond_tx, .. } => respond_tx
+                .send(acp_v2::RequestPermissionOutcome::Cancelled)
+                .is_ok(),
+        };
+        if !delivered {
+            log::debug!("Permission request closed before the outcome was delivered");
+        }
+    }
+
+    fn take_permission_request(
+        &mut self,
+        id: PermissionRequestId,
+        cx: &mut Context<Self>,
+    ) -> Option<PermissionRequest> {
+        let request = self.permission_requests.shift_remove(&id)?;
+        if let Some(tool_call_id) = request.legacy_tool_call_id()
+            && let Some((index, call)) = self.tool_call_mut(tool_call_id)
             && call.authorization_id() == Some(id)
         {
             call.authorization = None;
             cx.emit(AcpThreadEvent::EntryUpdated(index));
         }
-        if request.respond_tx.send(outcome).is_err() {
-            log::debug!("Permission request closed before the outcome was delivered");
-        }
         cx.emit(AcpThreadEvent::ToolAuthorizationReceived(id));
+        Some(request)
+    }
+
+    fn cancel_generic_permission_requests(&mut self, cx: &mut Context<Self>) {
+        let ids = self
+            .permission_requests
+            .values()
+            .filter(|request| request.generic_request().is_some())
+            .map(|request| request.id)
+            .collect::<Vec<_>>();
+        for id in ids {
+            self.cancel_permission_request(id, cx);
+        }
     }
 
     pub fn request_elicitation(
@@ -6029,6 +6203,9 @@ impl AcpThread {
                         // Handle refusal - distinguish between user prompt and tool call refusals
                         if let acp_v1::StopReason::Refusal = r.stop_reason {
                             this.had_error = true;
+                            if is_same_turn {
+                                this.cancel_generic_permission_requests(cx);
+                            }
                             if let Some((user_msg_ix, _)) = this.last_user_message() {
                                 // Check if there's a completed tool call with results after the last user message
                                 // This indicates the refusal is in response to tool output, not the user's prompt
@@ -6122,6 +6299,7 @@ impl AcpThread {
     ) -> Task<()> {
         self.flush_streaming_text(cx);
         if self.uses_reported_activity() {
+            self.cancel_generic_permission_requests(cx);
             let Some(receiver) = self.activity.wait_for_idle() else {
                 return Task::ready(());
             };
@@ -6225,6 +6403,7 @@ impl AcpThread {
         for id in canceled_requests {
             self.resolve_permission_request(id, permission_outcome.clone(), cx);
         }
+        self.cancel_generic_permission_requests(cx);
     }
 
     fn cancel_outstanding_elicitations(&mut self, cx: &mut Context<Self>) {
@@ -12935,8 +13114,8 @@ mod tests {
                     thread
                         .permission_request(request_id)
                         .expect("pending request")
-                        .tool_call_id,
-                    id
+                        .legacy_tool_call_id(),
+                    Some(&id)
                 );
                 assert_eq!(
                     serde_json::to_value(&call.reported_status).expect("reported status"),
@@ -19438,14 +19617,13 @@ mod tests {
                     let request = thread
                         .permission_request(old_id)
                         .expect("old request remains");
-                    assert_eq!(request.kind, AuthorizationKind::PermissionGrant);
-                    assert!(request.options.option_for_id(&"allow".into()).is_some());
-                    assert!(
-                        request
-                            .options
-                            .option_for_id(&"new-choice".into())
-                            .is_none()
+                    assert_eq!(
+                        request.legacy_kind(),
+                        Some(AuthorizationKind::PermissionGrant)
                     );
+                    let options = request.legacy_options().expect("legacy permission options");
+                    assert!(options.option_for_id(&"allow".into()).is_some());
+                    assert!(options.option_for_id(&"new-choice".into()).is_none());
                     assert_eq!(call.authorization_id(), Some(old_id));
                     assert_eq!(call.status(), ToolCallStatus::WaitingForConfirmation);
                     assert_eq!(*events.borrow(), [(true, old_id)]);
@@ -19860,8 +20038,8 @@ mod tests {
                     let request = thread
                         .permission_request(request_id)
                         .expect("invalid choice stays pending");
-                    assert_eq!(request.kind, kind);
-                    assert_eq!(request.tool_call_id, tool_id);
+                    assert_eq!(request.legacy_kind(), Some(kind));
+                    assert_eq!(request.legacy_tool_call_id(), Some(&tool_id));
                     assert_eq!(thread.pending_permission_requests().count(), 1);
                     let (_, call) = thread.tool_call(&tool_id).expect("waiting tool");
                     assert_eq!(call.authorization_id(), Some(request_id));
@@ -19994,6 +20172,665 @@ mod tests {
                 RequestPermissionOutcome::Cancelled
             ));
         }
+    }
+
+    #[gpui::test]
+    async fn test_generic_permission_retains_sdk_request_without_transcript_entries(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let (events, _subscription) = track_permission_events(&thread, cx);
+        let subjects = [
+            Some(
+                acp_v2::CommandPermissionSubject::new("cargo test", path!("/test"))
+                    .tool_call_id(acp_v2::ToolCallId::new("context-only"))
+                    .terminal_id(acp_v2::TerminalId::new("context-only-terminal"))
+                    .meta(acp_v2::Meta::from_iter([(
+                        "command-data".into(),
+                        json!({"nested": [1, true, null]}),
+                    )]))
+                    .into(),
+            ),
+            None,
+            Some(acp_v2::RequestPermissionSubject::Other(
+                acp_v2::OtherRequestPermissionSubject::new(
+                    "future_operation",
+                    [
+                        ("payload".into(), json!({"resource": ["one", "two"]})),
+                        ("_meta".into(), json!({"opaque": true})),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+            )),
+            Some(
+                acp_v2::ToolCallUpdate::new("not-a-transcript-tool")
+                    .title("Context, not a tool update")
+                    .status(acp_v2::ToolCallStatus::Completed)
+                    .content(vec!["Context, not transcript content".into()])
+                    .meta(acp_v2::Meta::from_iter([(
+                        "tool-data".into(),
+                        json!({"opaque": ["retained"]}),
+                    )]))
+                    .into(),
+            ),
+        ];
+        let mut pending = Vec::new();
+        for subject in subjects {
+            let request = thread.read_with(cx, |thread, _| {
+                test_generic_permission_request(thread, "future-choice").subject(subject)
+            });
+            let (id, response) = thread.update(cx, |thread, cx| {
+                thread
+                    .request_permission(request.clone(), cx)
+                    .expect("generic permission request")
+            });
+            thread.read_with(cx, |thread, _| {
+                let record = thread.permission_request(id).expect("pending record");
+                assert_eq!(record.generic_request(), Some(&request));
+                assert!(record.legacy_tool_call_id().is_none());
+                assert!(record.legacy_options().is_none());
+                assert!(record.legacy_kind().is_none());
+                assert!(thread.entries().is_empty());
+                assert!(thread.tool_call(&"context-only".into()).is_none());
+                assert!(thread.tool_call(&"not-a-transcript-tool".into()).is_none());
+                assert!(!thread.is_idle_for_retention());
+            });
+            pending.push((id, response));
+        }
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.pending_permission_requests().count(), 4);
+        });
+        assert_eq!(
+            *events.borrow(),
+            pending
+                .iter()
+                .map(|(id, _)| (true, *id))
+                .collect::<Vec<_>>()
+        );
+        for (id, response) in pending {
+            thread.update(cx, |thread, cx| thread.cancel_permission_request(id, cx));
+            assert_eq!(response.await, acp_v2::RequestPermissionOutcome::Cancelled);
+        }
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.pending_permission_requests().count(), 0);
+            assert!(thread.entries().is_empty());
+            assert!(thread.is_idle_for_retention());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_generic_permissions_for_same_subject_have_independent_choices(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let (events, _subscription) = track_permission_events(&thread, cx);
+        let subject = acp_v2::RequestPermissionSubject::from(
+            acp_v2::CommandPermissionSubject::new("cargo test", path!("/test")),
+        );
+        let (first_id, first_response) = thread.update(cx, |thread, cx| {
+            thread
+                .request_permission(
+                    test_generic_permission_request(thread, "first-choice")
+                        .subject(subject.clone()),
+                    cx,
+                )
+                .expect("first permission")
+        });
+        let (second_id, second_response) = thread.update(cx, |thread, cx| {
+            thread
+                .request_permission(
+                    test_generic_permission_request(thread, "second-choice").subject(subject),
+                    cx,
+                )
+                .expect("second permission")
+        });
+        assert_ne!(first_id, second_id);
+        thread.update(cx, |thread, cx| {
+            thread.select_permission_option(first_id, "second-choice".into(), cx);
+            thread.select_permission_option(second_id, "not-offered".into(), cx);
+            assert_eq!(
+                thread
+                    .pending_permission_requests()
+                    .map(|request| request.id)
+                    .collect::<Vec<_>>(),
+                [first_id, second_id]
+            );
+        });
+        assert_eq!(*events.borrow(), [(true, first_id), (true, second_id)]);
+        thread.update(cx, |thread, cx| {
+            thread.select_permission_option(first_id, "first-choice".into(), cx);
+            assert!(thread.permission_request(first_id).is_none());
+            thread.select_permission_option(first_id, "second-choice".into(), cx);
+            thread.cancel_permission_request(first_id, cx);
+            assert!(thread.permission_request(second_id).is_some());
+            assert_eq!(thread.pending_permission_requests().count(), 1);
+        });
+        assert_eq!(
+            *events.borrow(),
+            [(true, first_id), (true, second_id), (false, first_id)]
+        );
+        assert_eq!(
+            first_response.await,
+            acp_v2::RequestPermissionOutcome::Selected(acp_v2::SelectedPermissionOutcome::new(
+                "first-choice"
+            ))
+        );
+        thread.update(cx, |thread, cx| {
+            thread.cancel_permission_request(second_id, cx);
+            thread.cancel_permission_request(second_id, cx);
+            assert_eq!(thread.pending_permission_requests().count(), 0);
+            assert!(thread.entries().is_empty());
+        });
+        assert_eq!(
+            *events.borrow(),
+            [
+                (true, first_id),
+                (true, second_id),
+                (false, first_id),
+                (false, second_id)
+            ]
+        );
+        assert_eq!(
+            second_response.await,
+            acp_v2::RequestPermissionOutcome::Cancelled
+        );
+    }
+
+    #[gpui::test]
+    async fn test_generic_tool_permissions_do_not_replace_or_mutate_legacy_authorization(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let tool_id = acp_v1::ToolCallId::new("shared-tool");
+        let (legacy_id, legacy_response) =
+            request_test_permission_with_id(&thread, tool_id.clone(), cx);
+        let (events, _subscription) = track_permission_events(&thread, cx);
+        let transcript_events = Rc::new(RefCell::new(0));
+        let _transcript_subscription = cx.update(|cx| {
+            cx.subscribe(&thread, {
+                let transcript_events = transcript_events.clone();
+                move |_, event, _| {
+                    if matches!(
+                        event,
+                        AcpThreadEvent::NewEntry
+                            | AcpThreadEvent::EntryUpdated(_)
+                            | AcpThreadEvent::EntriesRemoved(_)
+                    ) {
+                        *transcript_events.borrow_mut() += 1;
+                    }
+                }
+            })
+        });
+        let request = thread.read_with(cx, |thread, _| {
+            test_generic_permission_request(thread, "future-choice").subject(
+                acp_v2::RequestPermissionSubject::from(
+                    acp_v2::ToolCallUpdate::new("shared-tool")
+                        .title("Must not replace the label")
+                        .status(acp_v2::ToolCallStatus::Completed)
+                        .content(vec!["Must not replace tool output".into()]),
+                ),
+            )
+        });
+        let (selected_id, selected_response) = thread.update(cx, |thread, cx| {
+            thread
+                .request_permission(request.clone(), cx)
+                .expect("first generic tool permission")
+        });
+        let (cancelled_id, cancelled_response) = thread.update(cx, |thread, cx| {
+            thread
+                .request_permission(request, cx)
+                .expect("second generic tool permission")
+        });
+        thread.update(cx, |thread, cx| {
+            thread.select_permission_option(selected_id, "future-choice".into(), cx);
+            thread.cancel_permission_request(cancelled_id, cx);
+            let (_, call) = thread.tool_call(&tool_id).expect("legacy tool");
+            assert_eq!(call.authorization_id(), Some(legacy_id));
+            assert_eq!(call.status(), ToolCallStatus::WaitingForConfirmation);
+            assert_eq!(call.label.read(cx).source(), "Needs permission");
+            assert!(call.content().is_empty());
+            assert_eq!(thread.entries().len(), 1);
+            assert_eq!(
+                thread
+                    .permission_request_for_tool(&tool_id)
+                    .expect("legacy link survives")
+                    .id,
+                legacy_id
+            );
+            assert!(
+                thread
+                    .permission_request(legacy_id)
+                    .expect("legacy record")
+                    .generic_request()
+                    .is_none()
+            );
+        });
+        assert_eq!(*transcript_events.borrow(), 0);
+        assert_eq!(
+            selected_response.await,
+            acp_v2::RequestPermissionOutcome::Selected(acp_v2::SelectedPermissionOutcome::new(
+                "future-choice"
+            ))
+        );
+        assert_eq!(
+            cancelled_response.await,
+            acp_v2::RequestPermissionOutcome::Cancelled
+        );
+        thread.update(cx, |thread, cx| {
+            thread.authorize_tool_call(
+                tool_id.clone(),
+                SelectedPermissionOutcome::new(
+                    "allow".into(),
+                    acp_v1::PermissionOptionKind::AllowOnce,
+                ),
+                cx,
+            );
+            assert_eq!(thread.pending_permission_requests().count(), 0);
+            assert_eq!(
+                thread
+                    .tool_call(&tool_id)
+                    .expect("authorized tool")
+                    .1
+                    .status(),
+                ToolCallStatus::InProgress
+            );
+        });
+        assert!(matches!(
+            legacy_response.await,
+            RequestPermissionOutcome::Selected(outcome) if outcome.option_id == "allow".into()
+        ));
+        assert_eq!(
+            *events.borrow(),
+            [
+                (true, selected_id),
+                (true, cancelled_id),
+                (false, selected_id),
+                (false, cancelled_id),
+                (false, legacy_id)
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_generic_permission_completion_is_state_owned_not_waiter_owned(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let (complete, turn) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        let (events, _subscription) = track_permission_events(&thread, cx);
+        let (first_id, first_response) = thread.update(cx, |thread, cx| {
+            thread
+                .request_permission(test_generic_permission_request(thread, "first-choice"), cx)
+                .expect("first permission")
+        });
+        let (second_id, second_response) = thread.update(cx, |thread, cx| {
+            thread
+                .request_permission(test_generic_permission_request(thread, "second-choice"), cx)
+                .expect("second permission")
+        });
+        drop(first_response);
+        drop(second_response);
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), [(true, first_id), (true, second_id)]);
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        thread.update(cx, |thread, cx| {
+            assert_eq!(
+                thread.foreground_activity(),
+                ForegroundActivity::RequiresAction
+            );
+            thread.select_permission_option(first_id, "first-choice".into(), cx);
+            assert!(thread.permission_request(first_id).is_none());
+            assert!(thread.permission_request(second_id).is_some());
+            assert_eq!(
+                thread.foreground_activity(),
+                ForegroundActivity::RequiresAction
+            );
+            thread.cancel_permission_request(second_id, cx);
+            thread.cancel_permission_request(second_id, cx);
+            assert_eq!(thread.pending_permission_requests().count(), 0);
+        });
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
+        });
+        assert_eq!(
+            *events.borrow(),
+            [
+                (true, first_id),
+                (true, second_id),
+                (false, first_id),
+                (false, second_id)
+            ]
+        );
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        complete
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+            .expect("backend still running");
+        turn.await.expect("turn completes");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        let released_thread = new_test_thread(cx).await;
+        let (_, response) = released_thread.update(cx, |thread, cx| {
+            thread
+                .request_permission(
+                    test_generic_permission_request(thread, "release-choice"),
+                    cx,
+                )
+                .expect("permission before release")
+        });
+        let released = released_thread.downgrade();
+        drop(released_thread);
+        cx.run_until_parked();
+        assert!(released.upgrade().is_none());
+        assert_eq!(response.await, acp_v2::RequestPermissionOutcome::Cancelled);
+    }
+
+    #[gpui::test]
+    async fn test_generic_permission_validation_has_no_records_events_or_tool_mutations(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let (events, _subscription) = track_permission_events(&thread, cx);
+        let valid = thread.read_with(cx, |thread, _| {
+            test_generic_permission_request(thread, "valid-choice").subject(
+                acp_v2::RequestPermissionSubject::from(
+                    acp_v2::ToolCallUpdate::new("must-not-create")
+                        .title("Must not create tool")
+                        .status(acp_v2::ToolCallStatus::InProgress),
+                ),
+            )
+        });
+        let mut wrong_session = valid.clone();
+        wrong_session.session_id = acp_v2::SessionId::new("different-session");
+        let mut empty_options = valid.clone();
+        empty_options.options.clear();
+        let mut duplicate_options = valid.clone();
+        duplicate_options
+            .options
+            .push(acp_v2::PermissionOption::new(
+                "valid-choice",
+                "Different label, same ID",
+                acp_v2::PermissionOptionKind::AllowAlways,
+            ));
+        for request in [wrong_session, empty_options, duplicate_options] {
+            let result = thread.update(cx, |thread, cx| thread.request_permission(request, cx));
+            assert!(result.is_err());
+            thread.read_with(cx, |thread, _| {
+                assert_eq!(thread.pending_permission_requests().count(), 0);
+                assert!(thread.entries().is_empty());
+                assert!(thread.tool_call(&"must-not-create".into()).is_none());
+                assert!(thread.is_idle_for_retention());
+            });
+            assert!(events.borrow().is_empty());
+        }
+        let (id, response) = thread.update(cx, |thread, cx| {
+            thread
+                .request_permission(valid.clone(), cx)
+                .expect("valid request after rejection")
+        });
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread
+                    .permission_request(id)
+                    .expect("valid record")
+                    .generic_request(),
+                Some(&valid)
+            );
+        });
+        thread.update(cx, |thread, cx| thread.cancel_permission_request(id, cx));
+        assert_eq!(response.await, acp_v2::RequestPermissionOutcome::Cancelled);
+        assert_eq!(*events.borrow(), [(true, id), (false, id)]);
+    }
+
+    #[gpui::test]
+    async fn test_generic_permissions_settle_on_cancellation_refusal_and_rewind(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        for lifecycle in [
+            "idle cancel",
+            "turn cancel",
+            "reported cancel",
+            "reported idle cancel",
+            "refusal",
+            "refusal without user",
+            "refusal after tool",
+            "rewind",
+        ] {
+            let thread = if matches!(lifecycle, "reported cancel" | "reported idle cancel") {
+                new_receipt_test_thread(cx).await.0
+            } else {
+                new_test_thread(cx).await
+            };
+            let (events, _subscription) = track_permission_events(&thread, cx);
+            let client_id = ClientUserMessageId::new();
+            thread.update(cx, |thread, cx| {
+                if lifecycle != "refusal without user" {
+                    thread.push_user_content_block(None, "retained".into(), cx);
+                }
+                if lifecycle == "reported cancel" {
+                    thread
+                        .update_session_state(
+                            acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                            cx,
+                        )
+                        .expect("reported running activity");
+                }
+            });
+            let running_turn = matches!(
+                lifecycle,
+                "turn cancel" | "refusal" | "refusal without user" | "refusal after tool"
+            )
+            .then(|| start_test_turn(&thread, cx));
+            let (first_id, first_response) = thread.update(cx, |thread, cx| {
+                thread
+                    .request_permission(test_generic_permission_request(thread, "first-choice"), cx)
+                    .expect("permission before rollback boundary")
+            });
+            thread.update(cx, |thread, cx| {
+                if lifecycle != "refusal without user" {
+                    thread.push_user_content_block(Some(client_id.clone()), "remove me".into(), cx);
+                }
+                if lifecycle == "refusal after tool" {
+                    thread
+                        .upsert_tool_call(
+                            acp_v1::ToolCall::new("finished-tool", "Finished operation")
+                                .status(acp_v1::ToolCallStatus::Completed)
+                                .raw_output(json!("completed output")),
+                            cx,
+                        )
+                        .expect("completed tool before refusal");
+                }
+            });
+            let (second_id, second_response) = thread.update(cx, |thread, cx| {
+                thread
+                    .request_permission(
+                        test_generic_permission_request(thread, "second-choice"),
+                        cx,
+                    )
+                    .expect("permission after rollback boundary")
+            });
+            if lifecycle == "reported idle cancel" {
+                thread.update(cx, |thread, cx| {
+                    thread
+                        .update_session_state(
+                            acp_v2::StateUpdate::Idle(
+                                acp_v2::IdleStateUpdate::new()
+                                    .stop_reason(acp_v2::StopReason::Refusal),
+                            ),
+                            cx,
+                        )
+                        .expect("reported idle is independent of pending requests");
+                    assert_eq!(thread.foreground_activity(), ForegroundActivity::Idle);
+                    assert_eq!(thread.pending_permission_requests().count(), 2);
+                });
+            }
+            let entry_count_before_stop = thread.read_with(cx, |thread, _| thread.entries().len());
+            if let Some((complete, turn)) = running_turn {
+                if matches!(
+                    lifecycle,
+                    "refusal" | "refusal without user" | "refusal after tool"
+                ) {
+                    complete
+                        .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::Refusal)))
+                        .expect("backend still running");
+                } else {
+                    let cancellation = thread.update(cx, |thread, cx| thread.cancel(cx));
+                    thread.read_with(cx, |thread, _| {
+                        assert_eq!(thread.pending_permission_requests().count(), 0);
+                    });
+                    complete
+                        .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+                        .expect("backend still running after local cancellation");
+                    cancellation.await;
+                }
+                turn.await.expect("turn settles");
+            } else if lifecycle == "rewind" {
+                thread
+                    .update(cx, |thread, cx| thread.rewind(client_id, cx))
+                    .await
+                    .expect("rewind succeeds");
+            } else if lifecycle == "reported cancel" {
+                let cancellation = thread.update(cx, |thread, cx| thread.cancel(cx));
+                thread.update(cx, |thread, cx| {
+                    assert_eq!(thread.pending_permission_requests().count(), 0);
+                    thread
+                        .update_session_state(
+                            acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
+                            cx,
+                        )
+                        .expect("reported cancellation completion");
+                });
+                cancellation.await;
+            } else {
+                thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+            }
+            thread.update(cx, |thread, cx| {
+                assert_eq!(
+                    thread.pending_permission_requests().count(),
+                    0,
+                    "{lifecycle}"
+                );
+                if lifecycle == "refusal without user" {
+                    assert!(thread.entries().is_empty());
+                } else if lifecycle == "refusal after tool" {
+                    assert_eq!(thread.entries().len(), entry_count_before_stop);
+                    let (_, call) = thread
+                        .tool_call(&"finished-tool".into())
+                        .expect("refusal retains completed tool");
+                    assert_eq!(call.status(), ToolCallStatus::Completed);
+                }
+                thread.cancel_permission_request(first_id, cx);
+                thread.cancel_permission_request(second_id, cx);
+            });
+            assert_eq!(
+                *events.borrow(),
+                [
+                    (true, first_id),
+                    (true, second_id),
+                    (false, first_id),
+                    (false, second_id)
+                ],
+                "{lifecycle}"
+            );
+            assert_eq!(
+                first_response.await,
+                acp_v2::RequestPermissionOutcome::Cancelled
+            );
+            assert_eq!(
+                second_response.await,
+                acp_v2::RequestPermissionOutcome::Cancelled
+            );
+        }
+
+        for asynchronous_failure in [false, true] {
+            let fs = FakeFs::new(cx.executor());
+            let project = Project::test(fs, [], cx).await;
+            let (connection, truncate_gate): (Rc<dyn AgentConnection>, _) = if asynchronous_failure
+            {
+                let connection = Rc::new(StubAgentConnection::new());
+                let gate = connection.defer_next_truncate();
+                (connection, Some(gate))
+            } else {
+                (
+                    Rc::new(FakeAgentConnection::new().without_truncate_support()),
+                    None,
+                )
+            };
+            let thread = cx
+                .update(|cx| {
+                    connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+                })
+                .await
+                .expect("rewind test thread");
+            let (events, _subscription) = track_permission_events(&thread, cx);
+            let client_id = ClientUserMessageId::new();
+            let (id, response) = thread.update(cx, |thread, cx| {
+                thread.push_user_content_block(Some(client_id.clone()), "keep me".into(), cx);
+                thread
+                    .request_permission(test_generic_permission_request(thread, "keep-choice"), cx)
+                    .expect("permission before failed rewind")
+            });
+            let mut rewind = thread.update(cx, |thread, cx| thread.rewind(client_id.clone(), cx));
+            cx.run_until_parked();
+            assert_eq!(*events.borrow(), [(true, id)]);
+            if asynchronous_failure {
+                assert!((&mut rewind).now_or_never().is_none());
+            }
+            drop(truncate_gate);
+            assert!(rewind.await.is_err());
+            thread.read_with(cx, |thread, _| {
+                assert_eq!(thread.entries().len(), 1);
+                assert!(thread.permission_request(id).is_some());
+                assert_eq!(thread.pending_permission_requests().count(), 1);
+            });
+            assert_eq!(*events.borrow(), [(true, id)]);
+            if asynchronous_failure {
+                thread
+                    .update(cx, |thread, cx| thread.rewind(client_id, cx))
+                    .await
+                    .expect("rewind succeeds after the backend failure");
+                thread.read_with(cx, |thread, _| assert!(thread.entries().is_empty()));
+            } else {
+                thread.update(cx, |thread, cx| thread.cancel_permission_request(id, cx));
+            }
+            assert_eq!(*events.borrow(), [(true, id), (false, id)]);
+            assert_eq!(response.await, acp_v2::RequestPermissionOutcome::Cancelled);
+        }
+    }
+
+    fn test_generic_permission_request(
+        thread: &AcpThread,
+        option_id: &str,
+    ) -> acp_v2::RequestPermissionRequest {
+        acp_v2::RequestPermissionRequest::new(
+            acp_v2::SessionId::new(thread.session_id().to_string()),
+            "Approve operation",
+            vec![
+                acp_v2::PermissionOption::new(
+                    option_id,
+                    "Future choice",
+                    acp_v2::PermissionOptionKind::Other("future_choice".into()),
+                )
+                .meta(acp_v2::Meta::from_iter([(
+                    "option-data".into(),
+                    json!({"opaque": [1, null]}),
+                )])),
+            ],
+        )
+        .description("Explanation for the permission prompt".to_owned())
+        .meta(acp_v2::Meta::from_iter([(
+            "request-data".into(),
+            json!({"opaque": {"preserved": true}}),
+        )]))
     }
 
     fn track_permission_events(
