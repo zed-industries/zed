@@ -105,6 +105,7 @@ impl WindowsWindowInner {
             WM_NCCALCSIZE => self.handle_calc_client_size(handle, wparam, lparam),
             WM_DPICHANGED => self.handle_dpi_changed_msg(handle, wparam, lparam),
             WM_DISPLAYCHANGE => self.handle_display_change_msg(handle),
+            WM_POWERBROADCAST => self.handle_power_broadcast_msg(wparam, lparam),
             WM_NCHITTEST => self.handle_hit_test_msg(handle, lparam),
             WM_PAINT => self.handle_paint_msg(handle),
             WM_CLOSE => self.handle_close_msg(),
@@ -341,6 +342,14 @@ impl WindowsWindowInner {
     }
 
     fn handle_destroy_msg(&self, handle: HWND) -> Option<isize> {
+        if let Some(notification) = self.state.display_power_notification.take() {
+            // SAFETY: `notification` was returned by `RegisterPowerSettingNotification`.
+            unsafe {
+                windows::Win32::System::Power::UnregisterPowerSettingNotification(notification)
+            }
+            .log_err();
+        }
+        self.state.callbacks.display_changed.take();
         let callback = { self.state.callbacks.close.take() };
         // Re-enable parent window if this was a modal dialog
         if let Some(parent_hwnd) = self.parent_hwnd {
@@ -867,6 +876,18 @@ impl WindowsWindowInner {
     }
 
     fn handle_create_msg(&self, handle: HWND) -> Option<isize> {
+        // SAFETY: `handle` is this window, which receives the
+        // `WM_POWERBROADCAST` messages until it unregisters on destroy.
+        let notification = unsafe {
+            windows::Win32::System::Power::RegisterPowerSettingNotification(
+                HANDLE(handle.0),
+                &GUID_CONSOLE_DISPLAY_STATE,
+                DEVICE_NOTIFY_WINDOW_HANDLE,
+            )
+        }
+        .context("registering for display power notifications")
+        .log_err();
+        self.state.display_power_notification.set(notification);
         if self.hide_title_bar {
             notify_frame_changed(handle);
             Some(0)
@@ -949,7 +970,9 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_display_change_msg(&self, handle: HWND) -> Option<isize> {
+    // Sent to every top-level window when a display's mode, including its
+    // refresh rate, changes or a display is added or removed.
+    fn handle_display_change_msg(self: &Rc<Self>, handle: HWND) -> Option<isize> {
         let new_monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONULL) };
         if new_monitor.is_invalid() {
             log::error!("No monitor detected!");
@@ -957,7 +980,45 @@ impl WindowsWindowInner {
         }
         let new_display = WindowsDisplay::new(WindowsDisplay::display_id_for_monitor(new_monitor))?;
         self.state.display.set(new_display);
+        self.report_display_change();
         Some(0)
+    }
+
+    fn handle_power_broadcast_msg(
+        self: &Rc<Self>,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> Option<isize> {
+        if wparam.0 as u32 != PBT_POWERSETTINGCHANGE || lparam.0 == 0 {
+            return None;
+        }
+        // SAFETY: for `PBT_POWERSETTINGCHANGE`, `lparam` points to a
+        // `POWERBROADCAST_SETTING` followed by `DataLength` bytes of data.
+        let setting =
+            unsafe { &*(lparam.0 as *const windows::Win32::System::Power::POWERBROADCAST_SETTING) };
+        if setting.PowerSetting != GUID_CONSOLE_DISPLAY_STATE
+            || (setting.DataLength as usize) < std::mem::size_of::<u32>()
+        {
+            return None;
+        }
+        // SAFETY: `DataLength` was checked to cover a `u32`.
+        let data = unsafe { std::ptr::read_unaligned(setting.Data.as_ptr() as *const u32) };
+        set_console_display_state(data);
+        self.report_display_change();
+        Some(1)
+    }
+
+    // Deferred for the same reason as `report_visibility`.
+    fn report_display_change(self: &Rc<Self>) {
+        let this = self.clone();
+        self.executor
+            .spawn(async move {
+                if let Some(mut callback) = this.state.callbacks.display_changed.take() {
+                    callback();
+                    this.state.callbacks.display_changed.set(Some(callback));
+                }
+            })
+            .detach();
     }
 
     fn handle_hit_test_msg(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {

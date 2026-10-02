@@ -55,6 +55,7 @@ pub(crate) struct Callbacks {
     hover_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
+    display_changed: Option<Box<dyn FnMut()>>,
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
@@ -655,21 +656,30 @@ impl WaylandWindowState {
         self.renderer.set_subpixel_layout(is_bgr);
     }
 
+    /// Chooses the window's display among the outputs its surface is on and
+    /// returns the highest scale among them.
+    ///
+    /// A compositor paces the frame callbacks of a surface on several outputs
+    /// by one of them, and Mutter picks the one with the highest refresh rate,
+    /// so that output is the display. Ties go to the higher scale, then to the
+    /// current display so equal outputs don't alternate. With no outputs the
+    /// last display is kept.
     pub fn primary_output_scale(&mut self) -> i32 {
-        let mut scale = 1;
-        let mut current_output = self.display.take();
-        for (id, output) in self.outputs.iter() {
-            if let Some((_, output_data)) = &current_output {
-                if output.scale > output_data.scale {
-                    current_output = Some((id.clone(), output.clone()));
-                }
-            } else {
-                current_output = Some((id.clone(), output.clone()));
-            }
-            scale = scale.max(output.scale);
+        let current_id = self.display.as_ref().map(|(id, _)| id.clone());
+        if let Some((id, output)) = self.outputs.iter().max_by_key(|(id, output)| {
+            (
+                std::cmp::Reverse(output.refresh_interval.unwrap_or(std::time::Duration::MAX)),
+                output.scale,
+                Some(*id) == current_id.as_ref(),
+            )
+        }) {
+            self.display = Some((id.clone(), output.clone()));
         }
-        self.display = current_output;
-        scale
+        self.outputs
+            .values()
+            .map(|output| output.scale)
+            .max()
+            .unwrap_or(1)
     }
 
     pub fn inset(&self) -> Pixels {
@@ -1384,6 +1394,48 @@ impl WaylandWindowStatePtr {
         }
     }
 
+    /// Updates the window's copy of an output it is on after the output's
+    /// properties change, e.g. its mode.
+    pub fn handle_output_changed(&self, id: &ObjectId, output: &Output) {
+        let mut state = self.state.borrow_mut();
+        let Some(entered) = state.outputs.get_mut(id) else {
+            return;
+        };
+        *entered = output.clone();
+        drop(state);
+        self.outputs_changed();
+    }
+
+    /// Forgets an output that was removed without the surface leaving it first.
+    pub fn handle_output_removed(&self, id: &ObjectId) {
+        let removed = self.state.borrow_mut().outputs.remove(id).is_some();
+        if removed {
+            self.outputs_changed();
+        }
+    }
+
+    fn outputs_changed(&self) {
+        let mut state = self.state.borrow_mut();
+        let scale = state.primary_output_scale();
+        state.update_subpixel_layout();
+
+        // We use `PreferredBufferScale` instead to set the scale if it's available
+        if state.surface.version() < wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
+            state.surface.set_buffer_scale(scale);
+            drop(state);
+            self.rescale(scale as f32);
+        } else {
+            drop(state);
+        }
+        self.request_redraw();
+
+        let callback = self.callbacks.borrow_mut().display_changed.take();
+        if let Some(mut callback) = callback {
+            callback();
+            self.callbacks.borrow_mut().display_changed = Some(callback);
+        }
+    }
+
     #[allow(clippy::mutable_key_type)]
     pub fn handle_surface_event(
         &self,
@@ -1401,35 +1453,13 @@ impl WaylandWindowStatePtr {
                 };
 
                 state.outputs.insert(id, output.clone());
-
-                let scale = state.primary_output_scale();
-                state.update_subpixel_layout();
-
-                // We use `PreferredBufferScale` instead to set the scale if it's available
-                if state.surface.version() < wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
-                    state.surface.set_buffer_scale(scale);
-                    drop(state);
-                    self.rescale(scale as f32);
-                } else {
-                    drop(state);
-                }
-                self.request_redraw();
+                drop(state);
+                self.outputs_changed();
             }
             wl_surface::Event::Leave { output } => {
                 state.outputs.remove(&output.id());
-
-                let scale = state.primary_output_scale();
-                state.update_subpixel_layout();
-
-                // We use `PreferredBufferScale` instead to set the scale if it's available
-                if state.surface.version() < wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
-                    state.surface.set_buffer_scale(scale);
-                    drop(state);
-                    self.rescale(scale as f32);
-                } else {
-                    drop(state);
-                }
-                self.request_redraw();
+                drop(state);
+                self.outputs_changed();
             }
             wl_surface::Event::PreferredBufferScale { factor } => {
                 // We use `WpFractionalScale` instead to set the scale if it's available
@@ -1761,6 +1791,7 @@ impl PlatformWindow for WaylandWindow {
                 id: id.clone(),
                 name: display.name.clone(),
                 bounds: display.bounds.to_pixels(state.scale),
+                refresh_interval: display.refresh_interval,
             }) as Rc<dyn PlatformDisplay>
         })
     }
@@ -1927,6 +1958,10 @@ impl PlatformWindow for WaylandWindow {
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.0.callbacks.borrow_mut().moved = Some(callback);
+    }
+
+    fn on_display_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.borrow_mut().display_changed = Some(callback);
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {

@@ -33,7 +33,7 @@ use std::{
     cell::RefCell, ffi::c_void, fmt::Display, num::NonZeroU32, ptr::NonNull, rc::Rc, sync::Arc,
 };
 
-use super::{X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES};
+use super::{CrtcMode, X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES};
 
 x11rb::atom_manager! {
     pub XcbAtoms: AtomsCookie {
@@ -250,6 +250,7 @@ pub struct Callbacks {
     hovered_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
+    display_changed: Option<Box<dyn FnMut()>>,
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
@@ -271,7 +272,7 @@ pub struct X11WindowState {
     bounds: Bounds<Pixels>,
     scale_factor: f32,
     renderer: WgpuRenderer,
-    display: Rc<dyn PlatformDisplay>,
+    display: X11Display,
     input_handler: Option<PlatformInputHandler>,
     appearance: WindowAppearance,
     background_appearance: WindowBackgroundAppearance,
@@ -815,7 +816,7 @@ impl X11WindowState {
                 )?;
             }
 
-            let display = Rc::new(X11Display::new(xcb, scale_factor, x_screen_index)?);
+            let display = X11Display::new(xcb, scale_factor, x_screen_index)?;
 
             Ok(Self {
                 parent,
@@ -1330,6 +1331,27 @@ impl X11WindowStatePtr {
         Ok(())
     }
 
+    /// Rereads the refresh interval of the monitor under the window's center.
+    pub fn update_display_refresh_interval(&self, crtcs: &[CrtcMode]) {
+        let mut state = self.state.borrow_mut();
+        let center = state.bounds.center();
+        let center = Point::new(
+            (center.x.as_f32() * state.scale_factor) as i32,
+            (center.y.as_f32() * state.scale_factor) as i32,
+        );
+        let refresh_interval = CrtcMode::refresh_interval_at(crtcs, center);
+        if state.display.refresh_interval == refresh_interval {
+            return;
+        }
+        state.display.refresh_interval = refresh_interval;
+        drop(state);
+        let callback = self.callbacks.borrow_mut().display_changed.take();
+        if let Some(mut callback) = callback {
+            callback();
+            self.callbacks.borrow_mut().display_changed = Some(callback);
+        }
+    }
+
     pub fn set_active(&self, focus: bool) {
         let callback = self.callbacks.borrow_mut().active_status_change.take();
         if let Some(mut fun) = callback {
@@ -1468,7 +1490,7 @@ impl PlatformWindow for X11Window {
     }
 
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        Some(self.0.state.borrow().display.clone())
+        Some(Rc::new(self.0.state.borrow().display.clone()))
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
@@ -1723,6 +1745,10 @@ impl PlatformWindow for X11Window {
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.0.callbacks.borrow_mut().moved = Some(callback);
+    }
+
+    fn on_display_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.borrow_mut().display_changed = Some(callback);
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
