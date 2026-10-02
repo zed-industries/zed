@@ -960,6 +960,7 @@ fn converse_language_model(model: &ConverseModel) -> LanguageModel {
         supports_tools: model.supports_tool_use(),
         supports_images: model.supports_images(),
         supports_thinking: model.supports_thinking(),
+        supports_disabling_thinking: !model.always_thinks(),
         refusal_fallback_model_id: model
             .id()
             .starts_with(anthropic::FABLE_MODEL_ID_PREFIX)
@@ -1003,7 +1004,7 @@ fn converse_language_model(model: &ConverseModel) -> LanguageModel {
         // Add support for None - we'll filter tool calls at response
         tool_choice_support: LanguageModelToolChoiceSupport {
             auto: model.supports_tool_use(),
-            any: model.supports_tool_use(),
+            any: model.supports_tool_use() && anthropic::supports_forced_tool_use(model.id()),
             none: model.supports_tool_use(),
         },
         supports_streaming_tools: true,
@@ -1056,6 +1057,7 @@ impl BedrockLanguageModelProvider {
             config.default_temperature(),
             config.max_output_tokens(),
             config.thinking_mode(),
+            config.always_thinks(),
             config.supports_caching(),
             config.supports_tool_use(),
             guardrail_identifier,
@@ -2025,6 +2027,7 @@ pub fn into_bedrock(
     default_temperature: f32,
     max_output_tokens: u64,
     thinking_mode: BedrockModelMode,
+    always_thinks: bool,
     supports_caching: bool,
     supports_tool_use: bool,
     guardrail_identifier: Option<String>,
@@ -2354,17 +2357,27 @@ pub fn into_bedrock(
             }
             BedrockModelMode::Default => None,
         }
-    } else if model.contains(ConverseModel::ClaudeOpus5.request_id()) {
+    } else if model.ends_with(ConverseModel::ClaudeOpus5.request_id()) {
         // On Claude Opus 5, omitting the `thinking` field no longer means
         // "off": the model runs adaptive thinking by default, so features
         // that suppress thinking (e.g. inline assist) must opt out
         // explicitly. Earlier Claude models treat omission as "off" and must
         // keep omitting the field. No effort accompanies the opt-out because
         // `disabled` combined with effort `xhigh`/`max` is a 400.
+        //
+        // Match with `ends_with` rather than `contains`: the Opus 5.5
+        // inference ids also contain the Opus 5 request id, and Opus 5.5
+        // rejects the opt-out.
         // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
         Some(bedrock::Thinking::Disabled)
     } else {
         None
+    };
+
+    let temperature = if always_thinks {
+        None
+    } else {
+        request.temperature.or(Some(default_temperature))
     };
 
     Ok(bedrock::Request {
@@ -2376,7 +2389,7 @@ pub fn into_bedrock(
         thinking,
         metadata: None,
         stop_sequences: Vec::new(),
-        temperature: request.temperature.or(Some(default_temperature)),
+        temperature,
         top_k: None,
         top_p: None,
         guardrail_identifier,
@@ -2964,6 +2977,7 @@ mod tests {
             1.0,
             4096,
             BedrockModelMode::Default,
+            false,
             true,
             true,
             None,
@@ -3217,13 +3231,63 @@ mod tests {
         // Claude Opus 5 runs adaptive thinking by default when the `thinking`
         // field is omitted, so suppressing thinking requires an explicit
         // `disabled` opt-out. Earlier Claude models treat omission as "off".
-        for (model, expects_explicit_opt_out, output_limit, expected_output) in [
-            ("us.anthropic.claude-opus-5", true, None, 128_000),
-            ("global.anthropic.claude-opus-5", true, Some(8192), 8192),
+        // Claude Opus 5.5 and Claude Fable 5.1 always think and reject both
+        // the opt-out and sampling parameters, so they must omit `thinking`
+        // and `temperature`.
+        for (
+            converse_model,
+            inference_id,
+            expects_explicit_opt_out,
+            output_limit,
+            expected_output,
+        ) in [
             (
+                ConverseModel::ClaudeOpus5,
+                "us.anthropic.claude-opus-5",
+                true,
+                None,
+                128_000,
+            ),
+            (
+                ConverseModel::ClaudeOpus5,
+                "global.anthropic.claude-opus-5",
+                true,
+                Some(8192),
+                8192,
+            ),
+            (
+                ConverseModel::ClaudeOpus4_8,
                 "us.anthropic.claude-opus-4-8",
                 false,
                 Some(256_000),
+                128_000,
+            ),
+            (
+                ConverseModel::ClaudeOpus5_5,
+                "us.anthropic.claude-opus-5-5",
+                false,
+                None,
+                128_000,
+            ),
+            (
+                ConverseModel::ClaudeOpus5_5,
+                "global.anthropic.claude-opus-5-5",
+                false,
+                Some(8192),
+                8192,
+            ),
+            (
+                ConverseModel::ClaudeFable5_1,
+                "us.anthropic.claude-fable-5-1",
+                false,
+                None,
+                128_000,
+            ),
+            (
+                ConverseModel::ClaudeFable5_1,
+                "global.anthropic.claude-fable-5-1",
+                false,
+                None,
                 128_000,
             ),
         ] {
@@ -3237,14 +3301,16 @@ mod tests {
                     }],
                     thinking_allowed: false,
                     max_output_tokens: output_limit,
+                    temperature: Some(0.5),
                     ..Default::default()
                 },
-                model.to_string(),
+                inference_id.to_string(),
                 1.0,
                 128_000,
                 BedrockModelMode::AdaptiveThinking {
                     effort: bedrock::BedrockAdaptiveThinkingEffort::High,
                 },
+                converse_model.always_thinks(),
                 true,
                 true,
                 None,
@@ -3256,12 +3322,24 @@ mod tests {
             if expects_explicit_opt_out {
                 assert!(
                     matches!(request.thinking, Some(bedrock::Thinking::Disabled)),
-                    "{model} should send an explicit thinking opt-out"
+                    "{inference_id} should send an explicit thinking opt-out"
                 );
             } else {
                 assert!(
                     request.thinking.is_none(),
-                    "{model} should omit the thinking field entirely"
+                    "{inference_id} should omit the thinking field entirely"
+                );
+            }
+            if converse_model.always_thinks() {
+                assert_eq!(
+                    request.temperature, None,
+                    "{inference_id} should omit temperature because adaptive thinking is always on"
+                );
+            } else {
+                assert_eq!(
+                    request.temperature,
+                    Some(0.5),
+                    "{inference_id} should keep the requested temperature"
                 );
             }
         }
@@ -3933,6 +4011,68 @@ mod tests {
             reasoning_details_count(&merged_events),
             reasoning_details_count(&baseline_events),
         );
+    }
+
+    #[test]
+    fn always_thinking_claude_models_do_not_offer_disabling_thinking() {
+        // The agent panel shows a thinking toggle only when thinking can be
+        // disabled; for always-thinking models it shows just the effort
+        // selector and always sends the chosen effort.
+        for converse_model in [ConverseModel::ClaudeFable5_1, ConverseModel::ClaudeOpus5_5] {
+            let model = converse_language_model(&converse_model);
+            assert!(model.supports_thinking(), "{}", converse_model.id());
+            assert!(
+                !model.supports_disabling_thinking(),
+                "{} always thinks, so it should not offer disabling thinking",
+                converse_model.id()
+            );
+        }
+
+        for converse_model in [ConverseModel::ClaudeOpus5, ConverseModel::ClaudeOpus4_8] {
+            assert!(
+                converse_language_model(&converse_model).supports_disabling_thinking(),
+                "{} should still offer disabling thinking",
+                converse_model.id()
+            );
+        }
+    }
+
+    #[test]
+    fn claude_models_rejecting_forced_tool_use_do_not_offer_any_tool_choice() {
+        // Claude Fable 5.1 and Claude Opus 5.5 reject `tool_choice: any`, unlike
+        // every earlier Claude model offered on Bedrock.
+        for converse_model in [ConverseModel::ClaudeFable5_1, ConverseModel::ClaudeOpus5_5] {
+            let model = converse_language_model(&converse_model);
+            assert!(
+                model.supports_tool_choice(LanguageModelToolChoice::Auto),
+                "{} should offer automatic tool choice",
+                converse_model.id()
+            );
+            assert!(
+                !model.supports_tool_choice(LanguageModelToolChoice::Any),
+                "{} should not offer forced tool use",
+                converse_model.id()
+            );
+            assert!(
+                model.supports_tool_choice(LanguageModelToolChoice::None),
+                "{} should offer disabling tool use",
+                converse_model.id()
+            );
+        }
+
+        for converse_model in [
+            ConverseModel::ClaudeFable5,
+            ConverseModel::ClaudeOpus5,
+            ConverseModel::ClaudeOpus4_8,
+            ConverseModel::ClaudeSonnet5,
+        ] {
+            let model = converse_language_model(&converse_model);
+            assert!(
+                model.supports_tool_choice(LanguageModelToolChoice::Any),
+                "{} should still offer forced tool use",
+                converse_model.id()
+            );
+        }
     }
 
     #[test]
