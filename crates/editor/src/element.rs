@@ -10663,12 +10663,13 @@ impl MinimapLayout {
         }
     }
 
-    /// The thumb advances through its oversized track by `thumb_text_unit_size` per editor
-    /// line, while the minimap content underneath scrolls up at the rate implied by
-    /// [`Self::calculate_minimap_top_offset`]. The on-screen movement is the difference.
+    /// How far the thumb moves on screen per scrolled editor line.
     ///
-    /// Returns `None` when the thumb cannot follow the scroll position, i.e. when there is
-    /// nothing to scroll or the thumb fills the whole minimap.
+    /// The thumb moves along its oversized track, but the minimap content scrolls underneath
+    /// it at the same time (see [`Self::calculate_minimap_top_offset`]), so what we actually
+    /// see is the difference of the two. Returns `None` if the thumb can't move at all, e.g.
+    /// because the whole document fits into the editor or the thumb covers the entire minimap
+    /// (extremely unlikely, but may happen for very small editors that we currently allow)
     fn thumb_pixels_per_editor_line(
         thumb_layout: &ScrollbarLayout,
         document_lines: f64,
@@ -11478,8 +11479,8 @@ mod tests {
 
     #[test]
     fn test_minimap_thumb_follows_drag_with_minimum_thumb_size() {
-        // 10 visible lines at 2px would be a 20px thumb, which is clamped to
-        // `ScrollbarLayout::MIN_THUMB_SIZE`.
+        // 10 lines at 2px each would only be a 20px thumb, so this gets bumped up to
+        // `ScrollbarLayout::MIN_THUMB_SIZE`
         let short_document = MinimapGeometry {
             document_lines: 80.,
             visible_editor_lines: 10.,
@@ -11510,7 +11511,7 @@ mod tests {
             None
         );
 
-        // The track is only 20px long, so the 25px minimum thumb fills it entirely.
+        // 10 lines at 2px each is a 20px track, so the thumb (at least 25px) already covers all of it
         let thumb_fills_track = MinimapGeometry {
             document_lines: 10.,
             visible_editor_lines: 5.,
