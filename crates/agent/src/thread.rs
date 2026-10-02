@@ -4443,11 +4443,12 @@ impl Thread {
 
         let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
         let base_project_context = self.project_context.read(cx);
-        let scoped_project_context = self.workspace_scope.scoped_project_context(
-            base_project_context,
-            self.project.read(cx),
-            cx,
-        );
+        let scoped_roots = self
+            .workspace_scope
+            .scoped_root_contexts(self.project.read(cx), cx);
+        let scoped_project_context = self
+            .workspace_scope
+            .scoped_project_context(base_project_context, &scoped_roots);
         let project_context = scoped_project_context
             .as_ref()
             .unwrap_or(base_project_context);

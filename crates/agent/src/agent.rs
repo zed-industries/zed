@@ -4171,6 +4171,79 @@ mod internal_tests {
         assert!(unknown.is_err(), "unknown workspace entry should fail");
     }
 
+    #[gpui::test]
+    async fn test_scoped_root_contexts(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "crates": { "foo": { "Cargo.toml": "" } },
+                "other.txt": ""
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let root_abs = cx.read(|cx| {
+            project
+                .read(cx)
+                .visible_worktrees(cx)
+                .next()
+                .expect("project should have one worktree")
+                .read(cx)
+                .abs_path()
+                .to_path_buf()
+        });
+
+        assert!(
+            cx.read(|cx| ProjectScope::unscoped().scoped_root_contexts(project.read(cx), cx))
+                .is_empty(),
+            "an unscoped session has no scoped roots"
+        );
+
+        // A scope entry nested inside a worktree root.
+        let scope = cx
+            .update(|cx| {
+                resolve_workspace_scope(
+                    &ProjectScope::unscoped(),
+                    Some(vec!["root/crates".to_string()]),
+                    &project,
+                    cx,
+                )
+            })
+            .unwrap();
+        let contexts = cx.read(|cx| scope.scoped_root_contexts(project.read(cx), cx));
+        assert_eq!(
+            contexts,
+            vec![prompt_store::ScopedRootContext {
+                root_name: "crates".to_string(),
+                abs_path: root_abs.join("crates").into(),
+                project_path: "root/crates".to_string(),
+            }]
+        );
+
+        // A scope entry that is a whole worktree root.
+        let scope = cx
+            .update(|cx| {
+                resolve_workspace_scope(
+                    &ProjectScope::unscoped(),
+                    Some(vec!["root".to_string()]),
+                    &project,
+                    cx,
+                )
+            })
+            .unwrap();
+        let contexts = cx.read(|cx| scope.scoped_root_contexts(project.read(cx), cx));
+        assert_eq!(
+            contexts,
+            vec![prompt_store::ScopedRootContext {
+                root_name: "root".to_string(),
+                abs_path: root_abs.into(),
+                project_path: "root".to_string(),
+            }]
+        );
+    }
+
     #[cfg(target_os = "macos")]
     #[gpui::test]
     async fn test_native_terminal_tool_releases_pty_resources(cx: &mut TestAppContext) {

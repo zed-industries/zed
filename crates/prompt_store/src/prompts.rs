@@ -91,6 +91,22 @@ pub struct WorktreeContext {
     pub rules_file: Option<RulesFileContext>,
 }
 
+/// A workspace-scoped root directory exposed to templates.
+///
+/// Mirrors [`WorktreeContext`]'s naming, but for the directories a
+/// workspace-scoped sub-agent is actually allowed to touch, which may be
+/// nested inside a worktree root.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+pub struct ScopedRootContext {
+    /// Base name of the scoped directory itself.
+    pub root_name: String,
+    pub abs_path: Arc<Path>,
+    /// The tool-facing path: the containing worktree's root name followed by
+    /// the directory's path within that worktree, `/`-separated
+    /// (`zed/crates/agent`). Tool calls accept paths in this form.
+    pub project_path: String,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct RulesFileContext {
     pub path_in_worktree: Arc<RelPath>,
