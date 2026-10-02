@@ -807,6 +807,11 @@ pub struct GitPanelSettingsContent {
     /// Default: 0
     pub commit_title_max_length: Option<usize>,
 
+    /// Whether to show the commit section (message editor and commit button) in the Git panel.
+    ///
+    /// Default: true
+    pub show_commit_section: Option<bool>,
+
     /// Default action when clicking a changed file in the Git panel.
     ///
     /// Default: project_diff

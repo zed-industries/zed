@@ -1140,6 +1140,10 @@
     //
     // Default: 0
     "commit_title_max_length": 0,
+    // Whether to show the commit section (message editor and commit button) in the Git panel.
+    //
+    // Default: true
+    "show_commit_section": true,
     // Default action when clicking a changed file in the Git panel.
     //
     // Choices: project_diff, file_diff, view_file
