@@ -22,6 +22,14 @@ pub trait Transport: Send + Sync {
     /// `MCP-Protocol-Version` header from 2025-06-18 onward) can pick it up.
     fn set_protocol_version(&self, _version: &str) {}
 
+    /// Called when a client generation using this transport is torn down
+    /// (explicit stop, request timeout, transport death). Transports shared
+    /// across client generations use this to invalidate state belonging to the
+    /// old generation — currently only the HTTP transport, which stops its
+    /// detached SSE reader tasks so they cannot feed responses to the
+    /// successor.
+    fn invalidate(&self) {}
+
     /// The authentication challenge from the last `401 Unauthorized` response
     /// this transport gave up on, if any (currently only set by the HTTP
     /// transport).
