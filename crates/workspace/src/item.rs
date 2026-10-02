@@ -227,6 +227,16 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         false
     }
 
+    /// Move the cursor to a zero-based row and column, when supported by the item.
+    fn go_to_line(
+        &mut self,
+        _row: u32,
+        _column: u32,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+
     fn telemetry_event_text(&self) -> Option<&'static str> {
         None
     }
@@ -522,6 +532,7 @@ pub trait ItemHandle: 'static + Send {
     fn deactivated(&self, window: &mut Window, cx: &mut App);
     fn on_removed(&self, cx: &mut App);
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App);
+    fn go_to_line(&self, row: u32, column: u32, window: &mut Window, cx: &mut App);
     fn navigate(&self, data: Arc<dyn Any + Send>, window: &mut Window, cx: &mut App) -> bool;
     fn item_id(&self) -> EntityId;
     fn to_any_view(&self) -> AnyView;
@@ -1021,6 +1032,10 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App) {
         self.update(cx, |this, cx| this.workspace_deactivated(window, cx));
+    }
+
+    fn go_to_line(&self, row: u32, column: u32, window: &mut Window, cx: &mut App) {
+        self.update(cx, |item, cx| item.go_to_line(row, column, window, cx));
     }
 
     fn navigate(&self, data: Arc<dyn Any + Send>, window: &mut Window, cx: &mut App) -> bool {

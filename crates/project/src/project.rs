@@ -77,7 +77,7 @@ use debugger::{
 pub use environment::ProjectEnvironment;
 
 use futures::{
-    StreamExt,
+    FutureExt as _, StreamExt,
     channel::mpsc::{self, UnboundedReceiver},
     future::try_join_all,
 };
@@ -229,6 +229,7 @@ pub struct Project {
     user_store: Entity<UserStore>,
     fs: Arc<dyn Fs>,
     remote_client: Option<Entity<RemoteClient>>,
+    remote_cli_requests: HashMap<String, smol::channel::Sender<()>>,
     // todo lw explain the client_state x remote_client matrix, its super confusing
     client_state: ProjectClientState,
     git_store: Entity<GitStore>,
@@ -441,14 +442,19 @@ pub enum Event {
     BufferEdited {
         source: BufferEditSource,
     },
-    /// A request from the remote server to open a file on the client.
-    OpenPathOnClient {
-        path: String,
-        row: Option<u32>,
-        column: Option<u32>,
-        /// If true, the server is waiting for the file to be closed.
-        wait: bool,
-    },
+    OpenPathOnClient(RemoteCliRequest),
+}
+
+#[derive(Clone, Debug)]
+pub struct RemoteCliRequest {
+    pub request: proto::OpenPathOnClient,
+    pub response: smol::channel::Sender<Result<()>>,
+}
+
+impl PartialEq for RemoteCliRequest {
+    fn eq(&self, other: &Self) -> bool {
+        self.response.same_channel(&other.response)
+    }
 }
 
 pub struct AgentLocationChanged;
@@ -1404,6 +1410,7 @@ impl Project {
                 fs,
                 remote_client: None,
                 bookmark_store,
+                remote_cli_requests: HashMap::default(),
                 breakpoint_store,
                 dap_store,
                 agent_server_store,
@@ -1652,6 +1659,7 @@ impl Project {
                 settings_observer,
                 fs,
                 remote_client: Some(remote.clone()),
+                remote_cli_requests: HashMap::default(),
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
@@ -1689,7 +1697,12 @@ impl Project {
             remote_proto.add_entity_message_handler(Self::handle_update_project);
             remote_proto.add_entity_message_handler(Self::handle_toast);
             remote_proto.add_entity_message_handler(Self::handle_telemetry_event);
+            remote_proto.add_request_handler(
+                cx.weak_entity(),
+                |_: Entity<Self>, _: TypedEnvelope<proto::Ping>, _| async { Ok(proto::Ack {}) },
+            );
             remote_proto.add_entity_request_handler(Self::handle_open_path_on_client);
+            remote_proto.add_entity_message_handler(Self::handle_cancel_open_path_on_client);
             remote_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
             remote_proto
                 .add_entity_request_handler(Self::handle_language_server_show_document_request);
@@ -1931,6 +1944,7 @@ impl Project {
                 snippets,
                 fs,
                 remote_client: None,
+                remote_cli_requests: HashMap::default(),
                 settings_observer: settings_observer.clone(),
                 client_subscriptions: Default::default(),
                 _subscriptions: vec![cx.on_release(Self::release)],
@@ -3907,6 +3921,7 @@ impl Project {
     ) {
         match event {
             &remote::RemoteClientEvent::Disconnected { server_not_running } => {
+                self.remote_cli_requests.clear();
                 self.worktree_store.update(cx, |store, cx| {
                     store.disconnected_from_host(cx);
                 });
@@ -5615,15 +5630,42 @@ impl Project {
         envelope: TypedEnvelope<proto::OpenPathOnClient>,
         mut cx: AsyncApp,
     ) -> Result<proto::OpenPathOnClientResponse> {
-        this.update(&mut cx, |_, cx| {
-            cx.emit(Event::OpenPathOnClient {
-                path: envelope.payload.path,
-                row: envelope.payload.row,
-                column: envelope.payload.column,
-                wait: envelope.payload.wait,
-            });
+        let request_id = envelope.payload.request_id.clone();
+        let (response, received) = smol::channel::bounded(1);
+        let (cancel, cancelled) = smol::channel::bounded(1);
+        this.update(&mut cx, |this, cx| {
+            this.remote_cli_requests.insert(request_id.clone(), cancel);
+            cx.emit(Event::OpenPathOnClient(RemoteCliRequest {
+                request: envelope.payload,
+                response,
+            }));
         });
+        let result = {
+            let response = received.recv().fuse();
+            let cancelled = cancelled.recv().fuse();
+            futures::pin_mut!(response, cancelled);
+            futures::select_biased! {
+                result = response => result.context("Remote workspace closed").and_then(|result| result),
+                _ = cancelled => Err(anyhow!("Remote CLI request cancelled")),
+            }
+        };
+        this.update(&mut cx, |this, _| {
+            this.remote_cli_requests.remove(&request_id);
+        });
+        result?;
         Ok(proto::OpenPathOnClientResponse { success: true })
+    }
+
+    async fn handle_cancel_open_path_on_client(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::CancelOpenPathOnClient>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, _| {
+            this.remote_cli_requests
+                .remove(&envelope.payload.request_id);
+        });
+        Ok(())
     }
 
     async fn handle_language_server_prompt_request(

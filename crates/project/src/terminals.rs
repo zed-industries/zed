@@ -623,20 +623,20 @@ impl Project {
         remote_client: Option<Entity<RemoteClient>>,
         cx: &mut App,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
-        if let Some(path) = &path {
-            let shell = Shell::Program(shell.to_string());
-            self.environment
-                .update(cx, |project_env, cx| match &remote_client {
-                    Some(remote_client) => project_env.remote_directory_environment(
-                        &shell,
-                        path.clone(),
-                        remote_client.clone(),
-                        cx,
-                    ),
-                    None => project_env.local_directory_environment(&shell, path.clone(), cx),
-                })
-        } else {
-            Task::ready(None).shared()
+        let shell = Shell::Program(shell.to_string());
+        match (remote_client, path) {
+            (Some(remote_client), path) => self.environment.update(cx, |environment, cx| {
+                environment.remote_directory_environment(
+                    &shell,
+                    path.unwrap_or_else(|| Arc::from(Path::new(""))),
+                    remote_client,
+                    cx,
+                )
+            }),
+            (None, Some(path)) => self.environment.update(cx, |environment, cx| {
+                environment.local_directory_environment(&shell, path, cx)
+            }),
+            (None, None) => Task::ready(None).shared(),
         }
     }
 }
@@ -650,23 +650,14 @@ fn create_remote_shell(
 ) -> Result<(Shell, HashMap<String, String>)> {
     insert_zed_terminal_env(&mut env, &release_channel::AppVersion::global(cx));
 
-    // Inject CLI environment for `zed` command in remote terminals.
-    // The socket path follows the same convention as the remote server state dir.
-    let identifier = remote_client.read(cx).unique_identifier().to_string();
-    let cli_socket_path = format!(
-        "$HOME/.local/share/zed/server_state/{}/cli.sock",
-        identifier
+    env.insert(
+        "ZED_REMOTE_SESSION_ID".into(),
+        remote_client.read(cx).unique_identifier().into(),
     );
-    env.insert("ZED_REMOTE_CLI_SOCKET".to_string(), cli_socket_path);
-
-    // Prepend ~/.zed/bin to PATH so the `zed` wrapper script is discoverable
-    let existing_path = env.get("PATH").cloned().unwrap_or_default();
-    let new_path = if existing_path.is_empty() {
-        "$HOME/.zed/bin:$PATH".to_string()
-    } else {
-        format!("$HOME/.zed/bin:{existing_path}")
-    };
-    env.insert("PATH".to_string(), new_path);
+    if let Some(bin_dir) = env.remove("ZED_REMOTE_CLI_BIN") {
+        let path = env.entry("PATH".into()).or_default();
+        *path = format!("{bin_dir}:{path}");
+    }
 
     let (program, args) = match spawn_command {
         Some((program, args)) => (Some(program.clone()), args),
@@ -843,5 +834,43 @@ mod tests {
             format_task_for_activation(&task, ShellKind::PowerShell, "powershell.exe", true),
             "&cargo test 'some test'"
         );
+    }
+}
+
+#[cfg(test)]
+mod remote_cli_tests {
+    use super::*;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    async fn remote_terminal_environment_is_resolved_without_a_directory(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+            let settings = settings::SettingsStore::test(cx);
+            cx.set_global(settings);
+        });
+        server_cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+            let settings = settings::SettingsStore::test(cx);
+            cx.set_global(settings);
+        });
+        let (options, server, _) = RemoteClient::fake_server(cx, server_cx);
+        let handler = server_cx.new(|_| ());
+        server.add_request_handler(
+            handler.downgrade(),
+            |_, _: rpc::TypedEnvelope<rpc::proto::Ping>, _| async { Ok(rpc::proto::Ack {}) },
+        );
+        let remote = RemoteClient::connect_mock(options, cx).await;
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let environment = project
+            .update(cx, |project, cx| {
+                project.resolve_directory_environment("/bin/sh", None, Some(remote), cx)
+            })
+            .await;
+        assert!(environment.is_some());
     }
 }

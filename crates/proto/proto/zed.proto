@@ -526,7 +526,8 @@ message Envelope {
     GetTerminalShell get_terminal_shell = 494;
     GetTerminalShellResponse get_terminal_shell_response = 495;
     OpenPathOnClient open_path_on_client = 496;
-    OpenPathOnClientResponse open_path_on_client_response = 497; // current max
+    OpenPathOnClientResponse open_path_on_client_response = 497;
+    CancelOpenPathOnClient cancel_open_path_on_client = 498; // current max
   }
 
   reserved 87 to 88;

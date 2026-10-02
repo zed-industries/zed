@@ -1,209 +1,216 @@
-//! CLI socket listener for the remote server.
-//!
-//! This module provides functionality for accepting file-open requests from a local
-//! CLI tool on the remote machine and forwarding them to the connected Zed client.
-//! This enables `zed <file>` to work from within remote terminal sessions.
+//! Unix socket bridge from remote terminals to the connected workspace.
 
+use crate::cli_client::{CliRequest, CliResponse, read_frame};
 use anyhow::{Context as _, Result};
-use futures::AsyncWriteExt;
+use futures::{AsyncReadExt as _, AsyncWriteExt as _, FutureExt as _};
 use gpui::App;
 use net::async_net::{UnixListener, UnixStream};
 use rpc::AnyProtoClient;
 use rpc::proto::{self, REMOTE_SERVER_PROJECT_ID};
-use smol::io::AsyncBufReadExt;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+use util::{ResultExt as _, paths::PathWithPosition};
 
-/// Start listening on a Unix socket for CLI open requests.
-///
-/// When a CLI client connects and sends a path (with optional line:column),
-/// this listener sends an `OpenPathOnClient` request over the RPC channel
-/// to the local Zed client, which opens the file in the editor.
 pub fn start_cli_listener(socket_path: PathBuf, session: AnyProtoClient, cx: &mut App) {
     cx.spawn(async move |_cx| {
-        if let Err(e) = run_cli_listener(&socket_path, &session).await {
-            log::error!("CLI listener error: {e:#}");
-        }
+        run_cli_listener(&socket_path, &session).await.log_err();
     })
     .detach();
 }
 
 async fn run_cli_listener(socket_path: &Path, session: &AnyProtoClient) -> Result<()> {
     if socket_path.exists() {
-        std::fs::remove_file(socket_path).ok();
+        std::fs::remove_file(socket_path)?;
     }
-
     let listener = UnixListener::bind(socket_path).context("failed to bind CLI listener socket")?;
-    log::info!("CLI listener started on {:?}", socket_path);
-
-    loop {
-        match listener.accept().await {
-            Ok((stream, _)) => {
-                let session = session.clone();
-                smol::spawn(async move {
-                    if let Err(e) = handle_cli_connection(stream, &session).await {
-                        log::warn!("CLI connection error: {e:#}");
-                    }
-                })
-                .detach();
-            }
-            Err(e) => {
-                log::error!("CLI listener accept error: {e:#}");
-                break;
-            }
-        }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))?;
     }
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let session = session.clone();
+        smol::spawn(async move {
+            handle_cli_connection(stream, &session).await.log_err();
+        })
+        .detach();
+    }
+}
 
-    Ok(())
+async fn write_response(
+    writer: &mut (impl futures::AsyncWrite + Unpin),
+    response: CliResponse,
+) -> Result<()> {
+    let mut message = serde_json::to_vec(&response)?;
+    message.push(b'\n');
+    let write = async {
+        writer.write_all(&message).await?;
+        writer.flush().await?;
+        anyhow::Ok(())
+    }
+    .fuse();
+    let timeout = smol::Timer::after(Duration::from_secs(5)).fuse();
+    futures::pin_mut!(write, timeout);
+    futures::select_biased! {
+        result = write => result,
+        _ = timeout => anyhow::bail!("CLI stopped reading responses"),
+    }
+}
+
+fn resolve_paths(request: &CliRequest) -> Result<Vec<PathWithPosition>> {
+    anyhow::ensure!(
+        request.cwd.is_absolute(),
+        "CLI working directory must be absolute"
+    );
+    anyhow::ensure!(!request.paths.is_empty(), "no paths supplied");
+    request
+        .paths
+        .iter()
+        .map(|path| {
+            let original = request.cwd.join(path);
+            let mut parsed = if original.exists() {
+                PathWithPosition::from_path(original)
+            } else {
+                let mut parsed = PathWithPosition::parse_str(path);
+                parsed.path = request.cwd.join(parsed.path);
+                parsed
+            };
+            // Canonicalize existing paths on the remote host, never on the GUI host.
+            if parsed.path.exists() {
+                parsed.path = parsed.path.canonicalize()?;
+            }
+            Ok(parsed)
+        })
+        .collect()
 }
 
 async fn handle_cli_connection(stream: UnixStream, session: &AnyProtoClient) -> Result<()> {
-    let (reader, mut writer) = futures::AsyncReadExt::split(stream);
-    let mut buf_reader = smol::io::BufReader::new(reader);
-    let mut line = String::new();
-    buf_reader.read_line(&mut line).await?;
-    let line = line.trim();
-
-    if line.is_empty() {
-        anyhow::bail!("empty request from CLI client");
+    let (reader, mut writer) = stream.split();
+    let mut reader = smol::io::BufReader::new(reader);
+    let request = async {
+        let read = read_frame(&mut reader).fuse();
+        let timeout = smol::Timer::after(Duration::from_secs(15)).fuse();
+        futures::pin_mut!(read, timeout);
+        let line = futures::select_biased! {
+            result = read => result?,
+            _ = timeout => anyhow::bail!("Timed out reading CLI request"),
+        };
+        let request: CliRequest = serde_json::from_str(&line)?;
+        let paths = resolve_paths(&request)?;
+        anyhow::Ok((request, paths))
     }
-
-    let request = parse_cli_request(line)?;
-    log::info!(
-        "CLI open request: path={}, row={:?}, column={:?}, wait={}",
-        request.path,
-        request.row,
-        request.column,
-        request.wait
-    );
-
-    let response = session
-        .request(proto::OpenPathOnClient {
-            project_id: REMOTE_SERVER_PROJECT_ID,
-            path: request.path,
-            row: request.row,
-            column: request.column,
-            wait: request.wait,
-        })
-        .await;
-
-    match response {
-        Ok(resp) => {
-            let status = if resp.success { "ok" } else { "error" };
-            writer
-                .write_all(format!("{status}\n").as_bytes())
-                .await
-                .ok();
+    .await;
+    let (request, paths) = match request {
+        Ok(request) => request,
+        Err(error) => {
+            return write_response(&mut writer, CliResponse::Error(error.to_string())).await;
         }
-        Err(e) => {
-            writer
-                .write_all(format!("error: {e}\n").as_bytes())
-                .await
-                .ok();
-        }
-    }
-
-    Ok(())
-}
-
-struct CliRequest {
-    path: String,
-    row: Option<u32>,
-    column: Option<u32>,
-    wait: bool,
-}
-
-/// Parse a CLI request line in the format: `[--wait] path[:line[:column]]`
-fn parse_cli_request(input: &str) -> Result<CliRequest> {
-    let mut wait = false;
-    let mut path_str = input;
-
-    if let Some(rest) = input.strip_prefix("--wait ") {
-        wait = true;
-        path_str = rest.trim();
-    }
-
-    let (path, row, column) = parse_path_with_position(path_str);
-
-    // Resolve to absolute path
-    let abs_path = if Path::new(&path).is_absolute() {
-        path
-    } else {
-        std::env::current_dir()
-            .map(|cwd| cwd.join(&path).to_string_lossy().into_owned())
-            .unwrap_or(path)
     };
-
-    Ok(CliRequest {
-        path: abs_path,
-        row,
-        column,
-        wait,
-    })
-}
-
-/// Parse `path:line:column` syntax. Returns (path, optional_row, optional_column).
-fn parse_path_with_position(input: &str) -> (String, Option<u32>, Option<u32>) {
-    // Try to split from the right to find :line:column or :line
-    // Be careful: on Windows, paths can start with C: so we need to handle that.
-    let parts: Vec<&str> = input.rsplitn(3, ':').collect();
-
-    match parts.as_slice() {
-        [col_str, line_str, path] => {
-            if let (Ok(line), Ok(col)) = (line_str.parse::<u32>(), col_str.parse::<u32>()) {
-                if !path.is_empty() {
-                    return (path.to_string(), Some(line), Some(col));
+    let request_ids = paths
+        .iter()
+        .map(|_| uuid::Uuid::new_v4().to_string())
+        .collect::<Vec<_>>();
+    let requests = paths
+        .into_iter()
+        .zip(&request_ids)
+        .map(|(path, request_id)| {
+            session.request(proto::OpenPathOnClient {
+                project_id: REMOTE_SERVER_PROJECT_ID,
+                is_directory: path.path.is_dir(),
+                path: path.path.to_string_lossy().into_owned(),
+                row: path.row,
+                column: path.column,
+                wait: request.wait,
+                request_id: request_id.clone(),
+            })
+        });
+    let result = async {
+        let requests = futures::future::try_join_all(requests).fuse();
+        let mut disconnect_buffer = [0];
+        let disconnected = reader.read(&mut disconnect_buffer).fuse();
+        futures::pin_mut!(requests, disconnected);
+        loop {
+            let heartbeat = smol::Timer::after(Duration::from_secs(1)).fuse();
+            futures::pin_mut!(heartbeat);
+            futures::select_biased! {
+                responses = requests => {
+                    for response in responses? {
+                        anyhow::ensure!(response.success, "Failed to open path in the connected workspace");
+                    }
+                    return Ok(());
+                },
+                _ = disconnected => anyhow::bail!("CLI disconnected"),
+                _ = heartbeat => {
+                    let ping = session.request(proto::Ping {}).fuse();
+                    let timeout = smol::Timer::after(Duration::from_secs(5)).fuse();
+                    futures::pin_mut!(ping, timeout);
+                    futures::select_biased! {
+                        result = ping => { result.context("Remote workspace disconnected")?; },
+                        _ = timeout => anyhow::bail!("Remote workspace stopped responding"),
+                    }
+                    write_response(&mut writer, CliResponse::Ping).await?;
                 }
             }
-            (input.to_string(), None, None)
         }
-        [line_str, path] => {
-            if let Ok(line) = line_str.parse::<u32>() {
-                if !path.is_empty() {
-                    return (path.to_string(), Some(line), None);
-                }
-            }
-            (input.to_string(), None, None)
+    }.await;
+    if result.is_err() {
+        for request_id in request_ids {
+            session
+                .send(proto::CancelOpenPathOnClient {
+                    project_id: REMOTE_SERVER_PROJECT_ID,
+                    request_id,
+                })
+                .log_err();
         }
-        _ => (input.to_string(), None, None),
     }
+    write_response(
+        &mut writer,
+        match result {
+            Ok(()) => CliResponse::Complete,
+            Err(error) => CliResponse::Error(format!("{error:#}")),
+        },
+    )
+    .await
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_path_with_position() {
-        let (path, row, col) = parse_path_with_position("/home/user/file.rs");
-        assert_eq!(path, "/home/user/file.rs");
-        assert_eq!(row, None);
-        assert_eq!(col, None);
-
-        let (path, row, col) = parse_path_with_position("/home/user/file.rs:42");
-        assert_eq!(path, "/home/user/file.rs");
-        assert_eq!(row, Some(42));
-        assert_eq!(col, None);
-
-        let (path, row, col) = parse_path_with_position("/home/user/file.rs:42:10");
-        assert_eq!(path, "/home/user/file.rs");
-        assert_eq!(row, Some(42));
-        assert_eq!(col, Some(10));
-
-        let (path, row, col) = parse_path_with_position(".");
-        assert_eq!(path, ".");
-        assert_eq!(row, None);
-        assert_eq!(col, None);
+    fn resolves_relative_paths_in_client_directory_with_position() {
+        let request = CliRequest {
+            paths: vec!["src/árvíz file.rs:42:7".into()],
+            cwd: PathBuf::from("/remote/project"),
+            wait: false,
+        };
+        let paths = resolve_paths(&request).unwrap();
+        assert_eq!(
+            paths[0].path,
+            Path::new("/remote/project/src/árvíz file.rs")
+        );
+        assert_eq!((paths[0].row, paths[0].column), (Some(42), Some(7)));
     }
 
     #[test]
-    fn test_parse_cli_request() {
-        let req = parse_cli_request("/home/user/file.rs:42").unwrap();
-        assert_eq!(req.path, "/home/user/file.rs");
-        assert_eq!(req.row, Some(42));
-        assert!(!req.wait);
-
-        let req = parse_cli_request("--wait /home/user/file.rs").unwrap();
-        assert_eq!(req.path, "/home/user/file.rs");
-        assert!(req.wait);
+    fn preserves_existing_filenames_that_end_in_numbers() {
+        let directory = std::env::temp_dir().join(format!("zed-cli-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(directory.join("file:42"), "").unwrap();
+        let paths = resolve_paths(&CliRequest {
+            paths: vec!["file:42".into(), ".".into(), "new file\nλ.rs".into()],
+            cwd: directory.clone(),
+            wait: false,
+        })
+        .unwrap();
+        assert_eq!(
+            paths[0].path,
+            directory.join("file:42").canonicalize().unwrap()
+        );
+        assert_eq!(paths[0].row, None);
+        assert_eq!(paths[1].path, directory.canonicalize().unwrap());
+        assert_eq!(paths[2].path, directory.join("new file\nλ.rs"));
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

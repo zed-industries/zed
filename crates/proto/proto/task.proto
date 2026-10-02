@@ -52,6 +52,7 @@ message SpawnInTerminal {
 message GetDirectoryEnvironment {
   uint64 project_id = 1;
   Shell shell = 2;
+  // Empty selects the remote home directory.
   string directory = 3;
 }
 
