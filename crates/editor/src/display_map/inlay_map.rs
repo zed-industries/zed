@@ -89,6 +89,12 @@ impl TransformSummary {
     }
 }
 
+impl InlaySnapshot {
+    pub(crate) fn has_inlays(&self) -> bool {
+        self.transforms.summary().has_inlays()
+    }
+}
+
 impl sum_tree::ContextLessSummary for TransformSummary {
     fn zero() -> Self {
         Default::default()
