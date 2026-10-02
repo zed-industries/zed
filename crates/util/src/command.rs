@@ -60,6 +60,12 @@ impl Command {
         self.0.get_args()
     }
 
+    /// The environment overrides set on this command, in the order they will
+    /// be applied. A `None` value means the variable is removed.
+    pub fn get_envs(&self) -> impl Iterator<Item = (&OsStr, Option<&OsStr>)> {
+        self.0.get_envs()
+    }
+
     pub fn env(&mut self, key: impl AsRef<OsStr>, val: impl AsRef<OsStr>) -> &mut Self {
         self.0.env(key, val);
         self

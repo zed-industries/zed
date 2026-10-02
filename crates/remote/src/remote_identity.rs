@@ -21,6 +21,10 @@ pub enum RemoteConnectionIdentity {
         container_id: String,
         name: String,
         remote_user: String,
+        /// The persistence key of the machine running the daemon, or `None`
+        /// when it is this one. Stored as a key rather than a nested identity
+        /// so this type stays flat, matching `DockerHost` itself.
+        host: Option<String>,
     },
     #[cfg(any(test, feature = "test-support"))]
     Mock { id: u64 },
@@ -50,7 +54,11 @@ impl RemoteConnectionIdentity {
                 container_id,
                 name,
                 remote_user,
-            } => format!("docker:{remote_user}@{name}:{container_id}"),
+                host,
+            } => match host {
+                Some(host) => format!("docker:{remote_user}@{name}:{container_id}@{host}"),
+                None => format!("docker:{remote_user}@{name}:{container_id}"),
+            },
             #[cfg(any(test, feature = "test-support"))]
             Self::Mock { id } => format!("mock:{id}"),
         }
@@ -73,6 +81,10 @@ impl From<&RemoteConnectionOptions> for RemoteConnectionIdentity {
                 container_id: options.container_id.clone(),
                 name: options.name.clone(),
                 remote_user: options.remote_user.clone(),
+                host: options
+                    .host
+                    .connection_options()
+                    .map(|host| remote_connection_identity(&host).persistence_key()),
             },
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(options) => Self::Mock { id: options.id },
@@ -102,7 +114,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::{DockerConnectionOptions, SshConnectionOptions, WslConnectionOptions};
+    use crate::{DockerConnectionOptions, DockerHost, SshConnectionOptions, WslConnectionOptions};
 
     #[test]
     fn ssh_identity_ignores_non_persisted_runtime_fields() {
@@ -173,6 +185,7 @@ mod tests {
             upload_binary_over_docker_exec: true,
             use_podman: true,
             remote_env: BTreeMap::from([("FOO".to_string(), "BAR".to_string())]),
+            host: Default::default(),
         });
         let right = RemoteConnectionOptions::Docker(DockerConnectionOptions {
             name: "zed-dev".to_string(),
@@ -181,9 +194,53 @@ mod tests {
             upload_binary_over_docker_exec: false,
             use_podman: false,
             remote_env: BTreeMap::new(),
+            host: Default::default(),
         });
 
         assert!(same_remote_connection_identity(Some(&left), Some(&right),));
+    }
+
+    #[test]
+    fn docker_identity_distinguishes_the_host_running_the_daemon() {
+        let container = |host: DockerHost| {
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                name: "zed-dev".to_string(),
+                container_id: "container-123".to_string(),
+                remote_user: "anth".to_string(),
+                upload_binary_over_docker_exec: false,
+                use_podman: false,
+                remote_env: BTreeMap::new(),
+                host,
+            })
+        };
+        let ssh_host = |port: u16, password: Option<&str>| {
+            DockerHost::Ssh(SshConnectionOptions {
+                host: "example.com".into(),
+                username: Some("anth".to_string()),
+                port: Some(port),
+                password: password.map(str::to_string),
+                nickname: password.map(|_| "work".to_string()),
+                ..Default::default()
+            })
+        };
+
+        assert!(!same_remote_connection_identity(
+            Some(&container(DockerHost::Local)),
+            Some(&container(ssh_host(2222, None))),
+        ));
+        assert!(!same_remote_connection_identity(
+            Some(&container(ssh_host(2222, None))),
+            Some(&container(ssh_host(2223, None))),
+        ));
+        assert!(same_remote_connection_identity(
+            Some(&container(ssh_host(2222, Some("secret")))),
+            Some(&container(ssh_host(2222, None))),
+        ));
+
+        assert_ne!(
+            remote_connection_identity(&container(DockerHost::Local)).persistence_key(),
+            remote_connection_identity(&container(ssh_host(2222, None))).persistence_key(),
+        );
     }
 
     #[test]

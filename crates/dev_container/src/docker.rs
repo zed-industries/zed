@@ -5,7 +5,8 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 use util::command::Command;
 
 use crate::{
-    command_json::{evaluate_json_command, evaluate_yaml_command},
+    DevContainerHost,
+    command_json::{deserialize_json_output, deserialize_yaml_output},
     devcontainer_api::DevContainerError,
     devcontainer_json::MountDefinition,
 };
@@ -191,6 +192,7 @@ pub(crate) struct DockerComposeConfig {
 }
 
 pub(crate) struct Docker {
+    host: DevContainerHost,
     docker_cli: String,
     has_buildx: bool,
 }
@@ -202,7 +204,11 @@ impl DockerInspect {
 }
 
 impl Docker {
-    pub(crate) async fn new(docker_cli: &str, use_buildkit: Option<bool>) -> Self {
+    pub(crate) async fn new(
+        host: DevContainerHost,
+        docker_cli: &str,
+        use_buildkit: Option<bool>,
+    ) -> Self {
         let has_buildx = if docker_cli == "podman" {
             false
         } else if let Some(use_buildkit) = use_buildkit {
@@ -215,11 +221,15 @@ impl Docker {
             // multi-stage `FROM`.
             use_buildkit
         } else {
-            let output = Command::new(docker_cli)
-                .args(["buildx", "version"])
-                .output()
-                .await;
-            output.map(|o| o.status.success()).unwrap_or(false)
+            let probe = host.command(docker_cli, &buildx_version_args(), &no_env(), None);
+            match probe {
+                Ok(mut command) => command
+                    .output()
+                    .await
+                    .map(|output| output.status.success())
+                    .unwrap_or(false),
+                Err(_) => false,
+            }
         };
         if !has_buildx && docker_cli != "podman" {
             log::info!(
@@ -227,23 +237,37 @@ impl Docker {
             );
         }
         Self {
+            host,
             docker_cli: docker_cli.to_string(),
             has_buildx,
         }
     }
 
-    fn is_podman(&self) -> bool {
-        self.docker_cli == "podman"
+    /// Runs an engine invocation on this client's host and waits for it to
+    /// exit. Every command the client issues goes through here, so the host
+    /// is applied in exactly one place.
+    async fn run(
+        &self,
+        args: Vec<String>,
+        env: HashMap<String, String>,
+    ) -> Result<std::process::Output, DevContainerError> {
+        let mut command = self.host.command(&self.docker_cli, &args, &env, None)?;
+        log::debug!("Running `{} {}`", self.docker_cli, args.join(" "));
+        command.output().await.map_err(|e| {
+            log::error!(
+                "Error running `{} {}`: {e}",
+                self.docker_cli,
+                args.join(" ")
+            );
+            DevContainerError::CommandFailed(self.docker_cli.clone())
+        })
     }
 
-    async fn pull_image(&self, image: &String) -> Result<(), DevContainerError> {
-        let mut command = Command::new(&self.docker_cli);
-        command.args(&["pull", "--", image]);
-
-        let output = command.output().await.map_err(|e| {
-            log::error!("Error pulling image: {e}");
-            DevContainerError::ResourceFetchFailed
-        })?;
+    async fn pull_image(&self, image: &str) -> Result<(), DevContainerError> {
+        let output = self
+            .run(pull_args(image), no_env())
+            .await
+            .map_err(|_| DevContainerError::ResourceFetchFailed)?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -252,52 +276,143 @@ impl Docker {
         }
         Ok(())
     }
+}
 
-    fn create_docker_query_containers(&self, filters: Vec<String>) -> Command {
-        let mut command = Command::new(&self.docker_cli);
-        command.args(&["ps", "-a"]);
+fn no_env() -> HashMap<String, String> {
+    HashMap::new()
+}
 
-        for filter in filters {
-            command.arg("--filter");
-            command.arg(filter);
-        }
-        command.arg("--format={{ json . }}");
-        command
+fn buildx_version_args() -> Vec<String> {
+    vec!["buildx".to_string(), "version".to_string()]
+}
+
+fn pull_args(image: &str) -> Vec<String> {
+    vec!["pull".to_string(), "--".to_string(), image.to_string()]
+}
+
+fn query_containers_args(filters: &[String]) -> Vec<String> {
+    let mut args = vec!["ps".to_string(), "-a".to_string()];
+    for filter in filters {
+        args.push("--filter".to_string());
+        args.push(filter.clone());
     }
+    args.push("--format={{ json . }}".to_string());
+    args
+}
 
-    fn create_docker_inspect(&self, id: &str) -> Command {
-        let mut command = Command::new(&self.docker_cli);
-        command.args(&["inspect", "--format={{json . }}", id]);
-        command
-    }
+fn inspect_args(id: &str) -> Vec<String> {
+    vec![
+        "inspect".to_string(),
+        "--format={{json . }}".to_string(),
+        id.to_string(),
+    ]
+}
 
-    fn create_docker_compose_config_command(&self, config_files: &Vec<PathBuf>) -> Command {
-        let mut command = Command::new(&self.docker_cli);
-        command.arg("compose");
-        for file_path in config_files {
-            command.args(&["-f", &file_path.display().to_string()]);
-        }
-        command.arg("config");
-        command
+fn compose_config_args(config_files: &[PathBuf]) -> Vec<String> {
+    let mut args = vec!["compose".to_string()];
+    for file_path in config_files {
+        args.push("-f".to_string());
+        args.push(file_path.display().to_string());
     }
+    args.push("config".to_string());
+    args
+}
+
+fn compose_build_args(
+    config_files: &[PathBuf],
+    project_name: &str,
+    services: Option<&Vec<String>>,
+) -> Vec<String> {
+    let mut args = vec![
+        "compose".to_string(),
+        "--project-name".to_string(),
+        project_name.to_string(),
+    ];
+    for file_path in config_files {
+        args.push("-f".to_string());
+        args.push(file_path.display().to_string());
+    }
+    args.push("build".to_string());
+    if let Some(services) = services {
+        args.extend(services.iter().cloned());
+    }
+    args
+}
+
+/// The builder selection passed to `docker compose build`. Without a usable
+/// BuildKit the classic builder is forced, because the feature content image
+/// is consumed by a later multi-stage `FROM` and only resolves from the
+/// daemon's image store.
+fn compose_build_env(is_podman: bool, has_buildx: bool) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    if is_podman {
+        return env;
+    }
+    if has_buildx {
+        env.insert("DOCKER_BUILDKIT".to_string(), "1".to_string());
+    } else {
+        env.insert("DOCKER_BUILDKIT".to_string(), "0".to_string());
+        env.insert("COMPOSE_DOCKER_CLI_BUILD".to_string(), "0".to_string());
+    }
+    env
+}
+
+fn start_container_args(id: &str) -> Vec<String> {
+    vec!["start".to_string(), id.to_string()]
+}
+
+fn exec_args(
+    container_id: &str,
+    remote_folder: &str,
+    user: &str,
+    env: &HashMap<String, String>,
+    inner_command: &Command,
+) -> Vec<String> {
+    let mut args = vec![
+        "exec".to_string(),
+        "-w".to_string(),
+        remote_folder.to_string(),
+        "-u".to_string(),
+        user.to_string(),
+    ];
+    for (key, value) in env.iter() {
+        args.push("-e".to_string());
+        args.push(format!("{key}={value}"));
+    }
+    args.push(container_id.to_string());
+    args.push("sh".to_string());
+
+    let mut inner_script: Vec<String> = vec![inner_command.get_program().display().to_string()];
+    inner_script.extend(
+        inner_command
+            .get_args()
+            .map(|arg| arg.display().to_string()),
+    );
+    args.push("-c".to_string());
+    args.push(inner_script.join(" "));
+    args
 }
 
 #[async_trait]
 impl DockerClient for Docker {
     async fn inspect(&self, id: &String) -> Result<DockerInspect, DevContainerError> {
         // Always try inspect first — avoid pulling unless necessary.
-        let command = self.create_docker_inspect(id);
-        match evaluate_json_command::<DockerInspect>(command).await {
-            Ok(Some(docker_inspect)) => return Ok(docker_inspect),
-            Ok(None) | Err(_) => {}
+        if let Ok(output) = self.run(inspect_args(id), no_env()).await
+            && let Ok(Some(docker_inspect)) = deserialize_json_output::<DockerInspect>(output)
+        {
+            return Ok(docker_inspect);
         }
 
         // Inspect failed — try pulling and retry.
         self.pull_image(id).await.ok();
 
-        let command = self.create_docker_inspect(id);
-        let Some(docker_inspect): Option<DockerInspect> = evaluate_json_command(command).await?
-        else {
+        let output = self.run(inspect_args(id), no_env()).await?;
+        let docker_inspect: Option<DockerInspect> =
+            deserialize_json_output(output).map_err(|e| {
+                log::error!("Error reading docker inspect output: {e}");
+                DevContainerError::CommandFailed(self.docker_cli.clone())
+            })?;
+        let Some(docker_inspect) = docker_inspect else {
             log::error!("Docker inspect produced no deserializable output");
             return Err(DevContainerError::CommandFailed(self.docker_cli.clone()));
         };
@@ -308,8 +423,13 @@ impl DockerClient for Docker {
         &self,
         config_files: &Vec<PathBuf>,
     ) -> Result<Option<DockerComposeConfig>, DevContainerError> {
-        let command = self.create_docker_compose_config_command(config_files);
-        evaluate_yaml_command(command).await
+        let output = self
+            .run(compose_config_args(config_files), no_env())
+            .await?;
+        deserialize_yaml_output(output).map_err(|e| {
+            log::error!("Error reading docker compose config output: {e}");
+            DevContainerError::CommandFailed(self.docker_cli.clone())
+        })
     }
 
     async fn docker_compose_build(
@@ -318,38 +438,17 @@ impl DockerClient for Docker {
         project_name: &str,
         services: Option<&Vec<String>>,
     ) -> Result<(), DevContainerError> {
-        let mut command = Command::new(&self.docker_cli);
-        if !self.is_podman() {
-            if self.has_buildx {
-                command.env("DOCKER_BUILDKIT", "1");
-            } else {
-                // Without a usable BuildKit, build through the classic builder so
-                // multi-stage `FROM` of locally-built images (the feature content
-                // image) resolves from the daemon's image store.
-                command.env("DOCKER_BUILDKIT", "0");
-                command.env("COMPOSE_DOCKER_CLI_BUILD", "0");
-            }
-        }
-        command.args(&["compose", "--project-name", project_name]);
-        for docker_compose_file in config_files {
-            command.args(&["-f", &docker_compose_file.display().to_string()]);
-        }
-        command.arg("build");
-        if let Some(services) = services {
-            command.args(services);
-        }
-
-        let output = command.output().await.map_err(|e| {
-            log::error!("Error running docker compose up: {e}");
-            DevContainerError::CommandFailed(command.get_program().display().to_string())
-        })?;
+        let output = self
+            .run(
+                compose_build_args(config_files, project_name, services),
+                compose_build_env(self.is_podman(), self.has_buildx),
+            )
+            .await?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            log::error!("Non-success status from docker compose up: {}", stderr);
-            return Err(DevContainerError::CommandFailed(
-                command.get_program().display().to_string(),
-            ));
+            log::error!("Non-success status from docker compose build: {}", stderr);
+            return Err(DevContainerError::CommandFailed(self.docker_cli.clone()));
         }
 
         Ok(())
@@ -362,33 +461,13 @@ impl DockerClient for Docker {
         env: &HashMap<String, String>,
         inner_command: Command,
     ) -> Result<(), DevContainerError> {
-        let mut command = Command::new(&self.docker_cli);
-
-        command.args(&["exec", "-w", remote_folder, "-u", user]);
-
-        for (k, v) in env.iter() {
-            command.arg("-e");
-            let env_declaration = format!("{}={}", k, v);
-            command.arg(&env_declaration);
-        }
-
-        command.arg(container_id);
-
-        command.arg("sh");
-
-        let mut inner_program_script: Vec<String> =
-            vec![inner_command.get_program().display().to_string()];
-        let mut args: Vec<String> = inner_command
-            .get_args()
-            .map(|arg| arg.display().to_string())
-            .collect();
-        inner_program_script.append(&mut args);
-        command.args(&["-c", &inner_program_script.join(" ")]);
-
-        let output = command.output().await.map_err(|e| {
-            log::error!("Error running command {e} in container exec");
-            DevContainerError::ContainerNotValid(container_id.to_string())
-        })?;
+        let output = self
+            .run(
+                exec_args(container_id, remote_folder, user, env, &inner_command),
+                no_env(),
+            )
+            .await
+            .map_err(|_| DevContainerError::ContainerNotValid(container_id.to_string()))?;
         let std_out = String::from_utf8_lossy(&output.stdout);
         log::debug!("Command output:\n {std_out}");
         if !output.status.success() {
@@ -400,21 +479,12 @@ impl DockerClient for Docker {
         Ok(())
     }
     async fn start_container(&self, id: &str) -> Result<(), DevContainerError> {
-        let mut command = Command::new(&self.docker_cli);
-
-        command.args(&["start", id]);
-
-        let output = command.output().await.map_err(|e| {
-            log::error!("Error running docker start: {e}");
-            DevContainerError::CommandFailed(command.get_program().display().to_string())
-        })?;
+        let output = self.run(start_container_args(id), no_env()).await?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             log::error!("Non-success status from docker start: {stderr}");
-            return Err(DevContainerError::CommandFailed(
-                command.get_program().display().to_string(),
-            ));
+            return Err(DevContainerError::CommandFailed(self.docker_cli.clone()));
         }
 
         Ok(())
@@ -424,17 +494,11 @@ impl DockerClient for Docker {
         &self,
         filters: Vec<String>,
     ) -> Result<Option<DockerPs>, DevContainerError> {
-        let mut command = self.create_docker_query_containers(filters);
-        let output = command.output().await.map_err(|e| {
-            log::error!("Error running command {:?}: {e}", command);
-            DevContainerError::CommandFailed(command.get_program().display().to_string())
-        })?;
+        let output = self.run(query_containers_args(&filters), no_env()).await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             log::error!("Non-success status from docker ps: {stderr}");
-            return Err(DevContainerError::CommandFailed(
-                command.get_program().display().to_string(),
-            ));
+            return Err(DevContainerError::CommandFailed(self.docker_cli.clone()));
         }
         let raw = String::from_utf8_lossy(&output.stdout);
         parse_find_process_output(&raw).map_err(|e| {
@@ -443,9 +507,34 @@ impl DockerClient for Docker {
                 e
             } else {
                 log::error!("Error parsing docker ps output: {e}");
-                DevContainerError::CommandFailed(command.get_program().display().to_string())
+                DevContainerError::CommandFailed(self.docker_cli.clone())
             }
         })
+    }
+
+    fn new_command(&self) -> Command {
+        Command::new(&self.docker_cli)
+    }
+
+    fn deploy(&self, command: Command) -> Result<Command, DevContainerError> {
+        if matches!(self.host, DevContainerHost::Local) {
+            return Ok(command);
+        }
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.display().to_string())
+            .collect();
+        let env: HashMap<String, String> = command
+            .get_envs()
+            .filter_map(|(key, value)| {
+                Some((key.display().to_string(), value?.display().to_string()))
+            })
+            .collect();
+        self.host.command(&self.docker_cli, &args, &env, None)
+    }
+
+    fn is_podman(&self) -> bool {
+        self.docker_cli == "podman"
     }
 
     fn docker_cli(&self) -> String {
@@ -511,8 +600,21 @@ pub(crate) trait DockerClient {
         filters: Vec<String>,
     ) -> Result<Option<DockerPs>, DevContainerError>;
     fn supports_compose_buildkit(&self) -> bool;
-    /// This operates as an escape hatch for more custom uses of the docker API.
-    /// See DevContainerManifest::create_docker_build as an example
+    /// Creates a command targeting this client's container engine, for callers
+    /// that build an invocation the trait does not model. Going through the
+    /// client rather than naming the engine directly keeps the decision of
+    /// *where* a command runs with the implementation.
+    ///
+    /// The result is only an argument holder: pass it to [`Self::deploy`]
+    /// before running it, or it will run against the local engine.
+    fn new_command(&self) -> Command;
+    /// Rewrites a command built with [`Self::new_command`] so that it runs on
+    /// the machine whose engine this client drives, wrapping it in the host's
+    /// transport when that machine is not this one.
+    fn deploy(&self, command: Command) -> Result<Command, DevContainerError>;
+    fn is_podman(&self) -> bool;
+    /// The engine's program name, for diagnostics. Prefer [`Self::new_command`]
+    /// when building an invocation.
     fn docker_cli(&self) -> String;
 }
 
@@ -754,41 +856,49 @@ where
 mod test {
     use std::{
         collections::HashMap,
-        ffi::OsStr,
+        path::PathBuf,
         process::{ExitStatus, Output},
+        sync::Arc,
     };
 
     use crate::{
+        DevContainerHost, FakeRemoteConnection,
         command_json::deserialize_json_output,
         devcontainer_api::DevContainerError,
         devcontainer_json::MountDefinition,
         docker::{
             Docker, DockerClient, DockerComposeConfig, DockerComposeService,
             DockerComposeServicePort, DockerComposeVolume, DockerInspect, DockerPs,
-            parse_find_process_output,
+            compose_build_args, compose_build_env, compose_config_args, exec_args, inspect_args,
+            parse_find_process_output, query_containers_args, start_container_args,
         },
     };
-    #[cfg(not(target_os = "windows"))]
     use util::command::Command;
 
     #[test]
     fn use_buildkit_setting_overrides_buildx_detection() {
         // `Some(_)` short-circuits the `buildx version` probe, so these run
         // without invoking docker.
-        let forced_off = futures::executor::block_on(Docker::new("docker", Some(false)));
+        let forced_off = futures::executor::block_on(Docker::new(
+            DevContainerHost::Local,
+            "docker",
+            Some(false),
+        ));
         assert!(
             !forced_off.supports_compose_buildkit(),
             "use_buildkit=false must force the classic builder"
         );
 
-        let forced_on = futures::executor::block_on(Docker::new("docker", Some(true)));
+        let forced_on =
+            futures::executor::block_on(Docker::new(DevContainerHost::Local, "docker", Some(true)));
         assert!(
             forced_on.supports_compose_buildkit(),
             "use_buildkit=true must enable BuildKit"
         );
 
         // podman never supports the BuildKit/buildx path, regardless of the setting.
-        let podman = futures::executor::block_on(Docker::new("podman", Some(true)));
+        let podman =
+            futures::executor::block_on(Docker::new(DevContainerHost::Local, "podman", Some(true)));
         assert!(!podman.supports_compose_buildkit());
     }
 
@@ -872,28 +982,171 @@ mod test {
 
     #[test]
     fn should_create_docker_inspect_command() {
-        let docker = Docker {
+        let given_id = "given_docker_id";
+
+        assert_eq!(
+            inspect_args(given_id),
+            vec!["inspect", "--format={{json . }}", given_id]
+        )
+    }
+
+    /// The argument vectors are shared by every host, so these lock down the
+    /// shape that both a local engine and a transport-wrapped one receive.
+    #[test]
+    fn should_build_engine_argument_vectors() {
+        assert_eq!(
+            query_containers_args(&["label=a".to_string(), "label=b".to_string()]),
+            vec![
+                "ps",
+                "-a",
+                "--filter",
+                "label=a",
+                "--filter",
+                "label=b",
+                "--format={{ json . }}"
+            ]
+        );
+
+        assert_eq!(start_container_args("abc"), vec!["start", "abc"]);
+
+        let config_files = vec![PathBuf::from("/project/compose.yml")];
+        assert_eq!(
+            compose_config_args(&config_files),
+            vec!["compose", "-f", "/project/compose.yml", "config"]
+        );
+        assert_eq!(
+            compose_build_args(&config_files, "project", Some(&vec!["app".to_string()])),
+            vec![
+                "compose",
+                "--project-name",
+                "project",
+                "-f",
+                "/project/compose.yml",
+                "build",
+                "app"
+            ]
+        );
+
+        // BuildKit selection is engine-dependent and must not leak into podman.
+        assert!(compose_build_env(true, false).is_empty());
+        assert_eq!(
+            compose_build_env(false, true).get("DOCKER_BUILDKIT"),
+            Some(&"1".to_string())
+        );
+        let classic = compose_build_env(false, false);
+        assert_eq!(classic.get("DOCKER_BUILDKIT"), Some(&"0".to_string()));
+        assert_eq!(
+            classic.get("COMPOSE_DOCKER_CLI_BUILD"),
+            Some(&"0".to_string())
+        );
+
+        let mut inner = Command::new("echo");
+        inner.args(["hello", "world"]);
+        assert_eq!(
+            exec_args(
+                "container",
+                "/workspace",
+                "root",
+                &HashMap::from([("KEY".to_string(), "value".to_string())]),
+                &inner,
+            ),
+            vec![
+                "exec",
+                "-w",
+                "/workspace",
+                "-u",
+                "root",
+                "-e",
+                "KEY=value",
+                "container",
+                "sh",
+                "-c",
+                "echo hello world"
+            ]
+        );
+    }
+
+    /// A remote host must hand the whole invocation to the connection so the
+    /// transport quotes it, and must not spawn the engine locally.
+    #[test]
+    fn should_route_commands_through_the_host_connection() {
+        let connection = Arc::new(FakeRemoteConnection::default());
+        let host = DevContainerHost::Remote(connection);
+        let command = host
+            .command(
+                "docker",
+                &inspect_args("id with spaces"),
+                &HashMap::from([("DOCKER_BUILDKIT".to_string(), "0".to_string())]),
+                None,
+            )
+            .expect("building a remote invocation should succeed");
+
+        assert_eq!(command.get_program().display().to_string(), "ssh");
+        assert_eq!(
+            command
+                .get_args()
+                .map(|arg| arg.display().to_string())
+                .collect::<Vec<_>>(),
+            vec![
+                "host".to_string(),
+                "--".to_string(),
+                "DOCKER_BUILDKIT=0".to_string(),
+                "'docker'".to_string(),
+                "'inspect'".to_string(),
+                "'--format={{json . }}'".to_string(),
+                "'id with spaces'".to_string(),
+            ]
+        );
+    }
+
+    /// Commands built outside the trait's modeled methods still have to reach
+    /// the same host, or a remote dev container would be provisioned by the
+    /// local engine.
+    #[test]
+    fn should_deploy_escape_hatch_commands_to_the_host() {
+        let local = Docker {
+            host: DevContainerHost::Local,
             docker_cli: "docker".to_string(),
             has_buildx: false,
         };
-        let given_id = "given_docker_id";
+        let mut command = local.new_command();
+        command.args(["build", "."]);
+        let deployed = local.deploy(command).expect("local deploy cannot fail");
+        assert_eq!(deployed.get_program().display().to_string(), "docker");
 
-        let command = docker.create_docker_inspect(given_id);
-
+        let remote = Docker {
+            host: DevContainerHost::Remote(Arc::new(FakeRemoteConnection::default())),
+            docker_cli: "docker".to_string(),
+            has_buildx: false,
+        };
+        let mut command = remote.new_command();
+        command.args(["build", "."]);
+        command.env("DOCKER_BUILDKIT", "0");
+        let deployed = remote
+            .deploy(command)
+            .expect("building a remote invocation should succeed");
+        assert_eq!(deployed.get_program().display().to_string(), "ssh");
         assert_eq!(
-            command.get_args().collect::<Vec<&OsStr>>(),
+            deployed
+                .get_args()
+                .map(|arg| arg.display().to_string())
+                .collect::<Vec<_>>(),
             vec![
-                OsStr::new("inspect"),
-                OsStr::new("--format={{json . }}"),
-                OsStr::new(given_id)
+                "host".to_string(),
+                "--".to_string(),
+                "DOCKER_BUILDKIT=0".to_string(),
+                "'docker'".to_string(),
+                "'build'".to_string(),
+                "'.'".to_string(),
             ]
-        )
+        );
     }
 
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn docker_exec_returns_error_on_nonzero_exit() {
         let docker = Docker {
+            host: DevContainerHost::Local,
             docker_cli: "false".to_string(),
             has_buildx: false,
         };
