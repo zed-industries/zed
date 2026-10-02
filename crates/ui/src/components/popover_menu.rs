@@ -498,11 +498,3 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         }
     }
 }
-
-impl<M: ManagedView> IntoElement for PopoverMenu<M> {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}

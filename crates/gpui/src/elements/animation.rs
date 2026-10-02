@@ -196,14 +196,6 @@ impl<E> SpringAnimationElement<E> {
     }
 }
 
-impl<E: IntoElement + 'static> IntoElement for SpringAnimationElement<E> {
-    type Element = SpringAnimationElement<E>;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl<E: ParentElement> ParentElement for AnimationElement<E> {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         let Some(element) = &mut self.element else {
@@ -219,14 +211,6 @@ impl<E> AnimationElement<E> {
     /// to the element being animated.
     pub fn map_element(mut self, f: impl FnOnce(E) -> E) -> AnimationElement<E> {
         self.element = self.element.map(f);
-        self
-    }
-}
-
-impl<E: IntoElement + 'static> IntoElement for AnimationElement<E> {
-    type Element = AnimationElement<E>;
-
-    fn into_element(self) -> Self::Element {
         self
     }
 }

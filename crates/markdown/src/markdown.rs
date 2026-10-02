@@ -3569,14 +3569,6 @@ fn render_copy_code_block_button(
     })
 }
 
-impl IntoElement for MarkdownElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 pub enum AnyDiv {
     Div(Div),
     Stateful(Stateful<Div>),
@@ -4351,14 +4343,6 @@ impl Element for RenderedLineElement {
         layout.paint_background(window, cx).log_err();
         self.line.paint_highlights(window);
         layout.paint_foreground(window, cx).log_err();
-    }
-}
-
-impl IntoElement for RenderedLineElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 
@@ -5216,14 +5200,6 @@ mod tests {
     struct CapturingMarkdownElement {
         markdown_element: MarkdownElement,
         rendered_text: Rc<RefCell<Option<RenderedText>>>,
-    }
-
-    impl IntoElement for CapturingMarkdownElement {
-        type Element = Self;
-
-        fn into_element(self) -> Self::Element {
-            self
-        }
     }
 
     impl Element for CapturingMarkdownElement {
