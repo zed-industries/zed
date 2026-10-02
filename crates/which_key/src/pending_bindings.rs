@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    rc::Rc,
-};
+use std::{collections::HashMap, rc::Rc};
 
 use gpui::{
     App, AvailableSpace, KeybindingKeystroke, Pixels, RenderOnce, ScrollHandle, Window, size,
@@ -45,20 +42,23 @@ pub(crate) fn prepare_pending_bindings(
 }
 
 fn group_bindings(bindings: Vec<PendingBinding>) -> Vec<PendingBindingRow> {
-    let mut seen_sequences = HashSet::new();
     let mut groups: HashMap<Option<KeybindingKeystroke>, Vec<PendingBinding>> = HashMap::new();
     for binding in bindings {
+        let group = groups
+            .entry(binding.remaining_keystrokes.first().cloned())
+            .or_default();
         // Candidates come in precedence order, so the first binding for a sequence is the one
         // dispatch tries first. Dispatch only moves on to the next binding when nothing on the
         // focus path handles the first action. Like GPUI's shortcut display, the popup treats the
-        // later bindings as shadowed and shows only the first.
-        if !seen_sequences.insert(binding.remaining_keystrokes.clone()) {
+        // later bindings as shadowed and shows only the first. Bindings for the same sequence
+        // share a first keystroke, so checking the group is enough.
+        if group
+            .iter()
+            .any(|existing| existing.remaining_keystrokes == binding.remaining_keystrokes)
+        {
             continue;
         }
-        groups
-            .entry(binding.remaining_keystrokes.first().cloned())
-            .or_default()
-            .push(binding);
+        group.push(binding);
     }
 
     let mut result = Vec::new();
