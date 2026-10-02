@@ -303,6 +303,35 @@ impl Component for ChoiceCard {
                     ),
                 ],
             ))
+            .child(example_group_with_title(
+                "Long Text",
+                vec![
+                    single_example(
+                        "Radio",
+                        Self::radio(
+                            "choice-radio-long-text",
+                            "Allow the agent to read and modify every file in this project, including files ignored by version control",
+                            true,
+                        )
+                        .description(
+                            "The agent will be able to create, edit, and delete files without asking for confirmation each time. You can revoke this permission at any point from the agent settings.",
+                        )
+                        .into_any_element(),
+                    ),
+                    single_example(
+                        "Checkbox",
+                        Self::checkbox(
+                            "choice-checkbox-long-text",
+                            "Include terminal output, diagnostics, and recently opened buffers as additional context",
+                            false,
+                        )
+                        .description(
+                            "Additional context can improve results for larger tasks, but it increases the size of each request and may take longer to process.",
+                        )
+                        .into_any_element(),
+                    )
+                ],
+            ))
             .into_any_element()
     }
 }
