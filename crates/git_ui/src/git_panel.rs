@@ -2402,6 +2402,9 @@ impl GitPanel {
     }
 
     fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
+        if !GitPanelSettings::get_global(cx).show_commit_section {
+            return;
+        }
         self.commit_editor.update(cx, |editor, cx| {
             window.focus(&editor.focus_handle(cx), cx);
         });
@@ -3735,10 +3738,12 @@ impl GitPanel {
         let commit_message = self.custom_or_suggested_commit_message(window, cx);
 
         let Some(mut message) = commit_message else {
-            self.commit_editor
-                .read(cx)
-                .focus_handle(cx)
-                .focus(window, cx);
+            if GitPanelSettings::get_global(cx).show_commit_section {
+                self.commit_editor
+                    .read(cx)
+                    .focus_handle(cx)
+                    .focus(window, cx);
+            }
             return;
         };
 
@@ -3929,6 +3934,9 @@ impl GitPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !GitPanelSettings::get_global(cx).show_commit_section {
+            return;
+        }
         self.generate_commit_message(cx);
     }
 
@@ -6366,6 +6374,9 @@ impl GitPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !GitPanelSettings::get_global(cx).show_commit_section {
+            return;
+        }
         self.commit_editor_expanded = !self.commit_editor_expanded;
         self.commit_editor.update(cx, |editor, _cx| {
             if self.commit_editor_expanded {
@@ -6579,11 +6590,6 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         let active_repository = self.active_repository.clone()?;
-        let settings = ThemeSettings::get_global(cx);
-        let panel_editor_style =
-            git_commit_editor_style(settings.git_commit_buffer_font_size(cx), cx);
-        let enable_coauthors = self.render_co_authors(cx);
-        let editor_focus_handle = self.commit_editor.focus_handle(cx);
         let branch = active_repository.read(cx).branch.clone();
         let head_commit = active_repository.read(cx).head_commit.clone();
 
@@ -6594,6 +6600,17 @@ impl GitPanel {
                 .display_name()
                 .trim_end_matches("/"),
         ));
+        let repo_footer = PanelRepoFooter::new(display_name, branch, head_commit, Some(git_panel));
+        if !GitPanelSettings::get_global(cx).show_commit_section {
+            return Some(v_flex().child(repo_footer));
+        }
+
+        let settings = ThemeSettings::get_global(cx);
+        let panel_editor_style =
+            git_commit_editor_style(settings.git_commit_buffer_font_size(cx), cx);
+        let enable_coauthors = self.render_co_authors(cx);
+        let editor_focus_handle = self.commit_editor.focus_handle(cx);
+
         let editor_is_long = self.commit_editor.update(cx, |editor, cx| {
             editor.max_point(cx).row().0 >= MAX_PANEL_EDITOR_LINES as u32
         });
@@ -6664,12 +6681,7 @@ impl GitPanel {
 
         let footer = v_flex()
             .when(self.commit_editor_expanded, |this| this.flex_1().min_h_0())
-            .child(PanelRepoFooter::new(
-                display_name,
-                branch,
-                head_commit,
-                Some(git_panel),
-            ))
+            .child(repo_footer)
             .when(title_exceeds_limit, |this| {
                 this.child(
                     h_flex()
@@ -9064,6 +9076,9 @@ impl Render for GitPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let project = self.project.read(cx);
         let has_entries = !self.entries.is_empty();
+        // A hidden commit editor can't fill the panel, otherwise the changes list would vanish.
+        let commit_editor_filled =
+            self.commit_editor_expanded && GitPanelSettings::get_global(cx).show_commit_section;
         let has_write_access = self.has_write_access(cx);
 
         #[cfg(feature = "call")]
@@ -9153,13 +9168,13 @@ impl Render for GitPanel {
             .child(
                 v_flex()
                     .size_full()
-                    .when(!self.commit_editor_expanded, |this| {
+                    .when(!commit_editor_filled, |this| {
                         this.child(self.render_tab_bar(cx))
                     })
                     .map(|this| match self.active_tab {
                         GitPanelTab::Changes => this
                             .children(self.render_changes_header(window, cx))
-                            .when(!self.commit_editor_expanded, |this| {
+                            .when(!commit_editor_filled, |this| {
                                 this.map(|this| {
                                     if let Some(repo) = self.active_repository.clone()
                                         && has_entries
@@ -9236,6 +9251,7 @@ impl editor::Addon for GitPanelAddon {
 impl Panel for GitPanel {
     fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
         if self.active_tab == GitPanelTab::Changes
+            && GitPanelSettings::get_global(cx).show_commit_section
             && (self.entries.is_empty() || self.commit_editor_expanded)
         {
             self.commit_editor.focus_handle(cx)
@@ -14059,6 +14075,57 @@ mod tests {
                 panel.commit_editor.read(cx).mode().clone(),
                 EditorMode::AutoHeight { .. }
             ));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_hidden_commit_section_is_not_focused(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({ "project": { ".git": {}, "src": { "main.rs": "fn main() {}" } } }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        panel.update(cx, |panel, cx| {
+            assert_eq!(
+                panel.activation_focus_handle(cx),
+                panel.commit_editor.focus_handle(cx)
+            );
+        });
+
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .git_panel
+                        .get_or_insert_default()
+                        .show_commit_section = Some(false);
+                });
+            });
+        });
+
+        panel.update(cx, |panel, cx| {
+            assert_eq!(panel.activation_focus_handle(cx), panel.focus_handle);
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.focus_editor(&FocusEditor, window, cx);
+            assert!(!panel.commit_editor.focus_handle(cx).is_focused(window));
+            panel.toggle_fill_commit_editor(&ToggleFillCommitEditor, window, cx);
+            assert!(!panel.commit_editor_expanded);
         });
     }
 
