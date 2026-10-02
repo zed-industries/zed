@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use fs::{FakeFs, Fs};
 use futures::{FutureExt, StreamExt};
 use gpui::{Entity, TestAppContext, UpdateGlobal as _};
@@ -168,7 +168,7 @@ async fn test_removing_invisible_worktree_cleans_reused_lsp_bookkeeping(cx: &mut
     language_registry.add(rust_lang());
     let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
-    let (_visible_buffer, _visible_handle) = project
+    let (visible_buffer, _visible_handle) = project
         .update(cx, |project, cx| {
             project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
         })
@@ -209,6 +209,36 @@ async fn test_removing_invisible_worktree_cleans_reused_lsp_bookkeeping(cx: &mut
                 .read(cx)
                 .has_language_server_seed_for_worktree(invisible_worktree_id)
         );
+    });
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    lsp_store.update(cx, |store, cx| store.stop_all_language_servers(cx));
+    cx.run_until_parked();
+    let _external_handle = project.update(cx, |project, cx| {
+        project.register_buffer_with_language_servers(&external_buffer, cx)
+    });
+    project.update(cx, |project, cx| {
+        project.restart_language_servers_for_buffers(vec![visible_buffer], HashSet::default(), cx);
+    });
+    let server_id = fake_servers.next().await.unwrap().server.server_id();
+    cx.run_until_parked();
+    project.update(cx, |project, cx| {
+        project.restart_language_servers_for_buffers(
+            vec![external_buffer.clone()],
+            HashSet::default(),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    lsp_store.update(cx, |store, cx| {
+        external_buffer.update(cx, |buffer, cx| {
+            assert_eq!(
+                store
+                    .language_server_for_local_buffer(buffer, server_id, cx)
+                    .map(|(_, server)| server.server_id()),
+                Some(server_id)
+            );
+        });
     });
 
     project.update(cx, |project, cx| {

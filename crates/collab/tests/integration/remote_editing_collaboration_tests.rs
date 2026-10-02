@@ -14,7 +14,9 @@ use gpui::{
 use http_client::BlockedHttpClient;
 use language::{
     FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
-    language_settings::{ConfiguredLanguageServer, Formatter, FormatterList, LanguageSettings},
+    language_settings::{
+        ConfiguredLanguageServer, Formatter, FormatterList, LanguageSettings, all_language_settings,
+    },
     rust_lang, tree_sitter_typescript,
 };
 use node_runtime::NodeRuntime;
@@ -33,7 +35,7 @@ use rpc::proto;
 use serde_json::json;
 use settings::{
     InlayHintSettingsContent, LanguageServerFormatterSpecifier, PrettierSettingsContent,
-    SettingsStore,
+    SemanticTokens, SettingsStore,
 };
 use std::{
     path::{Path, PathBuf},
@@ -939,7 +941,7 @@ async fn test_ssh_restarting_language_server_replaces_remote_status(
     });
 
     project_a.update(cx_a, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), true, cx);
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
     });
 
     let restarted_server = fake_language_servers.next().await.unwrap();
@@ -979,6 +981,53 @@ async fn test_ssh_restarting_language_server_replaces_remote_status(
             "restarting a remote language server should replace the old log store entry"
         );
     });
+
+    let lsp_store = project_a.read_with(cx_a, |project, _| project.lsp_store());
+    lsp_store.update(cx_a, |lsp_store, cx| {
+        lsp_store.stop_all_language_servers(cx);
+    });
+    executor.run_until_parked();
+    lsp_store.read_with(cx_a, |lsp_store, _| {
+        assert_eq!(lsp_store.language_server_statuses().count(), 0);
+    });
+
+    cx_a.update_global::<SettingsStore, _>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings.project.all_languages.defaults.semantic_tokens = Some(SemanticTokens::Full);
+        });
+    });
+    executor.run_until_parked();
+    server_cx.read(|cx| {
+        assert_eq!(
+            all_language_settings(None, cx).defaults.semantic_tokens,
+            SemanticTokens::Full
+        );
+    });
+    lsp_store.read_with(cx_a, |lsp_store, _| {
+        assert_eq!(lsp_store.language_server_statuses().count(), 0);
+    });
+
+    project_a.update(cx_a, |project, cx| {
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
+    });
+    executor.run_until_parked();
+    lsp_store.read_with(cx_a, |lsp_store, _| {
+        assert_eq!(lsp_store.language_server_statuses().count(), 1);
+    });
+    let mut resumed_server = fake_language_servers.next().await.unwrap();
+    assert_ne!(resumed_server.server.server_id(), restarted_server_id);
+    assert_eq!(
+        resumed_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document,
+        lsp::TextDocumentItem {
+            uri: lsp::Uri::from_file_path(path!("/project/a.rs")).unwrap(),
+            language_id: "rust".to_owned(),
+            version: 0,
+            text: "fn main() {}".to_owned(),
+        }
+    );
 }
 
 #[gpui::test]
