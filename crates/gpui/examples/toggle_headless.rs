@@ -110,7 +110,8 @@ fn open_window(todos: &Entity<Todos>, cx: &mut App) -> anyhow::Result<()> {
             _todos_subscription: cx.observe(todos, |_, _, cx| cx.notify()),
         })
     })?;
-    // The window opens behind the terminal otherwise, because the command came from there.
+    // On macOS, making the window key does not activate the app over the terminal.
+    cx.activate(true);
     handle.update(cx, |_, window, _| window.activate_window())?;
     todos.update(cx, |todos, _| todos.window = Some(handle.into()));
     Ok(())
