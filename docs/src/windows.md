@@ -32,6 +32,8 @@ Zed supports remote development on Windows through both SSH and WSL. You can con
 
 For detailed instructions on setting up and using remote development features, including SSH configuration, WSL setup, and troubleshooting, see the [Remote Development documentation](./remote-development.md).
 
+To open a project from a WSL terminal with `zed .`, see [Opening a folder from a WSL terminal](./remote-development.md#opening-a-folder-from-a-wsl-terminal).
+
 ## Troubleshooting
 
 ### Zed fails to start or shows a blank window

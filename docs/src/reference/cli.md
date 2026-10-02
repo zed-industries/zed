@@ -13,7 +13,7 @@ Use Zed's command-line interface (CLI) to open files and directories, integrate 
 
 **Linux:** The CLI is included with Zed packages. The binary name may vary by distribution (commonly `zed` or `zeditor`).
 
-**Windows:** The CLI is included with Zed. Add Zed's installation directory to your PATH, or use the full path to `zed.exe`.
+**Windows:** The CLI is included in the `bin` directory of your Zed installation. Keep the installer's **Add to PATH** option selected to make `zed` available in new terminals. If you configure PATH manually, add the `bin` directory (normally `%LOCALAPPDATA%\Programs\Zed\bin`). The `zed.exe` in that directory is the CLI; the executable in the parent directory is the editor application.
 
 ## Usage
 
@@ -254,7 +254,14 @@ zed --nightly myfile.txt
 
 ## WSL Integration (Windows)
 
-On Windows, the CLI supports opening paths from WSL distributions. This is handled automatically when launching Zed from within WSL.
+The Windows installation includes a `bin/zed` shell script that detects the current WSL distribution and user. Run it from a WSL terminal to open a Linux directory in the Windows editor:
+
+```sh
+cd ~/projects/myproject
+zed .
+```
+
+See [Opening a folder from a WSL terminal](../remote-development.md#opening-a-folder-from-a-wsl-terminal) for setup and PATH troubleshooting. Running `zed` inside Zed's integrated remote terminals is a separate [known limitation](../remote-development.md#known-limitations).
 
 ## Exit Codes
 
