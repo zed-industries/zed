@@ -1,11 +1,15 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{Stream, StreamExt};
+use futures::{FutureExt, Stream, StreamExt};
 use gpui::BackgroundExecutor;
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request, Response, http::Method};
 use parking_lot::Mutex as SyncMutex;
-use std::{pin::Pin, sync::Arc, time::Duration};
+use std::{
+    pin::{Pin, pin},
+    sync::Arc,
+    time::Duration,
+};
 
 use crate::oauth::{self, OAuthTokenProvider, WwwAuthenticate};
 use crate::transport::Transport;
@@ -74,6 +78,15 @@ pub struct HttpTransport {
 /// HTTP request deadline, so the MCP-level timeout (which can carry a
 /// cancellation) wins the race against the transport-level deadline.
 const REQUEST_DEADLINE_GRACE: Duration = Duration::from_secs(10);
+
+/// Maximum time a response may deliver no bytes: neither the response body
+/// (JSON) nor an SSE stream may stall for this long. The total request
+/// deadline remains the upper safety net; this catches stalled transfers
+/// earlier. Note that a long-running tool call that sends nothing until its
+/// final JSON answer is also bounded by this — servers that support long
+/// operations should stream SSE progress or keepalive pings (which are
+/// counted as activity).
+const RESPONSE_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl HttpTransport {
     pub fn new(
@@ -257,10 +270,30 @@ impl HttpTransport {
 
                 match content_type {
                     Some(ct) if ct.starts_with(JSON_MIME_TYPE) => {
-                        // JSON response - read and forward immediately
-                        let mut body = String::new();
-                        futures::AsyncReadExt::read_to_string(response.body_mut(), &mut body)
-                            .await?;
+                        // JSON response - read and forward immediately. The
+                        // read is bounded by an idle timer so a response that
+                        // stalls mid-body fails (and tears down the client)
+                        // instead of hanging until the total request deadline.
+                        let mut body = Vec::new();
+                        let mut chunk = [0u8; 8192];
+                        loop {
+                            let read =
+                                pin!(futures::AsyncReadExt::read(response.body_mut(), &mut chunk));
+                            let mut read = read.fuse();
+                            let bytes_read = futures::select_biased! {
+                                bytes = read => bytes?,
+                                _ = self.executor.timer(RESPONSE_IDLE_TIMEOUT).fuse() => {
+                                    anyhow::bail!(
+                                        "context server response body stalled for {RESPONSE_IDLE_TIMEOUT:?}"
+                                    );
+                                }
+                            };
+                            if bytes_read == 0 {
+                                break;
+                            }
+                            body.extend_from_slice(&chunk[..bytes_read]);
+                        }
+                        let body = String::from_utf8_lossy(&body).into_owned();
 
                         // Only send non-empty responses
                         if !body.is_empty() {
@@ -329,6 +362,7 @@ impl HttpTransport {
         let error_tx = self.error_tx.clone();
 
         // Spawn a task to handle the SSE stream
+        let executor = self.executor.clone();
         self.executor
             .spawn(async move {
                 let reader = futures::io::BufReader::new(response.body_mut());
@@ -337,7 +371,23 @@ impl HttpTransport {
                 let mut data_buffer = Vec::new();
                 let mut in_message = false;
 
-                while let Some(line_result) = lines.next().await {
+                loop {
+                    let next_line = pin!(lines.next());
+                    let mut next_line = next_line.fuse();
+                    let line_result = futures::select_biased! {
+                        line = next_line => match line {
+                            Some(line) => line,
+                            None => break,
+                        },
+                        _ = executor.timer(RESPONSE_IDLE_TIMEOUT).fuse() => {
+                            let _ = error_tx
+                                .send(format!(
+                                    "SSE stream stalled: no data for {RESPONSE_IDLE_TIMEOUT:?}"
+                                ))
+                                .await;
+                            break;
+                        }
+                    };
                     match line_result {
                         Ok(line) => {
                             if line.is_empty() {
@@ -467,7 +517,6 @@ impl Drop for HttpTransport {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use futures::FutureExt as _;
     use gpui::TestAppContext;
     use parking_lot::Mutex as SyncMutex;
     use std::{
@@ -918,5 +967,107 @@ mod tests {
             .expect("error should be TransportError");
         // Refresh was attempted exactly once.
         assert_eq!(provider.refresh_count(), 1);
+    }
+
+    /// A reader that yields one chunk of bytes and then stalls forever,
+    /// simulating a server that goes silent mid-response.
+    struct StallAfterFirstChunk {
+        bytes: &'static [u8],
+        sent: bool,
+    }
+
+    impl futures::AsyncRead for StallAfterFirstChunk {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &mut [u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            if self.sent {
+                return std::task::Poll::Pending;
+            }
+            self.sent = true;
+            let len = self.bytes.len().min(buf.len());
+            buf[..len].copy_from_slice(&self.bytes[..len]);
+            std::task::Poll::Ready(Ok(len))
+        }
+    }
+
+    #[gpui::test]
+    async fn test_sse_stream_idle_timeout(cx: &mut TestAppContext) {
+        let body = "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n";
+        let client = make_fake_http_client(move |_req| {
+            Box::pin(async move {
+                Ok(Response::builder()
+                    .status(200)
+                    .header("Content-Type", "text/event-stream")
+                    .body(AsyncBody::from_reader(StallAfterFirstChunk {
+                        bytes: body.as_bytes(),
+                        sent: false,
+                    }))
+                    .unwrap())
+            })
+        });
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+            None,
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.to_string())
+            .await
+            .expect("send should succeed");
+
+        // The stream never delivers another byte. After the idle timeout the
+        // stalled stream must surface an error instead of hanging forever.
+        cx.background_executor.advance_clock(RESPONSE_IDLE_TIMEOUT);
+        cx.run_until_parked();
+
+        let mut errs = transport.receive_err();
+        let err = errs
+            .next()
+            .await
+            .expect("expected an error for the stalled SSE stream");
+        assert!(err.contains("stalled"), "unexpected error: {err}");
+    }
+
+    #[gpui::test]
+    async fn test_json_response_body_idle_timeout(cx: &mut TestAppContext) {
+        let client = make_fake_http_client(move |_req| {
+            Box::pin(async move {
+                Ok(Response::builder()
+                    .status(200)
+                    .header("Content-Type", "application/json")
+                    .body(AsyncBody::from_reader(StallAfterFirstChunk {
+                        bytes: b"{\"jsonrpc\":\"2.0\"",
+                        sent: false,
+                    }))
+                    .unwrap())
+            })
+        });
+        let transport = std::sync::Arc::new(HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+            None,
+        ));
+
+        let send_transport = transport.clone();
+        let send_task = cx.background_executor.spawn(async move {
+            send_transport
+                .send(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.to_string())
+                .await
+        });
+        cx.background_executor.advance_clock(RESPONSE_IDLE_TIMEOUT);
+        let result = send_task.await;
+
+        let err = result.expect_err("a stalled response body should fail the send");
+        assert!(
+            format!("{:#}", err).contains("stalled"),
+            "unexpected error: {err}"
+        );
     }
 }
