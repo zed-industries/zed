@@ -533,6 +533,8 @@ actions!(
         ToggleAllDiffHunks,
         /// Expands macros recursively at cursor position.
         ExpandMacroRecursively,
+        /// Shows call hierarchy for the symbol at cursor.
+        ShowCallHierarchy,
         /// Finds the next match in the search.
         FindNextMatch,
         /// Finds the previous match in the search.
