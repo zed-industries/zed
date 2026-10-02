@@ -39,8 +39,8 @@ use git::repository::{
 use git::stash::GitStash;
 use git::status::{DiffStat, StageStatus};
 use git::{
-    AddToGitInfoExclude, AddToGitignore, Amend, Commit, RestoreFile, Signoff, SkipHooks,
-    ToggleStaged, repository::RepoPath, status::FileStatus,
+    Amend, Commit, RestoreFile, Signoff, SkipHooks, ToggleStaged, repository::RepoPath,
+    status::FileStatus,
 };
 use git::{
     ExpandCommitEditor, GitHostingProviderRegistry, GitRemote, RestoreTrackedFiles, StageAll,
@@ -1150,6 +1150,7 @@ pub struct GitPanel {
     mark_range_gesture: Option<MarkRangeGesture>,
     tracked_count: usize,
     tracked_staged_count: usize,
+    section_file_counts: HashMap<Section, usize>,
     update_visible_entries_task: Task<()>,
     reopen_commit_buffer_task: Task<()>,
     pub(crate) workspace: WeakEntity<Workspace>,
@@ -1465,6 +1466,7 @@ impl GitPanel {
                 mark_range_gesture: None,
                 tracked_count: 0,
                 tracked_staged_count: 0,
+                section_file_counts: HashMap::default(),
                 update_visible_entries_task: Task::ready(()),
                 reopen_commit_buffer_task: Task::ready(()),
                 show_placeholders: false,
@@ -1610,10 +1612,12 @@ impl GitPanel {
     fn marked_file_entries(&self) -> Vec<GitStatusEntry> {
         let mut coverage = MarkedDirectoryCoverage::default();
         let mut marked = Vec::new();
+        let mut seen_paths = HashSet::default();
         for entry in &self.entries {
             let covered = coverage.observe(entry, &self.marked_directories);
             if let Some(status_entry) = entry.status_entry()
                 && (covered || self.marked_entries.contains(&status_entry.repo_path))
+                && seen_paths.insert(status_entry.repo_path.clone())
             {
                 marked.push(status_entry.clone());
             }
@@ -1751,6 +1755,40 @@ impl GitPanel {
             .into_iter()
             .unique_by(|entry| entry.repo_path.clone())
             .collect()
+    }
+
+    fn effective_repo_paths(&self) -> Vec<RepoPath> {
+        let selected_index = self.selected_entry;
+        let selected_path = self.get_selected_entry().and_then(GitListEntry::repo_path);
+        if let Some(path) = selected_path {
+            let selected_is_marked = selected_index
+                .and_then(|index| self.row_mark(index))
+                .is_some_and(|mark| match mark {
+                    RowMark::File(path) => self.marked_entries.contains(&path),
+                    RowMark::Directory(key) => self.marked_directories.contains(&key),
+                });
+            let mark_count = self.marked_entries.len() + self.marked_directories.len();
+            if mark_count == 0 || mark_count == 1 && !selected_is_marked {
+                return vec![path.clone()];
+            }
+        }
+
+        let mut paths = Vec::new();
+        let mut seen_paths = HashSet::default();
+        for (index, entry) in self.entries.iter().enumerate() {
+            let marked = match self.row_mark(index) {
+                Some(RowMark::File(path)) => self.marked_entries.contains(&path),
+                Some(RowMark::Directory(key)) => self.marked_directories.contains(&key),
+                None => false,
+            };
+            if marked
+                && let Some(path) = entry.repo_path()
+                && seen_paths.insert(path.clone())
+            {
+                paths.push(path.clone());
+            }
+        }
+        paths
     }
 
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
@@ -2492,10 +2530,11 @@ impl GitPanel {
             self.open_selected_history_commit(window, cx);
             return;
         }
-        if let Some(GitListEntry::Directory(dir_entry)) = self
-            .selected_entry
-            .and_then(|i| self.entries.get(i))
-            .cloned()
+        if self.selection_target_kind() == Some(SelectionTargetKind::Directory)
+            && let Some(GitListEntry::Directory(dir_entry)) = self
+                .selected_entry
+                .and_then(|i| self.entries.get(i))
+                .cloned()
         {
             self.toggle_directory(&dir_entry.key, window, cx);
             return;
@@ -2547,66 +2586,118 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        maybe!({
-            let entry = self
-                .entries
-                .get(self.selected_entry?)?
-                .status_entry()?
-                .clone();
-            let repository = self.active_repository.clone()?;
-
-            SoloDiffView::open_or_focus(entry, repository, self.workspace.clone(), window, cx)
-                .detach_and_notify_err(self.workspace.clone(), window, cx);
-
-            Some(())
-        });
+        let Some(repository) = self.active_repository.clone() else {
+            return;
+        };
+        for entry in self.effective_status_entries() {
+            SoloDiffView::open_or_focus(
+                entry,
+                repository.clone(),
+                self.workspace.clone(),
+                window,
+                cx,
+            )
+            .detach_and_notify_err(self.workspace.clone(), window, cx);
+        }
     }
 
     fn view_file(&mut self, _: &ViewFile, window: &mut Window, cx: &mut Context<Self>) {
-        maybe!({
-            let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
-            let project_path = self
-                .active_repository
-                .as_ref()?
-                .read(cx)
-                .repo_path_to_project_path(&entry.repo_path, cx)?;
+        let Some(repository) = self.active_repository.as_ref() else {
+            return;
+        };
+        let project_paths = self
+            .effective_status_entries()
+            .iter()
+            .filter_map(|entry| {
+                repository
+                    .read(cx)
+                    .repo_path_to_project_path(&entry.repo_path, cx)
+            })
+            .collect::<Vec<_>>();
 
+        for project_path in project_paths {
             self.workspace
                 .update(cx, |workspace, cx| {
                     workspace
                         .open_path_preview(project_path, None, false, false, true, window, cx)
-                        .detach_and_log_err(cx);
+                        .detach_and_notify_err(self.workspace.clone(), window, cx);
                 })
-                .ok()?;
+                .log_err();
+        }
+    }
 
-            Some(())
-        });
+    fn view_file_history(
+        &mut self,
+        _: &git::FileHistory,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let entries = self.effective_status_entries();
+        if entries.len() <= 1 {
+            cx.propagate();
+            return;
+        }
+        let Some(repository) = self.active_repository.as_ref() else {
+            return;
+        };
+        let repository_id = repository.read(cx).id;
+        let git_store = self.project.read(cx).git_store().clone();
+        self.workspace
+            .update(cx, |workspace, cx| {
+                for entry in entries {
+                    if !entry.status.is_created() {
+                        crate::git_graph::open_or_reuse_graph(
+                            workspace,
+                            repository_id,
+                            git_store.clone(),
+                            LogSource::Path(entry.repo_path),
+                            None,
+                            window,
+                            cx,
+                        );
+                    }
+                }
+            })
+            .log_err();
+        cx.stop_propagation();
     }
 
     fn copy_path(&mut self, _: &CopyPath, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some((repo_path, repo)) = self
-            .get_selected_entry()
-            .and_then(GitListEntry::repo_path)
-            .zip(self.active_repository.as_ref())
-        {
-            let path = repo.read(cx).repo_path_to_abs_path(repo_path);
-            cx.write_to_clipboard(ClipboardItem::new_string(
-                path.to_string_lossy().into_owned(),
-            ));
-        } else {
+        let Some(repo) = self.active_repository.as_ref() else {
             cx.propagate();
+            return;
+        };
+        let paths = self.effective_repo_paths();
+        if paths.is_empty() {
+            cx.propagate();
+            return;
         }
+        let repo = repo.read(cx);
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            paths
+                .into_iter()
+                .map(|path| {
+                    repo.repo_path_to_abs_path(&path)
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .join("\n"),
+        ));
     }
 
     fn copy_relative_path(&mut self, _: &CopyRelativePath, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(repo_path) = self.get_selected_entry().and_then(GitListEntry::repo_path) {
-            let path_style = self.project.read(cx).path_style(cx);
-            cx.write_to_clipboard(ClipboardItem::new_string(
-                repo_path.display(path_style).into_owned(),
-            ));
-        } else {
+        let paths = self.effective_repo_paths();
+        if paths.is_empty() {
             cx.propagate();
+            return;
         }
+        let path_style = self.project.read(cx).path_style(cx);
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            paths
+                .into_iter()
+                .map(|path| path.display(path_style).into_owned())
+                .join("\n"),
+        ));
     }
 
     fn open_selected_entry_on_click(
@@ -2673,35 +2764,57 @@ impl GitPanel {
         }
     }
 
+    fn selected_ignorable_paths(&self) -> Vec<(RepoPath, bool)> {
+        if self.selection_target_kind() == Some(SelectionTargetKind::Multiple) {
+            let entries = self.effective_status_entries();
+            if entries.iter().any(|entry| !entry.status.is_created()) {
+                return Vec::new();
+            }
+            entries
+                .into_iter()
+                .map(|entry| (entry.repo_path, false))
+                .collect()
+        } else {
+            self.selected_ignorable_path().into_iter().collect()
+        }
+    }
+
     fn add_to_gitignore(
         &mut self,
         _: &git::AddToGitignore,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((repo_path, is_dir)) = self.selected_ignorable_path() else {
+        let paths = self.selected_ignorable_paths();
+        if paths.is_empty() {
             return;
-        };
+        }
 
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
 
-        let workspace = self.workspace.clone();
-        let receiver =
-            active_repository.update(cx, |repo, _| repo.add_path_to_gitignore(&repo_path, is_dir));
+        let receivers = active_repository.update(cx, |repo, _| {
+            paths
+                .iter()
+                .map(|(repo_path, is_dir)| repo.add_path_to_gitignore(repo_path, *is_dir))
+                .collect::<Vec<_>>()
+        });
 
-        cx.spawn(async move |_, cx| {
-            if let Err(e) = receiver.await? {
-                if let Some(workspace) = workspace.upgrade() {
-                    cx.update(|cx| {
-                        show_error_toast(workspace, "add to .gitignore", e, cx);
-                    });
+        for receiver in receivers {
+            let workspace = self.workspace.clone();
+            cx.spawn(async move |_, cx| {
+                if let Err(error) = receiver.await? {
+                    if let Some(workspace) = workspace.upgrade() {
+                        cx.update(|cx| {
+                            show_error_toast(workspace, "add to .gitignore", error, cx);
+                        });
+                    }
                 }
-            }
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
     }
 
     fn add_to_git_info_exclude(
@@ -2710,30 +2823,36 @@ impl GitPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((repo_path, is_dir)) = self.selected_ignorable_path() else {
+        let paths = self.selected_ignorable_paths();
+        if paths.is_empty() {
             return;
-        };
+        }
 
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
 
-        let workspace = self.workspace.clone();
-        let receiver = active_repository.update(cx, |repo, _| {
-            repo.add_path_to_git_info_exclude(&repo_path, is_dir)
+        let receivers = active_repository.update(cx, |repo, _| {
+            paths
+                .iter()
+                .map(|(repo_path, is_dir)| repo.add_path_to_git_info_exclude(repo_path, *is_dir))
+                .collect::<Vec<_>>()
         });
 
-        cx.spawn(async move |_, cx| {
-            if let Err(e) = receiver.await? {
-                if let Some(workspace) = workspace.upgrade() {
-                    cx.update(|cx| {
-                        show_error_toast(workspace, "add to .git/info/exclude", e, cx);
-                    });
+        for receiver in receivers {
+            let workspace = self.workspace.clone();
+            cx.spawn(async move |_, cx| {
+                if let Err(error) = receiver.await? {
+                    if let Some(workspace) = workspace.upgrade() {
+                        cx.update(|cx| {
+                            show_error_toast(workspace, "add to .git/info/exclude", error, cx);
+                        });
+                    }
                 }
-            }
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
     }
 
     fn revert_entries(
@@ -4412,10 +4531,11 @@ impl GitPanel {
             .project
             .read(cx)
             .visible_worktrees(cx)
+            .filter(|worktree| !worktree.read(cx).is_single_file())
             .collect::<Vec<_>>();
 
-        let worktree = if worktrees.len() == 1 {
-            Task::ready(Some(worktrees.first().unwrap().clone()))
+        let worktree = if let [worktree] = worktrees.as_slice() {
+            Task::ready(Some(worktree.clone()))
         } else if worktrees.is_empty() {
             let result = window.prompt(
                 PromptLevel::Warning,
@@ -4990,10 +5110,13 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let entry = self
-            .get_selected_entry()
-            .and_then(|entry| entry.status_entry())
-            .cloned();
+        let entry = if self.effective_status_entries().len() > 1 {
+            None
+        } else {
+            self.get_selected_entry()
+                .and_then(GitListEntry::status_entry)
+                .cloned()
+        };
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
                 StagedDiff::deploy_at(workspace, entry, window, cx);
@@ -5007,10 +5130,13 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let entry = self
-            .get_selected_entry()
-            .and_then(|entry| entry.status_entry())
-            .cloned();
+        let entry = if self.effective_status_entries().len() > 1 {
+            None
+        } else {
+            self.get_selected_entry()
+                .and_then(GitListEntry::status_entry)
+                .cloned()
+        };
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
                 UnstagedDiff::deploy_at(workspace, entry, window, cx);
@@ -5335,6 +5461,7 @@ impl GitPanel {
         self.new_staged_count = 0;
         self.tracked_staged_count = 0;
         self.entry_count = 0;
+        self.section_file_counts.clear();
         self.max_width_item_index = None;
 
         let settings = GitPanelSettings::get_global(cx);
@@ -5547,6 +5674,11 @@ impl GitPanel {
         let has_any_section_entries = section_entries
             .iter()
             .any(|(_, entries)| !entries.is_empty());
+        self.section_file_counts.extend(
+            section_entries
+                .iter()
+                .map(|(section, entries)| (*section, entries.len())),
+        );
         let show_when_empty = |section: Section| {
             group_by_staging_state
                 && has_any_section_entries
@@ -7711,27 +7843,34 @@ impl GitPanel {
     }
 
     fn render_uninitialized_ui(&self, cx: &mut Context<Self>) -> AnyElement {
-        let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
+        let project = self.project.read(cx);
+        let worktree_count = project.visible_worktrees(cx).count();
+        // `git init` can't run inside a worktree whose root is a single file.
+        let has_directory_worktree = project
+            .visible_worktrees(cx)
+            .any(|worktree| !worktree.read(cx).is_single_file());
         if worktree_count > 0 && self.active_repository.is_none() {
             v_flex()
                 .gap_1()
                 .items_center()
                 .child(Label::new("No Git Repositories").color(Color::Muted))
-                .child(
-                    Button::new("initialize_repository", "Initialize Repository")
-                        .label_size(LabelSize::Small)
-                        .style(ButtonStyle::Outlined)
-                        .tooltip(Tooltip::for_action_title_in(
-                            "git init",
-                            &git::Init,
-                            &self.focus_handle,
-                        ))
-                        .on_click(move |_, _, cx| {
-                            cx.defer(move |cx| {
-                                cx.dispatch_action(&git::Init);
-                            })
-                        }),
-                )
+                .when(has_directory_worktree, |this| {
+                    this.child(
+                        Button::new("initialize_repository", "Initialize Repository")
+                            .label_size(LabelSize::Small)
+                            .style(ButtonStyle::Outlined)
+                            .tooltip(Tooltip::for_action_title_in(
+                                "git init",
+                                &git::Init,
+                                &self.focus_handle,
+                            ))
+                            .on_click(move |_, _, cx| {
+                                cx.defer(move |cx| {
+                                    cx.dispatch_action(&git::Init);
+                                })
+                            }),
+                    )
+                })
                 .into_any_element()
         } else if worktree_count == 0 {
             let focus_handle = self.focus_handle.clone();
@@ -7992,6 +8131,11 @@ impl GitPanel {
             .entries
             .get(ix + 1)
             .is_some_and(GitListEntry::is_selectable);
+        let file_count = self
+            .section_file_counts
+            .get(&section)
+            .copied()
+            .unwrap_or_default();
 
         h_flex()
             .id(id)
@@ -8008,6 +8152,7 @@ impl GitPanel {
             .border_r_2()
             .child(
                 h_flex()
+                    .flex_1()
                     .gap_1()
                     .child(
                         Icon::new(if is_collapsed {
@@ -8024,6 +8169,9 @@ impl GitPanel {
                             .size(LabelSize::Small),
                     ),
             )
+            .when(file_count > 0, |this| {
+                this.child(Chip::new(file_count.to_string()).label_color(Color::Muted))
+            })
             .child(if section_is_empty {
                 gpui::Empty.into_any_element()
             } else {
@@ -8147,10 +8295,28 @@ impl GitPanel {
                 &format!("Discard Changes to {file_count} {file_label}")
             }
         };
-
         let is_bulk = matches!(target_kind, SelectionTargetKind::Multiple);
-        let is_file = matches!(target_kind, SelectionTargetKind::File);
-
+        let is_file_or_bulk = !matches!(target_kind, SelectionTargetKind::Directory);
+        let has_tracked = !all_created;
+        let plural = file_count > 1;
+        let copy_path_title = if plural { "Copy Paths" } else { "Copy Path" };
+        let copy_relative_path_title = if plural {
+            "Copy Relative Paths"
+        } else {
+            "Copy Relative Path"
+        };
+        let open_file_diff_title = if plural {
+            "Open File Diffs"
+        } else {
+            "Open File Diff"
+        };
+        let view_file_title = if plural { "View Files" } else { "View File" };
+        let open_diff_title = if plural { "Open Diffs" } else { "Open Diff" };
+        let view_file_history_title = if plural {
+            "View File Histories"
+        } else {
+            "View File History"
+        };
         ContextMenu::build(window, cx, |context_menu, _, _| {
             context_menu
                 .context(self.focus_handle.clone())
@@ -8160,30 +8326,38 @@ impl GitPanel {
                 .action("Unstaged Changes", ViewUnstagedChanges.boxed_clone())
                 .action("Staged Changes", ViewStagedChanges.boxed_clone())
                 .separator()
-                .action("Copy Path", CopyPath.boxed_clone())
-                .action("Copy Relative Path", CopyRelativePath.boxed_clone())
+                .action(copy_path_title, CopyPath.boxed_clone())
+                .action(copy_relative_path_title, CopyRelativePath.boxed_clone())
                 .separator()
                 .action_disabled_when(
-                    !all_created || is_bulk,
-                    "Add to .gitignore",
-                    AddToGitignore.boxed_clone(),
+                    !all_created,
+                    if is_bulk && plural {
+                        "Add Files to .gitignore"
+                    } else {
+                        "Add to .gitignore"
+                    },
+                    git::AddToGitignore.boxed_clone(),
                 )
                 .action_disabled_when(
-                    !all_created || is_bulk,
-                    "Add to .git/info/exclude",
-                    AddToGitInfoExclude.boxed_clone(),
+                    !all_created,
+                    if is_bulk && plural {
+                        "Add Files to .git/info/exclude"
+                    } else {
+                        "Add to .git/info/exclude"
+                    },
+                    git::AddToGitInfoExclude.boxed_clone(),
                 )
-                .when(is_file, |context_menu| {
+                .when(is_file_or_bulk, |context_menu| {
                     context_menu
                         .separator()
-                        .action("Open Diff", menu::Confirm.boxed_clone())
-                        .action("Open File Diff", menu::SecondaryConfirm.boxed_clone())
-                        .action("View File", ViewFile.boxed_clone())
+                        .action(open_diff_title, menu::Confirm.boxed_clone())
+                        .action(open_file_diff_title, menu::SecondaryConfirm.boxed_clone())
+                        .action(view_file_title, ViewFile.boxed_clone())
                 })
-                .when(is_file && !all_created, |context_menu| {
+                .when(is_file_or_bulk && has_tracked, |context_menu| {
                     context_menu
                         .separator()
-                        .action("View File History", Box::new(git::FileHistory))
+                        .action(view_file_history_title, Box::new(git::FileHistory))
                 })
         })
     }
@@ -9118,6 +9292,7 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::open_diff))
             .on_action(cx.listener(Self::open_solo_diff))
             .on_action(cx.listener(Self::view_file))
+            .on_action(cx.listener(Self::view_file_history))
             .on_action(cx.listener(Self::copy_path))
             .on_action(cx.listener(Self::copy_relative_path))
             .on_action(cx.listener(Self::view_unstaged_changes))
@@ -10301,6 +10476,114 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_file_actions_use_multiple_selected_entries(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_, _, workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "a.txt": "a",
+                "b.txt": "b",
+                "c.txt": "c",
+            }),
+            &[
+                ("a.txt", StatusCode::Modified),
+                ("b.txt", StatusCode::Modified),
+                ("c.txt", StatusCode::Modified),
+            ],
+        )
+        .await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.selected_entry = entry_index_for_repo_path(panel, &repo_path("b.txt"));
+            panel.marked_entries = HashSet::from_iter([repo_path("a.txt"), repo_path("b.txt")]);
+            panel.copy_relative_path(&CopyRelativePath, window, cx);
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some("a.txt\nb.txt".to_owned())
+            );
+            panel.copy_path(&CopyPath, window, cx);
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some(format!(
+                    "{}\n{}",
+                    path!("/project/a.txt"),
+                    path!("/project/b.txt")
+                ))
+            );
+            panel.view_file(&ViewFile, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.read_with(&cx, |workspace, cx| {
+            let opened_paths = workspace
+                .items_of_type::<Editor>(cx)
+                .filter_map(|editor| {
+                    let buffer = editor.read(cx).active_buffer(cx)?;
+                    let file = buffer.read(cx).file()?.clone();
+                    Some(file.path().as_ref().as_std_path().to_path_buf())
+                })
+                .collect::<HashSet<_>>();
+            assert_eq!(
+                opened_paths,
+                HashSet::from_iter([
+                    Path::new("a.txt").to_path_buf(),
+                    Path::new("b.txt").to_path_buf(),
+                ])
+            );
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.open_diff(&menu::Confirm, window, cx);
+        });
+        cx.run_until_parked();
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.open_solo_diff(&menu::SecondaryConfirm, window, cx);
+            panel.view_file_history(&git::FileHistory, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.read_with(&cx, |workspace, cx| {
+            assert_eq!(workspace.items_of_type::<SoloDiffView>(cx).count(), 2);
+            assert_eq!(
+                workspace
+                    .items_of_type::<crate::git_graph::GitGraph>(cx)
+                    .count(),
+                2
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_ignore_actions_use_multiple_selected_entries(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (fs, _, panel, mut cx) = setup_flat_marks_fixture(cx).await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.selected_entry = entry_index_for_repo_path(panel, &repo_path("new1.txt"));
+            panel.marked_entries =
+                HashSet::from_iter([repo_path("new1.txt"), repo_path("new2.txt")]);
+            panel.add_to_gitignore(&git::AddToGitignore, window, cx);
+            panel.add_to_git_info_exclude(&git::AddToGitInfoExclude, window, cx);
+        });
+        cx.run_until_parked();
+
+        let expected = "new1.txt\nnew2.txt\n";
+        assert_eq!(
+            fs.load(Path::new(path!("/project/.gitignore")))
+                .await
+                .expect(".gitignore should exist"),
+            expected
+        );
+        assert_eq!(
+            fs.load(Path::new(path!("/project/.git/info/exclude")))
+                .await
+                .expect(".git/info/exclude should exist"),
+            expected
+        );
+    }
+
+    #[gpui::test]
     async fn test_copy_paths(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
@@ -10318,8 +10601,12 @@ mod tests {
                 "src": {
                     "main.rs": "fn main() {}",
                 },
+                "other.txt": "other",
             }),
-            &[("src/main.rs", StatusCode::Modified)],
+            &[
+                ("src/main.rs", StatusCode::Modified),
+                ("other.txt", StatusCode::Modified),
+            ],
         )
         .await;
 
@@ -10368,6 +10655,26 @@ mod tests {
         assert_eq!(
             cx.read_from_clipboard().and_then(|item| item.text()),
             Some(path!("/project/src").to_owned())
+        );
+
+        panel.update(&mut cx, |panel, _| {
+            let directory_key = panel
+                .get_selected_entry()
+                .and_then(GitListEntry::directory_entry)
+                .expect("src directory should be selected")
+                .key
+                .clone();
+            panel.marked_directories.insert(directory_key);
+            panel.marked_entries.insert(repo_path("other.txt"));
+        });
+        cx.dispatch_action(CopyRelativePath);
+        let copied_paths = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .expect("selected paths should be copied");
+        assert_eq!(
+            copied_paths.lines().collect::<HashSet<_>>(),
+            HashSet::from_iter([path!("src"), path!("other.txt")]),
         );
     }
 
@@ -10512,6 +10819,37 @@ mod tests {
         panel.read_with(cx, |panel, _| {
             assert_eq!(panel.commit_history, CommitHistory::Loading);
         });
+    }
+
+    #[gpui::test]
+    async fn test_git_init_ignores_single_file_worktrees(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/demo"), json!({ "plain.txt": "hello" }))
+            .await;
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/demo/plain.txt"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        panel.update_in(cx, |panel, window, cx| panel.git_init(window, cx));
+        cx.run_until_parked();
+
+        assert!(
+            cx.has_pending_prompt(),
+            "git init should ask for a directory instead of running in a single-file worktree"
+        );
+        assert!(
+            !fs.is_dir(Path::new(path!("/demo/plain.txt/.git"))).await,
+            "git init should not run inside a single-file worktree"
+        );
     }
 
     #[test]
@@ -10903,6 +11241,9 @@ mod tests {
                     deleted: 2,
                 })
             );
+            assert_eq!(panel.section_file_counts.get(&Section::Conflict), Some(&1));
+            assert_eq!(panel.section_file_counts.get(&Section::Staged), Some(&3));
+            assert_eq!(panel.section_file_counts.get(&Section::Unstaged), Some(&4));
             panel.entries.clone()
         });
 
@@ -11793,6 +12134,11 @@ mod tests {
         cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
         handle.await;
 
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(panel.section_file_counts.get(&Section::Conflict), Some(&1));
+            assert_eq!(panel.section_file_counts.get(&Section::Tracked), Some(&3));
+            assert_eq!(panel.section_file_counts.get(&Section::New), Some(&3));
+        });
         let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
         #[rustfmt::skip]
         pretty_assertions::assert_matches!(
@@ -14687,7 +15033,7 @@ mod tests {
                 .expect("`src` directory should be present in the Git panel");
 
             panel.selected_entry = Some(index);
-            panel.add_to_gitignore(&AddToGitignore, window, cx);
+            panel.add_to_gitignore(&git::AddToGitignore, window, cx);
         });
 
         cx.run_until_parked();
@@ -14725,7 +15071,7 @@ mod tests {
                 .expect("`docs` directory should be present in the Git panel");
 
             panel.selected_entry = Some(index);
-            panel.add_to_gitignore(&AddToGitignore, window, cx);
+            panel.add_to_gitignore(&git::AddToGitignore, window, cx);
         });
 
         cx.run_until_parked();
@@ -14778,7 +15124,7 @@ mod tests {
                 .expect("`src` directory should be present in the Git panel");
 
             panel.selected_entry = Some(index);
-            panel.add_to_git_info_exclude(&AddToGitInfoExclude, window, cx);
+            panel.add_to_git_info_exclude(&git::AddToGitInfoExclude, window, cx);
         });
 
         cx.run_until_parked();
@@ -14816,7 +15162,7 @@ mod tests {
                 .expect("`docs` directory should be present in the Git panel");
 
             panel.selected_entry = Some(index);
-            panel.add_to_git_info_exclude(&AddToGitInfoExclude, window, cx);
+            panel.add_to_git_info_exclude(&git::AddToGitInfoExclude, window, cx);
         });
 
         cx.run_until_parked();
@@ -15354,6 +15700,23 @@ mod tests {
                 paths(panel),
                 vec![repo_path("b.txt"), repo_path("c.txt")],
                 "multiple marks win, in panel order",
+            );
+
+            let duplicate = panel
+                .entries
+                .iter()
+                .find(|entry| {
+                    entry
+                        .status_entry()
+                        .is_some_and(|entry| entry.repo_path == repo_path("b.txt"))
+                })
+                .cloned()
+                .expect("b.txt should be present");
+            panel.entries.push(duplicate);
+            assert_eq!(
+                paths(panel),
+                vec![repo_path("b.txt"), repo_path("c.txt")],
+                "a partially staged file shown in two sections should be included once",
             );
         });
     }

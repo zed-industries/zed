@@ -1164,6 +1164,10 @@
     //
     // Default: true
     "flexible": true,
+    // Maximum number of idle threads with loadable sessions to retain in the
+    // agent panel. Set to 0 to unload every eligible idle thread when it is
+    // no longer active.
+    "max_idle_retained_threads": 5,
     // Settings for the sidebar holding the agent panel and the list of agent threads.
     "threads_sidebar": {
       // Where to position the Threads Sidebar. Can be 'left' or 'right'.
@@ -1282,53 +1286,55 @@
       "write": {
         "name": "Write",
         "enable_all_context_servers": true,
+        // sorted to keep it diffable to custom profiles
         "tools": {
+          "apply_code_action": true,
+          "ask_user": false,
           "copy_path": true,
           "create_directory": true,
           "create_thread": true,
           "delete_path": true,
           "diagnostics": true,
-          "apply_code_action": true,
-          "ask_user": false,
           "edit_file": true,
-          "write_file": true,
           "fetch": true,
           "find_path": true,
           "find_references": true,
           "get_code_actions": true,
           "go_to_definition": true,
+          "grep": true,
           "list_agents_and_models": true,
           "list_directory": true,
           "move_path": true,
-          "rename_symbol": true,
           "read_file": true,
-          "grep": true,
+          "rename_symbol": true,
+          "search_web": true,
           "skill": true,
           "spawn_agent": true,
           "terminal": true,
-          "search_web": true,
+          "write_file": true,
         },
       },
       "ask": {
         "name": "Ask",
         // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
         // "enable_all_context_servers": true,
+        // sorted to keep it diffable to custom profiles
         "tools": {
+          "ask_user": false,
           "create_thread": true,
           "diagnostics": true,
-          "ask_user": false,
           "fetch": true,
-          "list_agents_and_models": true,
-          "list_directory": true,
           "find_path": true,
           "find_references": true,
           "get_code_actions": true,
           "go_to_definition": true,
-          "read_file": true,
           "grep": true,
+          "list_agents_and_models": true,
+          "list_directory": true,
+          "read_file": true,
+          "search_web": true,
           "skill": true,
           "spawn_agent": true,
-          "search_web": true,
         },
       },
       "minimal": {
@@ -2601,6 +2607,9 @@
       "prettier": {
         "allowed": true,
       },
+    },
+    "Typst": {
+      "allow_rewrap": "anywhere",
     },
     "SystemVerilog": {
       "language_servers": ["slang", "!verible", "!veridian", "!svls", "..."],

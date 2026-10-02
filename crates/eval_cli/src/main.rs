@@ -843,13 +843,16 @@ async fn run_agent(
 
     let outcome = select_biased! {
         result = send_future.fuse() => match result {
-            Ok(Some(response)) => {
+            Ok(Some(acp_thread::SubmissionResponse::LegacyCompleted(response))) => {
                 eprintln!("[eval-cli] stopped: {:?}", response.stop_reason);
                 if response.stop_reason == acp::StopReason::MaxTokens {
                     Err(anyhow::anyhow!("Model hit maximum token limit"))
                 } else {
                     Ok(AgentOutcome::Completed)
                 }
+            }
+            Ok(Some(acp_thread::SubmissionResponse::Accepted(_))) => {
+                Err(anyhow::anyhow!("Native agent returned acceptance instead of turn completion"))
             }
             Ok(None) => {
                 eprintln!("[eval-cli] completed (no response)");
@@ -974,7 +977,7 @@ fn log_acp_thread_event(
             let entries = acp_thread.read(cx).entries();
             if let Some(acp_thread::AgentThreadEntry::ToolCall(tool_call)) = entries.get(*index) {
                 if let Some(name) = &tool_call.tool_name {
-                    match &tool_call.status {
+                    match tool_call.status() {
                         acp_thread::ToolCallStatus::Completed => {
                             eprintln!("[tool] {name} ✓");
                         }
@@ -992,8 +995,8 @@ fn log_acp_thread_event(
                 }
             }
         }
-        acp_thread::AcpThreadEvent::Stopped(reason) => {
-            eprintln!("\n[eval-cli] stopped: {reason:?}");
+        acp_thread::AcpThreadEvent::Stopped { stop_reason, .. } => {
+            eprintln!("\n[eval-cli] stopped: {stop_reason:?}");
         }
         acp_thread::AcpThreadEvent::Error => {
             eprintln!("[eval-cli] error event");
