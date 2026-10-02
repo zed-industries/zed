@@ -1582,6 +1582,7 @@ pub struct Workspace {
     workspace_actions: Vec<Box<dyn Fn(Div, &Workspace, &mut Window, &mut Context<Self>) -> Div>>,
     zoomed: Option<AnyWeakView>,
     previous_dock_drag_coordinates: Option<Point<Pixels>>,
+    pending_dock_drag: Option<(DraggedDock, Pixels)>,
     zoomed_position: Option<DockPosition>,
     maximized_pane: Option<WeakEntity<Pane>>,
     center: PaneGroup,
@@ -2092,6 +2093,7 @@ impl Workspace {
             zoomed_position: None,
             maximized_pane: None,
             previous_dock_drag_coordinates: None,
+            pending_dock_drag: None,
             center,
             panes: vec![center_pane.clone()],
             panes_by_item: Default::default(),
@@ -8954,7 +8956,7 @@ impl Workspace {
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
-        if cx.stop_active_drag(window) {
+        if self.cancel_dock_drag(window, cx) || cx.stop_active_drag(window) {
         } else if let Some((notification_id, _)) = self.notifications.pop() {
             dismiss_app_notification(&notification_id, cx);
         } else {
@@ -8974,6 +8976,49 @@ impl Workspace {
             DockPosition::Right => self.resize_right_dock(new_size, window, cx),
             DockPosition::Bottom => self.resize_bottom_dock(new_size, window, cx),
         }
+    }
+
+    fn resize_dragged_dock(
+        &mut self,
+        dragged_dock: &DraggedDock,
+        new_size: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let dock = self.dock_at_position(dragged_dock.position).clone();
+        if !dock.read(cx).is_open() {
+            return;
+        }
+        self.pending_dock_drag = Some((dragged_dock.clone(), new_size));
+        self.resize_dock(dragged_dock.position, new_size, window, cx);
+    }
+
+    fn cancel_dock_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some((dragged_dock, _)) = self.pending_dock_drag.take() else {
+            return false;
+        };
+        cx.stop_active_drag(window);
+        self.previous_dock_drag_coordinates = None;
+        self.dock_at_position(dragged_dock.position)
+            .update(cx, |dock, cx| {
+                dock.restore_panel_size_states(&dragged_dock.panel_sizes, window, cx);
+            });
+        self.serialize_workspace(window, cx);
+        true
+    }
+
+    fn finish_dock_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.previous_dock_drag_coordinates = None;
+        let Some((dragged_dock, size)) = self.pending_dock_drag.take() else {
+            return;
+        };
+        if size <= RESIZE_HANDLE_SIZE {
+            self.dock_at_position(dragged_dock.position)
+                .update(cx, |dock, cx| {
+                    dock.close_after_drag(&dragged_dock.panel_sizes, window, cx);
+                });
+        }
+        self.serialize_workspace(window, cx);
     }
 
     fn resize_left_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
@@ -9542,7 +9587,10 @@ impl Focusable for Workspace {
 }
 
 #[derive(Clone)]
-struct DraggedDock(DockPosition);
+struct DraggedDock {
+    position: DockPosition,
+    panel_sizes: Vec<(&'static str, PanelSizeState)>,
+}
 
 impl Render for DraggedDock {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
@@ -9619,6 +9667,11 @@ impl Render for Workspace {
             .items_start()
             .text_color(colors.text)
             .overflow_hidden()
+            .capture_action(cx.listener(|workspace, _: &menu::Cancel, window, cx| {
+                if workspace.cancel_dock_drag(window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
             // Expose the title bar as an ARIA toolbar so region navigation
             // (FocusNextPart) can reach the top bar's controls and assistive
             // technology announces it as a toolbar. The contained controls form
@@ -9721,7 +9774,20 @@ impl Render for Workspace {
                                 .size_full()
                             })
                             .when(self.zoomed.is_none(), |this| {
-                                this.on_drag_move(cx.listener(
+                                this.capture_any_mouse_up(cx.listener(
+                                    |workspace, event: &gpui::MouseUpEvent, window, cx| {
+                                        if event.button == MouseButton::Left {
+                                            workspace.finish_dock_drag(window, cx);
+                                        }
+                                    },
+                                ))
+                                .on_mouse_up_out(
+                                    MouseButton::Left,
+                                    cx.listener(|workspace, _, window, cx| {
+                                        workspace.finish_dock_drag(window, cx);
+                                    }),
+                                )
+                                .on_drag_move(cx.listener(
                                     move |workspace, e: &DragMoveEvent<DraggedDock>, window, cx| {
                                         if workspace.previous_dock_drag_coordinates
                                             != Some(e.event.position)
@@ -9729,32 +9795,24 @@ impl Render for Workspace {
                                             workspace.previous_dock_drag_coordinates =
                                                 Some(e.event.position);
 
-                                            match e.drag(cx).0 {
+                                            let dragged_dock = e.drag(cx).clone();
+                                            let new_size = match dragged_dock.position {
                                                 DockPosition::Left => {
-                                                    workspace.resize_left_dock(
-                                                        e.event.position.x
-                                                            - workspace.bounds.left(),
-                                                        window,
-                                                        cx,
-                                                    );
+                                                    e.event.position.x - workspace.bounds.left()
                                                 }
                                                 DockPosition::Right => {
-                                                    workspace.resize_right_dock(
-                                                        workspace.bounds.right()
-                                                            - e.event.position.x,
-                                                        window,
-                                                        cx,
-                                                    );
+                                                    workspace.bounds.right() - e.event.position.x
                                                 }
                                                 DockPosition::Bottom => {
-                                                    workspace.resize_bottom_dock(
-                                                        workspace.bounds.bottom()
-                                                            - e.event.position.y,
-                                                        window,
-                                                        cx,
-                                                    );
+                                                    workspace.bounds.bottom() - e.event.position.y
                                                 }
                                             };
+                                            workspace.resize_dragged_dock(
+                                                &dragged_dock,
+                                                new_size,
+                                                window,
+                                                cx,
+                                            );
                                             workspace.serialize_workspace(window, cx);
                                         }
                                     },
@@ -15790,6 +15848,144 @@ mod tests {
             assert_eq!(num_panes, 1);
             assert_eq!(num_items_in_current_pane, 3);
             assert_eq!(active_item.item_id(), last_item.item_id());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reopen_dock_after_dragging_closed(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.bounds.size.width = px(1000.);
+            workspace.bounds.size.height = px(800.);
+            for position in [
+                DockPosition::Left,
+                DockPosition::Right,
+                DockPosition::Bottom,
+            ] {
+                for flexible in [false, true] {
+                    let panel = cx.new(|cx| {
+                        let mut panel = TestPanel::new(position, 100, cx);
+                        panel.flexible = flexible;
+                        panel
+                    });
+                    workspace.add_panel(panel.clone(), window, cx);
+                    let dock = workspace.dock_at_position(position).clone();
+                    dock.update(cx, |dock, cx| {
+                        dock.activate_panel(
+                            dock.panel_index_for_type::<TestPanel>()
+                                .expect("panel exists"),
+                            window,
+                            cx,
+                        );
+                        dock.set_open(true, window, cx);
+                    });
+                    window.focus(&panel.focus_handle(cx), cx);
+
+                    workspace.resize_dock(position, px(400.), window, cx);
+                    let initial_size = workspace.dock_size(&dock.read(cx), window, cx);
+                    let dragged_dock = DraggedDock {
+                        position,
+                        panel_sizes: vec![(
+                            TestPanel::panel_key(),
+                            dock.read(cx)
+                                .stored_panel_size_state(&panel)
+                                .expect("panel has size state"),
+                        )],
+                    };
+                    workspace.resize_dragged_dock(&dragged_dock, px(7.), window, cx);
+                    workspace.resize_dragged_dock(&dragged_dock, Pixels::ZERO, window, cx);
+                    assert!(dock.read(cx).is_open());
+                    workspace.resize_dragged_dock(&dragged_dock, px(100.), window, cx);
+                    workspace.finish_dock_drag(window, cx);
+                    assert!(dock.read(cx).is_open());
+                    let reopened_size = workspace
+                        .dock_size(&dock.read(cx), window, cx)
+                        .expect("dock has a size");
+                    assert!((reopened_size - px(100.)).abs() < px(0.01));
+
+                    workspace.resize_dock(position, px(400.), window, cx);
+                    workspace.resize_dragged_dock(&dragged_dock, Pixels::ZERO, window, cx);
+                    workspace.cancel(&menu::Cancel, window, cx);
+                    workspace.finish_dock_drag(window, cx);
+                    assert!(dock.read(cx).is_open());
+                    assert_eq!(
+                        workspace.dock_size(&dock.read(cx), window, cx),
+                        initial_size
+                    );
+                    assert!(workspace.pending_dock_drag.is_none());
+
+                    workspace.resize_dragged_dock(&dragged_dock, Pixels::ZERO, window, cx);
+                    assert!(dock.read(cx).is_open());
+                    workspace.finish_dock_drag(window, cx);
+                    assert!(!dock.read(cx).is_open());
+                    assert!(workspace.toggle_panel_focus::<TestPanel>(window, cx));
+                    assert!(dock.read(cx).is_open());
+                    assert_eq!(
+                        workspace.dock_size(&dock.read(cx), window, cx),
+                        initial_size
+                    );
+                    dock.update(cx, |dock, cx| {
+                        dock.remove_panel(&panel, window, cx);
+                    });
+                }
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_cancel_dock_drag_with_pane_focused(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel, window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+            workspace.active_pane().focus_handle(cx).focus(window, cx);
+        });
+        cx.run_until_parked();
+        let (divider, collapsed, initial_size) =
+            workspace.update_in(cx, |workspace, window, cx| {
+                let initial_size = workspace
+                    .dock_size(&workspace.right_dock().read(cx), window, cx)
+                    .expect("right dock has a size");
+                let divider = point(
+                    workspace.bounds.right() - initial_size,
+                    workspace.bounds.center().y,
+                );
+                let collapsed = point(
+                    workspace.bounds.right() - px(1.),
+                    workspace.bounds.center().y,
+                );
+                (divider, collapsed, initial_size)
+            });
+        cx.simulate_mouse_down(divider, MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_move(
+            divider + point(px(10.), px(0.)),
+            MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_move(collapsed, MouseButton::Left, gpui::Modifiers::default());
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(cx.has_active_drag());
+            assert!(workspace.pending_dock_drag.is_some());
+        });
+        cx.dispatch_action(menu::Cancel);
+        cx.run_until_parked();
+        cx.simulate_mouse_up(collapsed, MouseButton::Left, gpui::Modifiers::default());
+        workspace.update_in(cx, |workspace, window, cx| {
+            let dock = workspace.right_dock().read(cx);
+            assert!(dock.is_open());
+            assert!(workspace.pending_dock_drag.is_none());
+            assert_eq!(workspace.dock_size(&dock, window, cx), Some(initial_size));
+            assert!(!cx.has_active_drag());
         });
     }
 

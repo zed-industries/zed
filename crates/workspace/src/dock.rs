@@ -1021,6 +1021,59 @@ impl Dock {
             .map(|entry| entry.size_state)
     }
 
+    fn panel_size_states(&self) -> Vec<(&'static str, PanelSizeState)> {
+        self.panel_entries
+            .iter()
+            .map(|entry| (entry.panel.panel_key(), entry.size_state))
+            .collect()
+    }
+
+    pub(crate) fn restore_panel_size_states(
+        &mut self,
+        states: &[(&'static str, PanelSizeState)],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for entry in &mut self.panel_entries {
+            if let Some((_, state)) = states
+                .iter()
+                .find(|(panel_key, _)| *panel_key == entry.panel.panel_key())
+            {
+                entry.size_state = *state;
+                entry.panel.size_state_changed(window, cx);
+            }
+        }
+        let workspace = self.workspace.clone();
+        let states = states.to_vec();
+        cx.defer(move |cx| {
+            if let Some(workspace) = workspace.upgrade() {
+                workspace.update(cx, |workspace, cx| {
+                    for (panel_key, state) in states {
+                        workspace.persist_panel_size_state(panel_key, state, cx);
+                    }
+                });
+            }
+        });
+        cx.notify();
+    }
+
+    pub(crate) fn close_after_drag(
+        &mut self,
+        states: &[(&'static str, PanelSizeState)],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.restore_panel_size_states(states, window, cx);
+        self.set_open(false, window, cx);
+        if self
+            .active_panel()
+            .is_some_and(|panel| panel.panel_focus_handle(cx).contains_focused(window, cx))
+        {
+            window.focus(&self.focus_handle, cx);
+        }
+        cx.notify();
+    }
+
     pub fn stored_active_panel_size(&self, window: &Window, cx: &App) -> Option<Pixels> {
         if self.is_open {
             self.active_panel_entry().map(|entry| {
@@ -1275,10 +1328,16 @@ impl Render for Dock {
             let create_resize_handle = || {
                 let handle = div()
                     .id("resize-handle")
-                    .on_drag(DraggedDock(position), |dock, _, _, cx| {
-                        cx.stop_propagation();
-                        cx.new(|_| dock.clone())
-                    })
+                    .on_drag(
+                        DraggedDock {
+                            position,
+                            panel_sizes: self.panel_size_states(),
+                        },
+                        |dock, _, _, cx| {
+                            cx.stop_propagation();
+                            cx.new(|_| dock.clone())
+                        },
+                    )
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|_, _: &MouseDownEvent, _, cx| {
