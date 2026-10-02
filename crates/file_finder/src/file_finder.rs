@@ -22,7 +22,8 @@ use language::{BufferSnapshot, Point};
 use open_path_prompt::{OpenPathPrompt, file_finder_settings::FileFinderSettings};
 use picker::{Picker, PickerDelegate};
 use project::{
-    PathMatchCandidateSet, Project, ProjectPath, WorktreeId, worktree_store::WorktreeStore,
+    PathMatchCandidateSet, Project, ProjectPath, Worktree, WorktreeId,
+    worktree_store::WorktreeStore,
 };
 
 use settings::{ModalWidthContent, Settings, SettingsStore};
@@ -1035,6 +1036,11 @@ impl FileFinderDelegate {
         self.matches.matches = new;
     }
 
+    fn include_ignored_in(&self, worktree: &Worktree) -> bool {
+        self.include_ignored
+            .unwrap_or_else(|| worktree.root_entry().is_some_and(|entry| entry.is_ignored))
+    }
+
     fn spawn_search(
         &mut self,
         query: FileSearchQuery,
@@ -1057,14 +1063,13 @@ impl FileFinderDelegate {
                 let worktree = worktree.read(cx);
                 PathMatchCandidateSet {
                     snapshot: worktree.snapshot(),
-                    include_ignored: self.include_ignored.unwrap_or_else(|| {
-                        worktree.root_entry().is_some_and(|entry| entry.is_ignored)
-                    }),
+                    include_ignored: self.include_ignored_in(worktree),
                     include_root_name,
                     candidates: project::Candidates::Files,
                 }
             })
             .collect::<Vec<_>>();
+        let ignored_exact_path_match = self.ignored_exact_path_match(&query, include_root_name, cx);
 
         let search_id = util::post_inc(&mut self.search_count);
         self.cancel_flag.store(true, atomic::Ordering::Release);
@@ -1082,6 +1087,7 @@ impl FileFinderDelegate {
             )
             .await
             .into_iter()
+            .chain(ignored_exact_path_match.await)
             .map(ProjectPanelOrdMatch);
             let did_cancel = cancel_flag.load(atomic::Ordering::Acquire);
             picker
@@ -1200,49 +1206,26 @@ impl FileFinderDelegate {
                 }
             }
 
-            let query_path = query.path_query();
-            if let Ok(mut query_path) = RelPath::new(Path::new(query_path), path_style) {
-                let available_worktree = self
-                    .project
-                    .read(cx)
-                    .visible_worktrees(cx)
-                    .filter(|worktree| !worktree.read(cx).is_single_file())
-                    .collect::<Vec<_>>();
-                let worktree_count = available_worktree.len();
-                let mut expect_worktree = available_worktree.first().cloned();
-                for worktree in &available_worktree {
-                    let worktree_root = worktree.read(cx).root_name();
-                    if worktree_count > 1 {
-                        if let Ok(suffix) = query_path.strip_prefix(worktree_root) {
-                            query_path = Cow::Owned(suffix.to_owned());
-                            expect_worktree = Some(worktree.clone());
-                            break;
+            if let Some((worktree, query_path)) = self.worktree_path_for_query(&query, cx) {
+                let worktree = worktree.read(cx);
+                let worktree_id = worktree.id();
+                // A file inside an unscanned directory has no entry, but may
+                // have been found on disk and matched.
+                if worktree.entry_for_path(&query_path).is_none()
+                    && !self.matches.matches.iter().any(|m| match m {
+                        Match::Search(path_match) => {
+                            path_match.0.worktree_id == worktree_id.to_usize()
+                                && path_match.0.path == query_path
                         }
-                    }
-                }
-
-                if let Some(FoundPath { ref project, .. }) = self.currently_opened_path {
-                    let worktree_id = project.worktree_id;
-                    let focused_file_in_available_worktree = available_worktree
-                        .iter()
-                        .any(|wt| wt.read(cx).id() == worktree_id);
-
-                    if focused_file_in_available_worktree {
-                        expect_worktree = self.project.read(cx).worktree_for_id(worktree_id, cx);
-                    }
-                }
-
-                if let Some(worktree) = expect_worktree {
-                    let worktree = worktree.read(cx);
-                    if worktree.entry_for_path(&query_path).is_none()
-                        && !query.path_query().ends_with('/')
-                        && !(path_style.is_windows() && query.path_query().ends_with('\\'))
-                    {
-                        self.matches.matches.push(Match::CreateNew(ProjectPath {
-                            worktree_id: worktree.id(),
-                            path: query_path.into_arc(),
-                        }));
-                    }
+                        _ => false,
+                    })
+                    && !query.path_query().ends_with('/')
+                    && !(path_style.is_windows() && query.path_query().ends_with('\\'))
+                {
+                    self.matches.matches.push(Match::CreateNew(ProjectPath {
+                        worktree_id,
+                        path: query_path,
+                    }));
                 }
             }
 
@@ -1266,6 +1249,107 @@ impl FileFinderDelegate {
             self.latest_search_did_cancel = did_cancel;
 
             cx.notify();
+        }
+    }
+
+    fn worktree_path_for_query(
+        &self,
+        query: &FileSearchQuery,
+        cx: &App,
+    ) -> Option<(Entity<Worktree>, Arc<RelPath>)> {
+        let path_style = self.project.read(cx).path_style(cx);
+        let mut query_path = RelPath::new(Path::new(query.path_query()), path_style).ok()?;
+        let available_worktree = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .filter(|worktree| !worktree.read(cx).is_single_file())
+            .collect::<Vec<_>>();
+        let worktree_count = available_worktree.len();
+        let mut expect_worktree = available_worktree.first().cloned();
+        for worktree in &available_worktree {
+            let worktree_root = worktree.read(cx).root_name();
+            if worktree_count > 1 {
+                if let Ok(suffix) = query_path.strip_prefix(worktree_root) {
+                    query_path = Cow::Owned(suffix.to_owned());
+                    expect_worktree = Some(worktree.clone());
+                    break;
+                }
+            }
+        }
+
+        if let Some(FoundPath { ref project, .. }) = self.currently_opened_path {
+            let worktree_id = project.worktree_id;
+            let focused_file_in_available_worktree = available_worktree
+                .iter()
+                .any(|wt| wt.read(cx).id() == worktree_id);
+
+            if focused_file_in_available_worktree {
+                expect_worktree = self.project.read(cx).worktree_for_id(worktree_id, cx);
+            }
+        }
+
+        Some((expect_worktree?, query_path.into_arc()))
+    }
+
+    /// Finds the file that the query names exactly when fuzzy search can't:
+    /// ignored files are skipped unless ignored files are included, and the
+    /// contents of some directories, such as ignored ones, aren't scanned
+    /// until they're expanded.
+    fn ignored_exact_path_match(
+        &self,
+        query: &FileSearchQuery,
+        include_root_name: bool,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<Option<PathMatch>> {
+        let Some((worktree, path)) = self.worktree_path_for_query(query, cx) else {
+            return Task::ready(None);
+        };
+        let worktree = worktree.read(cx);
+        let include_ignored = self.include_ignored_in(worktree);
+        let snapshot = worktree.snapshot();
+        let disk_lookup = match snapshot.entry_for_path(&path) {
+            Some(entry) => {
+                let skipped_by_search = entry.is_file()
+                    && entry.is_ignored
+                    && !entry.is_always_included
+                    && !include_ignored;
+                if !skipped_by_search {
+                    return Task::ready(None);
+                }
+                None
+            }
+            None => {
+                let in_unloaded_dir = path
+                    .ancestors()
+                    .find_map(|ancestor| snapshot.entry_for_path(ancestor))
+                    .is_some_and(|entry| entry.kind.is_unloaded());
+                if !in_unloaded_dir {
+                    return Task::ready(None);
+                }
+                let abs_path = snapshot.absolutize(&path);
+                Some(self.project.update(cx, |project, cx| {
+                    project.resolve_abs_file_path(&abs_path.to_string_lossy(), cx)
+                }))
+            }
+        };
+
+        let root_name = include_root_name.then(|| Arc::from(snapshot.root_name()));
+        let path_match = fuzzy_nucleo::match_fixed_path_set(
+            vec![PathMatchCandidate::new(&path, false, root_name.as_deref())],
+            snapshot.id().to_usize(),
+            root_name,
+            query.path_query(),
+            fuzzy_nucleo::Case::Ignore,
+            1,
+            snapshot.path_style(),
+        )
+        .pop();
+        match disk_lookup {
+            Some(disk_lookup) => {
+                cx.background_spawn(async move { disk_lookup.await.and(path_match) })
+            }
+            None => Task::ready(path_match),
         }
     }
 
