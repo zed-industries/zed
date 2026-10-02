@@ -1656,8 +1656,19 @@ impl Item for MarkdownPreviewView {
     fn tab_extra_context_menu_actions(
         &self,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Vec<(SharedString, Box<dyn Action>)> {
+        let preview_id = cx.entity_id();
+        // Inactive tabs aren't rendered, so the action can't be dispatched to them.
+        let is_active_in_pane = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).pane_for_item_id(preview_id))
+            .and_then(|pane| pane.read(cx).active_item())
+            .is_some_and(|item| item.item_id() == preview_id);
+        if !is_active_in_pane {
+            return Vec::new();
+        }
         vec![("Show Source".into(), Box::new(CloseAndReturnToEditor))]
     }
 
@@ -3178,6 +3189,69 @@ mod tests {
                 };
                 assert_eq!(label.as_ref(), "Show Source");
                 assert!(action.as_any().is::<CloseAndReturnToEditor>());
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn tab_context_menu_hides_show_source_for_inactive_preview(cx: &mut TestAppContext) {
+        let (multi_workspace, editor) =
+            open_markdown_file(cx, "note.md", "# Note\n\nBody text\n").await;
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+        cx.run_until_parked();
+
+        multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    assert!(workspace.activate_item(&editor, true, true, window, cx));
+                });
+                let actions = preview.update(cx, |preview, cx| {
+                    preview.tab_extra_context_menu_actions(window, cx)
+                });
+                assert!(actions.is_empty());
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn tab_context_menu_offers_open_preview_only_for_active_editor(cx: &mut TestAppContext) {
+        let (multi_workspace, editor) =
+            open_markdown_file(cx, "note.md", "# Note\n\nBody text\n").await;
+        editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_language(
+                    Some(Arc::new(language::Language::new(
+                        markdown_language_config(),
+                        None,
+                    ))),
+                    cx,
+                );
+            });
+        });
+
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                let actions = editor.update(cx, |editor, cx| {
+                    editor.tab_extra_context_menu_actions(window, cx)
+                });
+                let [(label, _)] = actions.as_slice() else {
+                    panic!("expected exactly one tab menu action");
+                };
+                assert_eq!(label.as_ref(), "Open Markdown Preview");
+            })
+            .unwrap();
+
+        open_preview_for_active_editor(cx, &multi_workspace);
+        cx.run_until_parked();
+
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                let actions = editor.update(cx, |editor, cx| {
+                    editor.tab_extra_context_menu_actions(window, cx)
+                });
+                assert!(actions.is_empty());
             })
             .unwrap();
     }
