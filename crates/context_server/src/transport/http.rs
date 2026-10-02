@@ -11,6 +11,7 @@ use std::{
     time::Duration,
 };
 
+use crate::client::AnyRequest;
 use crate::oauth::{self, OAuthTokenProvider, WwwAuthenticate};
 use crate::transport::Transport;
 use crate::types;
@@ -80,12 +81,13 @@ pub struct HttpTransport {
 const REQUEST_DEADLINE_GRACE: Duration = Duration::from_secs(10);
 
 /// Maximum time a response may deliver no bytes: neither the response body
-/// (JSON) nor an SSE stream may stall for this long. The total request
-/// deadline remains the upper safety net; this catches stalled transfers
-/// earlier. Note that a long-running tool call that sends nothing until its
-/// final JSON answer is also bounded by this — servers that support long
-/// operations should stream SSE progress or keepalive pings (which are
-/// counted as activity).
+/// (JSON) nor an SSE stream may stall for this long. Note that the total
+/// request deadline below still bounds the *entire* request including a
+/// healthy, actively-streaming body — the MCP-level request timeout usually
+/// fires first, so this idle timeout mainly catches stalls earlier. A
+/// long-running tool call that sends nothing until its final JSON answer is
+/// also bounded by this — servers that support long operations should stream
+/// SSE progress or keepalive pings (which are counted as activity).
 const RESPONSE_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl HttpTransport {
@@ -201,7 +203,20 @@ impl HttpTransport {
 
         let is_notification =
             !message.contains("\"id\":") || message.contains("notifications/initialized");
-        let is_initialize = message.contains("\"method\":\"initialize\"");
+        // Decide initialization structurally from the top-level `method` field:
+        // a substring match could false-positive on a tool call whose arguments
+        // happen to embed the literal `"method":"initialize"` JSON, which —
+        // combined with the session-rejection check below — would tear down a
+        // healthy session.
+        let is_initialize = serde_json::from_str::<AnyRequest>(&message)
+            .is_ok_and(|request| request.method == "initialize");
+        if is_initialize {
+            // Never present a stale session from a previous generation: the
+            // MCP spec requires initialize to start a fresh session, and some
+            // servers answer 400 otherwise. A session id in the initialize
+            // response repopulates this.
+            *self.session_id.lock() = None;
+        }
 
         // If we currently have no access token, try refreshing before sending
         // the request so restored but expired sessions do not need an initial
@@ -380,11 +395,14 @@ impl HttpTransport {
                             None => break,
                         },
                         _ = executor.timer(RESPONSE_IDLE_TIMEOUT).fuse() => {
-                            let _ = error_tx
+                            if let Err(err) = error_tx
                                 .send(format!(
                                     "SSE stream stalled: no data for {RESPONSE_IDLE_TIMEOUT:?}"
                                 ))
-                                .await;
+                                .await
+                            {
+                                log::error!("failed to report SSE stall: {err}");
+                            }
                             break;
                         }
                     };
