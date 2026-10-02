@@ -11229,27 +11229,7 @@ impl Editor {
             if let Some(folds) = folds {
                 let snapshot = buffer_snapshot.get_or_init(|| self.buffer.read(cx).snapshot(cx));
                 let snapshot_len = snapshot.len().0;
-
-                // Helper: search for fingerprint in buffer, return offset if found
-                let find_fingerprint = |fingerprint: &str, search_start: usize| -> Option<usize> {
-                    // Ensure we start at a character boundary (defensive)
-                    let search_start = snapshot
-                        .clip_offset(MultiBufferOffset(search_start), Bias::Left)
-                        .0;
-                    let search_end = snapshot_len.saturating_sub(fingerprint.len());
-
-                    let mut byte_offset = search_start;
-                    for ch in snapshot.chars_at(MultiBufferOffset(search_start)) {
-                        if byte_offset > search_end {
-                            break;
-                        }
-                        if snapshot.contains_str_at(MultiBufferOffset(byte_offset), fingerprint) {
-                            return Some(byte_offset);
-                        }
-                        byte_offset += ch.len_utf8();
-                    }
-                    None
-                };
+                let mut fingerprint_search = fold::FingerprintSearch::new(snapshot, &folds);
 
                 // Track search position to handle duplicate fingerprints correctly.
                 // Folds are stored in document order, so we advance after each match.
@@ -11259,11 +11239,11 @@ impl Editor {
                 let mut db_folds_for_migration: Vec<(usize, usize, String, String)> = Vec::new();
 
                 let valid_folds: Vec<_> = folds
-                    .into_iter()
-                    .filter_map(|(stored_start, stored_end, start_fp, end_fp)| {
+                    .iter()
+                    .filter_map(|&(stored_start, stored_end, ref start_fp, ref end_fp)| {
                         // Skip folds without fingerprints (old data before migration)
-                        let sfp = start_fp?;
-                        let efp = end_fp?;
+                        let sfp = start_fp.as_ref()?;
+                        let efp = end_fp.as_ref()?;
                         let efp_len = efp.len();
 
                         // Fast path: check if fingerprints match at stored offsets
@@ -11281,15 +11261,15 @@ impl Editor {
                         } else if sfp == efp {
                             // Short fold: identical fingerprints can only match once per search
                             // Use stored fold length to compute new_end
-                            let new_start = find_fingerprint(&sfp, search_start)?;
+                            let new_start = fingerprint_search.find(sfp, search_start)?;
                             let fold_len = stored_end - stored_start;
                             let new_end = new_start + fold_len;
                             (new_start, new_end)
                         } else {
                             // Slow path: search for fingerprints in buffer
-                            let new_start = find_fingerprint(&sfp, search_start)?;
+                            let new_start = fingerprint_search.find(sfp, search_start)?;
                             // Search for end_fp after start, then add efp_len to get actual fold end
-                            let efp_pos = find_fingerprint(&efp, new_start + sfp.len())?;
+                            let efp_pos = fingerprint_search.find(efp, new_start + sfp.len())?;
                             let new_end = efp_pos + efp_len;
                             (new_start, new_end)
                         };
@@ -11304,7 +11284,12 @@ impl Editor {
 
                         // Collect for migration if needed
                         if needs_migration {
-                            db_folds_for_migration.push((new_start, new_end, sfp, efp));
+                            db_folds_for_migration.push((
+                                new_start,
+                                new_end,
+                                sfp.clone(),
+                                efp.clone(),
+                            ));
                         }
 
                         Some(
