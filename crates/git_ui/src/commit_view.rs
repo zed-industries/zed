@@ -87,6 +87,7 @@ pub struct CommitView {
     remote: Option<GitRemote>,
     is_shallow_boundary: bool,
     file_filter: Option<RepoPath>,
+    show_header: bool,
     _load_diff_task: Task<Result<()>>,
 }
 
@@ -196,6 +197,29 @@ impl CommitView {
             stash,
             file_filter,
             false,
+            true,
+            window,
+            cx,
+        )
+    }
+
+    /// Opens a commit's changes without the commit details header.
+    pub(crate) fn open_without_header(
+        commit_sha: String,
+        repo: WeakEntity<Repository>,
+        workspace: WeakEntity<Workspace>,
+        file_filter: Option<RepoPath>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        Self::open_with_options(
+            commit_sha,
+            repo,
+            workspace,
+            None,
+            file_filter,
+            false,
+            false,
             window,
             cx,
         )
@@ -208,6 +232,7 @@ impl CommitView {
         stash: Option<usize>,
         file_filter: Option<RepoPath>,
         ignore_shallow_boundary: bool,
+        show_header: bool,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -250,6 +275,7 @@ impl CommitView {
                                 workspace_handle,
                                 stash,
                                 file_filter,
+                                show_header,
                                 window,
                                 cx,
                             )
@@ -297,6 +323,7 @@ impl CommitView {
         workspace: WeakEntity<Workspace>,
         stash: Option<usize>,
         file_filter: Option<RepoPath>,
+        show_header: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -527,6 +554,7 @@ impl CommitView {
             remote,
             is_shallow_boundary,
             file_filter,
+            show_header,
             _load_diff_task: load_diff_task,
         }
     }
@@ -537,6 +565,7 @@ impl CommitView {
         let workspace = self.workspace.clone();
         let stash = self.stash;
         let file_filter = self.file_filter.clone();
+        let show_header = self.show_header;
         let unshallow_state = self.repository.read(cx).unshallow_state();
         let can_fetch = !self.project.read(cx).is_via_collab()
             && unshallow_state != UnshallowState::Unshallowed;
@@ -600,6 +629,7 @@ impl CommitView {
                                                     stash,
                                                     file_filter,
                                                     false,
+                                                    show_header,
                                                     window,
                                                     cx,
                                                 )
@@ -632,6 +662,7 @@ impl CommitView {
                                     stash,
                                     file_filter.clone(),
                                     true,
+                                    show_header,
                                     window,
                                     cx,
                                 );
@@ -1375,6 +1406,7 @@ impl Item for CommitView {
                 remote: self.remote.clone(),
                 is_shallow_boundary: self.is_shallow_boundary,
                 file_filter: self.file_filter.clone(),
+                show_header: self.show_header,
                 _load_diff_task: Task::ready(Ok(())),
             }
         })))
@@ -1390,9 +1422,13 @@ impl Render for CommitView {
             .on_action(cx.listener(Self::open_file_at_head_action))
             .size_full()
             .bg(cx.theme().colors().editor_background)
-            .child(self.render_header(window, cx))
+            .when(self.show_header, |this| {
+                this.child(self.render_header(window, cx))
+            })
             .when(
-                !self.editor.read(cx).rhs_editor().read(cx).is_empty(cx),
+                // Checks for loaded files rather than text, since a deleted file's new side is
+                // empty and its removed lines only exist in the diff.
+                !self.multibuffer.read(cx).is_empty(),
                 |this| this.child(div().flex_grow(1.).child(self.editor.clone())),
             )
             .when(self.is_shallow_boundary, |this| {
