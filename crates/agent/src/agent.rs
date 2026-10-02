@@ -3262,7 +3262,7 @@ fn resolve_workspace_scope(
             .join(", ")
     };
 
-    let mut roots = Vec::with_capacity(requested.len());
+    let mut roots = Vec::with_capacity(requested.len() * 2);
     for raw in &requested {
         let project_path = project_ref.find_project_path(raw, cx).ok_or_else(|| {
             anyhow!(
@@ -3271,9 +3271,10 @@ fn resolve_workspace_scope(
                 available_roots()
             )
         })?;
+        let entry_for_path = project_ref.entry_for_path(&project_path, cx);
         anyhow::ensure!(
             matches!(
-                project_ref.entry_for_path(&project_path, cx),
+                entry_for_path,
                 Some(entry) if entry.is_dir()
             ),
             "`workspace` entry `{raw}` is not a directory in this project"
@@ -3289,10 +3290,26 @@ fn resolve_workspace_scope(
             parent_scope.contains(&abs_path),
             "`workspace` entry `{raw}` is outside the parent session's scope"
         );
+        let root = project_ref
+            .worktree_for_entry(entry_for_path.unwrap().id, cx)
+            .unwrap()
+            .read(cx)
+            .root_name()
+            .to_string();
+        let relative_path = format!("{}/{}", root, project_path.path);
+        let relative_path = if relative_path.is_empty() {
+            root.as_str()
+        } else {
+            relative_path.as_str()
+        };
+        let relative_path: PathBuf = PathBuf::from(relative_path);
         roots.push(abs_path);
+        dbg!(&relative_path);
+        roots.push(relative_path);
     }
 
-    Ok(ProjectScope::from_roots(PathList::new(&roots)))
+    let _roots = PathList::new(&roots);
+    Ok(ProjectScope::from_roots(_roots))
 }
 
 impl NativeThreadEnvironment {
