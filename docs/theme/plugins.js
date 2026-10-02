@@ -30,10 +30,12 @@ function updateKeybindings() {
   const isMac = os === "Mac" || os === "iOS";
 
   function processKeybinding(element) {
-    const [macKeybinding, linuxKeybinding] = element.textContent.split("|");
+    const [macKeybinding, linuxKeybinding = macKeybinding] =
+        element.textContent.split("|");
+
     element.textContent = isMac ? macKeybinding : linuxKeybinding;
     element.classList.add("keybinding");
-  }
+}
 
   // Process all kbd elements at once (more efficient than walking entire DOM)
   const kbdElements = document.querySelectorAll("kbd");
