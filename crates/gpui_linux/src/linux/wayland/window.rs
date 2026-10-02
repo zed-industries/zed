@@ -200,6 +200,7 @@ impl WaylandSurfaceState {
             return Ok(WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState {
                 layer_surface,
                 anchor: options.anchor,
+                requested_size: params.bounds.size,
             }));
         }
 
@@ -310,6 +311,7 @@ pub struct WaylandXdgSurfaceState {
 pub struct WaylandLayerSurfaceState {
     layer_surface: zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
     anchor: Anchor,
+    requested_size: Size<Pixels>,
 }
 
 pub struct WaylandPopupSurfaceState {
@@ -429,13 +431,43 @@ impl WaylandSurfaceState {
             WaylandSurfaceState::Xdg(WaylandXdgSurfaceState { xdg_surface, .. }) => {
                 xdg_surface.set_window_geometry(x, y, width, height);
             }
-            WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface, .. }) => {
+            WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState {
+                layer_surface,
+                requested_size,
+                ..
+            }) => {
                 // cannot set window position of a layer surface
-                layer_surface.set_size(width as u32, height as u32);
+                layer_surface.set_size(
+                    f32::from(requested_size.width) as u32,
+                    f32::from(requested_size.height) as u32,
+                );
             }
             WaylandSurfaceState::Popup(WaylandPopupSurfaceState { xdg_surface, .. }) => {
                 xdg_surface.set_window_geometry(x, y, width, height);
             }
+        }
+    }
+
+    fn resolve_layer_shell_configure_size(
+        &self,
+        current_size: Size<Pixels>,
+        width: u32,
+        height: u32,
+    ) -> Size<Pixels> {
+        match self {
+            WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState {
+                requested_size, ..
+            }) => resolve_layer_shell_configure_size(*requested_size, current_size, width, height),
+            _ => current_size,
+        }
+    }
+
+    fn set_layer_shell_requested_size(&mut self, size: Size<Pixels>) {
+        if let WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState {
+            requested_size, ..
+        }) = self
+        {
+            *requested_size = size;
         }
     }
 
@@ -708,6 +740,28 @@ impl PresentationState {
     }
 }
 
+fn resolve_layer_shell_configure_size(
+    requested_size: Size<Pixels>,
+    current_size: Size<Pixels>,
+    width: u32,
+    height: u32,
+) -> Size<Pixels> {
+    fn resolve_axis(requested: Pixels, current: Pixels, configured: u32) -> Pixels {
+        if requested != px(0.0) {
+            requested
+        } else if configured != 0 {
+            px(configured as f32)
+        } else {
+            current
+        }
+    }
+
+    size(
+        resolve_axis(requested_size.width, current_size.width, width),
+        resolve_axis(requested_size.height, current_size.height, height),
+    )
+}
+
 #[cfg(test)]
 mod presentation_state_tests {
     use super::PresentationState;
@@ -738,6 +792,66 @@ mod presentation_state_tests {
         assert!(!PresentationState::Presented.requires_presentation());
         assert!(PresentationState::RetryBeforeFirstPresent.requires_presentation());
         assert!(PresentationState::RetryAfterPresent.requires_presentation());
+    }
+}
+
+#[cfg(test)]
+mod layer_shell_size_tests {
+    use super::resolve_layer_shell_configure_size;
+    use gpui::{px, size};
+
+    #[test]
+    fn keeps_explicit_dimensions_across_configures() {
+        let requested_size = size(px(0.0), px(38.0));
+        let mut current_size = requested_size;
+
+        for configured_size in [(2560, 1440), (2560, 38), (2560, 1440)] {
+            current_size = resolve_layer_shell_configure_size(
+                requested_size,
+                current_size,
+                configured_size.0,
+                configured_size.1,
+            );
+            assert_eq!(current_size, size(px(2560.0), px(38.0)));
+        }
+    }
+
+    #[test]
+    fn later_explicit_resize_replaces_the_initial_request() {
+        let initial_size = resolve_layer_shell_configure_size(
+            size(px(0.0), px(38.0)),
+            size(px(0.0), px(38.0)),
+            2560,
+            1440,
+        );
+        let resized_request = size(px(1200.0), px(56.0));
+
+        assert_eq!(
+            resolve_layer_shell_configure_size(resized_request, initial_size, 2560, 1440),
+            resized_request
+        );
+    }
+
+    #[test]
+    fn uses_compositor_dimensions_only_for_delegated_axes() {
+        assert_eq!(
+            resolve_layer_shell_configure_size(
+                size(px(400.0), px(0.0)),
+                size(px(400.0), px(300.0)),
+                900,
+                700
+            ),
+            size(px(400.0), px(700.0))
+        );
+        assert_eq!(
+            resolve_layer_shell_configure_size(
+                size(px(0.0), px(0.0)),
+                size(px(640.0), px(480.0)),
+                0,
+                0
+            ),
+            size(px(640.0), px(480.0))
+        );
     }
 }
 
@@ -1328,10 +1442,13 @@ impl WaylandWindowStatePtr {
                 height,
                 serial,
             } => {
-                let size = if width == 0 || height == 0 {
-                    None
-                } else {
-                    Some(size(px(width as f32), px(height as f32)))
+                let size = {
+                    let state = self.state.borrow();
+                    Some(state.surface_state.resolve_layer_shell_configure_size(
+                        state.bounds.size,
+                        width,
+                        height,
+                    ))
                 };
 
                 let mut state = self.state.borrow_mut();
@@ -1708,7 +1825,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn resize(&mut self, size: Size<Pixels>) {
-        let state = self.borrow();
+        let mut state = self.borrow_mut();
         let state_ptr = self.0.clone();
 
         // A popup's placement is the compositor's, so a resize re-runs the positioner and the
@@ -1727,6 +1844,8 @@ impl PlatformWindow for WaylandWindow {
             }
             return;
         }
+
+        state.surface_state.set_layer_shell_requested_size(size);
 
         // Keep window geometry consistent with configure handling. On Wayland, window geometry is
         // surface-local: resizing should not attempt to translate the window; the compositor
