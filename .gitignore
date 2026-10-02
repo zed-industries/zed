@@ -62,4 +62,9 @@ crates/docs_preprocessor/actions.json
 .local*
 .cache
 
+# License files under crates/, extensions/ and tooling/ are intentionally not tracked.
+/crates/
+/extensions/
+/tooling/
+
 .guidance/state/
