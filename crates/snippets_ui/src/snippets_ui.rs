@@ -189,7 +189,7 @@ impl ScopeSelectorDelegate {
         matcher
             .path_suffixes
             .iter()
-            .find_map(|extension| FileIcons::get_icon(Path::new(extension), cx))
+            .find_map(|extension| FileIcons::get_icon(Path::new(extension.as_str()), cx))
             .or(FileIcons::get(cx).get_icon_for_type("default", cx))
             .map(Icon::from_path)
             .map(|icon| icon.color(Color::Muted))

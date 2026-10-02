@@ -1,8 +1,10 @@
 use crate::{LanguageId, LanguageLoader, LanguageMatcher, LanguageName};
 use collections::FxHashMap;
-use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
+use globset::{GlobSet, GlobSetBuilder};
+use gpui::SharedString;
+use regex::RegexSet;
 use smallvec::SmallVec;
-use std::{cell::LazyCell, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 use sum_tree::Bias;
 use text::{Point, Rope};
 use unicase::UniCase;
@@ -46,71 +48,133 @@ impl AvailableLanguage {
 #[derive(Default)]
 pub(super) struct AvailableLanguages {
     languages: Vec<AvailableLanguage>,
-    suffix_index: SuffixIndex,
+    lookup: LanguageLookup,
 }
 
+/// A position in `AvailableLanguages::languages`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct LanguageIndex(usize);
+
+/// A position in the `LanguageMatcher::path_suffixes` of a language.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct PathSuffixIndex(usize);
+
+/// Lookup structures over `AvailableLanguages::languages`, rebuilt whenever the
+/// set of languages changes, so that detecting a language doesn't need to visit
+/// every registered language.
 #[derive(Default)]
-struct SuffixIndex {
-    globs: Option<GlobSet>,
-    suffixes: Vec<(String, usize)>,
+struct LanguageLookup {
+    suffix_globs: Option<GlobSet>,
+    /// The suffix that each glob in `suffix_globs` was built from, indexed by glob.
+    suffixes: Vec<(LanguageIndex, PathSuffixIndex)>,
+    first_line_patterns: Option<RegexSet>,
+    /// The language of each pattern in `first_line_patterns`, indexed by pattern.
+    first_line_pattern_languages: Vec<LanguageIndex>,
+    languages_by_name: FxHashMap<LanguageName, SmallVec<[LanguageIndex; 1]>>,
+    /// Modeline aliases, grammar names and language names, each mapping to the
+    /// first language that declares them.
+    modeline_aliases: FxHashMap<UniCase<SharedString>, LanguageIndex>,
+    grammar_names: FxHashMap<UniCase<SharedString>, LanguageIndex>,
+    language_names: FxHashMap<UniCase<SharedString>, LanguageIndex>,
 }
 
-impl SuffixIndex {
+impl LanguageLookup {
     fn new(languages: &[AvailableLanguage]) -> Self {
-        let mut builder = GlobSetBuilder::new();
+        let mut suffix_globs = GlobSetBuilder::new();
         let mut suffixes = Vec::new();
+        let mut first_line_patterns = Vec::new();
+        let mut first_line_pattern_languages = Vec::new();
+        let mut languages_by_name = FxHashMap::<_, SmallVec<_>>::default();
+        let mut modeline_aliases = FxHashMap::default();
+        let mut grammar_names = FxHashMap::default();
+        let mut language_names = FxHashMap::default();
+
         for (language_index, language) in languages.iter().enumerate() {
-            for suffix in &language.matcher.path_suffixes {
-                let mut pattern = String::from("*");
-                for character in suffix.chars() {
-                    let character = if cfg!(windows) && character == '\\' {
-                        '/'
-                    } else {
-                        character
-                    };
-                    if matches!(character, '\\' | '*' | '?' | '[' | ']' | '{' | '}') {
-                        pattern.push('\\');
+            let language_index = LanguageIndex(language_index);
+            for (suffix_index, suffix) in language.matcher.path_suffixes.iter().enumerate() {
+                let suffix_index = PathSuffixIndex(suffix_index);
+                match suffix.glob() {
+                    Ok(glob) => {
+                        suffix_globs.add(glob);
+                        suffixes.push((language_index, suffix_index));
                     }
-                    pattern.push(character);
+                    Err(error) => {
+                        log::error!(
+                            "invalid path suffix {suffix:?} for language {}: {error}",
+                            language.name
+                        );
+                    }
                 }
-                builder.add(
-                    GlobBuilder::new(&pattern)
-                        .backslash_escape(true)
-                        .literal_separator(false)
-                        .build()
-                        .expect("escaped literal suffix must be a valid glob"),
-                );
-                suffixes.push((suffix.clone(), language_index));
             }
+            if let Some(pattern) = &language.matcher.first_line_pattern {
+                first_line_patterns.push(pattern.as_str());
+                first_line_pattern_languages.push(language_index);
+            }
+            languages_by_name
+                .entry(language.name.clone())
+                .or_default()
+                .push(language_index);
+            for alias in &language.matcher.modeline_aliases {
+                modeline_aliases
+                    .entry(UniCase::new(alias.clone()))
+                    .or_insert(language_index);
+            }
+            if let Some(grammar) = &language.grammar {
+                grammar_names
+                    .entry(UniCase::new(SharedString::from(grammar)))
+                    .or_insert(language_index);
+            }
+            language_names
+                .entry(UniCase::new(language.name.0.clone()))
+                .or_insert(language_index);
         }
-        let globs = match builder.build() {
-            Ok(globs) => Some(globs),
-            Err(error) => {
-                log::error!("failed to compile language suffix index: {error}");
-                None
-            }
+
+        let suffix_globs = suffix_globs
+            .build()
+            .inspect_err(|error| log::error!("failed to compile language suffix index: {error}"))
+            .ok();
+        let first_line_patterns = if first_line_patterns.is_empty() {
+            None
+        } else {
+            RegexSet::new(first_line_patterns)
+                .inspect_err(|error| {
+                    log::error!("failed to compile language first line patterns: {error}")
+                })
+                .ok()
         };
-        Self { globs, suffixes }
-    }
 
-    fn literal_scores(
-        &self,
-        candidates: &[(&str, globset::Candidate<'_>)],
-        language_count: usize,
-    ) -> Vec<usize> {
-        let mut scores = vec![0; language_count];
-        for (suffix, language_index) in &self.suffixes {
-            scores[*language_index] = scores[*language_index].max(suffix_score(suffix, candidates));
+        Self {
+            suffix_globs,
+            suffixes,
+            first_line_patterns,
+            first_line_pattern_languages,
+            languages_by_name,
+            modeline_aliases,
+            grammar_names,
+            language_names,
         }
-        scores
     }
 
-    fn scores_for_path(
+    /// Returns `(language, score)` pairs, sorted by language, for every language
+    /// with a path suffix matching one of the `candidates`.
+    fn suffix_scores(
         &self,
+        languages: &[AvailableLanguage],
         path: &Path,
         candidates: &[(&str, globset::Candidate<'_>)],
-        language_count: usize,
-    ) -> Vec<usize> {
+    ) -> SmallVec<[(LanguageIndex, usize); 4]> {
+        let score = |&(language_index, suffix_index): &(LanguageIndex, PathSuffixIndex)| {
+            let suffix = languages
+                .get(language_index.0)?
+                .matcher
+                .path_suffixes
+                .get(suffix_index.0)?;
+            // The glob is only a suffix filter. Verify the dot boundary and recover
+            // the original score, including literal Windows separators.
+            let score = suffix_score(suffix, candidates);
+            (score > 0).then_some((language_index, score))
+        };
+
         // On ordinary paths all three legacy candidates end at the end of the full
         // path. Non-UTF8 parents and trailing separators or `/.` need an exact scan:
         // Path::file_name and globset do not agree about these paths' basenames.
@@ -119,20 +183,33 @@ impl SuffixIndex {
             .zip(path.file_name().and_then(|name| name.to_str()))
             .filter(|(path, filename)| path.ends_with(filename))
             .and_then(|_| candidates.last());
-        let (Some(globs), Some((_, candidate))) = (&self.globs, full_path_candidate) else {
-            return self.literal_scores(candidates, language_count);
-        };
-
-        let mut scores = vec![0; language_count];
-        let mut matches = Vec::new();
-        globs.matches_candidate_into(candidate, &mut matches);
-        for pattern_index in matches {
-            let (suffix, language_index) = &self.suffixes[pattern_index];
-            // The glob is only a suffix filter. Verify the dot boundary and recover
-            // the original score, including literal Windows separators.
-            scores[*language_index] = scores[*language_index].max(suffix_score(suffix, candidates));
-        }
+        let mut scores: SmallVec<[(LanguageIndex, usize); 4]> =
+            match (&self.suffix_globs, full_path_candidate) {
+                (Some(globs), Some((_, candidate))) => globs
+                    .matches_candidate(candidate)
+                    .into_iter()
+                    .filter_map(|glob_index| self.suffixes.get(glob_index))
+                    .filter_map(score)
+                    .collect(),
+                _ => self.suffixes.iter().filter_map(score).collect(),
+            };
+        scores.sort_unstable_by(|(language_a, score_a), (language_b, score_b)| {
+            language_a.cmp(language_b).then(score_b.cmp(score_a))
+        });
+        scores.dedup_by_key(|(language_index, _)| *language_index);
         scores
+    }
+
+    fn first_line_matches(&self, content: &str) -> SmallVec<[LanguageIndex; 2]> {
+        let Some(patterns) = &self.first_line_patterns else {
+            return SmallVec::new();
+        };
+        patterns
+            .matches(content)
+            .into_iter()
+            .filter_map(|pattern_index| self.first_line_pattern_languages.get(pattern_index))
+            .copied()
+            .collect()
     }
 }
 
@@ -215,11 +292,12 @@ impl AvailableLanguages {
 
     fn replace_languages(&mut self, languages: Vec<AvailableLanguage>) {
         // Build before publishing so lookups always see registrations and their matching index.
-        let suffix_index = SuffixIndex::new(&languages);
-        *self = Self {
-            languages,
-            suffix_index,
-        };
+        let lookup = LanguageLookup::new(&languages);
+        *self = Self { languages, lookup };
+    }
+
+    fn language_at(&self, index: LanguageIndex) -> Option<&AvailableLanguage> {
+        self.languages.get(index.0)
     }
 
     pub(super) fn unloaded_language_names(&self) -> Vec<LanguageName> {
@@ -262,30 +340,16 @@ impl AvailableLanguages {
     }
 
     pub(super) fn find_by_modeline_name(&self, modeline_name: &str) -> Option<AvailableLanguage> {
-        let modeline_name = modeline_name.to_lowercase();
-        self.languages
-            .iter()
-            .find(|language| {
-                language
-                    .matcher
-                    .modeline_aliases
-                    .iter()
-                    .any(|alias| alias.to_lowercase() == modeline_name)
-            })
-            .or_else(|| {
-                self.languages.iter().find(|language| {
-                    language
-                        .grammar
-                        .as_ref()
-                        .is_some_and(|grammar| grammar.to_lowercase() == modeline_name)
-                })
-            })
-            .or_else(|| {
-                self.languages
-                    .iter()
-                    .find(|language| language.name.0.to_lowercase() == modeline_name)
-            })
-            .cloned()
+        let modeline_name = UniCase::new(SharedString::from(modeline_name));
+        [
+            &self.lookup.modeline_aliases,
+            &self.lookup.grammar_names,
+            &self.lookup.language_names,
+        ]
+        .into_iter()
+        .find_map(|names| names.get(&modeline_name))
+        .and_then(|language_index| self.language_at(*language_index))
+        .cloned()
     }
 
     pub(super) fn mark_all_unloaded(&mut self) {
@@ -352,45 +416,75 @@ impl AvailableLanguages {
             .iter()
             .filter_map(|suffix| suffix.map(|suffix| (suffix, globset::Candidate::new(suffix))))
             .collect::<SmallVec<[_; 3]>>();
-        let scores = LazyCell::new(|| {
-            self.suffix_index
-                .scores_for_path(path, &path_suffixes, self.languages.len())
-        });
-        let content = LazyCell::new(|| {
-            content.map(|content| {
-                let end = content.clip_point(Point::new(0, 256), Bias::Left);
-                let end = content.point_to_offset(end);
-                content.chunks_in_range(0..end).collect::<String>()
+        let default_scores = self
+            .lookup
+            .suffix_scores(&self.languages, path, &path_suffixes);
+        let custom_scores = user_file_types
+            .into_iter()
+            .flatten()
+            .filter_map(|(language_name, (custom_suffixes, _))| {
+                let language_indices = self.lookup.languages_by_name.get(language_name.as_ref())?;
+                let len = path_suffixes
+                    .iter()
+                    .find(|(_, candidate)| custom_suffixes.is_match_candidate(candidate))
+                    .map(|(suffix, _)| suffix.len())?;
+                Some(
+                    language_indices
+                        .iter()
+                        .map(move |language_index| (*language_index, len)),
+                )
             })
-        });
+            .flatten()
+            .collect::<SmallVec<[_; 2]>>();
 
-        self.find_best_match_indexed(
-            |language_index, language_name, matcher, current_best_match| {
+        let mut candidates = default_scores
+            .iter()
+            .chain(&custom_scores)
+            .map(|(language_index, _)| *language_index)
+            .collect::<SmallVec<[_; 8]>>();
+        // Content is only consulted while no match has been found yet, so it can only
+        // affect the result for languages registered after every path match.
+        let highest_path_candidate = candidates.iter().max().copied();
+        let content_matches = if let Some(content) = content
+            && self
+                .lookup
+                .first_line_pattern_languages
+                .last()
+                .is_some_and(|language_index| {
+                    highest_path_candidate.is_none_or(|highest| *language_index > highest)
+                }) {
+            let end = content.clip_point(Point::new(0, 256), Bias::Left);
+            let end = content.point_to_offset(end);
+            let first_line = content.chunks_in_range(0..end).collect::<String>();
+            self.lookup.first_line_matches(&first_line)
+        } else {
+            SmallVec::new()
+        };
+        candidates.extend(content_matches.iter().copied());
+        candidates.sort_unstable_by(|a, b| b.cmp(a));
+        candidates.dedup();
+
+        self.find_best_match_among(
+            candidates,
+            |language_index, _language, current_best_match| {
                 let path_matches_default_suffix = || {
-                    let len = scores[language_index];
-                    (len > 0).then_some(len)
+                    default_scores
+                        .binary_search_by_key(&language_index, |(language_index, _)| {
+                            *language_index
+                        })
+                        .ok()
+                        .and_then(|position| default_scores.get(position))
+                        .map(|(_, len)| *len)
                 };
 
                 let path_matches_custom_suffix = || {
-                    user_file_types
-                        .and_then(|types| types.get(language_name.as_ref()))
-                        .and_then(|(custom_suffixes, _)| {
-                            path_suffixes
-                                .iter()
-                                .find(|(_, candidate)| {
-                                    custom_suffixes.is_match_candidate(candidate)
-                                })
-                                .map(|(suffix, _)| suffix.len())
-                        })
+                    custom_scores
+                        .iter()
+                        .find(|(custom_language_index, _)| *custom_language_index == language_index)
+                        .map(|(_, len)| *len)
                 };
 
-                let content_matches = || {
-                    matcher.first_line_pattern.as_ref().is_some_and(|pattern| {
-                        content
-                            .as_ref()
-                            .is_some_and(|content| pattern.is_match(content))
-                    })
-                };
+                let content_matches = || content_matches.contains(&language_index);
 
                 // Only return a match for the given file if we have a better match than
                 // the current one.
@@ -433,34 +527,31 @@ impl AvailableLanguages {
             LanguageMatchPrecedence,
         ) -> Option<LanguageMatchPrecedence>,
     ) -> Option<LanguageId> {
-        self.find_best_match_indexed(|_, name, matcher, precedence| {
-            callback(name, matcher, precedence)
-        })
+        self.find_best_match_among(
+            (0..self.languages.len()).rev().map(LanguageIndex),
+            |_, language, precedence| callback(&language.name, &language.matcher, precedence),
+        )
     }
 
-    fn find_best_match_indexed(
+    /// Folds over the languages at `candidates`, which must be in descending order.
+    /// Languages that are not candidates must be ones for which `callback` would return `None`.
+    fn find_best_match_among(
         &self,
+        candidates: impl IntoIterator<Item = LanguageIndex>,
         callback: impl Fn(
-            usize,
-            &LanguageName,
-            &LanguageMatcher,
+            LanguageIndex,
+            &AvailableLanguage,
             LanguageMatchPrecedence,
         ) -> Option<LanguageMatchPrecedence>,
     ) -> Option<LanguageId> {
-        self.languages
-            .iter()
-            .enumerate()
-            .rev()
+        candidates
+            .into_iter()
+            .filter_map(|language_index| Some((language_index, self.language_at(language_index)?)))
             .fold(None, |best_language_match, (language_index, language)| {
                 let current_match_type = best_language_match
                     .as_ref()
                     .map_or(LanguageMatchPrecedence::default(), |(_, score)| *score);
-                let language_score = callback(
-                    language_index,
-                    &language.name,
-                    &language.matcher,
-                    current_match_type,
-                );
+                let language_score = callback(language_index, language, current_match_type);
 
                 match (language_score, current_match_type) {
                     // no current best, so our candidate is better
@@ -523,7 +614,7 @@ mod tests {
             name: LanguageName::new(name),
             grammar: None,
             matcher: Arc::new(LanguageMatcher {
-                path_suffixes: suffixes.iter().map(|suffix| suffix.to_string()).collect(),
+                path_suffixes: suffixes.iter().map(|suffix| (*suffix).into()).collect(),
                 ..Default::default()
             }),
             hidden: false,
@@ -633,7 +724,7 @@ mod tests {
             detected(&languages, Path::new("/long.directory/archive.tar.gz")),
             Some("Full Path".into())
         );
-        languages.suffix_index.globs = None;
+        languages.lookup.suffix_globs = None;
         assert_eq!(
             detected(&languages, Path::new("/long.directory/archive.tar.gz")),
             Some("Full Path".into())
@@ -672,6 +763,79 @@ mod tests {
             detected(&languages, Path::new("file.other")),
             Some("Other".into())
         );
+    }
+
+    #[test]
+    fn first_line_patterns_only_apply_without_a_better_path_match() {
+        let with_first_line = |name: &str, suffixes: &[&str], pattern: &str| AvailableLanguage {
+            matcher: Arc::new(LanguageMatcher {
+                path_suffixes: suffixes.iter().map(|suffix| (*suffix).into()).collect(),
+                first_line_pattern: Some(crate::FirstLinePattern::new(pattern).unwrap()),
+                ..Default::default()
+            }),
+            ..language(name, &[])
+        };
+        let mut languages = AvailableLanguages::default();
+        languages.update(
+            &[],
+            vec![
+                with_first_line("Shell", &["sh"], r"^#!.*\bbash\b"),
+                with_first_line("Python", &[], r"^#!.*\bpython"),
+                language("Text", &["txt"]),
+            ],
+        );
+        let detected_with_content = |path: &str, content: &str| {
+            languages
+                .find_for_file(Path::new(path), Some(&Rope::from(content)), None)
+                .and_then(|id| languages.get_language(id))
+                .map(AvailableLanguage::name)
+        };
+
+        let python = "#!/usr/bin/env python\nprint()\n";
+        assert_eq!(
+            detected_with_content("script", python),
+            Some("Python".into())
+        );
+        assert_eq!(
+            detected_with_content("script", "#!/bin/bash\n"),
+            Some("Shell".into())
+        );
+        assert_eq!(detected_with_content("script", "plain\n"), None);
+        assert_eq!(
+            detected_with_content("script.sh", python),
+            Some("Shell".into())
+        );
+        assert_eq!(
+            detected_with_content("script.txt", python),
+            Some("Text".into())
+        );
+    }
+
+    #[test]
+    fn modeline_names_prefer_aliases_then_grammars_then_names() {
+        let mut alpha = language("Alpha", &[]);
+        alpha.grammar = Some("alpha_grammar".into());
+        alpha.matcher = Arc::new(LanguageMatcher {
+            modeline_aliases: vec!["Shared".into()],
+            ..Default::default()
+        });
+        let mut beta = language("Beta", &[]);
+        beta.matcher = Arc::new(LanguageMatcher {
+            modeline_aliases: vec!["shared".into()],
+            ..Default::default()
+        });
+        let mut languages = AvailableLanguages::default();
+        languages.update(&[], vec![language("Shared", &[]), alpha, beta]);
+
+        let modeline_language = |name: &str| {
+            languages
+                .find_by_modeline_name(name)
+                .map(|language| language.name())
+        };
+        assert_eq!(modeline_language("SHARED"), Some("Alpha".into()));
+        assert_eq!(modeline_language("Alpha_Grammar"), Some("Alpha".into()));
+        assert_eq!(modeline_language("beta"), Some("Beta".into()));
+        assert_eq!(modeline_language("missing"), None);
     }
 
     #[cfg(unix)]

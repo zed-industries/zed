@@ -52,13 +52,13 @@ use language_core::highlight_cache::{MAX_TEXT_HIGHLIGHT_ENTRY_BYTES, TextHighlig
 pub use language_core::{
     BlockCommentConfig, BracketPair, BracketPairConfig, BracketPairContent, BracketsConfig,
     BracketsPatternConfig, CodeLabel, CodeLabelBuilder, DebugVariablesConfig, DebuggerTextObject,
-    DecreaseIndentConfig, Grammar, GrammarId, HighlightsConfig, IndentConfig, InjectionConfig,
-    InjectionPatternConfig, JsxTagAutoCloseConfig, LanguageConfig, LanguageConfigOverride,
-    LanguageId, LanguageMatcher, OrderedListConfig, OutlineConfig, Override, OverrideConfig,
-    OverrideEntry, RedactionConfig, RunnableCapture, RunnableConfig, SoftWrap, Symbol,
-    TaskListConfig, TextObject, TextObjectConfig, WrapCharactersConfig, default_true,
-    deserialize_regex, deserialize_regex_vec, regex_json_schema, regex_vec_json_schema,
-    serialize_regex,
+    DecreaseIndentConfig, FirstLinePattern, Grammar, GrammarId, HighlightsConfig, IndentConfig,
+    InjectionConfig, InjectionPatternConfig, JsxTagAutoCloseConfig, LanguageConfig,
+    LanguageConfigOverride, LanguageId, LanguageMatcher, OrderedListConfig, OutlineConfig,
+    Override, OverrideConfig, OverrideEntry, PathSuffix, RedactionConfig, RunnableCapture,
+    RunnableConfig, SoftWrap, Symbol, TaskListConfig, TextObject, TextObjectConfig,
+    WrapCharactersConfig, default_true, deserialize_regex, deserialize_regex_vec,
+    regex_json_schema, regex_vec_json_schema, serialize_regex,
 };
 pub use language_registry::{
     LanguageLoader, LanguageName, LanguageRegistration, LanguageServerStatusUpdate, LoadedLanguage,
@@ -1220,7 +1220,7 @@ impl Language {
         }
     }
 
-    pub fn path_suffixes(&self) -> &[String] {
+    pub fn path_suffixes(&self) -> &[PathSuffix] {
         &self.config.matcher.path_suffixes
     }
 
@@ -1275,7 +1275,7 @@ pub fn build_highlight_map(capture_names: &[&str], theme: &SyntaxTheme) -> Highl
 }
 
 impl LanguageScope {
-    pub fn path_suffixes(&self) -> &[String] {
+    pub fn path_suffixes(&self) -> &[PathSuffix] {
         self.language.path_suffixes()
     }
 
