@@ -123,8 +123,14 @@ impl HttpTransport {
 
     /// Build a POST request for the given message body, attaching all standard
     /// headers (content-type, accept, session ID, static headers, and bearer
-    /// token if available).
-    fn build_request(&self, message: &[u8]) -> Result<http_client::Request<AsyncBody>> {
+    /// token if available). `initialize` requests never carry a session ID —
+    /// per the MCP spec, and so a re-initialize after a session expiry cannot
+    /// be rejected for presenting a stale one.
+    fn build_request(
+        &self,
+        message: &[u8],
+        is_initialize: bool,
+    ) -> Result<http_client::Request<AsyncBody>> {
         let mut request_builder = Request::builder()
             .method(Method::POST)
             .uri(&self.endpoint)
@@ -148,7 +154,9 @@ impl HttpTransport {
         }
 
         // Add session ID if we have one (except for initialize).
-        if let Some(ref session_id) = *self.session_id.lock() {
+        if let Some(ref session_id) = *self.session_id.lock()
+            && !is_initialize
+        {
             request_builder = request_builder.header(HEADER_SESSION_ID, session_id.as_str());
         }
 
@@ -180,6 +188,7 @@ impl HttpTransport {
 
         let is_notification =
             !message.contains("\"id\":") || message.contains("notifications/initialized");
+        let is_initialize = message.contains("\"method\":\"initialize\"");
 
         // If we currently have no access token, try refreshing before sending
         // the request so restored but expired sessions do not need an initial
@@ -190,7 +199,7 @@ impl HttpTransport {
             }
         }
 
-        let request = self.build_request(message.as_bytes())?;
+        let request = self.build_request(message.as_bytes(), is_initialize)?;
         let mut response = self.http_client.send(request).await?;
 
         // On 401, try refreshing the token and retry once.
@@ -212,7 +221,7 @@ impl HttpTransport {
             if let Some(ref provider) = self.token_provider {
                 if provider.try_refresh().await.unwrap_or(false) {
                     // Retry with the refreshed token.
-                    let retry_request = self.build_request(message.as_bytes())?;
+                    let retry_request = self.build_request(message.as_bytes(), is_initialize)?;
                     response = self.http_client.send(retry_request).await?;
 
                     // If still 401 after refresh, give up.
@@ -280,11 +289,32 @@ impl HttpTransport {
                 log::debug!("Notification accepted");
             }
             _ => {
+                let status = response.status().as_u16();
                 let mut error_body = String::new();
                 futures::AsyncReadExt::read_to_string(response.body_mut(), &mut error_body).await?;
 
+                // A server that has expired our session rejects every request
+                // carrying the old session ID: the MCP streamable-HTTP spec
+                // says such a server may answer 404, and some servers answer
+                // 400 with an "initialize required" error. Failing the send
+                // (rather than just piping the error to `error_tx`) kills the
+                // client so the owning store restarts it with a fresh
+                // initialize handshake; otherwise this request hangs until its
+                // timeout and every later call keeps failing the same way.
+                let session_rejected = self.session_id.lock().is_some()
+                    && (status == 404
+                        || (status == 400
+                            && error_body.to_lowercase().contains("initialize required")));
+                if session_rejected {
+                    log::error!(
+                        "server rejected the MCP session (HTTP {status}); \
+                         failing the transport so the session is re-initialized"
+                    );
+                    return Err(anyhow!("MCP session no longer valid (HTTP {status})"));
+                }
+
                 self.error_tx
-                    .send(format!("HTTP {}: {}", response.status(), error_body))
+                    .send(format!("HTTP {status}: {error_body}"))
                     .await
                     .map_err(|_| anyhow!("Failed to send error"))?;
             }

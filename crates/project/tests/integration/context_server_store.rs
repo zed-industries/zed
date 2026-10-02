@@ -1183,6 +1183,85 @@ async fn test_http_server_restarts_on_non_auth_transport_failure(cx: &mut TestAp
     });
 }
 
+// Some streamable-HTTP servers expire sessions aggressively: after the
+// session TTL they answer 400 with an "initialize required" error (or 404,
+// as the spec allows) instead of letting the request hang. The client must
+// tear down on such a response so the store restarts it with a fresh
+// initialize handshake, instead of staying `Running` with a session the
+// server will keep rejecting.
+#[gpui::test]
+async fn test_http_server_reinitializes_after_session_rejection(cx: &mut TestAppContext) {
+    const SERVER_ID: &str = "ttl-server";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    set_fake_mcp_http_client(cx, |message| {
+        if message.contains("\"method\":\"initialize\"") {
+            Ok(initialize_response_with_session())
+        } else if message.contains("notifications/initialized") {
+            Ok(notification_accepted_response())
+        } else {
+            Ok(session_expired_response())
+        }
+    });
+
+    let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_http_context_server_configuration(&server_id, cx);
+
+    {
+        let _server_events = assert_server_events(
+            &store,
+            vec![
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+                // Restart after the session was rejected.
+                (server_id.clone(), ContextServerStatus::Stopped),
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+            ],
+            cx,
+        );
+        cx.run_until_parked();
+
+        let old_client = store.read_with(cx, |store, _| {
+            store
+                .get_running_server(&server_id)
+                .expect("server should be running")
+                .client()
+                .expect("running server should have a client")
+        });
+
+        old_client
+            .request::<context_server::types::requests::ListTools>(())
+            .await
+            .expect_err("request rejected with an expired session should fail");
+        // Drop our handle so the dead client fully goes away: a lingering
+        // client would compete with its successor for the reused transport's
+        // response channel and starve the restart's initialize handshake.
+        drop(old_client);
+
+        cx.run_until_parked();
+
+        store.read_with(cx, |store, _| {
+            store
+                .get_running_server(&server_id)
+                .expect("server should be running again")
+                .client()
+                .expect("restarted server should have a client")
+        });
+        // Dropping the events guard asserts no further status change happened.
+    }
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Running),
+            "server should recover via re-initialization after a session rejection"
+        );
+    });
+}
+
 // A server may also require authentication on `initialize` itself. The
 // challenge is read from the transport slot rather than the returned error, so
 // the 401 is recognized even if another error (e.g. the request timeout) wins
@@ -1398,6 +1477,44 @@ fn initialize_response() -> Response<http_client::AsyncBody> {
             "serverInfo": { "name": "test-server", "version": "1.0.0" }
         }
     }))
+}
+
+fn initialize_response_with_session() -> Response<http_client::AsyncBody> {
+    Response::builder()
+        .status(200)
+        .header("Content-Type", "application/json")
+        .header("Mcp-Session-Id", "test-session-id")
+        .body(http_client::AsyncBody::from(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 0,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "serverInfo": { "name": "test-server", "version": "1.0.0" }
+                }
+            })
+            .to_string(),
+        ))
+        .unwrap()
+}
+
+fn session_expired_response() -> Response<http_client::AsyncBody> {
+    Response::builder()
+        .status(400)
+        .header("Content-Type", "application/json")
+        .body(http_client::AsyncBody::from(
+            json!({
+                "jsonrpc": "2.0",
+                "error": {
+                    "code": -32600,
+                    "message": "Invalid Request: initialize required (no valid mcp-session-id header)"
+                },
+                "id": null
+            })
+            .to_string(),
+        ))
+        .unwrap()
 }
 
 fn notification_accepted_response() -> Response<http_client::AsyncBody> {
