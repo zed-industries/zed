@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use extension::{ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy};
 use gpui::{App, Entity, WeakEntity};
-use language::{LanguageLoader, LanguageMatcher, LanguageName, LanguageRegistry};
+use language::{LanguageName, LanguageRegistration, LanguageRegistry};
 use project::LspStore;
 
 #[derive(Clone)]
@@ -44,30 +44,23 @@ impl ExtensionGrammarProxy for LanguageServerRegistryProxy {
 }
 
 impl ExtensionLanguageProxy for LanguageServerRegistryProxy {
-    fn register_language(
+    #[ztracing::instrument(skip_all)]
+    fn update_languages(
         &self,
-        language: LanguageName,
-        grammar: Option<Arc<str>>,
-        matcher: Arc<LanguageMatcher>,
-        hidden: bool,
-        load: LanguageLoader,
-    ) -> bool {
-        self.language_registry
-            .register_extension_language(language, grammar, matcher, hidden, None, load)
+        languages_to_remove: &[LanguageName],
+        grammars_to_remove: &[Arc<str>],
+        registrations: Vec<LanguageRegistration>,
+    ) -> Vec<bool> {
+        self.language_registry.update_extension_languages(
+            languages_to_remove,
+            grammars_to_remove,
+            registrations,
+        )
     }
 
     fn is_language_registered(&self, language: &LanguageName) -> bool {
         self.language_registry
             .available_language_for_name(language.0.as_ref())
             .is_some()
-    }
-
-    fn remove_languages(
-        &self,
-        languages_to_remove: &[LanguageName],
-        grammars_to_remove: &[Arc<str>],
-    ) {
-        self.language_registry
-            .remove_languages(languages_to_remove, grammars_to_remove);
     }
 }
