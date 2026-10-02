@@ -42,9 +42,10 @@ pub struct PopupOptions {
     /// user clicks outside of them or presses a dismissing key. Use it for menus and comboboxes,
     /// not for tooltips or other passive popups.
     ///
-    /// A grab must be requested while the triggering input is still active, in practice the
-    /// press of the mouse button that opens the popup. Open grabbing popups from a mouse-down
-    /// handler rather than a click handler, otherwise the grab is refused.
+    /// On Wayland, a grab must be requested while the triggering input is still active.
+    /// For portability, open grabbing popups from a mouse-down or key-down handler rather
+    /// than a click handler. macOS also supports opening them programmatically, including
+    /// from accessibility actions.
     ///
     /// Automatic dismissal only covers input aimed at other applications. A click elsewhere in
     /// your own application still reaches it as usual, so closing the popup in that case is up
