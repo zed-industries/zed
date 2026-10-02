@@ -12,7 +12,7 @@ default-run = "zed"
 workspace = true
 
 [features]
-default = ["gpui/inspector"]
+default = ["gpui/inspector", "ui/inspector"]
 tracy = ["ztracing/tracy"]
 # LEAK_BACKTRACE=1 cargo run --features zed/track-project-leak --profile release-fast
 track-project-leak = ["gpui/leak-detection"]
