@@ -215,6 +215,7 @@ This keeps Zed from accidentally checking out the same branch in multiple worktr
 
 The directory used for new worktrees is controlled by the `git.worktree_directory` setting.
 By default, Zed creates worktrees under `../worktrees` relative to the repository's working directory.
+You can configure another relative directory, an absolute path, or a path starting with `~`.
 
 See [All Settings](./reference/all-settings.md#git-worktree-directory) for examples.
 
