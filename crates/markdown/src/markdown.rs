@@ -2288,7 +2288,7 @@ impl MarkdownElement {
                 .image_link_for_position(window.mouse_position())
                 .is_some()
                 || rendered_text
-                    .source_index_for_position(window.mouse_position())
+                    .source_index_for_position(window.mouse_position(), false)
                     .ok()
                     .is_some_and(|source_index| {
                         rendered_text.link_for_source_index(source_index).is_some()
@@ -2316,7 +2316,7 @@ impl MarkdownElement {
                     && hitbox.is_hovered(window)
                 {
                     let link = rendered_text
-                        .source_index_for_position(event.position)
+                        .source_index_for_position(event.position, false)
                         .ok()
                         .and_then(|ix| rendered_text.link_for_source_index(ix))
                         .map(|link| link.destination_url.clone());
@@ -2332,7 +2332,7 @@ impl MarkdownElement {
                 if hitbox.is_hovered(window) {
                     if phase.bubble() && event.button != MouseButton::Right {
                         let position_result =
-                            rendered_text.source_index_for_position(event.position);
+                            rendered_text.source_index_for_position(event.position, false);
 
                         if let Ok(source_index) = position_result {
                             if let Some(footnote_ref) =
@@ -2349,7 +2349,9 @@ impl MarkdownElement {
                         if markdown.pressed_footnote_ref.is_none()
                             && markdown.pressed_link.is_none()
                         {
-                            let source_index = match position_result {
+                            let source_index = match rendered_text
+                                .source_index_for_position(event.position, true)
+                            {
                                 Ok(ix) | Err(ix) => ix,
                             };
                             if let Some(handler) = on_source_click.as_ref() {
@@ -2424,10 +2426,10 @@ impl MarkdownElement {
                 }
 
                 if markdown.selection.pending {
-                    let source_index = match rendered_text.source_index_for_position(event.position)
-                    {
-                        Ok(ix) | Err(ix) => ix,
-                    };
+                    let source_index =
+                        match rendered_text.source_index_for_position(event.position, true) {
+                            Ok(ix) | Err(ix) => ix,
+                        };
                     markdown.selection.set_head(source_index, &rendered_text);
                     markdown.autoscroll_code_block(source_index, event.position);
                     markdown.autoscroll_request = Some(source_index);
@@ -2435,7 +2437,11 @@ impl MarkdownElement {
                 } else {
                     let is_hitbox_hovered = hitbox.is_hovered(window);
                     let source_index = is_hitbox_hovered
-                        .then(|| rendered_text.source_index_for_position(event.position).ok())
+                        .then(|| {
+                            rendered_text
+                                .source_index_for_position(event.position, false)
+                                .ok()
+                        })
                         .flatten();
                     let hovered_url = is_hitbox_hovered
                         .then(|| rendered_text.image_link_for_position(event.position))
@@ -2467,7 +2473,9 @@ impl MarkdownElement {
             let rendered_text = rendered_text.clone();
             move |markdown, event: &MouseUpEvent, phase, window, cx| {
                 if phase.bubble() {
-                    let source_index = rendered_text.source_index_for_position(event.position).ok();
+                    let source_index = rendered_text
+                        .source_index_for_position(event.position, false)
+                        .ok();
                     if let Some(pressed_footnote_ref) = markdown.pressed_footnote_ref.take()
                         && source_index
                             .and_then(|ix| rendered_text.footnote_ref_for_source_index(ix))
@@ -4641,7 +4649,11 @@ impl RenderedLine {
         }
     }
 
-    fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
+    fn source_index_for_position(
+        &self,
+        position: Point<Pixels>,
+        closest: bool,
+    ) -> Result<usize, usize> {
         let adjusted_position = maybe!({
             if self.text_align == TextAlign::Left {
                 return None;
@@ -4689,7 +4701,12 @@ impl RenderedLine {
 
         let line_rendered_index;
         let out_of_bounds;
-        match self.layout.index_for_position(adjusted_position) {
+        let index = if closest {
+            self.layout.closest_index_for_position(adjusted_position)
+        } else {
+            self.layout.index_for_position(adjusted_position)
+        };
+        match index {
             Ok(ix) => {
                 line_rendered_index = ix;
                 out_of_bounds = false;
@@ -4872,7 +4889,11 @@ impl RenderedText {
             .collect()
     }
 
-    fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
+    fn source_index_for_position(
+        &self,
+        position: Point<Pixels>,
+        closest: bool,
+    ) -> Result<usize, usize> {
         let mut lines = self.lines.iter().peekable();
         let mut fallback_line: Option<&Rc<RenderedLine>> = None;
 
@@ -4881,7 +4902,7 @@ impl RenderedText {
 
             // Exact match: position is within bounds (handles overlapping bounds like table columns)
             if line_bounds.contains(&position) {
-                return line.source_index_for_position(position);
+                return line.source_index_for_position(position, closest);
             }
 
             // Track fallback for Y-coordinate based matching
@@ -4901,7 +4922,7 @@ impl RenderedText {
 
         // Fall back to Y-coordinate matched line
         if let Some(line) = fallback_line {
-            return line.source_index_for_position(position);
+            return line.source_index_for_position(position, closest);
         }
 
         Err(self.lines.last().map_or(0, |line| line.source_end))
@@ -4910,7 +4931,7 @@ impl RenderedText {
     fn source_index_for_visible_position(&self, position: Point<Pixels>) -> Option<usize> {
         self.lines.iter().find_map(|line| {
             if line.visible_bounds.get()?.contains(&position) {
-                line.source_index_for_position(position).ok()
+                line.source_index_for_position(position, false).ok()
             } else {
                 None
             }
@@ -6370,10 +6391,10 @@ mod tests {
         let first_bounds = rendered.lines[0].layout.bounds();
         let second_bounds = rendered.lines[1].layout.bounds();
 
-        let first_index = match rendered.source_index_for_position(first_bounds.center()) {
+        let first_index = match rendered.source_index_for_position(first_bounds.center(), false) {
             Ok(index) | Err(index) => index,
         };
-        let second_index = match rendered.source_index_for_position(second_bounds.center()) {
+        let second_index = match rendered.source_index_for_position(second_bounds.center(), false) {
             Ok(index) | Err(index) => index,
         };
 
