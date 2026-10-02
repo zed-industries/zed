@@ -796,6 +796,11 @@ pub struct GitPanelSettingsContent {
     /// Default: false
     pub show_count_badge: Option<bool>,
 
+    /// Configure git panel layout.
+    ///
+    /// Default: tabbed layout
+    pub panel_layout: Option<GitPanelLayout>,
+
     /// Whether the git panel should open on startup.
     ///
     /// Default: false
@@ -879,6 +884,27 @@ pub enum GitPanelGroupBy {
     #[default]
     Status,
     Staging,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPanelLayout {
+    #[default]
+    TabbedTop,
+    TabbedBottom,
 }
 
 #[derive(

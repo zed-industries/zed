@@ -6102,6 +6102,7 @@ See the [debugger page](../debugger.md) for more information about debugging sup
     },
     "starts_open": false,
     "show_count_badge": false,
+    "panel_layout": "tabbed_top",
     "diff_stats": true,
     "commit_title_max_length": 0,
     "entry_primary_click_action": "project_diff"
@@ -6125,6 +6126,7 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `scrollbar`: When to show the scrollbar in the git panel
 - `starts_open`: Whether the git panel should open on startup
 - `show_count_badge`: Whether to show a badge on the git panel icon with the count of uncommitted changes
+- `panel_layout`: Configure panel layout
 - `diff_stats`: Whether to show the addition/deletion change count next to each file in the git panel
 - `commit_title_max_length`: Maximum length of the commit message title before a warning is shown. Set to `0` to disable
 - `entry_primary_click_action`: Default action when clicking a changed file in the git panel. Can be `project_diff`, `file_diff`, or `view_file`

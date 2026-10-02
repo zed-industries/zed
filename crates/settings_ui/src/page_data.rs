@@ -6417,7 +6417,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 18] {
+    fn git_panel_section() -> [SettingsPageItem; 19] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6697,6 +6697,25 @@ fn panels_page() -> SettingsPage {
                             .git_panel
                             .get_or_insert_default()
                             .show_count_badge = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Git Panel Layout",
+                description: "Configure panel layout.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_panel.panel_layout"),
+                    pick: |settings_content| {
+                        settings_content.git_panel.as_ref()?.panel_layout.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .panel_layout = value;
                     },
                 }),
                 metadata: None,

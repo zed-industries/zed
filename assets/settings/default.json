@@ -1124,6 +1124,7 @@
     //
     // Default: false
     "show_count_badge": false,
+    "panel_layout": "tabbed_top",
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
