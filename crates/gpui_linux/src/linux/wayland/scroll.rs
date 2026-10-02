@@ -1,7 +1,4 @@
-use std::{
-    collections::VecDeque,
-    time::{Duration, Instant},
-};
+use std::{collections::VecDeque, time::Instant};
 
 use super::window::WaylandWindowStatePtr;
 use gpui::{
@@ -9,9 +6,9 @@ use gpui::{
 };
 
 const KINETIC_SCROLLING_FRICTION: f32 = 4.0;
-const KINETIC_SCROLLING_HISTORY_WINDOW: Duration = Duration::from_millis(150);
+const KINETIC_SCROLLING_HISTORY_WINDOW: u32 = 150;
 const KINETIC_SCROLLING_MIN_VELOCITY: Pixels = px(0.1);
-const KINETIC_SCROLLING_ASSUME_STOPPED_INTERVAL: Duration = Duration::from_millis(40);
+const KINETIC_SCROLLING_ASSUME_STOPPED_INTERVAL: u32 = 40;
 
 pub struct KineticScrollController {
     state: State,
@@ -66,23 +63,22 @@ impl KineticScrollController {
         }
     }
 
-    pub fn finger_scroll(&mut self, time: Instant, displacement: Point<Pixels>) -> ScrollUpdate {
+    pub fn finger_scroll(&mut self, time: u32, displacement: Point<Pixels>) {
         if let State::FingerScrolling(state) = &mut self.state {
             state.add_sample(time, displacement);
-            return ScrollUpdate::new(TouchPhase::Moved, displacement);
+            return;
         }
         let mut new_state = FingerScrollState::new();
         new_state.add_sample(time, displacement);
         self.state = State::FingerScrolling(new_state);
-        ScrollUpdate::new(TouchPhase::Started, displacement)
     }
 
-    pub fn stop_finger_scroll(&mut self, time: Instant) -> Option<ScrollUpdate> {
+    pub fn stop_finger_scroll(&mut self, time: u32) -> Option<ScrollUpdate> {
         match &mut self.state {
             State::Idling | State::KineticScrolling(_) => None,
             State::FingerScrolling(state) => {
                 if let Some(last_arrival) = state.last_arrival
-                    && time.duration_since(last_arrival) > KINETIC_SCROLLING_ASSUME_STOPPED_INTERVAL
+                    && time.wrapping_sub(last_arrival) > KINETIC_SCROLLING_ASSUME_STOPPED_INTERVAL
                 {
                     state.clear();
                 }
@@ -91,7 +87,8 @@ impl KineticScrollController {
                     self.state = State::Idling;
                     Some(ScrollUpdate::new(TouchPhase::Ended, Point::default()))
                 } else {
-                    self.state = State::KineticScrolling(KineticScrollState::new(velocity, time));
+                    self.state =
+                        State::KineticScrolling(KineticScrollState::new(velocity, Instant::now()));
                     None
                 }
             }
@@ -107,9 +104,9 @@ impl KineticScrollController {
         }
     }
 
-    pub fn tick(&mut self, time: Instant) -> Option<ScrollUpdate> {
+    pub fn tick(&mut self) -> Option<ScrollUpdate> {
         if let State::KineticScrolling(state) = &mut self.state {
-            let displacement = state.tick(time);
+            let displacement = state.tick(Instant::now());
             let new_velocity = state.velocity;
             let touch_phase;
             if kinetic_scrolling_ended(new_velocity) {
@@ -125,14 +122,14 @@ impl KineticScrollController {
 }
 
 struct Sample {
-    arrival_time: Instant,
-    interval: Duration,
+    arrival_time: u32,
+    interval: u32,
     displacement: Point<Pixels>,
 }
 
 impl Sample {
     fn average_velocity(&self) -> Point<Pixels> {
-        let interval = self.interval.as_secs_f32();
+        let interval = self.interval as f32 / 1000.0;
         if interval <= 1e-6 {
             return Point::default();
         }
@@ -142,7 +139,7 @@ impl Sample {
 
 struct FingerScrollState {
     samples: VecDeque<Sample>,
-    last_arrival: Option<Instant>,
+    last_arrival: Option<u32>,
 }
 
 impl FingerScrollState {
@@ -158,9 +155,9 @@ impl FingerScrollState {
         self.last_arrival = None;
     }
 
-    fn add_sample(&mut self, arrival_time: Instant, displacement: Point<Pixels>) {
+    fn add_sample(&mut self, arrival_time: u32, displacement: Point<Pixels>) {
         if let Some(last_arrival) = self.last_arrival {
-            let interval = arrival_time.duration_since(last_arrival);
+            let interval = arrival_time.wrapping_sub(last_arrival);
             if interval > KINETIC_SCROLLING_ASSUME_STOPPED_INTERVAL {
                 self.samples.clear();
             } else {
@@ -173,7 +170,7 @@ impl FingerScrollState {
         }
         self.last_arrival = Some(arrival_time);
         while let Some(first) = self.samples.front()
-            && arrival_time.duration_since(first.arrival_time) > KINETIC_SCROLLING_HISTORY_WINDOW
+            && arrival_time.wrapping_sub(first.arrival_time) > KINETIC_SCROLLING_HISTORY_WINDOW
         {
             self.samples.pop_front();
         }
@@ -193,7 +190,7 @@ impl FingerScrollState {
         for sample in self.samples.iter().skip(1) {
             let velocity = sample.average_velocity();
             let delta_v = velocity - last_velocity;
-            let delta_t = sample.interval.as_secs_f64();
+            let delta_t = sample.interval as f64 / 1000.0;
             if delta_t > 1e-6 {
                 energy.x += delta_v.x.to_f64() * velocity.x.abs().to_f64();
                 energy.y += delta_v.y.to_f64() * velocity.y.abs().to_f64();
