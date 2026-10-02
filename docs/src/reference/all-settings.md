@@ -2492,7 +2492,7 @@ When set to `expanded`, symbolic links are only scanned after you explicitly exp
       "**/Zed/**/*.json",
       "**/.vscode/**/*.json"
     ],
-    "Shell Script": [".env.*"]
+    "Env": [".env.*"]
   }
 }
 ```
