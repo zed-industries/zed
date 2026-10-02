@@ -12581,6 +12581,7 @@ mod tests {
         let serialized_panel = panel.update(cx, |panel, cx| SerializedGitPanel {
             signoff_enabled: false,
             commit_messages: panel.serialized_commit_messages(cx),
+            commit_editor_collapsed: None
         });
         let buffer = repository.read_with(cx, |repository, _| {
             repository.commit_message_buffer().unwrap().clone()
@@ -12676,6 +12677,7 @@ mod tests {
         let serialized_panel = panel.update(cx, |panel, cx| SerializedGitPanel {
             signoff_enabled: false,
             commit_messages: panel.serialized_commit_messages(cx),
+            commit_editor_collapsed: None,
         });
 
         // Simulate a restart and restore from the serialized state.
