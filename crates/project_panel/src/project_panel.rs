@@ -151,6 +151,7 @@ pub struct ProjectPanel {
     context_menu: Option<DeployedContextMenu>,
     filename_editor: Entity<Editor>,
     clipboard: Option<ClipboardEntry>,
+    clipboard_system_paths: Option<ExternalPaths>,
     _dragged_entry_destination: Option<Arc<Path>>,
     workspace: WeakEntity<Workspace>,
     diagnostics: HashMap<(WorktreeId, Arc<RelPath>), DiagnosticSeverity>,
@@ -891,6 +892,7 @@ impl ProjectPanel {
                 context_menu: None,
                 filename_editor,
                 clipboard: None,
+                clipboard_system_paths: None,
                 _dragged_entry_destination: None,
                 workspace: workspace.weak_handle(),
                 diagnostics: Default::default(),
@@ -3535,7 +3537,7 @@ impl ProjectPanel {
     fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
         let entries = self.disjoint_effective_entries_excluding_roots(cx);
         if !entries.is_empty() {
-            self.write_entries_to_system_clipboard(&entries, cx);
+            self.clipboard_system_paths = self.write_entries_to_system_clipboard(&entries, cx);
             self.clipboard = Some(ClipboardEntry::Cut(entries));
             cx.notify();
         }
@@ -3544,7 +3546,7 @@ impl ProjectPanel {
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         let entries = self.disjoint_effective_entries_excluding_roots(cx);
         if !entries.is_empty() {
-            self.write_entries_to_system_clipboard(&entries, cx);
+            self.clipboard_system_paths = self.write_entries_to_system_clipboard(&entries, cx);
             self.clipboard = Some(ClipboardEntry::Copied(entries));
             cx.notify();
         }
@@ -3615,12 +3617,21 @@ impl ProjectPanel {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(external_paths) = self.external_paths_from_system_clipboard(cx) {
+        let has_internal_clipboard = self
+            .clipboard
+            .as_ref()
+            .is_some_and(|clipboard| !clipboard.items().is_empty());
+        let external_paths = self.external_paths_from_system_clipboard(cx);
+        let external_paths_replace_internal = external_paths.as_ref().is_some_and(|paths| {
+            !has_internal_clipboard || self.clipboard_system_paths.as_ref() != Some(paths)
+        });
+
+        if external_paths_replace_internal {
             let target_entry_id = self
                 .selection
-                .map(|s| s.entry_id)
+                .map(|selection| selection.entry_id)
                 .or(self.state.last_worktree_root_id);
-            if let Some(entry_id) = target_entry_id {
+            if let (Some(entry_id), Some(external_paths)) = (target_entry_id, external_paths) {
                 self.drop_external_files(external_paths.paths(), entry_id, window, cx);
             }
             return;
@@ -4410,26 +4421,30 @@ impl ProjectPanel {
         Some(worktree.absolutize(&root_entry.path))
     }
 
-    fn write_entries_to_system_clipboard(&self, entries: &BTreeSet<SelectedEntry>, cx: &mut App) {
+    fn write_entries_to_system_clipboard(
+        &self,
+        entries: &BTreeSet<SelectedEntry>,
+        cx: &mut App,
+    ) -> Option<ExternalPaths> {
         let project = self.project.read(cx);
-        let paths: Vec<String> = entries
+        let paths: Vec<_> = entries
             .iter()
             .filter_map(|entry| {
                 let worktree = project.worktree_for_id(entry.worktree_id, cx)?;
                 let worktree = worktree.read(cx);
                 let worktree_entry = worktree.entry_for_id(entry.entry_id)?;
-                Some(
-                    worktree
-                        .abs_path()
-                        .join(worktree_entry.path.as_std_path())
-                        .to_string_lossy()
-                        .to_string(),
-                )
+                Some(worktree.abs_path().join(worktree_entry.path.as_std_path()))
             })
             .collect();
-        if !paths.is_empty() {
-            cx.write_to_clipboard(ClipboardItem::new_string(paths.join("\n")));
+        if paths.is_empty() {
+            return None;
         }
+
+        let paths = ExternalPaths(paths.into());
+        cx.write_to_clipboard(ClipboardItem {
+            entries: vec![GpuiClipboardEntry::ExternalPaths(paths.clone())],
+        });
+        Some(paths)
     }
 
     fn external_paths_from_system_clipboard(&self, cx: &App) -> Option<ExternalPaths> {
