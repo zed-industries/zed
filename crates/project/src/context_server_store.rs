@@ -695,7 +695,17 @@ impl ContextServerStore {
         .detach_and_log_err(cx);
     }
 
+    /// Explicitly stops a server. This is an operator decision, so it also
+    /// clears the automatic-restart budget (see `restart_after_transport_death`).
     pub fn stop_server(&mut self, id: &ContextServerId, cx: &mut Context<Self>) -> Result<()> {
+        let result = self.stop_server_inner(id, cx);
+        self.recent_restarts.remove(id);
+        result
+    }
+
+    /// Stops a server without touching the restart budget; used by the
+    /// automatic restart path, where a reset would defeat the budget.
+    fn stop_server_inner(&mut self, id: &ContextServerId, cx: &mut Context<Self>) -> Result<()> {
         if matches!(
             self.servers.get(id),
             Some(ContextServerState::Stopped { .. })
@@ -740,7 +750,7 @@ impl ContextServerStore {
                     | ContextServerState::Authenticating { .. },
             )
         ) {
-            self.stop_server(&id, cx).log_err();
+            self.stop_server_inner(&id, cx).log_err();
         }
         let task = cx.spawn({
             let id = server.id();
@@ -952,6 +962,7 @@ impl ContextServerStore {
             .remove(id)
             .context("Context server not found")?;
         self.server_working_directories.remove(id);
+        self.recent_restarts.remove(id);
 
         if let ContextServerConfiguration::Http { url, .. } = state.configuration().as_ref() {
             let server_url = url.clone();
