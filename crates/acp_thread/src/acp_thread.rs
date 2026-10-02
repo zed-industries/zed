@@ -14973,16 +14973,17 @@ mod tests {
         thread.update(cx, |thread, _| {
             thread.running_turn = Some(RunningTurn {
                 id: thread.turn_id + 1,
+                first_entry_index: 0,
                 send_task: Task::ready(()),
             });
             thread
                 .entries
                 .push(AgentThreadEntry::UserMessage(UserMessage {
-                    protocol_id: None,
+                    identity: MessageIdentity::Legacy(None),
+                    meta: None,
                     client_id: Some(ClientUserMessageId::new()),
                     is_optimistic: false,
-                    content: ContentBlock::Empty,
-                    chunks: Vec::new(),
+                    content: MessageContent::default(),
                     checkpoint: Some(Checkpoint {
                         git_checkpoint,
                         show: false,
