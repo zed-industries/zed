@@ -1367,6 +1367,18 @@ mod tests {
             assert!(*pending_input_changed_count.borrow() > count_before_blur);
         });
 
+        let temporary_focus = cx.update(|window, cx| {
+            let handle = cx.focus_handle();
+            window.focus(&handle, cx);
+            handle
+        });
+        cx.simulate_keystrokes("ctrl-d");
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+        let count_before_drop = *pending_input_changed_count.borrow();
+        cx.update(|_, _| drop(temporary_focus));
+        cx.update(|window, _| assert!(window.pending_input_is_none()));
+        assert_eq!(*pending_input_changed_count.borrow(), count_before_drop + 1);
+
         cx.update(|window, cx| window.disable_focus(cx));
         cx.simulate_keystrokes("ctrl-d");
 
