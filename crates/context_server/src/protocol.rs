@@ -123,6 +123,15 @@ impl InitializedContextServerProtocol {
         self.inner.notify(T::METHOD, params)
     }
 
+    /// Tears this client down: closes the outbound channel, cancels the I/O
+    /// tasks and fails concurrent in-flight requests fast. Dropping the handle
+    /// alone is not sufficient teardown — any other `Arc` clone keeps the
+    /// input task alive, which would keep reading the shared transport's
+    /// response channel and steal the next generation's initialize response.
+    pub fn shutdown(&self, reason: anyhow::Error) {
+        self.inner.shutdown(reason);
+    }
+
     /// A future that resolves once the underlying transport's output loop has
     /// terminated — after a send failure, or when the client is dropped —
     /// yielding the authentication challenge recorded by the transport if it

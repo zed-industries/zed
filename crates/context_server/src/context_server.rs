@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{fmt::Display, path::PathBuf};
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use client::Client;
 use gpui::AsyncApp;
 use parking_lot::RwLock;
@@ -180,6 +180,11 @@ impl ContextServer {
     pub fn stop(&self) -> Result<()> {
         let mut client = self.client.write();
         if let Some(protocol) = client.take() {
+            // Shut the client down explicitly instead of relying on the drop:
+            // callers may still hold clones of the protocol handle, and a
+            // surviving input task would keep consuming the shared transport's
+            // response channel, starving the next generation's initialize.
+            protocol.shutdown(anyhow!("context server stopped"));
             drop(protocol);
         }
         Ok(())

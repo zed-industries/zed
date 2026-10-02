@@ -1281,6 +1281,58 @@ async fn test_http_server_stops_restarting_after_repeated_transport_deaths(
     });
 }
 
+// A caller may still hold a clone of the old protocol handle when the
+// transport dies and the server restarts. The restart must reclaim the shared
+// transport's response channel regardless — a surviving input task of the old
+// client generation would otherwise consume the new initialize's response and
+// leave the server stuck in `Starting` until its timeout.
+#[gpui::test]
+async fn test_restart_reclaims_transport_from_retained_client(cx: &mut TestAppContext) {
+    const SERVER_ID: &str = "retained-handle-server";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    set_fake_mcp_http_client(cx, |message| {
+        if message.contains("\"method\":\"initialize\"") {
+            Ok(initialize_response())
+        } else if message.contains("notifications/initialized") {
+            Ok(notification_accepted_response())
+        } else {
+            Err(anyhow::anyhow!("connection reset"))
+        }
+    });
+
+    let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_http_context_server_configuration(&server_id, cx);
+    cx.run_until_parked();
+
+    // Retain the protocol handle across the restart, as production callers
+    // (e.g. an agent awaiting a tool call) legitimately do.
+    let retained_client = store.read_with(cx, |store, _| {
+        store
+            .get_running_server(&server_id)
+            .expect("server should be running")
+            .client()
+            .expect("running server should have a client")
+    });
+
+    retained_client
+        .request::<context_server::types::requests::ListTools>(())
+        .await
+        .expect_err("request should fail when the transport errors");
+    // Deliberately do NOT drop `retained_client` here.
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Running),
+            "the restart should complete even while the old client handle is retained"
+        );
+    });
+}
+
 // Some streamable-HTTP servers expire sessions aggressively: after the
 // session TTL they answer 400 with an "initialize required" error (or 404,
 // as the spec allows) instead of letting the request hang. The client must

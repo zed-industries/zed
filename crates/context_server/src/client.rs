@@ -356,8 +356,16 @@ impl Client {
     /// clearing the response handlers makes concurrent in-flight requests fail
     /// fast with the given reason instead of hanging until their own timers
     /// expire. Later requests fail fast on the closed outbound channel.
-    fn shutdown(&self, reason: anyhow::Error) {
-        *self.last_transport_error.lock() = Some(reason);
+    pub(crate) fn shutdown(&self, reason: anyhow::Error) {
+        // Keep an error a transport failure already recorded: pending requests
+        // report it (e.g. a typed `AuthRequired`), and a generic "stopped"
+        // reason must not bury the actual cause. `reason` only applies when
+        // this shutdown itself is the first thing going wrong (e.g. a timeout).
+        let mut last_transport_error = self.last_transport_error.lock();
+        if last_transport_error.is_none() {
+            *last_transport_error = Some(reason);
+        }
+        drop(last_transport_error);
         self.outbound_tx.close();
         if let Some((input_task, output_task)) = self.io_tasks.lock().take() {
             drop(input_task);
