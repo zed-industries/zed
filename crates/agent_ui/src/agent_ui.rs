@@ -41,6 +41,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ::ui::IconName;
+use acp_thread::decode_path_escapes;
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
@@ -101,21 +102,39 @@ pub(crate) fn resolve_agent_image(
         ))));
     }
 
-    let path = Path::new(dest_url);
-    if path.is_absolute() && path.exists() {
-        return Some(ImageSource::Resource(Resource::Path(Arc::from(path))));
+    if dest_url.starts_with("file:") {
+        let path = url::Url::parse(dest_url).ok()?.to_file_path().ok()?;
+        return existing_image_path(&path);
     }
 
-    for root in worktree_roots {
-        let absolute_path = root.join(dest_url);
-        if absolute_path.exists() {
-            return Some(ImageSource::Resource(Resource::Path(Arc::from(
-                absolute_path.as_path(),
-            ))));
+    // Percent escapes in bare paths are ambiguous: prefer the decoded
+    // interpretation, falling back to the literal one (e.g. a file actually
+    // named `a%20b.png`) only when the decoded path doesn't exist.
+    let decoded = decode_path_escapes(dest_url);
+    let literal_fallback = (decoded != dest_url).then_some(dest_url);
+
+    for candidate in std::iter::once(decoded.as_ref()).chain(literal_fallback) {
+        let path = Path::new(candidate);
+        if path.is_absolute() {
+            if let Some(source) = existing_image_path(path) {
+                return Some(source);
+            }
+            continue;
+        }
+
+        for root in worktree_roots {
+            if let Some(source) = existing_image_path(&root.join(candidate)) {
+                return Some(source);
+            }
         }
     }
 
     None
+}
+
+fn existing_image_path(path: &Path) -> Option<ImageSource> {
+    path.is_file()
+        .then(|| ImageSource::Resource(Resource::Path(Arc::from(path))))
 }
 
 /// Opens `abs_path` in the workspace, moving the cursor to `point` when one
@@ -970,6 +989,96 @@ mod tests {
     use settings::{
         DockPosition, NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, Settings, SettingsStore,
     };
+
+    fn image_path(source: Option<ImageSource>) -> Option<Arc<Path>> {
+        match source {
+            Some(ImageSource::Resource(Resource::Path(path))) => Some(path),
+            _ => None,
+        }
+    }
+
+    fn file_url(path: &Path) -> String {
+        url::Url::from_file_path(path)
+            .expect("temp paths are absolute")
+            .to_string()
+    }
+
+    #[test]
+    fn test_resolve_agent_image_passes_remote_urls_through() {
+        let source = resolve_agent_image("https://example.com/a.png", &[]);
+        assert!(matches!(
+            source,
+            Some(ImageSource::Resource(Resource::Uri(uri))) if uri.to_string() == "https://example.com/a.png"
+        ));
+    }
+
+    #[test]
+    fn test_resolve_agent_image_resolves_absolute_paths_and_file_urls() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("my screenshot.png");
+        std::fs::write(&image, b"png").unwrap();
+        let expected: Arc<Path> = Arc::from(image.as_path());
+
+        assert_eq!(
+            image_path(resolve_agent_image(image.to_str().unwrap(), &[])),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            image_path(resolve_agent_image(&file_url(&image), &[])),
+            Some(expected.clone())
+        );
+
+        let encoded_path = image.to_str().unwrap().replace(' ', "%20");
+        assert!(encoded_path.contains("%20"));
+        assert_eq!(
+            image_path(resolve_agent_image(&encoded_path, &[])),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn test_resolve_agent_image_prefers_literal_path_when_decoded_one_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let literal = dir.path().join("a%20b.png");
+        std::fs::write(&literal, b"png").unwrap();
+
+        assert_eq!(
+            image_path(resolve_agent_image(literal.to_str().unwrap(), &[])),
+            Some(Arc::from(literal.as_path()))
+        );
+    }
+
+    #[test]
+    fn test_resolve_agent_image_resolves_relative_paths_against_worktree_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("shots").join("my screenshot.png");
+        std::fs::create_dir_all(image.parent().unwrap()).unwrap();
+        std::fs::write(&image, b"png").unwrap();
+        let roots = vec![dir.path().to_path_buf()];
+        let expected: Arc<Path> = Arc::from(image.as_path());
+
+        assert_eq!(
+            image_path(resolve_agent_image("shots/my screenshot.png", &roots)),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            image_path(resolve_agent_image("shots/my%20screenshot.png", &roots)),
+            Some(expected)
+        );
+        assert!(resolve_agent_image("shots/nope.png", &roots).is_none());
+        assert!(resolve_agent_image("shots/my screenshot.png", &[]).is_none());
+    }
+
+    #[test]
+    fn test_resolve_agent_image_returns_none_for_missing_files_and_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("nope.png");
+
+        assert!(resolve_agent_image(missing.to_str().unwrap(), &[]).is_none());
+        assert!(resolve_agent_image(&file_url(&missing), &[]).is_none());
+        assert!(resolve_agent_image(&file_url(dir.path()), &[]).is_none());
+        assert!(resolve_agent_image("file://not a url", &[]).is_none());
+    }
 
     #[gpui::test]
     fn test_agent_command_palette_visibility(cx: &mut TestAppContext) {
