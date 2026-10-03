@@ -2,22 +2,30 @@ use anyhow::{Context as _, Result};
 use futures::{
     AsyncBufReadExt as _, StreamExt as _,
     channel::mpsc::{self},
+    future::{self, Either},
     io::BufReader,
 };
-use gpui::{App, Entity, EntityId, Task, Window};
+use gpui::{App, AppContext as _, Entity, EntityId, Task, Window};
 use jupyter_protocol::{
     ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply,
     connection_info::{ConnectionInfo, Transport},
 };
 use project::Fs;
-use runtimelib::dirs;
+use runtimelib::{
+    ClientControlConnection, ClientIoPubConnection, ClientShellConnection, ClientStdinConnection,
+    dirs,
+};
 use smol::net::TcpListener;
 use std::{
+    collections::VecDeque,
     env,
     fmt::Debug,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
+    pin::pin,
+    process::ExitStatus,
     sync::Arc,
+    time::Duration,
 };
 
 use uuid::Uuid;
@@ -90,6 +98,63 @@ async fn peek_ports(ip: IpAddr) -> Result<[u16; 5]> {
     Ok(ports)
 }
 
+const KERNEL_STDERR_LINES_TO_REPORT: usize = 20;
+
+async fn connect_to_kernel(
+    connection_info: &ConnectionInfo,
+    session_id: &str,
+) -> Result<(
+    ClientIoPubConnection,
+    ClientControlConnection,
+    ClientShellConnection,
+    ClientStdinConnection,
+)> {
+    let iopub_socket =
+        runtimelib::create_client_iopub_connection(connection_info, "", session_id).await?;
+    let control_socket =
+        runtimelib::create_client_control_connection(connection_info, session_id).await?;
+
+    let peer_identity = runtimelib::peer_identity_for_session(session_id)?;
+    let shell_socket = runtimelib::create_client_shell_connection_with_identity(
+        connection_info,
+        session_id,
+        peer_identity.clone(),
+    )
+    .await?;
+    let stdin_socket = runtimelib::create_client_stdin_connection_with_identity(
+        connection_info,
+        session_id,
+        peer_identity,
+    )
+    .await?;
+
+    Ok((iopub_socket, control_socket, shell_socket, stdin_socket))
+}
+
+fn kernel_exited_before_ready_message(
+    exit_status: std::io::Result<ExitStatus>,
+    stderr: &[String],
+) -> String {
+    let mut message = match exit_status {
+        Ok(status) => format!("kernel process exited before it was ready ({status})"),
+        Err(error) => format!("kernel process exited before it was ready: {error}"),
+    };
+    if !stderr.is_empty() {
+        message.push_str("\n\n");
+        message.push_str(&stderr.join("\n"));
+    }
+    if stderr
+        .iter()
+        .any(|line| line.contains("No module named ipykernel"))
+    {
+        message.push_str(
+            "\n\n`ipykernel` is not installed for this Python environment. \
+             Try running `pip install ipykernel` in it, or pick another kernel.",
+        );
+    }
+    message
+}
+
 pub struct NativeRunningKernel {
     pub process: util::process::Child,
     connection_path: PathBuf,
@@ -155,43 +220,13 @@ impl NativeRunningKernel {
                 std::process::Stdio::piped(),
             )?;
 
-            let session_id = Uuid::new_v4().to_string();
-
-            let iopub_socket =
-                runtimelib::create_client_iopub_connection(&connection_info, "", &session_id)
-                    .await?;
-            let control_socket =
-                runtimelib::create_client_control_connection(&connection_info, &session_id).await?;
-
-            let peer_identity = runtimelib::peer_identity_for_session(&session_id)?;
-            let shell_socket = runtimelib::create_client_shell_connection_with_identity(
-                &connection_info,
-                &session_id,
-                peer_identity.clone(),
-            )
-            .await?;
-            let stdin_socket = runtimelib::create_client_stdin_connection_with_identity(
-                &connection_info,
-                &session_id,
-                peer_identity,
-            )
-            .await?;
-
-            let (request_tx, stdin_tx) = start_kernel_tasks(
-                session.clone(),
-                iopub_socket,
-                shell_socket,
-                control_socket,
-                stdin_socket,
-                cx,
-            );
-
+            // Start reading output before connecting, so that if the kernel exits
+            // before binding its sockets (e.g. `ipykernel` is not installed), its
+            // stderr can be shown to the user.
             let stderr = process.stderr.take();
             let stdout = process.stdout.take();
 
-            cx.spawn(async move |_cx| {
-                use futures::future::Either;
-
+            let output_task = cx.background_spawn(async move {
                 let stderr_lines = match stderr {
                     Some(s) => Either::Left(
                         BufReader::new(s)
@@ -209,11 +244,49 @@ impl NativeRunningKernel {
                     None => Either::Right(futures::stream::empty()),
                 };
                 let mut lines = futures::stream::select(stderr_lines, stdout_lines);
+                let mut recent_stderr = VecDeque::new();
                 while let Some((level, Ok(line))) = lines.next().await {
                     log::log!(level, "kernel: {}", line);
+                    if level == log::Level::Error {
+                        if recent_stderr.len() == KERNEL_STDERR_LINES_TO_REPORT {
+                            recent_stderr.pop_front();
+                        }
+                        recent_stderr.push_back(line);
+                    }
                 }
-            })
-            .detach();
+                Vec::from(recent_stderr)
+            });
+
+            let session_id = Uuid::new_v4().to_string();
+
+            // Connecting retries until the kernel binds its sockets, so it would
+            // never finish if the kernel process has already exited.
+            let connect = pin!(connect_to_kernel(&connection_info, &session_id));
+            let exit_status = pin!(process.status());
+            let (iopub_socket, control_socket, shell_socket, stdin_socket) =
+                match future::select(connect, exit_status).await {
+                    Either::Left((sockets, _)) => sockets?,
+                    Either::Right((exit_status, _)) => {
+                        // Don't wait forever for output in case a child of the kernel
+                        // process is still holding its stdout or stderr open.
+                        let timeout = cx.background_executor().timer(Duration::from_secs(1));
+                        let stderr = match future::select(output_task, timeout).await {
+                            Either::Left((stderr, _)) => stderr,
+                            Either::Right(_) => Vec::new(),
+                        };
+                        anyhow::bail!(kernel_exited_before_ready_message(exit_status, &stderr));
+                    }
+                };
+            output_task.detach();
+
+            let (request_tx, stdin_tx) = start_kernel_tasks(
+                session.clone(),
+                iopub_socket,
+                shell_socket,
+                control_socket,
+                stdin_socket,
+                cx,
+            );
 
             let status = process.status();
 
@@ -451,6 +524,30 @@ mod test {
         assert_eq!(
             kernels.iter().map(|c| c.name.clone()).collect::<Vec<_>>(),
             vec!["deno", "python"]
+        );
+    }
+
+    #[test]
+    fn test_kernel_exited_before_ready_message() {
+        let message = kernel_exited_before_ready_message(
+            Err(std::io::Error::other("killed")),
+            &["/usr/bin/python3: No module named ipykernel_launcher".to_string()],
+        );
+        assert_eq!(
+            message,
+            "kernel process exited before it was ready: killed\n\n\
+             /usr/bin/python3: No module named ipykernel_launcher\n\n\
+             `ipykernel` is not installed for this Python environment. \
+             Try running `pip install ipykernel` in it, or pick another kernel."
+        );
+
+        let message = kernel_exited_before_ready_message(
+            Err(std::io::Error::other("killed")),
+            &["SyntaxError: invalid syntax".to_string()],
+        );
+        assert_eq!(
+            message,
+            "kernel process exited before it was ready: killed\n\nSyntaxError: invalid syntax"
         );
     }
 }
