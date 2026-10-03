@@ -797,6 +797,7 @@ pub struct ConversationView {
     /// Cache + worktree snapshot for resolving paths in markdown code spans.
     /// Shared with the child [`ThreadView`] when one is constructed.
     pub(crate) code_span_resolver: AgentCodeSpanResolver,
+    elapsed_label_tracker: ElapsedLabelTracker,
     request_elicitation_form_states: HashMap<ElicitationEntryId, ElicitationFormState>,
     _subscriptions: Vec<Subscription>,
 }
@@ -1075,6 +1076,7 @@ impl ConversationView {
             last_theme_id: Some(cx.theme().id.clone()),
             draft_prompt_persist_task: None,
             code_span_resolver,
+            elapsed_label_tracker: ElapsedLabelTracker::default(),
             request_elicitation_form_states: HashMap::default(),
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
@@ -1628,6 +1630,7 @@ impl ConversationView {
                 self.code_span_resolver.clone(),
                 self.thread_store.clone(),
                 initial_content,
+                self.elapsed_label_tracker.clone(),
                 subscriptions,
                 window,
                 cx,
@@ -1886,8 +1889,9 @@ impl ConversationView {
             AcpThreadEvent::ElicitationResponded(_) => {}
             AcpThreadEvent::Retry(retry) => {
                 if let Some(active) = self.thread_view(&session_id) {
-                    active.update(cx, |active, _cx| {
+                    active.update(cx, |active, cx| {
                         active.thread_retry_status = Some(retry.clone());
+                        cx.notify();
                     });
                 }
             }
@@ -3992,6 +3996,7 @@ pub(crate) mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::any::Any;
+    use std::cell::Cell;
     use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use std::sync::Arc;
@@ -4098,6 +4103,130 @@ pub(crate) mod tests {
         let weak_view = conversation_view.downgrade();
         drop(conversation_view);
         assert!(!weak_view.is_upgradable());
+    }
+
+    #[gpui::test]
+    async fn test_turn_timer_skips_hidden_elapsed_labels(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        let thread_view = active_thread(&conversation_view, cx);
+        let notification_count = count_notifications(&thread_view, cx);
+
+        let generation = thread_view.update(cx, |thread_view, cx| thread_view.start_turn(cx));
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(31));
+        cx.run_until_parked();
+
+        assert_eq!(notification_count.get(), 0);
+        thread_view.update(cx, |thread_view, cx| thread_view.stop_turn(generation, cx));
+    }
+
+    #[gpui::test]
+    async fn test_turn_timer_updates_visible_elapsed_label(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    show_turn_stats: true,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let notification_count = count_notifications(&thread_view, cx);
+
+        let finish_prompt = connection.defer_next_prompt_response();
+        message_editor(&conversation_view, cx).update_in(cx, |editor, window, cx| {
+            editor.set_text("prompt", window, cx);
+        });
+        thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        cx.executor()
+            .advance_clock(STOPWATCH_THRESHOLD + Duration::from_secs(1));
+        cx.run_until_parked();
+        let after_threshold = notification_count.get();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert!(notification_count.get() > after_threshold);
+
+        finish_prompt
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+            .expect("prompt response should still be pending");
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_turn_timer_updates_retry_countdown(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let notification_count = count_notifications(&thread_view, cx);
+
+        let finish_prompt = connection.defer_next_prompt_response();
+        message_editor(&conversation_view, cx).update_in(cx, |editor, window, cx| {
+            editor.set_text("prompt", window, cx);
+        });
+        thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        let before_retry = notification_count.get();
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            thread.update_retry_status(
+                RetryStatus {
+                    last_error: "Server overloaded".into(),
+                    attempt: 1,
+                    max_attempts: 3,
+                    started_at: Instant::now(),
+                    duration: Duration::from_secs(60),
+                    meta: None,
+                },
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert!(notification_count.get() > before_retry);
+
+        let after_retry = notification_count.get();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert!(notification_count.get() > after_retry);
+
+        finish_prompt
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+            .expect("prompt response should still be pending");
+        cx.run_until_parked();
+    }
+
+    fn count_notifications(
+        thread_view: &Entity<ThreadView>,
+        cx: &mut VisualTestContext,
+    ) -> Rc<Cell<usize>> {
+        let notification_count = Rc::new(Cell::new(0));
+        cx.update({
+            let notification_count = notification_count.clone();
+            let thread_view = thread_view.clone();
+            move |_, cx| {
+                cx.observe(&thread_view, move |_, _| {
+                    notification_count.set(notification_count.get() + 1)
+                })
+                .detach();
+            }
+        });
+        notification_count
     }
 
     #[gpui::test]
