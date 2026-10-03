@@ -210,6 +210,7 @@ impl CachedMermaidDiagram {
         let parsed_svg = Arc::new(OnceLock::<Arc<ParsedSvg>>::new());
         let svg_renderer = cx.svg_renderer();
         let mermaid_theme = build_mermaid_theme(cx);
+        let text_system = cx.text_system().clone();
 
         let task = cx.spawn({
             let render_image = render_image.clone();
@@ -218,8 +219,11 @@ impl CachedMermaidDiagram {
             async move |this, cx| {
                 let value = cx
                     .background_spawn(async move {
-                        let svg_string =
-                            mermaid_render::render_to_svg(&contents.contents, &mermaid_theme)?;
+                        let svg_string = mermaid_render::render_to_svg(
+                            &contents.contents,
+                            &mermaid_theme,
+                            text_system,
+                        )?;
                         let tree = svg_renderer
                             .parse_svg(svg_string.as_bytes())
                             .map_err(|error| anyhow::anyhow!("{error}"))?;
@@ -338,27 +342,6 @@ impl CachedMermaidDiagram {
     }
 }
 
-/// Merman has somewhat limited text measurement capabilities.
-///
-/// When it doesn't have metrics for any of the specified fonts, it chooses a
-/// fairly narrow width, which causes visible overflow. Adding `sans-serif`
-/// allows it to fall back to a more conservative (i.e. wider) measurement.
-///
-/// This isn't perfect - very wide fonts will likely still cause overflow. A
-/// proper fix would involve somehow piping `resvg`'s actual measurements into
-/// `merman`, but that is a lot of work for a fairly uncommon edge case.
-fn mermaid_font_family(font_family: &str) -> String {
-    let font_family = gpui::font_name_with_fallbacks(font_family, "system-ui");
-    if font_family
-        .split(',')
-        .any(|family| family.trim().eq_ignore_ascii_case("sans-serif"))
-    {
-        font_family.to_string()
-    } else {
-        format!("{font_family}, sans-serif")
-    }
-}
-
 fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_render::MermaidTheme {
     let colors = cx.theme().colors();
     let theme_settings = ThemeSettings::get_global(cx);
@@ -370,7 +353,7 @@ fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_render::MermaidTheme {
 
     mermaid_render::MermaidTheme {
         dark_mode: is_dark,
-        font_family: mermaid_font_family(theme_settings.ui_font.family.as_ref()),
+        font: theme_settings.ui_font.clone(),
         background: colors.editor_background,
         primary_color: colors.surface_background,
         primary_text_color: colors.text,
@@ -424,14 +407,17 @@ fn parse_mermaid_info(info: &str) -> Option<u32> {
 /// supports them, because we have not yet written custom CSS to ensure text is
 /// readable.
 fn is_supported_diagram_type(source: &str) -> bool {
-    /// If updating this list, also update the system prompt!
-    const SUPPORTED_PREFIXES: &[&str] = &[
+    /// If updating this list, also update the system prompt and the `diagram-*`
+    /// features of `merman` in crates/mermaid_render/Cargo.toml!
+    const SUPPORTED_DIAGRAM_TYPES: &[&str] = &[
+        "flowchart-v2",
         "flowchart",
-        "graph",
-        "sequenceDiagram",
+        "sequence",
         "classDiagram",
+        "class",
         "stateDiagram",
-        "stateDiagram-v2",
+        "state",
+        "er",
         "erDiagram",
         "gantt",
         "pie",
@@ -439,17 +425,11 @@ fn is_supported_diagram_type(source: &str) -> bool {
         "mindmap",
         "timeline",
         "quadrantChart",
-        "xychart-beta",
+        "xychart",
         "journey",
     ];
-    let first_token = source
-        .trim_start()
-        .split(|c: char| c.is_whitespace() || c == '\n')
-        .next()
-        .unwrap_or("");
-    SUPPORTED_PREFIXES
-        .iter()
-        .any(|prefix| first_token.eq_ignore_ascii_case(prefix))
+    mermaid_render::detect_diagram_type(source)
+        .is_some_and(|diagram_type| SUPPORTED_DIAGRAM_TYPES.contains(&diagram_type))
 }
 
 pub(crate) fn extract_mermaid_diagrams(
@@ -1095,31 +1075,6 @@ mod tests {
     }
 
     #[test]
-    fn test_mermaid_font_family_resolves_zed_virtual_fonts() {
-        assert_eq!(
-            super::mermaid_font_family(".ZedSans"),
-            "IBM Plex Sans, sans-serif"
-        );
-        assert_eq!(
-            super::mermaid_font_family("Zed Plex Sans"),
-            "IBM Plex Sans, sans-serif"
-        );
-        assert_eq!(super::mermaid_font_family(".ZedMono"), "Lilex, sans-serif");
-        assert_eq!(
-            super::mermaid_font_family(".SystemUIFont"),
-            "system-ui, sans-serif"
-        );
-        assert_eq!(
-            super::mermaid_font_family("Custom Font"),
-            "Custom Font, sans-serif"
-        );
-        assert_eq!(
-            super::mermaid_font_family("Custom Font, sans-serif"),
-            "Custom Font, sans-serif"
-        );
-    }
-
-    #[test]
     fn test_parse_mermaid_info() {
         assert_eq!(parse_mermaid_info("mermaid"), Some(100));
         assert_eq!(parse_mermaid_info("mermaid 150"), Some(150));
@@ -1139,6 +1094,46 @@ mod tests {
         let diagram = diagrams.values().next().unwrap();
         assert_eq!(diagram.contents.contents, "graph TD;");
         assert_eq!(diagram.contents.scale, 150);
+    }
+
+    #[test]
+    fn test_extract_mermaid_diagrams_with_init_directive() {
+        let markdown = concat!(
+            "```mermaid\n",
+            "%%{init: {\"flowchart\": {\"wrappingWidth\": 320}}}%%\n",
+            "flowchart TD\n",
+            "    A --> B\n",
+            "```",
+        );
+        let events =
+            crate::parser::parse_markdown_with_options(markdown, false, false, false).events;
+        let diagrams = extract_mermaid_diagrams(markdown, &events);
+
+        assert_eq!(diagrams.len(), 1);
+        let diagram = diagrams.values().next().expect("Mermaid diagram missing");
+        assert!(diagram.contents.contents.starts_with("%%{init:"));
+    }
+
+    #[test]
+    fn test_extract_mermaid_diagrams_with_frontmatter() {
+        let markdown = concat!(
+            "```mermaid\n",
+            "---\n",
+            "config:\n",
+            "  flowchart:\n",
+            "    wrappingWidth: 320\n",
+            "---\n",
+            "flowchart TD\n",
+            "    A --> B\n",
+            "```",
+        );
+        let events =
+            crate::parser::parse_markdown_with_options(markdown, false, false, false).events;
+        let diagrams = extract_mermaid_diagrams(markdown, &events);
+
+        assert_eq!(diagrams.len(), 1);
+        let diagram = diagrams.values().next().expect("Mermaid diagram missing");
+        assert!(diagram.contents.contents.starts_with("---"));
     }
 
     #[test]
@@ -1163,6 +1158,7 @@ mod tests {
         let markdown = concat!(
             "```mermaid\nsankey-beta\n```\n\n",
             "```mermaid\nblock-beta\n```\n\n",
+            "```mermaid\nflowchart-elk TD\n    A --> B\n```\n\n",
             "```mermaid\nflowchart TD\n    A --> B\n```",
         );
         let events =
@@ -1171,7 +1167,7 @@ mod tests {
         assert_eq!(
             diagrams.len(),
             1,
-            "Only the flowchart should be extracted; sankey and block should be skipped"
+            "Only the flowchart should be extracted; sankey, block, and ELK flowchart should be skipped"
         );
         let diagram = diagrams.values().next().unwrap();
         assert!(

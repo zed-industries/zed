@@ -1,5 +1,15 @@
-use gpui::Hsla;
+use std::sync::Arc;
+
+use gpui::{Hsla, NoopTextSystem, TextSystem};
 use mermaid_render::MermaidTheme;
+
+fn render_to_svg_for_test(source: &str, theme: &MermaidTheme) -> anyhow::Result<String> {
+    mermaid_render::render_to_svg(
+        source,
+        theme,
+        Arc::new(TextSystem::new(Arc::new(NoopTextSystem::new()))),
+    )
+}
 
 fn rgb(r: u8, g: u8, b: u8) -> Hsla {
     gpui::Rgba {
@@ -63,7 +73,7 @@ const DIAGRAMS: &[(&str, &str)] = &[
 fn rgb_theme() -> MermaidTheme {
     MermaidTheme {
         dark_mode: true,
-        font_family: "system-ui".to_string(),
+        font: gpui::Font::default(),
         background: rgb(40, 44, 51),
         primary_color: rgb(47, 52, 62),
         primary_text_color: rgb(220, 224, 229),
@@ -233,7 +243,7 @@ fn accent_colors_auto_applied_to_nodes() {
     // automatic accent colors applied to its node groups.
     let source = "stateDiagram-v2\n    [*] --> Idle\n    Idle --> Processing\n    Processing --> Done\n    Done --> [*]";
 
-    let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
+    let svg = render_to_svg_for_test(source, &theme).expect("render failed");
 
     // accent_fill_and_text darkens the background color for dark mode.
     // The stroke colors are direct hex conversions of the accent rgb values.
@@ -259,7 +269,7 @@ fn accent_colors_auto_applied_to_nodes() {
 fn generics_not_double_escaped() {
     let theme = rgb_theme();
     let source = "classDiagram\n    class Shelter {\n        -List~Animal~ animals\n        +adopt(Animal a) bool\n    }";
-    let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
+    let svg = render_to_svg_for_test(source, &theme).expect("render failed");
     assert!(
         !svg.contains("&amp;lt;"),
         "Double-escaped &amp;lt; found in SVG"
@@ -284,7 +294,7 @@ fn class_diagram_label_text_uses_accent_classes() {
     }
     Dog --|> Animal"#;
 
-    let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
+    let svg = render_to_svg_for_test(source, &theme).expect("render failed");
 
     use quick_xml::XmlVersion;
     use quick_xml::events::Event;
@@ -320,7 +330,7 @@ fn class_diagram_label_text_uses_accent_classes() {
 fn sequence_diagram_tspan_uses_accent_classes() {
     let theme = rgb_theme();
     let source = "sequenceDiagram\n    participant Database";
-    let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
+    let svg = render_to_svg_for_test(source, &theme).expect("render failed");
 
     use quick_xml::XmlVersion;
     use quick_xml::events::Event;
@@ -358,7 +368,7 @@ fn no_empty_attributes_or_nan_with_rgb_theme() {
     let mut all_issues = Vec::new();
 
     for (name, source) in DIAGRAMS {
-        match mermaid_render::render_to_svg(source, &theme) {
+        match render_to_svg_for_test(source, &theme) {
             Ok(svg) => all_issues.extend(check_svg_issues(name, &svg)),
             Err(e) => eprintln!("{name}: render failed (skipped): {e}"),
         }
