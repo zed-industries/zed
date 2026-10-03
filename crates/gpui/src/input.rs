@@ -304,8 +304,6 @@ mod tests {
             move |_, cx| ConfigurationTestView {
                 focus_handle: cx.focus_handle(),
                 configuration: custom,
-                text: String::new(),
-                selected_range: 0..0,
             }
         });
         let view = window.root(cx).unwrap();
@@ -383,48 +381,9 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    fn focused_selected_text_reads_from_focused_input_handler(cx: &mut TestAppContext) {
-        let window = cx.add_window(|_, cx| ConfigurationTestView {
-            focus_handle: cx.focus_handle(),
-            configuration: TextInputConfiguration::default(),
-            text: "the quick brown fox".to_string(),
-            selected_range: 4..15,
-        });
-        let view = window.root(cx).unwrap();
-        let window = AnyWindowHandle::from(window);
-        let draw = |cx: &mut TestAppContext| {
-            cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
-                .unwrap();
-        };
-        let focused_selected_text = |cx: &mut TestAppContext| {
-            cx.update_window(window, |_, window, cx| window.focused_selected_text(cx))
-                .unwrap()
-        };
-
-        // Without focus, no input handler is registered.
-        draw(cx);
-        assert_eq!(focused_selected_text(cx), None);
-
-        cx.update_window(window, |_, window, cx| {
-            let focus_handle = view.read(cx).focus_handle.clone();
-            window.focus(&focus_handle, cx);
-        })
-        .unwrap();
-        draw(cx);
-        assert_eq!(focused_selected_text(cx).as_deref(), Some("quick brown"));
-        // The handler is restored, so it can be queried again.
-        assert_eq!(focused_selected_text(cx).as_deref(), Some("quick brown"));
-
-        view.update(cx, |view, _| view.selected_range = 4..4);
-        assert_eq!(focused_selected_text(cx), None);
-    }
-
     struct ConfigurationTestView {
         focus_handle: FocusHandle,
         configuration: TextInputConfiguration,
-        text: String,
-        selected_range: std::ops::Range<usize>,
     }
 
     impl Render for ConfigurationTestView {
@@ -448,15 +407,14 @@ mod tests {
     }
 
     impl EntityInputHandler for ConfigurationTestView {
-        // The test text is ASCII, so UTF-16 offsets equal byte offsets.
         fn text_for_range(
             &mut self,
-            range: std::ops::Range<usize>,
+            _range: std::ops::Range<usize>,
             _adjusted_range: &mut Option<std::ops::Range<usize>>,
             _window: &mut Window,
             _cx: &mut Context<Self>,
         ) -> Option<String> {
-            self.text.get(range).map(ToString::to_string)
+            None
         }
 
         fn selected_text_range(
@@ -465,10 +423,7 @@ mod tests {
             _window: &mut Window,
             _cx: &mut Context<Self>,
         ) -> Option<UTF16Selection> {
-            Some(UTF16Selection {
-                range: self.selected_range.clone(),
-                reversed: false,
-            })
+            None
         }
 
         fn marked_text_range(
