@@ -36,7 +36,7 @@ use workspace::{
 
 use crate::{
     Autoscroll, DefaultDiffHunkRenderer, DiffHunkRenderer, Editor, EditorEvent, EditorSettings,
-    ToggleSoftWrap,
+    ScrollOffset, ToggleSoftWrap,
     actions::{DisableBreakpoint, EditLogBreakpoint, EnableBreakpoint, ToggleBreakpoint},
     display_map::Companion,
 };
@@ -84,16 +84,16 @@ fn buffer_range_to_base_text_range(
 }
 
 fn translate_lhs_selections_to_rhs(
-    selections_by_buffer: &HashMap<BufferId, (Vec<Range<BufferOffset>>, Option<u32>)>,
+    selections_by_buffer: &HashMap<BufferId, (Vec<Range<BufferOffset>>, Option<ScrollOffset>)>,
     splittable: &SplittableEditor,
     cx: &App,
-) -> HashMap<Entity<Buffer>, (Vec<Range<BufferOffset>>, Option<u32>)> {
+) -> HashMap<Entity<Buffer>, (Vec<Range<BufferOffset>>, Option<ScrollOffset>)> {
     let Some(lhs) = &splittable.lhs else {
         return HashMap::default();
     };
     let lhs_snapshot = lhs.multibuffer.read(cx).snapshot(cx);
 
-    let mut translated: HashMap<Entity<Buffer>, (Vec<Range<BufferOffset>>, Option<u32>)> =
+    let mut translated: HashMap<Entity<Buffer>, (Vec<Range<BufferOffset>>, Option<ScrollOffset>)> =
         HashMap::default();
 
     for (lhs_buffer_id, (ranges, scroll_offset)) in selections_by_buffer {
