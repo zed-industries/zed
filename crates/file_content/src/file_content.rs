@@ -88,7 +88,7 @@ pub fn decode_text(bytes: Vec<u8>) -> Result<DecodedText> {
 
 pub async fn detect_encoding(reader: &mut (dyn Read + Send)) -> io::Result<&'static Encoding> {
     let mut detector = EncodingDetector::new();
-    let mut block = [0; DECODING_BLOCK_BYTES];
+    let mut block = vec![0; DECODING_BLOCK_BYTES];
     let mut length = 0;
     loop {
         let read = match reader.read(&mut block[length..]) {
