@@ -438,6 +438,7 @@ pub fn python_env_kernel_specifications(
         .map(|w| w.read(cx).abs_path());
 
     let background_executor = cx.background_executor().clone();
+    let fs = project.read(cx).fs().clone();
 
     async move {
         let (toolchains, user_toolchains) = if let Some(Toolchains {
@@ -457,6 +458,7 @@ pub fn python_env_kernel_specifications(
             .chain(toolchains.toolchains)
             .map(|toolchain| {
                 let wsl_distro = wsl_distro.clone();
+                let fs = fs.clone();
                 background_executor.spawn(async move {
                     // For remote projects, we assume python is available assuming toolchain is reported.
                     // We can skip the `ipykernel` check or run it remotely.
@@ -515,6 +517,7 @@ pub fn python_env_kernel_specifications(
                         .unwrap_or(false);
 
                     let mut env = HashMap::new();
+                    let mut venv_root = None;
                     if let Some(python_bin_dir) = PathBuf::from(&python_path).parent() {
                         if let Some(path_var) = std::env::var_os("PATH") {
                             let mut paths = std::env::split_paths(&path_var).collect::<Vec<_>>();
@@ -524,20 +527,50 @@ pub fn python_env_kernel_specifications(
                             }
                         }
 
-                        if let Some(venv_root) = python_bin_dir.parent() {
-                            env.insert("VIRTUAL_ENV".to_string(), venv_root.to_string_lossy().to_string());
+                        if let Some(root) = python_bin_dir.parent() {
+                            env.insert("VIRTUAL_ENV".to_string(), root.to_string_lossy().to_string());
+                            venv_root = Some(root.to_path_buf());
                         }
                     }
+
+                    // Prefer the name of a kernelspec already installed in the venv (e.g. via
+                    // `ipykernel install`), so external tools like `jupyter execute` and
+                    // nbconvert - which resolve kernels by `name`, not `display_name` - can find
+                    // it too. Otherwise fall back to the toolchain's own name.
+                    let kernel_name: String = if let Some(venv_root) = venv_root.as_deref() {
+                        installed_kernel_name_for_venv(venv_root, fs.as_ref()).await
+                    } else {
+                        None
+                    }
+                    .unwrap_or_else(|| toolchain.name.to_string());
 
                     log::info!("Preparing Python kernel for toolchain: {}", toolchain.name);
                     log::info!("Python path: {}", python_path);
                     if let Some(path) = env.get("PATH") {
-                         log::info!("Kernel PATH: {}", path);
+                        log::info!("Kernel PATH: {}", path);
                     } else {
-                         log::info!("Kernel PATH not set in env");
+                        log::info!("Kernel PATH not set in env");
                     }
                     if let Some(venv) = env.get("VIRTUAL_ENV") {
-                         log::info!("Kernel VIRTUAL_ENV: {}", venv);
+                        log::info!("Kernel VIRTUAL_ENV: {}", venv);
+                    }
+
+                    // TODO: the fallback above can still produce an illegal name (toolchain
+                    // display names often contain spaces/parens/etc) when no kernelspec is
+                    // installed - sanitize it or auto-register a kernelspec instead of only
+                    // warning. Jupyter kernel names may only contain ASCII letters, numbers,
+                    // and - . _ (hyphen, period, underscore):
+                    // https://jupyter-client.readthedocs.io/en/latest/kernels.html#kernel-specs
+                    // Also see the `TODO` in `test_python_env_kernel_specifications_falls_back_without_installed_kernelspec`
+                    // where we test this fallback behavior.
+                    if !kernel_name
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_')
+                    {
+                        log::warn!(
+                            "Kernel name '{}' contains illegal characters. Kernel names can only contain ASCII letters and numbers and these separators: - . _ (hyphen, period, and underscore). Some tools may not be able to resolve this kernel.",
+                            kernel_name
+                        );
                     }
 
                     let kernelspec = JupyterKernelspec {
@@ -556,7 +589,7 @@ pub fn python_env_kernel_specifications(
                     };
 
                     Some(KernelSpecification::PythonEnv(PythonEnvKernelSpecification {
-                        name: toolchain.name.to_string(),
+                        name: kernel_name,
                         path: PathBuf::from(&python_path),
                         kernelspec,
                         has_ipykernel,
@@ -763,5 +796,231 @@ impl Kernel {
             | Kernel::ErroredLaunch(_)
             | Kernel::Shutdown => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use async_trait::async_trait;
+    use gpui::TestAppContext;
+    use language::{
+        Language, LanguageConfig, LanguageMatcher, ManifestName, Toolchain, ToolchainList,
+        ToolchainLister, ToolchainMetadata,
+    };
+    use project::FakeFs;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use task::ShellKind;
+    use util::path;
+
+    /// Reports a single fixed Python toolchain, so tests control exactly which interpreter
+    /// path `python_env_kernel_specifications` discovers, without touching real toolchain
+    /// detection (pyenv, conda, etc).
+    struct TestPythonToolchainLister {
+        toolchain_path: SharedString,
+        toolchain_name: SharedString,
+    }
+
+    #[async_trait]
+    impl ToolchainLister for TestPythonToolchainLister {
+        async fn list(
+            &self,
+            _worktree_root: PathBuf,
+            _subroot_relative_path: std::sync::Arc<RelPath>,
+            _project_env: Option<collections::HashMap<String, String>>,
+        ) -> ToolchainList {
+            ToolchainList {
+                toolchains: vec![Toolchain {
+                    name: self.toolchain_name.clone(),
+                    path: self.toolchain_path.clone(),
+                    language_name: LanguageName::new_static("Python"),
+                    as_json: serde_json::Value::Null,
+                }],
+                ..Default::default()
+            }
+        }
+
+        async fn resolve(
+            &self,
+            _path: PathBuf,
+            _project_env: Option<collections::HashMap<String, String>>,
+        ) -> anyhow::Result<Toolchain> {
+            anyhow::bail!("not implemented")
+        }
+
+        fn activation_script(
+            &self,
+            _toolchain: &Toolchain,
+            _shell: ShellKind,
+            _cx: &App,
+        ) -> futures::future::BoxFuture<'static, Vec<String>> {
+            Box::pin(async { Vec::new() })
+        }
+
+        fn meta(&self) -> ToolchainMetadata {
+            ToolchainMetadata {
+                term: SharedString::new_static("Python"),
+                new_toolchain_placeholder: SharedString::default(),
+                manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
+            }
+        }
+    }
+
+    /// Sets up a project whose single Python toolchain is `toolchain_path`, so
+    /// `python_env_kernel_specifications` will look for an installed kernelspec at
+    /// `<parent of parent of toolchain_path>/share/jupyter/kernels`.
+    async fn project_with_python_toolchain(
+        fs: std::sync::Arc<dyn project::Fs>,
+        toolchain_path: &'static str,
+        toolchain_name: &'static str,
+        cx: &mut TestAppContext,
+    ) -> (Entity<Project>, WorktreeId) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+        let python = std::sync::Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "Python".into(),
+                    matcher: (LanguageMatcher {
+                        path_suffixes: vec!["py".to_string()],
+                        ..Default::default()
+                    })
+                    .into(),
+                    ..Default::default()
+                },
+                None,
+            )
+            .with_manifest(Some(ManifestName::from(SharedString::new_static(
+                "pyproject.toml",
+            ))))
+            .with_toolchain_lister(Some(std::sync::Arc::new(TestPythonToolchainLister {
+                toolchain_path: SharedString::new_static(toolchain_path),
+                toolchain_name: SharedString::new_static(toolchain_name),
+            }))),
+        );
+        project.read_with(cx, |project, _cx| {
+            project.languages().add(python.clone());
+        });
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        (project, worktree_id)
+    }
+
+    #[gpui::test]
+    async fn test_python_env_kernel_specifications_uses_installed_kernelspec_name(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "main.py": "",
+                ".venv": {
+                    "bin": { "python": "" },
+                    // A real `ipykernel install` into this venv, as VS Code's Jupyter
+                    // extension and `uv run jupyter execute` would both find and use.
+                    "share": {
+                        "jupyter": {
+                            "kernels": {
+                                "python3": {
+                                    "kernel.json": r#"{
+                                        "display_name": "Python 3 (ipykernel)",
+                                        "language": "python",
+                                        "argv": ["python", "-m", "ipykernel_launcher", "-f", "{connection_file}"],
+                                        "env": {}
+                                    }"#
+                                }
+                            }
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let (project, worktree_id) = project_with_python_toolchain(
+            fs,
+            path!("/project/.venv/bin/python"),
+            // Deliberately the kind of display label Zed synthesizes for uv/venv toolchains -
+            // spaces, parens and a semicolon, all illegal in a Jupyter kernel `name`. If the
+            // installed-kernelspec lookup were skipped or broken, this raw string would end up
+            // as `name`, reproducing the original `jupyter execute` failure.
+            "Python 3.12.12 (project; uv)",
+            cx,
+        )
+        .await;
+
+        let specs = cx
+            .update(|cx| python_env_kernel_specifications(&project, worktree_id, cx))
+            .await
+            .expect("python_env_kernel_specifications should succeed");
+
+        let spec = specs
+            .into_iter()
+            .find_map(|spec| match spec {
+                KernelSpecification::PythonEnv(spec) => Some(spec),
+                _ => None,
+            })
+            .expect("expected a PythonEnv kernel specification for the discovered toolchain");
+
+        // Expected: "python3", the name of the kernelspec actually installed in the venv -
+        // not the raw toolchain display string, which is not a legal Jupyter kernel name and
+        // (even if sanitized) would not match anything `jupyter execute`/nbconvert can resolve.
+        assert_eq!(spec.name, "python3");
+    }
+
+    #[gpui::test]
+    async fn test_python_env_kernel_specifications_falls_back_without_installed_kernelspec(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "main.py": "",
+                ".venv": {
+                    // A bare venv: no `share/jupyter/kernels`, i.e. `ipykernel install` was
+                    // never run here.
+                    "bin": { "python": "" },
+                }
+            }),
+        )
+        .await;
+
+        let (project, worktree_id) = project_with_python_toolchain(
+            fs,
+            path!("/project/.venv/bin/python"),
+            "Python 3.12.12 (project; uv)",
+            cx,
+        )
+        .await;
+
+        let specs = cx
+            .update(|cx| python_env_kernel_specifications(&project, worktree_id, cx))
+            .await
+            .expect("python_env_kernel_specifications should succeed");
+
+        let spec = specs
+            .into_iter()
+            .find_map(|spec| match spec {
+                KernelSpecification::PythonEnv(spec) => Some(spec),
+                _ => None,
+            })
+            .expect("expected a PythonEnv kernel specification for the discovered toolchain");
+
+        // Expected: falls back to the toolchain's own name, which may contain illegal characters.
+        // Zed has no installed kernelspec to infer the name from here, so there is currently nothing
+        // valid to name this kernel. This assertion documents current behavior, not an endorsement of it.
+        // See the `TODO` + `log::warn!` in `python_env_kernel_specifications` for more information.
+        assert_eq!(spec.name, "Python 3.12.12 (project; uv)");
     }
 }
