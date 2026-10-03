@@ -218,6 +218,8 @@ fn to_merman_config(theme: &MermaidTheme) -> merman::MermaidConfig {
 
     merman::MermaidConfig::from_value(serde_json::json!({
         "theme": "base",
+        // Mermaid 12 defaults to the `neo` look; Zed's injected CSS targets classic output.
+        "look": "classic",
         "darkMode": theme.dark_mode,
         "fontFamily": svg_font_family,
         // resvg can't rasterize HTML `<foreignObject>` labels, so merman's

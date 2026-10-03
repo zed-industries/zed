@@ -407,7 +407,8 @@ fn parse_mermaid_info(info: &str) -> Option<u32> {
 /// supports them, because we have not yet written custom CSS to ensure text is
 /// readable.
 fn is_supported_diagram_type(source: &str) -> bool {
-    /// If updating this list, also update the system prompt!
+    /// If updating this list, also update the system prompt and the `diagram-*`
+    /// features of `merman` in crates/mermaid_render/Cargo.toml!
     const SUPPORTED_DIAGRAM_TYPES: &[&str] = &[
         "flowchart-v2",
         "flowchart",

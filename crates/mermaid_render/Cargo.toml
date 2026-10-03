@@ -18,7 +18,21 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 gpui.workspace = true
-merman = { git = "https://github.com/Latias94/merman", rev = "54d257aa8be7ae9ab1332d1b257205b60b43dbbd", version = "0.8.0-alpha.6", default-features = false, features = [
+merman = { version = "=0.8.0-alpha.7", default-features = false, features = [
+    # Keep in sync with `SUPPORTED_DIAGRAM_TYPES` in crates/markdown/src/mermaid.rs.
+    "diagram-class",
+    "diagram-er",
+    "diagram-flowchart",
+    "diagram-gantt",
+    "diagram-git-graph",
+    "diagram-journey",
+    "diagram-mindmap",
+    "diagram-pie",
+    "diagram-quadrant-chart",
+    "diagram-sequence",
+    "diagram-state",
+    "diagram-timeline",
+    "diagram-xychart",
     "layout-cytoscape",
     "svg",
 ] }
