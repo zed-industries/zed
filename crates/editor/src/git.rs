@@ -5,19 +5,26 @@ use ::git::{
     Oid, Restore, blame::BlameEntry, commit::ParsedCommitMessage, repository::RepoPath,
     status::FileStatus,
 };
-use buffer_diff::{BufferDiff, DiffHunkStatus, DiffHunkStatusKind};
+use buffer_diff::{
+    BufferDiff, DiffHunkStatus, DiffHunkStatusKind, ResolvedLineSelection, base_row_span,
+    buffer_row_span,
+};
 use project::git_store::Repository;
 
 #[derive(Clone)]
 struct ResolvedDiffHunk {
     buffer_range: Range<text::Anchor>,
+    multi_buffer_range: Range<Anchor>,
     diff_base_byte_range: Range<usize>,
     status: DiffHunkStatus,
+    staged_added: Vec<Range<text::Anchor>>,
+    staged_deleted: Vec<Range<u32>>,
 }
 
 #[derive(Clone)]
 struct ResolvedDiffHunks {
     diff: Entity<BufferDiff>,
+    buffer_id: BufferId,
     buffer: Option<Entity<Buffer>>,
     hunks: Vec<ResolvedDiffHunk>,
 }
@@ -38,6 +45,145 @@ pub trait DiffHunkRenderer {
     fn render_hunk_as_staged(&self, status: &DiffHunkStatus, _cx: &App) -> bool {
         !status.has_secondary_hunk()
     }
+}
+
+/// Resolves multibuffer selection ranges into per-buffer line selections for
+/// the given hunks, and computes the direction of a toggle: stage if any
+/// selected visible line is unstaged.
+///
+/// A selection over a hunk whose deletion block is collapsed can't include the
+/// deleted lines explicitly, so the whole deletion is implied whenever the
+/// selection touches such a hunk. Implied deletions follow the toggle
+/// direction, but only drive it for pure deletion hunks, which have no visible
+/// lines of their own.
+fn resolve_line_selections(
+    hunks: &[ResolvedDiffHunks],
+    ranges: &[Range<Anchor>],
+    snapshot: &MultiBufferSnapshot,
+    cx: &App,
+) -> (HashMap<BufferId, Vec<ResolvedLineSelection>>, bool) {
+    let mut selections: HashMap<BufferId, Vec<ResolvedLineSelection>> = HashMap::default();
+    for range in ranges {
+        let point_range = range.to_point(snapshot);
+        let is_cursor = point_range.start == point_range.end;
+        for (buffer_snapshot, buffer_range, deleted_anchor) in
+            snapshot.range_to_buffer_ranges_with_deleted_hunks(point_range)
+        {
+            let (buffer_id, is_deleted) = if let Some(buffer_id) = deleted_anchor
+                .and_then(|anchor| anchor.raw_text_anchor())
+                .map(|anchor| anchor.buffer_id)
+            {
+                // buffer_id and buffer_snapshot differ in source here because
+                // we want to key to the hunks in the real buffer but want the
+                // rows from the base text
+                (buffer_id, true)
+            } else {
+                (buffer_snapshot.remote_id(), false)
+            };
+            let buffer_point_range = buffer_range.to_point(buffer_snapshot);
+            let rows = if is_cursor {
+                buffer_point_range.start.row..buffer_point_range.start.row + 1
+            } else if buffer_point_range.start == buffer_point_range.end {
+                continue;
+            } else {
+                buffer_row_span(&buffer_point_range)
+            };
+            selections
+                .entry(buffer_id)
+                .or_default()
+                .push(ResolvedLineSelection { rows, is_deleted });
+        }
+    }
+
+    let mut stage = false;
+    let mut implied = Vec::new();
+    for group in hunks {
+        let Some(buffer_snapshot) = snapshot.buffer_for_id(group.buffer_id) else {
+            continue;
+        };
+        let base_text = group.diff.read(cx).base_text(cx);
+        let explicit = selections.get(&group.buffer_id);
+        for hunk in &group.hunks {
+            let added_rows = buffer_row_span(&hunk.buffer_range.to_point(&buffer_snapshot));
+            let deleted_rows = base_row_span(
+                &base_text,
+                &hunk.diff_base_byte_range,
+                &hunk.diff_base_byte_range.to_point(&base_text),
+            );
+            let staged_added = hunk
+                .staged_added
+                .iter()
+                .map(|range| buffer_row_span(&range.to_point(&buffer_snapshot)))
+                .collect_vec();
+
+            let mut touched = false;
+            let mut deletion_selected = false;
+            for selection in explicit.into_iter().flatten() {
+                if selection.is_deleted {
+                    let overlap = selection.rows.start.max(deleted_rows.start)
+                        ..selection.rows.end.min(deleted_rows.end);
+                    if overlap.start >= overlap.end {
+                        continue;
+                    }
+                    deletion_selected = true;
+                    // staged_deleted is relative to the hunk's deleted region
+                    let overlap =
+                        overlap.start - deleted_rows.start..overlap.end - deleted_rows.start;
+                    if !rows_fully_staged(overlap, &hunk.staged_deleted) {
+                        stage = true;
+                    }
+                } else if added_rows.is_empty() {
+                    // A pure deletion has no visible lines; a selection touches
+                    // it when it reaches the hunk's position, boundaries
+                    // included, matching how hunks are resolved for ranges.
+                    touched |= selection.rows.start <= added_rows.start
+                        && added_rows.start <= selection.rows.end;
+                } else {
+                    let overlap = selection.rows.start.max(added_rows.start)
+                        ..selection.rows.end.min(added_rows.end);
+                    if overlap.start >= overlap.end {
+                        continue;
+                    }
+                    touched = true;
+                    if !rows_fully_staged(overlap, &staged_added) {
+                        stage = true;
+                    }
+                }
+            }
+
+            if touched
+                && !deletion_selected
+                && !deleted_rows.is_empty()
+                && !snapshot.single_hunk_is_expanded(hunk.multi_buffer_range.clone())
+            {
+                implied.push((
+                    group.buffer_id,
+                    ResolvedLineSelection {
+                        rows: deleted_rows.clone(),
+                        is_deleted: true,
+                    },
+                ));
+                if added_rows.is_empty()
+                    && !rows_fully_staged(
+                        0..deleted_rows.end - deleted_rows.start,
+                        &hunk.staged_deleted,
+                    )
+                {
+                    stage = true;
+                }
+            }
+        }
+    }
+    for (buffer_id, selection) in implied {
+        selections.entry(buffer_id).or_default().push(selection);
+    }
+
+    (selections, stage)
+}
+
+fn rows_fully_staged(rows: Range<u32>, staged: &[Range<u32>]) -> bool {
+    rows.into_iter()
+        .all(|row| staged.iter().any(|staged| staged.contains(&row)))
 }
 
 pub struct DefaultDiffHunkRenderer;
@@ -119,6 +265,10 @@ pub(super) enum DisplayDiffHunk {
         multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
         word_diffs: Vec<Range<MultiBufferOffset>>,
+        staged_added: Vec<Range<DisplayRow>>,
+        staged_deleted: Vec<Range<u32>>,
+        deleted_lines: u32,
+        is_expanded: bool,
     },
 }
 
@@ -262,6 +412,7 @@ impl Editor {
         cx: &App,
     ) -> Vec<ResolvedDiffHunks> {
         let multibuffer = self.buffer().read(cx);
+        let multibuffer_snapshot = multibuffer.snapshot(cx);
         let chunk_by = hunks.into_iter().chunk_by(|hunk| hunk.buffer_id);
         let mut resolved = Vec::new();
 
@@ -279,14 +430,29 @@ impl Editor {
             let mut resolved_hunks = Vec::new();
 
             for hunk in hunks {
+                let staged_added = hunk
+                    .staged_added
+                    .iter()
+                    .filter_map(|range| {
+                        Some(
+                            multibuffer_snapshot.anchor_to_buffer_anchor(range.start)?.0
+                                ..multibuffer_snapshot.anchor_to_buffer_anchor(range.end)?.0,
+                        )
+                    })
+                    .collect();
+                let staged_deleted = hunk.staged_deleted.clone();
                 if hunk.buffer_id == main_buffer_id {
                     resolved_hunks.push(ResolvedDiffHunk {
                         buffer_range: hunk.buffer_range,
+                        multi_buffer_range: hunk.multi_buffer_range,
                         diff_base_byte_range: hunk.diff_base_byte_range.start.0
                             ..hunk.diff_base_byte_range.end.0,
                         status: hunk.status,
+                        staged_added,
+                        staged_deleted,
                     });
                 } else {
+                    let multi_buffer_range = hunk.multi_buffer_range;
                     let diff_base_byte_range =
                         hunk.diff_base_byte_range.start.0..hunk.diff_base_byte_range.end.0;
                     let Some(hunk) = diff_snapshot
@@ -307,11 +473,14 @@ impl Editor {
                     };
                     resolved_hunks.push(ResolvedDiffHunk {
                         buffer_range: hunk.buffer_range,
+                        multi_buffer_range,
                         diff_base_byte_range: hunk.diff_base_byte_range,
                         status: DiffHunkStatus {
                             kind,
                             secondary: hunk.secondary_status,
                         },
+                        staged_added,
+                        staged_deleted,
                     });
                 }
             }
@@ -319,6 +488,7 @@ impl Editor {
             if !resolved_hunks.is_empty() {
                 resolved.push(ResolvedDiffHunks {
                     diff,
+                    buffer_id: main_buffer_id,
                     buffer,
                     hunks: resolved_hunks,
                 });
@@ -1610,6 +1780,30 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
+    pub(super) fn toggle_staged_selected_lines(
+        &mut self,
+        _: &::git::ToggleStagedSelectedLines,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ranges: Vec<_> = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .map(|s| s.range())
+            .collect();
+        let task = self.save_buffers_for_ranges_if_needed(&ranges, cx);
+        cx.spawn_in(window, async move |this, cx| {
+            task.await?;
+            this.update_in(cx, |this, window, cx| {
+                let snapshot = this.buffer.read(cx).snapshot(cx);
+                let hunks = this.diff_hunks_in_ranges(&ranges, &snapshot).collect();
+                this.apply_toggle_lines(hunks, ranges, window, cx);
+            })
+        })
+        .detach_and_log_err(cx);
+    }
+
     pub(super) fn stage_and_next(
         &mut self,
         _: &::git::StageAndNext,
@@ -1681,6 +1875,52 @@ impl Editor {
         }
     }
 
+    pub fn apply_toggle_lines(
+        &mut self,
+        hunks: Vec<MultiBufferDiffHunk>,
+        ranges: Vec<Range<Anchor>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let hunks = self.resolve_diff_hunks(hunks, cx);
+        if hunks.is_empty() {
+            return;
+        }
+        if let Some(target) = self.diff_hunk_action_target.clone() {
+            target
+                .update(cx, |editor, cx| {
+                    editor.toggle_resolved_diff_hunk_lines(hunks, ranges, cx);
+                })
+                .log_err();
+            return;
+        }
+        self.toggle_resolved_diff_hunk_lines(hunks, ranges, cx);
+    }
+
+    fn toggle_resolved_diff_hunk_lines(
+        &mut self,
+        hunks: Vec<ResolvedDiffHunks>,
+        ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        let (selections, any_selected_line_unstaged) =
+            resolve_line_selections(&hunks, &ranges, &snapshot, cx);
+        for hunks in hunks {
+            let Some(operations) = hunks.diff.read(cx).operations() else {
+                continue;
+            };
+            let stage = if !operations.supports_unstaging() {
+                true
+            } else if !operations.supports_staging() {
+                false
+            } else {
+                any_selected_line_unstaged
+            };
+            self.stage_or_unstage_resolved_diff_hunk_lines(stage, vec![hunks], &selections, cx);
+        }
+    }
+
     pub fn apply_stage_or_unstage(
         &mut self,
         stage: bool,
@@ -1728,6 +1968,83 @@ impl Editor {
             } else {
                 operations.unstage(hunks.diff, hunks.buffer, ranges, cx);
             }
+        }
+    }
+
+    pub fn apply_stage_or_unstage_lines(
+        &mut self,
+        stage: bool,
+        ranges: Vec<Range<Anchor>>,
+        hunks: Vec<MultiBufferDiffHunk>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let hunks = self.resolve_diff_hunks(hunks, cx);
+        if hunks.is_empty() {
+            return;
+        }
+        if let Some(target) = self.diff_hunk_action_target.clone() {
+            target
+                .update(cx, |editor, cx| {
+                    editor.stage_or_unstage_resolved_diff_hunk_lines_in_ranges(
+                        stage, hunks, ranges, cx,
+                    );
+                })
+                .log_err();
+            return;
+        }
+        self.stage_or_unstage_resolved_diff_hunk_lines_in_ranges(stage, hunks, ranges, cx);
+    }
+
+    fn stage_or_unstage_resolved_diff_hunk_lines_in_ranges(
+        &mut self,
+        stage: bool,
+        hunks: Vec<ResolvedDiffHunks>,
+        ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        let (selections, _) = resolve_line_selections(&hunks, &ranges, &snapshot, cx);
+        self.stage_or_unstage_resolved_diff_hunk_lines(stage, hunks, &selections, cx);
+    }
+
+    fn stage_or_unstage_resolved_diff_hunk_lines(
+        &mut self,
+        stage: bool,
+        hunks: Vec<ResolvedDiffHunks>,
+        selections: &HashMap<BufferId, Vec<ResolvedLineSelection>>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.project().cloned() else {
+            return;
+        };
+        for hunks in hunks {
+            // Line-level staging is expressed in terms of the uncommitted diff, which is the
+            // only diff that can both stage and unstage.
+            let Some(operations) = hunks.diff.read(cx).operations() else {
+                continue;
+            };
+            if !operations.supports_staging() || !operations.supports_unstaging() {
+                continue;
+            }
+            let Some(buffer) = hunks.buffer else {
+                continue;
+            };
+            let buffer_id = buffer.read(cx).remote_id();
+            let Some(selections) = selections.get(&buffer_id) else {
+                continue;
+            };
+            project
+                .update(cx, |project, cx| {
+                    project.stage_or_unstage_lines(
+                        stage,
+                        buffer,
+                        hunks.diff,
+                        selections.clone(),
+                        cx,
+                    )
+                })
+                .log_err();
         }
     }
 
@@ -2971,6 +3288,42 @@ impl EditorSnapshot {
                     }
                     let is_created_file = hunk.is_created_file();
                     let multi_buffer_range = hunk.multi_buffer_range.clone();
+                    let is_expanded = self
+                        .buffer_snapshot()
+                        .single_hunk_is_expanded(multi_buffer_range.clone());
+                    let deleted_lines = if let Some(base) = self
+                        .buffer_snapshot()
+                        .diff_for_buffer_id(hunk.buffer_id)
+                        .map(|diff| diff.base_text())
+                    {
+                        let start = hunk.diff_base_byte_range.start.0;
+                        let end = hunk.diff_base_byte_range.end.0;
+                        let start_point = base.offset_to_point(start);
+                        let end_point = base.offset_to_point(end);
+
+                        let span = buffer_diff::base_row_span(
+                            &base.text,
+                            &(start..end),
+                            &(start_point..end_point),
+                        );
+                        span.end - span.start
+                    } else {
+                        0
+                    };
+
+                    let staged_added = hunk
+                        .staged_added
+                        .iter()
+                        .map(|range| {
+                            let start = range.start.to_display_point(&self.display_snapshot);
+                            let end = range.end.to_display_point(&self.display_snapshot);
+                            let mut end_row = end.row();
+                            if end.column() > 0 {
+                                end_row.0 += 1;
+                            }
+                            start.row()..end_row
+                        })
+                        .collect();
 
                     DisplayDiffHunk::Unfolded {
                         status: hunk.status(),
@@ -2980,6 +3333,10 @@ impl EditorSnapshot {
                         display_row_range: hunk_display_start.row()..end_row,
                         multi_buffer_range,
                         is_created_file,
+                        staged_added,
+                        staged_deleted: hunk.staged_deleted,
+                        deleted_lines,
+                        is_expanded,
                     }
                 };
 
