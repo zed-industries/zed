@@ -257,6 +257,10 @@ pub enum EstablishConnectionError {
     Websocket(#[from] async_tungstenite::tungstenite::http::Error),
 }
 
+#[derive(Debug, Error)]
+#[error("didn't receive login redirect")]
+struct LoginRedirectNotReceived;
+
 impl From<WebsocketError> for EstablishConnectionError {
     fn from(error: WebsocketError) -> Self {
         if let WebsocketError::Http(response) = &error {
@@ -702,6 +706,7 @@ impl Client {
 
                     let mut delay = INITIAL_RECONNECTION_DELAY;
                     loop {
+                        let mut should_retry = true;
                         match client.connect(true, cx).await {
                             ConnectionResult::Timeout => {
                                 log::error!("client connect attempt timed out")
@@ -711,11 +716,17 @@ impl Client {
                             }
                             ConnectionResult::Result(r) => {
                                 if let Err(error) = r {
+                                    should_retry =
+                                        error.downcast_ref::<LoginRedirectNotReceived>().is_none();
                                     log::error!("failed to connect: {error}");
                                 } else {
                                     break;
                                 }
                             }
+                        }
+
+                        if !should_retry {
+                            break;
                         }
 
                         if matches!(
@@ -1538,7 +1549,7 @@ impl Client {
                                 }
                             }
 
-                            anyhow::bail!("didn't receive login redirect");
+                            anyhow::bail!(LoginRedirectNotReceived);
                         })
                         .await?;
 
