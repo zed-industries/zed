@@ -429,14 +429,14 @@ mod tests {
     fn test_compute_move_directions(cx: &mut TestAppContext) {
         let (view, cx) = setup_test_view(cx, 10, 5);
 
-        use NavigationDirection as ND;
+        use NavigationDirection as Nav;
         view.read_with(cx, |this, _| {
-            assert_eq!(this.compute_move((0, 0), ND::Down), (1, 0));
-            assert_eq!(this.compute_move((0, 0), ND::Right), (0, 1));
-            assert_eq!(this.compute_move((0, 0), ND::Up), (0, 0));
-            assert_eq!(this.compute_move((0, 0), ND::Left), (0, 0));
-            assert_eq!(this.compute_move((9, 4), ND::Down), (9, 4));
-            assert_eq!(this.compute_move((9, 4), ND::Right), (9, 4));
+            assert_eq!(this.compute_move((0, 0), Nav::Down), (1, 0));
+            assert_eq!(this.compute_move((0, 0), Nav::Right), (0, 1));
+            assert_eq!(this.compute_move((0, 0), Nav::Up), (0, 0));
+            assert_eq!(this.compute_move((0, 0), Nav::Left), (0, 0));
+            assert_eq!(this.compute_move((9, 4), Nav::Down), (9, 4));
+            assert_eq!(this.compute_move((9, 4), Nav::Right), (9, 4));
         });
     }
 
