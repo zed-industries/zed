@@ -136,17 +136,20 @@ impl Editor {
         }
     }
 
-    pub(super) fn is_lsp_relevant(&self, file: Option<&Arc<dyn language::File>>, cx: &App) -> bool {
+    pub(crate) fn is_lsp_relevant(&self, buffer: &impl LspBufferContext, cx: &App) -> bool {
         let Some(project) = self.project() else {
             return false;
         };
-        let Some(buffer_file) = project::File::from_dyn(file) else {
-            return false;
+        let project = project.read(cx);
+        let Some(buffer_file) = project::File::from_dyn(buffer.file()) else {
+            return project
+                .lsp_store()
+                .read(cx)
+                .has_buffer_uri(buffer.remote_id());
         };
         let Some(entry_id) = buffer_file.project_entry_id() else {
             return false;
         };
-        let project = project.read(cx);
         let Some(buffer_worktree) = project.worktree_for_id(buffer_file.worktree_id(cx), cx) else {
             return false;
         };

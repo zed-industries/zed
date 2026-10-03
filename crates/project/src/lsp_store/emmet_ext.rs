@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -87,7 +87,7 @@ impl LspCommand for ExpandAbbreviation {
 
     fn to_lsp(
         &self,
-        _: &Path,
+        _: &lsp::Uri,
         _: &Buffer,
         server: &Arc<LanguageServer>,
         _: &App,

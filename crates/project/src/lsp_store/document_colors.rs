@@ -20,7 +20,9 @@ use worktree::File;
 
 use crate::{
     ColorPresentation, DocumentColor, LspStore,
-    lsp_command::{GetDocumentColor, LspCommand as _, make_text_document_identifier},
+    lsp_command::{
+        GetDocumentColor, LspCommand as _, file_path_to_lsp_url, make_text_document_identifier,
+    },
     lsp_store::{
         LspStoreEvent, RunningFetch, missing_servers_to_query, next_lsp_fetch_id,
         upstream_lsp_query_server_filter,
@@ -291,14 +293,11 @@ impl LspStore {
                 Ok(color)
             })
         } else {
-            let path = match buffer
-                .update(cx, |buffer, cx| {
-                    Some(File::from_dyn(buffer.file())?.abs_path(cx))
-                })
-                .context("buffer with the missing path")
-            {
-                Ok(path) => path,
-                Err(e) => return Task::ready(Err(e)),
+            let Some(uri) = buffer.update(cx, |buffer, cx| {
+                let path = File::from_dyn(buffer.file())?.abs_path(cx);
+                file_path_to_lsp_url(&path).ok()
+            }) else {
+                return Task::ready(Err(anyhow::anyhow!("buffer with the missing path")));
             };
             let Some(lang_server) = buffer.update(cx, |buffer, cx| {
                 self.language_server_for_local_buffer(buffer, server_id, cx)
@@ -313,7 +312,7 @@ impl LspStore {
             cx.background_spawn(async move {
                 let resolve_task = lang_server.request::<lsp::request::ColorPresentationRequest>(
                     lsp::ColorPresentationParams {
-                        text_document: make_text_document_identifier(&path)?,
+                        text_document: make_text_document_identifier(&uri),
                         color: color.color,
                         range: color.lsp_range,
                         work_done_progress_params: Default::default(),
