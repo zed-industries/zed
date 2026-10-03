@@ -339,6 +339,7 @@ pub enum DebugStackFrameLine {}
 pub enum ConflictsOuter {}
 pub enum ConflictsOurs {}
 pub enum ConflictsTheirs {}
+pub enum ConflictsBase {}
 pub enum ConflictsOursMarker {}
 pub enum ConflictsTheirsMarker {}
 
