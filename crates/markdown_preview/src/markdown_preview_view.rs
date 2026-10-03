@@ -2093,6 +2093,21 @@ impl SerializableItem for MarkdownPreviewView {
                 .context("No markdown preview entry found")?;
             let mode = MarkdownPreviewMode::from_db(mode_value);
 
+            // A preview is a view of the file's contents on disk, so a persisted
+            // preview whose file was deleted or moved while the app was closed
+            // cannot be restored. Opening it anyway would fabricate an empty
+            // buffer and announce it to language servers as an existing document.
+            // This runs before the path is resolved into a worktree so that a
+            // stale preview does not leave an empty worktree behind.
+            if !project
+                .update(cx, |project, cx| project.abs_path_is_file(&abs_path, cx))
+                .await
+            {
+                anyhow::bail!(
+                    "Refusing to restore markdown preview for {abs_path:?}: not a readable file",
+                );
+            }
+
             let (worktree, relative_path) = project
                 .update(cx, |project, cx| {
                     project.find_or_create_worktree(abs_path.clone(), false, cx)
@@ -2245,7 +2260,8 @@ mod tests {
     use workspace::item::{Item, ItemHandle, SerializableItem};
     use workspace::path_link::{OpenTarget, OpenTargetFoundBy};
     use workspace::{
-        AppState, ItemId, MultiWorkspace, Pane, SaveIntent, Workspace, WorkspaceId, open_paths,
+        AppState, ItemId, MultiWorkspace, Pane, SaveIntent, Workspace, WorkspaceDb, WorkspaceId,
+        open_paths,
     };
 
     use super::{
@@ -4324,6 +4340,104 @@ mod tests {
             MarkdownPreviewView::get_folder_for_active_editor(editor, cx)
         });
         assert_eq!(folder, Some(PathBuf::from("/remote/project/docs")));
+    }
+
+    // A persisted markdown preview is a view of a file on disk, so it must not be
+    // restored once that file is gone: the preview would otherwise open an empty
+    // buffer and announce it to language servers as an existing document.
+    // https://github.com/zed-industries/zed/issues/64231
+    #[gpui::test]
+    async fn deserialize_does_not_restore_preview_for_missing_file(cx: &mut TestAppContext) {
+        let (project, _workspace, multi_workspace) = markdown_workspace(
+            cx,
+            json!({
+                "docs": {
+                    "guide.md": "# Guide\n",
+                    "readme.md": "# readme\n",
+                }
+            }),
+            false,
+        )
+        .await;
+
+        let workspace_id = cx
+            .update(|cx| WorkspaceDb::global(cx))
+            .next_id()
+            .await
+            .unwrap();
+        let preview_db = cx.update(|cx| super::persistence::MarkdownPreviewDb::global(cx));
+
+        let restore_preview = |item_id: ItemId, cx: &mut TestAppContext| {
+            multi_workspace
+                .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.workspace().update(cx, |workspace, cx| {
+                        MarkdownPreviewView::deserialize(
+                            project.clone(),
+                            workspace.weak_handle(),
+                            workspace_id,
+                            item_id,
+                            window,
+                            cx,
+                        )
+                    })
+                })
+                .unwrap()
+        };
+
+        // Positive control: a preview whose file still exists restores.
+        let valid_id = 31_001 as ItemId;
+        preview_db
+            .save_preview(
+                valid_id,
+                workspace_id,
+                PathBuf::from(path!("/project/docs/guide.md")),
+                0,
+            )
+            .await
+            .unwrap();
+        let restored = restore_preview(valid_id, cx).await;
+        assert!(
+            restored.is_ok(),
+            "a preview for an existing file must restore"
+        );
+        cx.run_until_parked();
+
+        // The file was deleted while the app was closed.
+        let missing_id = 31_002 as ItemId;
+        preview_db
+            .save_preview(
+                missing_id,
+                workspace_id,
+                PathBuf::from(path!("/project/docs/readme.md")),
+                0,
+            )
+            .await
+            .unwrap();
+        let fs = project.read_with(cx, |project, _| project.fs().clone());
+        fs.remove_file(
+            Path::new(path!("/project/docs/readme.md")),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        let restored = restore_preview(missing_id, cx).await;
+        assert!(
+            restored.is_err(),
+            "a preview for a deleted file must not be restored"
+        );
+        cx.run_until_parked();
+        assert!(
+            !project.read_with(cx, |project, cx| {
+                project.buffer_store().read(cx).buffers().any(|buffer| {
+                    buffer
+                        .read(cx)
+                        .file()
+                        .is_some_and(|file| file.path().as_std_path().ends_with("docs/readme.md"))
+                })
+            }),
+            "no buffer may be created for the deleted preview source"
+        );
     }
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {

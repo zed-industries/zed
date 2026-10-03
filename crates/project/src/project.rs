@@ -4944,6 +4944,36 @@ impl Project {
         self.worktree_store.read(cx).find_worktree(abs_path, cx)
     }
 
+    /// Whether `abs_path` currently names a regular file.
+    ///
+    /// Session restoration consults this before opening a persisted, file-backed
+    /// item: a path whose file was deleted, moved, or replaced while the app was
+    /// closed must not be resurrected as a new, empty buffer. Such a buffer has
+    /// [`DiskState::New`] and is announced to language servers as an existing
+    /// document, which corrupts their view of the project (for example,
+    /// rust-analyzer resolving `mod ast;` against an empty `src/ast.rs` instead
+    /// of `src/ast/mod.rs`).
+    ///
+    /// The check asks the filesystem rather than the worktree: worktrees omit
+    /// paths excluded from their scan, so consulting them would refuse to restore
+    /// a file that does exist. `Fs::is_file` also follows symlinks and excludes
+    /// special files, so a path replaced by a dangling symlink or a non-regular
+    /// node is reported as missing instead of being loaded as an empty document.
+    ///
+    /// Only local projects are checked. A remote project's files live on the host,
+    /// which this process cannot stat, so remote projects keep their previous
+    /// restore behavior; refusing a stale path there requires a host-side check on
+    /// the buffer-open request, not a guess from the client.
+    pub fn abs_path_is_file(&self, abs_path: &Path, cx: &App) -> Task<bool> {
+        if !self.is_local() {
+            return Task::ready(true);
+        }
+
+        let abs_path = abs_path.to_owned();
+        let fs = self.fs.clone();
+        cx.background_spawn(async move { fs.is_file(&abs_path).await })
+    }
+
     pub fn is_shared(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Shared { .. } => true,
