@@ -319,6 +319,22 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+## Extension Suggestions
+
+- Description: Whether Zed suggests installing extensions for the languages of the files you open.
+- Setting: `extension_suggestions`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+```json [settings]
+{
+  "extension_suggestions": false
+}
+```
+
 ## Auto Update extensions
 
 - Description: Disable auto-updates for specific extensions.

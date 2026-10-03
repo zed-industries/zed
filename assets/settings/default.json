@@ -2339,6 +2339,9 @@
   "auto_install_extensions": {
     "html": true,
   },
+  // Whether Zed suggests installing extensions for the languages of the
+  // files you open.
+  "extension_suggestions": true,
   // The capabilities granted to extensions.
   //
   // This list can be customized to restrict what extensions are able to do.
