@@ -1415,6 +1415,7 @@ impl WaylandConnection {
             return;
         };
         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
+            let has_html = item.html().is_some();
             state.clipboard.set(item);
             let Some(serial) = state.serial_tracker.selection_serial() else {
                 log::warn!(
@@ -1426,6 +1427,9 @@ impl WaylandConnection {
                 .create_data_source(&state.globals.qh, DataSourceKind::Clipboard);
             for mime_type in TEXT_MIME_TYPES {
                 data_source.offer(mime_type.to_string());
+            }
+            if has_html {
+                data_source.offer("text/html".to_string());
             }
             data_source.offer(state.clipboard.self_mime());
             data_device.set_selection(Some(&data_source), serial.as_raw());
