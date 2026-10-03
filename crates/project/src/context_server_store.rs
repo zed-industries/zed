@@ -872,7 +872,8 @@ impl ContextServerStore {
             let id = id.clone();
             cx.spawn(async move |_this, cx| {
                 let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
-                if let Err(err) = Self::clear_session(&credentials_provider, &server_url, &cx).await
+                if let Err(err) =
+                    Self::clear_session(&credentials_provider, &server_url, &id, &cx).await
                 {
                     log::warn!("{} failed to clear OAuth session on removal: {}", id, err);
                 }
@@ -995,7 +996,7 @@ impl ContextServerStore {
                     let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
                     let http_client = cx.update(|cx| cx.http_client());
 
-                    match Self::load_session(&credentials_provider, url, &cx).await {
+                    match Self::load_session(&credentials_provider, url, &id, &cx).await {
                         Ok(Some(session)) => {
                             log::info!("{} loaded cached OAuth session from keychain", id);
                             Some(Self::create_oauth_token_provider(
@@ -1169,9 +1170,14 @@ impl ContextServerStore {
 
         cx.spawn(async move |cx| {
             while let Some(refreshed_session) = token_refresh_rx.next().await {
-                if let Err(err) =
-                    Self::store_session(&credentials_provider, &server_url, &refreshed_session, &cx)
-                        .await
+                if let Err(err) = Self::store_session(
+                    &credentials_provider,
+                    &server_url,
+                    &id,
+                    &refreshed_session,
+                    &cx,
+                )
+                .await
                 {
                     log::warn!("{} failed to persist refreshed OAuth session: {}", id, err);
                 }
@@ -1246,7 +1252,7 @@ impl ContextServerStore {
                 if let Some(server_url) = needs_keychain_check {
                     let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
                     let has_keychain_secret =
-                        Self::load_client_secret(&credentials_provider, &server_url, cx)
+                        Self::load_client_secret(&credentials_provider, &server_url, &id, cx)
                             .await
                             .ok()
                             .flatten()
@@ -1346,9 +1352,14 @@ impl ContextServerStore {
                 // Store the secret if non-empty (empty means public client / skip).
                 if !secret.is_empty() {
                     let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
-                    if let Err(err) =
-                        Self::store_client_secret(&credentials_provider, &server_url, &secret, cx)
-                            .await
+                    if let Err(err) = Self::store_client_secret(
+                        &credentials_provider,
+                        &server_url,
+                        &id,
+                        &secret,
+                        cx,
+                    )
+                    .await
                     {
                         log::error!(
                             "{} failed to store client secret in keychain: {:?}",
@@ -1380,7 +1391,7 @@ impl ContextServerStore {
                         // gets a fresh prompt.
                         let credentials_provider =
                             cx.update(|cx| zed_credentials_provider::global(cx));
-                        Self::clear_client_secret(&credentials_provider, &server_url, cx)
+                        Self::clear_client_secret(&credentials_provider, &server_url, &id, cx)
                             .await
                             .log_err();
 
@@ -1466,7 +1477,7 @@ impl ContextServerStore {
                 let client_secret = if oauth_settings.client_secret.is_some() {
                     oauth_settings.client_secret.clone()
                 } else {
-                    Self::load_client_secret(&credentials_provider, url, cx)
+                    Self::load_client_secret(&credentials_provider, url, &id, cx)
                         .await
                         .ok()
                         .flatten()
@@ -1521,7 +1532,7 @@ impl ContextServerStore {
             tokens,
         };
 
-        Self::store_session(&credentials_provider, &server_url, &session, cx)
+        Self::store_session(&credentials_provider, &server_url, &id, &session, cx)
             .await
             .context("Failed to persist OAuth session in keychain")?;
 
@@ -1571,10 +1582,11 @@ impl ContextServerStore {
     async fn store_session(
         credentials_provider: &Arc<dyn CredentialsProvider>,
         server_url: &url::Url,
+        server_id: &ContextServerId,
         session: &OAuthSession,
         cx: &AsyncApp,
     ) -> Result<()> {
-        let key = Self::keychain_key(server_url);
+        let key = Self::keychain_key(server_url, server_id);
         let json = serde_json::to_string(session)?;
         credentials_provider
             .write_credentials(&key, "mcp-oauth", json.as_bytes(), cx)
@@ -1586,9 +1598,10 @@ impl ContextServerStore {
     async fn load_session(
         credentials_provider: &Arc<dyn CredentialsProvider>,
         server_url: &url::Url,
+        server_id: &ContextServerId,
         cx: &AsyncApp,
     ) -> Result<Option<OAuthSession>> {
-        let key = Self::keychain_key(server_url);
+        let key = Self::keychain_key(server_url, server_id);
         match credentials_provider.read_credentials(&key, cx).await? {
             Some((_username, password_bytes)) => {
                 let session: OAuthSession = serde_json::from_slice(&password_bytes)?;
@@ -1602,29 +1615,36 @@ impl ContextServerStore {
     async fn clear_session(
         credentials_provider: &Arc<dyn CredentialsProvider>,
         server_url: &url::Url,
+        server_id: &ContextServerId,
         cx: &AsyncApp,
     ) -> Result<()> {
-        let key = Self::keychain_key(server_url);
+        let key = Self::keychain_key(server_url, server_id);
         credentials_provider.delete_credentials(&key, cx).await
     }
 
-    fn keychain_key(server_url: &url::Url) -> String {
-        format!("mcp-oauth:{}", oauth::canonical_server_uri(server_url))
+    fn keychain_key(server_url: &url::Url, server_id: &ContextServerId) -> String {
+        format!(
+            "mcp-oauth:{}:{}",
+            oauth::canonical_server_uri(server_url),
+            server_id
+        )
     }
 
-    fn client_secret_keychain_key(server_url: &url::Url) -> String {
+    fn client_secret_keychain_key(server_url: &url::Url, server_id: &ContextServerId) -> String {
         format!(
-            "mcp-oauth-client-secret:{}",
-            oauth::canonical_server_uri(server_url)
+            "mcp-oauth-client-secret:{}:{}",
+            oauth::canonical_server_uri(server_url),
+            server_id
         )
     }
 
     async fn load_client_secret(
         credentials_provider: &Arc<dyn CredentialsProvider>,
         server_url: &url::Url,
+        server_id: &ContextServerId,
         cx: &AsyncApp,
     ) -> Result<Option<String>> {
-        let key = Self::client_secret_keychain_key(server_url);
+        let key = Self::client_secret_keychain_key(server_url, server_id);
         match credentials_provider.read_credentials(&key, cx).await? {
             Some((_username, secret_bytes)) => Ok(Some(String::from_utf8(secret_bytes)?)),
             None => Ok(None),
@@ -1634,10 +1654,11 @@ impl ContextServerStore {
     pub async fn store_client_secret(
         credentials_provider: &Arc<dyn CredentialsProvider>,
         server_url: &url::Url,
+        server_id: &ContextServerId,
         secret: &str,
         cx: &AsyncApp,
     ) -> Result<()> {
-        let key = Self::client_secret_keychain_key(server_url);
+        let key = Self::client_secret_keychain_key(server_url, server_id);
         credentials_provider
             .write_credentials(&key, "mcp-oauth-client-secret", secret.as_bytes(), cx)
             .await
@@ -1646,9 +1667,10 @@ impl ContextServerStore {
     async fn clear_client_secret(
         credentials_provider: &Arc<dyn CredentialsProvider>,
         server_url: &url::Url,
+        server_id: &ContextServerId,
         cx: &AsyncApp,
     ) -> Result<()> {
-        let key = Self::client_secret_keychain_key(server_url);
+        let key = Self::client_secret_keychain_key(server_url, server_id);
         credentials_provider.delete_credentials(&key, cx).await
     }
 
@@ -1668,12 +1690,14 @@ impl ContextServerStore {
 
         cx.spawn(async move |this, cx| {
             let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
-            if let Err(err) = Self::clear_session(&credentials_provider, &server_url, &cx).await {
+            if let Err(err) =
+                Self::clear_session(&credentials_provider, &server_url, &id, &cx).await
+            {
                 log::error!("{} failed to clear OAuth session: {}", id, err);
             }
             // Also clear any client secret so the user gets a fresh prompt on
             // the next authentication attempt.
-            Self::clear_client_secret(&credentials_provider, &server_url, &cx)
+            Self::clear_client_secret(&credentials_provider, &server_url, &id, &cx)
                 .await
                 .log_err();
             // Trigger server recreation so the next start uses a fresh
@@ -1919,10 +1943,10 @@ async fn resolve_start_failure(
         };
 
         let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
-        match ContextServerStore::load_session(&credentials_provider, &server_url, cx).await {
+        match ContextServerStore::load_session(&credentials_provider, &server_url, &id, cx).await {
             Ok(Some(_)) => {
                 log::info!("{id} start failed with a cached OAuth session present; clearing it");
-                ContextServerStore::clear_session(&credentials_provider, &server_url, cx)
+                ContextServerStore::clear_session(&credentials_provider, &server_url, &id, cx)
                     .await
                     .log_err();
             }
