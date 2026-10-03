@@ -14,7 +14,7 @@ back to whatever you were just working on.
 ## Quick Switching
 
 When the Tab Switcher is opened using {#kb tab_switcher::Toggle}, instead of
-running the {#action tab_switcher::Toggle} from the command palette, it'll stay
+running the {#action tab_switcher::Toggle} ({#kb tab_switcher::ToggleAll}) from the command palette, it'll stay
 active as long as the <kbd class="keybinding">ctrl</kbd> key is held down.
 
 While holding down <kbd class="keybinding">ctrl</kbd>, each subsequent <kbd
