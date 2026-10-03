@@ -1939,6 +1939,102 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_mcp_mention_pins_tools_to_the_mentioned_server(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "tool_permissions": { "default": "allow" },
+                "profiles": {
+                    "test": {
+                        "name": "Test Profile",
+                        "enable_all_context_servers": true,
+                        "tools": {
+                            EchoTool::NAME: true,
+                        }
+                    },
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    let _first_server = setup_context_server(
+        "first_server",
+        vec![context_server::types::Tool {
+            name: "first_tool".into(),
+            title: None,
+            description: None,
+            input_schema: EchoTool::input_schema().to_value(),
+            output_schema: None,
+            annotations: None,
+        }],
+        &context_server_store,
+        cx,
+    );
+    let _second_server = setup_context_server(
+        "second_server",
+        vec![context_server::types::Tool {
+            name: "second_tool".into(),
+            title: None,
+            description: None,
+            input_schema: EchoTool::input_schema().to_value(),
+            output_schema: None,
+            annotations: None,
+        }],
+        &context_server_store,
+        cx,
+    );
+
+    // With no mention, every running server's tools are available.
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Hey"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let completion = fake_model.pending_completions().pop().unwrap();
+    assert_eq!(
+        tool_names_for_completion(&completion),
+        vec!["first_tool", "second_tool"]
+    );
+    fake_model.end_last_completion_stream();
+
+    // Mentioning one server pins the conversation to it: the sibling server's
+    // tools are no longer offered, so the model cannot reach for the wrong one.
+    let mention = UserMessageContent::Mention {
+        uri: acp_thread::MentionUri::ContextServer {
+            server_id: "first_server".to_string(),
+        },
+        content: String::new().into(),
+    };
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), [mention], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let completion = fake_model.pending_completions().pop().unwrap();
+    assert_eq!(tool_names_for_completion(&completion), vec!["first_tool"]);
+    fake_model.end_last_completion_stream();
+}
+
+#[gpui::test]
 async fn test_mcp_tool_names_are_sanitized_for_providers(cx: &mut TestAppContext) {
     let ThreadTest {
         model,

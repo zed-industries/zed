@@ -351,6 +351,9 @@ impl UserMessage {
         const MERGE_CONFLICT_TAG: &str = "<merge_conflicts>";
         const OPEN_SKILLS_TAG: &str =
             "<skills>\nThe user has attached the following agent skills:\n";
+        const OPEN_MCP_TAG: &str = "<mcp_servers>\n\
+            The user has explicitly attached the following MCP context servers. \
+            Use the tools listed under each server for this request.\n";
 
         let mut file_context = OPEN_FILES_TAG.to_string();
         let mut directory_context = OPEN_DIRECTORIES_TAG.to_string();
@@ -363,6 +366,7 @@ impl UserMessage {
         let mut diffs_context = OPEN_DIFFS_TAG.to_string();
         let mut merge_conflict_context = MERGE_CONFLICT_TAG.to_string();
         let mut skills_context = OPEN_SKILLS_TAG.to_string();
+        let mut mcp_context = OPEN_MCP_TAG.to_string();
 
         for chunk in &*self.content {
             let chunk = match chunk {
@@ -484,6 +488,22 @@ impl UserMessage {
                             let label = format!("{} ({})", name, source);
                             write!(&mut skills_context, "\nSkill: {}\n{}\n", label, content).ok();
                         }
+                        MentionUri::ContextServer { server_id } => {
+                            // The id is written verbatim. `mcp:<server>:<tool>` is
+                            // a tool-permission key, not a server id, and a model
+                            // that copies it as a tool name calls nothing.
+                            write!(
+                                &mut mcp_context,
+                                "\n- Server: {server_id}\n  Server ID: {server_id}\n",
+                            )
+                            .ok();
+                            if !content.is_empty() {
+                                write!(&mut mcp_context, "  Tools:\n").ok();
+                                for line in content.lines() {
+                                    write!(&mut mcp_context, "  {line}\n").ok();
+                                }
+                            }
+                        }
                     }
 
                     language_model::MessageContent::Text(uri.as_link().to_string())
@@ -570,6 +590,13 @@ impl UserMessage {
             message
                 .content
                 .push(language_model::MessageContent::Text(merge_conflict_context));
+        }
+
+        if mcp_context.len() > OPEN_MCP_TAG.len() {
+            mcp_context.push_str("</mcp_servers>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(mcp_context));
         }
 
         if message.content.len() > len_before_context {
@@ -1300,6 +1327,9 @@ pub struct Thread {
     #[allow(unused)]
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     pub(crate) context_server_registry: Entity<ContextServerRegistry>,
+    /// Context servers a parent thread pinned with `@mcp`, inherited by
+    /// subagents so a subagent cannot reach for a server the parent excluded.
+    inherited_context_server_scope: HashSet<String>,
     profile_id: AgentProfileId,
     /// Whether `profile_id` was downgraded to `minimal` at thread start because
     /// the workspace is restricted. Used purely to surface a warning in the UI.
@@ -1347,6 +1377,7 @@ impl Thread {
         let project = parent_thread.read(cx).project.clone();
         let project_context = parent_thread.read(cx).project_context.clone();
         let context_server_registry = parent_thread.read(cx).context_server_registry.clone();
+        let inherited_context_server_scope = parent_thread.read(cx).mentioned_context_servers();
         let templates = parent_thread.read(cx).templates.clone();
         let parent_model = parent_thread.read(cx).model().cloned();
         let parent_action_log = parent_thread.read(cx).action_log().clone();
@@ -1365,6 +1396,7 @@ impl Thread {
             parent_thread_id: parent_thread.read(cx).id().clone(),
             depth: parent_thread.read(cx).depth() + 1,
         });
+        thread.inherited_context_server_scope = inherited_context_server_scope;
         thread.inherit_parent_settings(parent_thread, cx);
         let model_selection = model_selection
             .cloned()
@@ -1452,6 +1484,7 @@ impl Thread {
                     .shared()
             },
             context_server_registry,
+            inherited_context_server_scope: HashSet::default(),
             profile_id,
             profile_downgraded_for_restricted_workspace,
             project_context,
@@ -1826,6 +1859,9 @@ impl Thread {
             pending_compaction_telemetry: None,
             initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
             context_server_registry,
+            // Restored messages carry their own `@mcp` mentions, so the scope is
+            // derived from them rather than inherited.
+            inherited_context_server_scope: HashSet::default(),
             profile_id,
             profile_downgraded_for_restricted_workspace: false,
             project_context,
@@ -4209,6 +4245,32 @@ impl Thread {
         Ok(request)
     }
 
+    /// The context servers the user explicitly attached with `@mcp`, across the
+    /// whole thread, plus any scope inherited from a parent thread.
+    ///
+    /// A mention is a pin, not just a hint: when the user names servers, only
+    /// those servers keep their tools, so the model cannot satisfy the request
+    /// with a similarly named tool from a sibling server. With no mention every
+    /// enabled server stays available.
+    fn mentioned_context_servers(&self) -> HashSet<String> {
+        let mut servers = self.inherited_context_server_scope.clone();
+        for message in &self.messages {
+            let Message::User(user_message) = &**message else {
+                continue;
+            };
+            for content in &*user_message.content {
+                if let UserMessageContent::Mention {
+                    uri: MentionUri::ContextServer { server_id },
+                    ..
+                } = content
+                {
+                    servers.insert(server_id.clone());
+                }
+            }
+        }
+        servers
+    }
+
     fn enabled_tools(&self, cx: &App) -> BTreeMap<SharedString, Arc<dyn AnyAgentTool>> {
         let Some(model) = self.model() else {
             return BTreeMap::new();
@@ -4262,10 +4324,31 @@ impl Thread {
             .filter(|(tool_name, _)| crate::tools::tool_feature_flag_enabled(tool_name, cx))
             .collect::<BTreeMap<_, _>>();
 
+        // A mention can outlive its server: the server may have stopped, or the
+        // mention may have been pasted from another machine. Pin only to servers
+        // that are still registered and still have a tool the profile enables —
+        // otherwise fall back to the profile's own tool set rather than hiding
+        // every MCP tool because of one stale mention.
+        let mut pinned_servers = self.mentioned_context_servers();
+        if !pinned_servers.is_empty() {
+            let registry = self.context_server_registry.read(cx);
+            pinned_servers.retain(|id| {
+                registry.servers().any(|(server_id, server_tools)| {
+                    server_id.0.as_ref() == id.as_str()
+                        && server_tools
+                            .keys()
+                            .any(|tool| profile.is_context_server_tool_enabled(&server_id.0, tool))
+                })
+            });
+        }
+
         let mut context_server_tools = Vec::new();
         let mut seen_tools = tools.keys().cloned().collect::<HashSet<_>>();
         let mut duplicate_tool_names = HashSet::default();
         for (server_id, server_tools) in self.context_server_registry.read(cx).servers() {
+            if !pinned_servers.is_empty() && !pinned_servers.contains(&*server_id.0) {
+                continue;
+            }
             for (tool_name, tool) in server_tools {
                 if profile.is_context_server_tool_enabled(&server_id.0, &tool_name) {
                     let tool_name: SharedString =
