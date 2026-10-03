@@ -275,6 +275,11 @@ pub struct EditorSettingsContent {
     /// Default: off
     pub completion_menu_item_kind: Option<CompletionMenuItemKind>,
 
+    /// Symbols used to represent LSP item kinds in the completions menu.
+    /// Each value must be a single Unicode character. Unspecified values inherit
+    /// their defaults.
+    pub completion_menu_item_kind_symbols: Option<CompletionMenuItemKindSymbols>,
+
     /// How to display diffs in the editor.
     ///
     /// Default: split
@@ -349,6 +354,38 @@ pub enum CompletionMenuItemKind {
     #[default]
     Off,
     Symbol,
+}
+
+#[with_fallible_options]
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
+pub struct CompletionMenuItemKindSymbols {
+    pub text: Option<char>,
+    pub method: Option<char>,
+    pub function: Option<char>,
+    pub constructor: Option<char>,
+    pub field: Option<char>,
+    pub variable: Option<char>,
+    pub class: Option<char>,
+    pub interface: Option<char>,
+    pub module: Option<char>,
+    pub property: Option<char>,
+    pub unit: Option<char>,
+    pub value: Option<char>,
+    pub r#enum: Option<char>,
+    pub keyword: Option<char>,
+    pub snippet: Option<char>,
+    pub color: Option<char>,
+    pub file: Option<char>,
+    pub reference: Option<char>,
+    pub folder: Option<char>,
+    pub enum_member: Option<char>,
+    pub constant: Option<char>,
+    pub r#struct: Option<char>,
+    pub event: Option<char>,
+    pub operator: Option<char>,
+    pub type_parameter: Option<char>,
 }
 
 impl RelativeLineNumbers {
