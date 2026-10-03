@@ -236,7 +236,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
         match &recent_workspace.location {
             SerializedWorkspaceLocation::Local => {
                 if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
-                    let paths = recent_workspace.paths.paths().to_vec();
+                    let paths = recent_workspace.paths.ordered_paths().cloned().collect();
                     cx.defer(move |cx| {
                         if let Some(task) = handle
                             .update(cx, |multi_workspace, window, cx| {
@@ -262,7 +262,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                         crate::RemoteSettings::get_global(cx)
                             .fill_connection_options_from_settings(connection);
                     };
-                    let paths = recent_workspace.paths.paths().to_vec();
+                    let paths = recent_workspace.paths.ordered_paths().cloned().collect();
                     cx.spawn_in(window, async move |_, cx| {
                         open_remote_project(connection.clone(), paths, app_state, open_options, cx)
                             .await
