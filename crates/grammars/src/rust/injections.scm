@@ -37,6 +37,60 @@
   (_) @injection.content
   (#set! injection.language "sql"))
 
+; sqlx
+(macro_invocation
+  macro: (scoped_identifier) @_macro_name
+  [
+    ; query, query_scalar
+    (token_tree
+      . "("
+      . [
+        (string_literal
+          (string_content) @injection.content)
+        (raw_string_literal
+          (string_content) @injection.content)
+      ])
+    ; query_as
+    (token_tree
+      . "("
+      . (identifier)
+      . ","
+      . [
+        (string_literal
+          (string_content) @injection.content)
+        (raw_string_literal
+          (string_content) @injection.content)
+      ])
+  ]
+  ; query macro must have a `sqlx::` prefix, to avoid false positives
+  (#match? @_macro_name "^sqlx::query(_as|_scalar)?(_unchecked)?$")
+  (#set! injection.language "sql"))
+
+(call_expression
+  function: (scoped_identifier) @_fn_path
+  arguments: [
+    ; query, query_scalar, raw_sql
+    (arguments
+      . [
+        (string_literal
+          (string_content) @injection.content)
+        (raw_string_literal
+          (string_content) @injection.content)
+      ])
+    ; query_as
+    (arguments
+      . (identifier)
+      . [
+        (string_literal
+          (string_content) @injection.content)
+        (raw_string_literal
+          (string_content) @injection.content)
+      ])
+  ]
+  ; query function must have a `sqlx::` prefix, to avoid false positives
+  (#match? @_fn_path "^sqlx::((query(_as|_scalar)?(_with)?)|raw_sql)$")
+  (#set! injection.language "sql"))
+
 ; lazy_regex
 (macro_invocation
   macro: [
