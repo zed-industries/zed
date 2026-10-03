@@ -14,8 +14,8 @@ use editor::{
     Editor, EditorEvent, EditorSettingsScrollbarProxy, MultiBufferOffset, SelectionEffects,
 };
 use gpui::{
-    App, ClipboardItem, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Global,
-    ImageSource, InteractiveElement, IntoElement, IsZero, Pixels, Render, Resource,
+    Action, App, ClipboardItem, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
+    Global, ImageSource, InteractiveElement, IntoElement, IsZero, Pixels, Render, Resource,
     RetainAllImageCache, ScrollHandle, SharedString, SharedUri, Subscription, Task, WeakEntity,
     Window, point, px,
 };
@@ -1087,6 +1087,7 @@ impl MarkdownPreviewView {
         };
 
         let mut markdown_element = MarkdownElement::new(self.markdown.clone(), markdown_style)
+            .input_focus_handle(self.focus_handle.clone())
             .code_block_renderer(CodeBlockRenderer::Default {
                 copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
                 wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
@@ -1640,8 +1641,35 @@ impl Item for MarkdownPreviewView {
             .unwrap_or_else(|| SharedString::from("Markdown Preview"))
     }
 
+    fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
+        self.active_editor
+            .as_ref()?
+            .editor
+            .read(cx)
+            .tab_tooltip_text(cx)
+    }
+
     fn telemetry_event_text(&self) -> Option<&'static str> {
         Some("Markdown Preview Opened")
+    }
+
+    fn tab_extra_context_menu_actions(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<(SharedString, Box<dyn Action>)> {
+        let preview_id = cx.entity_id();
+        // Inactive tabs aren't rendered, so the action can't be dispatched to them.
+        let is_active_in_pane = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).pane_for_item_id(preview_id))
+            .and_then(|pane| pane.read(cx).active_item())
+            .is_some_and(|item| item.item_id() == preview_id);
+        if !is_active_in_pane {
+            return Vec::new();
+        }
+        vec![("Show Source".into(), Box::new(CloseAndReturnToEditor))]
     }
 
     fn added_to_workspace(
@@ -2214,7 +2242,7 @@ mod tests {
     use util::paths::{PathStyle, PathWithPosition};
     use util::rel_path::{RelPath, rel_path};
     use util::test::TempTree;
-    use workspace::item::{ItemHandle, SerializableItem};
+    use workspace::item::{Item, ItemHandle, SerializableItem};
     use workspace::path_link::{OpenTarget, OpenTargetFoundBy};
     use workspace::{
         AppState, ItemId, MultiWorkspace, Pane, SaveIntent, Workspace, WorkspaceId, open_paths,
@@ -2243,6 +2271,31 @@ mod tests {
         assert_eq!(
             filter_non_rendered_matches(vec![58..65, 1..9, 30..37], &non_rendered_ranges),
             vec![58..65, 1..9]
+        );
+    }
+
+    #[gpui::test]
+    async fn preview_tab_tooltip_matches_source_file_path(cx: &mut TestAppContext) {
+        let (project, _, multi_workspace) = markdown_workspace(
+            cx,
+            json!({
+                "docs": {
+                    "guide.md": "# Guide"
+                }
+            }),
+            false,
+        )
+        .await;
+        let source_item =
+            open_project_file(cx, &project, &multi_workspace, "docs/guide.md", None, true).await;
+        let source_editor = cx.update(|cx| source_item.act_as::<Editor>(cx).unwrap());
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+
+        let source_tooltip = source_editor.read_with(cx, |editor, cx| editor.tab_tooltip_text(cx));
+        assert!(source_tooltip.is_some());
+        assert_eq!(
+            preview.read_with(cx, |preview, cx| preview.tab_tooltip_text(cx)),
+            source_tooltip
         );
     }
 
@@ -3117,6 +3170,90 @@ mod tests {
             editor.read_with(cx, |editor, cx| editor.buffer().read(cx).read(cx).text()),
             "- [x] Finish work\n"
         );
+    }
+
+    #[gpui::test]
+    async fn tab_context_menu_offers_show_source(cx: &mut TestAppContext) {
+        let (multi_workspace, _editor) =
+            open_markdown_file(cx, "note.md", "# Note\n\nBody text\n").await;
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+        cx.run_until_parked();
+
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                let actions = preview.update(cx, |preview, cx| {
+                    preview.tab_extra_context_menu_actions(window, cx)
+                });
+                let [(label, action)] = actions.as_slice() else {
+                    panic!("expected exactly one tab menu action");
+                };
+                assert_eq!(label.as_ref(), "Show Source");
+                assert!(action.as_any().is::<CloseAndReturnToEditor>());
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn tab_context_menu_hides_show_source_for_inactive_preview(cx: &mut TestAppContext) {
+        let (multi_workspace, editor) =
+            open_markdown_file(cx, "note.md", "# Note\n\nBody text\n").await;
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+        cx.run_until_parked();
+
+        multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    assert!(workspace.activate_item(&editor, true, true, window, cx));
+                });
+                let actions = preview.update(cx, |preview, cx| {
+                    preview.tab_extra_context_menu_actions(window, cx)
+                });
+                assert!(actions.is_empty());
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn tab_context_menu_offers_open_preview_only_for_active_editor(cx: &mut TestAppContext) {
+        let (multi_workspace, editor) =
+            open_markdown_file(cx, "note.md", "# Note\n\nBody text\n").await;
+        editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_language(
+                    Some(Arc::new(language::Language::new(
+                        markdown_language_config(),
+                        None,
+                    ))),
+                    cx,
+                );
+            });
+        });
+
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                let actions = editor.update(cx, |editor, cx| {
+                    editor.tab_extra_context_menu_actions(window, cx)
+                });
+                let [(label, _)] = actions.as_slice() else {
+                    panic!("expected exactly one tab menu action");
+                };
+                assert_eq!(label.as_ref(), "Open Markdown Preview");
+            })
+            .unwrap();
+
+        open_preview_for_active_editor(cx, &multi_workspace);
+        cx.run_until_parked();
+
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                let actions = editor.update(cx, |editor, cx| {
+                    editor.tab_extra_context_menu_actions(window, cx)
+                });
+                assert!(actions.is_empty());
+            })
+            .unwrap();
     }
 
     #[gpui::test]

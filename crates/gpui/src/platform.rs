@@ -32,20 +32,23 @@ pub(crate) type PlatformScreenCaptureFrame = scap::frame::Frame;
 #[cfg(not(feature = "screen-capture"))]
 pub(crate) type PlatformScreenCaptureFrame = ();
 #[cfg(all(target_os = "macos", feature = "screen-capture"))]
-pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBuffer;
+pub(crate) type PlatformScreenCaptureFrame =
+    objc2_core_foundation::CFRetained<objc2_core_video::CVImageBuffer>;
 
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
     FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
-    LineLayout, Pixels, PlatformGestures, PlatformInput, Point, Priority, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString,
-    Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
+    LineLayout, MissingGlyphSink, Pixels, PlatformGestures, PlatformInput, Point, Priority,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
+    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea,
+    hash, point, px, size,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;
 use anyhow::{Context as _, Result};
 use async_task::Runnable;
+use collections::FxHashMap;
 use futures::channel::oneshot;
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 use image::RgbaImage;
@@ -59,6 +62,7 @@ use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::borrow::Cow;
+use std::collections::hash_map::Entry;
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
 use std::ops;
@@ -77,6 +81,58 @@ use uuid::Uuid;
 pub use app_menu::*;
 pub use keyboard::*;
 pub use keystroke::*;
+
+/// Whether the platform is presenting a window's frames.
+///
+/// This is about presentation, not the window's shown/hidden state: a shown
+/// window that is fully covered by other windows, minimized, on another
+/// Space or virtual desktop, or on a display that is asleep is `Hidden`. A
+/// window only partly covered by other windows is `Visible`.
+///
+/// Each platform reports from a single source, and what that source can see
+/// differs:
+///
+/// * macOS: `NSWindow.occlusionState`. Covers all of the cases above.
+/// * Windows: `WS_VISIBLE` and the minimized state. Windows keeps compositing
+///   covered windows for thumbnails and Alt-Tab and offers no occlusion
+///   notification, so a fully covered window stays `Visible`. Display sleep is
+///   not reported either.
+/// * Wayland: the `xdg_toplevel` `suspended` state (xdg-shell v6). Compositors
+///   that don't support it never report `Hidden`.
+/// * X11: mapped state plus `VisibilityNotify`. Compositing window managers
+///   generally never report a window as fully obscured, so covering is only
+///   detected without compositing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowVisibility {
+    /// At least part of the window is being presented; frames drawn for it
+    /// will be shown.
+    Visible,
+    /// No part of the window is being presented. The platform will not
+    /// request frames for it until it becomes visible again.
+    Hidden,
+}
+
+impl WindowVisibility {
+    /// Whether frames drawn for the window will be shown.
+    pub fn is_visible(self) -> bool {
+        self == Self::Visible
+    }
+}
+
+/// Controls whether the application participates in the system's foreground UI.
+///
+/// Only has an effect on macOS; other platforms ignore this setting. There,
+/// [`App::request_windowing`] sets it: `Accessory` while headless and `Regular` while windowed.
+/// Set it directly with [`App::set_activation_policy`] for the one case that doesn't cover: an
+/// accessory app that shows windows, such as a menu bar utility.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum ActivationPolicy {
+    /// Participate in foreground application UI, such as the Dock and menu bar on macOS.
+    #[default]
+    Regular,
+    /// Run without foreground application UI while retaining the ability to open windows.
+    Accessory,
+}
 
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 pub(crate) use test::*;
@@ -118,26 +174,152 @@ pub fn guess_compositor() -> &'static str {
     if std::env::var_os("ZED_HEADLESS").is_some() {
         return "Headless";
     }
+    GraphicalEnvironment::detect().guess_compositor()
+}
 
-    #[cfg(feature = "wayland")]
-    let wayland_display = std::env::var_os("WAYLAND_DISPLAY");
-    #[cfg(not(feature = "wayland"))]
-    let wayland_display: Option<std::ffi::OsString> = None;
+/// The graphical session to connect to: the variables that locate its display server, as some
+/// process sees them.
+///
+/// A long-running process can outlive the graphical session it was started in, so a platform
+/// that attaches to a display server later can be given a fresher environment than its own.
+/// While connected, programs the platform launches (for example to open a URL) get these
+/// variables instead of the ones this process started with. Apply
+/// [`App::graphical_environment`] to the programs an app launches, for the same reason.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[derive(Clone, Debug, Default)]
+pub struct GraphicalEnvironment {
+    /// `WAYLAND_DISPLAY`: a socket name relative to `xdg_runtime_dir`, or an absolute path.
+    pub wayland_display: Option<OsString>,
+    /// `DISPLAY`: the X11 display name.
+    pub x11_display: Option<OsString>,
+    /// `XDG_RUNTIME_DIR`: the directory containing Wayland sockets.
+    pub xdg_runtime_dir: Option<OsString>,
+    /// `XDG_ACTIVATION_TOKEN`: lets the first window take focus on Wayland.
+    ///
+    /// A platform takes this process's token from its environment when it's created, and uses
+    /// it if it starts windowed. Pass one here to switch to windowed mode later, for example
+    /// the token of the process that asked for a window.
+    pub activation_token: Option<String>,
+}
 
-    #[cfg(feature = "x11")]
-    let x11_display = std::env::var_os("DISPLAY");
-    #[cfg(not(feature = "x11"))]
-    let x11_display: Option<std::ffi::OsString> = None;
+/// The graphical session to connect to: the Windows session whose desktop windows appear on.
+///
+/// A process can only show windows in its own session, so switching to windowed mode fails if
+/// this names another one, for example when a process started over SSH is asked to show a
+/// window on the desktop.
+#[cfg(target_os = "windows")]
+#[derive(Clone, Debug, Default)]
+pub struct GraphicalEnvironment {
+    /// The session ID, as `ProcessIdToSessionId` reports it. `None` means this process's own
+    /// session.
+    pub session_id: Option<u32>,
+}
 
-    let use_wayland = wayland_display.is_some_and(|display| !display.is_empty());
-    let use_x11 = x11_display.is_some_and(|display| !display.is_empty());
+#[cfg(target_os = "windows")]
+impl GraphicalEnvironment {
+    /// Returns the environment of this process's session.
+    pub fn detect() -> Self {
+        let mut session_id = 0;
+        // SAFETY: `session_id` is a valid pointer for the call's duration.
+        let result = unsafe {
+            windows::Win32::System::RemoteDesktop::ProcessIdToSessionId(
+                windows::Win32::System::Threading::GetCurrentProcessId(),
+                &mut session_id,
+            )
+        };
+        Self {
+            session_id: result.is_ok().then_some(session_id),
+        }
+    }
 
-    if use_wayland {
-        "Wayland"
-    } else if use_x11 {
-        "X11"
-    } else {
-        "Headless"
+    /// Does nothing on this platform: programs inherit the session of the process that
+    /// starts them.
+    pub fn apply_to(&self, _command: &mut std::process::Command) {}
+}
+
+/// The graphical session to connect to. Carries nothing yet on this platform.
+#[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "windows")))]
+#[derive(Clone, Debug, Default)]
+pub struct GraphicalEnvironment;
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "windows")))]
+impl GraphicalEnvironment {
+    /// Returns the environment of this process's graphical session.
+    pub fn detect() -> Self {
+        Self
+    }
+
+    /// Does nothing on this platform.
+    pub fn apply_to(&self, _command: &mut std::process::Command) {}
+}
+
+/// A display mode for [`App::request_windowing`] to switch to.
+#[derive(Clone, Debug)]
+pub enum WindowingRequest {
+    /// No display server. Windows lay out and handle input but draw nothing.
+    Headless,
+    /// Connected to the display server that the environment names.
+    Windowed(GraphicalEnvironment),
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+impl GraphicalEnvironment {
+    /// Reads the display variables from this process's environment.
+    ///
+    /// This only reads environment variables: whether they name a reachable display server is
+    /// checked when a platform connects. Leaves `activation_token` unset: see its documentation.
+    pub fn detect() -> Self {
+        Self {
+            wayland_display: std::env::var_os("WAYLAND_DISPLAY"),
+            x11_display: std::env::var_os("DISPLAY"),
+            xdg_runtime_dir: std::env::var_os("XDG_RUNTIME_DIR"),
+            activation_token: None,
+        }
+    }
+
+    /// Sets this environment's display variables on `command`, and removes the ones it doesn't
+    /// set, so the program connects to this graphical session rather than the one this process
+    /// started in. Leaves `XDG_ACTIVATION_TOKEN` alone.
+    pub fn apply_to(&self, command: &mut std::process::Command) {
+        for (name, value) in [
+            ("WAYLAND_DISPLAY", &self.wayland_display),
+            ("DISPLAY", &self.x11_display),
+            ("XDG_RUNTIME_DIR", &self.xdg_runtime_dir),
+        ] {
+            match value {
+                Some(value) => command.env(name, value),
+                None => command.env_remove(name),
+            };
+        }
+    }
+
+    /// Returns the compositor this environment selects: Wayland, then X11, then headless.
+    ///
+    /// Does not attempt to connect to the compositor.
+    pub fn guess_compositor(&self) -> &'static str {
+        let is_set =
+            |value: &Option<OsString>| value.as_ref().is_some_and(|value| !value.is_empty());
+        if cfg!(feature = "wayland") && is_set(&self.wayland_display) {
+            "Wayland"
+        } else if cfg!(feature = "x11") && is_set(&self.x11_display) {
+            "X11"
+        } else {
+            "Headless"
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+bitflags::bitflags! {
+    /// The windowing modes a platform may start in or switch to.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct WindowingModes: u8 {
+        /// Connected to a Wayland compositor.
+        const WAYLAND = 1 << 0;
+        /// Connected to an X server.
+        const X11 = 1 << 1;
+        /// No display server. Windows lay out and handle input but draw nothing.
+        const HEADLESS = 1 << 2;
     }
 }
 
@@ -149,8 +331,20 @@ pub trait Platform: 'static {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);
     fn quit(&self);
+    /// Switches a capable platform between headless and windowed modes. See
+    /// [`App::request_windowing`].
+    /// Sets the windowing mode the platform starts in. Called before `run`. See
+    /// [`Application::with_windowing`].
+    fn set_initial_windowing(&self, _request: WindowingRequest) {}
+    fn request_windowing(&self, _request: WindowingRequest) -> Task<anyhow::Result<()>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "this platform cannot switch between headless and windowed modes"
+        )))
+    }
     fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<OsString>);
     fn activate(&self, ignoring_other_apps: bool);
+    /// Sets the initial or current activation policy. Has no effect outside macOS.
+    fn set_activation_policy(&self, _policy: ActivationPolicy) {}
     fn hide(&self);
     fn hide_other_apps(&self);
     fn unhide_other_apps(&self);
@@ -221,6 +415,9 @@ pub trait Platform: 'static {
 
     fn on_quit(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
+    /// Registers the callback invoked when the system is about to sleep.
+    fn on_system_sleep(&self, callback: Box<dyn FnMut()>);
+    /// Registers the callback invoked when the system resumes from sleep.
     fn on_system_wake(&self, callback: Box<dyn FnMut()>);
 
     // Mobile platform methods. On mobile the OS owns the application
@@ -312,6 +509,11 @@ pub trait Platform: 'static {
 
     fn compositor_name(&self) -> &'static str {
         ""
+    }
+    /// The environment of the display server a platform that can switch windowing modes is
+    /// connected to. See [`App::graphical_environment`].
+    fn graphical_environment(&self) -> Option<GraphicalEnvironment> {
+        None
     }
     fn app_path(&self) -> Result<PathBuf>;
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
@@ -754,6 +956,16 @@ pub struct A11yCallbacks {
     pub deactivation: Box<dyn Fn() + Send + 'static>,
 }
 
+/// The source of a platform frame request's timestamp.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
+pub enum FrameRequestSource {
+    /// An OS callback or compositor-paced frame request.
+    #[default]
+    NativeCallback,
+    /// A refresh timer, retry, queued wakeup, or fallback sleep paced by the app.
+    LocalSchedule,
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 #[expect(missing_docs)]
 pub struct RequestFrameOptions {
@@ -761,6 +973,102 @@ pub struct RequestFrameOptions {
     pub require_presentation: bool,
     /// Force refresh of all rendering states when true.
     pub force_render: bool,
+    /// When the platform first requested this frame, before main-thread dispatch.
+    ///
+    /// `None` means the captured request time is unavailable.
+    /// Coalesced requests carry their first request time, not their delivery time.
+    /// Built-in backends collect timestamps only with the `profiler` feature.
+    pub signal_at: Option<Instant>,
+    /// Distinguishes native callbacks from local scheduling requests.
+    pub signal_source: FrameRequestSource,
+}
+
+/// Preserves the first platform frame request time across coalesced notifications.
+///
+/// Producers may record from a platform thread without waiting for the UI thread.
+/// The consumer drains the timestamp before dispatching the request on the UI thread.
+/// The timestamp offset and source share one atomic word so coalescing cannot
+/// mix a request's time with another request's source. The low bit encodes the
+/// source; the remaining bits encode nanoseconds from `origin`. `u64::MAX` is empty.
+/// Without the `profiler` feature, this accumulator has no timestamp storage.
+pub struct PlatformFrameSignal {
+    #[cfg(feature = "profiler")]
+    origin: Instant,
+    #[cfg(feature = "profiler")]
+    first_signal: std::sync::atomic::AtomicU64,
+}
+
+impl Default for PlatformFrameSignal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PlatformFrameSignal {
+    /// Creates an empty signal accumulator.
+    pub fn new() -> Self {
+        Self {
+            #[cfg(feature = "profiler")]
+            origin: Instant::now(),
+            #[cfg(feature = "profiler")]
+            first_signal: std::sync::atomic::AtomicU64::new(u64::MAX),
+        }
+    }
+
+    /// Captures a platform request timestamp only when profiling is enabled.
+    ///
+    /// The closure is not invoked in profiler-disabled builds.
+    #[inline]
+    pub fn capture(capture: impl FnOnce() -> Instant) -> Option<Instant> {
+        if cfg!(feature = "profiler") {
+            Some(capture())
+        } else {
+            None
+        }
+    }
+
+    /// Records a platform frame request, retaining the first undrained timestamp.
+    #[inline]
+    #[cfg_attr(not(feature = "profiler"), expect(unused_variables))]
+    pub fn record(&self, at: Instant, source: FrameRequestSource) {
+        #[cfg(feature = "profiler")]
+        {
+            let nanoseconds = at
+                .saturating_duration_since(self.origin)
+                .as_nanos()
+                .min(u128::from((u64::MAX >> 1) - 1)) as u64;
+            let source_bit = match source {
+                FrameRequestSource::NativeCallback => 0,
+                FrameRequestSource::LocalSchedule => 1,
+            };
+            self.first_signal.fetch_min(
+                (nanoseconds << 1) | source_bit,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
+    }
+
+    /// Drains the first platform frame request time and source, leaving the accumulator empty.
+    #[inline]
+    pub fn take(&self) -> Option<(Instant, FrameRequestSource)> {
+        #[cfg(feature = "profiler")]
+        {
+            let signal = self
+                .first_signal
+                .swap(u64::MAX, std::sync::atomic::Ordering::Relaxed);
+            (signal != u64::MAX).then(|| {
+                let source = match signal & 1 {
+                    0 => FrameRequestSource::NativeCallback,
+                    _ => FrameRequestSource::LocalSchedule,
+                };
+                (self.origin + Duration::from_nanos(signal >> 1), source)
+            })
+        }
+        #[cfg(not(feature = "profiler"))]
+        {
+            None
+        }
+    }
 }
 
 /// The application's lifecycle phase, as owned and reported by a mobile OS.
@@ -822,9 +1130,9 @@ impl WindowInsets {
 /// A change in the state of the focused text input.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum TextInputStateChange {
-    /// An editable element gained focus.
+    /// The window changed from having no active text input to having one.
     FocusGained,
-    /// The focused editable element lost focus.
+    /// The window no longer has an active text input.
     FocusLost,
     /// The selection or caret moved
     SelectionChanged,
@@ -838,6 +1146,26 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn is_maximized(&self) -> bool;
     fn window_bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
+    /// Returns the visible viewport in logical pixels relative to the content origin.
+    ///
+    /// This may be smaller or offset when a keyboard or zoom obscures content;
+    /// it must not change the full layout size returned by `content_size`.
+    /// Implementations should return a frame snapshot, not query platform layout here.
+    fn visual_viewport_bounds(&self) -> Bounds<Pixels> {
+        Bounds::new(Point::default(), self.content_size())
+    }
+    /// Registers a callback when visible geometry may have changed.
+    ///
+    /// This requests a frame; backends can sample the new viewport and safe-area
+    /// geometry in `prepare_frame` rather than updating it inside the callback.
+    fn on_visual_viewport_changed(&self, _callback: Box<dyn FnMut()>) {}
+    /// Samples platform geometry before a draw, returning whether view caches must be invalidated.
+    ///
+    /// Geometry getters must remain consistent throughout the ensuing draw.
+    /// Do not invoke callbacks here: GPUI is already updating this window.
+    fn prepare_frame(&self) -> bool {
+        false
+    }
     fn resize(&mut self, size: Size<Pixels>);
     fn scale_factor(&self) -> f32;
     fn appearance(&self) -> WindowAppearance;
@@ -863,6 +1191,9 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Requests that the operating system draw attention to this window.
     fn request_attention(&self) {}
     fn is_active(&self) -> bool;
+    /// The current [`WindowVisibility`]. Read once when the window is created;
+    /// afterwards changes arrive through [`Self::on_visibility_change`].
+    fn visibility(&self) -> WindowVisibility;
     fn is_hovered(&self) -> bool;
     fn background_appearance(&self) -> WindowBackgroundAppearance;
     fn set_title(&mut self, title: &str);
@@ -877,6 +1208,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>);
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
+    /// Registers the callback invoked when [`Self::visibility`] changes. Only
+    /// transitions are reported; the callback runs on the main thread outside
+    /// of any window update.
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>);
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_moved(&self, callback: Box<dyn FnMut()>);
@@ -1105,6 +1440,8 @@ pub trait PlatformDispatcher: Send + Sync {
 #[expect(missing_docs)]
 pub trait PlatformTextSystem: Send + Sync {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()>;
+    /// Installs a nonblocking sink for unresolved grapheme clusters.
+    fn set_missing_glyph_sink(&self, _sink: Option<Arc<dyn MissingGlyphSink>>) {}
     /// Get all available font names.
     fn all_font_names(&self) -> Vec<String>;
     /// Get the font ID for a font descriptor.
@@ -1313,13 +1650,6 @@ pub enum AtlasKey {
 }
 
 impl AtlasKey {
-    #[cfg_attr(
-        all(
-            any(target_os = "linux", target_os = "freebsd"),
-            not(any(feature = "x11", feature = "wayland"))
-        ),
-        allow(dead_code)
-    )]
     /// Returns the texture kind for this atlas key.
     pub fn texture_kind(&self) -> AtlasTextureKind {
         match self {
@@ -1358,9 +1688,10 @@ impl From<RenderImageParams> for AtlasKey {
 
 #[expect(missing_docs)]
 pub trait PlatformAtlas {
+    /// The builder runs with the atlas locked and must not re-enter the same atlas.
     fn get_or_insert_with<'a>(
         &self,
-        key: &AtlasKey,
+        key: AtlasKey,
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>>;
     fn remove(&self, key: &AtlasKey);
@@ -1368,6 +1699,136 @@ pub trait PlatformAtlas {
     #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     fn contains(&self, _key: &AtlasKey) -> bool {
         false
+    }
+}
+
+#[doc(hidden)]
+pub trait AtlasBackend {
+    fn insert(
+        &mut self,
+        kind: AtlasTextureKind,
+        size: Size<DevicePixels>,
+        bytes: &[u8],
+    ) -> Result<AtlasTile>;
+
+    fn remove(&mut self, tile: AtlasTile);
+}
+
+#[doc(hidden)]
+pub struct AtlasState<Backend> {
+    tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
+    pub backend: Backend,
+}
+
+impl<Backend> AtlasState<Backend> {
+    pub fn new(backend: Backend) -> Self {
+        Self {
+            tiles_by_key: FxHashMap::default(),
+            backend,
+        }
+    }
+
+    pub fn contains(&self, key: &AtlasKey) -> bool {
+        self.tiles_by_key.contains_key(key)
+    }
+
+    pub fn clear(&mut self, reset_backend: impl FnOnce(&mut Backend)) {
+        self.tiles_by_key.clear();
+        reset_backend(&mut self.backend);
+    }
+}
+
+impl<Backend: Default> Default for AtlasState<Backend> {
+    fn default() -> Self {
+        Self::new(Backend::default())
+    }
+}
+
+impl<Backend: AtlasBackend> AtlasState<Backend> {
+    pub fn get_or_insert_with<'a>(
+        &mut self,
+        key: AtlasKey,
+        build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
+    ) -> Result<Option<AtlasTile>> {
+        match self.tiles_by_key.entry(key) {
+            Entry::Occupied(entry) => Ok(Some(*entry.get())),
+            Entry::Vacant(entry) => {
+                profiling::scope!("new tile");
+                let Some((size, bytes)) = build()? else {
+                    return Ok(None);
+                };
+                let tile = self
+                    .backend
+                    .insert(entry.key().texture_kind(), size, &bytes)?;
+                entry.insert(tile);
+                Ok(Some(tile))
+            }
+        }
+    }
+
+    pub fn remove(&mut self, key: &AtlasKey) {
+        if let Some(tile) = self.tiles_by_key.remove(key) {
+            self.backend.remove(tile);
+        }
+    }
+}
+
+/// A sprite atlas for windows without a GPU. It hands out uniquely identified
+/// tiles without uploading any pixels, so glyph, SVG, and image painting can
+/// run to completion in tests and headless platforms.
+#[derive(Default)]
+pub struct HeadlessAtlas(parking_lot::Mutex<AtlasState<HeadlessAtlasBackend>>);
+
+#[doc(hidden)]
+#[derive(Default)]
+pub struct HeadlessAtlasBackend {
+    next_id: u32,
+}
+
+impl AtlasBackend for HeadlessAtlasBackend {
+    fn insert(
+        &mut self,
+        kind: AtlasTextureKind,
+        size: Size<DevicePixels>,
+        _bytes: &[u8],
+    ) -> Result<AtlasTile> {
+        self.next_id += 1;
+        let texture_id = self.next_id;
+        self.next_id += 1;
+        let tile_id = self.next_id;
+        Ok(AtlasTile {
+            texture_id: AtlasTextureId {
+                index: texture_id,
+                kind,
+            },
+            tile_id: TileId(tile_id),
+            padding: 0,
+            bounds: Bounds {
+                origin: Point::default(),
+                size,
+            },
+        })
+    }
+
+    fn remove(&mut self, _tile: AtlasTile) {}
+}
+
+impl PlatformAtlas for HeadlessAtlas {
+    fn get_or_insert_with<'a>(
+        &self,
+        key: AtlasKey,
+        build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
+    ) -> Result<Option<AtlasTile>> {
+        self.0.lock().get_or_insert_with(key, build)
+    }
+
+    fn remove(&self, key: &AtlasKey) {
+        self.0.lock().remove(key);
+    }
+
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    fn contains(&self, key: &AtlasKey) -> bool {
+        self.0.lock().contains(key)
     }
 }
 
@@ -2956,6 +3417,169 @@ mod image_tests {
         for pixel in bytes.chunks_exact(4) {
             assert_eq!(pixel, &[0xF8, 0xBD, 0x38, 0xFF]);
         }
+    }
+}
+
+#[cfg(test)]
+mod atlas_tests {
+    use super::*;
+
+    const TILE_SIZE: Size<DevicePixels> = Size {
+        width: DevicePixels(1),
+        height: DevicePixels(1),
+    };
+
+    #[derive(Default)]
+    struct RecordingAtlasBackend {
+        insert_calls: u32,
+        fail_next_insert: bool,
+        removed_tiles: Vec<AtlasTile>,
+    }
+
+    impl AtlasBackend for RecordingAtlasBackend {
+        fn insert(
+            &mut self,
+            kind: AtlasTextureKind,
+            size: Size<DevicePixels>,
+            _bytes: &[u8],
+        ) -> Result<AtlasTile> {
+            self.insert_calls += 1;
+            if std::mem::take(&mut self.fail_next_insert) {
+                anyhow::bail!("backend failed");
+            }
+            Ok(AtlasTile {
+                texture_id: AtlasTextureId { index: 0, kind },
+                tile_id: TileId(self.insert_calls),
+                padding: 0,
+                bounds: Bounds {
+                    origin: Point::default(),
+                    size,
+                },
+            })
+        }
+
+        fn remove(&mut self, tile: AtlasTile) {
+            self.removed_tiles.push(tile);
+        }
+    }
+
+    fn image_key(image_id: usize) -> AtlasKey {
+        AtlasKey::Image(RenderImageParams {
+            image_id: crate::ImageId(image_id),
+            frame_index: 0,
+        })
+    }
+
+    fn build_tile() -> Result<Option<(Size<DevicePixels>, Cow<'static, [u8]>)>> {
+        Ok(Some((TILE_SIZE, Cow::Borrowed(&[0, 0, 0, 255]))))
+    }
+
+    #[test]
+    fn only_successful_inserts_are_cached() -> Result<()> {
+        let mut state = AtlasState::new(RecordingAtlasBackend::default());
+        let key = image_key(1);
+
+        assert_eq!(
+            state.get_or_insert_with(key.clone(), &mut || Ok(None))?,
+            None
+        );
+        state
+            .get_or_insert_with(key.clone(), &mut || anyhow::bail!("builder failed"))
+            .expect_err("builder error should propagate");
+        assert!(!state.contains(&key));
+        assert_eq!(state.backend.insert_calls, 0);
+
+        state.backend.fail_next_insert = true;
+        state
+            .get_or_insert_with(key.clone(), &mut build_tile)
+            .expect_err("backend error should propagate");
+        assert!(!state.contains(&key));
+        assert_eq!(state.backend.insert_calls, 1);
+
+        let tile = state
+            .get_or_insert_with(key.clone(), &mut build_tile)?
+            .context("builder should produce a tile")?;
+        assert_eq!(tile.texture_id.kind, key.texture_kind());
+        assert_eq!(
+            state.get_or_insert_with(key.clone(), &mut || {
+                anyhow::bail!("cache hit must not call the builder")
+            })?,
+            Some(tile)
+        );
+        assert!(state.contains(&key));
+        assert_eq!(state.backend.insert_calls, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn remove_and_clear_invalidate_keys() -> Result<()> {
+        let mut state = AtlasState::new(RecordingAtlasBackend::default());
+        let key = image_key(1);
+        let other_key = image_key(2);
+        let tile = state
+            .get_or_insert_with(key.clone(), &mut build_tile)?
+            .context("builder should produce a tile")?;
+        state
+            .get_or_insert_with(other_key.clone(), &mut build_tile)?
+            .context("builder should produce another tile")?;
+
+        state.remove(&key);
+        state.remove(&key);
+        assert!(!state.contains(&key));
+        assert!(state.contains(&other_key));
+        assert_eq!(state.backend.removed_tiles, vec![tile]);
+
+        let mut reset_calls = 0;
+        state.clear(|_| reset_calls += 1);
+        assert_eq!(reset_calls, 1);
+        assert!(!state.contains(&other_key));
+        assert_eq!(state.backend.removed_tiles, vec![tile]);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod frame_signal_tests {
+    use super::*;
+
+    #[cfg(feature = "profiler")]
+    #[test]
+    fn coalesced_signals_retain_the_earliest_until_drained() {
+        for (first_source, later_source) in [
+            (
+                FrameRequestSource::NativeCallback,
+                FrameRequestSource::LocalSchedule,
+            ),
+            (
+                FrameRequestSource::LocalSchedule,
+                FrameRequestSource::NativeCallback,
+            ),
+        ] {
+            let signal = PlatformFrameSignal::new();
+            let first =
+                PlatformFrameSignal::capture(Instant::now).expect("profiling captures requests");
+            assert_eq!(signal.take(), None);
+            signal.record(first + Duration::from_millis(16), later_source);
+            signal.record(first, first_source);
+            signal.record(first + Duration::from_millis(32), later_source);
+            assert_eq!(signal.take(), Some((first, first_source)));
+            assert_eq!(signal.take(), None);
+            let next = first + Duration::from_millis(48);
+            signal.record(next, later_source);
+            assert_eq!(signal.take(), Some((next, later_source)));
+        }
+    }
+
+    #[cfg(not(feature = "profiler"))]
+    #[test]
+    fn disabled_profiling_does_not_capture_or_store_timestamps() {
+        let captured = PlatformFrameSignal::capture(|| {
+            panic!("profiler-disabled builds must not evaluate the capture closure");
+        });
+        assert_eq!(captured, None);
+        let signal = PlatformFrameSignal::new();
+        signal.record(Instant::now(), FrameRequestSource::LocalSchedule);
+        assert_eq!(signal.take(), None);
     }
 }
 

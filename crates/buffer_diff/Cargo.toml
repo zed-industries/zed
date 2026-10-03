@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/buffer_diff.rs"
+doctest = false
 
 [features]
 test-support = ["settings"]
