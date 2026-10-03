@@ -213,6 +213,45 @@ Some AWS environments require a guardrail on every Bedrock API call. Add `guardr
 }
 ```
 
+### Custom Bedrock Models {#bedrock-custom-models}
+
+Add models that are not yet built into Zed with `available_models`. Use the Bedrock model ID as `name`, including a region prefix when you want a specific inference profile:
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "available_models": [
+        {
+          "name": "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abcdef123456",
+          "display_name": "Grok 4.3 (ARN)",
+          "max_tokens": 500000,
+          "max_output_tokens": 131072,
+          "supports_tools": true,
+          "supports_images": true,
+          "thinking": true
+        },
+        {
+          "name": "us.moonshotai.kimi-k3",
+          "display_name": "Kimi K3",
+          "max_tokens": 1000000,
+          "max_output_tokens": 64000,
+          "supports_tools": true,
+          "supports_images": true,
+          "thinking": {
+            "adaptive": true,
+            "has_xhigh": true,
+            "budget_tokens": 5000
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+`name` is sent to Bedrock as the model ID. Use the full ID, including a geo prefix or ARN when the model requires one (for example `us.anthropic.claude-sonnet-4-7` or `us.xai.grok-4.6`). Set `supports_tools` and `supports_images` for models that support those features. Set `thinking` to `true` to enable thinking, or to an object with `"adaptive": true`, optional `"has_xhigh": true`, and optional `budget_tokens`. Leave `default_temperature` unset for models that reject the temperature field, such as xAI and MoonshotAI models.
+
 ### Bedrock Mantle Models {#bedrock-mantle-models}
 
 Some models, such as the GPT-5.6 family (Sol, Terra, and Luna), GPT-5.5, GPT-5.4, and Grok 4.3, aren't available through Bedrock's Converse API and are only reachable through `bedrock-mantle`, AWS's OpenAI-compatible inference endpoint. Zed routes these models through `bedrock-mantle` automatically; they appear alongside the rest of the Bedrock models in the model picker once you're authenticated, with no extra configuration required.
