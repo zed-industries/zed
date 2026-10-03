@@ -5746,3 +5746,347 @@ fn build_project(ssh: Entity<RemoteClient>, cx: &mut TestAppContext) -> Entity<P
 
     cx.update(|cx| Project::remote(ssh, client, node, user_store, languages, fs, false, cx))
 }
+
+#[gpui::test]
+async fn test_remote_cli_opens_remote_file_at_position(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/remote-cli"),
+        json!({"árvíz file.txt": "first\nsecond line\nthird"}),
+    )
+    .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let app_state = cx.update(workspace::AppState::test);
+    cx.update(|cx| {
+        workspace::init(app_state.clone(), cx);
+        editor::init(cx);
+    });
+    let (workspace, cx) = cx.add_window_view(|window, cx| {
+        workspace::Workspace::new(None, project, app_state, window, cx)
+    });
+    let session = headless.read_with(server_cx, |headless, _| headless.session.clone());
+    let response = session
+        .request(proto::OpenPathOnClient {
+            project_id: proto::REMOTE_SERVER_PROJECT_ID,
+            path: path!("/remote-cli/árvíz file.txt").into(),
+            row: Some(2),
+            column: Some(4),
+            wait: false,
+            is_directory: false,
+            request_id: "open-position".into(),
+        })
+        .await
+        .unwrap();
+    assert!(response.success);
+    let editor = workspace
+        .read_with(cx, |workspace, cx| {
+            workspace.active_item_as::<editor::Editor>(cx)
+        })
+        .unwrap();
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), "first\nsecond line\nthird");
+        assert_eq!(
+            editor
+                .selections
+                .newest::<language::Point>(&editor.display_snapshot(cx))
+                .head(),
+            language::Point::new(1, 3)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_remote_cli_waits_until_file_is_closed(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    use futures::FutureExt as _;
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/remote-cli"), json!({"file.txt": "content"}))
+        .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let app_state = cx.update(workspace::AppState::test);
+    cx.update(|cx| {
+        workspace::init(app_state.clone(), cx);
+        editor::init(cx);
+    });
+    let (workspace, cx) = cx.add_window_view(|window, cx| {
+        workspace::Workspace::new(None, project, app_state, window, cx)
+    });
+    let session = headless.read_with(server_cx, |headless, _| headless.session.clone());
+    let mut response = Box::pin(session.request(proto::OpenPathOnClient {
+        project_id: proto::REMOTE_SERVER_PROJECT_ID,
+        path: path!("/remote-cli/file.txt").into(),
+        wait: true,
+        request_id: "wait-close".into(),
+        ..Default::default()
+    }));
+    cx.run_until_parked();
+    assert!(workspace.read_with(cx, |workspace, cx| workspace.active_item(cx).is_some()));
+    assert!(response.as_mut().now_or_never().is_none());
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.close_all_items(
+                    &workspace::CloseAllItems {
+                        close_pinned: true,
+                        save_intent: None,
+                    },
+                    window,
+                    cx,
+                )
+            })
+        })
+        .await
+        .unwrap();
+    assert!(response.await.unwrap().success);
+}
+
+#[gpui::test]
+async fn test_remote_cli_fails_without_a_workspace(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    let (_project, headless) = init_test(&fs, cx, server_cx).await;
+    let session = headless.read_with(server_cx, |headless, _| headless.session.clone());
+    let result = session
+        .request(proto::OpenPathOnClient {
+            project_id: proto::REMOTE_SERVER_PROJECT_ID,
+            path: path!("/remote-cli/file.txt").into(),
+            request_id: "no-workspace".into(),
+            ..Default::default()
+        })
+        .await;
+    assert!(result.is_err());
+}
+
+#[gpui::test]
+async fn test_remote_cli_waits_for_directory_window_close(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    use futures::FutureExt as _;
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/remote-cli"), json!({"file.txt": "content"}))
+        .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let app_state = cx.update(workspace::AppState::test);
+    cx.update(|cx| {
+        workspace::init(app_state.clone(), cx);
+        editor::init(cx);
+    });
+    let (workspace, cx) = cx.add_window_view(|window, cx| {
+        workspace::Workspace::new(None, project.clone(), app_state, window, cx)
+    });
+    let session = headless.read_with(server_cx, |headless, _| headless.session.clone());
+    let mut response = Box::pin(session.request(proto::OpenPathOnClient {
+        project_id: proto::REMOTE_SERVER_PROJECT_ID,
+        path: path!("/remote-cli").into(),
+        wait: true,
+        is_directory: true,
+        request_id: "wait-directory".into(),
+        ..Default::default()
+    }));
+    cx.run_until_parked();
+    assert_eq!(
+        project.read_with(cx, |project, cx| project.visible_worktrees(cx).count()),
+        1
+    );
+    assert!(response.as_mut().now_or_never().is_none());
+    drop(workspace);
+    cx.update(|window, _| window.remove_window());
+    assert!(response.await.unwrap().success);
+}
+
+#[gpui::test]
+async fn test_remote_cli_cancel_releases_wait_without_closing_file(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    use futures::FutureExt as _;
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/remote-cli"), json!({"file.txt": "content"}))
+        .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let app_state = cx.update(workspace::AppState::test);
+    cx.update(|cx| {
+        workspace::init(app_state.clone(), cx);
+        editor::init(cx);
+    });
+    let (workspace, cx) = cx.add_window_view(|window, cx| {
+        workspace::Workspace::new(None, project, app_state, window, cx)
+    });
+    let session = headless.read_with(server_cx, |headless, _| headless.session.clone());
+    let mut response = Box::pin(session.request(proto::OpenPathOnClient {
+        project_id: proto::REMOTE_SERVER_PROJECT_ID,
+        path: path!("/remote-cli/file.txt").into(),
+        wait: true,
+        request_id: "cancel-wait".into(),
+        ..Default::default()
+    }));
+    cx.run_until_parked();
+    assert!(response.as_mut().now_or_never().is_none());
+    session
+        .send(proto::CancelOpenPathOnClient {
+            project_id: proto::REMOTE_SERVER_PROJECT_ID,
+            request_id: "cancel-wait".into(),
+        })
+        .unwrap();
+    assert!(response.await.is_err());
+    assert!(workspace.read_with(cx, |workspace, cx| workspace.active_item(cx).is_some()));
+}
+
+#[gpui::test]
+async fn test_remote_cli_environment_comes_from_selected_server(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let expected = HashMap::from_iter([
+        (
+            "ZED_REMOTE_CLI_SOCKET".into(),
+            "/custom data/zed/session/cli.sock".into(),
+        ),
+        (
+            "ZED_REMOTE_CLI_BINARY".into(),
+            "/remote/server-version-a".into(),
+        ),
+        ("ZED_REMOTE_CLI_BIN".into(), "/custom data/zed/bin".into()),
+    ]);
+    headless.update(server_cx, |headless, _| {
+        headless.cli_environment = expected.clone()
+    });
+    let session = project.read_with(cx, |project, cx| {
+        project.remote_client().unwrap().read(cx).proto_client()
+    });
+    let response = session
+        .request(proto::GetDirectoryEnvironment {
+            project_id: proto::REMOTE_SERVER_PROJECT_ID,
+            shell: Some(task::shell_to_proto(task::Shell::Program("/bin/sh".into()))),
+            directory: String::new(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(response.environment, expected.into_iter().collect());
+}
+
+#[gpui::test]
+async fn test_remote_cli_opens_missing_file_and_clips_position(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/remote-cli"), json!({})).await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let app_state = cx.update(workspace::AppState::test);
+    cx.update(|cx| {
+        workspace::init(app_state.clone(), cx);
+        editor::init(cx);
+    });
+    let (workspace, cx) = cx.add_window_view(|window, cx| {
+        workspace::Workspace::new(None, project, app_state, window, cx)
+    });
+    let session = headless.read_with(server_cx, |headless, _| headless.session.clone());
+    let response = session
+        .request(proto::OpenPathOnClient {
+            project_id: proto::REMOTE_SERVER_PROJECT_ID,
+            path: path!("/remote-cli/new-file.txt").into(),
+            row: Some(u32::MAX),
+            column: Some(u32::MAX),
+            request_id: "missing-file".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(response.success);
+    let editor = workspace
+        .read_with(cx, |workspace, cx| {
+            workspace.active_item_as::<editor::Editor>(cx)
+        })
+        .unwrap();
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), "");
+        assert_eq!(
+            editor
+                .selections
+                .newest::<language::Point>(&editor.display_snapshot(cx))
+                .head(),
+            language::Point::new(0, 0)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_remote_cli_reverse_heartbeat(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    let (_project, headless) = init_test(&fs, cx, server_cx).await;
+    let session = headless.read_with(server_cx, |headless, _| headless.session.clone());
+    session.request(proto::Ping {}).await.unwrap();
+}
+
+#[gpui::test]
+async fn test_remote_cli_heartbeat_fails_after_project_release(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let session = headless.read_with(server_cx, |headless, _| headless.session.clone());
+    drop(project);
+    cx.executor().run_until_parked();
+    assert!(session.request(proto::Ping {}).await.is_err());
+}
+
+#[gpui::test]
+async fn test_remote_cli_disconnect_cancels_wait_and_preserves_file(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    use futures::FutureExt as _;
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/remote-cli"), json!({"file.txt": "content"}))
+        .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let response_sender = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let _subscription = cx.update(|cx| {
+        cx.subscribe(&project, {
+            let response_sender = response_sender.clone();
+            move |_, event, _| {
+                if let project::Event::OpenPathOnClient(request) = event {
+                    *response_sender.borrow_mut() = Some(request.response.clone());
+                }
+            }
+        })
+    });
+    let app_state = cx.update(workspace::AppState::test);
+    cx.update(|cx| {
+        workspace::init(app_state.clone(), cx);
+        editor::init(cx);
+    });
+    let (workspace, cx) = cx.add_window_view(|window, cx| {
+        workspace::Workspace::new(None, project.clone(), app_state, window, cx)
+    });
+    let session = headless.read_with(server_cx, |headless, _| headless.session.clone());
+    let mut response = Box::pin(session.request(proto::OpenPathOnClient {
+        project_id: proto::REMOTE_SERVER_PROJECT_ID,
+        path: path!("/remote-cli/file.txt").into(),
+        wait: true,
+        request_id: "disconnect-wait".into(),
+        ..Default::default()
+    }));
+    cx.run_until_parked();
+    assert!(response.as_mut().now_or_never().is_none());
+    let remote = project.read_with(cx, |project, _| project.remote_client().unwrap());
+    remote.update(cx, |remote, cx| remote.force_server_not_running(cx));
+    cx.run_until_parked();
+    assert!(response_sender.borrow().as_ref().unwrap().is_closed());
+    assert!(workspace.read_with(cx, |workspace, cx| workspace.active_item(cx).is_some()));
+}
