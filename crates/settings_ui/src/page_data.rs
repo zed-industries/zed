@@ -517,6 +517,28 @@ fn general_page(cx: &App) -> SettingsPage {
         ]
     }
 
+    fn extensions_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Extensions"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Extension Suggestions",
+                description: "Whether Zed suggests installing extensions for the languages of the files you open.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("extension_suggestions"),
+                    pick: |settings_content| {
+                        Some(&settings_content.extension.extension_suggestions)
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.extension.extension_suggestions = value.unwrap_or(true);
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     SettingsPage {
         title: "General",
         items: concat_sections!(
@@ -527,6 +549,7 @@ fn general_page(cx: &App) -> SettingsPage {
             scoped_settings_section(),
             privacy_section(),
             auto_update_section(),
+            extensions_section(),
         )
         .into(),
     }

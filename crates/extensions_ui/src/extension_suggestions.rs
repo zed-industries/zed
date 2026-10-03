@@ -233,9 +233,26 @@ fn show_suggestion(
                 })
                 .secondary_icon(IconName::Close)
                 .secondary_icon_color(Color::Error)
-                .secondary_on_click(move |_window, cx| dismiss_suggestion(&extension_id, cx))
+                .secondary_on_click({
+                    let extension_id = extension_id.clone();
+                    move |_window, cx| dismiss_suggestion(&extension_id, cx)
+                })
+                .tertiary_message("Never Suggest Extensions")
+                .tertiary_icon(IconName::XCircle)
+                .tertiary_icon_color(Color::Muted)
+                .tertiary_on_click(move |_window, cx| {
+                    disable_extension_suggestions(&extension_id, cx)
+                })
         })
     });
+}
+
+fn disable_extension_suggestions(extension_id: &str, cx: &mut App) {
+    let fs = AppState::global(cx).fs.clone();
+    settings::update_settings_file(fs, cx, |content, _| {
+        content.extension.extension_suggestions = false;
+    });
+    dismiss_suggestion(extension_id, cx);
 }
 
 #[cfg(test)]
@@ -336,7 +353,7 @@ mod tests {
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings(cx, |content| {
-                    content.extension.extension_suggestions = Some(false);
+                    content.extension.extension_suggestions = false;
                 });
             });
         });
@@ -344,6 +361,29 @@ mod tests {
 
         open_file(&workspace, "index.html", cx).await;
 
+        assert_eq!(notification_ids(&workspace, cx), Vec::new());
+    }
+
+    #[gpui::test]
+    async fn test_disabling_extension_suggestions_persists_and_stops_suggestions(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let (workspace, cx) = open_test_workspace(&app_state, cx).await;
+        open_file(&workspace, "index.html", cx).await;
+        assert_eq!(
+            notification_ids(&workspace, cx),
+            vec![notification_id(EMMET_EXTENSION_ID)]
+        );
+
+        cx.update(|_, cx| disable_extension_suggestions(EMMET_EXTENSION_ID, cx));
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            assert!(!ExtensionSettings::get_global(cx).extension_suggestions);
+        });
+
+        open_file(&workspace, "other.html", cx).await;
         assert_eq!(notification_ids(&workspace, cx), Vec::new());
     }
 

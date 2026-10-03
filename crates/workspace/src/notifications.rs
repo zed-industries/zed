@@ -667,6 +667,10 @@ pub mod simple_message_notification {
         secondary_icon: Option<ActionIcon>,
         secondary_icon_color: Option<Color>,
         secondary_on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
+        tertiary_message: Option<SharedString>,
+        tertiary_icon: Option<ActionIcon>,
+        tertiary_icon_color: Option<Color>,
+        tertiary_on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
         more_info_message: Option<SharedString>,
         more_info_url: Option<Arc<str>>,
         show_close_button: bool,
@@ -719,6 +723,10 @@ pub mod simple_message_notification {
                 secondary_icon: None,
                 secondary_icon_color: None,
                 secondary_on_click: None,
+                tertiary_message: None,
+                tertiary_icon: None,
+                tertiary_icon_color: None,
+                tertiary_on_click: None,
                 more_info_message: None,
                 more_info_url: None,
                 show_close_button: true,
@@ -814,6 +822,47 @@ pub mod simple_message_notification {
             F: 'static + Fn(&mut Window, &mut Context<Self>),
         {
             self.secondary_on_click = Some(on_click);
+            self
+        }
+
+        pub fn tertiary_message<S>(mut self, message: S) -> Self
+        where
+            S: Into<SharedString>,
+        {
+            self.tertiary_message = Some(message.into());
+            self
+        }
+
+        /// Show `icon` at the start (left) of the tertiary action button label.
+        pub fn tertiary_icon(mut self, icon: IconName) -> Self {
+            self.tertiary_icon = Some(ActionIcon::start(icon));
+            self
+        }
+
+        /// Show `icon` at the end (right) of the tertiary action button label.
+        pub fn tertiary_end_icon(mut self, icon: IconName) -> Self {
+            self.tertiary_icon = Some(ActionIcon::end(icon));
+            self
+        }
+
+        pub fn tertiary_icon_color(mut self, color: Color) -> Self {
+            self.tertiary_icon_color = Some(color);
+            self
+        }
+
+        pub fn tertiary_on_click<F>(mut self, on_click: F) -> Self
+        where
+            F: 'static + Fn(&mut Window, &mut Context<Self>),
+        {
+            self.tertiary_on_click = Some(Arc::new(on_click));
+            self
+        }
+
+        pub fn tertiary_on_click_arc<F>(mut self, on_click: Arc<F>) -> Self
+        where
+            F: 'static + Fn(&mut Window, &mut Context<Self>),
+        {
+            self.tertiary_on_click = Some(on_click);
             self
         }
 
@@ -1037,6 +1086,7 @@ pub mod simple_message_notification {
 
             let has_suffix = self.primary_message.is_some()
                 || self.secondary_message.is_some()
+                || self.tertiary_message.is_some()
                 || self.more_info_message.is_some();
 
             let suffix = h_flex()
@@ -1075,6 +1125,26 @@ pub mod simple_message_notification {
                             let element = Icon::new(icon.name)
                                 .size(IconSize::Small)
                                 .color(self.secondary_icon_color.unwrap_or(Color::Muted));
+                            match icon.position {
+                                IconPosition::Start => button.start_icon(element),
+                                IconPosition::End => button.end_icon(element),
+                            }
+                        })
+                }))
+                .children(self.tertiary_message.iter().map(|message| {
+                    Button::new(("notification-tertiary", cx.entity_id()), message.clone())
+                        .when_some(self.button_style, |button, style| button.style(style))
+                        .label_size(LabelSize::Small)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            if let Some(on_click) = this.tertiary_on_click.as_ref() {
+                                (on_click)(window, cx)
+                            };
+                            this.dismiss(cx)
+                        }))
+                        .when_some(self.tertiary_icon, |button, icon| {
+                            let element = Icon::new(icon.name)
+                                .size(IconSize::Small)
+                                .color(self.tertiary_icon_color.unwrap_or(Color::Muted));
                             match icon.position {
                                 IconPosition::Start => button.start_icon(element),
                                 IconPosition::End => button.end_icon(element),
