@@ -2,7 +2,8 @@ use settings::{Settings, SettingsStore};
 
 use gpui::{
     AnyWindowHandle, Context, Hsla, InteractiveElement, MouseButton, ParentElement, ScrollHandle,
-    Styled, SystemWindowTab, SystemWindowTabController, Window, WindowId, actions, canvas, div,
+    Styled, Subscription, SystemWindowTab, SystemWindowTabController, Window, WindowId, actions,
+    canvas, div,
 };
 
 use theme_settings::ThemeSettings;
@@ -41,20 +42,32 @@ pub struct SystemWindowTabs {
     tab_bar_scroll_handle: ScrollHandle,
     measured_tab_width: Pixels,
     last_dragged_tab: Option<DraggedWindowTab>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl SystemWindowTabs {
-    pub fn new() -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
             tab_bar_scroll_handle: ScrollHandle::new(),
             measured_tab_width: px(0.),
             last_dragged_tab: None,
+            // The controller is a global, and reading it during render does not subscribe,
+            // so tab changes (including Merge All Windows) would otherwise stay invisible.
+            _subscriptions: vec![cx.observe_global::<SystemWindowTabController>(|_, cx| {
+                cx.notify();
+            })],
         }
     }
 
     pub fn init(cx: &mut App) {
         let mut was_use_system_window_tabs =
             WorkspaceSettings::get_global(cx).use_system_window_tabs;
+        // Window creation only turns automatic tabbing on. Apply the off state
+        // once here, before any window opens, so a launch with the setting
+        // disabled still overrides the macOS "Prefer tabs: Always" preference.
+        if !was_use_system_window_tabs {
+            cx.set_allows_automatic_window_tabbing(false);
+        }
 
         cx.observe_global::<SettingsStore>(move |cx| {
             let use_system_window_tabs = WorkspaceSettings::get_global(cx).use_system_window_tabs;
@@ -62,6 +75,9 @@ impl SystemWindowTabs {
                 return;
             }
             was_use_system_window_tabs = use_system_window_tabs;
+            // Set directly rather than relying on the per-window loop below, which
+            // does nothing when no windows are open.
+            cx.set_allows_automatic_window_tabbing(use_system_window_tabs);
 
             let tabbing_identifier = if use_system_window_tabs {
                 Some(String::from("zed"))
@@ -86,7 +102,11 @@ impl SystemWindowTabs {
                             )]
                         };
 
+                        let has_multiple_tabs = tabs.len() > 1;
                         SystemWindowTabController::add_tab(cx, handle.window_id(), tabs);
+                        if has_multiple_tabs {
+                            SystemWindowTabController::set_visible(cx, true);
+                        }
                     }
                 });
             });

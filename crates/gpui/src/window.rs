@@ -1550,6 +1550,8 @@ impl Window {
             tabbing_identifier,
         } = options;
 
+        #[cfg(target_os = "macos")]
+        let has_tabbing_identifier = tabbing_identifier.is_some();
         let initial_window_title = titlebar
             .as_ref()
             .and_then(|titlebar| titlebar.title.clone());
@@ -1579,7 +1581,28 @@ impl Window {
         let tab_bar_visible = platform_window.tab_bar_visible();
         SystemWindowTabController::init_visible(cx, tab_bar_visible);
         if let Some(tabs) = platform_window.tabbed_windows() {
+            let joined_existing_group = tabs.len() > 1;
             SystemWindowTabController::add_tab(cx, handle.window_id(), tabs);
+            // AppKit shows the tab bar when a window gains a second tab, but the native bar
+            // is kept hidden, so apps draw their own from this flag.
+            if joined_existing_group {
+                SystemWindowTabController::set_visible(cx, true);
+            }
+        } else {
+            #[cfg(target_os = "macos")]
+            if has_tabbing_identifier {
+                // A standalone window is not in a native tab group yet, so `tabbed_windows()`
+                // is `None`. Register it anyway; otherwise Merge All Windows no-ops because
+                // the controller has never heard of this window.
+                let title = initial_window_title
+                    .clone()
+                    .unwrap_or_else(|| SharedString::from(""));
+                SystemWindowTabController::add_tab(
+                    cx,
+                    handle.window_id(),
+                    vec![SystemWindowTab::new(title, handle)],
+                );
+            }
         }
 
         let display_id = platform_window.display().map(|display| display.id());
@@ -1953,6 +1976,15 @@ impl Window {
                         window.bounds_changed(cx);
                         window.refresh();
 
+                        // Windows opened hidden (e.g. restored at launch) are only placed into a
+                        // native tab group once shown, after they were registered at creation.
+                        if active
+                            && let Some(tabs) = window.platform_window.tabbed_windows()
+                            && tabs.len() > 1
+                            && SystemWindowTabController::sync_tabs(cx, tabs)
+                        {
+                            SystemWindowTabController::set_visible(cx, true);
+                        }
                         SystemWindowTabController::update_last_active(cx, window.handle.id);
                     })
                     .log_err();
@@ -2015,13 +2047,37 @@ impl Window {
             })
         });
         platform_window.on_merge_all_windows({
-            let mut cx = cx.to_async();
+            let cx = cx.to_async();
+            let foreground_executor = cx.foreground_executor().clone();
             Box::new(move || {
-                handle
-                    .update(&mut cx, |_, _window, cx| {
-                        SystemWindowTabController::merge_all_windows(cx, handle.window_id());
+                let mut cx = cx.clone();
+                // AppKit calls this synchronously from the menu tracking loop, while `App`
+                // may already be borrowed. Defer so the controller update is not dropped.
+                foreground_executor
+                    .spawn(async move {
+                        handle
+                            .update(&mut cx, |_, window, cx| {
+                                let window_id = handle.window_id();
+                                if let Some(tabs) = window.platform_window.tabbed_windows()
+                                    && tabs.len() > 1
+                                {
+                                    SystemWindowTabController::sync_tabs(cx, tabs);
+                                    SystemWindowTabController::set_visible(cx, true);
+                                    return;
+                                }
+                                SystemWindowTabController::merge_all_windows(cx, window_id);
+                                let tab_count = cx
+                                    .global::<SystemWindowTabController>()
+                                    .tabs(window_id)
+                                    .map(|tabs| tabs.len())
+                                    .unwrap_or(0);
+                                if tab_count > 1 {
+                                    SystemWindowTabController::set_visible(cx, true);
+                                }
+                            })
+                            .log_err();
                     })
-                    .log_err();
+                    .detach();
             })
         });
         platform_window.on_select_next_tab({
@@ -7952,6 +8008,98 @@ mod tests {
             .update(cx, |_, window, _| assert!(window.is_visible()))
             .unwrap();
         assert_eq!(test_window.frame_wake_count(), frame_wake_count);
+    }
+
+    #[gpui::test]
+    fn test_system_window_tab_group_ids_do_not_collide(cx: &mut TestAppContext) {
+        use crate::{SystemWindowTab, SystemWindowTabController};
+
+        let windows: Vec<AnyWindowHandle> = (0..4)
+            .map(|_| cx.add_window(|_, _| EmptyView).into())
+            .collect();
+        cx.update(|cx| {
+            for handle in &windows[..3] {
+                SystemWindowTabController::add_tab(
+                    cx,
+                    handle.window_id(),
+                    vec![SystemWindowTab::new("".into(), *handle)],
+                );
+            }
+            SystemWindowTabController::remove_tab(cx, windows[0].window_id());
+            SystemWindowTabController::add_tab(
+                cx,
+                windows[3].window_id(),
+                vec![SystemWindowTab::new("".into(), windows[3])],
+            );
+
+            let controller = cx.global::<SystemWindowTabController>();
+            assert_eq!(controller.tab_groups().len(), 3);
+            for handle in &windows[1..] {
+                assert!(controller.tabs(handle.window_id()).is_some());
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn test_system_window_tab_sync_keeps_last_active(cx: &mut TestAppContext) {
+        use crate::{App, SystemWindowTab, SystemWindowTabController};
+
+        let first: AnyWindowHandle = cx.add_window(|_, _| EmptyView).into();
+        let second: AnyWindowHandle = cx.add_window(|_, _| EmptyView).into();
+        cx.update(|cx| {
+            for handle in [first, second] {
+                SystemWindowTabController::add_tab(
+                    cx,
+                    handle.window_id(),
+                    vec![SystemWindowTab::new("".into(), handle)],
+                );
+            }
+            let last_active_at = |cx: &App, handle: AnyWindowHandle| {
+                cx.global::<SystemWindowTabController>()
+                    .tabs(handle.window_id())
+                    .and_then(|tabs| tabs.iter().find(|tab| tab.id == handle.window_id()))
+                    .map(|tab| tab.last_active_at)
+            };
+            let first_active_at = last_active_at(cx, first);
+
+            SystemWindowTabController::sync_tabs(
+                cx,
+                vec![
+                    SystemWindowTab::new("".into(), first),
+                    SystemWindowTab::new("".into(), second),
+                ],
+            );
+
+            let controller = cx.global::<SystemWindowTabController>();
+            assert_eq!(controller.tab_groups().len(), 1);
+            assert_eq!(last_active_at(cx, first), first_active_at);
+        });
+    }
+
+    #[gpui::test]
+    fn test_system_window_tab_sync_collapses_duplicate_groups(cx: &mut TestAppContext) {
+        use crate::{SystemWindowTab, SystemWindowTabController};
+
+        let first: AnyWindowHandle = cx.add_window(|_, _| EmptyView).into();
+        let second: AnyWindowHandle = cx.add_window(|_, _| EmptyView).into();
+        cx.update(|cx| {
+            let tabs = vec![
+                SystemWindowTab::new("".into(), first),
+                SystemWindowTab::new("".into(), second),
+            ];
+            SystemWindowTabController::add_tab(cx, first.window_id(), tabs.clone());
+            SystemWindowTabController::add_tab(cx, second.window_id(), tabs.clone());
+            assert_eq!(
+                cx.global::<SystemWindowTabController>().tab_groups().len(),
+                2
+            );
+
+            assert!(SystemWindowTabController::sync_tabs(cx, tabs));
+
+            let controller = cx.global::<SystemWindowTabController>();
+            assert_eq!(controller.tab_groups().len(), 1);
+            assert_eq!(controller.tabs(first.window_id()).map(Vec::len), Some(2));
+        });
     }
 
     #[gpui::test]
