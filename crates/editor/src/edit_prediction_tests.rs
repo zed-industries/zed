@@ -199,6 +199,45 @@ async fn test_edit_prediction_insert(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_cursor_popover_respects_vim_mode_edit_prediction_visibility(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+    update_test_language_settings(cx, &|settings| {
+        settings.edit_predictions.get_or_insert_default().mode = Some(EditPredictionsMode::Subtle);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state("let x = ˇ;");
+
+    propose_edits(&provider, vec![(8..8, "42")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    cx.editor(|editor, _, _| {
+        assert!(editor.has_active_edit_prediction());
+        assert!(editor.edit_prediction_visible_in_cursor_popover(true));
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.set_edit_predictions_hidden_for_vim_mode(true, window, cx);
+    });
+    cx.editor(|editor, _, _| {
+        assert!(editor.has_active_edit_prediction());
+        assert!(!editor.edit_prediction_visible_in_cursor_popover(true));
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.set_edit_predictions_hidden_for_vim_mode(false, window, cx);
+    });
+    cx.editor(|editor, _, _| {
+        assert!(editor.has_active_edit_prediction());
+        assert!(editor.edit_prediction_visible_in_cursor_popover(true));
+    });
+}
+
+#[gpui::test]
 async fn test_edit_prediction_cursor_position_inside_insertion(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {
         eprintln!("");
