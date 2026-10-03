@@ -1336,7 +1336,6 @@ impl SerializableItem for Editor {
                 language,
                 ..
             } => window.spawn(cx, {
-                let project = project.clone();
                 async move |cx| {
                     let content_language_detection_enabled = language.is_none();
                     let language_registry =
@@ -1386,70 +1385,65 @@ impl SerializableItem for Editor {
                 contents,
                 mtime,
                 ..
-            } => {
-                let opened_buffer = project.update(cx, |project, cx| {
+            } => window.spawn(cx, async move |cx| {
+                // A file-backed editor without unsaved contents is only restorable
+                // while its file still exists. Reopening a persisted path that has
+                // since been deleted, moved, or replaced by a directory would
+                // fabricate a new, empty buffer and announce it to language servers
+                // as an existing document, corrupting their view of the project.
+                // Unsaved contents are themselves restorable state, so they are
+                // preserved even when the backing file is gone.
+                if contents.is_none()
+                    && !project
+                        .update(cx, |project, cx| project.abs_path_is_file(&abs_path, cx))
+                        .await
+                {
+                    anyhow::bail!(
+                        "Refusing to restore editor for {abs_path:?}: not a readable file",
+                    );
+                }
+
+                let project_path = project.update(cx, |project, cx| {
                     let (worktree, path) = project.find_worktree(&abs_path, cx)?;
-                    let project_path = ProjectPath {
+                    Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: path,
-                    };
-                    Some(project.open_path(project_path, cx))
+                        path,
+                    })
                 });
 
-                match opened_buffer {
-                    Some(opened_buffer) => window.spawn(cx, async move |cx| {
-                        let (_, buffer) = opened_buffer
+                let buffer = match project_path {
+                    Some(project_path) => {
+                        let (_, buffer) = project
+                            .update(cx, |project, cx| project.open_path(project_path, cx))
                             .await
                             .context("Failed to open path in project")?;
-
-                        if let Some(contents) = contents {
-                            buffer.update(cx, |buffer, cx| {
-                                restore_serialized_buffer_contents(buffer, contents, mtime, cx);
-                            });
-                        }
-
-                        cx.update(|window, cx| {
-                            cx.new(|cx| {
-                                let mut editor =
-                                    Editor::for_buffer(buffer, Some(project), window, cx);
-
-                                editor.read_metadata_from_db(item_id, workspace_id, window, cx);
-                                editor
-                            })
-                        })
-                    }),
-                    None => {
-                        // File is not in any worktree (e.g., opened as a standalone file).
-                        // Open the buffer directly via the project rather than through
-                        // workspace.open_abs_path(), which has the side effect of adding
-                        // the item to a pane. The caller (deserialize_to) will add the
-                        // returned item to the correct pane.
-                        window.spawn(cx, async move |cx| {
-                            let buffer = project
-                                .update(cx, |project, cx| project.open_local_buffer(&abs_path, cx))
-                                .await
-                                .with_context(|| {
-                                    format!("Failed to open buffer for {abs_path:?}")
-                                })?;
-
-                            if let Some(contents) = contents {
-                                buffer.update(cx, |buffer, cx| {
-                                    restore_serialized_buffer_contents(buffer, contents, mtime, cx);
-                                });
-                            }
-
-                            cx.update(|window, cx| {
-                                cx.new(|cx| {
-                                    let mut editor =
-                                        Editor::for_buffer(buffer, Some(project), window, cx);
-                                    editor.read_metadata_from_db(item_id, workspace_id, window, cx);
-                                    editor
-                                })
-                            })
-                        })
+                        buffer
                     }
+                    // File is not in any worktree (e.g., opened as a standalone file).
+                    // Open the buffer directly via the project rather than through
+                    // workspace.open_abs_path(), which has the side effect of adding
+                    // the item to a pane. The caller (deserialize_to) will add the
+                    // returned item to the correct pane.
+                    None => project
+                        .update(cx, |project, cx| project.open_local_buffer(&abs_path, cx))
+                        .await
+                        .with_context(|| format!("Failed to open buffer for {abs_path:?}"))?,
+                };
+
+                if let Some(contents) = contents {
+                    buffer.update(cx, |buffer, cx| {
+                        restore_serialized_buffer_contents(buffer, contents, mtime, cx);
+                    });
                 }
-            }
+
+                cx.update(|window, cx| {
+                    cx.new(|cx| {
+                        let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
+                        editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+                        editor
+                    })
+                })
+            }),
             SerializedEditor {
                 abs_path: None,
                 contents: None,
@@ -2595,10 +2589,16 @@ pub(crate) fn handle_lsp_show_document(
 mod tests {
     use crate::editor_tests::init_test;
     use fs::Fs;
+    use futures::{FutureExt as _, StreamExt as _};
+    use language::{DiskState, FakeLspAdapter, rust_lang};
+    use lsp::notification::DidOpenTextDocument;
+    use settings::{SettingsStore, SplicingVec};
     use workspace::MultiWorkspace;
+    use workspace::item::ItemHandle;
 
     use super::*;
     use fs::MTime;
+    use gpui::UpdateGlobal as _;
     use gpui::{App, VisualTestContext};
     use language::TestFile;
     use project::FakeFs;
@@ -2822,20 +2822,7 @@ mod tests {
         project: Entity<Project>,
         cx: &mut VisualTestContext,
     ) -> Entity<Editor> {
-        workspace
-            .update_in(cx, |workspace, window, cx| {
-                let pane = workspace.active_pane();
-                pane.update(cx, |_, cx| {
-                    Editor::deserialize(
-                        project.clone(),
-                        workspace.weak_handle(),
-                        workspace_id,
-                        item_id,
-                        window,
-                        cx,
-                    )
-                })
-            })
+        try_deserialize_editor(item_id, workspace_id, workspace, project, cx)
             .await
             .unwrap()
     }
@@ -3101,6 +3088,598 @@ mod tests {
                 assert!(buffer.file().is_some());
             });
         }
+    }
+
+    /// Creates a project rooted at `/root` containing `files`, plus a window and a
+    /// fresh workspace id: everything that editor restoration needs.
+    async fn restore_context(
+        files: serde_json::Value,
+        cx: &mut gpui::TestAppContext,
+    ) -> (
+        Entity<Workspace>,
+        Entity<Project>,
+        Arc<FakeFs>,
+        WorkspaceId,
+        &mut VisualTestContext,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), files).await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(&*cx, |multi_workspace, _| {
+            multi_workspace.workspace().clone()
+        });
+        let workspace_id = cx
+            .update(|_, cx| workspace::WorkspaceDb::global(cx))
+            .next_id()
+            .await
+            .unwrap();
+        (workspace, project, fs, workspace_id, cx)
+    }
+
+    /// Persists a file-backed editor the way `Editor::serialize` would.
+    async fn save_editor_state(
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+        abs_path: &str,
+        contents: Option<String>,
+        cx: &mut VisualTestContext,
+    ) {
+        cx.update(|_, cx| EditorDb::global(cx))
+            .save_serialized_editor(
+                item_id,
+                workspace_id,
+                SerializedEditor {
+                    abs_path: Some(PathBuf::from(abs_path)),
+                    contents,
+                    language: None,
+                    mtime: None,
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    /// Like [`deserialize_editor`], but propagates the restoration error instead of
+    /// unwrapping it, so tests can assert that stale state is rejected.
+    async fn try_deserialize_editor(
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+        workspace: Entity<Workspace>,
+        project: Entity<Project>,
+        cx: &mut VisualTestContext,
+    ) -> Result<Entity<Editor>> {
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                let pane = workspace.active_pane();
+                pane.update(cx, |_, cx| {
+                    Editor::deserialize(
+                        project.clone(),
+                        workspace.weak_handle(),
+                        workspace_id,
+                        item_id,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .await
+    }
+
+    /// Whether the project holds any buffer for a path ending in `suffix`.
+    fn has_buffer_for_path(
+        project: &Entity<Project>,
+        suffix: &str,
+        cx: &VisualTestContext,
+    ) -> bool {
+        project.read_with(cx, |project, cx| {
+            project.buffer_store().read(cx).buffers().any(|buffer| {
+                buffer
+                    .read(cx)
+                    .file()
+                    .is_some_and(|file| file.path().as_std_path().ends_with(suffix))
+            })
+        })
+    }
+
+    // Restoration must not resurrect a persisted file-backed editor whose file was
+    // deleted while the app was closed. Opening the stale path fabricates a new,
+    // empty buffer which Zed then announces to language servers as an existing
+    // document, so rust-analyzer resolves `mod ast;` against an empty `src/ast.rs`
+    // instead of the real `src/ast/mod.rs`.
+    // https://github.com/zed-industries/zed/issues/64231
+    #[gpui::test]
+    async fn test_deserialize_does_not_restore_editor_for_deleted_file(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let (workspace, project, fs, workspace_id, cx) = restore_context(
+            json!({ "src": { "lib.rs": "mod ast;\n", "ast.rs": "pub struct Error;\n" } }),
+            cx,
+        )
+        .await;
+
+        let item_id = 20_001 as ItemId;
+        save_editor_state(item_id, workspace_id, path!("/root/src/ast.rs"), None, cx).await;
+        fs.remove_file(Path::new(path!("/root/src/ast.rs")), Default::default())
+            .await
+            .unwrap();
+
+        let restored =
+            try_deserialize_editor(item_id, workspace_id, workspace, project.clone(), cx).await;
+
+        assert!(
+            restored.is_err(),
+            "a tab for a file deleted while the app was closed must not be restored"
+        );
+        assert!(
+            !has_buffer_for_path(&project, "src/ast.rs", cx),
+            "no buffer may be created for the deleted path"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_deserialize_does_not_restore_editor_for_moved_file(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let (workspace, project, fs, workspace_id, cx) = restore_context(
+            json!({ "src": { "lib.rs": "mod ast;\n", "ast.rs": "pub struct Error;\n" } }),
+            cx,
+        )
+        .await;
+
+        let old_path_id = 20_002 as ItemId;
+        let new_path_id = 20_003 as ItemId;
+        save_editor_state(
+            old_path_id,
+            workspace_id,
+            path!("/root/src/ast.rs"),
+            None,
+            cx,
+        )
+        .await;
+        save_editor_state(
+            new_path_id,
+            workspace_id,
+            path!("/root/src/ast/mod.rs"),
+            None,
+            cx,
+        )
+        .await;
+
+        // `mkdir src/ast && mv src/ast.rs src/ast/mod.rs`, the refactor from the issue.
+        fs.remove_file(Path::new(path!("/root/src/ast.rs")), Default::default())
+            .await
+            .unwrap();
+        fs.create_dir(Path::new(path!("/root/src/ast")))
+            .await
+            .unwrap();
+        fs.insert_file(
+            Path::new(path!("/root/src/ast/mod.rs")),
+            "pub struct Error;\n".into(),
+        )
+        .await;
+
+        let restored_old_path = try_deserialize_editor(
+            old_path_id,
+            workspace_id,
+            workspace.clone(),
+            project.clone(),
+            cx,
+        )
+        .await;
+        assert!(
+            restored_old_path.is_err(),
+            "the tab for the file's old path must not be restored"
+        );
+        assert!(
+            !has_buffer_for_path(&project, "src/ast.rs", cx),
+            "no buffer may be created for the moved path"
+        );
+
+        // The tab for the file's current path still restores, with its real contents.
+        let restored_new_path =
+            try_deserialize_editor(new_path_id, workspace_id, workspace, project.clone(), cx)
+                .await
+                .expect("the tab for the moved-to path must restore");
+        restored_new_path.read_with(cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "pub struct Error;\n");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_deserialize_rejects_directory_where_file_was_and_restores_after_reverting(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let (workspace, project, fs, workspace_id, cx) =
+            restore_context(json!({ "src": { "util.rs": "pub fn util() {}\n" } }), cx).await;
+
+        let item_id = 20_004 as ItemId;
+        save_editor_state(item_id, workspace_id, path!("/root/src/util.rs"), None, cx).await;
+
+        // The file was replaced by a directory of the same name.
+        fs.remove_file(Path::new(path!("/root/src/util.rs")), Default::default())
+            .await
+            .unwrap();
+        fs.create_dir(Path::new(path!("/root/src/util.rs")))
+            .await
+            .unwrap();
+        fs.insert_file(
+            Path::new(path!("/root/src/util.rs/mod.rs")),
+            "pub fn util() {}\n".into(),
+        )
+        .await;
+
+        let restored = try_deserialize_editor(
+            item_id,
+            workspace_id,
+            workspace.clone(),
+            project.clone(),
+            cx,
+        )
+        .await;
+        assert!(
+            restored.is_err(),
+            "a persisted path that is now a directory must not be restored as a document"
+        );
+        assert!(
+            !has_buffer_for_path(&project, "src/util.rs", cx),
+            "no buffer may be created for a path that is now a directory"
+        );
+
+        // The check follows the filesystem, not the persisted path's shape: once a
+        // file exists at that path again the tab restores normally.
+        fs.remove_dir(
+            Path::new(path!("/root/src/util.rs")),
+            fs::RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .unwrap();
+        fs.insert_file(
+            Path::new(path!("/root/src/util.rs")),
+            "pub fn util() {}\n".into(),
+        )
+        .await;
+
+        let restored =
+            try_deserialize_editor(item_id, workspace_id, workspace.clone(), project, cx).await;
+        assert!(
+            restored.is_ok(),
+            "a path that is a file again must restore normally"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_deserialize_restores_existing_and_empty_files(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let (workspace, project, _fs, workspace_id, cx) =
+            restore_context(json!({ "file.rs": "fn main() {}\n", "empty.rs": "" }), cx).await;
+
+        let file_id = 20_005 as ItemId;
+        let empty_id = 20_006 as ItemId;
+        save_editor_state(file_id, workspace_id, path!("/root/file.rs"), None, cx).await;
+        save_editor_state(empty_id, workspace_id, path!("/root/empty.rs"), None, cx).await;
+
+        let restored_file = try_deserialize_editor(
+            file_id,
+            workspace_id,
+            workspace.clone(),
+            project.clone(),
+            cx,
+        )
+        .await
+        .expect("a tab for an existing file must restore");
+        restored_file.read_with(cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "fn main() {}\n");
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+            assert!(
+                matches!(
+                    buffer.file().map(|file| file.disk_state()),
+                    Some(DiskState::Present { .. })
+                ),
+                "an existing file must be restored as a document backed by disk"
+            );
+        });
+
+        // An empty file that exists is not a missing file: it must still restore.
+        let restored_empty =
+            try_deserialize_editor(empty_id, workspace_id, workspace, project.clone(), cx)
+                .await
+                .expect("a tab for an existing empty file must restore");
+        restored_empty.read_with(cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "");
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+            assert!(
+                matches!(
+                    buffer.file().map(|file| file.disk_state()),
+                    Some(DiskState::Present { .. })
+                ),
+                "an empty file must not be mistaken for a missing file"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_deserialize_restores_unsaved_contents_for_deleted_file(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let (workspace, project, fs, workspace_id, cx) =
+            restore_context(json!({ "gone.rs": "on disk\n" }), cx).await;
+
+        let item_id = 20_007 as ItemId;
+        save_editor_state(
+            item_id,
+            workspace_id,
+            path!("/root/gone.rs"),
+            Some("unsaved edits\n".to_string()),
+            cx,
+        )
+        .await;
+
+        fs.remove_file(Path::new(path!("/root/gone.rs")), Default::default())
+            .await
+            .unwrap();
+
+        // Unsaved contents are restorable state in their own right, so hot-exit
+        // still preserves them when the backing file is gone.
+        let restored =
+            try_deserialize_editor(item_id, workspace_id, workspace, project.clone(), cx)
+                .await
+                .expect("unsaved contents must be restored even if the file is gone");
+        restored.read_with(cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "unsaved edits\n");
+            assert!(editor.is_dirty(cx));
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+            assert!(
+                matches!(
+                    buffer.file().map(|file| file.disk_state()),
+                    Some(DiskState::New)
+                ),
+                "restored unsaved contents keep the file as a not-yet-written document"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_deserialize_restores_only_valid_tabs_in_a_pane(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let (workspace, project, fs, workspace_id, cx) = restore_context(
+            json!({
+                "keep.rs": "keep\n",
+                "empty.rs": "",
+                "gone_1.rs": "gone 1\n",
+                "gone_2.rs": "gone 2\n",
+            }),
+            cx,
+        )
+        .await;
+
+        // One pane holding a mix of surviving and vanished paths, the way the
+        // reported workspace had 250 tabs, 56 of them for missing files.
+        let items = [
+            (20_008 as ItemId, path!("/root/keep.rs")),
+            (20_009 as ItemId, path!("/root/gone_1.rs")),
+            (20_010 as ItemId, path!("/root/empty.rs")),
+            (20_011 as ItemId, path!("/root/gone_2.rs")),
+        ];
+        for (item_id, path) in items {
+            save_editor_state(item_id, workspace_id, path, None, cx).await;
+        }
+        for missing in [path!("/root/gone_1.rs"), path!("/root/gone_2.rs")] {
+            fs.remove_file(Path::new(missing), Default::default())
+                .await
+                .unwrap();
+        }
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        // Mirror of `SerializedPane::deserialize_to`: only items that deserialize
+        // successfully are added to the pane.
+        for (item_id, _) in items {
+            if let Ok(editor) = try_deserialize_editor(
+                item_id,
+                workspace_id,
+                workspace.clone(),
+                project.clone(),
+                cx,
+            )
+            .await
+            {
+                let item: Box<dyn ItemHandle> = Box::new(editor);
+                pane.update_in(cx, |pane, window, cx| {
+                    pane.add_item(item, false, false, None, window, cx);
+                });
+            }
+        }
+
+        let restored_paths = pane.read_with(cx, |pane, cx| {
+            pane.items()
+                .map(|item| {
+                    item.project_path(cx)
+                        .expect("restored editor should have a project path")
+                        .path
+                        .as_std_path()
+                        .to_path_buf()
+                })
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            restored_paths,
+            vec![PathBuf::from("keep.rs"), PathBuf::from("empty.rs")],
+            "only worktree-relative paths whose files still exist may be restored, in order"
+        );
+        assert!(
+            !has_buffer_for_path(&project, "gone_1.rs", cx)
+                && !has_buffer_for_path(&project, "gone_2.rs", cx),
+            "missing paths must not leave buffers behind"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_deserialize_missing_file_is_not_announced_to_language_servers(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let (workspace, project, fs, workspace_id, cx) = restore_context(
+            json!({ "lib.rs": "mod ast;\n", "ast.rs": "pub struct Error;\n" }),
+            cx,
+        )
+        .await;
+
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "the-rust-language-server",
+                ..Default::default()
+            },
+        );
+
+        let valid_id = 20_012 as ItemId;
+        let missing_id = 20_013 as ItemId;
+        save_editor_state(valid_id, workspace_id, path!("/root/lib.rs"), None, cx).await;
+        save_editor_state(missing_id, workspace_id, path!("/root/ast.rs"), None, cx).await;
+        fs.remove_file(Path::new(path!("/root/ast.rs")), Default::default())
+            .await
+            .unwrap();
+
+        // Positive control: a restored file that still exists is announced, proving
+        // the fake server observes `didOpen` traffic on this path.
+        let _valid_editor = try_deserialize_editor(
+            valid_id,
+            workspace_id,
+            workspace.clone(),
+            project.clone(),
+            cx,
+        )
+        .await
+        .expect("a tab for an existing file must restore");
+        // Creating the editor registers its buffer with language servers, which is
+        // the production wiring for a restored tab, so the announcement below is
+        // observed without any test-side registration.
+        let mut fake_server = fake_servers.next().await.unwrap();
+        let did_open = fake_server
+            .receive_notification::<DidOpenTextDocument>()
+            .await;
+        assert!(
+            did_open.text_document.uri.as_str().ends_with("lib.rs"),
+            "the existing file should have been announced, got {:?}",
+            did_open.text_document.uri
+        );
+
+        // The vanished file produces no buffer, so there is nothing to announce.
+        let restored_missing =
+            try_deserialize_editor(missing_id, workspace_id, workspace, project.clone(), cx).await;
+        assert!(restored_missing.is_err());
+        cx.run_until_parked();
+        assert!(
+            !has_buffer_for_path(&project, "ast.rs", cx),
+            "the missing file must not become a document"
+        );
+        assert!(
+            fake_server
+                .try_receive_notification::<DidOpenTextDocument>()
+                .now_or_never()
+                .is_none(),
+            "a missing file must never be announced to language servers"
+        );
+    }
+
+    // Restore decides existence from the filesystem, not from the worktree snapshot,
+    // so a tab for a file the scan skips must still come back when the file exists.
+    #[gpui::test]
+    async fn test_deserialize_restores_file_excluded_from_the_worktree_scan(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_exclusions =
+                        Some(SplicingVec::from(vec!["**/excluded".to_string()]));
+                });
+            });
+        });
+
+        let (workspace, project, _fs, workspace_id, cx) = restore_context(
+            json!({ "excluded": { "kept.rs": "pub struct Kept;\n" } }),
+            cx,
+        )
+        .await;
+
+        let excluded_path = RelPath::from_unix_str("excluded/kept.rs").unwrap();
+        assert!(
+            project.read_with(cx, |project, cx| {
+                project
+                    .worktrees(cx)
+                    .next()
+                    .unwrap()
+                    .read(cx)
+                    .entry_for_path(&excluded_path)
+                    .is_none()
+            }),
+            "sanity check: the fixture file must be absent from the worktree scan"
+        );
+
+        let item_id = 20_014 as ItemId;
+        save_editor_state(
+            item_id,
+            workspace_id,
+            path!("/root/excluded/kept.rs"),
+            None,
+            cx,
+        )
+        .await;
+
+        let restored =
+            try_deserialize_editor(item_id, workspace_id, workspace, project.clone(), cx)
+                .await
+                .expect("a tab for an existing file excluded from the scan must restore");
+        restored.read_with(cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "pub struct Kept;\n");
+        });
+    }
+
+    // The guard covers both restore branches, including a standalone file that is
+    // not in any worktree and was deleted while the app was closed.
+    #[gpui::test]
+    async fn test_deserialize_does_not_restore_standalone_file_that_is_gone(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let (workspace, project, fs, workspace_id, cx) = restore_context(json!({}), cx).await;
+        fs.insert_file(path!("/standalone.rs"), "fn main() {}\n".into())
+            .await;
+
+        let item_id = 20_015 as ItemId;
+        save_editor_state(item_id, workspace_id, path!("/standalone.rs"), None, cx).await;
+        fs.remove_file(Path::new(path!("/standalone.rs")), Default::default())
+            .await
+            .unwrap();
+
+        let restored =
+            try_deserialize_editor(item_id, workspace_id, workspace, project.clone(), cx).await;
+        assert!(
+            restored.is_err(),
+            "a standalone file that no longer exists must not be restored"
+        );
+        assert!(!has_buffer_for_path(&project, "standalone.rs", cx));
     }
 
     // Verify that renaming an open file emits EditorEvent::FileHandleChanged so that

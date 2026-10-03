@@ -7706,11 +7706,8 @@ mod tests {
                 }),
             )
             .await;
-        let mut first_dir = PathBuf::from(path!("/")).join(first_dir);
-        let mut second_dir = PathBuf::from(path!("/")).join(second_dir);
-        if second_dir < first_dir {
-            std::mem::swap(&mut first_dir, &mut second_dir);
-        }
+        let first_dir = PathBuf::from(path!("/")).join(first_dir);
+        let second_dir = PathBuf::from(path!("/")).join(second_dir);
 
         let session_id = cx.read(|cx| app_state.session.read(cx).id().to_owned());
         let first_window = open_test_project_window_with_tabs(
@@ -7798,18 +7795,136 @@ mod tests {
         });
         restored_tabs.sort_by(|left, right| left.0.cmp(&right.0));
 
+        // Windows are restored in an arbitrary order, so sort the expectation the
+        // same way instead of assuming which directory sorts first. Swapping the
+        // directories into order here would pair them with the wrong tabs: each
+        // directory only contains the files it was created with.
+        let mut expected_tabs = vec![
+            (
+                first_dir,
+                vec![rel_path("a.txt").into(), rel_path("b.txt").into()],
+            ),
+            (
+                second_dir,
+                vec![rel_path("c.txt").into(), rel_path("d.txt").into()],
+            ),
+        ];
+        expected_tabs.sort_by(|left, right| left.0.cmp(&right.0));
+
+        assert_eq!(restored_tabs, expected_tabs);
+    }
+
+    // End-to-end session restore: a tab whose file was deleted while Zed was
+    // closed must not come back, must not leave a buffer behind, and must never be
+    // announced to language servers as an existing document.
+    // https://github.com/zed-industries/zed/issues/64231
+    #[gpui::test]
+    async fn test_reload_does_not_restore_tabs_for_files_deleted_while_closed(
+        cx: &mut TestAppContext,
+    ) {
+        use session::Session;
+
+        let app_state = init_test(cx);
+        cx.update(init);
+
+        let dir = format!("reload-deleted-{}", uuid::Uuid::new_v4());
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/"),
+                json!({
+                    dir.clone(): {
+                        "kept.txt": "kept",
+                        "removed.txt": "removed"
+                    }
+                }),
+            )
+            .await;
+        let dir = PathBuf::from(path!("/")).join(dir);
+
+        let session_id = cx.read(|cx| app_state.session.read(cx).id().to_owned());
+        let window = open_test_project_window_with_tabs(
+            &app_state,
+            &dir,
+            &[rel_path("kept.txt"), rel_path("removed.txt")],
+            cx,
+        )
+        .await;
+
+        let restart = cx.expect_restart();
+        cx.update(workspace::reload);
+        restart.await.expect("restart was not requested");
+
+        // The file behind one of the persisted tabs is gone by the time the
+        // workspace is restored.
+        app_state
+            .fs
+            .remove_file(&dir.join("removed.txt"), Default::default())
+            .await
+            .unwrap();
+
+        window
+            .update(cx, |_, window, _| window.remove_window())
+            .expect("workspace window was closed");
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            app_state.session.update(cx, |app_session, _cx| {
+                app_session
+                    .replace_session_for_test(Session::test_with_old_session(session_id.clone()));
+            });
+        });
+
+        let mut async_cx = cx.to_async();
+        crate::restore_or_create_workspace(app_state.clone(), &mut async_cx)
+            .await
+            .expect("failed to restore workspaces");
+        cx.run_until_parked();
+
+        let (restored_tabs, has_buffer_for_removed_file) = cx.read(|cx| {
+            let window = cx
+                .windows()
+                .into_iter()
+                .find_map(|window| window.downcast::<MultiWorkspace>())
+                .expect("restored workspace window was closed");
+            window
+                .read_with(cx, |multi_workspace, cx| {
+                    let workspace = multi_workspace.workspace().read(cx);
+                    let restored_tabs = workspace
+                        .active_pane()
+                        .read(cx)
+                        .items()
+                        .map(|item| {
+                            item.project_path(cx)
+                                .expect("restored tab should have a project path")
+                                .path
+                        })
+                        .collect::<Vec<_>>();
+                    let has_buffer_for_removed_file = workspace
+                        .project()
+                        .read(cx)
+                        .buffer_store()
+                        .read(cx)
+                        .buffers()
+                        .any(|buffer| {
+                            buffer.read(cx).file().is_some_and(|file| {
+                                file.path().as_std_path().ends_with("removed.txt")
+                            })
+                        });
+                    (restored_tabs, has_buffer_for_removed_file)
+                })
+                .expect("restored workspace window was closed")
+        });
+
         assert_eq!(
             restored_tabs,
-            vec![
-                (
-                    first_dir,
-                    vec![rel_path("a.txt").into(), rel_path("b.txt").into()]
-                ),
-                (
-                    second_dir,
-                    vec![rel_path("c.txt").into(), rel_path("d.txt").into()]
-                ),
-            ]
+            vec![rel_path("kept.txt").into()],
+            "only the tab whose file still exists may be restored"
+        );
+        assert!(
+            !has_buffer_for_removed_file,
+            "the deleted file must not be reopened as an empty document"
         );
     }
 
