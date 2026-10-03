@@ -117,6 +117,10 @@ pub struct TouchId(pub u64);
 /// position, even after the touch moves outside them.
 #[derive(Clone, Debug, Default)]
 pub struct TouchEvent {
+    /// Monotonic platform sample time, independent of dispatch or rendering delay.
+    /// Use the same clock for the lifetime of a contact, or leave this `None`
+    /// throughout to use arrival times. Only differences between samples matter.
+    pub timestamp: Option<std::time::Duration>,
     /// Which touch this event belongs to.
     pub id: TouchId,
     /// The phase of the touch.

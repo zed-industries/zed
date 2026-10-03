@@ -1,5 +1,5 @@
 [package]
-name = "gpui_shared_string"
+name = "gpui_shared_string_lint_fixture"
 version = "0.0.0"
 edition = "2021"
 publish = false

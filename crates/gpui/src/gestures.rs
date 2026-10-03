@@ -473,6 +473,10 @@ const VELOCITY_WINDOW: Duration = Duration::from_millis(100);
 /// reports movement every 8–16ms while the finger is in motion.
 const VELOCITY_ASSUME_STOPPED_GAP: Duration = Duration::from_millis(40);
 
+// Allow brief stationary reports near lift-off without treating them as a hold.
+// Like Chromium, use a separate 80ms release grace period from the movement gap.
+const VELOCITY_RELEASE_STOPPED_GAP: Duration = Duration::from_millis(80);
+
 const VELOCITY_MAX_SAMPLES: usize = 20;
 
 /// The portable recognizer behind raw touch input: it watches the
@@ -543,7 +547,19 @@ struct ActiveTouch {
     /// Retained across stationary samples so prediction corrections cannot
     /// reverse a pan when integer browser coordinates repeat.
     last_movement: Point<Pixels>,
+    timestamp_origin: Option<(Duration, Instant)>,
     velocity_tracker: VelocityTracker,
+}
+
+impl ActiveTouch {
+    fn event_time(&self, timestamp: Option<Duration>, fallback: Instant) -> Instant {
+        match (self.timestamp_origin, timestamp) {
+            (Some((origin, instant)), Some(timestamp)) => {
+                instant + timestamp.saturating_sub(origin)
+            }
+            _ => fallback,
+        }
+    }
 }
 
 struct CompletedTap {
@@ -614,6 +630,7 @@ impl TouchGestureRecognizer {
                         start_position: event.position,
                         last_position: event.position,
                         emitted_position: event.position,
+                        timestamp_origin: event.timestamp.map(|time| (time, now)),
                         last_movement: Point::default(),
                         velocity_tracker,
                     };
@@ -646,7 +663,9 @@ impl TouchGestureRecognizer {
                     long_press_offered,
                     touch_drag_offered,
                 } if touch.id == event.id => {
-                    touch.velocity_tracker.push(now, event.position);
+                    touch
+                        .velocity_tracker
+                        .push(touch.event_time(event.timestamp, now), event.position);
                     touch.last_position = event.position;
                     let accumulated = event.position - touch.start_position;
                     if accumulated.magnitude() > f64::from(self.tuning.touch_slop) {
@@ -686,7 +705,9 @@ impl TouchGestureRecognizer {
                     if raw_delta != Point::default() {
                         touch.last_movement = raw_delta;
                     }
-                    touch.velocity_tracker.push(now, event.position);
+                    touch
+                        .velocity_tracker
+                        .push(touch.event_time(event.timestamp, now), event.position);
                     touch.last_position = event.position;
                     let mut target = event.predicted_position.unwrap_or(event.position);
                     let mut delta = target - touch.emitted_position;
@@ -771,13 +792,8 @@ impl TouchGestureRecognizer {
                     // estimate. But a release long after the last movement
                     // means the finger had already stopped, so nothing
                     // flings.
-                    let finger_stopped =
-                        touch
-                            .velocity_tracker
-                            .latest_sample_time()
-                            .is_none_or(|latest| {
-                                now.duration_since(latest) > VELOCITY_ASSUME_STOPPED_GAP
-                            });
+                    let event_time = touch.event_time(event.timestamp, now);
+                    let finger_stopped = touch.velocity_tracker.is_stopped_at(event_time);
                     let mut velocity = if finger_stopped {
                         Point::default()
                     } else {
@@ -1023,6 +1039,15 @@ struct VelocityTracker {
 
 impl VelocityTracker {
     fn push(&mut self, time: Instant, position: Point<Pixels>) {
+        // Repeated positions can flatten or reverse the fit near lift-off.
+        // Keep the last movement time unchanged so a held finger still stops.
+        if self
+            .samples
+            .back()
+            .is_some_and(|(_, previous)| *previous == position)
+        {
+            return;
+        }
         self.samples.push_back((time, position));
         while self.samples.len() > VELOCITY_MAX_SAMPLES {
             self.samples.pop_front();
@@ -1031,6 +1056,11 @@ impl VelocityTracker {
 
     fn latest_sample_time(&self) -> Option<Instant> {
         self.samples.back().map(|(time, _)| *time)
+    }
+
+    fn is_stopped_at(&self, time: Instant) -> bool {
+        self.latest_sample_time()
+            .is_none_or(|latest| time.duration_since(latest) >= VELOCITY_RELEASE_STOPPED_GAP)
     }
 
     /// The velocity at the newest sample, in pixels per second.
@@ -2199,8 +2229,68 @@ mod tests {
         assert!(recognizer.offer_long_press(replacement_touch).is_some());
     }
 
+    #[test]
+    fn repeated_positions_preserve_flick_but_do_not_extend_release_grace() {
+        let start = Instant::now();
+        let mut tracker = VelocityTracker::default();
+        for time in [0, 16, 32, 48, 64] {
+            tracker.push(
+                start + Duration::from_millis(time),
+                point(px(0.), px(time as f32)),
+            );
+        }
+        for time in [80, 96, 112, 128, 144, 160] {
+            tracker.push(start + Duration::from_millis(time), point(px(0.), px(64.)));
+        }
+        assert!((tracker.velocity().y - 1000.).abs() < 0.1);
+        assert_eq!(
+            tracker.latest_sample_time(),
+            Some(start + Duration::from_millis(64))
+        );
+        assert!(!tracker.is_stopped_at(start + Duration::from_millis(64 + 79)));
+        assert!(tracker.is_stopped_at(start + Duration::from_millis(64 + 80)));
+        assert!(tracker.is_stopped_at(start + Duration::from_millis(160)));
+    }
+
+    #[test]
+    fn movement_in_either_axis_is_retained() {
+        let start = Instant::now();
+        let mut tracker = VelocityTracker::default();
+        tracker.push(start, point(px(0.), px(10.)));
+        tracker.push(start + Duration::from_millis(16), point(px(1.), px(10.)));
+        tracker.push(start + Duration::from_millis(32), point(px(1.), px(9.)));
+        assert_eq!(tracker.samples.len(), 3);
+        assert_eq!(
+            tracker.latest_sample_time(),
+            Some(start + Duration::from_millis(32))
+        );
+    }
+
+    #[test]
+    fn coalesced_sample_times_preserve_fling_and_stationary_release_stops_it() {
+        for release_time in [140, 180] {
+            let mut recognizer = TouchGestureRecognizer::new(GestureTuning::default());
+            let start = Instant::now();
+            let mut event = touch_event(TouchId(1), TouchPhase::Started, 0., 0.);
+            event.timestamp = Some(Duration::from_secs(50));
+            recognizer.handle_event_at(&event, start);
+            // Batched delivery must not replace sample times in velocity or stop decisions.
+            for time in (10..=130).step_by(10) {
+                event.phase = TouchPhase::Moved;
+                event.position.y = px(time.min(100) as f32);
+                event.timestamp = Some(Duration::from_secs(50) + Duration::from_millis(time));
+                recognizer.handle_event_at(&event, start + Duration::from_millis(500));
+            }
+            event.phase = TouchPhase::Ended;
+            event.timestamp = Some(Duration::from_secs(50) + Duration::from_millis(release_time));
+            recognizer.handle_event_at(&event, start + Duration::from_millis(501));
+            assert_eq!(recognizer.has_momentum(), release_time < 180);
+        }
+    }
+
     fn touch_event(id: TouchId, phase: TouchPhase, x: f32, y: f32) -> TouchEvent {
         TouchEvent {
+            timestamp: None,
             id,
             phase,
             position: point(px(x), px(y)),

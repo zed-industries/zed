@@ -1,5 +1,5 @@
 [package]
-name = "gpui"
+name = "gpui_lint_fixture"
 version = "0.0.0"
 edition = "2021"
 publish = false

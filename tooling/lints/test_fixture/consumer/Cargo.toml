@@ -8,4 +8,4 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
-gpui_shared_string = { path = "../gpui_shared_string" }
+gpui_shared_string = { package = "gpui_shared_string_lint_fixture", path = "../gpui_shared_string" }
