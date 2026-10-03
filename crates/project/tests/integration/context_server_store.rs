@@ -1106,11 +1106,12 @@ async fn test_http_server_authenticates_on_notification_401(cx: &mut TestAppCont
     });
 }
 
-// A transport failure that is not an authentication challenge must not touch
-// the server's state: no spurious auth flow, and (as before the transport
-// watch existed) the server stays `Running`.
+// A transport failure that is not an authentication challenge must not trip
+// the auth flow. Since the transport is unusable afterwards, the store
+// restarts the HTTP server with a fresh connection instead of leaving it
+// `Running` with a dead client.
 #[gpui::test]
-async fn test_http_server_ignores_non_auth_transport_failure(cx: &mut TestAppContext) {
+async fn test_http_server_restarts_on_non_auth_transport_failure(cx: &mut TestAppContext) {
     const SERVER_ID: &str = "flaky-server";
     let server_id = ContextServerId(SERVER_ID.into());
 
@@ -1135,12 +1136,16 @@ async fn test_http_server_ignores_non_auth_transport_failure(cx: &mut TestAppCon
             vec![
                 (server_id.clone(), ContextServerStatus::Starting),
                 (server_id.clone(), ContextServerStatus::Running),
+                // Restart after the non-auth transport failure.
+                (server_id.clone(), ContextServerStatus::Stopped),
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
             ],
             cx,
         );
         cx.run_until_parked();
 
-        let client = store.read_with(cx, |store, _| {
+        let old_client = store.read_with(cx, |store, _| {
             store
                 .get_running_server(&server_id)
                 .expect("server should be running")
@@ -1148,12 +1153,24 @@ async fn test_http_server_ignores_non_auth_transport_failure(cx: &mut TestAppCon
                 .expect("running server should have a client")
         });
 
-        client
+        old_client
             .request::<context_server::types::requests::ListTools>(())
             .await
             .expect_err("request should fail when the transport errors");
+        // Drop our handle so the dead client fully goes away: a lingering
+        // client would compete with its successor for the reused transport's
+        // response channel and starve the restart's initialize handshake.
+        drop(old_client);
 
         cx.run_until_parked();
+
+        store.read_with(cx, |store, _| {
+            store
+                .get_running_server(&server_id)
+                .expect("server should be running again")
+                .client()
+                .expect("restarted server should have a client")
+        });
         // Dropping the events guard asserts no further status change happened.
     }
 
@@ -1161,7 +1178,236 @@ async fn test_http_server_ignores_non_auth_transport_failure(cx: &mut TestAppCon
         assert_eq!(
             store.read(cx).status_for_server(&server_id),
             Some(ContextServerStatus::Running),
-            "a non-auth transport failure should not change the server state"
+            "server should recover via restart after a non-auth transport failure"
+        );
+    });
+}
+
+// The automatic restart has a budget: a server whose transport keeps dying
+// (e.g. it rejects every session) must not be restarted on every request.
+// After MAX_RESTARTS_PER_WINDOW deaths within the window the store stops
+// restarting, leaving the server `Running` with a dead client until the user
+// intervenes or the window elapses.
+#[gpui::test]
+async fn test_http_server_stops_restarting_after_repeated_transport_deaths(
+    cx: &mut TestAppContext,
+) {
+    const SERVER_ID: &str = "churning-server";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    set_fake_mcp_http_client(cx, |message| {
+        if message.contains("\"method\":\"initialize\"") {
+            Ok(initialize_response())
+        } else if message.contains("notifications/initialized") {
+            Ok(notification_accepted_response())
+        } else {
+            Err(anyhow::anyhow!("connection reset"))
+        }
+    });
+
+    let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_http_context_server_configuration(&server_id, cx);
+
+    // Each failed request kills the transport and eats one restart from the
+    // budget: the initial start plus MAX_RESTARTS_PER_WINDOW restarts, then
+    // the fourth death must not produce any further status changes.
+    {
+        let _server_events = assert_server_events(
+            &store,
+            std::iter::once(ContextServerStatus::Starting)
+                .chain(std::iter::once(ContextServerStatus::Running))
+                .chain(
+                    [
+                        ContextServerStatus::Stopped,
+                        ContextServerStatus::Starting,
+                        ContextServerStatus::Running,
+                    ]
+                    .into_iter()
+                    .cycle()
+                    .take(3 * 3), // MAX_RESTARTS_PER_WINDOW restarts × 3 events each
+                )
+                .map(|status| (server_id.clone(), status))
+                .collect(),
+            cx,
+        );
+        cx.run_until_parked();
+
+        // Three restarts within the budget, each producing a fresh client.
+        for _ in 0..3 {
+            let client = store.read_with(cx, |store, _| {
+                store
+                    .get_running_server(&server_id)
+                    .expect("server should be running")
+                    .client()
+                    .expect("running server should have a client")
+            });
+            client
+                .request::<context_server::types::requests::ListTools>(())
+                .await
+                .expect_err("request should fail when the transport errors");
+            // Drop our handle so the dead client fully goes away: a lingering
+            // client's input task would compete with its successor for the
+            // shared transport response channel and starve the restart's
+            // initialize handshake.
+            drop(client);
+            cx.run_until_parked();
+        }
+
+        // Budget exhausted: this death produces no status change and no new
+        // client. Dropping the events guard asserts exactly that.
+        let client = store.read_with(cx, |store, _| {
+            store
+                .get_running_server(&server_id)
+                .expect("server should still be running")
+                .client()
+                .expect("server should still have a client")
+        });
+        client
+            .request::<context_server::types::requests::ListTools>(())
+            .await
+            .expect_err("request should fail when the transport errors");
+        drop(client);
+        cx.run_until_parked();
+    }
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Running),
+            "server should stay in its current state once the restart budget is exhausted"
+        );
+    });
+}
+
+// A caller may still hold a clone of the old protocol handle when the
+// transport dies and the server restarts. The restart must reclaim the shared
+// transport's response channel regardless — a surviving input task of the old
+// client generation would otherwise consume the new initialize's response and
+// leave the server stuck in `Starting` until its timeout.
+#[gpui::test]
+async fn test_restart_reclaims_transport_from_retained_client(cx: &mut TestAppContext) {
+    const SERVER_ID: &str = "retained-handle-server";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    set_fake_mcp_http_client(cx, |message| {
+        if message.contains("\"method\":\"initialize\"") {
+            Ok(initialize_response())
+        } else if message.contains("notifications/initialized") {
+            Ok(notification_accepted_response())
+        } else {
+            Err(anyhow::anyhow!("connection reset"))
+        }
+    });
+
+    let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_http_context_server_configuration(&server_id, cx);
+    cx.run_until_parked();
+
+    // Retain the protocol handle across the restart, as production callers
+    // (e.g. an agent awaiting a tool call) legitimately do.
+    let retained_client = store.read_with(cx, |store, _| {
+        store
+            .get_running_server(&server_id)
+            .expect("server should be running")
+            .client()
+            .expect("running server should have a client")
+    });
+
+    retained_client
+        .request::<context_server::types::requests::ListTools>(())
+        .await
+        .expect_err("request should fail when the transport errors");
+    // Deliberately do NOT drop `retained_client` here.
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Running),
+            "the restart should complete even while the old client handle is retained"
+        );
+    });
+}
+
+// Some streamable-HTTP servers expire sessions aggressively: after the
+// session TTL they answer 400 with an "initialize required" error (or 404,
+// as the spec allows) instead of letting the request hang. The client must
+// tear down on such a response so the store restarts it with a fresh
+// initialize handshake, instead of staying `Running` with a session the
+// server will keep rejecting.
+#[gpui::test]
+async fn test_http_server_reinitializes_after_session_rejection(cx: &mut TestAppContext) {
+    const SERVER_ID: &str = "ttl-server";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    set_fake_mcp_http_client(cx, |message| {
+        if message.contains("\"method\":\"initialize\"") {
+            Ok(initialize_response_with_session())
+        } else if message.contains("notifications/initialized") {
+            Ok(notification_accepted_response())
+        } else {
+            Ok(session_expired_response())
+        }
+    });
+
+    let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_http_context_server_configuration(&server_id, cx);
+
+    {
+        let _server_events = assert_server_events(
+            &store,
+            vec![
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+                // Restart after the session was rejected.
+                (server_id.clone(), ContextServerStatus::Stopped),
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+            ],
+            cx,
+        );
+        cx.run_until_parked();
+
+        let old_client = store.read_with(cx, |store, _| {
+            store
+                .get_running_server(&server_id)
+                .expect("server should be running")
+                .client()
+                .expect("running server should have a client")
+        });
+
+        old_client
+            .request::<context_server::types::requests::ListTools>(())
+            .await
+            .expect_err("request rejected with an expired session should fail");
+        // Drop our handle so the dead client fully goes away: a lingering
+        // client would compete with its successor for the reused transport's
+        // response channel and starve the restart's initialize handshake.
+        drop(old_client);
+
+        cx.run_until_parked();
+
+        store.read_with(cx, |store, _| {
+            store
+                .get_running_server(&server_id)
+                .expect("server should be running again")
+                .client()
+                .expect("restarted server should have a client")
+        });
+        // Dropping the events guard asserts no further status change happened.
+    }
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Running),
+            "server should recover via re-initialization after a session rejection"
         );
     });
 }
@@ -1287,6 +1533,10 @@ async fn test_http_server_restart_clears_stale_auth_challenge(cx: &mut TestAppCo
         .request::<context_server::types::requests::ListTools>(())
         .await
         .expect_err("request should fail when the transport errors");
+    // Drop our handle so the dead client fully goes away: a lingering client
+    // would compete with its successor for the reused transport's response
+    // channel and starve the restart's initialize handshake.
+    drop(client);
     cx.run_until_parked();
 
     cx.update(|cx| {
@@ -1294,6 +1544,94 @@ async fn test_http_server_restart_clears_stale_auth_challenge(cx: &mut TestAppCo
             store.read(cx).status_for_server(&server_id),
             Some(ContextServerStatus::Running),
             "a stale challenge from a previous client generation must not trigger auth"
+        );
+    });
+}
+
+// A client-level request timeout must tear down the client so the store
+// restarts the HTTP server. This exercises the real timeout path (a server
+// that accepts the request but never answers) rather than a transport send
+// failure.
+#[gpui::test]
+async fn test_request_timeout_restarts_http_server(cx: &mut TestAppContext) {
+    const SERVER_ID: &str = "hung-server";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    set_fake_mcp_http_client(cx, |message| {
+        if message.contains("\"method\":\"initialize\"") {
+            Ok(initialize_response())
+        } else if message.contains("notifications/initialized") {
+            Ok(notification_accepted_response())
+        } else {
+            // An SSE stream that never delivers a response: the request must
+            // hit the client-level timeout.
+            stalled_sse_response()
+        }
+    });
+
+    let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_context_server_configuration(
+        vec![(
+            SERVER_ID.into(),
+            settings::ContextServerSettingsContent::Http {
+                enabled: true,
+                url: "https://mcp.example.com/mcp".to_string(),
+                headers: Default::default(),
+                timeout: Some(1),
+                oauth: None,
+            },
+        )],
+        cx,
+    );
+
+    {
+        let _server_events = assert_server_events(
+            &store,
+            vec![
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+                // Restart after the request timeout.
+                (server_id.clone(), ContextServerStatus::Stopped),
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+            ],
+            cx,
+        );
+        cx.run_until_parked();
+
+        let client = store.read_with(cx, |store, _| {
+            store
+                .get_running_server(&server_id)
+                .expect("server should be running")
+                .client()
+                .expect("running server should have a client")
+        });
+        let request_task = cx.background_executor.spawn(async move {
+            client
+                .request::<context_server::types::requests::ListTools>(())
+                .await
+        });
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(2));
+
+        let error = request_task
+            .await
+            .expect_err("a hung request should hit the client-level timeout");
+        assert!(
+            format!("{:#}", error).contains("timeout"),
+            "unexpected error: {error}"
+        );
+        cx.run_until_parked();
+        // Dropping the events guard asserts no further status change happened.
+    }
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Running),
+            "server should recover via restart after a request timeout"
         );
     });
 }
@@ -1379,11 +1717,85 @@ fn initialize_response() -> Response<http_client::AsyncBody> {
     }))
 }
 
+fn initialize_response_with_session() -> Response<http_client::AsyncBody> {
+    Response::builder()
+        .status(200)
+        .header("Content-Type", "application/json")
+        .header("Mcp-Session-Id", "test-session-id")
+        .body(http_client::AsyncBody::from(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 0,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "serverInfo": { "name": "test-server", "version": "1.0.0" }
+                }
+            })
+            .to_string(),
+        ))
+        .unwrap()
+}
+
+fn session_expired_response() -> Response<http_client::AsyncBody> {
+    Response::builder()
+        .status(400)
+        .header("Content-Type", "application/json")
+        .body(http_client::AsyncBody::from(
+            json!({
+                "jsonrpc": "2.0",
+                "error": {
+                    "code": -32600,
+                    "message": "Invalid Request: initialize required (no valid mcp-session-id header)"
+                },
+                "id": null
+            })
+            .to_string(),
+        ))
+        .unwrap()
+}
+
 fn notification_accepted_response() -> Response<http_client::AsyncBody> {
     Response::builder()
         .status(202)
         .body(http_client::AsyncBody::empty())
         .unwrap()
+}
+
+/// A reader that yields one chunk of bytes and then stalls forever, used to
+/// simulate a server that accepts a request but never answers it.
+struct StallAfterFirstChunk {
+    bytes: &'static [u8],
+    sent: bool,
+}
+
+impl futures::AsyncRead for StallAfterFirstChunk {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        if self.sent {
+            return std::task::Poll::Pending;
+        }
+        self.sent = true;
+        let len = self.bytes.len().min(buf.len());
+        buf[..len].copy_from_slice(&self.bytes[..len]);
+        std::task::Poll::Ready(Ok(len))
+    }
+}
+
+/// An SSE stream carrying only a keepalive comment: the transport accepts the
+/// response but no JSON-RPC answer ever arrives, so a request on it can only
+/// end via the client-level timeout.
+fn stalled_sse_response() -> Result<Response<http_client::AsyncBody>> {
+    Ok(Response::builder()
+        .status(200)
+        .header("Content-Type", "text/event-stream")
+        .body(http_client::AsyncBody::from_reader(StallAfterFirstChunk {
+            bytes: b": keepalive\n\n",
+            sent: false,
+        }))?)
 }
 
 fn unauthorized_response() -> Response<http_client::AsyncBody> {
