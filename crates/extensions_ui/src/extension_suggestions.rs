@@ -196,6 +196,9 @@ fn show_suggestion(
     if workspace.has_notification(&notification_id) {
         return;
     }
+    if !ExtensionSettings::get_global(cx).extension_suggestions {
+        return;
+    }
 
     let extension_store = ExtensionStore::global(cx);
     let extension_store = extension_store.read(cx);
@@ -323,6 +326,23 @@ mod tests {
         let (workspace, cx) = open_test_workspace(&app_state, cx).await;
 
         open_file(&workspace, "main.rs", cx).await;
+
+        assert_eq!(notification_ids(&workspace, cx), Vec::new());
+    }
+
+    #[gpui::test]
+    async fn test_no_suggestion_when_extension_suggestions_disabled(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content.extension.extension_suggestions = Some(false);
+                });
+            });
+        });
+        let (workspace, cx) = open_test_workspace(&app_state, cx).await;
+
+        open_file(&workspace, "index.html", cx).await;
 
         assert_eq!(notification_ids(&workspace, cx), Vec::new());
     }

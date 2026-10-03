@@ -18,6 +18,10 @@ pub struct ExtensionSettingsContent {
     pub auto_install_extensions: HashMap<Arc<str>, bool>,
     #[serde(default)]
     pub auto_update_extensions: HashMap<Arc<str>, bool>,
+    /// Whether Zed suggests installing extensions for the languages of the files you open.
+    ///
+    /// Default: true
+    pub extension_suggestions: Option<bool>,
     /// The capabilities granted to extensions.
     pub granted_extension_capabilities: Option<Vec<ExtensionCapabilityContent>>,
 }
