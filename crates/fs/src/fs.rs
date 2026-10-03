@@ -76,6 +76,10 @@ pub trait Watcher: Send + Sync {
     fn remove(&self, path: &Path) -> Result<()>;
 }
 
+pub trait ReadSeek: io::Read + io::Seek {}
+
+impl<T: io::Read + io::Seek + ?Sized> ReadSeek for T {}
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum PathEventKind {
     Removed,
@@ -130,7 +134,7 @@ pub trait Fs: Send + Sync {
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
 
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>>;
-    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>>;
+    async fn open_sync(&self, path: &Path) -> Result<Box<dyn ReadSeek + Send + Sync>>;
     async fn load(&self, path: &Path) -> Result<String> {
         Ok(String::from_utf8(self.load_bytes(path).await?)?)
     }
@@ -936,7 +940,7 @@ impl Fs for RealFs {
         Ok(self.trash.lock().insert(entry))
     }
 
-    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
+    async fn open_sync(&self, path: &Path) -> Result<Box<dyn ReadSeek + Send + Sync>> {
         Ok(Box::new(std::fs::File::open(path)?))
     }
 
@@ -1474,6 +1478,8 @@ struct FakeWatches {
     registered_paths: Vec<PathBuf>,
     watch_calls: Vec<PathBuf>,
     event_sink: Option<Box<dyn Fn(notify::Result<notify::Event>) + Send + Sync>>,
+    /// A file to create, without an event, when the given path is next watched.
+    file_to_create_on_watch: Option<(PathBuf, PathBuf)>,
 }
 
 #[cfg(feature = "test-support")]
@@ -1783,6 +1789,29 @@ impl fs_watcher::WatchBackend for FakeWatchBackend {
             "fake filesystem state is locked; this execution would have caused a test hang",
         );
         state.watches.watch_calls.push(path.clone());
+        if let Some((_, file_path)) = state
+            .watches
+            .file_to_create_on_watch
+            .take_if(|(watch_path, _)| *watch_path == path)
+        {
+            let inode = state.get_and_increment_inode();
+            let mtime = state.get_and_increment_mtime();
+            state
+                .write_path(&file_path, |entry| {
+                    let btree_map::Entry::Vacant(entry) = entry else {
+                        anyhow::bail!("file already exists: {}", file_path.display());
+                    };
+                    entry.insert(FakeFsEntry::File {
+                        inode,
+                        mtime,
+                        len: 0,
+                        content: Vec::new(),
+                        git_dir_path: None,
+                    });
+                    Ok(())
+                })
+                .map_err(|error| notify::Error::generic(&error.to_string()))?;
+        }
         state.watches.registered_paths.push(path);
         Ok(())
     }
@@ -2048,6 +2077,19 @@ impl FakeFs {
     /// including paths that were later unwatched.
     pub fn watch_calls(&self) -> Vec<PathBuf> {
         self.state.lock().watches.watch_calls.clone()
+    }
+
+    /// Creates `path` without emitting an event when `watch_path` is next
+    /// watched, simulating a change that lands while the watch is installed.
+    pub fn create_file_before_next_watch_add(
+        &self,
+        watch_path: impl AsRef<Path>,
+        path: impl AsRef<Path>,
+    ) {
+        self.state.lock().watches.file_to_create_on_watch = Some((
+            normalize_path(watch_path.as_ref()),
+            normalize_path(path.as_ref()),
+        ));
     }
 
     pub fn flush_events(&self, count: usize) {
@@ -2845,8 +2887,13 @@ impl FakeFs {
 
                 None
             }
-            btree_map::Entry::Occupied(mut entry) => {
-                entry.get_mut().file_content(&path)?;
+            btree_map::Entry::Occupied(entry) => {
+                // Like `unlink`, removing a symlink removes the link itself.
+                if let entry = entry.get()
+                    && !entry.is_symlink()
+                {
+                    entry.file_content(&path)?;
+                }
                 Some(entry.remove())
             }
         };
@@ -3128,33 +3175,42 @@ impl Fs for FakeFs {
         let target = normalize_path(target);
         let mut state = self.state.lock();
         let mtime = state.get_and_increment_mtime();
-        let inode = state.get_and_increment_inode();
+        let new_inode = state.get_and_increment_inode();
         let source_entry = state.entry(&source)?;
         let content = source_entry.file_content(&source)?.clone();
-        let mut kind = Some(PathEventKind::Created);
-        state.write_path(&target, |e| match e {
-            btree_map::Entry::Occupied(e) => {
-                if options.overwrite {
-                    kind = Some(PathEventKind::Changed);
-                    Ok(Some(e.get().clone()))
-                } else if !options.ignore_if_exists {
+        let new_entry = move |inode| FakeFsEntry::File {
+            inode,
+            mtime,
+            len: content.len() as u64,
+            content,
+            git_dir_path: None,
+        };
+
+        let kind = state.write_path(&target, |e| match e {
+            btree_map::Entry::Occupied(mut e) => {
+                if !options.overwrite {
+                    if options.ignore_if_exists {
+                        return Ok(None);
+                    }
                     anyhow::bail!("{target:?} already exists");
-                } else {
-                    Ok(None)
                 }
+                let inode = match e.get() {
+                    FakeFsEntry::File { inode, .. } => *inode,
+                    FakeFsEntry::Dir { .. } => anyhow::bail!("{target:?} is a directory"),
+                    FakeFsEntry::Symlink { .. } => new_inode,
+                };
+                e.insert(new_entry(inode));
+                Ok(Some(PathEventKind::Changed))
             }
-            btree_map::Entry::Vacant(e) => Ok(Some(
-                e.insert(FakeFsEntry::File {
-                    inode,
-                    mtime,
-                    len: content.len() as u64,
-                    content,
-                    git_dir_path: None,
-                })
-                .clone(),
-            )),
+            btree_map::Entry::Vacant(e) => {
+                e.insert(new_entry(new_inode));
+                Ok(Some(PathEventKind::Created))
+            }
         })?;
-        state.emit_event([(target, kind)]);
+
+        if let Some(kind) = kind {
+            state.emit_event([(target, Some(kind))]);
+        }
         Ok(())
     }
 
@@ -3197,7 +3253,7 @@ impl Fs for FakeFs {
         self.remove_file_inner(path, options).await.map(|_| ())
     }
 
-    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
+    async fn open_sync(&self, path: &Path) -> Result<Box<dyn ReadSeek + Send + Sync>> {
         let bytes = self.load_internal(path).await?;
         Ok(Box::new(io::Cursor::new(bytes)))
     }
