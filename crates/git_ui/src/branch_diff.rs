@@ -9,7 +9,7 @@ use crate::{
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use editor::{
-    Addon, Editor, EditorEvent, RestoreOnlyDiffHunkDelegate, SplittableEditor,
+    Addon, Editor, EditorEvent, HiddenDiffHunkRenderer, SplittableEditor,
     actions::SendReviewToAgent,
 };
 use git::{repository::DiffType, status::FileStatus};
@@ -338,7 +338,7 @@ impl BranchDiff {
                 Capability::ReadWrite,
                 "No changes",
                 move |editor, cx| {
-                    editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
+                    editor.set_diff_hunk_renderer(Some(Arc::new(HiddenDiffHunkRenderer)), cx);
                     editor.rhs_editor().update(cx, move |rhs_editor, _cx| {
                         rhs_editor.set_read_only(false);
                         rhs_editor.register_addon(BranchDiffAddon {
@@ -682,7 +682,6 @@ impl SerializableItem for BranchDiff {
         workspace: &mut Workspace,
         item_id: workspace::ItemId,
         _closing: bool,
-        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let workspace_id = workspace.database_id()?;

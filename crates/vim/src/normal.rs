@@ -2174,6 +2174,10 @@ mod test {
         cx.shared_state().await.assert_eq("// hello\n// ˇ\n");
         cx.simulate_shared_keystrokes("x escape shift-o").await;
         cx.shared_state().await.assert_eq("// hello\n// ˇ\n// x\n");
+
+        cx.set_state("/*\n * helloˇ\n */\n", Mode::Normal);
+        cx.simulate_keystrokes("o");
+        cx.assert_state("/*\n * hello\n * ˇ\n */\n", Mode::Insert);
     }
 
     #[gpui::test]

@@ -4,7 +4,6 @@
 //! macOS screens have a y axis that goes up from the bottom of the screen and
 //! an origin at the bottom left of the main display.
 
-mod dispatcher;
 mod display;
 mod display_link;
 mod events;
@@ -20,7 +19,7 @@ use gpui_apple::metal_renderer as renderer;
 pub mod metal_renderer {
     pub use gpui_apple::metal_renderer::{PathRasterizationVertex, PathSprite, SurfaceBounds};
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
     pub use gpui_apple::metal_renderer::MetalHeadlessRenderer;
 }
 
@@ -45,9 +44,9 @@ use std::{
     ops::Range,
 };
 
-pub(crate) use dispatcher::*;
 pub(crate) use display::*;
 pub(crate) use display_link::*;
+pub(crate) use gpui_apple::{AppleActivity, AppleDispatcher};
 pub(crate) use keyboard::*;
 pub(crate) use platform::*;
 pub(crate) use window::*;

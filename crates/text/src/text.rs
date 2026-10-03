@@ -2447,6 +2447,31 @@ impl BufferSnapshot {
         D: 'a + TextDimension,
         A: 'a + IntoIterator<Item = (Anchor, T)>,
     {
+        self.summaries_for_anchors_with_payload_impl::<D, A, T, false>(anchors)
+    }
+
+    pub fn summaries_for_anchors_unordered<'a, D, A>(
+        &'a self,
+        anchors: A,
+    ) -> impl 'a + Iterator<Item = D>
+    where
+        D: 'a + TextDimension,
+        A: 'a + IntoIterator<Item = Anchor>,
+    {
+        self.summaries_for_anchors_with_payload_impl::<D, _, (), true>(
+            anchors.into_iter().map(|anchor| (anchor, ())),
+        )
+        .map(|(summary, ())| summary)
+    }
+
+    fn summaries_for_anchors_with_payload_impl<'a, D, A, T, const ALLOW_BACKWARDS: bool>(
+        &'a self,
+        anchors: A,
+    ) -> impl 'a + Iterator<Item = (D, T)>
+    where
+        D: 'a + TextDimension,
+        A: 'a + IntoIterator<Item = (Anchor, T)>,
+    {
         let anchors = anchors.into_iter();
         let mut fragment_cursor = self
             .fragments
@@ -2487,13 +2512,23 @@ impl BufferSnapshot {
                 anchor.bias == Bias::Right,
             );
 
-            fragment_cursor.seek_forward(&Some(&insertion.fragment_id), Bias::Left);
+            let fragment_id = Some(&insertion.fragment_id);
+            // The cursor's start locator belongs to the preceding fragment.
+            if ALLOW_BACKWARDS && fragment_id <= fragment_cursor.start().0 {
+                fragment_cursor.seek(&fragment_id, Bias::Left);
+            } else {
+                fragment_cursor.seek_forward(&fragment_id, Bias::Left);
+            }
             let fragment = fragment_cursor.item().unwrap();
             let mut fragment_offset = fragment_cursor.start().1;
             if fragment.visible {
                 fragment_offset += (anchor.offset - insertion.split_offset) as usize;
             }
 
+            if ALLOW_BACKWARDS && fragment_offset < text_cursor.offset() {
+                text_cursor = self.visible_text.cursor(0);
+                position = D::zero(());
+            }
             position.add_assign(&text_cursor.summary(fragment_offset));
             (position, payload)
         })
@@ -2669,9 +2704,8 @@ impl BufferSnapshot {
     }
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
-        anchor.is_min()
-            || anchor.is_max()
-            || (self.remote_id == anchor.buffer_id && self.version.observed(anchor.timestamp()))
+        self.remote_id == anchor.buffer_id
+            && (anchor.is_min() || anchor.is_max() || self.version.observed(anchor.timestamp()))
     }
 
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {

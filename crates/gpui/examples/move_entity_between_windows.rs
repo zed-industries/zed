@@ -8,6 +8,9 @@
 
 #![cfg_attr(target_family = "wasm", no_main)]
 
+#[path = "example_support/fonts.rs"]
+mod example_support;
+
 use std::time::Duration;
 
 use gpui::{
@@ -128,6 +131,9 @@ impl Render for HelloWorld {
 
 fn run_example() {
     application().run(|cx: &mut App| {
+        if !example_support::load_fonts(cx) {
+            return;
+        }
         let bounds = Bounds::centered(None, size(px(500.0), px(500.0)), cx);
         cx.open_window(
             WindowOptions {

@@ -53,6 +53,8 @@ pub const DEFAULT_DARK_THEME: &str = "One Dark";
 pub const CLIENT_SIDE_DECORATION_ROUNDING: Pixels = px(10.0);
 /// Defines window shadow size for platforms that use client side decorations.
 pub const CLIENT_SIDE_DECORATION_SHADOW: Pixels = px(10.0);
+/// Defines window border width for platforms that use client side decorations.
+pub const CLIENT_SIDE_DECORATION_BORDER: Pixels = px(1.0);
 
 /// Styling helpers for elements that follow client-side window decorations.
 pub trait ClientDecorationsExt: Styled {
