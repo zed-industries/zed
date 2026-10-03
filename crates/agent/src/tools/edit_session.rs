@@ -3,7 +3,7 @@ mod streaming_fuzzy_matcher;
 mod streaming_parser;
 
 use super::tool_permissions::resolve_creatable_global_skill_path;
-use crate::{Thread, ToolCallEventStream};
+use crate::{ProjectScope, Thread, ToolCallEventStream};
 use acp_thread::Diff;
 use action_log::ActionLog;
 use agent_client_protocol::schema::v1::{self as acp, ToolCallLocation, ToolCallUpdateFields};
@@ -135,6 +135,7 @@ impl From<EditSessionOutput> for LanguageModelToolResultContent {
 
 pub(crate) struct EditSessionContext {
     project: Entity<Project>,
+    scope: ProjectScope,
     thread: WeakEntity<Thread>,
     action_log: Entity<ActionLog>,
     language_registry: Arc<LanguageRegistry>,
@@ -143,12 +144,14 @@ pub(crate) struct EditSessionContext {
 impl EditSessionContext {
     pub(crate) fn new(
         project: Entity<Project>,
+        scope: ProjectScope,
         thread: WeakEntity<Thread>,
         action_log: Entity<ActionLog>,
         language_registry: Arc<LanguageRegistry>,
     ) -> Self {
         Self {
             project,
+            scope,
             thread,
             action_log,
             language_registry,
@@ -693,7 +696,8 @@ impl EditSession {
                 project_path: None,
             }
         } else {
-            let project_path = cx.update(|cx| resolve_path(mode, &path, &context.project, cx))?;
+            let project_path =
+                cx.update(|cx| resolve_path(mode, &path, &context.project, &context.scope, cx))?;
 
             let Some(abs_path) =
                 cx.update(|cx| context.project.read(cx).absolute_path(&project_path, cx))
@@ -1226,14 +1230,15 @@ fn resolve_path(
     mode: EditSessionMode,
     path: &PathBuf,
     project: &Entity<Project>,
+    scope: &ProjectScope,
     cx: &mut App,
 ) -> Result<ProjectPath, String> {
     let project = project.read(cx);
 
     match mode {
         EditSessionMode::Edit => {
-            let path = project
-                .find_project_path(&path, cx)
+            let path = scope
+                .resolve_project_path(project, &path, cx)
                 .ok_or_else(|| "Can't edit file: path not found".to_string())?;
 
             let entry = project
@@ -1247,7 +1252,7 @@ fn resolve_path(
             }
         }
         EditSessionMode::Write => {
-            if let Some(path) = project.find_project_path(&path, cx)
+            if let Some(path) = scope.resolve_project_path(project, &path, cx)
                 && let Some(entry) = project.entry_for_path(&path, cx)
             {
                 if entry.is_file() {
@@ -1261,7 +1266,7 @@ fn resolve_path(
                 .parent()
                 .ok_or_else(|| "Can't create file: incorrect path".to_string())?;
 
-            let parent_project_path = project.find_project_path(&parent_path, cx);
+            let parent_project_path = scope.resolve_project_path(project, &parent_path, cx);
 
             let parent_entry = parent_project_path
                 .as_ref()
@@ -1295,5 +1300,13 @@ pub(crate) async fn test_resolve_path(
     project: &Entity<Project>,
     cx: &mut gpui::TestAppContext,
 ) -> Result<ProjectPath, String> {
-    cx.update(|cx| resolve_path(*mode, &PathBuf::from(path), project, cx))
+    cx.update(|cx| {
+        resolve_path(
+            *mode,
+            &PathBuf::from(path),
+            project,
+            &ProjectScope::unscoped(),
+            cx,
+        )
+    })
 }

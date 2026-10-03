@@ -9,7 +9,7 @@ use std::{
 use action_log::ActionLog;
 use agent::{
     AgentTool, ContextServerRegistry, EditFileTool, EditFileToolInput, EditFileToolOutput,
-    Templates, Thread, ToolCallEventStream, ToolInput,
+    ProjectScope, Templates, Thread, ToolCallEventStream, ToolInput,
 };
 use agent_settings::{AgentSettings, ToolRules};
 use benchmarks::bench_utils::{
@@ -220,6 +220,7 @@ async fn setup_editor_and_tool(cx: &mut TestAppContext, file_text: String) -> Ha
         thread.read_with(cx, |thread, _cx| thread.action_log().clone());
     let edit_tool = Arc::new(EditFileTool::new(
         project.clone(),
+        ProjectScope::unscoped(),
         thread.downgrade(),
         action_log,
         language_registry,

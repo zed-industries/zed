@@ -3,7 +3,7 @@ use crate::{
     CreateDirectoryTool, CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool,
     DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
     GoToDefinitionTool, GrepTool, ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool,
-    ProjectSnapshot, ReadFileTool, RenameTool, SandboxedTerminalTool, SpawnAgentTool,
+    ProjectScope, ProjectSnapshot, ReadFileTool, RenameTool, SandboxedTerminalTool, SpawnAgentTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
     WriteFileTool, decide_permission_from_settings,
 };
@@ -66,7 +66,9 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock, paths::PathStyle};
+use util::{
+    ResultExt, debug_panic, markdown::MarkdownCodeBlock, path_list::PathList, paths::PathStyle,
+};
 use uuid::Uuid;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
@@ -791,6 +793,7 @@ pub trait ThreadEnvironment {
         &self,
         label: String,
         model: Option<AgentModelId>,
+        workspace: Option<Vec<String>>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>>;
 
@@ -1315,6 +1318,9 @@ pub struct Thread {
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
     pub(crate) action_log: Entity<ActionLog>,
+    /// Project roots this session is allowed to touch. `None` means the whole
+    /// project. Immutable for the thread's lifetime.
+    workspace_scope: ProjectScope,
     /// If this is a subagent thread, contains context about the parent
     subagent_context: Option<SubagentContext>,
     /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
@@ -1342,6 +1348,7 @@ impl Thread {
     pub fn new_subagent(
         parent_thread: &Entity<Thread>,
         model_selection: Option<&LanguageModelSelection>,
+        scope: ProjectScope,
         cx: &mut Context<Self>,
     ) -> Self {
         let project = parent_thread.read(cx).project.clone();
@@ -1361,6 +1368,7 @@ impl Thread {
             action_log,
             cx,
         );
+        thread.workspace_scope = scope;
         thread.subagent_context = Some(SubagentContext {
             parent_thread_id: parent_thread.read(cx).id().clone(),
             depth: parent_thread.read(cx).depth() + 1,
@@ -1465,6 +1473,7 @@ impl Thread {
             prompt_capabilities_rx,
             project,
             action_log,
+            workspace_scope: ProjectScope::unscoped(),
             subagent_context: None,
             draft_prompt: None,
             ui_scroll_position: None,
@@ -1837,6 +1846,10 @@ impl Thread {
             speed: db_thread.speed,
             project,
             action_log,
+            workspace_scope: db_thread
+                .workspace_scope
+                .map(|serialized| ProjectScope::from_roots(PathList::deserialize(&serialized)))
+                .unwrap_or_else(ProjectScope::unscoped),
             updated_at: db_thread.updated_at,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
@@ -1949,6 +1962,7 @@ impl Thread {
             }),
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
             sandbox_grants: self.sandbox_grants.borrow().to_db(),
+            workspace_scope: self.workspace_scope.roots().map(|roots| roots.serialize()),
         };
 
         cx.background_spawn(async move {
@@ -1980,6 +1994,10 @@ impl Thread {
 
     pub fn project(&self) -> &Entity<Project> {
         &self.project
+    }
+
+    pub fn workspace_scope(&self) -> &ProjectScope {
+        &self.workspace_scope
     }
 
     pub fn action_log(&self) -> &Entity<ActionLog> {
@@ -2179,59 +2197,74 @@ impl Thread {
         let update_agent_location = self.parent_thread_id().is_none();
 
         let language_registry = self.project.read(cx).languages().clone();
-        self.add_tool(CopyPathTool::new(self.project.clone()));
-        self.add_tool(CreateDirectoryTool::new(self.project.clone()));
+        let scope = self.workspace_scope.clone();
+        self.add_tool(CopyPathTool::new(self.project.clone(), scope.clone()));
+        self.add_tool(CreateDirectoryTool::new(
+            self.project.clone(),
+            scope.clone(),
+        ));
         self.add_tool(DeletePathTool::new(
             self.project.clone(),
+            scope.clone(),
             self.action_log.clone(),
         ));
         self.add_tool(EditFileTool::new(
             self.project.clone(),
+            scope.clone(),
             cx.weak_entity(),
             self.action_log.clone(),
             language_registry.clone(),
         ));
         self.add_tool(WriteFileTool::new(
             self.project.clone(),
+            scope.clone(),
             cx.weak_entity(),
             self.action_log.clone(),
             language_registry,
         ));
         self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
-        self.add_tool(FindPathTool::new(self.project.clone()));
-        self.add_tool(GrepTool::new(self.project.clone()));
-        self.add_tool(ListDirectoryTool::new(self.project.clone()));
-        self.add_tool(MovePathTool::new(self.project.clone()));
+        self.add_tool(FindPathTool::new(self.project.clone(), scope.clone()));
+        self.add_tool(GrepTool::new(self.project.clone(), scope.clone()));
+        self.add_tool(ListDirectoryTool::new(self.project.clone(), scope.clone()));
+        self.add_tool(MovePathTool::new(self.project.clone(), scope.clone()));
         self.add_tool(ReadFileTool::new(
             self.project.clone(),
+            scope.clone(),
             self.action_log.clone(),
             update_agent_location,
         ));
         // Register terminal tool variants; `enabled_tools` exposes the one
         // matching the current sandbox state to the model as `terminal`.
-        self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
+        self.add_tool(TerminalTool::new(
+            self.project.clone(),
+            scope.clone(),
+            environment.clone(),
+        ));
         self.add_tool(SandboxedTerminalTool::new(
             self.project.clone(),
+            scope.clone(),
             environment.clone(),
         ));
         self.add_tool(WebSearchTool);
 
         self.add_tool(AskUserTool);
 
-        self.add_tool(DiagnosticsTool::new(self.project.clone()));
+        self.add_tool(DiagnosticsTool::new(self.project.clone(), scope.clone()));
 
         let code_action_store: CodeActionStore = cx.new(|_cx| None);
-        self.add_tool(FindReferencesTool::new(self.project.clone()));
+        self.add_tool(FindReferencesTool::new(self.project.clone(), scope.clone()));
         self.add_tool(GetCodeActionsTool::new(
             self.project.clone(),
+            scope.clone(),
             code_action_store.clone(),
         ));
         self.add_tool(ApplyCodeActionTool::new(
             self.project.clone(),
+            scope.clone(),
             code_action_store,
         ));
-        self.add_tool(GoToDefinitionTool::new(self.project.clone()));
-        self.add_tool(RenameTool::new(self.project.clone()));
+        self.add_tool(GoToDefinitionTool::new(self.project.clone(), scope.clone()));
+        self.add_tool(RenameTool::new(self.project.clone(), scope));
 
         if self.depth() < MAX_SUBAGENT_DEPTH {
             self.add_tool(SpawnAgentTool::new(environment.clone()));
@@ -4409,8 +4442,18 @@ impl Thread {
         log::trace!("Building request messages from {} thread messages", end_ix);
 
         let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
+        let base_project_context = self.project_context.read(cx);
+        let scoped_roots = self
+            .workspace_scope
+            .scoped_root_contexts(self.project.read(cx), cx);
+        let scoped_project_context = self
+            .workspace_scope
+            .scoped_project_context(base_project_context, &scoped_roots);
+        let project_context = scoped_project_context
+            .as_ref()
+            .unwrap_or(base_project_context);
         let system_prompt = SystemPromptTemplate {
-            project: self.project_context.read(cx),
+            project: project_context,
             available_tools,
             model_name: self.model().map(|m| m.name().0.to_string()),
             date: Local::now().format("%Y-%m-%d").to_string(),
@@ -8400,7 +8443,8 @@ mod tests {
         cx.update(|cx| {
             let mut subagents = Vec::new();
             for _ in 0..count {
-                let subagent = cx.new(|cx| Thread::new_subagent(parent, None, cx));
+                let subagent =
+                    cx.new(|cx| Thread::new_subagent(parent, None, ProjectScope::unscoped(), cx));
                 parent.update(cx, |thread, _cx| {
                     thread.register_running_subagent(subagent.downgrade());
                 });

@@ -8,7 +8,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::symbol_locator::CodeActionStore;
-use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use crate::{AgentTool, ProjectScope, ToolCallEventStream, ToolInput};
 
 /// Applies a code action previously retrieved by get_code_actions.
 ///
@@ -26,13 +26,19 @@ pub struct ApplyCodeActionToolInput {
 
 pub struct ApplyCodeActionTool {
     project: Entity<Project>,
+    scope: ProjectScope,
     code_action_store: CodeActionStore,
 }
 
 impl ApplyCodeActionTool {
-    pub fn new(project: Entity<Project>, code_action_store: CodeActionStore) -> Self {
+    pub fn new(
+        project: Entity<Project>,
+        scope: ProjectScope,
+        code_action_store: CodeActionStore,
+    ) -> Self {
         Self {
             project,
+            scope,
             code_action_store,
         }
     }
@@ -79,6 +85,7 @@ impl AgentTool for ApplyCodeActionTool {
         cx: &mut App,
     ) -> Task<Result<String, String>> {
         let project = self.project.clone();
+        let scope = self.scope.clone();
         let store = self.code_action_store.clone();
         cx.spawn(async move |cx| {
             let input = input
@@ -89,6 +96,23 @@ impl AgentTool for ApplyCodeActionTool {
             let pending = store.update(cx, |store, _cx| store.take()).ok_or_else(|| {
                 "No code actions available. Call get_code_actions first.".to_string()
             })?;
+
+            let buffer_path = pending
+                .buffer
+                .read_with(cx, |buffer, cx| buffer.file().map(|file| file.full_path(cx)));
+            if let Some(buffer_path) = buffer_path {
+                let in_scope = project.read_with(cx, |project, cx| {
+                    scope
+                        .resolve_project_path(project, &buffer_path, cx)
+                        .is_some()
+                });
+                if !in_scope {
+                    return Err(format!(
+                        "Path {} isn't in this project or is outside the session's workspace scope.",
+                        buffer_path.display()
+                    ));
+                }
+            }
 
             let zero_based_index = input
                 .index

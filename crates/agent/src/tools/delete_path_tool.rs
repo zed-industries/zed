@@ -3,7 +3,7 @@ use super::tool_permissions::{
     resolve_global_skill_descendant_path, resolves_to_global_skills_dir, sensitive_settings_kind,
 };
 use crate::{
-    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
+    AgentTool, ProjectScope, ToolCallEventStream, ToolInput, ToolPermissionDecision,
     authorize_with_sensitive_settings, decide_permission_for_path,
 };
 use action_log::ActionLog;
@@ -40,13 +40,19 @@ pub struct DeletePathToolInput {
 
 pub struct DeletePathTool {
     project: Entity<Project>,
+    scope: ProjectScope,
     action_log: Entity<ActionLog>,
 }
 
 impl DeletePathTool {
-    pub fn new(project: Entity<Project>, action_log: Entity<ActionLog>) -> Self {
+    pub fn new(
+        project: Entity<Project>,
+        scope: ProjectScope,
+        action_log: Entity<ActionLog>,
+    ) -> Self {
         Self {
             project,
+            scope,
             action_log,
         }
     }
@@ -81,6 +87,7 @@ impl AgentTool for DeletePathTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
         let project = self.project.clone();
+        let scope = self.scope.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |cx| {
             let input = input.recv().await.map_err(|e| e.to_string())?;
@@ -192,13 +199,17 @@ impl AgentTool for DeletePathTool {
             }
 
             let (project_path, worktree_snapshot) = project.read_with(cx, |project, cx| {
-                let project_path = project.find_project_path(&path, cx).ok_or_else(|| {
-                    format!("Couldn't delete {path} because that path isn't in this project.")
+                let project_path = scope.resolve_project_path(project, &path, cx).ok_or_else(|| {
+                    format!(
+                        "Couldn't delete {path} because that path isn't in this project or is outside the session's workspace scope."
+                    )
                 })?;
                 let worktree = project
                     .worktree_for_id(project_path.worktree_id, cx)
                     .ok_or_else(|| {
-                        format!("Couldn't delete {path} because that path isn't in this project.")
+                        format!(
+                            "Couldn't delete {path} because that path isn't in this project or is outside the session's workspace scope."
+                        )
                     })?;
                 let worktree_snapshot = worktree.read(cx).snapshot();
                 Result::<_, String>::Ok((project_path, worktree_snapshot))
@@ -249,7 +260,9 @@ impl AgentTool for DeletePathTool {
             let deletion_task = project
                 .update(cx, |project, cx| project.delete_file(project_path, cx))
                 .ok_or_else(|| {
-                    format!("Couldn't delete {path} because that path isn't in this project.")
+                    format!(
+                        "Couldn't delete {path} because that path isn't in this project or is outside the session's workspace scope."
+                    )
                 })?;
 
             futures::select! {
@@ -304,7 +317,11 @@ mod tests {
         cx.executor().run_until_parked();
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(DeletePathTool::new(project, action_log));
+        let tool = Arc::new(DeletePathTool::new(
+            project,
+            ProjectScope::unscoped(),
+            action_log,
+        ));
         let input_path = PathBuf::from("~")
             .join(".agents")
             .join("skills")
@@ -363,7 +380,11 @@ mod tests {
         cx.executor().run_until_parked();
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(DeletePathTool::new(project, action_log));
+        let tool = Arc::new(DeletePathTool::new(
+            project,
+            ProjectScope::unscoped(),
+            action_log,
+        ));
         let input_path = PathBuf::from("~")
             .join(".agents")
             .join("skills")
@@ -407,7 +428,11 @@ mod tests {
         cx.executor().run_until_parked();
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(DeletePathTool::new(project, action_log));
+        let tool = Arc::new(DeletePathTool::new(
+            project,
+            ProjectScope::unscoped(),
+            action_log,
+        ));
         let input_path = PathBuf::from("~")
             .join(".agents")
             .join("skills")
@@ -465,7 +490,11 @@ mod tests {
         cx.executor().run_until_parked();
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(DeletePathTool::new(project, action_log));
+        let tool = Arc::new(DeletePathTool::new(
+            project,
+            ProjectScope::unscoped(),
+            action_log,
+        ));
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
@@ -535,7 +564,11 @@ mod tests {
         cx.executor().run_until_parked();
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(DeletePathTool::new(project, action_log));
+        let tool = Arc::new(DeletePathTool::new(
+            project,
+            ProjectScope::unscoped(),
+            action_log,
+        ));
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
@@ -595,7 +628,11 @@ mod tests {
         cx.executor().run_until_parked();
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(DeletePathTool::new(project, action_log));
+        let tool = Arc::new(DeletePathTool::new(
+            project,
+            ProjectScope::unscoped(),
+            action_log,
+        ));
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
@@ -680,7 +717,11 @@ mod tests {
         cx.executor().run_until_parked();
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(DeletePathTool::new(project, action_log));
+        let tool = Arc::new(DeletePathTool::new(
+            project,
+            ProjectScope::unscoped(),
+            action_log,
+        ));
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let result = cx

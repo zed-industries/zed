@@ -2,7 +2,7 @@ use super::edit_session::{
     EditSession, EditSessionContext, EditSessionMode, EditSessionOutput, EditSessionResult,
     initial_title_from_partial_path, run_session,
 };
-use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload};
+use crate::{AgentTool, ProjectScope, Thread, ToolCallEventStream, ToolInput, ToolInputPayload};
 use action_log::ActionLog;
 use agent_client_protocol::schema::v1 as acp;
 use futures::FutureExt as _;
@@ -68,6 +68,7 @@ pub struct WriteFileTool {
 impl WriteFileTool {
     pub fn new(
         project: Entity<Project>,
+        scope: ProjectScope,
         thread: WeakEntity<Thread>,
         action_log: Entity<ActionLog>,
         language_registry: Arc<LanguageRegistry>,
@@ -75,6 +76,7 @@ impl WriteFileTool {
         Self {
             session_context: Arc::new(EditSessionContext::new(
                 project,
+                scope,
                 thread,
                 action_log,
                 language_registry,
@@ -662,6 +664,7 @@ mod tests {
 
         let tool2 = Arc::new(WriteFileTool::new(
             project.clone(),
+            ProjectScope::unscoped(),
             thread.downgrade(),
             action_log.clone(),
             language_registry,
@@ -765,6 +768,7 @@ mod tests {
 
         let tool2 = Arc::new(WriteFileTool::new(
             project.clone(),
+            ProjectScope::unscoped(),
             thread.downgrade(),
             action_log.clone(),
             language_registry,
@@ -828,6 +832,7 @@ mod tests {
         {
             let tool = Arc::new(WriteFileTool::new(
                 project.clone(),
+                ProjectScope::unscoped(),
                 thread.downgrade(),
                 action_log,
                 language_registry,
@@ -1396,6 +1401,7 @@ mod tests {
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let write_tool = Arc::new(WriteFileTool::new(
             project.clone(),
+            ProjectScope::unscoped(),
             thread.downgrade(),
             action_log.clone(),
             language_registry,

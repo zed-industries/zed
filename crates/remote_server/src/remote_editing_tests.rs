@@ -3,9 +3,9 @@
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
 use agent::{
-    AgentTool, NativeAgent, NativeAgentConnection, ReadFileTool, ReadFileToolInput, SkillTool,
-    SkillToolInput, SkillToolOutput, Templates, ThreadStore, ToolCallEventStream, ToolInput,
-    skill_body_resolver_for_project, skills_resolver_for_project,
+    AgentTool, NativeAgent, NativeAgentConnection, ProjectScope, ReadFileTool, ReadFileToolInput,
+    SkillTool, SkillToolInput, SkillToolOutput, Templates, ThreadStore, ToolCallEventStream,
+    ToolInput, skill_body_resolver_for_project, skills_resolver_for_project,
 };
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
@@ -4387,7 +4387,12 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
         start_line: None,
         end_line: None,
     };
-    let read_tool = Arc::new(ReadFileTool::new(project, action_log, true));
+    let read_tool = Arc::new(ReadFileTool::new(
+        project,
+        ProjectScope::unscoped(),
+        action_log,
+        true,
+    ));
     let (event_stream, _) = ToolCallEventStream::test();
 
     let exists_result = cx.update(|cx| {
@@ -4457,7 +4462,11 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
     cx.run_until_parked();
 
     let skill_tool = Arc::new(SkillTool::with_body_resolver(
-        skills_resolver_for_project(agent.downgrade(), project.entity_id()),
+        skills_resolver_for_project(
+            agent.downgrade(),
+            project.entity_id(),
+            ProjectScope::unscoped(),
+        ),
         skill_body_resolver_for_project(project.clone(), fs.clone()),
     ));
     let (event_stream, mut event_stream_rx) = ToolCallEventStream::test();

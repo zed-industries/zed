@@ -5,7 +5,7 @@ use super::edit_session::{
     EditSession, EditSessionContext, EditSessionMode, EditSessionResult,
     initial_title_from_partial_path, run_session,
 };
-use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload};
+use crate::{AgentTool, ProjectScope, Thread, ToolCallEventStream, ToolInput, ToolInputPayload};
 use action_log::ActionLog;
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
@@ -79,6 +79,7 @@ pub struct EditFileTool {
 impl EditFileTool {
     pub fn new(
         project: Entity<Project>,
+        scope: ProjectScope,
         thread: WeakEntity<Thread>,
         action_log: Entity<ActionLog>,
         language_registry: Arc<LanguageRegistry>,
@@ -86,6 +87,7 @@ impl EditFileTool {
         Self {
             session_context: Arc::new(EditSessionContext::new(
                 project,
+                scope,
                 thread,
                 action_log,
                 language_registry,
@@ -2152,6 +2154,7 @@ mod tests {
             setup_test(cx, json!({"test.txt": "original content"})).await;
         let read_tool = Arc::new(crate::ReadFileTool::new(
             project.clone(),
+            ProjectScope::unscoped(),
             action_log.clone(),
             true,
         ));
@@ -2222,6 +2225,7 @@ mod tests {
             setup_test(cx, json!({"test.txt": "original content"})).await;
         let read_tool = Arc::new(crate::ReadFileTool::new(
             project.clone(),
+            ProjectScope::unscoped(),
             action_log.clone(),
             true,
         ));
@@ -2307,6 +2311,7 @@ mod tests {
             setup_test(cx, json!({"test.txt": "original content"})).await;
         let read_tool = Arc::new(crate::ReadFileTool::new(
             project.clone(),
+            ProjectScope::unscoped(),
             action_log.clone(),
             true,
         ));
@@ -2397,6 +2402,7 @@ mod tests {
             setup_test(cx, json!({"test.txt": "original content"})).await;
         let read_tool = Arc::new(crate::ReadFileTool::new(
             project.clone(),
+            ProjectScope::unscoped(),
             action_log.clone(),
             true,
         ));
@@ -2488,6 +2494,7 @@ mod tests {
             setup_test(cx, json!({"test.txt": "original content"})).await;
         let read_tool = Arc::new(crate::ReadFileTool::new(
             project.clone(),
+            ProjectScope::unscoped(),
             action_log.clone(),
             true,
         ));
@@ -2566,6 +2573,7 @@ mod tests {
             setup_test(cx, json!({"test.txt": "original content"})).await;
         let read_tool = Arc::new(crate::ReadFileTool::new(
             project.clone(),
+            ProjectScope::unscoped(),
             action_log.clone(),
             true,
         ));
@@ -3103,6 +3111,7 @@ mod tests {
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
         let edit_tool = Arc::new(EditFileTool::new(
             project.clone(),
+            ProjectScope::unscoped(),
             thread.downgrade(),
             action_log.clone(),
             language_registry,

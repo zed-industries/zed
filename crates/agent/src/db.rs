@@ -18,7 +18,7 @@ use sqlez::{
 };
 use std::{io::ErrorKind, path::PathBuf, sync::Arc};
 use ui::{App, SharedString};
-use util::path_list::PathList;
+use util::path_list::{PathList, SerializedPathList};
 use zed_env_vars::ZED_STATELESS;
 
 pub type DbMessage = crate::Message;
@@ -86,6 +86,11 @@ pub struct DbThread {
     /// [`crate::sandboxing::ThreadSandboxGrants`].
     #[serde(default)]
     pub sandbox_grants: DbSandboxGrants,
+    /// The project directories this session is scoped to, if any. Persisted so
+    /// that restoring a scoped subagent keeps its scope instead of silently
+    /// widening to the whole project.
+    #[serde(default)]
+    pub workspace_scope: Option<SerializedPathList>,
 }
 
 /// Serialized form of the sandbox permissions the user granted "for the rest of
@@ -169,6 +174,7 @@ impl SharedThread {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            workspace_scope: None,
         }
     }
 
@@ -355,6 +361,7 @@ impl DbThread {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            workspace_scope: None,
         })
     }
 }
@@ -826,6 +833,7 @@ mod tests {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            workspace_scope: None,
         }
     }
 
@@ -1146,6 +1154,52 @@ mod tests {
             .expect("subagent_context should be restored");
         assert_eq!(context.parent_thread_id, parent_id);
         assert_eq!(context.depth, 2);
+    }
+
+    #[gpui::test]
+    async fn test_workspace_scope_roundtrips_through_save_load(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let thread_id = session_id("scoped-subagent");
+        let scope = PathList::new(&[PathBuf::from("/root/crates")]);
+        let mut thread = make_thread(
+            "Scoped Subagent",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        thread.workspace_scope = Some(scope.serialize());
+
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .unwrap();
+
+        let loaded = database
+            .load_thread(thread_id)
+            .await
+            .unwrap()
+            .expect("thread should exist");
+        let restored = loaded
+            .workspace_scope
+            .expect("workspace_scope should be restored");
+        assert_eq!(PathList::deserialize(&restored), scope);
+
+        // A thread saved without a scope stays unscoped after loading.
+        let unscoped_id = session_id("unscoped-thread");
+        let unscoped_thread = make_thread(
+            "Unscoped",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        database
+            .save_thread(unscoped_id.clone(), unscoped_thread, PathList::default())
+            .await
+            .unwrap();
+
+        let loaded = database
+            .load_thread(unscoped_id)
+            .await
+            .unwrap()
+            .expect("thread should exist");
+        assert!(loaded.workspace_scope.is_none());
     }
 
     #[gpui::test]
