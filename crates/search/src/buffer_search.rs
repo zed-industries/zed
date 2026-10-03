@@ -4509,6 +4509,100 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_shift_enter_selects_previous_match_with_jetbrains_keymap(
+        cx: &mut TestAppContext,
+    ) {
+        init_globals(cx);
+        let buffer = cx.new(|cx| Buffer::local("zed\nzed\nzed\n", cx));
+        let mut editor = None;
+        let window = cx.add_window(|window, cx| {
+            // Load the keymaps in the same order (and with the same sources) as
+            // `load_default_keymap` does, so precedence matches a real session
+            // with `base_keymap: JetBrains`.
+            let mut default_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-macos.json",
+                cx,
+            )
+            .unwrap();
+            for binding in &mut default_bindings {
+                binding.set_meta(settings::KeybindSource::Default.meta());
+            }
+            cx.bind_keys(default_bindings);
+
+            let mut jetbrains_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/macos/jetbrains.json",
+                cx,
+            )
+            .unwrap();
+            for binding in &mut jetbrains_bindings {
+                binding.set_meta(settings::KeybindSource::Base.meta());
+            }
+            cx.bind_keys(jetbrains_bindings);
+
+            editor = Some(cx.new(|cx| Editor::for_buffer(buffer.clone(), None, window, cx)));
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
+            search_bar.set_active_pane_item(Some(&editor.clone().unwrap()), window, cx);
+            search_bar.show(window, cx);
+            search_bar
+        });
+        let search_bar = window.root(cx).unwrap();
+        let cx = VisualTestContext::from_window(*window, cx).into_mut();
+
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search("zed", None, true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        let match_count = search_bar
+            .read_with(cx, |search_bar, _| {
+                search_bar
+                    .searchable_items_with_matches
+                    .values()
+                    .next()
+                    .map(|(matches, _)| matches.len())
+            })
+            .expect("search should have populated matches");
+        assert!(
+            match_count >= 2,
+            "test precondition: need at least 2 matches, got {match_count}"
+        );
+        assert_eq!(
+            search_bar.read_with(cx, |search_bar, _| search_bar.active_match_index),
+            Some(0),
+            "the first match should be active after searching"
+        );
+
+        let query_focus = search_bar.read_with(cx, |search_bar, cx| {
+            search_bar.query_editor.focus_handle(cx)
+        });
+        cx.update(|window, cx| window.focus(&query_focus, cx));
+        cx.update(|window, cx| {
+            assert!(
+                query_focus.contains_focused(window, cx),
+                "query editor must be focused before simulating shift-enter"
+            );
+        });
+
+        cx.simulate_keystrokes("shift-enter");
+        cx.run_until_parked();
+
+        let query_text = search_bar.read_with(cx, |search_bar, cx| {
+            search_bar.query_editor.read(cx).text(cx)
+        });
+        assert!(
+            !query_text.contains('\n'),
+            "shift-enter must not insert a newline into the query; got {query_text:?}"
+        );
+        assert_eq!(
+            search_bar.read_with(cx, |search_bar, _| search_bar.active_match_index),
+            Some(match_count - 1),
+            "shift-enter should wrap from the first to the last match"
+        );
+    }
+
     fn update_search_settings(search_settings: SearchSettings, cx: &mut TestAppContext) {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
