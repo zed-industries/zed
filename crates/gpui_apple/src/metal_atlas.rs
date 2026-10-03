@@ -12,10 +12,10 @@ use std::borrow::Cow;
 pub struct MetalAtlas(Mutex<AtlasState<MetalAtlasTextures>>);
 
 impl MetalAtlas {
-    pub(crate) fn new(device: Device, is_apple_gpu: bool) -> Self {
+    pub(crate) fn new(device: Device, supports_shared_storage: bool) -> Self {
         MetalAtlas(Mutex::new(AtlasState::new(MetalAtlasTextures {
             device: AssertSend(device),
-            is_apple_gpu,
+            supports_shared_storage,
             monochrome_textures: Default::default(),
             polychrome_textures: Default::default(),
         })))
@@ -32,7 +32,7 @@ impl MetalAtlas {
 
 struct MetalAtlasTextures {
     device: AssertSend<Device>,
-    is_apple_gpu: bool,
+    supports_shared_storage: bool,
     monochrome_textures: AtlasTextureList<MetalAtlasTexture>,
     polychrome_textures: AtlasTextureList<MetalAtlasTexture>,
 }
@@ -156,7 +156,7 @@ impl MetalAtlasTextures {
         texture_descriptor.set_usage(usage);
         // Shared memory mode can be used only on Apple GPU families
         // https://developer.apple.com/documentation/metal/mtlresourceoptions/storagemodeshared
-        texture_descriptor.set_storage_mode(if self.is_apple_gpu {
+        texture_descriptor.set_storage_mode(if self.supports_shared_storage {
             metal::MTLStorageMode::Shared
         } else {
             metal::MTLStorageMode::Managed
