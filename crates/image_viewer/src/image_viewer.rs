@@ -291,7 +291,7 @@ impl ImageView {
         event: &ScrollWheelEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> ScrollDelta {
         if event.modifiers.control || event.modifiers.platform {
             let delta: f32 = match event.delta {
                 ScrollDelta::Pixels(pixels) => pixels.y.into(),
@@ -311,6 +311,7 @@ impl ImageView {
             self.pan_offset += delta;
             cx.notify();
         }
+        ScrollDelta::default()
     }
 
     fn handle_mouse_down(
@@ -787,7 +788,7 @@ impl Render for ImageView {
                     } else {
                         gpui::CursorStyle::OpenHand
                     })
-                    .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
+                    .on_scroll_wheel(cx.scroll_listener(Self::handle_scroll_wheel))
                     .on_pinch(cx.listener(Self::handle_pinch))
                     .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
                     .on_mouse_down(MouseButton::Middle, cx.listener(Self::handle_mouse_down))
