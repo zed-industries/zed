@@ -5,6 +5,7 @@ use agent_client_protocol::schema::v1 as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
+use context_server::{ContextServerId, types::requests::ListTools};
 use editor::{
     Anchor, Editor, EditorSnapshot, FoldPlaceholder, ToOffset,
     display_map::{Crease, CreaseId, CreaseMetadata, FoldId},
@@ -164,10 +165,9 @@ impl MentionSet {
             MentionUri::Selection { abs_path: None, .. } => Task::ready(Err(anyhow!(
                 "Untitled buffer selection mentions are not supported for paste"
             ))),
-            MentionUri::ContextServer { .. } => Task::ready(Ok(Mention::Text {
-                content: String::new(),
-                tracked_buffers: Vec::new(),
-            })),
+            MentionUri::ContextServer { server_id } => {
+                self.confirm_mention_for_context_server(server_id, cx)
+            }
             MentionUri::PastedImage { .. }
             | MentionUri::TerminalSelection { .. }
             | MentionUri::MergeConflict { .. }
@@ -356,10 +356,9 @@ impl MentionSet {
                 debug_panic!("unexpected rule URI");
                 Task::ready(Err(anyhow!("unexpected rule URI")))
             }
-            MentionUri::ContextServer { .. } => Task::ready(Ok(Mention::Text {
-                content: String::new(),
-                tracked_buffers: Vec::new(),
-            })),
+            MentionUri::ContextServer { server_id } => {
+                self.confirm_mention_for_context_server(server_id, cx)
+            }
         };
         let task = cx
             .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
@@ -673,6 +672,63 @@ impl MentionSet {
             let content = diagnostics_task
                 .await?
                 .unwrap_or_else(|| "No diagnostics found.".into());
+            Ok(Mention::Text {
+                content,
+                tracked_buffers: Vec::new(),
+            })
+        })
+    }
+
+    /// Resolves an `@mcp` mention into the list of tools the server offers.
+    ///
+    /// The agent already receives every enabled server's tool definitions, but a
+    /// model that is not told *which* server a tool belongs to tends to reach for
+    /// a similarly named tool on a sibling server. Naming the server's tools in
+    /// the prompt is what makes the mention an attachment rather than a hint.
+    ///
+    /// A server that is not running, or that fails to answer `tools/list`,
+    /// resolves to an empty description instead of an error: a dead server must
+    /// not stop the user from sending the message.
+    fn confirm_mention_for_context_server(
+        &self,
+        server_id: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Mention>> {
+        let Some(project) = self.project.upgrade() else {
+            return Task::ready(Err(anyhow!("project not found")));
+        };
+
+        let Some(client) = project
+            .read(cx)
+            .context_server_store()
+            .read(cx)
+            .get_running_server(&ContextServerId(server_id.into()))
+            .and_then(|server| server.client())
+        else {
+            return Task::ready(Ok(Mention::Text {
+                content: String::new(),
+                tracked_buffers: Vec::new(),
+            }));
+        };
+
+        cx.spawn(async move |_, _| {
+            let content = match client.request::<ListTools>(()).await {
+                Ok(response) => response
+                    .tools
+                    .iter()
+                    .map(|tool| match tool.description.as_deref() {
+                        Some(description) if !description.is_empty() => {
+                            format!("- {}: {}", tool.name, description)
+                        }
+                        _ => format!("- {}", tool.name),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                Err(error) => {
+                    log::warn!("Failed to list tools for a mentioned context server: {error:#}");
+                    String::new()
+                }
+            };
             Ok(Mention::Text {
                 content,
                 tracked_buffers: Vec::new(),

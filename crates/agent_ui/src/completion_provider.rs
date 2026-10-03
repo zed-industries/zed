@@ -9,6 +9,7 @@ use crate::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
 use acp_thread::MentionUri;
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
+use context_server::ContextServerId;
 use editor::{CompletionProvider, Editor, code_context_menus::COMPLETION_MENU_MAX_WIDTH};
 use futures::FutureExt as _;
 use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
@@ -19,6 +20,7 @@ use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
 use lsp::CompletionContext;
 use multi_buffer::ToOffset as _;
 use ordered_float::OrderedFloat;
+use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use project::lsp_store::{CompletionDocumentation, SymbolLocation};
 use project::{
     Completion, CompletionDisplayOptions, CompletionGroup, CompletionIntent, CompletionResponse,
@@ -315,6 +317,19 @@ pub struct BranchDiffMatch {
 #[derive(Debug, Clone)]
 pub struct ContextServerMatch {
     pub server_id: String,
+}
+
+/// Whether `id` names a context server that is currently running.
+///
+/// `ContextServerStore::server_ids` lists every *configured* server, including
+/// stopped, disabled and failed ones. Only a running server has tools the agent
+/// can call, so `@mcp` must not offer the others: attaching a dead server would
+/// put tools in the prompt that can never be invoked.
+fn is_context_server_running(store: &ContextServerStore, id: &ContextServerId) -> bool {
+    matches!(
+        store.status_for_server(id),
+        Some(ContextServerStatus::Running)
+    )
 }
 
 impl Match {
@@ -1216,16 +1231,13 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             Some(PromptContextType::BranchDiff) => Task::ready(Vec::new()),
 
             Some(PromptContextType::ContextServer) => {
-                let store = workspace
-                    .read(cx)
-                    .project()
-                    .read(cx)
-                    .context_server_store();
+                let store = workspace.read(cx).project().read(cx).context_server_store();
                 let store = store.read(cx);
                 let query_lower = query.to_lowercase();
                 let matches: Vec<Match> = store
                     .server_ids()
                     .iter()
+                    .filter(|id| is_context_server_running(store, id))
                     .filter(|id| {
                         query_lower.is_empty() || id.0.to_lowercase().contains(&query_lower)
                     })
@@ -1484,16 +1496,17 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             }
         }
 
-        if self.source.supports_context(PromptContextType::ContextServer, cx) {
-            let has_servers = !workspace
-                .read(cx)
-                .project()
-                .read(cx)
-                .context_server_store()
-                .read(cx)
+        if self
+            .source
+            .supports_context(PromptContextType::ContextServer, cx)
+        {
+            let store = workspace.read(cx).project().read(cx).context_server_store();
+            let store = store.read(cx);
+            let has_running_servers = store
                 .server_ids()
-                .is_empty();
-            if has_servers {
+                .iter()
+                .any(|id| is_context_server_running(store, id));
+            if has_running_servers {
                 entries.push(PromptContextEntry::Mode(PromptContextType::ContextServer));
             }
         }
