@@ -164,3 +164,21 @@
   ])
   (#match? @_ecma_comment "^\\/\\*\\s*wgsl\\s*\\*\\/")
   (#set! injection.language "WGSL/WESL"))
+
+(call_expression
+  function: (identifier) @_name
+  (#eq? @_name "surql")
+  arguments: (template_string
+    (string_fragment) @injection.content
+    (#set! injection.language "surrealql")))
+
+; '/* surql */' or '/*surql*/'
+(((comment) @_ecma_comment
+  [
+    (string
+      (string_fragment) @injection.content)
+    (template_string
+      (string_fragment) @injection.content)
+  ])
+  (#match? @_ecma_comment "^\\/\\*\\s*surql\\s*\\*\\/")
+  (#set! injection.language "surrealql"))
