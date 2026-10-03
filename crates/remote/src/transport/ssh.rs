@@ -173,6 +173,73 @@ struct SshSocket {
     _proxy: askpass::PasswordProxy,
 }
 
+struct RemoteEnvironment {
+    shell: String,
+    platform: RemotePlatform,
+    os_version: Option<String>,
+}
+
+impl RemoteEnvironment {
+    fn parse_posix(output: &str) -> Result<Self> {
+        let mut fields = output.splitn(5, '\0').skip(1);
+
+        let shell = parse_shell(fields.next().context("Missing remote shell")?, "sh");
+        let platform = parse_platform(fields.next().context("Missing remote platform")?)?;
+        let version = fields.next().context("Missing remote OS version")?;
+        let status = fields
+            .next()
+            .context("Missing remote OS version exit status")?;
+        let os_version = if status == "0" {
+            super::parse_os_version(platform.os, version)
+        } else {
+            log::warn!("Failed to determine remote OS version: exit status {status}");
+            None
+        };
+
+        Ok(Self {
+            shell,
+            platform,
+            os_version,
+        })
+    }
+
+    fn parse_windows(output: &str) -> Result<Self> {
+        let mut fields = output.splitn(5, '\0').skip(1);
+
+        let shell = parse_shell(fields.next().context("Missing remote shell")?, "cmd.exe");
+        let architecture = fields
+            .next()
+            .context("Missing remote Windows architecture")?
+            .trim();
+        let platform = RemotePlatform {
+            os: RemoteOs::Windows,
+            arch: match architecture {
+                "AMD64" => RemoteArch::X86_64,
+                "ARM64" => RemoteArch::Aarch64,
+                architecture => anyhow::bail!(
+                    "Prebuilt remote servers are not yet available for windows-{architecture}. See https://zed.dev/docs/remote-development"
+                ),
+            },
+        };
+        let version = fields.next().context("Missing remote OS version")?;
+        let status = fields
+            .next()
+            .context("Missing remote OS version exit status")?;
+        let os_version = if status == "0" {
+            super::parse_os_version(RemoteOs::Windows, version)
+        } else {
+            log::warn!("Failed to determine remote OS version: exit status {status}");
+            None
+        };
+
+        Ok(Self {
+            shell,
+            platform,
+            os_version,
+        })
+    }
+}
+
 struct MasterProcess {
     process: Child,
 }
@@ -791,14 +858,20 @@ impl SshRemoteConnection {
         let is_windows = socket.probe_is_windows().await;
         log::info!("Remote is windows: {}", is_windows);
 
-        let ssh_shell = socket.shell(is_windows).await;
+        let RemoteEnvironment {
+            shell: ssh_shell,
+            platform: ssh_platform,
+            os_version: ssh_os_version,
+        } = if is_windows {
+            socket.environment_windows().await?
+        } else {
+            socket.environment_posix().await?
+        };
         log::info!("Remote shell discovered: {}", ssh_shell);
 
         let ssh_shell_kind = ShellKind::new(&ssh_shell, is_windows);
-        let ssh_platform = socket.platform(ssh_shell_kind, is_windows).await?;
         log::info!("Remote platform discovered: {:?}", ssh_platform);
 
-        let ssh_os_version = socket.os_version(ssh_platform.os, ssh_shell_kind).await;
         log::info!("Remote OS version discovered: {:?}", ssh_os_version);
 
         let (ssh_path_style, ssh_default_system_shell) = match ssh_platform.os {
@@ -1456,20 +1529,22 @@ impl SshSocket {
         arguments
     }
 
-    async fn platform(&self, shell: ShellKind, is_windows: bool) -> Result<RemotePlatform> {
-        if is_windows {
-            self.platform_windows(shell).await
-        } else {
-            self.platform_posix(shell).await
-        }
-    }
-
-    async fn platform_posix(&self, shell: ShellKind) -> Result<RemotePlatform> {
+    async fn environment_posix(&self) -> Result<RemoteEnvironment> {
+        let script = r#"
+            platform=$(uname -sm) || exit;
+            printf "%c%s%c%s%c" "" "$SHELL" "" "$platform" "";
+            case "$platform" in
+                "Linux "*) cat /etc/os-release;;
+                "Darwin "*) sw_vers -productVersion;;
+            esac;
+            printf "%c%s" "" "$?"
+        "#
+        .replace('\n', " ");
         let output = self
-            .run_command(shell, "uname", &["-sm"], false)
+            .run_command(ShellKind::Posix, "sh", &["-c", &script], false)
             .await
-            .context("Failed to run 'uname -sm' to determine platform")?;
-        parse_platform(&output)
+            .context("Failed to determine remote environment")?;
+        RemoteEnvironment::parse_posix(&output)
     }
 
     /// Best-effort detection of the remote OS version. Failures are logged and
@@ -1526,52 +1601,61 @@ impl SshSocket {
         }
     }
 
-    async fn shell(&self, is_windows: bool) -> String {
-        if is_windows {
-            self.shell_windows().await
-        } else {
-            self.shell_posix().await
-        }
-    }
+    async fn environment_windows(&self) -> Result<RemoteEnvironment> {
+        use base64::Engine as _;
 
-    async fn shell_posix(&self) -> String {
-        const DEFAULT_SHELL: &str = "sh";
-        match self
-            .run_command(ShellKind::Posix, "sh", &["-c", "echo $SHELL"], false)
-            .await
-        {
-            Ok(output) => parse_shell(&output, DEFAULT_SHELL),
-            Err(e) => {
-                log::error!("Failed to detect remote shell: {e}");
-                DEFAULT_SHELL.to_owned()
-            }
-        }
-    }
+        let script = r#"
+            $shell = "";
+            try {
+                $process = Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction Stop;
+                $shell = (Get-CimInstance Win32_Process -Filter "ProcessId=$($process.ParentProcessId)" -ErrorAction Stop).Name;
+            } catch {
+                [Console]::Error.WriteLine($_);
+            };
 
-    async fn shell_windows(&self) -> String {
-        const DEFAULT_SHELL: &str = "cmd.exe";
+            $architecture = cmd.exe /c echo %PROCESSOR_ARCHITECTURE%;
+            if ($LASTEXITCODE -ne 0) {
+                exit $LASTEXITCODE;
+            };
 
-        // We detect the shell used by the SSH session by running the following command in PowerShell:
-        // (Get-CimInstance Win32_Process -Filter "ProcessId = $((Get-CimInstance Win32_Process -Filter ProcessId=$PID).ParentProcessId)").Name
-        // This prints the name of PowerShell's parent process (which will be the shell that SSH launched).
-        // We pass it as a Base64 encoded string since we don't yet know how to correctly quote that command.
-        // (We'd need to know what the shell is to do that...)
+            $version = "";
+            $status = 1;
+            try {
+                $version = cmd.exe /c ver;
+                $status = $LASTEXITCODE;
+            } catch {
+                [Console]::Error.WriteLine($_);
+            };
+
+            [Console]::Write([string]::Join([char]0, @("", $shell, ($architecture -join "`n"), ($version -join "`n"), $status)));
+        "#
+        .replace('\n', " ");
+        // The SSH shell is still unknown, encode the script to avoid quoting issues.
+        let encoded_script = base64::engine::general_purpose::STANDARD.encode(
+            script
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<_>>(),
+        );
         match self
             .run_command(
                 ShellKind::Cmd,
                 "powershell",
-                &[
-                    "-E",
-                    "KABHAGUAdAAtAEMAaQBtAEkAbgBzAHQAYQBuAGMAZQAgAFcAaQBuADMAMgBfAFAAcgBvAGMAZQBzAHMAIAAtAEYAaQBsAHQAZQByACAAIgBQAHIAbwBjAGUAcwBzAEkAZAAgAD0AIAAkACgAKABHAGUAdAAtAEMAaQBtAEkAbgBzAHQAYQBuAGMAZQAgAFcAaQBuADMAMgBfAFAAcgBvAGMAZQBzAHMAIAAtAEYAaQBsAHQAZQByACAAUAByAG8AYwBlAHMAcwBJAGQAPQAkAFAASQBEACkALgBQAGEAcgBlAG4AdABQAHIAbwBjAGUAcwBzAEkAZAApACIAKQAuAE4AYQBtAGUA",
-                ],
+                &["-E", &encoded_script],
                 false,
             )
             .await
         {
-            Ok(output) => parse_shell(&output, DEFAULT_SHELL),
-            Err(e) => {
-                log::error!("Failed to detect remote shell: {e}");
-                DEFAULT_SHELL.to_owned()
+            Ok(output) => RemoteEnvironment::parse_windows(&output),
+            Err(error) => {
+                log::error!("Failed to determine remote Windows environment: {error:#}");
+                let platform = self.platform_windows(ShellKind::Cmd).await?;
+                let os_version = self.os_version(RemoteOs::Windows, ShellKind::Cmd).await;
+                return Ok(RemoteEnvironment {
+                    shell: "cmd.exe".to_owned(),
+                    platform,
+                    os_version,
+                });
             }
         }
     }
@@ -2071,6 +2155,163 @@ fn build_command_windows(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_posix_environment_output() -> Result<()> {
+        for (shell, platform, version, expected_os, expected_arch, expected_version) in [
+            (
+                "/usr/bin/fish",
+                "Linux x86_64",
+                "NAME=\"Ubuntu\"\nID=ubuntu\nVERSION_ID=\"24.04\"\n",
+                RemoteOs::Linux,
+                RemoteArch::X86_64,
+                "ubuntu 24.04",
+            ),
+            (
+                "/bin/zsh",
+                "Darwin arm64",
+                "15.6.1\n",
+                RemoteOs::MacOs,
+                RemoteArch::Aarch64,
+                "15.6.1",
+            ),
+        ] {
+            let output = [
+                "Welcome\nShell startup output\n",
+                shell,
+                platform,
+                version,
+                "0",
+            ]
+            .join("\0");
+            let environment = RemoteEnvironment::parse_posix(&output)?;
+
+            assert_eq!(environment.shell, shell);
+            assert_eq!(environment.platform.os, expected_os);
+            assert_eq!(environment.platform.arch, expected_arch);
+            assert_eq!(environment.os_version.as_deref(), Some(expected_version));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parses_windows_environment_output() -> Result<()> {
+        for (shell, architecture, raw_version, expected_arch, expected_version) in [
+            (
+                "powershell.exe",
+                "AMD64",
+                "\r\nMicrosoft Windows [Version 10.0.19045.5011]\r\n",
+                RemoteArch::X86_64,
+                "10.0.19045",
+            ),
+            (
+                "pwsh.exe",
+                "ARM64",
+                "\r\nMicrosoft Windows [Version 10.0.26100.2033]\r\n",
+                RemoteArch::Aarch64,
+                "10.0.26100",
+            ),
+        ] {
+            let output = [
+                "Shell startup output\r\n",
+                shell,
+                architecture,
+                raw_version,
+                "0",
+            ]
+            .join("\0");
+            let environment = RemoteEnvironment::parse_windows(&output)?;
+
+            assert_eq!(environment.shell, shell);
+            assert_eq!(environment.platform.os, RemoteOs::Windows);
+            assert_eq!(environment.platform.arch, expected_arch);
+            assert_eq!(environment.os_version.as_deref(), Some(expected_version));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn uses_default_shell_when_shell_is_empty() -> Result<()> {
+        let output = [
+            "",
+            "",
+            "Linux x86_64",
+            "ID=ubuntu\nVERSION_ID=\"24.04\"\n",
+            "0",
+        ]
+        .join("\0");
+        assert_eq!(RemoteEnvironment::parse_posix(&output)?.shell, "sh");
+
+        let output = [
+            "",
+            "",
+            "AMD64",
+            "Microsoft Windows [Version 10.0.19045.5011]",
+            "0",
+        ]
+        .join("\0");
+        assert_eq!(RemoteEnvironment::parse_windows(&output)?.shell, "cmd.exe");
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_output_without_environment_fields() {
+        assert!(RemoteEnvironment::parse_posix("shell startup output\n").is_err());
+        assert!(RemoteEnvironment::parse_windows("shell startup output\r\n").is_err());
+    }
+
+    #[test]
+    fn rejects_unsupported_windows_architecture() {
+        let output = [
+            "",
+            "cmd.exe",
+            "x86",
+            "Microsoft Windows [Version 10.0.19045.5011]",
+            "0",
+        ]
+        .join("\0");
+        assert!(RemoteEnvironment::parse_windows(&output).is_err());
+    }
+
+    #[test]
+    fn ignores_os_version_when_query_fails() -> Result<()> {
+        for (environment, expected_shell, expected_os) in [
+            (
+                RemoteEnvironment::parse_posix(
+                    &[
+                        "",
+                        "/bin/sh",
+                        "Linux x86_64",
+                        "ID=ubuntu\nVERSION_ID=\"24.04\"\n",
+                        "1",
+                    ]
+                    .join("\0"),
+                )?,
+                "/bin/sh",
+                RemoteOs::Linux,
+            ),
+            (
+                RemoteEnvironment::parse_windows(
+                    &[
+                        "",
+                        "powershell.exe",
+                        "AMD64",
+                        "Microsoft Windows [Version 10.0.19045.5011]",
+                        "1",
+                    ]
+                    .join("\0"),
+                )?,
+                "powershell.exe",
+                RemoteOs::Windows,
+            ),
+        ] {
+            assert_eq!(environment.shell, expected_shell);
+            assert_eq!(environment.platform.os, expected_os);
+            assert_eq!(environment.platform.arch, RemoteArch::X86_64);
+            assert_eq!(environment.os_version, None);
+        }
+        Ok(())
+    }
 
     #[test]
     fn test_build_command() -> Result<()> {
