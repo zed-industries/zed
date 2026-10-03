@@ -4761,6 +4761,7 @@ impl EditorElement {
         row_range: Range<DisplayRow>,
         row_infos: &[RowInfo],
         text_hitbox: &Hitbox,
+        gutter_hitbox: &Hitbox,
         newest_cursor_row: Option<DisplayRow>,
         line_height: Pixels,
         right_margin: Pixels,
@@ -4773,6 +4774,8 @@ impl EditorElement {
         cx: &mut App,
     ) -> (Vec<AnyElement>, Vec<(DisplayRow, Bounds<Pixels>)>) {
         let diff_hunk_renderer = editor.read(cx).diff_hunk_renderer();
+        let compact = crate::git::compact_hunk_controls(cx)
+            && diff_hunk_renderer.supports_compact_controls(cx);
         let hovered_diff_hunk_row = editor.read(cx).hovered_diff_hunk_row;
         let sticky_top = text_hitbox.bounds.top() + sticky_header_height;
 
@@ -4850,6 +4853,7 @@ impl EditorElement {
                         multi_buffer_range.clone(),
                         *is_created_file,
                         line_height,
+                        display_row_range.len() as u32,
                         &editor,
                         window,
                         cx,
@@ -4857,9 +4861,23 @@ impl EditorElement {
                     let size =
                         element.layout_as_root(size(px(100.0), line_height).into(), window, cx);
 
-                    let x = text_hitbox.bounds.right() - right_margin - px(10.) - size.width;
+                    // Controls too wide for the gutter (e.g. when it is hidden) stay in the
+                    // text area so they remain reachable.
+                    let strip_width = Self::gutter_strip_width(line_height, cx);
+                    let in_gutter =
+                        compact && size.width + strip_width <= gutter_hitbox.bounds.size.width;
+                    let x = if in_gutter {
+                        gutter_hitbox.bounds.left() + strip_width
+                    } else {
+                        text_hitbox.bounds.right() - right_margin - px(10.) - size.width
+                    };
+                    let y = if in_gutter {
+                        y.min(text_hitbox.bounds.bottom() - size.height)
+                    } else {
+                        y
+                    };
 
-                    if x < text_hitbox.bounds.left() {
+                    if !in_gutter && x < text_hitbox.bounds.left() {
                         continue;
                     }
 
@@ -5892,7 +5910,6 @@ impl EditorElement {
                 self.paint_inline_diagnostics(layout, window, cx);
                 self.paint_inline_blame(layout, window, cx);
                 self.paint_inline_code_actions(layout, window, cx);
-                self.paint_diff_hunk_controls(layout, window, cx);
                 window.with_element_namespace("crease_trailers", |window| {
                     for trailer in layout.crease_trailers.iter_mut().flatten() {
                         trailer.element.paint(window, cx);
@@ -9917,6 +9934,7 @@ impl Element for EditorElement {
                                 start_row..end_row,
                                 &row_infos,
                                 &text_hitbox,
+                                &gutter_hitbox,
                                 current_selection_head,
                                 line_height,
                                 right_margin,
@@ -10103,6 +10121,10 @@ impl Element for EditorElement {
                             self.paint_gutter_highlights(layout, window, cx);
                             self.paint_gutter_indicators(layout, window, cx);
                         }
+
+                        // Painted outside the text area's content mask, since the controls
+                        // can be placed in the gutter.
+                        self.paint_diff_hunk_controls(layout, window, cx);
 
                         if !layout.blocks.is_empty() {
                             window.with_element_namespace("blocks", |window| {
@@ -14092,5 +14114,76 @@ mod tests {
         expected.sort_by_key(|(row, x, _)| (*row, *x));
 
         assert_eq!(actual, expected, "scale: {scale}, x offset: {x_offset:?}");
+    }
+
+    /// Hovers the line numbers of the hunk on `hunk_row` with compact controls enabled and returns
+    /// the bounds of the controls that appear, the gutter's bounds, and the line height.
+    async fn hover_compact_hunk_controls(
+        state: &str,
+        head_text: &str,
+        hunk_row: u32,
+        cx: &mut TestAppContext,
+    ) -> (Bounds<Pixels>, Bounds<Pixels>, Pixels) {
+        init_test(cx, |_| {});
+        let mut cx = crate::test::editor_test_context::EditorTestContext::new(cx).await;
+        cx.update(|_, cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git.get_or_insert_default().compact_hunk_controls = Some(true);
+                });
+            });
+        });
+        cx.set_state(state);
+        cx.set_head_text(head_text);
+        cx.update_editor(|editor, window, cx| {
+            editor.expand_all_diff_hunks(&crate::actions::ExpandAllDiffHunks, window, cx);
+        });
+        cx.run_until_parked();
+
+        // The controls are laid out by the window's own draw, since they need a view.
+        let position_map = |cx: &mut crate::test::editor_test_context::EditorTestContext| {
+            cx.update_editor(|editor, _, _| editor.last_position_map.clone())
+                .expect("editor should have been laid out")
+        };
+        let initial = position_map(&mut cx);
+        assert!(initial.diff_hunk_control_bounds.is_empty());
+
+        // Hovering the hunk's line numbers, on the way to the controls, reveals them.
+        let gutter_bounds = initial.gutter_hitbox.bounds;
+        cx.simulate_mouse_move(
+            point(
+                gutter_bounds.right() - px(4.),
+                gutter_bounds.top() + initial.line_height * (hunk_row as f32 + 0.5),
+            ),
+            None,
+            gpui::Modifiers::none(),
+        );
+        cx.run_until_parked();
+        let position_map = position_map(&mut cx);
+        let [(row, bounds)] = position_map.diff_hunk_control_bounds.as_slice() else {
+            panic!("expected controls for the hovered hunk");
+        };
+        assert_eq!(*row, DisplayRow(hunk_row));
+        assert!(bounds.left() > gutter_bounds.left());
+        assert!(bounds.size.width > px(0.) && bounds.right() <= gutter_bounds.right());
+        (*bounds, gutter_bounds, position_map.line_height)
+    }
+
+    #[gpui::test]
+    async fn test_compact_hunk_controls_in_gutter(cx: &mut TestAppContext) {
+        // A modified line shows as a deleted and an added row, so the controls stack vertically.
+        let (bounds, _, line_height) =
+            hover_compact_hunk_controls("oneˇ\nTWO\nthree\n", "one\ntwo\nthree\n", 1, cx).await;
+        assert!(bounds.size.height > line_height);
+        assert!(bounds.size.height <= line_height * 2.);
+    }
+
+    #[gpui::test]
+    async fn test_compact_hunk_controls_for_one_line_hunk(cx: &mut TestAppContext) {
+        // A one-line hunk lays the controls out in a row so they don't spill onto the next row.
+        let (bounds, _, line_height) =
+            hover_compact_hunk_controls("oneˇ\nnew\nthree\n", "one\nthree\n", 1, cx).await;
+        assert!(bounds.size.height <= line_height);
+        assert!(bounds.size.width > bounds.size.height);
     }
 }

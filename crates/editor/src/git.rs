@@ -30,6 +30,7 @@ pub trait DiffHunkRenderer {
         hunk_range: Range<Anchor>,
         is_created_file: bool,
         line_height: Pixels,
+        row_count: u32,
         editor: &Entity<Editor>,
         window: &mut Window,
         cx: &mut App,
@@ -37,6 +38,11 @@ pub trait DiffHunkRenderer {
 
     fn render_hunk_as_staged(&self, status: &DiffHunkStatus, _cx: &App) -> bool {
         !status.has_secondary_hunk()
+    }
+
+    /// Whether this renderer draws compact controls when `git.compact_hunk_controls` is on.
+    fn supports_compact_controls(&self, _cx: &App) -> bool {
+        true
     }
 }
 
@@ -50,6 +56,7 @@ impl DiffHunkRenderer for DefaultDiffHunkRenderer {
         hunk_range: Range<Anchor>,
         is_created_file: bool,
         line_height: Pixels,
+        row_count: u32,
         editor: &Entity<Editor>,
         window: &mut Window,
         cx: &mut App,
@@ -60,6 +67,7 @@ impl DiffHunkRenderer for DefaultDiffHunkRenderer {
             hunk_range,
             is_created_file,
             line_height,
+            row_count,
             editor,
             window,
             cx,
@@ -77,6 +85,7 @@ impl DiffHunkRenderer for HiddenDiffHunkRenderer {
         _hunk_range: Range<Anchor>,
         _is_created_file: bool,
         _line_height: Pixels,
+        _row_count: u32,
         _editor: &Entity<Editor>,
         _window: &mut Window,
         _cx: &mut App,
@@ -95,6 +104,7 @@ impl DiffHunkRenderer for HiddenUnstagedDiffHunkRenderer {
         _hunk_range: Range<Anchor>,
         _is_created_file: bool,
         _line_height: Pixels,
+        _row_count: u32,
         _editor: &Entity<Editor>,
         _window: &mut Window,
         _cx: &mut App,
@@ -3028,12 +3038,115 @@ pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) 
     cx.set_global(GlobalBlameRenderer(Arc::new(renderer)));
 }
 
+pub(crate) fn compact_hunk_controls(cx: &App) -> bool {
+    ProjectSettings::get_global(cx).git.compact_hunk_controls
+}
+
+/// The container for a diff hunk's controls: a toolbar on the right side of the hunk, or
+/// compact gutter controls when `git.compact_hunk_controls` is on, in a row for one-row hunks
+/// and stacked otherwise.
+pub fn diff_hunk_controls_container(row_count: u32, line_height: Pixels, cx: &App) -> Div {
+    let container = if compact_hunk_controls(cx) {
+        // A stack taller than a one-line hunk would spill onto the next row, where it can be
+        // covered (e.g. by the next file's header), so lay those controls out in a row instead.
+        // Either way restore comes before stage.
+        if row_count <= 1 {
+            h_flex().flex_row_reverse()
+        } else {
+            v_flex().flex_col_reverse()
+        }
+        .p_px()
+        .gap_px()
+        .border_1()
+        .rounded_sm()
+        .shadow_sm()
+    } else {
+        h_flex()
+            .h(line_height)
+            .mr_1()
+            .gap_1()
+            .px_0p5()
+            .pb_1()
+            .border_x_1()
+            .border_b_1()
+            .rounded_b_lg()
+            .shadow_md()
+    };
+    container
+        .border_color(cx.theme().colors().border_variant)
+        .bg(cx.theme().colors().editor_background)
+        .block_mouse_except_scroll()
+}
+
+/// A diff hunk control: a labeled button in the toolbar, or an icon in the gutter.
+#[derive(IntoElement)]
+pub enum HunkControlButton {
+    Labeled(Button),
+    Icon(IconButton),
+}
+
+impl HunkControlButton {
+    pub fn new(id: impl Into<ElementId>, label: &'static str, icon: IconName, cx: &App) -> Self {
+        if compact_hunk_controls(cx) {
+            Self::Icon(
+                IconButton::new(id, icon)
+                    .size(ButtonSize::Compact)
+                    .icon_size(IconSize::XSmall)
+                    .aria_label(label),
+            )
+        } else {
+            Self::Labeled(Button::new(id, label))
+        }
+    }
+
+    pub fn alpha(self, alpha: f32) -> Self {
+        match self {
+            Self::Labeled(button) => Self::Labeled(button.alpha(alpha)),
+            Self::Icon(button) => Self::Icon(button.alpha(alpha)),
+        }
+    }
+
+    pub fn disabled(self, disabled: bool) -> Self {
+        match self {
+            Self::Labeled(button) => Self::Labeled(button.disabled(disabled)),
+            Self::Icon(button) => Self::Icon(button.disabled(disabled)),
+        }
+    }
+
+    pub fn tooltip(
+        self,
+        tooltip: impl Fn(&mut Window, &mut App) -> gpui::AnyView + 'static,
+    ) -> Self {
+        match self {
+            Self::Labeled(button) => Self::Labeled(button.tooltip(tooltip)),
+            Self::Icon(button) => Self::Icon(button.tooltip(tooltip)),
+        }
+    }
+
+    pub fn on_click(self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+        match self {
+            Self::Labeled(button) => Self::Labeled(button.on_click(handler)),
+            Self::Icon(button) => Self::Icon(button.on_click(handler)),
+        }
+    }
+}
+
+impl RenderOnce for HunkControlButton {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        match self {
+            Self::Labeled(button) => button.into_any_element(),
+            Self::Icon(button) => button.into_any_element(),
+        }
+    }
+}
+
 pub fn render_diff_hunk_controls(
     row: u32,
     status: &DiffHunkStatus,
     hunk_range: Range<Anchor>,
     is_created_file: bool,
     line_height: Pixels,
+    row_count: u32,
     editor: &Entity<Editor>,
     _window: &mut Window,
     cx: &mut App,
@@ -3056,27 +3169,24 @@ pub fn render_diff_hunk_controls(
         .as_ref()
         .is_some_and(|operations| operations.supports_restore());
 
-    h_flex()
-        .h(line_height)
-        .mr_1()
-        .gap_1()
-        .px_0p5()
-        .pb_1()
-        .border_x_1()
-        .border_b_1()
-        .border_color(cx.theme().colors().border_variant)
-        .rounded_b_lg()
-        .bg(cx.theme().colors().editor_background)
-        .gap_1()
-        .block_mouse_except_scroll()
-        .shadow_md()
+    let supports_stage_control = if status.has_secondary_hunk() {
+        supports_staging
+    } else {
+        supports_unstaging
+    };
+    let compact = compact_hunk_controls(cx);
+    if compact && !(show_stage_restore && (supports_stage_control || supports_restore)) {
+        return gpui::Empty.into_any_element();
+    }
+
+    diff_hunk_controls_container(row_count, line_height, cx)
         .when(
             show_stage_restore
                 && ((status.has_secondary_hunk() && supports_staging)
                     || (!status.has_secondary_hunk() && supports_unstaging)),
             |el| {
                 el.child(if status.has_secondary_hunk() {
-                    Button::new(("stage", row as u64), "Stage")
+                    HunkControlButton::new(("stage", row as u64), "Stage", IconName::Plus, cx)
                         .alpha(if status.is_pending() { 0.66 } else { 1.0 })
                         .tooltip({
                             let focus_handle = editor.focus_handle(cx);
@@ -3103,7 +3213,7 @@ pub fn render_diff_hunk_controls(
                             }
                         })
                 } else {
-                    Button::new(("unstage", row as u64), "Unstage")
+                    HunkControlButton::new(("unstage", row as u64), "Unstage", IconName::Dash, cx)
                         .alpha(if status.is_pending() { 0.66 } else { 1.0 })
                         .tooltip({
                             let focus_handle = editor.focus_handle(cx);
@@ -3134,7 +3244,7 @@ pub fn render_diff_hunk_controls(
         )
         .when(show_stage_restore && supports_restore, |el| {
             el.child(
-                Button::new(("restore", row as u64), "Restore")
+                HunkControlButton::new(("restore", row as u64), "Restore", IconName::Undo, cx)
                     .tooltip({
                         let focus_handle = editor.focus_handle(cx);
                         move |_window, cx| {
@@ -3160,7 +3270,7 @@ pub fn render_diff_hunk_controls(
             )
         })
         .when(
-            !editor.read(cx).buffer().read(cx).all_diff_hunks_expanded(),
+            !compact && !editor.read(cx).buffer().read(cx).all_diff_hunks_expanded(),
             |el| {
                 el.child(
                     IconButton::new(("next-hunk", row as u64), IconName::ArrowDown)
