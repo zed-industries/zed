@@ -36,6 +36,29 @@ pub enum SidebarDockPosition {
     Right,
 }
 
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
+pub struct ThreadsSidebarSettingsContent {
+    /// Whether opening a folder in an existing window automatically opens the
+    /// Threads Sidebar. Applies when `default_open_behavior` or
+    /// `cli_default_open_behavior` is set to `existing_window`.
+    ///
+    /// Default: true
+    pub auto_open: Option<bool>,
+    /// Where to position the threads sidebar.
+    ///
+    /// Default: left
+    pub position: Option<SidebarDockPosition>,
+    /// Default width of the threads sidebar in pixels.
+    ///
+    /// Values range from 200 to 800, matching the widths the sidebar can be
+    /// dragged to. Values outside that range are clamped into it.
+    ///
+    /// Default: 300
+    #[schemars(range(min = 200, max = 800))]
+    pub default_width: Option<crate::PixelSetting>,
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum SidebarSide {
     #[default]
@@ -206,24 +229,46 @@ pub struct AgentSettingsContent {
     ///
     /// Default: left (Agentic layout), right (Classic layout)
     pub dock: Option<DockPosition>,
-    /// Whether the agent panel should use flexible (proportional) sizing.
+    /// Whether the agent panel should use flexible (proportional) sizing when docked to the
+    /// left or right.
+    ///
+    /// When enabled, `default_width` does not control the panel width, and resetting the panel
+    /// restores the default proportion.
     ///
     /// Default: true
     pub flexible: Option<bool>,
-    /// Where to position the threads sidebar.
+    /// The deprecated version of `threads_sidebar.position`.
     ///
-    /// Default: left
+    /// Don't use this field.
+    #[schemars(skip)]
     pub sidebar_side: Option<SidebarDockPosition>,
-    /// Default width in pixels when the agent panel is docked to the left or right.
+    /// The deprecated version of `threads_sidebar.default_width`.
+    ///
+    /// Don't use this field.
+    #[schemars(skip)]
+    pub threads_sidebar_default_width: Option<crate::PixelSetting>,
+    /// The deprecated version of `threads_sidebar.auto_open`.
+    ///
+    /// Don't use this field.
+    #[schemars(skip)]
+    pub threads_sidebar_auto_open: Option<bool>,
+    /// Maximum number of idle threads with loadable sessions to retain in the
+    /// agent panel. Set to 0 to unload every eligible idle thread when it is
+    /// no longer active.
+    ///
+    /// Default: 5
+    pub max_idle_retained_threads: Option<usize>,
+    /// Settings for the threads sidebar.
+    pub threads_sidebar: Option<ThreadsSidebarSettingsContent>,
+    /// Default fixed width in pixels when the agent panel is docked to the left or right and
+    /// `flexible` is false.
     ///
     /// Default: 640
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_width: Option<f32>,
+    pub default_width: Option<crate::PixelSetting>,
     /// Default height in pixels when the agent panel is docked to the bottom.
     ///
     /// Default: 320
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_height: Option<f32>,
+    pub default_height: Option<crate::PixelSetting>,
     /// Whether to limit the content width in the agent panel. When enabled,
     /// content will be constrained to `max_content_width` and centered when
     /// the panel is wider than that value, for optimal readability.
@@ -234,8 +279,7 @@ pub struct AgentSettingsContent {
     /// centered when the panel is wider than this value.
     ///
     /// Default: 850
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub max_content_width: Option<f32>,
+    pub max_content_width: Option<crate::PixelSetting>,
     /// The default model to use when creating new chats and for other features when a specific model is not specified.
     pub default_model: Option<LanguageModelSelection>,
     /// The model to use for subagents spawned via the `spawn_agent` tool. Defaults to the parent agent's model when not specified.
@@ -282,6 +326,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: never
     pub play_sound_when_agent_done: Option<PlaySoundWhenAgentDone>,
+    /// Whether to keep the system awake while agent threads are running.
+    ///
+    /// Default: true
+    pub prevent_idle_sleep: Option<bool>,
     /// Whether to display agent edits in single-file editors in addition to the review multibuffer pane.
     ///
     /// Default: false
@@ -367,8 +415,22 @@ impl AgentSettingsContent {
         self.dock = Some(dock);
     }
 
-    pub fn set_sidebar_side(&mut self, position: SidebarDockPosition) {
-        self.sidebar_side = Some(position);
+    pub fn set_threads_sidebar_position(&mut self, position: Option<SidebarDockPosition>) {
+        self.sidebar_side = None;
+        self.threads_sidebar.get_or_insert_default().position = position;
+    }
+
+    pub fn set_threads_sidebar_default_width(
+        &mut self,
+        default_width: Option<crate::PixelSetting>,
+    ) {
+        self.threads_sidebar_default_width = None;
+        self.threads_sidebar.get_or_insert_default().default_width = default_width;
+    }
+
+    pub fn set_threads_sidebar_auto_open(&mut self, auto_open: Option<bool>) {
+        self.threads_sidebar_auto_open = None;
+        self.threads_sidebar.get_or_insert_default().auto_open = auto_open;
     }
 
     pub fn set_flexible_size(&mut self, flexible: bool) {
@@ -527,6 +589,7 @@ impl AgentSettingsContent {
 pub struct AgentProfileContent {
     pub name: Arc<str>,
     #[serde(default)]
+    #[schemars(schema_with = "agent_profile_tools_schema")]
     pub tools: IndexMap<Arc<str>, bool>,
     /// Whether all context servers are enabled by default.
     pub enable_all_context_servers: Option<bool>,
@@ -540,6 +603,44 @@ pub struct AgentProfileContent {
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ContextServerPresetContent {
     pub tools: IndexMap<Arc<str>, bool>,
+}
+
+fn agent_profile_tools_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let tool_names = [
+        "apply_code_action",
+        "ask_user",
+        "copy_path",
+        "create_directory",
+        "create_thread",
+        "delete_path",
+        "diagnostics",
+        "edit_file",
+        "fetch",
+        "find_path",
+        "find_references",
+        "get_code_actions",
+        "go_to_definition",
+        "grep",
+        "list_agents_and_models",
+        "list_directory",
+        "move_path",
+        "read_file",
+        "rename_symbol",
+        "search_web",
+        "skill",
+        "spawn_agent",
+        "terminal",
+        "write_file",
+    ];
+    let properties = tool_names
+        .into_iter()
+        .map(|name| (name.to_string(), serde_json::json!({ "type": "boolean" })))
+        .collect::<serde_json::Map<_, _>>();
+    json_schema!({
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": false
+    })
 }
 
 #[derive(
@@ -638,10 +739,12 @@ impl JsonSchema for LanguageModelProviderSetting {
                         "mistral",
                         "ollama",
                         "openai",
+                        "openai-subscribed",
                         "opencode",
                         "openrouter",
                         "vercel_ai_gateway",
                         "x_ai",
+                        "x_ai_subscribed",
                         "zed.dev"
                     ]
                 },

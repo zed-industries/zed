@@ -1,13 +1,13 @@
 use std::{future::IntoFuture, path::Path, time::Duration};
 
 use super::*;
-use editor::Editor;
+use editor::{Editor, SelectionEffects};
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use menu::{Cancel, Confirm, SelectNext, SelectPrevious};
 use pretty_assertions::{assert_eq, assert_matches};
 use project::{FS_WATCH_LATENCY, RemoveOptions};
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{SettingsStore, SplicingVec};
 use util::{path, rel_path::rel_path};
 use workspace::{
     AppState, CloseActiveItem, Item, MultiWorkspace, OpenOptions, ToggleFileFinder, Workspace,
@@ -403,14 +403,11 @@ async fn test_complex_path(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -1006,10 +1003,10 @@ async fn test_ignored_root_with_file_inclusions(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_inclusions = Some(vec![
-                    "height_demo/**/hi_bonjour".to_string(),
+                settings.project.worktree.file_scan_inclusions = Some(SplicingVec::from(vec![
                     "**/height_1".to_string(),
-                ]);
+                    "height_demo/**/hi_bonjour".to_string(),
+                ]));
             });
         })
     });
@@ -1100,7 +1097,8 @@ async fn test_ignored_root_with_file_inclusions_repro(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_inclusions = Some(vec!["**/.env".to_string()]);
+                settings.project.worktree.file_scan_inclusions =
+                    Some(SplicingVec::from(vec!["**/.env".to_string()]));
             });
         })
     });
@@ -1796,14 +1794,11 @@ async fn test_path_distance_ordering(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -2042,14 +2037,11 @@ async fn test_history_match_positions(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -2111,14 +2103,11 @@ async fn test_history_labels_do_not_include_worktree_root_name(cx: &mut gpui::Te
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -2211,14 +2200,11 @@ async fn test_history_labels_include_worktree_root_name_when_hide_root_false(
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: false,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(false);
+            });
+        });
     });
 
     app_state
@@ -2264,14 +2250,11 @@ async fn test_history_labels_include_worktree_root_name_when_hide_root_true_and_
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -2594,14 +2577,11 @@ async fn test_non_project_file_matches_history_with_hidden_root(cx: &mut gpui::T
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -2799,14 +2779,11 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -2915,14 +2892,11 @@ async fn test_search_sorts_history_items(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -3409,14 +3383,11 @@ async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppCo
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -3468,14 +3439,11 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -3953,14 +3921,11 @@ async fn test_selected_match_stays_selected_after_matches_refreshed(cx: &mut gpu
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state.fs.as_fake().insert_tree("/src", json!({})).await;
@@ -4752,6 +4717,195 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
     search_entries
 }
 
+#[cfg(test)]
+fn select_range_in_active_editor(
+    workspace: &Entity<Workspace>,
+    cx: &mut VisualTestContext,
+    range: Range<Point>,
+) {
+    let editor = cx.read(|cx| workspace.read(cx).active_item_as::<Editor>(cx).unwrap());
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([range]);
+        });
+    });
+}
+
+#[gpui::test]
+async fn test_seed_query_from_editor_selection(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "the_quick.rs": "quick brown",
+                "unrelated.rs": "",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    open_queried_buffer("the_quick", 1, "the_quick.rs", &workspace, cx).await;
+    select_range_in_active_editor(&workspace, cx, Point::new(0, 0)..Point::new(0, 5));
+
+    // The finder opens pre-filled with the selection and searches for it.
+    cx.dispatch_action(ToggleFileFinder {
+        separate_history: true,
+        include_ignored: None,
+    });
+    let picker = active_file_picker(&workspace, cx);
+    assert_eq!(picker.read_with(cx, |picker, cx| picker.query(cx)), "quick");
+
+    cx.executor().advance_clock(SEARCH_DEBOUNCE);
+    cx.run_until_parked();
+    picker.update(cx, |finder, _| {
+        assert_match_at_position(finder, 0, "the_quick.rs");
+    });
+}
+
+#[gpui::test]
+async fn test_no_seed_query_without_selection(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "the_quick.rs": "quick brown",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    open_queried_buffer("the_quick", 1, "the_quick.rs", &workspace, cx).await;
+
+    // Without a selection the finder opens in history mode.
+    cx.dispatch_action(ToggleFileFinder {
+        separate_history: true,
+        include_ignored: None,
+    });
+    let picker = active_file_picker(&workspace, cx);
+    assert_eq!(picker.read_with(cx, |picker, cx| picker.query(cx)), "");
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 1);
+        assert_match_at_position(finder, 0, "the_quick.rs");
+    });
+}
+
+#[gpui::test]
+async fn test_seed_query_flattens_multiline_selection(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "words.rs": "alpha beta\ngamma delta\n",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    open_queried_buffer("words", 1, "words.rs", &workspace, cx).await;
+    select_range_in_active_editor(&workspace, cx, Point::new(0, 0)..Point::new(1, 11));
+
+    cx.dispatch_action(ToggleFileFinder {
+        separate_history: true,
+        include_ignored: None,
+    });
+    let picker = active_file_picker(&workspace, cx);
+    assert_eq!(
+        picker.read_with(cx, |picker, cx| picker.query(cx)),
+        "alpha beta gamma delta"
+    );
+
+    cx.executor().advance_clock(SEARCH_DEBOUNCE);
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+async fn test_no_seed_query_when_setting_disabled(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *FileFinderSettings::get_global(cx);
+        FileFinderSettings::override_global(
+            FileFinderSettings {
+                prefill_query_from_selection: false,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "the_quick.rs": "quick brown",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    open_queried_buffer("the_quick", 1, "the_quick.rs", &workspace, cx).await;
+    select_range_in_active_editor(&workspace, cx, Point::new(0, 0)..Point::new(0, 5));
+
+    cx.dispatch_action(ToggleFileFinder {
+        separate_history: true,
+        include_ignored: None,
+    });
+    let picker = active_file_picker(&workspace, cx);
+    assert_eq!(picker.read_with(cx, |picker, cx| picker.query(cx)), "");
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 1);
+        assert_match_at_position(finder, 0, "the_quick.rs");
+    });
+}
+
+#[test]
+fn test_sanitize_file_query() {
+    assert_eq!(
+        sanitize_file_query("  the   quick\nbrown fox\ttabs ").as_deref(),
+        Some("the quick brown fox tabs")
+    );
+    assert_eq!(sanitize_file_query("").as_deref(), None);
+    assert_eq!(sanitize_file_query("  \n\t ").as_deref(), None);
+    let long_selection = "a".repeat(MAX_SEED_QUERY_LENGTH + 1);
+    assert_eq!(
+        sanitize_file_query(&long_selection)
+            .unwrap()
+            .chars()
+            .count(),
+        MAX_SEED_QUERY_LENGTH
+    );
+}
+
 #[track_caller]
 fn assert_match_selection(
     finder: &Picker<FileFinderDelegate>,
@@ -4792,14 +4946,11 @@ async fn test_filename_precedence(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -4848,14 +4999,11 @@ async fn test_paths_with_starting_slash(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -5225,6 +5373,67 @@ async fn test_exact_filename_with_directory_token(cx: &mut TestAppContext) {
         assert_eq!(
             matches[0].path.as_unix_str(),
             "crates/agent_servers/src/acp.rs",
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_hover_does_not_set_has_changed_selected_index(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a.rs": "",
+                "b.rs": "",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    open_close_queried_buffer("a", 1, "a.rs", &workspace, cx).await;
+    open_close_queried_buffer("b", 1, "b.rs", &workspace, cx).await;
+
+    let picker = open_file_picker(&workspace, cx);
+
+    picker.update(cx, |picker, _| {
+        assert!(
+            picker.delegate.matches.len() >= 2,
+            "need at least 2 matches"
+        );
+    });
+
+    picker.update_in(cx, |picker, window, cx| {
+        picker.set_hovered_index(1, window, cx);
+    });
+
+    picker.update(cx, |picker, _| {
+        assert!(
+            !picker.delegate.has_changed_selected_index,
+            "hover should not set `has_changed_selected_index`"
+        );
+        assert_eq!(
+            picker.delegate.selected_index(),
+            1,
+            "hover should change `selected_index`"
+        );
+    });
+
+    picker.update_in(cx, |picker, window, cx| {
+        picker.cycle_selection(window, cx);
+    });
+
+    picker.update(cx, |picker, _| {
+        assert!(
+            picker.delegate.has_changed_selected_index,
+            "keyboard should set `has_changed_selected_index`"
         );
     });
 }

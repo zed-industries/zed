@@ -1,6 +1,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, fmt, path::Path, sync::LazyLock};
+use std::{borrow::Cow, fmt, path::Path};
+#[cfg(windows)]
+use std::{path::PathBuf, sync::LazyLock};
 
 /// Shell configuration to open the terminal with.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
@@ -84,33 +86,42 @@ pub fn get_default_system_shell() -> String {
 
 /// Get the default system shell, preferring bash on Windows.
 pub fn get_default_system_shell_preferring_bash() -> String {
-    if cfg!(windows) {
+    #[cfg(windows)]
+    {
         get_windows_bash().unwrap_or_else(|| get_windows_system_shell())
-    } else {
+    }
+
+    #[cfg(not(windows))]
+    {
         "/bin/sh".to_string()
     }
 }
 
+#[cfg(windows)]
 pub fn get_windows_bash() -> Option<String> {
-    use std::path::PathBuf;
-
-    fn find_bash_in_scoop() -> Option<PathBuf> {
-        let bash_exe =
-            PathBuf::from(std::env::var_os("USERPROFILE")?).join("scoop\\shims\\bash.exe");
-        bash_exe.exists().then_some(bash_exe)
+    fn find_bash_in_installation(install_root: &Path) -> Option<PathBuf> {
+        if !install_root.join("git-bash.exe").is_file() {
+            return None;
+        }
+        let bash = install_root.join("bin").join("bash.exe");
+        bash.is_file().then_some(bash)
     }
 
     fn find_bash_in_git() -> Option<PathBuf> {
-        // /path/to/git/cmd/git.exe/../../bin/bash.exe
+        if let Some(bash) = std::env::var_os("GIT_INSTALL_ROOT")
+            .map(PathBuf::from)
+            .and_then(|path| find_bash_in_installation(&path))
+        {
+            return Some(bash);
+        }
         let git = which::which("git").ok()?;
-        let git_bash = git.parent()?.parent()?.join("bin").join("bash.exe");
-        git_bash.exists().then_some(git_bash)
+        let binary_directory = git.parent()?;
+        let parent = binary_directory.parent()?;
+        find_bash_in_installation(parent).or_else(|| find_bash_in_installation(parent.parent()?))
     }
 
     static BASH: LazyLock<Option<String>> = LazyLock::new(|| {
-        let bash = find_bash_in_scoop()
-            .or_else(|| find_bash_in_git())
-            .map(|p| p.to_string_lossy().into_owned());
+        let bash = find_bash_in_git().map(|p| p.to_string_lossy().into_owned());
         if let Some(ref path) = bash {
             log::info!("Found bash at {}", path);
         }
@@ -234,13 +245,13 @@ impl ShellKind {
 
     fn to_cmd_variable(input: &str) -> String {
         if let Some(var_str) = input.strip_prefix("${") {
-            if var_str.find(':').is_none() {
-                // If the input starts with "${", remove the trailing "}"
-                format!("%{}%", &var_str[..var_str.len() - 1])
-            } else {
+            match var_str.strip_suffix('}') {
+                Some(var_name) if !var_name.is_empty() && !var_name.contains(':') => {
+                    format!("%{var_name}%")
+                }
                 // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
                 // which will result in the task failing to run in such cases.
-                input.into()
+                _ => input.into(),
             }
         } else if let Some(var_str) = input.strip_prefix('$') {
             // If the input starts with "$", directly append to "$env:"
@@ -253,13 +264,13 @@ impl ShellKind {
 
     fn to_powershell_variable(input: &str) -> String {
         if let Some(var_str) = input.strip_prefix("${") {
-            if var_str.find(':').is_none() {
-                // If the input starts with "${", remove the trailing "}"
-                format!("$env:{}", &var_str[..var_str.len() - 1])
-            } else {
+            match var_str.strip_suffix('}') {
+                Some(var_name) if !var_name.is_empty() && !var_name.contains(':') => {
+                    format!("$env:{var_name}")
+                }
                 // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
                 // which will result in the task failing to run in such cases.
-                input.into()
+                _ => input.into(),
             }
         } else if let Some(var_str) = input.strip_prefix('$') {
             // If the input starts with "$", directly append to "$env:"
@@ -941,6 +952,42 @@ mod tests {
             assert!(quoted.starts_with('\''));
             assert!(quoted.ends_with('\''));
             assert!(quoted.contains("O''Brien"));
+        }
+    }
+
+    #[test]
+    fn test_to_shell_variable() {
+        assert_eq!(
+            ShellKind::PowerShell.to_shell_variable("${FOO}"),
+            "$env:FOO"
+        );
+        assert_eq!(ShellKind::Pwsh.to_shell_variable("${FOO}"), "$env:FOO");
+        assert_eq!(ShellKind::Cmd.to_shell_variable("${FOO}"), "%FOO%");
+        assert_eq!(ShellKind::Nushell.to_shell_variable("${FOO}"), "$env.FOO");
+        assert_eq!(ShellKind::Posix.to_shell_variable("${FOO}"), "${FOO}");
+
+        assert_eq!(ShellKind::PowerShell.to_shell_variable("$FOO"), "$env:FOO");
+        assert_eq!(
+            ShellKind::PowerShell.to_shell_variable("${日本}"),
+            "$env:日本"
+        );
+        assert_eq!(
+            ShellKind::PowerShell.to_shell_variable("${FOO:-bar}"),
+            "${FOO:-bar}"
+        );
+    }
+
+    #[test]
+    fn test_to_shell_variable_malformed_is_passed_through() {
+        for input in ["${", "${FOO", "${café", "${}", "${日本"] {
+            for shell_kind in [
+                ShellKind::PowerShell,
+                ShellKind::Pwsh,
+                ShellKind::Cmd,
+                ShellKind::Nushell,
+            ] {
+                assert_eq!(shell_kind.to_shell_variable(input), input);
+            }
         }
     }
 }

@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/feature_flags.rs"
+doctest = false
 
 [dependencies]
 collections.workspace = true
@@ -17,7 +18,6 @@ feature_flags_macros.workspace = true
 fs.workspace = true
 gpui.workspace = true
 inventory.workspace = true
-release_channel.workspace = true
 schemars.workspace = true
 serde_json.workspace = true
 settings.workspace = true

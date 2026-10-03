@@ -464,11 +464,11 @@ pub enum ButtonSize {
 impl ButtonSize {
     pub fn rems(self) -> Rems {
         match self {
-            ButtonSize::Large => rems_from_px(32.),
-            ButtonSize::Medium => rems_from_px(28.),
-            ButtonSize::Default => rems_from_px(22.),
-            ButtonSize::Compact => rems_from_px(18.),
-            ButtonSize::None => rems_from_px(16.),
+            ButtonSize::Large => rems_from_px(32_f32),
+            ButtonSize::Medium => rems_from_px(28_f32),
+            ButtonSize::Default => rems_from_px(22_f32),
+            ButtonSize::Compact => rems_from_px(18_f32),
+            ButtonSize::None => rems_from_px(16_f32),
         }
     }
 }
@@ -486,6 +486,8 @@ pub struct ButtonLike {
     pub(super) disabled: bool,
     pub(super) selected: bool,
     pub(super) selected_style: Option<ButtonStyle>,
+    pub(super) hover_background: Option<Hsla>,
+    pub(super) active_background: Option<Hsla>,
     pub(super) width: Option<DefiniteLength>,
     pub(super) height: Option<DefiniteLength>,
     pub(super) layer: Option<ElevationIndex>,
@@ -521,6 +523,8 @@ impl ButtonLike {
             disabled: false,
             selected: false,
             selected_style: None,
+            hover_background: None,
+            active_background: None,
             width: None,
             height: None,
             size: ButtonSize::Default,
@@ -670,6 +674,7 @@ impl SelectableButton for ButtonLike {
 }
 
 impl Clickable for ButtonLike {
+    #[inline(always)]
     fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(Box::new(handler));
         self
@@ -708,6 +713,7 @@ impl ButtonCommon for ButtonLike {
         self
     }
 
+    #[inline(always)]
     fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
@@ -754,6 +760,10 @@ impl RenderOnce for ButtonLike {
             ButtonStyle::Outlined | ButtonStyle::OutlinedGhost | ButtonStyle::OutlinedCustom(_)
         );
 
+        let active_background = self
+            .active_background
+            .unwrap_or_else(|| style.active(cx).background);
+
         self.base
             .h_flex()
             .id(self.id.clone())
@@ -776,7 +786,11 @@ impl RenderOnce for ButtonLike {
                     Toggled::False
                 })
             })
-            .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index))
+            .when_some(self.tab_index, |this, tab_index| {
+                // Keep an already-focused button registered so disabling it does not
+                // move focus outside the view.
+                this.tab_index(tab_index).tab_stop(!self.disabled)
+            })
             .when_some(self.focus_handle, |this, focus_handle| {
                 this.track_focus(&focus_handle)
             })
@@ -813,8 +827,8 @@ impl RenderOnce for ButtonLike {
             })
             .when(!self.disabled, |this| {
                 let hovered_style = style.hovered(self.layer, cx);
-                let focus_color =
-                    |refinement: StyleRefinement| refinement.bg(hovered_style.background);
+                let hover_background = self.hover_background.unwrap_or(hovered_style.background);
+                let focus_color = |refinement: StyleRefinement| refinement.bg(hover_background);
 
                 this.cursor(self.cursor_style)
                     .hover(focus_color)
@@ -827,7 +841,7 @@ impl RenderOnce for ButtonLike {
                             this.focus_visible(focus_color)
                         }
                     })
-                    .active(|active| active.bg(style.active(cx).background))
+                    .active(|active| active.bg(active_background))
             })
             .when_some(
                 self.on_right_click.filter(|_| !self.disabled),

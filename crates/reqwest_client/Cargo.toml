@@ -13,14 +13,13 @@ test-support = []
 
 [lib]
 path = "src/reqwest_client.rs"
-doctest = true
+doctest = false
 
 [dependencies]
 anyhow.workspace = true
 bytes.workspace = true
 futures.workspace = true
 http_client.workspace = true
-serde.workspace = true
 log.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 regex.workspace = true
@@ -29,5 +28,3 @@ gpui_util.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 http_client_tls.workspace = true
-
-[dev-dependencies]

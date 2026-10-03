@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/sandbox.rs"
+doctest = false
 
 [features]
 # Builds `bwrap_test_helper`, the behavior helper driven by the NixOS sandbox
@@ -74,3 +75,6 @@ tempfile.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 smol.workspace = true
+# Structural WSL-installed check (registered distros under HKCU\...\Lxss)
+# without spawning `wsl.exe`.
+windows-registry.workspace = true

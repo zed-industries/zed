@@ -128,34 +128,46 @@ In this example:
 
 The `"..."` entry acts as a wildcard that includes any registered language server you haven't explicitly mentioned. Servers you list by name keep their position, and `"..."` fills in the remaining ones at that point in the list. Servers prefixed with `!` are excluded entirely. This means that if a new language server extension is installed or a new server is registered for a language, `"..."` will automatically include it. If you want full control over which servers are enabled, omit `"..."` — only the servers you list by name will be used.
 
+Some language servers are disabled by default for some of their languages, e.g. `typescript-language-server` for TypeScript, or `ty` for Python. Extensions can also mark their language servers as [disabled by default](./extensions/languages.md#opt-in-language-servers). Such servers are never included by `"..."`, regardless of your configuration, and only start when you list them by name, e.g. `["my-alternative-server", "..."]`.
+
 #### Examples
 
 Suppose you're working with Ruby. The default configuration is:
 
 ```json [settings]
 {
-  "language_servers": [
-    "solargraph",
-    "!ruby-lsp",
-    "!rubocop",
-    "!sorbet",
-    "!steep",
-    "!kanayago",
-    "..."
-  ]
+  "languages": {
+    "Ruby": {
+      "language_servers": [
+        "solargraph",
+        "!ruby-lsp",
+        "!rubocop",
+        "!sorbet",
+        "!steep",
+        "!kanayago",
+        "!fuzzy-ruby-server",
+        "..."
+      ]
+    }
+  }
 }
 ```
 
 When you override `language_servers` in your settings, your list **replaces** the default entirely. This means default-disabled servers like `kanayago` will be re-enabled by `"..."` unless you explicitly disable them again.
 
-| Configuration                                     | Result                                                             |
-| ------------------------------------------------- | ------------------------------------------------------------------ |
-| `["..."]`                                         | `solargraph`, `ruby-lsp`, `rubocop`, `sorbet`, `steep`, `kanayago` |
-| `["ruby-lsp", "..."]`                             | `ruby-lsp`, `solargraph`, `rubocop`, `sorbet`, `steep`, `kanayago` |
-| `["ruby-lsp", "!solargraph", "!kanayago", "..."]` | `ruby-lsp`, `rubocop`, `sorbet`, `steep`                           |
-| `["ruby-lsp", "solargraph"]`                      | `ruby-lsp`, `solargraph`                                           |
+| Configuration                                     | Result                                                                                  |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `["..."]`                                         | `solargraph`, `ruby-lsp`, `rubocop`, `sorbet`, `steep`, `kanayago`, `fuzzy-ruby-server` |
+| `["ruby-lsp", "..."]`                             | `ruby-lsp`, `solargraph`, `rubocop`, `sorbet`, `steep`, `kanayago`, `fuzzy-ruby-server` |
+| `["ruby-lsp", "!solargraph", "!kanayago", "..."]` | `ruby-lsp`, `rubocop`, `sorbet`, `steep`, `fuzzy-ruby-server`                           |
+| `["ruby-lsp", "solargraph"]`                      | `ruby-lsp`, `solargraph`                                                                |
 
 > Note: In the first example, `"..."` includes `kanayago` even though it is disabled by default. The override replaced the default list, so the `"!kanayago"` entry is no longer present. To keep it disabled, you must include `"!kanayago"` in your configuration.
+
+#### Top-level language settings
+
+Every language setting can also be set at the top level of `settings.json`, outside the `languages` map.
+Top-level entries are the default for all languages: a language-specific value always **replaces** the top-level one entirely, the two are never merged.
 
 ### Toolchains
 
@@ -309,7 +321,7 @@ Zed supports both built-in and external formatters. See [`formatter`](./referenc
 }
 ```
 
-This example uses Prettier for JavaScript and the language server's formatter for Rust, both set to format on save.
+This example uses Prettier for JavaScript and the language server's formatter for [Rust](./languages/rust.md), both set to format on save.
 
 To disable formatting for a specific language:
 
@@ -337,7 +349,7 @@ Linting in Zed is typically handled by language servers. Many language servers a
 }
 ```
 
-This configuration sets up ESLint to organize imports on save for JavaScript files.
+This configuration sets up ESLint to organize imports on save for [JavaScript](./languages/javascript.md) files.
 
 To run linter fixes automatically on save:
 

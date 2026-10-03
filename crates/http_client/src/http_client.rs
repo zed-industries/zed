@@ -13,9 +13,9 @@ use http::{HeaderName, HeaderValue};
 use futures::future::BoxFuture;
 use parking_lot::Mutex;
 use serde::Serialize;
-use std::sync::Arc;
 #[cfg(feature = "test-support")]
 use std::{any::type_name, fmt};
+use std::{sync::Arc, time::Duration};
 pub use url::{Host, Url};
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
@@ -26,6 +26,9 @@ pub enum RedirectPolicy {
     FollowAll,
 }
 pub struct FollowRedirects(pub bool);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RequestTimeout(pub Duration);
 
 pub trait HttpRequestExt {
     /// Conditionally modify self with the given closure.
@@ -49,11 +52,19 @@ pub trait HttpRequestExt {
 
     /// Whether or not to follow redirects
     fn follow_redirects(self, follow: RedirectPolicy) -> Self;
+
+    /// Sets a deadline for the complete HTTP request, including its response body.
+    fn timeout(self, timeout: Duration) -> Self;
 }
 
 impl HttpRequestExt for http::request::Builder {
     fn follow_redirects(self, follow: RedirectPolicy) -> Self {
         self.extension(follow)
+    }
+
+    fn timeout(self, timeout: Duration) -> Self {
+        debug_assert!(!timeout.is_zero(), "timeout must be positive");
+        self.extension(RequestTimeout(timeout))
     }
 }
 

@@ -33,8 +33,10 @@ anyhow.workspace = true
 async-trait.workspace = true
 clock.workspace = true
 collections.workspace = true
+diffy.workspace = true
 ec4rs.workspace = true
 encoding_rs.workspace = true
+file_content.workspace = true
 fs.workspace = true
 futures.workspace = true
 futures-lite.workspace = true
@@ -78,7 +80,6 @@ util.workspace = true
 watch.workspace = true
 zlog.workspace = true
 ztracing.workspace = true
-diffy = "0.4.2"
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
@@ -114,5 +115,5 @@ theme_settings.workspace = true
 name = "highlight_map"
 harness = false
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["tracing"]

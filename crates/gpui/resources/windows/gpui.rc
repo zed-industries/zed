@@ -1,2 +1,2 @@
 #define RT_MANIFEST 24
-1 RT_MANIFEST "resources/windows/gpui.manifest.xml"
+1 RT_MANIFEST "gpui.manifest.xml"

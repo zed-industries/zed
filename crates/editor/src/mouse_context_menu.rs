@@ -107,7 +107,7 @@ impl MouseContextMenu {
             }
         });
 
-        let selection_init = editor.selections.newest_anchor().clone();
+        let selection_init = *editor.selections.newest_anchor();
 
         let _cursor_move_subscription = cx.subscribe_in(
             &cx.entity(),
@@ -257,8 +257,11 @@ pub fn deploy_context_menu(
                     |builder| builder.separator(),
                 )
                 .action("Go to Definition", Box::new(GoToDefinition::default()))
-                .action("Go to Declaration", Box::new(GoToDeclaration))
-                .action("Go to Type Definition", Box::new(GoToTypeDefinition))
+                .action("Go to Declaration", Box::new(GoToDeclaration::default()))
+                .action(
+                    "Go to Type Definition",
+                    Box::new(GoToTypeDefinition::default()),
+                )
                 .action(
                     "Go to Implementation",
                     Box::new(GoToImplementation::default()),
@@ -266,6 +269,14 @@ pub fn deploy_context_menu(
                 .action(
                     "Find All References",
                     Box::new(FindAllReferences::default()),
+                )
+                .action(
+                    "Show Incoming Calls",
+                    Box::new(zed_actions::ShowIncomingCalls),
+                )
+                .action(
+                    "Show Outgoing Calls",
+                    Box::new(zed_actions::ShowOutgoingCalls),
                 )
                 .separator()
                 .action("Rename Symbol", Box::new(Rename))
@@ -307,7 +318,7 @@ pub fn deploy_context_menu(
                 )
                 .action_disabled_when(
                     !has_git_repo,
-                    "Copy Permalink",
+                    "Copy Permalink to Line",
                     Box::new(CopyPermalinkToLine),
                 )
                 .action_disabled_when(

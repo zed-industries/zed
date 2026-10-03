@@ -922,7 +922,7 @@ impl Editor {
     ///     Ordering::Equal => on screen
     ///     Ordering::Less => above or to the left of the screen
     ///     Ordering::Greater => below or to the right of the screen
-    pub fn newest_selection_on_screen(&self, cx: &mut App) -> Ordering {
+    pub fn newest_selection_on_screen(&self, window: &mut Window, cx: &mut App) -> Ordering {
         let snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let newest_head = self
             .selections
@@ -938,9 +938,32 @@ impl Editor {
         if let (Some(visible_lines), Some(visible_columns)) =
             (self.visible_line_count(), self.visible_column_count())
             && newest_head.row() <= DisplayRow(screen_top.row().0 + visible_lines as u32)
-            && newest_head.column() <= screen_top.column() + visible_columns as u32
         {
-            return Ordering::Equal;
+            let text_layout_details = self.text_layout_details(window, cx);
+            let font_id = text_layout_details
+                .text_system
+                .resolve_font(&text_layout_details.editor_style.text.font());
+            let font_size = text_layout_details
+                .editor_style
+                .text
+                .font_size
+                .to_pixels(text_layout_details.rem_size);
+            let on_screen = match text_layout_details
+                .text_system
+                .em_advance(font_id, font_size)
+                .log_err()
+            {
+                Some(em_advance) => {
+                    let head_x = snapshot.x_for_display_point(newest_head, &text_layout_details);
+                    let screen_left_x =
+                        snapshot.x_for_display_point(screen_top, &text_layout_details);
+                    head_x <= screen_left_x + em_advance * visible_columns as f32
+                }
+                None => newest_head.column() <= screen_top.column() + visible_columns as u32,
+            };
+            if on_screen {
+                return Ordering::Equal;
+            }
         }
 
         Ordering::Greater
