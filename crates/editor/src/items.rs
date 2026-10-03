@@ -26,8 +26,11 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::{BufferOffset, MultiBufferOffset, MultiBufferRow, PathKey};
 use project::{
-    File, Project, ProjectItem as _, ProjectPath, git_store::GitStore, lsp_store::FormatTrigger,
-    project_settings::ProjectSettings, search::SearchQuery,
+    File, Project, ProjectItem as _, ProjectPath,
+    git_store::GitStore,
+    lsp_store::{FormatTrigger, LanguageServerShowDocumentRequest},
+    project_settings::ProjectSettings,
+    search::SearchQuery,
 };
 use rope::TextSummary;
 use rpc::proto::{self, update_view};
@@ -43,15 +46,20 @@ use std::{
 };
 use text::{BufferId, BufferSnapshot, OffsetRangeExt, Selection, ToPoint as _};
 use ui::{IconDecorationKind, prelude::*};
-use util::{ResultExt, TryFutureExt, debug_panic, paths::PathExt, rel_path::RelPath};
+use util::{
+    ResultExt, TryFutureExt, debug_panic,
+    paths::{PathExt, UrlExt as _},
+    rel_path::RelPath,
+};
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 use workspace::{
-    CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    CollaboratorId, ItemId, ItemNavHistory, OpenOptions, OpenVisible, ToolbarItemLocation, ViewId,
+    Workspace, WorkspaceId,
     invalid_item_view::InvalidItemView,
     item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
     searchable::{
         Direction, FilteredSearchRange, SearchEvent, SearchToken, SearchableItem,
-        SearchableItemHandle,
+        SearchableItemHandle, SelectSearchOptions,
     },
 };
 use workspace::{
@@ -1208,6 +1216,17 @@ impl Item for Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<(SharedString, Box<dyn gpui::Action>)> {
+        let editor_id = cx.entity_id();
+        // Inactive tabs aren't rendered, so the preview actions can't be dispatched to them.
+        let is_active_in_pane = self
+            .workspace()
+            .and_then(|workspace| workspace.read(cx).pane_for_item_id(editor_id))
+            .and_then(|pane| pane.read(cx).active_item())
+            .is_some_and(|item| item.item_id() == editor_id);
+        if !is_active_in_pane {
+            return Vec::new();
+        }
+
         let mut actions = Vec::new();
 
         let is_markdown = self
@@ -2113,12 +2132,18 @@ impl SearchableItem for Editor {
         self.expect_bounds_change = self.last_bounds;
     }
 
-    fn set_search_is_case_sensitive(
+    fn set_select_search_options(
         &mut self,
-        case_sensitive: Option<bool>,
+        select_search_options: Option<SelectSearchOptions>,
         _cx: &mut Context<Self>,
     ) {
-        self.select_next_is_case_sensitive = case_sensitive;
+        if self.select_next_options == select_search_options {
+            return;
+        }
+
+        self.select_next_options = select_search_options;
+        self.select_next_state = None;
+        self.select_prev_state = None;
     }
 }
 
@@ -2502,6 +2527,68 @@ fn compute_modified_ranges(
         merged.push(expanded);
     }
     merged
+}
+
+pub(crate) fn handle_lsp_show_document(
+    workspace: &mut Workspace,
+    request: &LanguageServerShowDocumentRequest,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Task<()> {
+    let request = request.clone();
+    if request.external {
+        cx.open_url(request.uri.as_str());
+        request.respond(true);
+        return Task::ready(());
+    }
+    let Ok(abs_path) = request.uri.to_file_path_ext(workspace.path_style(cx)) else {
+        log::error!(
+            "language server requested to show document with unsupported uri {}",
+            request.uri.as_str()
+        );
+        request.respond(false);
+        return Task::ready(());
+    };
+    let open_task = workspace.open_abs_path(
+        abs_path,
+        OpenOptions {
+            visible: Some(OpenVisible::None),
+            focus: Some(request.take_focus),
+            ..OpenOptions::default()
+        },
+        window,
+        cx,
+    );
+    cx.spawn_in(window, async move |_, cx| {
+        let success = match open_task.await {
+            Ok(item) => match item.downcast::<Editor>().zip(request.selection) {
+                Some((editor, selection)) => editor
+                    .update_in(cx, |editor, window, cx| {
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
+                        let range = language::range_from_lsp(selection);
+                        let start = snapshot.point_utf16_to_offset(
+                            snapshot.clip_point_utf16(range.start, Bias::Left),
+                        );
+                        let end = snapshot.point_utf16_to_offset(
+                            snapshot.clip_point_utf16(range.end, Bias::Left),
+                        );
+                        editor.change_selections(
+                            SelectionEffects::scroll(Autoscroll::center()),
+                            window,
+                            cx,
+                            |selections| selections.select_ranges([start..end]),
+                        );
+                    })
+                    .is_ok(),
+                None => true,
+            },
+            Err(error) => {
+                log::error!("failed to show document for a language server: {error:#}");
+                false
+            }
+        };
+        request.respond(success);
+    })
 }
 
 #[cfg(test)]

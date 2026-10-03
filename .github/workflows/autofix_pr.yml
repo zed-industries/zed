@@ -61,7 +61,7 @@ jobs:
       run: cargo fix --workspace --allow-dirty --allow-staged
     - name: autofix_pr::run_autofix::run_cargo_shear_fix
       if: inputs.run_clippy == true || inputs.run_clippy == 'true'
-      run: cargo shear --fix
+      run: cargo shear --fix --check-test-targets
     - name: autofix_pr::run_autofix::run_clippy_fix
       if: inputs.run_clippy == true || inputs.run_clippy == 'true'
       run: cargo clippy --workspace --fix --allow-dirty --allow-staged
