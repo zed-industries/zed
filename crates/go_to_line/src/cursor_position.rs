@@ -8,7 +8,7 @@ use ui::{
     Render, Tooltip, Window, div,
 };
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::{StatusBarSettings, StatusItemView, Workspace, item::ItemHandle};
+use workspace::{HideStatusItem, StatusBarSettings, StatusItemView, Workspace, item::ItemHandle};
 
 #[derive(Copy, Clone, Debug, Default, PartialOrd, PartialEq)]
 pub(crate) struct SelectionStats {
@@ -225,6 +225,11 @@ impl Render for CursorPosition {
             el.child(
                 Button::new("go-to-line-column", text)
                     .label_size(LabelSize::Small)
+                    .tab_index(0isize)
+                    .aria_label(format!(
+                        "Line {}, column {}",
+                        position.line, position.character
+                    ))
                     .on_click(cx.listener(|this, _, window, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {
                             workspace.update(cx, |workspace, cx| {
@@ -289,6 +294,15 @@ impl StatusItemView for CursorPosition {
         }
 
         cx.notify();
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+        Some(HideStatusItem::new(|settings| {
+            settings
+                .status_bar
+                .get_or_insert_default()
+                .cursor_position_button = Some(false);
+        }))
     }
 }
 

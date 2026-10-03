@@ -2,7 +2,7 @@ use std::process::ExitStatus;
 
 use anyhow::Result;
 use collections::HashSet;
-use gpui::{AppContext, Context, Entity, Task};
+use gpui::{AppContext, AsyncWindowContext, Context, Entity, Task, TaskExt, WeakEntity};
 use language::Buffer;
 use project::{TaskSourceKind, WorktreeId};
 use remote::ConnectionState;
@@ -14,6 +14,16 @@ use ui::Window;
 use util::TryFutureExt;
 
 use crate::{SaveIntent, Toast, Workspace, notifications::NotificationId};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScheduledTaskResult {
+    Success,
+    Failure,
+    SpawnFailed,
+    Cancelled,
+}
+
+type TaskCompletionHandler = Box<dyn FnOnce(ScheduledTaskResult, &mut AsyncWindowContext)>;
 
 impl Workspace {
     pub fn schedule_task(
@@ -59,6 +69,44 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        self.schedule_resolved_task_internal(
+            task_source_kind,
+            resolved_task,
+            omit_history,
+            None,
+            window,
+            cx,
+        );
+    }
+
+    pub fn schedule_resolved_task_with_completion(
+        self: &mut Workspace,
+        task_source_kind: TaskSourceKind,
+        resolved_task: ResolvedTask,
+        omit_history: bool,
+        on_complete: impl FnOnce(ScheduledTaskResult, &mut AsyncWindowContext) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        self.schedule_resolved_task_internal(
+            task_source_kind,
+            resolved_task,
+            omit_history,
+            Some(Box::new(on_complete)),
+            window,
+            cx,
+        );
+    }
+
+    fn schedule_resolved_task_internal(
+        self: &mut Workspace,
+        task_source_kind: TaskSourceKind,
+        resolved_task: ResolvedTask,
+        omit_history: bool,
+        on_complete: Option<TaskCompletionHandler>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
         let spawn_in_terminal = resolved_task.resolved.clone();
         if !omit_history {
             if let Some(debugger_provider) = self.debugger_provider.as_ref() {
@@ -78,26 +126,7 @@ impl Workspace {
 
         if self.terminal_provider.is_some() {
             let task = cx.spawn_in(window, async move |workspace, cx| {
-                let save_action = match spawn_in_terminal.save {
-                    SaveStrategy::All => {
-                        let save_all = workspace.update_in(cx, |workspace, window, cx| {
-                            let task = workspace.save_all_internal(SaveIntent::SaveAll, window, cx);
-                            // Match the type of the other arm by ignoring the bool value returned
-                            cx.background_spawn(async { task.await.map(|_| ()) })
-                        });
-                        save_all.ok()
-                    }
-                    SaveStrategy::Current => {
-                        let save_current = workspace.update_in(cx, |workspace, window, cx| {
-                            workspace.save_active_item(SaveIntent::SaveAll, window, cx)
-                        });
-                        save_current.ok()
-                    }
-                    SaveStrategy::None => None,
-                };
-                if let Some(save_action) = save_action {
-                    save_action.log_err().await;
-                }
+                Self::save_for_task(&workspace, spawn_in_terminal.save, cx).await;
 
                 let spawn_task = workspace.update_in(cx, |workspace, window, cx| {
                     workspace
@@ -109,12 +138,14 @@ impl Workspace {
                 });
                 if let Some(spawn_task) = spawn_task.ok().flatten() {
                     let res = cx.background_spawn(spawn_task).await;
-                    match res {
+                    let result = match res {
                         Some(Ok(status)) => {
                             if status.success() {
                                 log::debug!("Task spawn succeeded");
+                                ScheduledTaskResult::Success
                             } else {
                                 log::debug!("Task spawn failed, code: {:?}", status.code());
+                                ScheduledTaskResult::Failure
                             }
                         }
                         Some(Err(e)) => {
@@ -122,13 +153,48 @@ impl Workspace {
                             _ = workspace.update(cx, |w, cx| {
                                 let id = NotificationId::unique::<ResolvedTask>();
                                 w.show_toast(Toast::new(id, format!("Task spawn failed: {e}")), cx);
-                            })
+                            });
+                            ScheduledTaskResult::SpawnFailed
                         }
-                        None => log::debug!("Task spawn got cancelled"),
+                        None => {
+                            log::debug!("Task spawn got cancelled");
+                            ScheduledTaskResult::Cancelled
+                        }
                     };
+                    if let Some(on_complete) = on_complete {
+                        on_complete(result, cx);
+                    }
+                } else if let Some(on_complete) = on_complete {
+                    on_complete(ScheduledTaskResult::Cancelled, cx);
                 }
             });
             self.scheduled_tasks.push(task);
+        }
+    }
+
+    pub async fn save_for_task(
+        workspace: &WeakEntity<Self>,
+        save_strategy: SaveStrategy,
+        cx: &mut AsyncWindowContext,
+    ) {
+        let save_action = match save_strategy {
+            SaveStrategy::All => {
+                let save_all = workspace.update_in(cx, |workspace, window, cx| {
+                    let task = workspace.save_all_internal(SaveIntent::SaveAll, true, window, cx);
+                    cx.background_spawn(async { task.await.map(|_| ()) })
+                });
+                save_all.ok()
+            }
+            SaveStrategy::Current => {
+                let save_current = workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.save_active_item(SaveIntent::SaveAll, window, cx)
+                });
+                save_current.ok()
+            }
+            SaveStrategy::None => None,
+        };
+        if let Some(save_action) = save_action {
+            save_action.log_err().await;
         }
     }
 
@@ -353,6 +419,30 @@ mod tests {
         assert!(cx.read(|cx| fixture.item.read(cx).is_dirty));
     }
 
+    #[gpui::test]
+    async fn test_schedule_resolved_task_with_completion_reports_success(cx: &mut TestAppContext) {
+        let (fixture, cx) = create_fixture(cx, SaveStrategy::None).await;
+        let task_result = Arc::new(Mutex::new(None));
+        fixture.workspace.update_in(cx, |workspace, window, cx| {
+            workspace.schedule_resolved_task_with_completion(
+                TaskSourceKind::UserInput,
+                fixture.task,
+                false,
+                {
+                    let task_result = task_result.clone();
+                    move |result, _| {
+                        *task_result.lock() = Some(result);
+                    }
+                },
+                window,
+                cx,
+            );
+        });
+        cx.executor().run_until_parked();
+
+        assert_eq!(*task_result.lock(), Some(ScheduledTaskResult::Success));
+    }
+
     async fn create_fixture(
         cx: &mut TestAppContext,
         save_strategy: SaveStrategy,
@@ -415,6 +505,69 @@ mod tests {
             workspace.add_item(pane, Box::new(item.clone()), None, true, active, window, cx);
         });
         item
+    }
+
+    #[gpui::test]
+    async fn test_save_for_task_all(cx: &mut TestAppContext) {
+        let (fixture, cx) = create_fixture(cx, SaveStrategy::All).await;
+        let workspace = fixture.workspace.downgrade();
+        cx.run_until_parked();
+
+        assert!(cx.read(|cx| fixture.item.read(cx).is_dirty));
+        fixture.workspace.update_in(cx, |_workspace, window, cx| {
+            cx.spawn_in(window, {
+                let workspace = workspace.clone();
+                async move |_this, cx| {
+                    Workspace::save_for_task(&workspace, SaveStrategy::All, cx).await;
+                }
+            })
+            .detach();
+        });
+        cx.run_until_parked();
+        assert!(cx.read(|cx| !fixture.item.read(cx).is_dirty));
+    }
+
+    #[gpui::test]
+    async fn test_save_for_task_none(cx: &mut TestAppContext) {
+        let (fixture, cx) = create_fixture(cx, SaveStrategy::None).await;
+        let workspace = fixture.workspace.downgrade();
+        cx.run_until_parked();
+
+        assert!(cx.read(|cx| fixture.item.read(cx).is_dirty));
+        fixture.workspace.update_in(cx, |_workspace, window, cx| {
+            cx.spawn_in(window, {
+                let workspace = workspace.clone();
+                async move |_this, cx| {
+                    Workspace::save_for_task(&workspace, SaveStrategy::None, cx).await;
+                }
+            })
+            .detach();
+        });
+        cx.run_until_parked();
+        assert!(cx.read(|cx| fixture.item.read(cx).is_dirty));
+    }
+
+    #[gpui::test]
+    async fn test_save_for_task_current(cx: &mut TestAppContext) {
+        let (fixture, cx) = create_fixture(cx, SaveStrategy::Current).await;
+        let inactive = add_test_item(&fixture.workspace, "file2.txt", false, cx);
+        let workspace = fixture.workspace.downgrade();
+        cx.run_until_parked();
+
+        assert!(cx.read(|cx| fixture.item.read(cx).is_dirty));
+        assert!(cx.read(|cx| inactive.read(cx).is_dirty));
+        fixture.workspace.update_in(cx, |_workspace, window, cx| {
+            cx.spawn_in(window, {
+                let workspace = workspace.clone();
+                async move |_this, cx| {
+                    Workspace::save_for_task(&workspace, SaveStrategy::Current, cx).await;
+                }
+            })
+            .detach();
+        });
+        cx.run_until_parked();
+        assert!(cx.read(|cx| !fixture.item.read(cx).is_dirty));
+        assert!(cx.read(|cx| inactive.read(cx).is_dirty));
     }
 
     struct TestTerminalProvider {

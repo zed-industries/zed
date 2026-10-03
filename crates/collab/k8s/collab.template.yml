@@ -87,16 +87,16 @@ spec:
                   key: url
             - name: DATABASE_MAX_CONNECTIONS
               value: "${DATABASE_MAX_CONNECTIONS}"
-            - name: API_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: api
-                  key: token
             - name: ZED_CLIENT_CHECKSUM_SEED
               valueFrom:
                 secretKeyRef:
                   name: zed-client
                   key: checksum-seed
+            - name: ZED_CLOUD_INTERNAL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: zed-cloud
+                  key: internal-api-key
             - name: LIVEKIT_SERVER
               valueFrom:
                 secretKeyRef:

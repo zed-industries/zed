@@ -1,6 +1,6 @@
 use crate::{AgentServer, AgentServerDelegate};
-use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
-use agent_client_protocol as acp;
+use acp_thread::{AcpThread, AgentThreadEntry, ToolCallStatus};
+use agent_client_protocol::schema::v1 as acp;
 use client::RefreshLlmTokenListener;
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
 use gpui::AppContext;
@@ -133,12 +133,9 @@ where
         assert!(thread.entries().iter().any(|entry| {
             matches!(
                 entry,
-                AgentThreadEntry::ToolCall(ToolCall {
-                    status: ToolCallStatus::Pending
+                AgentThreadEntry::ToolCall(call) if matches!(call.status(), ToolCallStatus::Pending
                         | ToolCallStatus::InProgress
-                        | ToolCallStatus::Completed,
-                    ..
-                })
+                        | ToolCallStatus::Completed)
             )
         }));
         assert!(
@@ -175,10 +172,7 @@ pub async fn test_tool_call_with_permission<T, F>(
         |entry| {
             matches!(
                 entry,
-                AgentThreadEntry::ToolCall(ToolCall {
-                    status: ToolCallStatus::WaitingForConfirmation { .. },
-                    ..
-                })
+                AgentThreadEntry::ToolCall(call) if call.status() == ToolCallStatus::WaitingForConfirmation
             )
         },
         cx,
@@ -186,12 +180,7 @@ pub async fn test_tool_call_with_permission<T, F>(
     .await;
 
     let tool_call_id = thread.read_with(cx, |thread, cx| {
-        let AgentThreadEntry::ToolCall(ToolCall {
-            id,
-            label,
-            status: ToolCallStatus::WaitingForConfirmation { .. },
-            ..
-        }) = &thread
+        let AgentThreadEntry::ToolCall(tool_call) = &thread
             .entries()
             .iter()
             .find(|entry| matches!(entry, AgentThreadEntry::ToolCall(_)))
@@ -199,11 +188,12 @@ pub async fn test_tool_call_with_permission<T, F>(
         else {
             panic!();
         };
+        assert_eq!(tool_call.status(), ToolCallStatus::WaitingForConfirmation);
 
-        let label = label.read(cx).source();
+        let label = tool_call.label.read(cx).source();
         assert!(label.contains("touch"), "Got: {}", label);
 
-        id.clone()
+        tool_call.id.clone()
     });
 
     thread.update(cx, |thread, cx| {
@@ -218,25 +208,16 @@ pub async fn test_tool_call_with_permission<T, F>(
 
         assert!(thread.entries().iter().any(|entry| matches!(
             entry,
-            AgentThreadEntry::ToolCall(ToolCall {
-                status: ToolCallStatus::Pending
+            AgentThreadEntry::ToolCall(call) if matches!(call.status(), ToolCallStatus::Pending
                     | ToolCallStatus::InProgress
-                    | ToolCallStatus::Completed,
-                ..
-            })
+                    | ToolCallStatus::Completed)
         )));
     });
 
     full_turn.await.unwrap();
 
     thread.read_with(cx, |thread, cx| {
-        let AgentThreadEntry::ToolCall(ToolCall {
-            content,
-            status: ToolCallStatus::Pending
-                | ToolCallStatus::InProgress
-                | ToolCallStatus::Completed,
-            ..
-        }) = thread
+        let AgentThreadEntry::ToolCall(tool_call) = thread
             .entries()
             .iter()
             .find(|entry| matches!(entry, AgentThreadEntry::ToolCall(_)))
@@ -244,9 +225,16 @@ pub async fn test_tool_call_with_permission<T, F>(
         else {
             panic!();
         };
+        assert!(matches!(
+            tool_call.status(),
+            ToolCallStatus::Pending | ToolCallStatus::InProgress | ToolCallStatus::Completed
+        ));
 
         assert!(
-            content.iter().any(|c| c.to_markdown(cx).contains("Hello")),
+            tool_call
+                .content()
+                .iter()
+                .any(|content| content.to_markdown(cx).contains("Hello")),
             "Expected content to contain 'Hello'"
         );
     });
@@ -273,10 +261,7 @@ where
         |entry| {
             matches!(
                 entry,
-                AgentThreadEntry::ToolCall(ToolCall {
-                    status: ToolCallStatus::WaitingForConfirmation { .. },
-                    ..
-                })
+                AgentThreadEntry::ToolCall(call) if call.status() == ToolCallStatus::WaitingForConfirmation
             )
         },
         cx,
@@ -284,31 +269,23 @@ where
     .await;
 
     thread.read_with(cx, |thread, cx| {
-        let AgentThreadEntry::ToolCall(ToolCall {
-            id,
-            label,
-            status: ToolCallStatus::WaitingForConfirmation { .. },
-            ..
-        }) = &thread.entries()[first_tool_call_ix]
-        else {
+        let AgentThreadEntry::ToolCall(tool_call) = &thread.entries()[first_tool_call_ix] else {
             panic!("{:?}", thread.entries()[1]);
         };
+        assert_eq!(tool_call.status(), ToolCallStatus::WaitingForConfirmation);
 
-        let label = label.read(cx).source();
+        let label = tool_call.label.read(cx).source();
         assert!(label.contains("touch"), "Got: {}", label);
 
-        id.clone()
+        tool_call.id.clone()
     });
 
     thread.update(cx, |thread, cx| thread.cancel(cx)).await;
     thread.read_with(cx, |thread, _cx| {
-        let AgentThreadEntry::ToolCall(ToolCall {
-            status: ToolCallStatus::Canceled,
-            ..
-        }) = &thread.entries()[first_tool_call_ix]
-        else {
+        let AgentThreadEntry::ToolCall(tool_call) = &thread.entries()[first_tool_call_ix] else {
             panic!();
         };
+        assert_eq!(tool_call.status(), ToolCallStatus::Canceled);
     });
 
     thread
@@ -379,7 +356,7 @@ macro_rules! common_e2e_tests {
             async fn tool_call_with_permission(cx: &mut ::gpui::TestAppContext) {
                 $crate::e2e_tests::test_tool_call_with_permission(
                     $server,
-                    ::agent_client_protocol::PermissionOptionId::new($allow_option_id),
+                    ::agent_client_protocol::schema::v1::PermissionOptionId::new($allow_option_id),
                     cx,
                 )
                 .await;
@@ -436,7 +413,7 @@ pub async fn new_test_thread(
     cx: &mut TestAppContext,
 ) -> Entity<AcpThread> {
     let store = project.read_with(cx, |project, _| project.agent_server_store().clone());
-    let delegate = AgentServerDelegate::new(store, None);
+    let delegate = AgentServerDelegate::new(store, None, None);
 
     let connection = cx
         .update(|cx| server.connect(delegate, project.clone(), cx))

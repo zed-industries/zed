@@ -36,12 +36,6 @@ impl ZedVersion {
             return false;
         }
 
-        // Since we hotfixed the changes to no longer connect to Collab automatically to Preview, we also need to reject
-        // versions in the range [v0.199.0, v0.199.1].
-        if self.0 >= Version::new(0, 199, 0) && self.0 < Version::new(0, 199, 2) {
-            return false;
-        }
-
         true
     }
 }

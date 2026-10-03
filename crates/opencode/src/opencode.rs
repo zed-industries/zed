@@ -1,8 +1,15 @@
+//! OpenCode API types and streaming clients.
+//!
+//! This crate describes dynamically discovered OpenCode models and sends requests using
+//! each model's advertised protocol and capabilities.
+
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+};
+use language_model_core::ReasoningEffort;
 use serde::{Deserialize, Serialize};
-use strum::EnumIter;
 
 pub const OPENCODE_API_URL: &str = "https://opencode.ai/zen";
 
@@ -17,407 +24,128 @@ pub enum ApiProtocol {
     Google,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
-pub enum Model {
-    // -- Anthropic protocol models --
-    #[serde(rename = "claude-opus-4-6")]
-    ClaudeOpus4_6,
-    #[serde(rename = "claude-opus-4-5")]
-    ClaudeOpus4_5,
-    #[serde(rename = "claude-opus-4-1")]
-    ClaudeOpus4_1,
-    #[default]
-    #[serde(rename = "claude-sonnet-4-6")]
-    ClaudeSonnet4_6,
-    #[serde(rename = "claude-sonnet-4-5")]
-    ClaudeSonnet4_5,
-    #[serde(rename = "claude-sonnet-4")]
-    ClaudeSonnet4,
-    #[serde(rename = "claude-haiku-4-5")]
-    ClaudeHaiku4_5,
-    #[serde(rename = "claude-3-5-haiku")]
-    Claude3_5Haiku,
+#[serde(rename_all = "snake_case")]
+pub enum OpenCodeSubscription {
+    Zen,
+    Go,
+}
 
-    // -- OpenAI Responses API models --
-    #[serde(rename = "gpt-5.4")]
-    Gpt5_4,
-    #[serde(rename = "gpt-5.4-pro")]
-    Gpt5_4Pro,
-    #[serde(rename = "gpt-5.4-mini")]
-    Gpt5_4Mini,
-    #[serde(rename = "gpt-5.4-nano")]
-    Gpt5_4Nano,
-    #[serde(rename = "gpt-5.3-codex")]
-    Gpt5_3Codex,
-    #[serde(rename = "gpt-5.3-codex-spark")]
-    Gpt5_3Spark,
-    #[serde(rename = "gpt-5.2")]
-    Gpt5_2,
-    #[serde(rename = "gpt-5.2-codex")]
-    Gpt5_2Codex,
-    #[serde(rename = "gpt-5.1")]
-    Gpt5_1,
-    #[serde(rename = "gpt-5.1-codex")]
-    Gpt5_1Codex,
-    #[serde(rename = "gpt-5.1-codex-max")]
-    Gpt5_1CodexMax,
-    #[serde(rename = "gpt-5.1-codex-mini")]
-    Gpt5_1CodexMini,
-    #[serde(rename = "gpt-5")]
-    Gpt5,
-    #[serde(rename = "gpt-5-codex")]
-    Gpt5Codex,
-    #[serde(rename = "gpt-5-nano")]
-    Gpt5Nano,
+impl OpenCodeSubscription {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Zen => "Zen",
+            Self::Go => "Go",
+        }
+    }
 
-    // -- Google protocol models --
-    #[serde(rename = "gemini-3.1-pro")]
-    Gemini3_1Pro,
-    #[serde(rename = "gemini-3-flash")]
-    Gemini3Flash,
+    pub fn id_prefix(&self) -> &'static str {
+        match self {
+            Self::Zen => "zen",
+            Self::Go => "go",
+        }
+    }
 
-    // -- OpenAI Chat Completions protocol models --
-    #[serde(rename = "minimax-m2.5")]
-    MiniMaxM2_5,
-    #[serde(rename = "minimax-m2.5-free")]
-    MiniMaxM2_5Free,
-    #[serde(rename = "glm-5")]
-    Glm5,
-    #[serde(rename = "kimi-k2.5")]
-    KimiK2_5,
-    #[serde(rename = "mimo-v2-pro-free")]
-    MimoV2ProFree,
-    #[serde(rename = "mimo-v2-omni-free")]
-    MimoV2OmniFree,
-    #[serde(rename = "mimo-v2-flash-free")]
-    MimoV2FlashFree,
-    #[serde(rename = "trinity-large-preview-free")]
-    TrinityLargePreviewFree,
-    #[serde(rename = "big-pickle")]
-    BigPickle,
-    #[serde(rename = "nemotron-3-super-free")]
-    Nemotron3SuperFree,
+    pub fn api_path_suffix(&self) -> &'static str {
+        match self {
+            Self::Zen => "",
+            Self::Go => "/go",
+        }
+    }
+}
 
-    // -- Custom model --
-    #[serde(rename = "custom")]
-    Custom {
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub struct Model {
+    name: String,
+    display_name: Option<String>,
+    max_tokens: u64,
+    max_output_tokens: Option<u64>,
+    protocol: ApiProtocol,
+    reasoning_effort_levels: Option<Vec<ReasoningEffort>>,
+    custom_model_api_url: Option<String>,
+    interleaved_reasoning: bool,
+}
+
+impl Model {
+    pub fn new(
         name: String,
         display_name: Option<String>,
         max_tokens: u64,
         max_output_tokens: Option<u64>,
         protocol: ApiProtocol,
-    },
-}
-
-impl Model {
-    pub fn default_fast() -> Self {
-        Self::ClaudeHaiku4_5
+        reasoning_effort_levels: Option<Vec<ReasoningEffort>>,
+        custom_model_api_url: Option<String>,
+        interleaved_reasoning: bool,
+    ) -> Self {
+        Self {
+            name,
+            display_name,
+            max_tokens,
+            max_output_tokens,
+            protocol,
+            reasoning_effort_levels,
+            custom_model_api_url,
+            interleaved_reasoning,
+        }
     }
 
     pub fn id(&self) -> &str {
-        match self {
-            Self::ClaudeOpus4_6 => "claude-opus-4-6",
-            Self::ClaudeOpus4_5 => "claude-opus-4-5",
-            Self::ClaudeOpus4_1 => "claude-opus-4-1",
-            Self::ClaudeSonnet4_6 => "claude-sonnet-4-6",
-            Self::ClaudeSonnet4_5 => "claude-sonnet-4-5",
-            Self::ClaudeSonnet4 => "claude-sonnet-4",
-            Self::ClaudeHaiku4_5 => "claude-haiku-4-5",
-            Self::Claude3_5Haiku => "claude-3-5-haiku",
-
-            Self::Gpt5_4 => "gpt-5.4",
-            Self::Gpt5_4Pro => "gpt-5.4-pro",
-            Self::Gpt5_4Mini => "gpt-5.4-mini",
-            Self::Gpt5_4Nano => "gpt-5.4-nano",
-            Self::Gpt5_3Codex => "gpt-5.3-codex",
-            Self::Gpt5_3Spark => "gpt-5.3-codex-spark",
-            Self::Gpt5_2 => "gpt-5.2",
-            Self::Gpt5_2Codex => "gpt-5.2-codex",
-            Self::Gpt5_1 => "gpt-5.1",
-            Self::Gpt5_1Codex => "gpt-5.1-codex",
-            Self::Gpt5_1CodexMax => "gpt-5.1-codex-max",
-            Self::Gpt5_1CodexMini => "gpt-5.1-codex-mini",
-            Self::Gpt5 => "gpt-5",
-            Self::Gpt5Codex => "gpt-5-codex",
-            Self::Gpt5Nano => "gpt-5-nano",
-
-            Self::Gemini3_1Pro => "gemini-3.1-pro",
-            Self::Gemini3Flash => "gemini-3-flash",
-
-            Self::MiniMaxM2_5 => "minimax-m2.5",
-            Self::MiniMaxM2_5Free => "minimax-m2.5-free",
-            Self::Glm5 => "glm-5",
-            Self::KimiK2_5 => "kimi-k2.5",
-            Self::MimoV2ProFree => "mimo-v2-pro-free",
-            Self::MimoV2OmniFree => "mimo-v2-omni-free",
-            Self::MimoV2FlashFree => "mimo-v2-flash-free",
-            Self::TrinityLargePreviewFree => "trinity-large-preview-free",
-            Self::BigPickle => "big-pickle",
-            Self::Nemotron3SuperFree => "nemotron-3-super-free",
-
-            Self::Custom { name, .. } => name,
-        }
+        &self.name
     }
 
     pub fn display_name(&self) -> &str {
-        match self {
-            Self::ClaudeOpus4_6 => "Claude Opus 4.6",
-            Self::ClaudeOpus4_5 => "Claude Opus 4.5",
-            Self::ClaudeOpus4_1 => "Claude Opus 4.1",
-            Self::ClaudeSonnet4_6 => "Claude Sonnet 4.6",
-            Self::ClaudeSonnet4_5 => "Claude Sonnet 4.5",
-            Self::ClaudeSonnet4 => "Claude Sonnet 4",
-            Self::ClaudeHaiku4_5 => "Claude Haiku 4.5",
-            Self::Claude3_5Haiku => "Claude Haiku 3.5",
-
-            Self::Gpt5_4 => "GPT 5.4",
-            Self::Gpt5_4Pro => "GPT 5.4 Pro",
-            Self::Gpt5_4Mini => "GPT 5.4 Mini",
-            Self::Gpt5_4Nano => "GPT 5.4 Nano",
-            Self::Gpt5_3Codex => "GPT 5.3 Codex",
-            Self::Gpt5_3Spark => "GPT 5.3 Codex Spark",
-            Self::Gpt5_2 => "GPT 5.2",
-            Self::Gpt5_2Codex => "GPT 5.2 Codex",
-            Self::Gpt5_1 => "GPT 5.1",
-            Self::Gpt5_1Codex => "GPT 5.1 Codex",
-            Self::Gpt5_1CodexMax => "GPT 5.1 Codex Max",
-            Self::Gpt5_1CodexMini => "GPT 5.1 Codex Mini",
-            Self::Gpt5 => "GPT 5",
-            Self::Gpt5Codex => "GPT 5 Codex",
-            Self::Gpt5Nano => "GPT 5 Nano",
-
-            Self::Gemini3_1Pro => "Gemini 3.1 Pro",
-            Self::Gemini3Flash => "Gemini 3 Flash",
-
-            Self::MiniMaxM2_5 => "MiniMax M2.5",
-            Self::MiniMaxM2_5Free => "MiniMax M2.5 Free",
-            Self::Glm5 => "GLM 5",
-            Self::KimiK2_5 => "Kimi K2.5",
-            Self::MimoV2ProFree => "MiMo V2 Pro Free",
-            Self::MimoV2OmniFree => "MiMo V2 Omni Free",
-            Self::MimoV2FlashFree => "MiMo V2 Flash Free",
-            Self::TrinityLargePreviewFree => "Trinity Large Preview Free",
-            Self::BigPickle => "Big Pickle",
-            Self::Nemotron3SuperFree => "Nemotron 3 Super Free",
-
-            Self::Custom {
-                name, display_name, ..
-            } => display_name.as_deref().unwrap_or(name),
-        }
+        self.display_name.as_deref().unwrap_or(&self.name)
     }
 
     pub fn protocol(&self) -> ApiProtocol {
-        match self {
-            Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeSonnet4_6
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeHaiku4_5
-            | Self::Claude3_5Haiku => ApiProtocol::Anthropic,
+        self.protocol
+    }
 
-            Self::Gpt5_4
-            | Self::Gpt5_4Pro
-            | Self::Gpt5_4Mini
-            | Self::Gpt5_4Nano
-            | Self::Gpt5_3Codex
-            | Self::Gpt5_3Spark
-            | Self::Gpt5_2
-            | Self::Gpt5_2Codex
-            | Self::Gpt5_1
-            | Self::Gpt5_1Codex
-            | Self::Gpt5_1CodexMax
-            | Self::Gpt5_1CodexMini
-            | Self::Gpt5
-            | Self::Gpt5Codex
-            | Self::Gpt5Nano => ApiProtocol::OpenAiResponses,
-
-            Self::Gemini3_1Pro | Self::Gemini3Flash => ApiProtocol::Google,
-
-            Self::MiniMaxM2_5
-            | Self::MiniMaxM2_5Free
-            | Self::Glm5
-            | Self::KimiK2_5
-            | Self::MimoV2ProFree
-            | Self::MimoV2OmniFree
-            | Self::MimoV2FlashFree
-            | Self::TrinityLargePreviewFree
-            | Self::BigPickle
-            | Self::Nemotron3SuperFree => ApiProtocol::OpenAiChat,
-
-            Self::Custom { protocol, .. } => *protocol,
-        }
+    pub fn interleaved_reasoning(&self) -> bool {
+        self.interleaved_reasoning
     }
 
     pub fn max_token_count(&self) -> u64 {
-        match self {
-            // Anthropic models
-            Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6 => 1_000_000,
-            Self::ClaudeOpus4_5 | Self::ClaudeSonnet4_5 | Self::ClaudeSonnet4 => 200_000,
-            Self::ClaudeOpus4_1 => 200_000,
-            Self::ClaudeHaiku4_5 => 200_000,
-            Self::Claude3_5Haiku => 200_000,
-
-            // OpenAI models
-            Self::Gpt5_4 | Self::Gpt5_4Pro => 1_050_000,
-            Self::Gpt5_4Mini | Self::Gpt5_4Nano => 400_000,
-            Self::Gpt5_3Codex => 400_000,
-            Self::Gpt5_3Spark => 128_000,
-            Self::Gpt5_2 | Self::Gpt5_2Codex => 400_000,
-            Self::Gpt5_1 | Self::Gpt5_1Codex | Self::Gpt5_1CodexMax | Self::Gpt5_1CodexMini => {
-                400_000
-            }
-            Self::Gpt5 | Self::Gpt5Codex | Self::Gpt5Nano => 400_000,
-
-            // Google models
-            Self::Gemini3_1Pro => 1_048_576,
-            Self::Gemini3Flash => 1_048_576,
-
-            // OpenAI-compatible models
-            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => 196_608,
-            Self::Glm5 => 200_000,
-            Self::KimiK2_5 => 262_144,
-            Self::MimoV2ProFree => 1_048_576,
-            Self::MimoV2OmniFree | Self::MimoV2FlashFree => 262_144,
-            Self::TrinityLargePreviewFree => 131_072,
-            Self::BigPickle => 200_000,
-            Self::Nemotron3SuperFree => 262_144,
-
-            Self::Custom { max_tokens, .. } => *max_tokens,
-        }
+        self.max_tokens
     }
 
     pub fn max_output_tokens(&self) -> Option<u64> {
-        match self {
-            // Anthropic models
-            Self::ClaudeOpus4_6 => Some(128_000),
-            Self::ClaudeSonnet4_6 => Some(64_000),
-            Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeHaiku4_5 => Some(64_000),
-            Self::Claude3_5Haiku => Some(8_192),
-
-            // OpenAI models
-            Self::Gpt5_4
-            | Self::Gpt5_4Pro
-            | Self::Gpt5_4Mini
-            | Self::Gpt5_4Nano
-            | Self::Gpt5_3Codex
-            | Self::Gpt5_3Spark
-            | Self::Gpt5_2
-            | Self::Gpt5_2Codex
-            | Self::Gpt5_1
-            | Self::Gpt5_1Codex
-            | Self::Gpt5_1CodexMax
-            | Self::Gpt5_1CodexMini
-            | Self::Gpt5
-            | Self::Gpt5Codex
-            | Self::Gpt5Nano => Some(128_000),
-
-            // Google models
-            Self::Gemini3_1Pro | Self::Gemini3Flash => Some(65_536),
-
-            // OpenAI-compatible models
-            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => Some(65_536),
-            Self::Glm5 | Self::BigPickle => Some(128_000),
-            Self::KimiK2_5 => Some(65_536),
-            Self::MimoV2ProFree => Some(131_072),
-            Self::MimoV2OmniFree | Self::MimoV2FlashFree => Some(65_536),
-            Self::TrinityLargePreviewFree | Self::Nemotron3SuperFree => Some(16_384),
-
-            Self::Custom {
-                max_output_tokens, ..
-            } => *max_output_tokens,
-        }
+        self.max_output_tokens
     }
 
     pub fn supports_tools(&self) -> bool {
         true
     }
 
-    pub fn supports_images(&self) -> bool {
-        match self {
-            // Anthropic models support images
-            Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeSonnet4_6
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeHaiku4_5
-            | Self::Claude3_5Haiku => true,
+    pub fn supported_reasoning_effort_levels(&self) -> Option<&[ReasoningEffort]> {
+        self.reasoning_effort_levels.as_deref()
+    }
 
-            // OpenAI models support images
-            Self::Gpt5_4
-            | Self::Gpt5_4Pro
-            | Self::Gpt5_4Mini
-            | Self::Gpt5_4Nano
-            | Self::Gpt5_3Codex
-            | Self::Gpt5_3Spark
-            | Self::Gpt5_2
-            | Self::Gpt5_2Codex
-            | Self::Gpt5_1
-            | Self::Gpt5_1Codex
-            | Self::Gpt5_1CodexMax
-            | Self::Gpt5_1CodexMini
-            | Self::Gpt5
-            | Self::Gpt5Codex
-            | Self::Gpt5Nano => true,
-
-            // Google models support images
-            Self::Gemini3_1Pro | Self::Gemini3Flash => true,
-
-            // OpenAI-compatible models — conservative default
-            Self::MiniMaxM2_5
-            | Self::MiniMaxM2_5Free
-            | Self::Glm5
-            | Self::KimiK2_5
-            | Self::MimoV2ProFree
-            | Self::MimoV2OmniFree
-            | Self::MimoV2FlashFree
-            | Self::TrinityLargePreviewFree
-            | Self::BigPickle
-            | Self::Nemotron3SuperFree => false,
-
-            Self::Custom { protocol, .. } => matches!(
-                protocol,
-                ApiProtocol::Anthropic
-                    | ApiProtocol::OpenAiResponses
-                    | ApiProtocol::OpenAiChat
-                    | ApiProtocol::Google
-            ),
-        }
+    pub fn custom_model_api_url(&self) -> Option<&str> {
+        self.custom_model_api_url.as_deref()
     }
 }
 
-/// Stream generate content for Google models via OpenCode Zen.
-///
-/// Unlike `google_ai::stream_generate_content()`, this uses:
-/// - `/v1/models/{model}` path (not `/v1beta/models/{model}`)
-/// - `Authorization: Bearer` header (not `key=` query param)
-pub async fn stream_generate_content_zen(
+/// Streams Google generate-content responses through OpenCode.
+pub async fn stream_generate_content(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
     request: google_ai::GenerateContentRequest,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<google_ai::GenerateContentResponse>>> {
     let api_key = api_key.trim();
-
     let model_id = &request.model.model_id;
-
     let uri = format!("{api_url}/v1/models/{model_id}:streamGenerateContent?alt=sse");
-
-    let request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {api_key}"));
-
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+        .header("Authorization", format!("Bearer {api_key}"))
+        .extra_headers(extra_headers)
+        .body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
@@ -445,7 +173,7 @@ pub async fn stream_generate_content_zen(
         let mut text = String::new();
         response.body_mut().read_to_string(&mut text).await?;
         Err(anyhow!(
-            "error during streamGenerateContent via OpenCode Zen, status code: {:?}, body: {}",
+            "error during streamGenerateContent via OpenCode, status code: {:?}, body: {}",
             response.status(),
             text
         ))

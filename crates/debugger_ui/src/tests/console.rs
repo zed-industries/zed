@@ -328,7 +328,7 @@ async fn test_escape_code_processing(executor: BackgroundExecutor, cx: &mut Test
 
             let text_highlights = editor.update(cx, |editor, cx| {
                 let mut text_highlights = editor.all_text_highlights(window, cx).into_iter().flat_map(|(_, ranges)| ranges).collect::<Vec<_>>();
-                text_highlights.sort_by(|a, b| a.start.cmp(&b.start));
+                text_highlights.sort_by_key(|hl| hl.start);
                 text_highlights
             });
             pretty_assertions::assert_eq!(

@@ -6,6 +6,7 @@ use gpui::{
     Window,
 };
 use project::search::SearchQuery;
+use settings::SeedQuerySetting;
 
 use crate::{
     ItemHandle,
@@ -69,6 +70,12 @@ pub enum FilteredSearchRange {
     Default,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct SelectSearchOptions {
+    pub case_sensitive: bool,
+    pub whole_word: bool,
+}
+
 pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
     type Match: Any + Sync + Send + Clone;
 
@@ -116,7 +123,12 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         window: &mut Window,
         cx: &mut Context<Self>,
     );
-    fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String;
+    fn query_suggestion(
+        &mut self,
+        seed_query_override: Option<SeedQuerySetting>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String;
     fn activate_match(
         &mut self,
         index: usize,
@@ -199,7 +211,8 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize>;
-    fn set_search_is_case_sensitive(&mut self, _: Option<bool>, _: &mut Context<Self>) {}
+    fn set_select_search_options(&mut self, _: Option<SelectSearchOptions>, _: &mut Context<Self>) {
+    }
 }
 
 pub trait SearchableItemHandle: ItemHandle {
@@ -221,7 +234,12 @@ pub trait SearchableItemHandle: ItemHandle {
         window: &mut Window,
         cx: &mut App,
     );
-    fn query_suggestion(&self, window: &mut Window, cx: &mut App) -> String;
+    fn query_suggestion(
+        &self,
+        seed_query_override: Option<SeedQuerySetting>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> String;
     fn activate_match(
         &self,
         index: usize,
@@ -292,7 +310,7 @@ pub trait SearchableItemHandle: ItemHandle {
         cx: &mut App,
     );
 
-    fn set_search_is_case_sensitive(&self, is_case_sensitive: Option<bool>, cx: &mut App);
+    fn set_select_search_options(&self, search_options: Option<SelectSearchOptions>, cx: &mut App);
 }
 
 impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
@@ -335,8 +353,15 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
             this.update_matches(matches.as_slice(), active_match_index, token, window, cx)
         });
     }
-    fn query_suggestion(&self, window: &mut Window, cx: &mut App) -> String {
-        self.update(cx, |this, cx| this.query_suggestion(window, cx))
+    fn query_suggestion(
+        &self,
+        seed_query_override: Option<SeedQuerySetting>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> String {
+        self.update(cx, |this, cx| {
+            this.query_suggestion(seed_query_override, window, cx)
+        })
     }
     fn activate_match(
         &self,
@@ -489,9 +514,9 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
             this.toggle_filtered_search_ranges(enabled, window, cx)
         });
     }
-    fn set_search_is_case_sensitive(&self, enabled: Option<bool>, cx: &mut App) {
+    fn set_select_search_options(&self, search_options: Option<SelectSearchOptions>, cx: &mut App) {
         self.update(cx, |this, cx| {
-            this.set_search_is_case_sensitive(enabled, cx)
+            this.set_select_search_options(search_options, cx)
         });
     }
 }

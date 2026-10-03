@@ -10,10 +10,14 @@ workspace = true
 
 [lib]
 path = "src/miniprofiler_ui.rs"
+test = false
+doctest = false
 
 [dependencies]
+command_palette_hooks.workspace = true
 gpui.workspace = true
 rpc.workspace = true
+settings.workspace = true
 theme_settings.workspace = true
 zed_actions.workspace = true
 workspace.workspace = true

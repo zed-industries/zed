@@ -1,24 +1,24 @@
 use anyhow::{Context as _, anyhow};
 use ashpd::WindowIdentifier;
 use calloop::{
-    EventLoop, LoopHandle, RegistrationToken,
+    LoopHandle, RegistrationToken,
     generic::{FdWrapper, Generic},
 };
 use collections::HashMap;
 use core::str;
-use gpui::{Capslock, TaskTiming, profiler};
+use gpui::{Capslock, GraphicalEnvironment};
+use gpui_util::ResultExt as _;
 use http_client::Url;
 use log::Level;
 use smallvec::SmallVec;
 use std::{
-    cell::RefCell,
+    cell::{RefCell, RefMut},
     collections::{BTreeMap, HashSet},
     ops::Deref,
     path::PathBuf,
     rc::{Rc, Weak},
     time::{Duration, Instant},
 };
-use util::ResultExt as _;
 
 use x11rb::{
     connection::{Connection, RequestConnection},
@@ -29,7 +29,7 @@ use x11rb::{
     protocol::xkb::ConnectionExt as _,
     protocol::xproto::{
         AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent,
-        ConnectionExt as _, EventMask, ModMask, Visibility,
+        ConnectionExt as _, EventMask, Visibility,
     },
     protocol::{Event, dri3, randr, render, xinput, xkb, xproto},
     resource_manager::Database,
@@ -49,9 +49,9 @@ use super::{
 };
 
 use crate::linux::{
-    DEFAULT_CURSOR_ICON_NAME, LinuxClient, capslock_from_xkb, cursor_style_to_icon_names,
-    get_xkb_compose_state, is_within_click_distance, keystroke_from_xkb,
-    keystroke_underlying_dead_key, log_cursor_icon_warning, modifiers_from_xkb, open_uri_internal,
+    DEFAULT_CURSOR_ICON_NAME, capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state,
+    is_within_click_distance, keystroke_from_xkb, keystroke_underlying_dead_key,
+    log_cursor_icon_warning, modifiers_from_xkb, new_xkb_context, open_uri_internal,
     platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
     reveal_path_internal,
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
@@ -59,10 +59,11 @@ use crate::linux::{
 use crate::linux::{LinuxCommon, LinuxKeyboardLayout, X11Window, modifiers_from_xinput_info};
 
 use gpui::{
-    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay, PlatformInput,
-    PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta, Size,
-    TouchPhase, WindowButtonLayout, WindowParams, point, px,
+    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, FileDropEvent, FrameRequestSource,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay,
+    PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point,
+    RequestFrameOptions, ScrollDelta, Size, TouchPhase, WindowButtonLayout, WindowParams,
+    WindowVisibility, point, px,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 
@@ -81,7 +82,6 @@ const GPUI_X11_SCALE_FACTOR_ENV: &str = "GPUI_X11_SCALE_FACTOR";
 pub(crate) struct WindowRef {
     window: X11WindowStatePtr,
     refresh_state: Option<RefreshState>,
-    expose_event_received: bool,
     last_visibility: Visibility,
     is_mapped: bool,
 }
@@ -89,6 +89,17 @@ pub(crate) struct WindowRef {
 impl WindowRef {
     pub fn handle(&self) -> AnyWindowHandle {
         self.window.state.borrow().handle
+    }
+
+    /// Whether the X server is presenting this window. Compositing window
+    /// managers rarely report `FULLY_OBSCURED`, so under them this is the
+    /// mapped state alone.
+    fn visibility(&self) -> WindowVisibility {
+        if self.is_mapped && !matches!(self.last_visibility, Visibility::FULLY_OBSCURED) {
+            WindowVisibility::Visible
+        } else {
+            WindowVisibility::Hidden
+        }
     }
 }
 
@@ -169,8 +180,14 @@ struct ScrollAxisState {
 }
 
 pub struct X11ClientState {
-    pub(crate) loop_handle: LoopHandle<'static, X11Client>,
-    pub(crate) event_loop: Option<calloop::EventLoop<'static, X11Client>>,
+    /// A weak pointer to this state, for event-loop callbacks registered by its methods.
+    this: X11ClientStatePtr,
+    pub(crate) loop_handle: LoopHandle<'static, ()>,
+    /// Long-lived sources this client registered on the loop, removed when its
+    /// [`X11Connection`] drops.
+    registrations: Vec<RegistrationToken>,
+    /// The environment this connection was made in, without its activation token.
+    graphical_environment: GraphicalEnvironment,
 
     pub(crate) last_click: Instant,
     pub(crate) last_mouse_button: Option<MouseButton>,
@@ -188,7 +205,7 @@ pub struct X11ClientState {
     xkb_device_id: i32,
     client_side_decorations_supported: bool,
     pub(crate) x_root_index: usize,
-    pub(crate) _resource_database: Database,
+    pub(crate) resource_database: Database,
     pub(crate) atoms: XcbAtoms,
     pub(crate) windows: HashMap<xproto::Window, WindowRef>,
     pub(crate) mouse_focused_window: Option<xproto::Window>,
@@ -211,12 +228,14 @@ pub struct X11ClientState {
     pub(crate) cursor_handle: cursor::Handle,
     pub(crate) cursor_styles: HashMap<xproto::Window, CursorStyle>,
     pub(crate) cursor_cache: HashMap<CursorStyle, Option<xproto::Cursor>>,
+    pub(crate) invisible_cursor_cache: Option<xproto::Cursor>,
+    pub(crate) cursor_hidden_window: Option<xproto::Window>,
 
     pointer_device_states: BTreeMap<xinput::DeviceId, PointerDeviceState>,
 
     pub(crate) supports_xinput_gestures: bool,
 
-    pub(crate) common: LinuxCommon,
+    pub(crate) common: Rc<RefCell<LinuxCommon>>,
     pub(crate) clipboard: Clipboard,
     pub(crate) clipboard_item: Option<ClipboardItem>,
     pub(crate) xdnd_state: Xdnd,
@@ -248,6 +267,9 @@ impl X11ClientStatePtr {
         }
         if state.keyboard_focused_window == Some(x_window) {
             state.keyboard_focused_window = None;
+        }
+        if state.cursor_hidden_window == Some(x_window) {
+            state.cursor_hidden_window = None;
         }
         state.cursor_styles.remove(&x_window);
     }
@@ -297,49 +319,68 @@ impl X11ClientStatePtr {
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct X11Client(pub(crate) Rc<RefCell<X11ClientState>>);
+/// A connection to an X server.
+///
+/// Not `Clone`: dropping it removes the connection's event-loop sources and forgets its windows.
+/// The X connection itself closes once the last [`X11Client`] handle is gone.
+pub(crate) struct X11Connection(X11Client);
 
-impl X11Client {
-    pub(crate) fn new() -> anyhow::Result<Self> {
-        let event_loop = EventLoop::try_new()?;
+impl std::ops::Deref for X11Connection {
+    type Target = X11Client;
 
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
+    fn deref(&self) -> &X11Client {
+        &self.0
+    }
+}
 
-        let handle = event_loop.handle();
-
-        handle
-            .insert_source(main_receiver, {
-                let handle = handle.clone();
-                move |event, _, _: &mut X11Client| {
-                    if let calloop::channel::Event::Msg(runnable) = event {
-                        // Insert the runnables as idle callbacks, so we make sure that user-input and X11
-                        // events have higher priority and runnables are only worked off after the event
-                        // callbacks.
-                        handle.insert_idle(|_| {
-                            let start = Instant::now();
-                            let location = runnable.metadata().location;
-                            let mut timing = TaskTiming {
-                                location,
-                                start,
-                                end: None,
-                            };
-                            profiler::add_task_timing(timing);
-
-                            runnable.run();
-
-                            let end = Instant::now();
-                            timing.end = Some(end);
-                            profiler::add_task_timing(timing);
-                        });
-                    }
-                }
+impl Drop for X11Connection {
+    fn drop(&mut self) {
+        let mut state = self.0.0.borrow_mut();
+        state.common.borrow_mut().after_runnable = None;
+        for token in std::mem::take(&mut state.registrations) {
+            state.loop_handle.remove(token);
+        }
+        let refresh_tokens = state
+            .windows
+            .values_mut()
+            .filter_map(|window| match window.refresh_state.take() {
+                Some(RefreshState::PeriodicRefresh {
+                    event_loop_token, ..
+                }) => Some(event_loop_token),
+                _ => None,
             })
-            .map_err(|err| {
-                anyhow!("Failed to initialize event loop handling of foreground tasks: {err:?}")
-            })?;
+            .collect::<Vec<_>>();
+        for token in refresh_tokens {
+            state.loop_handle.remove(token);
+        }
+        let windows = std::mem::take(&mut state.windows);
+        drop(state);
+        drop(windows);
+    }
+}
 
-        let (xcb_connection, x_root_index) = XCBConnection::connect(None)?;
+impl X11Connection {
+    /// Connects to the X server `environment` names and registers its event sources on
+    /// `handle`.
+    ///
+    /// Dropping the connection removes those sources, leaving the loop and `common` usable
+    /// without X11.
+    pub(crate) fn attach(
+        handle: LoopHandle<'static, ()>,
+        common: Rc<RefCell<LinuxCommon>>,
+        environment: &GraphicalEnvironment,
+    ) -> anyhow::Result<Self> {
+        let display = environment
+            .x11_display
+            .as_ref()
+            .filter(|display| !display.is_empty())
+            .context("DISPLAY is not set")?
+            .to_str()
+            .context("DISPLAY is not valid UTF-8")?;
+        let display_name =
+            std::ffi::CString::new(display).context("X display name contains a NUL byte")?;
+        let (xcb_connection, x_root_index) = XCBConnection::connect(Some(&display_name))
+            .with_context(|| format!("failed to connect to X server {display:?}"))?;
         xcb_connection.prefetch_extension_information(xkb::X11_EXTENSION_NAME)?;
         xcb_connection.prefetch_extension_information(randr::X11_EXTENSION_NAME)?;
         xcb_connection.prefetch_extension_information(render::X11_EXTENSION_NAME)?;
@@ -353,7 +394,7 @@ impl X11Client {
             || "XInput XiQueryVersion failed",
             xcb_connection.xinput_xi_query_version(2, 4),
         )?;
-        assert!(
+        anyhow::ensure!(
             xinput_version.major_version >= 2,
             "XInput version >= 2 required."
         );
@@ -390,7 +431,7 @@ impl X11Client {
             xcb_connection
                 .xkb_use_extension(XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION),
         )?;
-        assert!(xkb.supported);
+        anyhow::ensure!(xkb.supported, "X server does not support XKB");
 
         let events = xkb::EventType::STATE_NOTIFY
             | xkb::EventType::MAP_NOTIFY
@@ -415,7 +456,7 @@ impl X11Client {
             ),
         )?;
 
-        let xkb_context = xkbc::Context::new(xkbc::CONTEXT_NO_FLAGS);
+        let xkb_context = new_xkb_context()?;
         let xkb_device_id = xkbc::x11::get_core_keyboard_device_id(&xcb_connection);
         let xkb_state = {
             let xkb_keymap = xkbc::x11::keymap_new_from_device(
@@ -442,7 +483,7 @@ impl X11Client {
             .reply()
             .context("Failed to initialize cursor theme handler")?;
 
-        let clipboard = Clipboard::new().context("Failed to initialize clipboard")?;
+        let clipboard = Clipboard::new(display).context("Failed to initialize clipboard")?;
 
         let screen = &xcb_connection.setup().roots[x_root_index];
         let compositor_gpu = detect_compositor_gpu(&xcb_connection, screen);
@@ -456,10 +497,88 @@ impl X11Client {
             None
         };
 
+        let background_executor = common.borrow().background_executor.clone();
+        let connection = X11Connection(X11Client(Rc::new_cyclic(|this| {
+            RefCell::new(X11ClientState {
+                this: X11ClientStatePtr(this.clone()),
+                registrations: Vec::new(),
+                graphical_environment: GraphicalEnvironment {
+                    activation_token: None,
+                    ..environment.clone()
+                },
+                modifiers: Modifiers::default(),
+                capslock: Capslock::default(),
+                last_modifiers_changed_event: Modifiers::default(),
+                last_capslock_changed_event: Capslock::default(),
+                loop_handle: handle.clone(),
+                common,
+                last_click: Instant::now(),
+                last_mouse_button: None,
+                last_location: Point::new(px(0.0), px(0.0)),
+                current_count: 0,
+                pinch_scale: 1.0,
+                gpu_context: Rc::new(RefCell::new(None)),
+                compositor_gpu,
+                scale_factor,
+
+                xkb_context,
+                xcb_connection,
+                xkb_device_id,
+                client_side_decorations_supported,
+                x_root_index,
+                resource_database,
+                atoms,
+                windows: HashMap::default(),
+                mouse_focused_window: None,
+                keyboard_focused_window: None,
+                xkb: xkb_state,
+                keyboard_layout,
+                ximc,
+                xim_handler,
+
+                compose_state,
+                pre_edit_text: None,
+                pre_key_char_down: None,
+                composing: false,
+
+                cursor_handle,
+                cursor_styles: HashMap::default(),
+                cursor_cache: HashMap::default(),
+                cursor_hidden_window: None,
+                invisible_cursor_cache: None,
+
+                pointer_device_states,
+
+                supports_xinput_gestures,
+
+                clipboard,
+                clipboard_item: None,
+                xdnd_state: Xdnd::default(),
+            })
+        })));
+        // From here on, `Drop` removes whatever was registered if a later step fails.
+        connection.register_sources(&handle, background_executor)?;
+        let xcb_connection = connection.0.0.borrow().xcb_connection.clone();
+        xcb_flush(&xcb_connection);
+        Ok(connection)
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct X11Client(pub(crate) Rc<RefCell<X11ClientState>>);
+
+impl X11Client {
+    fn register_sources(
+        &self,
+        handle: &LoopHandle<'static, ()>,
+        background_executor: gpui::BackgroundExecutor,
+    ) -> anyhow::Result<()> {
+        let this = self.0.borrow().this.clone();
+        let xcb_connection = self.0.borrow().xcb_connection.clone();
+
         // Safety: Safe if xcb::Connection always returns a valid fd
         let fd = unsafe { FdWrapper::new(Rc::clone(&xcb_connection)) };
-
-        handle
+        let token = handle
             .insert_source(
                 Generic::new_with_error::<EventHandlerError>(
                     fd,
@@ -467,91 +586,67 @@ impl X11Client {
                     calloop::Mode::Level,
                 ),
                 {
+                    let this = this.clone();
                     let xcb_connection = xcb_connection.clone();
-                    move |_readiness, _, client| {
-                        client.process_x11_events(&xcb_connection)?;
+                    move |_readiness, _, _| {
+                        if let Some(client) = this.get_client() {
+                            client.process_x11_events(&xcb_connection)?;
+                        }
                         Ok(calloop::PostAction::Continue)
                     }
                 },
             )
             .map_err(|err| anyhow!("Failed to initialize X11 event source: {err:?}"))?;
+        self.0.borrow_mut().registrations.push(token);
 
-        handle
-            .insert_source(XDPEventSource::new(&common.background_executor), {
-                move |event, _, client| match event {
-                    XDPEvent::WindowAppearance(appearance) => {
-                        client.with_common(|common| common.appearance = appearance);
-                        for window in client.0.borrow_mut().windows.values_mut() {
-                            window.window.set_appearance(appearance);
+        let token = handle
+            .insert_source(XDPEventSource::new(&background_executor), {
+                let this = this.clone();
+                move |event, _, _| {
+                    let Some(client) = this.get_client() else {
+                        return;
+                    };
+                    match event {
+                        XDPEvent::WindowAppearance(appearance) => {
+                            client.with_common(|common| common.appearance = appearance);
+                            for window in client.0.borrow_mut().windows.values_mut() {
+                                window.window.set_appearance(appearance);
+                            }
                         }
-                    }
-                    XDPEvent::ButtonLayout(layout_str) => {
-                        let layout = WindowButtonLayout::parse(&layout_str)
-                            .log_err()
-                            .unwrap_or_else(WindowButtonLayout::linux_default);
-                        client.with_common(|common| common.button_layout = layout);
-                        for window in client.0.borrow_mut().windows.values_mut() {
-                            window.window.set_button_layout();
+                        XDPEvent::ButtonLayout(layout_str) => {
+                            let layout = WindowButtonLayout::parse(&layout_str)
+                                .log_err()
+                                .unwrap_or_else(WindowButtonLayout::linux_default);
+                            client.with_common(|common| common.button_layout = layout);
+                            for window in client.0.borrow_mut().windows.values_mut() {
+                                window.window.set_button_layout();
+                            }
                         }
-                    }
-                    XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {
-                        // noop, X11 manages this for us.
+                        XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {
+                            // noop, X11 manages this for us.
+                        }
                     }
                 }
             })
             .map_err(|err| anyhow!("Failed to initialize XDP event source: {err:?}"))?;
+        self.0.borrow_mut().registrations.push(token);
 
-        xcb_flush(&xcb_connection);
+        // Runnables' requests can read events into xcb's queue, where they don't wake the loop.
+        let common = self.0.borrow().common.clone();
+        common.borrow_mut().after_runnable = Some(Rc::new(move || {
+            if let Some(client) = this.get_client() {
+                client.process_x11_events(&xcb_connection).log_err();
+            }
+        }));
+        Ok(())
+    }
 
-        Ok(X11Client(Rc::new(RefCell::new(X11ClientState {
-            modifiers: Modifiers::default(),
-            capslock: Capslock::default(),
-            last_modifiers_changed_event: Modifiers::default(),
-            last_capslock_changed_event: Capslock::default(),
-            event_loop: Some(event_loop),
-            loop_handle: handle,
-            common,
-            last_click: Instant::now(),
-            last_mouse_button: None,
-            last_location: Point::new(px(0.0), px(0.0)),
-            current_count: 0,
-            pinch_scale: 1.0,
-            gpu_context: Rc::new(RefCell::new(None)),
-            compositor_gpu,
-            scale_factor,
+    pub(crate) fn has_windows(&self) -> bool {
+        !self.0.borrow().windows.is_empty()
+    }
 
-            xkb_context,
-            xcb_connection,
-            xkb_device_id,
-            client_side_decorations_supported,
-            x_root_index,
-            _resource_database: resource_database,
-            atoms,
-            windows: HashMap::default(),
-            mouse_focused_window: None,
-            keyboard_focused_window: None,
-            xkb: xkb_state,
-            keyboard_layout,
-            ximc,
-            xim_handler,
-
-            compose_state,
-            pre_edit_text: None,
-            pre_key_char_down: None,
-            composing: false,
-
-            cursor_handle,
-            cursor_styles: HashMap::default(),
-            cursor_cache: HashMap::default(),
-
-            pointer_device_states,
-
-            supports_xinput_gestures,
-
-            clipboard,
-            clipboard_item: None,
-            xdnd_state: Xdnd::default(),
-        }))))
+    pub(crate) fn graphical_environment(&self) -> GraphicalEnvironment {
+        self.0.borrow().graphical_environment.clone()
     }
 
     pub fn process_x11_events(
@@ -649,13 +744,6 @@ impl X11Client {
                 break;
             }
 
-            for window in windows_to_refresh.into_iter() {
-                let mut state = self.0.borrow_mut();
-                if let Some(window) = state.windows.get_mut(&window) {
-                    window.expose_event_received = true;
-                }
-            }
-
             for event in events.into_iter() {
                 let mut state = self.0.borrow_mut();
                 if !state.has_xim() {
@@ -703,6 +791,23 @@ impl X11Client {
                         drop(state);
                         self.handle_event(event);
                     }
+                }
+            }
+
+            for x_window in windows_to_refresh {
+                let window = self
+                    .0
+                    .borrow()
+                    .windows
+                    .get(&x_window)
+                    .and_then(|window| window.is_mapped.then(|| window.window.clone()));
+                if let Some(window) = window {
+                    window.refresh(RequestFrameOptions {
+                        require_presentation: true,
+                        force_render: false,
+                        signal_at: None,
+                        signal_source: FrameRequestSource::NativeCallback,
+                    });
                 }
             }
         }
@@ -771,7 +876,6 @@ impl X11Client {
         state
             .windows
             .get(&win)
-            .filter(|window_reference| !window_reference.window.state.borrow().destroyed)
             .map(|window_reference| window_reference.window.clone())
     }
 
@@ -782,34 +886,38 @@ impl X11Client {
                 if let Some(window_ref) = state.windows.get_mut(&event.window) {
                     window_ref.is_mapped = false;
                 }
-                state.update_refresh_loop(event.window);
+                handle_visibility_changed(state, event.window);
             }
             Event::MapNotify(event) => {
                 let mut state = self.0.borrow_mut();
                 if let Some(window_ref) = state.windows.get_mut(&event.window) {
                     window_ref.is_mapped = true;
                 }
-                state.update_refresh_loop(event.window);
+                handle_visibility_changed(state, event.window);
             }
             Event::VisibilityNotify(event) => {
                 let mut state = self.0.borrow_mut();
                 if let Some(window_ref) = state.windows.get_mut(&event.window) {
                     window_ref.last_visibility = event.state;
                 }
-                state.update_refresh_loop(event.window);
+                handle_visibility_changed(state, event.window);
             }
             Event::ClientMessage(event) => {
                 let window = self.get_window(event.window)?;
                 let [atom, arg1, arg2, arg3, arg4] = event.data.as_data32();
-                let mut state = self.0.borrow_mut();
+                let delete_window_atom = self.0.borrow().atoms.WM_DELETE_WINDOW;
 
-                if atom == state.atoms.WM_DELETE_WINDOW && window.should_close() {
-                    // window "x" button clicked by user
-                    // Rest of the close logic is handled in drop_window()
-                    drop(state);
-                    window.close();
-                    state = self.0.borrow_mut();
-                } else if atom == state.atoms._NET_WM_SYNC_REQUEST {
+                if atom == delete_window_atom {
+                    if window.should_close() {
+                        // window "x" button clicked by user
+                        // Rest of the close logic is handled in drop_window()
+                        window.close();
+                    }
+                    return Some(());
+                }
+
+                let mut state = self.0.borrow_mut();
+                if atom == state.atoms._NET_WM_SYNC_REQUEST {
                     window.state.borrow_mut().last_sync_counter =
                         Some(x11rb::protocol::sync::Int64 {
                             lo: arg2,
@@ -908,7 +1016,13 @@ impl X11Client {
                     let paths: SmallVec<[_; 2]> = file_list
                         .lines()
                         .filter_map(|path| Url::parse(path).log_err())
-                        .filter_map(|url| url.to_file_path().log_err())
+                        .filter_map(|url| match url.to_file_path() {
+                            Ok(url) => Some(url),
+                            Err(()) => {
+                                log::error!("Failed turn {url:?} into a file path");
+                                None
+                            }
+                        })
                         .collect();
                     let input = PlatformInput::FileDrop(FileDropEvent::Entered {
                         position: state.xdnd_state.position,
@@ -965,6 +1079,7 @@ impl X11Client {
                     compose_state.reset();
                 }
                 state.pre_edit_text.take();
+                state.restore_cursor_after_hide();
                 drop(state);
                 self.reset_ime();
                 window.handle_ime_delete();
@@ -1034,23 +1149,16 @@ impl X11Client {
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
                 state.pre_key_char_down.take();
-
-                // Macros containing modifiers might result in
-                // the modifiers missing from the event.
-                // We therefore update the mask from the global state.
-                update_xkb_mask_from_event_state(&mut state.xkb, event.state);
+                let key_event_state = xkb_state_for_key_event(&state.xkb, event.state);
 
                 let keystroke = {
                     let code = event.detail.into();
-                    let mut keystroke = keystroke_from_xkb(&state.xkb, modifiers, code);
-                    let keysym = state.xkb.key_get_one_sym(code);
+                    let mut keystroke = keystroke_from_xkb(&key_event_state, modifiers, code);
+                    let keysym = key_event_state.key_get_one_sym(code);
 
                     if keysym.is_modifier_key() {
                         return Some(());
                     }
-
-                    // should be called after key_get_one_sym
-                    state.xkb.update_key(code, xkbc::KeyDirection::Down);
 
                     if let Some(mut compose_state) = state.compose_state.take() {
                         compose_state.feed(keysym);
@@ -1104,23 +1212,16 @@ impl X11Client {
 
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
-
-                // Macros containing modifiers might result in
-                // the modifiers missing from the event.
-                // We therefore update the mask from the global state.
-                update_xkb_mask_from_event_state(&mut state.xkb, event.state);
+                let key_event_state = xkb_state_for_key_event(&state.xkb, event.state);
 
                 let keystroke = {
                     let code = event.detail.into();
-                    let keystroke = keystroke_from_xkb(&state.xkb, modifiers, code);
-                    let keysym = state.xkb.key_get_one_sym(code);
+                    let keystroke = keystroke_from_xkb(&key_event_state, modifiers, code);
+                    let keysym = key_event_state.key_get_one_sym(code);
 
                     if keysym.is_modifier_key() {
                         return Some(());
                     }
-
-                    // should be called after key_get_one_sym
-                    state.xkb.update_key(code, xkbc::KeyDirection::Up);
 
                     keystroke
                 };
@@ -1232,6 +1333,7 @@ impl X11Client {
             Event::XinputMotion(event) => {
                 let window = self.get_window(event.event)?;
                 let mut state = self.0.borrow_mut();
+                state.restore_cursor_after_hide();
                 if window.is_blocked() {
                     // We want to set the cursor to the default arrow
                     // when the window is blocked
@@ -1294,6 +1396,7 @@ impl X11Client {
                 window.set_hovered(true);
                 let mut state = self.0.borrow_mut();
                 state.mouse_focused_window = Some(event.event);
+                state.restore_cursor_after_hide();
             }
             Event::XinputLeave(event) if event.mode == xinput::NotifyMode::NORMAL => {
                 let mut state = self.0.borrow_mut();
@@ -1508,31 +1611,38 @@ impl X11Client {
         let layout_name = keymap.layout_get_name(layout_idx);
         if layout_name != state.keyboard_layout.name() {
             state.keyboard_layout = LinuxKeyboardLayout::new(layout_name.to_string().into());
-            if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take() {
+            let callback = state
+                .common
+                .borrow_mut()
+                .callbacks
+                .keyboard_layout_change
+                .take();
+            if let Some(mut callback) = callback {
                 drop(state);
                 callback();
                 state = self.0.borrow_mut();
-                state.common.callbacks.keyboard_layout_change = Some(callback);
+                state.common.borrow_mut().callbacks.keyboard_layout_change = Some(callback);
             }
         }
     }
 }
 
-impl LinuxClient for X11Client {
-    fn compositor_name(&self) -> &'static str {
+impl X11Client {
+    pub(crate) fn compositor_name(&self) -> &'static str {
         "X11"
     }
 
-    fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
-        f(&mut self.0.borrow_mut().common)
+    pub(crate) fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
+        let common = self.0.borrow().common.clone();
+        f(&mut common.borrow_mut())
     }
 
-    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
+    pub(crate) fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         let state = self.0.borrow();
         Box::new(state.keyboard_layout.clone())
     }
 
-    fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
+    pub(crate) fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         let state = self.0.borrow();
         let setup = state.xcb_connection.setup();
         setup
@@ -1547,7 +1657,7 @@ impl LinuxClient for X11Client {
             .collect()
     }
 
-    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+    pub(crate) fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         let state = self.0.borrow();
         X11Display::new(
             &state.xcb_connection,
@@ -1558,33 +1668,21 @@ impl LinuxClient for X11Client {
         .map(|display| Rc::new(display) as Rc<dyn PlatformDisplay>)
     }
 
-    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        let state = self.0.borrow();
-
-        Some(Rc::new(
-            X11Display::new(
-                &state.xcb_connection,
-                state.scale_factor,
-                u32::from(id) as usize,
-            )
-            .ok()?,
-        ))
-    }
-
     #[cfg(feature = "screen-capture")]
-    fn is_screen_capture_supported(&self) -> bool {
+    pub(crate) fn is_screen_capture_supported(&self) -> bool {
         true
     }
 
     #[cfg(feature = "screen-capture")]
-    fn screen_capture_sources(
+    pub(crate) fn screen_capture_sources(
         &self,
     ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Rc<dyn gpui::ScreenCaptureSource>>>>
     {
-        gpui::scap_screen_capture::scap_screen_sources(&self.0.borrow().common.foreground_executor)
+        let foreground_executor = self.0.borrow().common.borrow().foreground_executor.clone();
+        gpui::scap_screen_capture::scap_screen_sources(&foreground_executor)
     }
 
-    fn open_window(
+    pub(crate) fn open_window(
         &self,
         handle: AnyWindowHandle,
         params: WindowParams,
@@ -1604,13 +1702,17 @@ impl LinuxClient for X11Client {
         let x_root_index = state.x_root_index;
         let atoms = state.atoms;
         let scale_factor = state.scale_factor;
-        let appearance = state.common.appearance;
+        let appearance = state.common.borrow().appearance;
         let compositor_gpu = state.compositor_gpu.take();
         let supports_xinput_gestures = state.supports_xinput_gestures;
+        let is_bgr = state
+            .resource_database
+            .get_string("Xft.rgba", "Xft.Rgba")
+            .is_some_and(|v| v.eq_ignore_ascii_case("bgr"));
         let window = X11Window::new(
             handle,
             X11ClientStatePtr(Rc::downgrade(&self.0)),
-            state.common.foreground_executor.clone(),
+            state.common.borrow().foreground_executor.clone(),
             state.gpu_context.clone(),
             compositor_gpu,
             params,
@@ -1623,6 +1725,7 @@ impl LinuxClient for X11Client {
             appearance,
             parent_window,
             supports_xinput_gestures,
+            is_bgr,
         )?;
         check_reply(
             || "Failed to set XdndAware property",
@@ -1640,7 +1743,6 @@ impl LinuxClient for X11Client {
         let window_ref = WindowRef {
             window: window.0.clone(),
             refresh_state: None,
-            expose_event_received: false,
             last_visibility: Visibility::UNOBSCURED,
             is_mapped: false,
         };
@@ -1649,7 +1751,7 @@ impl LinuxClient for X11Client {
         Ok(Box::new(window))
     }
 
-    fn set_cursor_style(&self, style: CursorStyle) {
+    pub(crate) fn set_cursor_style(&self, style: CursorStyle) {
         let mut state = self.0.borrow_mut();
         let Some(focused_window) = state.mouse_focused_window else {
             return;
@@ -1670,11 +1772,17 @@ impl LinuxClient for X11Client {
             return;
         }
 
+        state.cursor_styles.insert(focused_window, style);
+
+        // Don't clobber the invisible cursor; restore reads back from `cursor_styles`.
+        if state.cursor_hidden_window == Some(focused_window) {
+            return;
+        }
+
         let Some(cursor) = state.get_cursor_icon(style) else {
             return;
         };
 
-        state.cursor_styles.insert(focused_window, style);
         check_reply(
             || "Failed to set cursor style",
             state.xcb_connection.change_window_attributes(
@@ -1689,25 +1797,33 @@ impl LinuxClient for X11Client {
         state.xcb_connection.flush().log_err();
     }
 
-    fn open_uri(&self, uri: &str) {
-        #[cfg(any(feature = "wayland", feature = "x11"))]
+    pub(crate) fn hide_cursor_until_mouse_moves(&self) {
+        self.0.borrow_mut().hide_cursor_until_mouse_moves();
+    }
+
+    pub(crate) fn is_cursor_visible(&self) -> bool {
+        self.0.borrow().cursor_hidden_window.is_none()
+    }
+
+    pub(crate) fn open_uri(&self, uri: &str) {
         open_uri_internal(
             self.with_common(|c| c.background_executor.clone()),
             uri,
             None,
+            self.graphical_environment(),
         );
     }
 
-    fn reveal_path(&self, path: PathBuf) {
-        #[cfg(any(feature = "x11", feature = "wayland"))]
+    pub(crate) fn reveal_path(&self, path: PathBuf) {
         reveal_path_internal(
             self.with_common(|c| c.background_executor.clone()),
             path,
             None,
+            self.graphical_environment(),
         );
     }
 
-    fn write_to_primary(&self, item: gpui::ClipboardItem) {
+    pub(crate) fn write_to_primary(&self, item: gpui::ClipboardItem) {
         let state = self.0.borrow_mut();
         state
             .clipboard
@@ -1720,7 +1836,7 @@ impl LinuxClient for X11Client {
             .log_with_level(log::Level::Debug);
     }
 
-    fn write_to_clipboard(&self, item: gpui::ClipboardItem) {
+    pub(crate) fn write_to_clipboard(&self, item: gpui::ClipboardItem) {
         let mut state = self.0.borrow_mut();
         state
             .clipboard
@@ -1734,7 +1850,7 @@ impl LinuxClient for X11Client {
         state.clipboard_item.replace(item);
     }
 
-    fn read_from_primary(&self) -> Option<gpui::ClipboardItem> {
+    pub(crate) fn read_from_primary(&self) -> Option<gpui::ClipboardItem> {
         let state = self.0.borrow_mut();
         state
             .clipboard
@@ -1743,7 +1859,7 @@ impl LinuxClient for X11Client {
             .log_with_level(log::Level::Debug)
     }
 
-    fn read_from_clipboard(&self) -> Option<gpui::ClipboardItem> {
+    pub(crate) fn read_from_clipboard(&self) -> Option<gpui::ClipboardItem> {
         let state = self.0.borrow_mut();
         // if the last copy was from this app, return our cached item
         // which has metadata attached.
@@ -1760,22 +1876,7 @@ impl LinuxClient for X11Client {
             .log_with_level(log::Level::Debug)
     }
 
-    fn run(&self) {
-        let Some(mut event_loop) = self
-            .0
-            .borrow_mut()
-            .event_loop
-            .take()
-            .context("X11Client::run called but it's already running")
-            .log_err()
-        else {
-            return;
-        };
-
-        event_loop.run(None, &mut self.clone(), |_| {}).log_err();
-    }
-
-    fn active_window(&self) -> Option<AnyWindowHandle> {
+    pub(crate) fn active_window(&self) -> Option<AnyWindowHandle> {
         let state = self.0.borrow();
         state.keyboard_focused_window.and_then(|focused_window| {
             state
@@ -1785,7 +1886,7 @@ impl LinuxClient for X11Client {
         })
     }
 
-    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+    pub(crate) fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         let state = self.0.borrow();
         let root = state.xcb_connection.setup().roots[state.x_root_index].root;
 
@@ -1819,15 +1920,15 @@ impl LinuxClient for X11Client {
             .rev()
             .filter_map(|&win| state.windows.get(&win))
         {
-            if !window_ref.window.state.borrow().destroyed {
-                handles.push(window_ref.handle());
-            }
+            handles.push(window_ref.handle());
         }
 
         Some(handles)
     }
 
-    fn window_identifier(&self) -> impl Future<Output = Option<WindowIdentifier>> + Send + 'static {
+    pub(crate) fn window_identifier(
+        &self,
+    ) -> impl Future<Output = Option<WindowIdentifier>> + Send + 'static {
         let state = self.0.borrow();
         state
             .keyboard_focused_window
@@ -1867,8 +1968,7 @@ impl X11ClientState {
         let Some(window_ref) = self.windows.get_mut(&x_window) else {
             return;
         };
-        let is_visible = window_ref.is_mapped
-            && !matches!(window_ref.last_visibility, Visibility::FULLY_OBSCURED);
+        let is_visible = window_ref.visibility().is_visible();
         match (is_visible, window_ref.refresh_state.take()) {
             (false, refresh_state @ Some(RefreshState::Hidden { .. }))
             | (false, refresh_state @ None)
@@ -1952,21 +2052,22 @@ impl X11ClientState {
     ) -> RegistrationToken {
         self.loop_handle
             .insert_source(calloop::timer::Timer::immediate(), {
-                move |mut instant, (), client| {
+                let this = self.this.clone();
+                move |mut instant, (), _| {
+                    let Some(client) = this.get_client() else {
+                        return calloop::timer::TimeoutAction::Drop;
+                    };
                     let xcb_connection = {
                         let mut state = client.0.borrow_mut();
                         let xcb_connection = state.xcb_connection.clone();
                         if let Some(window) = state.windows.get_mut(&x_window) {
-                            let expose_event_received = window.expose_event_received;
-                            window.expose_event_received = false;
-                            let force_render = std::mem::take(
-                                &mut window.window.state.borrow_mut().force_render_after_recovery,
-                            );
                             let window = window.window.clone();
                             drop(state);
                             window.refresh(RequestFrameOptions {
-                                require_presentation: expose_event_received,
-                                force_render,
+                                require_presentation: false,
+                                force_render: false,
+                                signal_at: PlatformFrameSignal::capture(|| instant),
+                                signal_source: FrameRequestSource::LocalSchedule,
                             });
                         }
                         xcb_connection
@@ -1989,41 +2090,33 @@ impl X11ClientState {
             return *cursor;
         }
 
-        let result;
-        match style {
-            CursorStyle::None => match create_invisible_cursor(&self.xcb_connection) {
-                Ok(loaded_cursor) => result = Ok(loaded_cursor),
-                Err(err) => result = Err(err.context("X11: error while creating invisible cursor")),
-            },
-            _ => 'outer: {
-                let mut errors = String::new();
-                let cursor_icon_names = cursor_style_to_icon_names(style);
-                for cursor_icon_name in cursor_icon_names {
-                    match self
-                        .cursor_handle
-                        .load_cursor(&self.xcb_connection, cursor_icon_name)
-                    {
-                        Ok(loaded_cursor) => {
-                            if loaded_cursor != x11rb::NONE {
-                                result = Ok(loaded_cursor);
-                                break 'outer;
-                            }
-                        }
-                        Err(err) => {
-                            errors.push_str(&err.to_string());
-                            errors.push('\n');
+        let result = 'outer: {
+            let mut errors = String::new();
+            let cursor_icon_names = cursor_style_to_icon_names(style);
+            for cursor_icon_name in cursor_icon_names {
+                match self
+                    .cursor_handle
+                    .load_cursor(&self.xcb_connection, cursor_icon_name)
+                {
+                    Ok(loaded_cursor) => {
+                        if loaded_cursor != x11rb::NONE {
+                            break 'outer Ok(loaded_cursor);
                         }
                     }
+                    Err(err) => {
+                        errors.push_str(&err.to_string());
+                        errors.push('\n');
+                    }
                 }
-                if errors.is_empty() {
-                    result = Err(anyhow!(
-                        "errors while loading cursor icons {:?}:\n{}",
-                        cursor_icon_names,
-                        errors
-                    ));
-                } else {
-                    result = Err(anyhow!("did not find cursor icons {:?}", cursor_icon_names));
-                }
+            }
+            if errors.is_empty() {
+                Err(anyhow!(
+                    "errors while loading cursor icons {:?}:\n{}",
+                    cursor_icon_names,
+                    errors
+                ))
+            } else {
+                Err(anyhow!("did not find cursor icons {:?}", cursor_icon_names))
             }
         };
 
@@ -2055,6 +2148,73 @@ impl X11ClientState {
         self.cursor_cache.insert(style, cursor);
         cursor
     }
+
+    fn get_or_create_invisible_cursor(&mut self) -> Option<xproto::Cursor> {
+        if let Some(cursor) = self.invisible_cursor_cache {
+            return Some(cursor);
+        }
+        let cursor = create_invisible_cursor(&self.xcb_connection)
+            .context("X11: error while creating invisible cursor")
+            .log_err()?;
+        self.invisible_cursor_cache = Some(cursor);
+        Some(cursor)
+    }
+
+    fn hide_cursor_until_mouse_moves(&mut self) {
+        if self.cursor_hidden_window.is_some() {
+            return;
+        }
+        let Some(focused_window) = self.mouse_focused_window else {
+            // No window to apply the per-window invisible cursor to.
+            return;
+        };
+        let Some(invisible_cursor) = self.get_or_create_invisible_cursor() else {
+            return;
+        };
+        check_reply(
+            || "Failed to hide cursor",
+            self.xcb_connection.change_window_attributes(
+                focused_window,
+                &ChangeWindowAttributesAux {
+                    cursor: Some(invisible_cursor),
+                    ..Default::default()
+                },
+            ),
+        )
+        .log_err();
+        self.xcb_connection.flush().log_err();
+        self.cursor_hidden_window = Some(focused_window);
+    }
+
+    fn restore_cursor_after_hide(&mut self) {
+        let Some(hidden_window) = self.cursor_hidden_window.take() else {
+            return;
+        };
+        let style = self
+            .cursor_styles
+            .get(&hidden_window)
+            .copied()
+            .unwrap_or(CursorStyle::Arrow);
+        let Some(cursor) = self.get_cursor_icon(style) else {
+            log::warn!(
+                "X11: no cursor icon available to restore {:?} after hide; cursor may stay invisible",
+                style
+            );
+            return;
+        };
+        check_reply(
+            || "Failed to restore cursor style after hide",
+            self.xcb_connection.change_window_attributes(
+                hidden_window,
+                &ChangeWindowAttributesAux {
+                    cursor: Some(cursor),
+                    ..Default::default()
+                },
+            ),
+        )
+        .log_err();
+        self.xcb_connection.flush().log_err();
+    }
 }
 
 // Adapted from:
@@ -2068,6 +2228,20 @@ pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
     let micros = 1_000_000_000 / millihertz;
     log::info!("Refreshing every {}ms", micros / 1_000);
     Duration::from_micros(micros)
+}
+
+/// Applies a mapped/obscured change to the refresh loop and reports the
+/// resulting visibility to the window. Consumes the client borrow because the
+/// visibility callback re-enters GPUI.
+fn handle_visibility_changed(mut state: RefMut<'_, X11ClientState>, x_window: xproto::Window) {
+    state.update_refresh_loop(x_window);
+    let Some(window_ref) = state.windows.get(&x_window) else {
+        return;
+    };
+    let visibility = window_ref.visibility();
+    let window = window_ref.window.clone();
+    drop(state);
+    window.set_visibility(visibility);
 }
 
 fn fp3232_to_f32(value: xinput::Fp3232) -> f32 {
@@ -2685,17 +2859,354 @@ fn valid_scale_factor(scale_factor: f32) -> bool {
 }
 
 #[inline]
-fn update_xkb_mask_from_event_state(xkb: &mut xkbc::State, event_state: xproto::KeyButMask) {
-    let depressed_mods = event_state.remove((ModMask::LOCK | ModMask::M2).bits());
-    let latched_mods = xkb.serialize_mods(xkbc::STATE_MODS_LATCHED);
-    let locked_mods = xkb.serialize_mods(xkbc::STATE_MODS_LOCKED);
-    let locked_layout = xkb.serialize_layout(xkbc::STATE_LAYOUT_LOCKED);
-    xkb.update_mask(
-        depressed_mods.into(),
-        latched_mods,
-        locked_mods,
-        0,
-        0,
-        locked_layout,
+fn xkb_state_for_key_event(xkb: &xkbc::State, event_state: xproto::KeyButMask) -> xkbc::State {
+    let keymap = xkb.get_keymap();
+    let mut key_event_state = xkbc::State::new(&keymap);
+
+    let latched_modifiers = xkb.serialize_mods(xkbc::STATE_MODS_LATCHED);
+    let locked_modifiers = xkb.serialize_mods(xkbc::STATE_MODS_LOCKED);
+    let active_modifier_mask: xkbc::ModMask = u16::from(
+        event_state
+            & (xproto::KeyButMask::SHIFT
+                | xproto::KeyButMask::LOCK
+                | xproto::KeyButMask::CONTROL
+                | xproto::KeyButMask::MOD1
+                | xproto::KeyButMask::MOD2
+                | xproto::KeyButMask::MOD3
+                | xproto::KeyButMask::MOD4
+                | xproto::KeyButMask::MOD5),
+    )
+    .into();
+    let depressed_modifiers = active_modifier_mask & !(latched_modifiers | locked_modifiers);
+
+    key_event_state.update_mask(
+        depressed_modifiers,
+        latched_modifiers,
+        locked_modifiers,
+        xkb.serialize_layout(xkbc::STATE_LAYOUT_DEPRESSED),
+        xkb.serialize_layout(xkbc::STATE_LAYOUT_LATCHED),
+        xkb.serialize_layout(xkbc::STATE_LAYOUT_LOCKED),
     );
+
+    key_event_state
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_keymap(layouts: &str) -> xkbc::Keymap {
+        test_keymap_with_variant(layouts, "")
+    }
+
+    fn test_keymap_with_variant(layouts: &str, variant: &str) -> xkbc::Keymap {
+        // These fixtures compile layout names from local files, unlike server keymaps.
+        let context = xkbc::Context::new(xkbc::CONTEXT_NO_FLAGS);
+        assert!(!context.get_raw_ptr().is_null());
+        xkbc::Keymap::new_from_names(
+            &context,
+            "",
+            "pc105",
+            layouts,
+            variant,
+            None,
+            xkbc::COMPILE_NO_FLAGS,
+        )
+        .expect("test keymap should compile")
+    }
+
+    // Returns a state where the second layout is active via a temporary
+    // mechanism (holding a key down or one-shot), not a permanent toggle.
+    fn state_with_non_locked_layout(keymap: &xkbc::Keymap) -> xkbc::State {
+        let mut depressed_layout_state = xkbc::State::new(keymap);
+        depressed_layout_state.update_mask(0, 0, 0, 1, 0, 0);
+        if depressed_layout_state.serialize_layout(STATE_LAYOUT_EFFECTIVE) == 1 {
+            return depressed_layout_state;
+        }
+
+        let mut latched_layout_state = xkbc::State::new(keymap);
+        latched_layout_state.update_mask(0, 0, 0, 0, 1, 0);
+        if latched_layout_state.serialize_layout(STATE_LAYOUT_EFFECTIVE) == 1 {
+            return latched_layout_state;
+        }
+
+        panic!("test keymap should support a non-locked secondary layout");
+    }
+
+    #[test]
+    fn key_event_state_uses_event_modifiers_without_mutating_server_state() {
+        let keymap = test_keymap("us");
+        let server_state = xkbc::State::new(&keymap);
+        // The "9" key on a US keyboard.
+        let keycode = keymap
+            .key_by_name("AE09")
+            .expect("test key should exist in the keymap");
+
+        // Simulate pressing Shift+9 (which should produce "(").
+        let key_event_state = xkb_state_for_key_event(&server_state, xproto::KeyButMask::SHIFT);
+        let keystroke = keystroke_from_xkb(
+            &key_event_state,
+            modifiers_from_state(xproto::KeyButMask::SHIFT),
+            keycode,
+        );
+
+        // Assert Shift+9 produces "(" on US layout.
+        assert_eq!(keystroke.key, "(");
+        assert_eq!(keystroke.key_char.as_deref(), Some("("));
+        // Assert the long-lived server state was not mutated by the key event.
+        assert_eq!(server_state.key_get_utf8(keycode), "9");
+    }
+
+    #[test]
+    fn key_event_state_ignores_pointer_button_bits() {
+        let keymap = test_keymap("us");
+        let server_state = xkbc::State::new(&keymap);
+        // The "9" key on a US keyboard.
+        let keycode = keymap
+            .key_by_name("AE09")
+            .expect("test key should exist in the keymap");
+
+        // Simulate Shift held down.
+        let shifted_state = xkb_state_for_key_event(&server_state, xproto::KeyButMask::SHIFT);
+        // Simulate Shift held down while also clicking the left mouse button.
+        let shifted_with_button_state = xkb_state_for_key_event(
+            &server_state,
+            xproto::KeyButMask::SHIFT | xproto::KeyButMask::BUTTON1,
+        );
+
+        // Assert the mouse button has no effect on modifier state.
+        assert_eq!(
+            shifted_with_button_state.serialize_mods(xkbc::STATE_MODS_EFFECTIVE),
+            shifted_state.serialize_mods(xkbc::STATE_MODS_EFFECTIVE)
+        );
+        // Assert both cases produce the same character.
+        assert_eq!(
+            shifted_with_button_state.key_get_utf8(keycode),
+            shifted_state.key_get_utf8(keycode)
+        );
+    }
+
+    #[test]
+    fn key_event_state_preserves_non_locked_layout_components() {
+        // US + Russian dual-layout keyboard.
+        let keymap = test_keymap("us,ru");
+        // Simulate the Russian layout being active via a temporary layout
+        // switch (holding a key), not a permanent toggle.
+        let server_state = state_with_non_locked_layout(&keymap);
+        // The "Q" key position, which produces a Cyrillic character in Russian layout.
+        let keycode = keymap
+            .key_by_name("AD01")
+            .expect("test key should exist in the keymap");
+
+        let expected_text = server_state.key_get_utf8(keycode);
+        let key_event_state = xkb_state_for_key_event(&server_state, xproto::KeyButMask::default());
+
+        // Assert the temporary layout switch is preserved.
+        assert_eq!(
+            key_event_state.serialize_layout(STATE_LAYOUT_EFFECTIVE),
+            server_state.serialize_layout(STATE_LAYOUT_EFFECTIVE)
+        );
+        // Assert the key produces the same character as expected from the
+        // Russian layout.
+        assert_eq!(key_event_state.key_get_utf8(keycode), expected_text);
+    }
+
+    // https://github.com/zed-industries/zed/issues/14282
+    #[test]
+    fn capslock_toggle_produces_uppercase() {
+        let keymap = test_keymap("us");
+        let mut server_state = xkbc::State::new(&keymap);
+        // The "A" key position on a US keyboard.
+        let keycode = keymap
+            .key_by_name("AC01")
+            .expect("'a' key should exist in the keymap");
+
+        // Simulate the user having toggled CapsLock on (it's now permanently
+        // active until pressed again).
+        let lock_mod = u16::from(xproto::KeyButMask::LOCK) as xkbc::ModMask;
+        server_state.update_mask(0, 0, lock_mod, 0, 0, 0);
+
+        // Simulate pressing the "a" key while CapsLock is on.
+        let key_event_state = xkb_state_for_key_event(&server_state, xproto::KeyButMask::LOCK);
+
+        // Assert CapsLock is treated as a toggle (locked), not as a held key
+        // (depressed). This distinction matters because XKB only applies
+        // capitalization when CapsLock is in the "locked" state.
+        assert_eq!(
+            key_event_state.serialize_mods(xkbc::STATE_MODS_LOCKED) & lock_mod,
+            lock_mod,
+        );
+        // Assert typing "a" with CapsLock on produces "A".
+        assert_eq!(key_event_state.key_get_utf8(keycode), "A");
+    }
+
+    // https://github.com/zed-industries/zed/issues/14282
+    #[test]
+    fn neo2_level3_via_capslock_produces_ellipsis() {
+        // Neo 2 is a German keyboard layout that repurposes CapsLock as a
+        // "level 3" modifier key for accessing additional characters.
+        let keymap = test_keymap_with_variant("de", "neo");
+        let server_state = xkbc::State::new(&keymap);
+        // The key in the "Q" position, which produces "x" on Neo 2 base layer.
+        let keycode = keymap
+            .key_by_name("AD01")
+            .expect("test key should exist in the keymap");
+
+        // Simulate holding CapsLock, which in Neo 2 activates the "level 3"
+        // layer (mapped to the Mod5 modifier internally).
+        let key_event_state = xkb_state_for_key_event(&server_state, xproto::KeyButMask::MOD5);
+
+        // Assert holding CapsLock + pressing the "x" key produces "..."
+        // (ellipsis), which is the level 3 character on that key in Neo 2.
+        assert_eq!(key_event_state.key_get_utf8(keycode), "\u{2026}");
+    }
+
+    // https://github.com/zed-industries/zed/issues/14282
+    #[test]
+    fn neo2_latched_mod5_preserved() {
+        // Neo 2 also supports "latching" the level 3 modifier (via Caps+Tab),
+        // which activates it for only the next keypress and then deactivates.
+        let keymap = test_keymap_with_variant("de", "neo");
+        let mut server_state = xkbc::State::new(&keymap);
+        let keycode = keymap
+            .key_by_name("AD01")
+            .expect("test key should exist in the keymap");
+
+        // Simulate the level 3 modifier being latched (one-shot active).
+        let mod5 = u16::from(xproto::KeyButMask::MOD5) as xkbc::ModMask;
+        server_state.update_mask(0, mod5, 0, 0, 0, 0);
+
+        let key_event_state = xkb_state_for_key_event(&server_state, xproto::KeyButMask::MOD5);
+
+        // Assert the modifier stays classified as "latched" (one-shot) rather
+        // than being reclassified as "depressed" (held down). This matters
+        // because latched modifiers auto-deactivate after one keypress.
+        assert_eq!(
+            key_event_state.serialize_mods(xkbc::STATE_MODS_LATCHED) & mod5,
+            mod5,
+        );
+        // Assert the latched level 3 still produces the ellipsis character.
+        assert_eq!(key_event_state.key_get_utf8(keycode), "\u{2026}");
+    }
+
+    // https://github.com/zed-industries/zed/pull/31193
+    #[test]
+    fn german_layout_correct_key_resolution() {
+        // Standard German keyboard layout.
+        let keymap = test_keymap("de");
+        let server_state = xkbc::State::new(&keymap);
+        // The "7" key on the number row.
+        let keycode = keymap
+            .key_by_name("AE07")
+            .expect("'7' key should exist in the keymap");
+
+        let key_event_state = xkb_state_for_key_event(&server_state, xproto::KeyButMask::default());
+
+        // Assert pressing the "7" key on a German layout produces "7".
+        assert_eq!(key_event_state.key_get_utf8(keycode), "7");
+    }
+
+    // https://github.com/zed-industries/zed/issues/26468
+    // https://github.com/zed-industries/zed/issues/16667
+    #[test]
+    fn space_works_with_cyrillic_layout_active() {
+        // US + Russian dual-layout keyboard.
+        let keymap = test_keymap("us,ru");
+        let mut server_state = xkbc::State::new(&keymap);
+        let space = keymap
+            .key_by_name("SPCE")
+            .expect("space key should exist in the keymap");
+
+        // Simulate the user having switched to the Russian layout
+        // (e.g. via a keyboard shortcut like Super+Space).
+        server_state.update_mask(0, 0, 0, 0, 0, 1);
+
+        let key_event_state = xkb_state_for_key_event(&server_state, xproto::KeyButMask::default());
+
+        // Assert the Russian layout is still active after constructing the
+        // key event state (not accidentally reset to US).
+        assert_eq!(key_event_state.serialize_layout(STATE_LAYOUT_EFFECTIVE), 1);
+        // Assert pressing space while on the Russian layout still types a space.
+        assert_eq!(key_event_state.key_get_utf8(space), " ");
+    }
+
+    // https://github.com/zed-industries/zed/issues/40678
+    #[test]
+    fn macro_shift_bracket_produces_brace() {
+        let keymap = test_keymap("us");
+        let server_state = xkbc::State::new(&keymap);
+        // The "]" key on a US keyboard.
+        let bracket = keymap
+            .key_by_name("AD12")
+            .expect("']' key should exist in the keymap");
+
+        // Simulate a keyboard macro (e.g. from a ZMK/QMK firmware keyboard)
+        // that sends Shift + "]" very rapidly. The modifier state notification
+        // for Shift hasn't reached us yet, so the server state has no
+        // modifiers. But the key event itself carries the correct Shift state.
+        assert_eq!(server_state.serialize_mods(xkbc::STATE_MODS_EFFECTIVE), 0);
+        let key_event_state = xkb_state_for_key_event(&server_state, xproto::KeyButMask::SHIFT);
+
+        // Assert Shift+"]" produces "}" even when the Shift notification
+        // arrived late.
+        assert_eq!(key_event_state.key_get_utf8(bracket), "}");
+    }
+
+    // https://github.com/zed-industries/zed/issues/49329
+    #[test]
+    fn sequential_key_events_do_not_corrupt_state() {
+        let keymap = test_keymap("us");
+        let server_state = xkbc::State::new(&keymap);
+
+        // Simulate typing "a s d" with spaces in between, all without any
+        // modifier keys held.
+        let keys: &[(&str, &str)] = &[
+            ("AC01", "a"),
+            ("SPCE", " "),
+            ("AC02", "s"),
+            ("SPCE", " "),
+            ("AC03", "d"),
+        ];
+
+        for &(key_name, expected_utf8) in keys {
+            let keycode = keymap
+                .key_by_name(key_name)
+                .expect("test key should exist in the keymap");
+
+            let key_event_state =
+                xkb_state_for_key_event(&server_state, xproto::KeyButMask::default());
+
+            // Assert each key in the sequence produces the expected character
+            // (no dropped or garbled input from state corruption).
+            assert_eq!(
+                key_event_state.key_get_utf8(keycode),
+                expected_utf8,
+                "key {key_name} should produce {expected_utf8:?}",
+            );
+        }
+
+        // Assert the server state is completely untouched after processing
+        // all key events.
+        assert_eq!(server_state.serialize_mods(xkbc::STATE_MODS_EFFECTIVE), 0);
+        assert_eq!(server_state.serialize_layout(STATE_LAYOUT_EFFECTIVE), 0);
+    }
+
+    // https://github.com/zed-industries/zed/issues/26468
+    #[test]
+    fn space_works_with_czech_layout_active() {
+        // US + Czech dual-layout keyboard.
+        let keymap = test_keymap("us,cz");
+        let mut server_state = xkbc::State::new(&keymap);
+        let space = keymap
+            .key_by_name("SPCE")
+            .expect("space key should exist in the keymap");
+
+        // Simulate the user having switched to the Czech layout.
+        server_state.update_mask(0, 0, 0, 0, 0, 1);
+
+        let key_event_state = xkb_state_for_key_event(&server_state, xproto::KeyButMask::default());
+
+        // Assert pressing space while on the Czech layout still types a space.
+        assert_eq!(key_event_state.key_get_utf8(space), " ");
+    }
 }

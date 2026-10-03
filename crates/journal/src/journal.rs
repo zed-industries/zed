@@ -1,7 +1,7 @@
 use chrono::{Datelike, Local, NaiveTime, Timelike};
 use editor::scroll::Autoscroll;
 use editor::{Editor, SelectionEffects};
-use gpui::{App, AppContext as _, Context, Window, actions};
+use gpui::{App, AppContext as _, Context, TaskExt, Window, actions};
 pub use settings::HourFormat;
 use settings::{RegisterSetting, Settings};
 use std::{

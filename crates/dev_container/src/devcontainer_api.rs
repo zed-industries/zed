@@ -58,6 +58,8 @@ pub(crate) struct DevContainerUp {
     pub(crate) extension_ids: Vec<String>,
     #[serde(default)]
     pub(crate) remote_env: HashMap<String, String>,
+    #[serde(default)]
+    pub(crate) started_at: Option<String>,
 }
 
 #[derive(Debug)]
@@ -75,9 +77,15 @@ pub enum DevContainerError {
     DevContainerUpFailed(String),
     DevContainerNotFound,
     DevContainerParseFailed,
+    DevContainerValidationFailed(String),
     FilesystemError,
     ResourceFetchFailed,
     NotInValidProject,
+    /// Multiple existing containers match this project's identifying labels
+    /// (`devcontainer.local_folder` + `devcontainer.config_file`). The spec
+    /// expects those labels to be unique per project, so Zed can't choose
+    /// which one to connect to. The user must remove the duplicate(s).
+    MultipleMatchingContainers(Vec<String>),
 }
 
 impl Display for DevContainerError {
@@ -110,6 +118,13 @@ impl Display for DevContainerError {
                     "Error downloading resources locally".to_string(),
                 DevContainerError::ResourceFetchFailed =>
                     "Failed to fetch resources from template or feature repository".to_string(),
+                DevContainerError::DevContainerValidationFailed(failure) => failure.to_string(),
+                DevContainerError::MultipleMatchingContainers(ids) => format!(
+                    "Multiple containers match this project's dev container labels ({}). \
+                     Zed can't decide which to connect to. Stop and remove the stale one(s) with \
+                     `docker stop <id>` and `docker rm <id>`, then try again.",
+                    ids.join(", ")
+                ),
             }
         )
     }
@@ -159,13 +174,13 @@ pub fn find_devcontainer_configs(workspace: &Workspace, cx: &gpui::App) -> Vec<D
 pub fn find_configs_in_snapshot(snapshot: &Snapshot) -> Vec<DevContainerConfig> {
     let mut configs = Vec::new();
 
-    let devcontainer_dir_path = RelPath::unix(".devcontainer").expect("valid path");
+    let devcontainer_dir_path = RelPath::from_unix_str(".devcontainer").expect("valid path");
 
     if let Some(devcontainer_entry) = snapshot.entry_for_path(devcontainer_dir_path) {
         if devcontainer_entry.is_dir() {
             log::debug!("find_configs_in_snapshot: Scanning .devcontainer directory");
             let devcontainer_json_path =
-                RelPath::unix(".devcontainer/devcontainer.json").expect("valid path");
+                RelPath::from_unix_str(".devcontainer/devcontainer.json").expect("valid path");
             for entry in snapshot.child_entries(devcontainer_dir_path) {
                 log::debug!(
                     "find_configs_in_snapshot: Found entry: {:?}, is_file: {}, is_dir: {}",
@@ -186,7 +201,7 @@ pub fn find_configs_in_snapshot(snapshot: &Snapshot) -> Vec<DevContainerConfig> 
 
                     let config_json_path =
                         format!("{}/devcontainer.json", entry.path.as_unix_str());
-                    if let Ok(rel_config_path) = RelPath::unix(&config_json_path) {
+                    if let Ok(rel_config_path) = RelPath::from_unix_str(&config_json_path) {
                         if snapshot.entry_for_path(rel_config_path).is_some() {
                             log::debug!(
                                 "find_configs_in_snapshot: Found config in subfolder: {}",
@@ -210,7 +225,7 @@ pub fn find_configs_in_snapshot(snapshot: &Snapshot) -> Vec<DevContainerConfig> 
 
     // Always include `.devcontainer.json` so the user can pick it from the UI
     // even when `.devcontainer/devcontainer.json` also exists.
-    let root_config_path = RelPath::unix(".devcontainer.json").expect("valid path");
+    let root_config_path = RelPath::from_unix_str(".devcontainer.json").expect("valid path");
     if snapshot
         .entry_for_path(root_config_path)
         .is_some_and(|entry| entry.is_file())
@@ -283,6 +298,7 @@ pub async fn start_dev_container_with_config(
 
             Ok((connection, remote_workspace_folder))
         }
+        Err(err @ DevContainerError::MultipleMatchingContainers(_)) => Err(err),
         Err(err) => {
             let message = format!("Failed with nested error: {:?}", err);
             Err(DevContainerError::DevContainerUpFailed(message))
@@ -386,7 +402,7 @@ pub(crate) async fn apply_devcontainer_template(
             log::error!("Can't create relative path: {e}");
             DevContainerError::FilesystemError
         })?;
-        let rel_path = RelPath::unix(relative_path)
+        let rel_path = RelPath::from_unix_str(relative_path)
             .map_err(|e| {
                 log::error!("Can't create relative path: {e}");
                 DevContainerError::FilesystemError

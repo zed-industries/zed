@@ -1,10 +1,8 @@
 use std::{cell::RefCell, collections::HashMap, mem, ops::Range};
 
 use gpui::{DefiniteLength, FontWeight, SharedString, TextAlign, px, relative};
-use html5ever::{
-    Attribute, LocalName, ParseOpts, local_name, parse_document, tendril::TendrilSink,
-};
-use markup5ever_rcdom::{Node, NodeData, RcDom};
+use html5ever::{Attribute, LocalName, local_name};
+use markup5ever_rcdom::{Node, NodeData};
 use pulldown_cmark::{Alignment, HeadingLevel};
 use stacksafe::stacksafe;
 
@@ -195,10 +193,7 @@ pub(crate) fn parse_html_block(
 ) -> Option<ParsedHtmlBlock> {
     let bytes = cleanup_html(source);
     let mut cursor = std::io::Cursor::new(bytes);
-    let dom = parse_document(RcDom::default(), ParseOpts::default())
-        .from_utf8()
-        .read_from(&mut cursor)
-        .ok()?;
+    let dom = super::parse_html(&mut cursor).ok()?;
 
     let mut children = Vec::new();
     parse_html_node(
@@ -865,6 +860,51 @@ mod tests {
         assert_eq!(table.body.len(), 2);
         assert_eq!(table.body[0].columns[0].col_span, 2);
         assert_eq!(table.body[1].columns.len(), 2);
+    }
+
+    #[test]
+    fn parses_html_table_th_defaults_to_center() {
+        let html = "<table><thead><tr><th>H1</th><th>H2</th></tr></thead><tbody><tr><td>a</td><td>b</td></tr></tbody></table>";
+        let parsed = parse_html_block(html, 0..html.len()).unwrap();
+
+        let ParsedHtmlElement::Table(table) = &parsed.children[0] else {
+            panic!("expected table");
+        };
+
+        assert_eq!(table.header.len(), 1);
+        for column in &table.header[0].columns {
+            assert!(column.is_header);
+            assert_eq!(column.alignment, Alignment::Center);
+        }
+
+        for column in &table.body[0].columns {
+            assert!(!column.is_header);
+            assert_eq!(column.alignment, Alignment::None);
+        }
+    }
+
+    #[test]
+    fn parses_html_table_explicit_align_attribute_preserved() {
+        let html = "<table>\
+            <thead><tr>\
+                <th align=\"right\">H1</th>\
+                <th align=\"left\">H2</th>\
+            </tr></thead>\
+            <tbody><tr>\
+                <td align=\"center\">a</td>\
+                <td align=\"right\">b</td>\
+            </tr></tbody>\
+        </table>";
+        let parsed = parse_html_block(html, 0..html.len()).unwrap();
+
+        let ParsedHtmlElement::Table(table) = &parsed.children[0] else {
+            panic!("expected table");
+        };
+
+        assert_eq!(table.header[0].columns[0].alignment, Alignment::Right);
+        assert_eq!(table.header[0].columns[1].alignment, Alignment::Left);
+        assert_eq!(table.body[0].columns[0].alignment, Alignment::Center);
+        assert_eq!(table.body[0].columns[1].alignment, Alignment::Right);
     }
 
     #[test]

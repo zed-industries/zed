@@ -1,12 +1,12 @@
 use editor::Editor;
 use gpui::{
-    Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, WeakEntity, Window,
-    div,
+    App, Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, WeakEntity,
+    Window, div,
 };
 use language::LanguageName;
 use settings::Settings as _;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
-use workspace::{StatusBarSettings, StatusItemView, Workspace, item::ItemHandle};
+use workspace::{HideStatusItem, StatusBarSettings, StatusItemView, Workspace, item::ItemHandle};
 
 use crate::{LanguageSelector, Toggle};
 
@@ -53,8 +53,10 @@ impl Render for ActiveBufferLanguage {
             };
 
             el.child(
-                Button::new("change-language", active_language_text)
+                Button::new("change-language", active_language_text.clone())
                     .label_size(LabelSize::Small)
+                    .tab_index(0isize)
+                    .aria_label(format!("Language: {active_language_text}"))
                     .on_click(cx.listener(|this, _, window, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {
                             workspace.update(cx, |workspace, cx| {
@@ -85,5 +87,14 @@ impl StatusItemView for ActiveBufferLanguage {
         }
 
         cx.notify();
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+        Some(HideStatusItem::new(|settings| {
+            settings
+                .status_bar
+                .get_or_insert_default()
+                .active_language_button = Some(false);
+        }))
     }
 }

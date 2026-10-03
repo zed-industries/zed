@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/google_ai.rs"
+doctest = false
 
 [features]
 schemars = ["dep:schemars"]
@@ -24,4 +25,3 @@ schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 strum.workspace = true
-tiktoken-rs.workspace = true

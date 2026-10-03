@@ -261,7 +261,7 @@
           },
           "link_text": {
             "color": "#73ade9ff",
-            "font_style": "normal",
+            "font_style": "italic",
             "font_weight": null
           },
           "link_uri": {
@@ -391,6 +391,11 @@
           },
           "variable": {
             "color": "#acb2beff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "variable.parameter": {
+            "color": "#d07277ff",
             "font_style": null,
             "font_weight": null
           },
@@ -803,6 +808,11 @@
           },
           "variable": {
             "color": "#242529ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "variable.parameter": {
+            "color": "#d3604fff",
             "font_style": null,
             "font_weight": null
           },

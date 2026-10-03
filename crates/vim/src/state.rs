@@ -15,7 +15,8 @@ use editor::display_map::{is_invisible, replacement};
 use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer, ToPoint as EditorToPoint};
 use gpui::{
     Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, DismissEvent, Entity,
-    EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
+    EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TaskExt, TextStyle,
+    WeakEntity,
 };
 use language::{Buffer, BufferEvent, BufferId, Chunk, LanguageAwareStyling, Point};
 
@@ -78,6 +79,15 @@ impl Mode {
     pub fn is_helix(&self) -> bool {
         matches!(self, Self::HelixNormal | Self::HelixSelect)
     }
+
+    /// `HelixNormal` qualifies because its cursor is itself a one-character selection.
+    pub fn has_selection(&self) -> bool {
+        self.is_visual() || matches!(self, Self::HelixNormal)
+    }
+
+    pub fn is_normal(&self) -> bool {
+        matches!(self, Self::Normal | Self::HelixNormal)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -112,6 +122,8 @@ pub enum Operator {
         /// Represents whether the opening bracket was used for the target
         /// object.
         opening: bool,
+        /// Computed anchors for the opening and closing bracket characters,
+        bracket_anchors: Vec<Option<(Anchor, Anchor)>>,
     },
     DeleteSurrounds,
     Mark,
@@ -153,6 +165,25 @@ pub enum Operator {
         replaced_char: Option<char>,
     },
     HelixSurroundDelete,
+    HelixJump {
+        behaviour: HelixJumpBehaviour,
+        first_char: Option<char>,
+        labels: Vec<HelixJumpLabel>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HelixJumpLabel {
+    pub label: [char; 2],
+    pub range: Range<Anchor>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HelixJumpBehaviour {
+    Move,
+    MoveToWordStart,
+    Extend,
+    ExtendToWordStart,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -418,23 +449,24 @@ impl MarksState {
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) {
-        let new_points: HashMap<String, Vec<Point>> =
-            if let Some(anchors) = self.buffer_marks.get(&buffer.read(cx).remote_id()) {
-                anchors
-                    .iter()
-                    .map(|(name, anchors)| {
-                        (
-                            name.clone(),
-                            buffer
-                                .read(cx)
-                                .summaries_for_anchors::<Point, _>(anchors.iter().copied())
-                                .collect(),
-                        )
-                    })
-                    .collect()
-            } else {
-                HashMap::default()
-            };
+        let new_points: HashMap<String, Vec<Point>> = if let Some(anchors) =
+            self.buffer_marks.get(&buffer.read(cx).remote_id())
+        {
+            anchors
+                .iter()
+                .map(|(name, anchors)| {
+                    let snapshot = buffer.read(cx);
+                    (
+                        name.clone(),
+                        snapshot
+                            .summaries_for_anchors_unordered::<Point, _>(anchors.iter().copied())
+                            .collect(),
+                    )
+                })
+                .collect()
+        } else {
+            HashMap::default()
+        };
         let old_points = self.serialized_marks.get(&path);
         if old_points == Some(&new_points) {
             return;
@@ -1083,6 +1115,7 @@ impl Operator {
             Operator::HelixMatch => "helix_m",
             Operator::HelixNext { .. } => "helix_next",
             Operator::HelixPrevious { .. } => "helix_previous",
+            Operator::HelixJump { .. } => "gw",
             Operator::HelixSurroundAdd => "helix_ms",
             Operator::HelixSurroundReplace { .. } => "helix_mr",
             Operator::HelixSurroundDelete => "helix_md",
@@ -1110,6 +1143,7 @@ impl Operator {
             Operator::HelixMatch => "m".to_string(),
             Operator::HelixNext { .. } => "]".to_string(),
             Operator::HelixPrevious { .. } => "[".to_string(),
+            Operator::HelixJump { .. } => "gw".to_string(),
             Operator::HelixSurroundAdd => "ms".to_string(),
             Operator::HelixSurroundReplace {
                 replaced_char: None,
@@ -1140,7 +1174,8 @@ impl Operator {
             | Operator::ChangeSurrounds {
                 target: Some(_), ..
             }
-            | Operator::DeleteSurrounds => true,
+            | Operator::DeleteSurrounds
+            | Operator::HelixJump { .. } => true,
             Operator::Change
             | Operator::Delete
             | Operator::Yank
@@ -1211,7 +1246,8 @@ impl Operator {
             | Operator::Register
             | Operator::RecordRegister
             | Operator::ReplayRegister
-            | Operator::HelixMatch => false,
+            | Operator::HelixMatch
+            | Operator::HelixJump { .. } => false,
         }
     }
 }
@@ -1228,6 +1264,10 @@ pub struct RegistersViewDelegate {
 
 impl PickerDelegate for RegistersViewDelegate {
     type ListItem = Div;
+
+    fn name() -> &'static str {
+        "registers view"
+    }
 
     fn match_count(&self) -> usize {
         self.matches.len()
@@ -1388,15 +1428,13 @@ impl RegistersView {
                 })
             }
         });
-        matches.sort_by(|a, b| a.name.cmp(&b.name));
+        matches.sort_by_key(|m| m.name);
         let delegate = RegistersViewDelegate {
             selected_index: 0,
             matches,
         };
 
-        Picker::nonsearchable_uniform_list(delegate, window, cx)
-            .width(rems(36.))
-            .modal(true)
+        Picker::nonsearchable_uniform_list(delegate, window, cx).initial_width(rems(36.))
     }
 }
 
@@ -1442,6 +1480,10 @@ pub struct MarksViewDelegate {
 
 impl PickerDelegate for MarksViewDelegate {
     type ListItem = Div;
+
+    fn name() -> &'static str {
+        "marks view"
+    }
 
     fn match_count(&self) -> usize {
         self.matches.len()
@@ -1757,9 +1799,7 @@ impl MarksView {
             matches,
             workspace,
         };
-        Picker::nonsearchable_uniform_list(delegate, window, cx)
-            .width(rems(36.))
-            .modal(true)
+        Picker::nonsearchable_uniform_list(delegate, window, cx).initial_width(rems(36.))
     }
 }
 

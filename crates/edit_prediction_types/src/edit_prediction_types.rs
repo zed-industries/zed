@@ -1,4 +1,4 @@
-use std::{ops::Range, sync::Arc};
+use std::{ops::Range, sync::Arc, time::Duration};
 
 use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
@@ -8,6 +8,24 @@ pub enum EditPredictionDiscardReason {
     Rejected,
     Ignored,
 }
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditPredictionRequestTrigger {
+    DiagnosticNavigation,
+    Explicit,
+    BufferEdit,
+    LSPCompletionAccepted,
+    PredictionAccepted,
+    PredictionPartiallyAccepted,
+    EditorCreated,
+    ProviderChanged,
+    UserInfoChanged,
+    VimModeChanged,
+    SettingsChanged,
+    #[default]
+    Other,
+}
+
 use icons::IconName;
 use language::{Anchor, Buffer, OffsetRangeExt};
 
@@ -184,7 +202,8 @@ pub trait EditPredictionDelegate: 'static + Sized {
         &mut self,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
-        debounce: bool,
+        debounce_duration: Duration,
+        trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     );
     fn accept(&mut self, cx: &mut Context<Self>);
@@ -220,7 +239,8 @@ pub trait EditPredictionDelegateHandle {
         &self,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
-        debounce: bool,
+        debounce_duration: Duration,
+        trigger: EditPredictionRequestTrigger,
         cx: &mut App,
     );
     fn did_show(&self, display_type: SuggestionDisplayType, cx: &mut App);
@@ -295,11 +315,12 @@ where
         &self,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
-        debounce: bool,
+        debounce_duration: Duration,
+        trigger: EditPredictionRequestTrigger,
         cx: &mut App,
     ) {
         self.update(cx, |this, cx| {
-            this.refresh(buffer, cursor_position, debounce, cx)
+            this.refresh(buffer, cursor_position, debounce_duration, trigger, cx)
         })
     }
 
@@ -376,5 +397,5 @@ pub fn interpolate_edits(
 
     edits.extend(model_edits.cloned());
 
-    if edits.is_empty() { None } else { Some(edits) }
+    Some(edits)
 }

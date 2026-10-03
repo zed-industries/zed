@@ -1,6 +1,5 @@
 use crate::TestServer;
 use call::ActiveCall;
-use chrono::Utc;
 use collab::db::ChannelId;
 use editor::Editor;
 use gpui::{BackgroundExecutor, TestAppContext};
@@ -183,14 +182,6 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
 #[gpui::test]
 async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let mut server = TestServer::start(cx_a.executor()).await;
-
-    server
-        .app_state
-        .db
-        .update_or_create_user_by_github_account("user_b", 100, None, None, Utc::now(), None)
-        .await
-        .unwrap();
-
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let active_call_a = cx_a.read(ActiveCall::global);
@@ -288,10 +279,17 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     });
 
     // User B signs the zed CLA.
+    let user_b = server
+        .app_state
+        .user_service
+        .get_user_by_github_login("user_b")
+        .await
+        .unwrap()
+        .expect("user_b not found");
     server
         .app_state
         .db
-        .add_contributor("user_b", 100, None, None, Utc::now(), None)
+        .add_contributor(user_b.id)
         .await
         .unwrap();
 

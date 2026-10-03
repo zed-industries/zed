@@ -1,5 +1,5 @@
 use gpui::{
-    AnyView, Corner, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Pixels, Point,
+    Anchor, AnyView, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Pixels, Point,
     Subscription,
 };
 use ui::{
@@ -18,7 +18,7 @@ where
     trigger: T,
     tooltip: TT,
     handle: Option<PopoverMenuHandle<Picker<P>>>,
-    anchor: Corner,
+    anchor: Anchor,
     offset: Option<Point<Pixels>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -33,9 +33,10 @@ where
         picker: Entity<Picker<P>>,
         trigger: T,
         tooltip: TT,
-        anchor: Corner,
+        anchor: Anchor,
         cx: &mut App,
     ) -> Self {
+        picker.update(cx, |picker, _| picker.set_popover());
         Self {
             _subscriptions: vec![cx.subscribe(&picker, |picker, &DismissEvent, cx| {
                 picker.update(cx, |_, cx| cx.emit(DismissEvent));

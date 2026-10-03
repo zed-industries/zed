@@ -1,4 +1,5 @@
 use crate::db::{ChannelId, ChannelMemberId, ChannelRole, UserId, channel_member};
+use rpc::proto;
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
@@ -10,6 +11,21 @@ pub struct Model {
     pub user_id: UserId,
     pub accepted: bool,
     pub role: ChannelRole,
+}
+
+impl From<Model> for proto::ChannelMember {
+    fn from(member: Model) -> Self {
+        Self {
+            role: member.role.into(),
+            user_id: member.user_id.to_proto(),
+            kind: if member.accepted {
+                proto::channel_member::Kind::Member
+            } else {
+                proto::channel_member::Kind::Invitee
+            }
+            .into(),
+        }
+    }
 }
 
 impl ActiveModelBehavior for ActiveModel {}

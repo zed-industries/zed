@@ -7,7 +7,7 @@ use serde_json::json;
 use util::{path, rel_path::rel_path};
 use workspace::{ActivatePreviousItem, AppState, MultiWorkspace, Workspace, item::test::TestItem};
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }
@@ -251,6 +251,61 @@ async fn test_close_selected_item(cx: &mut gpui::TestAppContext) {
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
         assert_eq!(active_editor.read(cx).title(cx), "3.txt");
+    });
+    assert_tab_switcher_is_closed(workspace, cx);
+}
+
+#[gpui::test]
+async fn test_quick_switch_before_popover_visible(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "1.txt": "First file",
+                "2.txt": "Second file",
+                "3.txt": "Third file",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    open_buffer("1.txt", &workspace, cx).await;
+    open_buffer("2.txt", &workspace, cx).await;
+    let _tab_3 = open_buffer("3.txt", &workspace, cx).await;
+
+    // Simulate quick Ctrl+Tab: press modifier, open switcher, release modifier
+    // all before the POPOVER_DELAY (300ms) elapses.
+    cx.simulate_modifiers_change(Modifiers::control());
+    let tab_switcher = open_tab_switcher(false, &workspace, cx);
+
+    // Verify the switcher is not visible yet (before delay)
+    tab_switcher.read_with(cx, |picker, cx| {
+        let tab_switcher = picker
+            .delegate
+            .tab_switcher
+            .upgrade()
+            .expect("tab switcher should exist");
+        assert!(!tab_switcher.read(cx).visible);
+    });
+
+    // Release modifiers before delay — should confirm the pre-selected item (2.txt)
+    cx.simulate_modifiers_change(Modifiers::none());
+
+    cx.read(|cx| {
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(
+            active_editor.read(cx).title(cx),
+            "2.txt",
+            "quick switch should select previous tab, not a random one"
+        );
     });
     assert_tab_switcher_is_closed(workspace, cx);
 }
@@ -548,4 +603,60 @@ async fn test_open_in_active_pane_closes_file_in_all_panes(cx: &mut gpui::TestAp
             "all panes should be empty"
         );
     }
+}
+
+#[gpui::test]
+async fn test_toggle_all_stays_open_after_closing_last_tab_in_active_pane(
+    cx: &mut gpui::TestAppContext,
+) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a.txt": "",
+                "b.txt": "",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    let tab_a = open_buffer("a.txt", &workspace, cx).await;
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.split_pane(
+            workspace.active_pane().clone(),
+            workspace::SplitDirection::Right,
+            window,
+            cx,
+        );
+    });
+    open_buffer("b.txt", &workspace, cx).await;
+
+    // Right pane (with b.txt) is now the active pane.
+    cx.dispatch_action(ToggleAll);
+    let tab_switcher = get_active_tab_switcher(&workspace, cx);
+
+    tab_switcher.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 2);
+        // Explicitly select b.txt (index 0, the most recently activated item)
+        // to close the last tab in the active (right) pane.
+        picker.delegate.selected_index = 0;
+    });
+
+    cx.dispatch_action(CloseSelectedItem);
+    cx.run_until_parked();
+
+    // Tab switcher must remain open with a.txt as the only match
+    let tab_switcher = get_active_tab_switcher(&workspace, cx);
+    tab_switcher.update(cx, |picker, cx| {
+        assert_eq!(picker.delegate.matches.len(), 1);
+        assert_match_at_position(picker, 0, tab_a.boxed_clone());
+        let _ = cx;
+    });
 }

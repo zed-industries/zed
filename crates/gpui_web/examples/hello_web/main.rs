@@ -1,7 +1,10 @@
+use std::borrow::Cow;
+use std::cell::RefCell;
+
 use gpui::prelude::*;
 use gpui::{
-    App, Bounds, Context, ElementId, SharedString, Task, Window, WindowBounds, WindowOptions, div,
-    px, rgb, size,
+    App, ApplicationHandle, Bounds, Context, ElementId, SharedString, Task, Window, WindowBounds,
+    WindowOptions, div, px, rgb, size,
 };
 
 // ---------------------------------------------------------------------------
@@ -405,18 +408,57 @@ impl Render for HelloWeb {
 // Entry point
 // ---------------------------------------------------------------------------
 
+fn requested_backend() -> gpui_platform::WebBackendPreference {
+    let search = web_sys::window()
+        .and_then(|window| window.location().search().ok())
+        .unwrap_or_default();
+    if search
+        .trim_start_matches('?')
+        .split('&')
+        .any(|parameter| parameter == "backend=webgpu")
+    {
+        gpui_platform::WebBackendPreference::WebGpu
+    } else if search
+        .trim_start_matches('?')
+        .split('&')
+        .any(|parameter| parameter == "backend=webgl")
+    {
+        gpui_platform::WebBackendPreference::WebGl
+    } else {
+        gpui_platform::WebBackendPreference::Auto
+    }
+}
+
+thread_local! {
+    static APPLICATION: RefCell<Option<ApplicationHandle>> = RefCell::new(None);
+}
+
 fn main() {
     gpui_platform::web_init();
-    gpui_platform::application().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(640.), px(560.)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |_, cx| cx.new(HelloWeb::new),
-        )
-        .expect("failed to open window");
-        cx.activate(true);
-    });
+    let handle = gpui_platform::application_with_web_backend(requested_backend()).run_embedded(
+        |cx: &mut App| {
+            if let Err(error) = cx
+                .text_system()
+                .add_fonts(vec![Cow::Borrowed(include_bytes!(
+                    "../../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf"
+                ))])
+            {
+                web_sys::console::error_1(
+                    &format!("failed to load application fonts: {error:#}").into(),
+                );
+                return;
+            }
+            let bounds = Bounds::centered(None, size(px(640.), px(560.)), cx);
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                |_, cx| cx.new(HelloWeb::new),
+            )
+            .expect("failed to open window");
+            cx.activate(true);
+        },
+    );
+    APPLICATION.with(|cell| *cell.borrow_mut() = Some(handle));
 }

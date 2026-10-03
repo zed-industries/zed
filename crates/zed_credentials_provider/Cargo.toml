@@ -10,6 +10,8 @@ workspace = true
 
 [lib]
 path = "src/zed_credentials_provider.rs"
+test = false
+doctest = false
 
 [dependencies]
 anyhow.workspace = true
@@ -18,5 +20,4 @@ futures.workspace = true
 gpui.workspace = true
 paths.workspace = true
 release_channel.workspace = true
-serde.workspace = true
 serde_json.workspace = true

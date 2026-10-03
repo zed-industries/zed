@@ -227,6 +227,15 @@ fn find_target(
             break;
         }
 
+        // vim's ctrl-a/ctrl-x operate on the number at or after the cursor and
+        // do not require it to be whitespace-separated. Stop the backward scan
+        // at a '-' so we keep the number the cursor is on (e.g. `05` in
+        // `2025-05-10`) instead of scanning past the '-' to an earlier number on
+        // the line. vim folds a leading '-' into the number, making it negative.
+        if ch == '-' {
+            break;
+        }
+
         // Avoid the influence of hexadecimal letters
         if first_char_is_num
             && !ch.is_ascii_hexdigit()
@@ -284,17 +293,17 @@ fn find_target(
             begin = None;
             target = String::new();
         } else if ch == '.' {
-            // When the cursor is on a number followed by a dot and a non-digit
-            // (`ˇ1. item`), terminate the match so the number is incrementable.
-            // Without this, the dot unconditionally resets the scan and the
-            // number is skipped. We only do this when the cursor is on the
-            // number, when it's past (`111.ˇ.2`), we still reset so the forward
-            // scan can find the number after the dots.
-            let next_is_non_digit = chars.peek().map_or(true, |char| !char.is_digit(radix));
+            // vim treats '.' as a separator, not a decimal point: ctrl-a/ctrl-x
+            // act on the whole digit run, not a float. So when the cursor is on
+            // the current number, terminate the match at the dot regardless of
+            // what follows it, so `ˇ1. item` and version strings like `0.8ˇ1.46`
+            // (-> `0.82.46`) both increment the number under the cursor. When the
+            // cursor is past the number (`111.ˇ.2`), `on_number` is false and we
+            // still reset so the forward scan finds the number after the dots.
             let on_number =
                 is_num && begin.is_some_and(|begin| begin >= start_offset || start_offset < offset);
 
-            if on_number && next_is_non_digit {
+            if on_number {
                 end = Some(offset);
                 break;
             }
@@ -475,6 +484,11 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             1.ˇ2
             "});
+
+        // '.' is a separator, not a decimal point, so the number the cursor is
+        // on is incremented even without surrounding whitespace.
+        cx.simulate("ctrl-a", "0.8ˇ1.46").await.assert_matches();
+        cx.simulate("ctrl-x", "0.8ˇ1.46").await.assert_matches();
     }
 
     #[gpui::test]
@@ -776,6 +790,22 @@ mod test {
             18  2
             24
             30"});
+    }
+
+    #[gpui::test]
+    async fn test_increment_negative_numbers(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // vim folds a leading '-' into the number, so ctrl-a on the `05` here
+        // operates on `-05` and decrements the visible digits to `04`.
+        cx.simulate("ctrl-a", "2025-0ˇ5-10").await.assert_matches();
+
+        // Cursor on or just before a trailing '-' (with or without a following
+        // number) must not scan past the '-' into the earlier number.
+        cx.simulate("ctrl-a", "2025-05ˇ-").await.assert_matches();
+        cx.simulate("ctrl-a", "2025-05ˇ- 345")
+            .await
+            .assert_matches();
     }
 
     #[gpui::test]

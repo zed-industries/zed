@@ -10,6 +10,8 @@ workspace = true
 
 [lib]
 path = "src/ui_prompt.rs"
+test = false
+doctest = false
 
 [features]
 default = []
@@ -19,6 +21,7 @@ gpui.workspace = true
 markdown.workspace = true
 menu.workspace = true
 settings.workspace = true
+theme.workspace = true
 theme_settings.workspace = true
 ui.workspace = true
 workspace.workspace = true
