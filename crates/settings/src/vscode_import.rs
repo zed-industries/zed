@@ -1117,6 +1117,7 @@ impl VsCodeSettings {
             }),
             zoomed_padding: None,
             focus_follows_mouse: None,
+            delete_inaccessible_projects: None,
         }
     }
 
