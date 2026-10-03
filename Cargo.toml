@@ -79,6 +79,7 @@ members = [
     "crates/feature_flags",
     "crates/feature_flags_macros",
     "crates/feedback",
+    "crates/file_content",
     "crates/file_finder",
     "crates/file_icons",
     "crates/fs",
@@ -351,6 +352,7 @@ extensions_ui = { path = "crates/extensions_ui" }
 feature_flags = { path = "crates/feature_flags" }
 feature_flags_macros = { path = "crates/feature_flags_macros" }
 feedback = { path = "crates/feedback" }
+file_content = { path = "crates/file_content" }
 file_finder = { path = "crates/file_finder" }
 file_icons = { path = "crates/file_icons" }
 fs = { path = "crates/fs" }
@@ -622,6 +624,7 @@ derive_more = { version = "2.1.1", features = [
 dialoguer = { version = "0.12", default-features = false }
 diffy = "0.4.2"
 dirs = "6.0"
+dispatch2 = "0.3.1"
 documented = "0.10"
 dotenvy = "0.15.0"
 dunce = "1.0"
@@ -755,6 +758,7 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "objc2-core-foundation",
     "std",
 ] }
+objc2-quartz-core = { version = "=0.3.2", default-features = false, features = ["std", "CALayer", "CAMetalLayer"] }
 objc2-screen-capture-kit = { version = "=0.3.2", default-features = false, features = [
     "block2",
     "dispatch2",
@@ -1015,7 +1019,7 @@ tree-sitter-language = { git = "https://github.com/tree-sitter/tree-sitter", rev
 async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
 async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
-calloop = { git = "https://github.com/zed-industries/calloop" }
+calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
 livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "0a1c519cfce9b365229026b55de9b9dbdb6fed3c" }
 libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "0a1c519cfce9b365229026b55de9b9dbdb6fed3c" }
 notify = { git = "https://github.com/zed-industries/notify", rev = "d842f16b2716bd60f09caf3ae3a894237ab38f54" }
@@ -1087,6 +1091,7 @@ command_palette = { codegen-units = 1 }
 command_palette_hooks = { codegen-units = 1 }
 edit_prediction_ui = { codegen-units = 1 }
 feature_flags = { codegen-units = 1 }
+file_content = { codegen-units = 1 }
 file_icons = { codegen-units = 1 }
 image_viewer = { codegen-units = 1 }
 install_cli = { codegen-units = 1 }

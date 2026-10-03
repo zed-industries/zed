@@ -44,17 +44,17 @@ pub use visual_test_context::*;
 use crate::InspectorElementRegistry;
 use crate::asset_cache::CachedLoad;
 use crate::{
-    Action, ActionBuildError, ActionRegistry, ActivityGuard, Any, AnyView, AnyWindowHandle,
-    AppContext, Arena, ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem,
-    ClipboardReadError, CursorStyle, DispatchPhase, DisplayId, EventEmitter, ExternalDragPayload,
-    FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext, Keymap, Keystroke,
-    LayoutId, Menu, MenuItem, MissingGlyph, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
-    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
+    Action, ActionBuildError, ActionRegistry, ActivationPolicy, ActivityGuard, Any, AnyView,
+    AnyWindowHandle, AppContext, Arena, ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds,
+    ClipboardItem, ClipboardReadError, CursorStyle, DispatchPhase, DisplayId, EventEmitter,
+    ExternalDragPayload, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
+    Keymap, Keystroke, LayoutId, Menu, MenuItem, MissingGlyph, OwnedMenu, PathPromptOptions,
+    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point,
+    Priority, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
     Subscription, SvgRenderer, SystemNotification, SystemNotificationResponse, Task,
     TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout,
-    WindowHandle, WindowId, WindowInvalidator,
+    WindowHandle, WindowId, WindowInvalidator, WindowingRequest,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -226,6 +226,17 @@ impl Application {
     /// By default, [`QuitMode::Default`] is used.
     pub fn with_quit_mode(self, mode: QuitMode) -> Self {
         self.0.borrow_mut().quit_mode = mode;
+        self
+    }
+
+    /// Sets the windowing mode the app starts in. See [`App::request_windowing`].
+    ///
+    /// Defaults to windowed. On Linux, the default environment is the process's own, and the app
+    /// starts headless if that names no allowed display server. On macOS, headless means the app
+    /// starts without a Dock icon or menu bar ([`ActivationPolicy::Accessory`]). Has no effect on
+    /// other platforms.
+    pub fn with_windowing(self, request: WindowingRequest) -> Self {
+        self.0.borrow().platform.set_initial_windowing(request);
         self
     }
 
@@ -756,6 +767,8 @@ pub struct App {
     pub(crate) foreground_executor: ForegroundExecutor,
     #[cfg(feature = "profiler")]
     foreground_journal: crate::profiler::journal::ForegroundJournal,
+    #[cfg(all(feature = "profiler", not(target_family = "wasm")))]
+    hang_monitor: Option<crate::profiler::hang::HangMonitor>,
     pub(crate) entities: EntityMap,
     pub(crate) new_entity_observers: SubscriberSet<TypeId, NewEntityListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Box<Window>>>,
@@ -837,7 +850,7 @@ pub struct App {
 
     // We need to ensure the leak detector drops last, after all tasks, callbacks and things have been dropped.
     // Otherwise it may report false positives.
-    #[cfg(any(test, feature = "leak-detection"))]
+    #[cfg(any(test, gpui_leak_detection))]
     _ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
 
@@ -863,7 +876,7 @@ impl App {
         let keyboard_layout = platform.keyboard_layout();
         let keyboard_mapper = platform.keyboard_mapper();
 
-        #[cfg(any(test, feature = "leak-detection"))]
+        #[cfg(any(test, gpui_leak_detection))]
         let _ref_counts = entities.ref_counts_drop_handle();
 
         let app = Rc::new_cyclic(|this| AppCell {
@@ -882,6 +895,8 @@ impl App {
                 foreground_executor,
                 #[cfg(feature = "profiler")]
                 foreground_journal,
+                #[cfg(all(feature = "profiler", not(target_family = "wasm")))]
+                hang_monitor: None,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 loading_assets: Default::default(),
                 asset_source,
@@ -938,7 +953,7 @@ impl App {
                 element_arena: RefCell::new(Arena::new(1024 * 1024)),
                 event_arena: Arena::new(1024 * 1024),
 
-                #[cfg(any(test, feature = "leak-detection"))]
+                #[cfg(any(test, gpui_leak_detection))]
                 _ref_counts,
             }),
         });
@@ -1031,7 +1046,7 @@ impl App {
     /// The returned [`LeakDetectorSnapshot`] can later be passed to
     /// [`assert_no_new_leaks`](Self::assert_no_new_leaks) to verify that no
     /// entities created after the snapshot are still alive.
-    #[cfg(any(test, feature = "leak-detection"))]
+    #[cfg(any(test, gpui_leak_detection))]
     pub fn leak_detector_snapshot(&self) -> LeakDetectorSnapshot {
         self.entities.leak_detector_snapshot()
     }
@@ -1047,10 +1062,21 @@ impl App {
     /// Panics if any new entity handles exist. The panic message lists every
     /// leaked entity with its type name, and includes allocation-site backtraces
     /// when `LEAK_BACKTRACE` is set.
-    #[cfg(any(test, feature = "leak-detection"))]
+    #[cfg(any(test, gpui_leak_detection))]
     pub fn assert_no_new_leaks(&self, snapshot: &LeakDetectorSnapshot) {
         self.entities.assert_no_new_leaks(snapshot)
     }
+
+    /// Without leak detection compiled in, this records nothing.
+    #[cfg(all(feature = "test-support", not(any(test, gpui_leak_detection))))]
+    pub fn leak_detector_snapshot(&self) -> LeakDetectorSnapshot {
+        LeakDetectorSnapshot::default()
+    }
+
+    /// Without leak detection compiled in, this checks nothing. Set
+    /// `GPUI_LEAK_DETECTION` when building to enable it.
+    #[cfg(all(feature = "test-support", not(any(test, gpui_leak_detection))))]
+    pub fn assert_no_new_leaks(&self, _snapshot: &LeakDetectorSnapshot) {}
 
     /// Quit the application gracefully.
     ///
@@ -1058,10 +1084,30 @@ impl App {
     /// [`SHUTDOWN_TIMEOUT`] to complete. WebAssembly runs them asynchronously as best-effort cleanup
     /// because its event-loop thread cannot block.
     pub fn shutdown(&mut self) {
-        let mut futures = Vec::new();
+        // Requested first so the final hang poll overlaps with the quit
+        // handlers. It's awaited alongside them, within `SHUTDOWN_TIMEOUT`.
+        #[cfg(all(feature = "profiler", not(target_family = "wasm")))]
+        let hang_monitor_flush = self
+            .hang_monitor
+            .as_ref()
+            .and_then(|hang_monitor| hang_monitor.request_flush());
+
+        let mut futures: Vec<LocalBoxFuture<'static, ()>> = Vec::new();
 
         for observer in self.quit_observers.remove(&()) {
             futures.push(observer(self));
+        }
+
+        #[cfg(all(feature = "profiler", not(target_family = "wasm")))]
+        if let Some(flushed) = hang_monitor_flush {
+            futures.push(
+                async move {
+                    if flushed.await.is_err() {
+                        log::warn!("hang monitor exited before flushing");
+                    }
+                }
+                .boxed_local(),
+            );
         }
 
         self.windows.clear();
@@ -1113,6 +1159,41 @@ impl App {
     /// Gracefully quit the application via the platform's standard routine.
     pub fn quit(&self) {
         self.platform.quit();
+    }
+
+    /// Switches the platform between headless and windowed modes.
+    ///
+    /// On Linux, headless means no display server: windows opened afterwards lay out and handle
+    /// input but draw nothing. Windowed, the platform connects to the display server the
+    /// environment names. On macOS, the modes set the [`ActivationPolicy`]: headless is
+    /// `Accessory` (no Dock icon or menu bar) and windowed is `Regular`. Switching to windowed
+    /// doesn't activate the app: call [`App::activate`] for that.
+    ///
+    /// The returned task resolves once the switch has been applied. It fails if the platform is
+    /// already in the requested mode (switching to another display server means going headless
+    /// first), if the platform doesn't allow the mode or can't switch at all, if any window is
+    /// open (a window belongs to the display server that opened it), or if the display server
+    /// can't be reached.
+    pub fn request_windowing(&self, request: WindowingRequest) -> Task<anyhow::Result<()>> {
+        if !self.windows.is_empty() {
+            return Task::ready(Err(anyhow::anyhow!(
+                "cannot switch windowing modes while windows are open"
+            )));
+        }
+        self.platform.request_windowing(request)
+    }
+
+    /// The environment of the display server the platform is connected to, or `None` while
+    /// headless. Its activation token is always unset, since the connection has used it.
+    ///
+    /// Programs an app launches inherit this process's environment, which may name another
+    /// graphical session, or none if the app started headless. Pass them this one with
+    /// [`GraphicalEnvironment::apply_to`](crate::GraphicalEnvironment::apply_to).
+    ///
+    /// On macOS, the environment carries nothing, and this is `None` while the activation
+    /// policy is `Accessory`. Always `None` on platforms that can't switch windowing modes.
+    pub fn graphical_environment(&self) -> Option<crate::GraphicalEnvironment> {
+        self.platform.graphical_environment()
     }
 
     /// Returns the current policy for hiding the cursor in response to
@@ -1755,6 +1836,18 @@ impl App {
         self.quit_mode = mode;
     }
 
+    /// Sets whether the application participates in the system's foreground UI.
+    ///
+    /// Only has an effect on macOS, where [`Self::request_windowing`] normally sets it. Use this
+    /// for an accessory app that shows windows, such as a menu bar utility. It overrides the
+    /// policy until the next [`Self::request_windowing`], and the app counts as headless while
+    /// `Accessory`. After switching to [`ActivationPolicy::Regular`], activate the app yourself
+    /// with [`Self::activate`]; otherwise its menu bar may not appear until the app is
+    /// reactivated.
+    pub fn set_activation_policy(&mut self, policy: ActivationPolicy) {
+        self.platform.set_activation_policy(policy);
+    }
+
     /// Returns the SVG renderer used by the application.
     pub fn svg_renderer(&self) -> SvgRenderer {
         self.svg_renderer.clone()
@@ -2017,6 +2110,12 @@ impl App {
         &self.background_executor
     }
 
+    /// Whether this app runs on the deterministic test scheduler. See
+    /// [`BackgroundExecutor::is_test`].
+    pub fn is_test(&self) -> bool {
+        self.background_executor.is_test()
+    }
+
     /// Obtains a reference to the executor, which can be used to spawn futures.
     pub fn foreground_executor(&self) -> &ForegroundExecutor {
         if self.quitting {
@@ -2030,6 +2129,45 @@ impl App {
     #[cfg(feature = "profiler")]
     pub fn foreground_journal(&self) -> crate::profiler::journal::ForegroundJournal {
         self.foreground_journal.clone()
+    }
+
+    /// Starts detecting foreground hangs on a dedicated thread.
+    ///
+    /// Nothing is spawned unless the app calls this. The thread polls a
+    /// detector over this app's foreground journal every `config.interval`
+    /// and passes each poll's incidents, including empty polls, to `on_poll`
+    /// on that thread. When the app quits, a final poll with
+    /// [`HangMonitorPollReason::Flush`] runs during shutdown, concurrently
+    /// with quit handlers and within [`SHUTDOWN_TIMEOUT`], so `on_poll` can
+    /// deliver batched results.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the monitor was already started or its thread can't be
+    /// spawned.
+    ///
+    /// [`HangMonitorPollReason::Flush`]: crate::profiler::hang::HangMonitorPollReason::Flush
+    #[cfg(all(feature = "profiler", not(target_family = "wasm")))]
+    pub fn start_hang_monitor(
+        &mut self,
+        config: crate::profiler::hang::HangMonitorConfig,
+        on_poll: impl FnMut(crate::profiler::hang::HangMonitorPoll) + Send + 'static,
+    ) -> Result<(), crate::profiler::hang::HangMonitorError> {
+        use crate::profiler::hang::{HangDetector, HangMonitor, HangMonitorError};
+
+        if self.hang_monitor.is_some() {
+            debug_assert!(false, "the hang monitor was started twice");
+            return Err(HangMonitorError::AlreadyStarted);
+        }
+        let detector = HangDetector::new(
+            self.foreground_journal(),
+            config.threshold,
+            config.frame_budget,
+        );
+        let monitor = HangMonitor::spawn(detector, config.interval, on_poll)
+            .map_err(HangMonitorError::Spawn)?;
+        self.hang_monitor = Some(monitor);
+        Ok(())
     }
 
     /// Spawns the future returned by the given function on the main thread. The closure will be invoked
