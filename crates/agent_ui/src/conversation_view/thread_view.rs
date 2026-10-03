@@ -4437,6 +4437,7 @@ impl ThreadView {
                                                     content.as_view(),
                                                     None,
                                                     true,
+                                                    false,
                                                     window,
                                                     cx,
                                                 )
@@ -7892,6 +7893,7 @@ impl ThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
+        let collapse_code_blocks = !AgentSettings::get_global(cx).expand_code_block;
         v_flex().w_full().gap_3().children(
             content
                 .blocks()
@@ -7899,7 +7901,14 @@ impl ThreadView {
                 .filter(|(_, block)| block.visible_content(cx))
                 .map(|(block_ix, block)| {
                     let content = self.render_output_content_block(
-                        entry_ix, block_ix, block, None, false, window, cx,
+                        entry_ix,
+                        block_ix,
+                        block,
+                        None,
+                        false,
+                        collapse_code_blocks,
+                        window,
+                        cx,
                     );
                     div()
                         .id(("message-content-block", block_ix))
@@ -10706,6 +10715,7 @@ impl ThreadView {
                 block.as_view(),
                 Some(tool_call),
                 card_layout,
+                false,
                 window,
                 cx,
             ),
@@ -10805,6 +10815,7 @@ impl ThreadView {
         content: acp_thread::ContentBlockView<'_>,
         tool_call: Option<&ToolCall>,
         card_layout: bool,
+        collapse_code_blocks: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -10825,6 +10836,7 @@ impl ThreadView {
                     MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
                     cx,
                 )
+                .collapse_code_blocks(collapse_code_blocks)
                 .into_any()
             }
         } else if let Some((resource, _)) = content.embedded_resource() {
