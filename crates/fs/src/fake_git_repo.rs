@@ -75,6 +75,7 @@ pub struct FakeGitRepositoryState {
     pub simulated_index_write_error_message: Option<String>,
     pub simulated_create_worktree_error: Option<String>,
     pub simulated_graph_error: Option<String>,
+    pub simulated_diff_tree_error: Option<String>,
     pub branches_requiring_force_delete: HashSet<String>,
     pub worktrees_requiring_force_delete: HashSet<PathBuf>,
     pub refs: HashMap<String, String>,
@@ -100,6 +101,7 @@ impl FakeGitRepositoryState {
             simulated_index_write_error_message: Default::default(),
             simulated_create_worktree_error: Default::default(),
             simulated_graph_error: None,
+            simulated_diff_tree_error: None,
             branches_requiring_force_delete: Default::default(),
             worktrees_requiring_force_delete: Default::default(),
             refs: HashMap::from_iter([("HEAD".into(), "abc".into())]),
@@ -332,6 +334,9 @@ impl GitRepository for FakeGitRepository {
                     .collect::<HashMap<_, _>>()
             });
         self.with_state_async(false, move |state| {
+            if let Some(message) = &state.simulated_diff_tree_error {
+                bail!("{message}");
+            }
             let contents = worktree_contents.as_ref().unwrap_or(&state.head_contents);
             let tracked_paths = state
                 .merge_base_contents
