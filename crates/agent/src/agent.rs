@@ -1979,7 +1979,7 @@ impl NativeAgent {
 
             for message in prompt.messages {
                 let context_server::types::PromptMessage { role, content } = message;
-                let block = mcp_message_content_to_acp_content_block(content);
+                let block = mcp_message_content_to_acp_content_block(&thread, cx, content).await?;
                 let display_block = acp_thread::content::from_v1(block.clone())?;
 
                 match role {
@@ -8020,34 +8020,38 @@ mod internal_tests {
     }
 }
 
-fn mcp_message_content_to_acp_content_block(
+/// Converts an MCP prompt message's content into an ACP content block.
+/// Resources embedded in the message are downloaded to the thread's downloads
+/// directory and the block is the download summary.
+async fn mcp_message_content_to_acp_content_block(
+    thread: &Entity<Thread>,
+    cx: &mut AsyncApp,
     content: context_server::types::MessageContent,
-) -> acp_v1::ContentBlock {
+) -> Result<acp_v1::ContentBlock> {
     match content {
         context_server::types::MessageContent::Text {
             text,
             annotations: _,
-        } => text.into(),
+        } => Ok(text.into()),
         context_server::types::MessageContent::Image {
             data,
             mime_type,
             annotations: _,
-        } => acp_v1::ContentBlock::Image(acp_v1::ImageContent::new(data, mime_type)),
+        } => Ok(acp_v1::ContentBlock::Image(acp_v1::ImageContent::new(
+            data, mime_type,
+        ))),
         context_server::types::MessageContent::Audio {
             data,
             mime_type,
             annotations: _,
-        } => acp_v1::ContentBlock::Audio(acp_v1::AudioContent::new(data, mime_type)),
-        context_server::types::MessageContent::Resource {
-            resource,
-            annotations: _,
-        } => {
-            let mut link =
-                acp_v1::ResourceLink::new(resource.uri.to_string(), resource.uri.to_string());
-            if let Some(mime_type) = resource.mime_type {
-                link = link.mime_type(mime_type);
-            }
-            acp_v1::ContentBlock::ResourceLink(link)
+        } => Ok(acp_v1::ContentBlock::Audio(acp_v1::AudioContent::new(
+            data, mime_type,
+        ))),
+        context_server::types::MessageContent::Resource { resource, .. } => {
+            let downloads_dir = thread.update(cx, |thread, cx| thread.mcp_downloads_dir(cx))?;
+            let summary =
+                crate::tools::save_mcp_resource_contents(&downloads_dir, resource, cx).await?;
+            Ok(acp_v1::ContentBlock::Text(acp_v1::TextContent::new(summary)))
         }
     }
 }
