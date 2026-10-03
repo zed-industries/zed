@@ -141,6 +141,12 @@ pub struct GlobalLspSettings {
 
     /// Rules for highlighting semantic tokens.
     pub semantic_token_rules: SemanticTokenRules,
+
+    /// Whether to enable horizontal scrolling for code blocks in hover popovers,
+    /// signature help, and code context menus instead of wrapping text.
+    ///
+    /// Default: `false`
+    pub code_block_horizontal_scroll: bool,
 }
 
 impl Default for GlobalLspSettings {
@@ -151,6 +157,7 @@ impl Default for GlobalLspSettings {
             max_buffer_line_length: 20_000,
             notifications: LspNotificationSettings::default(),
             semantic_token_rules: SemanticTokenRules::default(),
+            code_block_horizontal_scroll: false,
         }
     }
 }
@@ -771,6 +778,12 @@ impl Settings for ProjectSettings {
                     .as_ref()
                     .unwrap()
                     .clone(),
+                code_block_horizontal_scroll: content
+                    .global_lsp_settings
+                    .as_ref()
+                    .unwrap()
+                    .code_block_horizontal_scroll
+                    .unwrap(),
             },
             dap: project
                 .dap
