@@ -163,6 +163,7 @@ pub(crate) enum PromptContextType {
     Skill,
     Diagnostics,
     BranchDiff,
+    ContextServer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -247,6 +248,7 @@ impl TryFrom<&str> for PromptContextType {
             "skill" => Ok(Self::Skill),
             "diagnostics" => Ok(Self::Diagnostics),
             "diff" => Ok(Self::BranchDiff),
+            "mcp" => Ok(Self::ContextServer),
             _ => Err(format!("Invalid context picker mode: {}", value)),
         }
     }
@@ -262,6 +264,7 @@ impl PromptContextType {
             Self::Skill => "skill",
             Self::Diagnostics => "diagnostics",
             Self::BranchDiff => "branch diff",
+            Self::ContextServer => "mcp",
         }
     }
 
@@ -274,6 +277,7 @@ impl PromptContextType {
             Self::Skill => "Skills",
             Self::Diagnostics => "Diagnostics",
             Self::BranchDiff => "Branch Diff",
+            Self::ContextServer => "MCP Servers",
         }
     }
 
@@ -286,6 +290,7 @@ impl PromptContextType {
             Self::Skill => IconName::Sparkle,
             Self::Diagnostics => IconName::Warning,
             Self::BranchDiff => IconName::GitBranch,
+            Self::ContextServer => IconName::Server,
         }
     }
 }
@@ -299,11 +304,17 @@ pub(crate) enum Match {
     Skill(AvailableSkill),
     Entry(EntryMatch),
     BranchDiff(BranchDiffMatch),
+    ContextServer(ContextServerMatch),
 }
 
 #[derive(Debug, Clone)]
 pub struct BranchDiffMatch {
     pub base_ref: SharedString,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContextServerMatch {
+    pub server_id: String,
 }
 
 impl Match {
@@ -317,6 +328,7 @@ impl Match {
             Match::Skill(_) => 1.,
             Match::Fetch(_) => 1.,
             Match::BranchDiff(_) => 1.,
+            Match::ContextServer(_) => 1.,
         }
     }
 }
@@ -638,6 +650,50 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             )),
             group: None,
         }
+    }
+
+    fn completion_for_context_server(
+        server: ContextServerMatch,
+        source_range: Range<Anchor>,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        cx: &mut App,
+    ) -> Option<Completion> {
+        let uri = MentionUri::ContextServer {
+            server_id: server.server_id.clone(),
+        };
+        let new_text = format!("{} ", uri.as_link());
+        let new_text_len = new_text.len();
+        let icon_path = uri.icon_path(cx);
+        let crease_text: SharedString = uri.name().into();
+
+        let label = CodeLabel::plain(server.server_id.clone(), None);
+
+        Some(Completion {
+            replace_range: source_range.clone(),
+            new_text,
+            label,
+            documentation: None,
+            insert_text_mode: None,
+            source: project::CompletionSource::Custom,
+            match_start: None,
+            snippet_deduplication_key: None,
+            icon_path: Some(icon_path),
+            icon_color: None,
+            confirm: Some(confirm_completion_callback(
+                crease_text,
+                source_range.start,
+                new_text_len - 1,
+                uri,
+                source,
+                editor,
+                mention_set,
+                workspace,
+            )),
+            group: None,
+        })
     }
 
     pub(crate) fn completion_for_path(
@@ -1159,6 +1215,29 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
             Some(PromptContextType::BranchDiff) => Task::ready(Vec::new()),
 
+            Some(PromptContextType::ContextServer) => {
+                let store = workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .context_server_store();
+                let store = store.read(cx);
+                let query_lower = query.to_lowercase();
+                let matches: Vec<Match> = store
+                    .server_ids()
+                    .iter()
+                    .filter(|id| {
+                        query_lower.is_empty() || id.0.to_lowercase().contains(&query_lower)
+                    })
+                    .map(|id| {
+                        Match::ContextServer(ContextServerMatch {
+                            server_id: id.0.to_string(),
+                        })
+                    })
+                    .collect();
+                Task::ready(matches)
+            }
+
             None if query.is_empty() => {
                 let recent_task = self.recent_context_picker_entries(&workspace, cx);
                 let entries = self
@@ -1402,6 +1481,20 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 .diagnostic_summary(false, cx);
             if summary.error_count > 0 || summary.warning_count > 0 {
                 entries.push(PromptContextEntry::Mode(PromptContextType::Diagnostics));
+            }
+        }
+
+        if self.source.supports_context(PromptContextType::ContextServer, cx) {
+            let has_servers = !workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .context_server_store()
+                .read(cx)
+                .server_ids()
+                .is_empty();
+            if has_servers {
+                entries.push(PromptContextEntry::Mode(PromptContextType::ContextServer));
             }
         }
 
@@ -1869,6 +1962,17 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                             workspace.clone(),
                                             cx,
                                         ))
+                                    }
+                                    Match::ContextServer(ctx_server) => {
+                                        Self::completion_for_context_server(
+                                            ctx_server,
+                                            source_range.clone(),
+                                            source.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            workspace.clone(),
+                                            cx,
+                                        )
                                     }
                                 };
                                 if let Some(completion) = &mut completion {
