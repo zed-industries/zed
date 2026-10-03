@@ -7,7 +7,7 @@ use acp_thread::{
 use anyhow::Result;
 use collections::{HashSet, IndexMap};
 use futures::FutureExt;
-use fuzzy::{StringMatchCandidate, match_strings};
+use fuzzy_nucleo::StringMatchCandidate;
 use gpui::{
     Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, FocusHandle, Subscription, Task,
     TaskExt, WeakEntity,
@@ -441,20 +441,30 @@ async fn fuzzy_search(
 ) -> AgentModelList {
     async fn fuzzy_search_list(
         model_list: Vec<AgentModelInfo>,
+        group_name: Option<SharedString>,
         query: &str,
         executor: BackgroundExecutor,
     ) -> Vec<AgentModelInfo> {
         let candidates = model_list
             .iter()
             .enumerate()
-            .map(|(ix, model)| StringMatchCandidate::new(ix, model.name.as_ref()))
+            .map(|(index, model)| {
+                StringMatchCandidate::new(
+                    index,
+                    format!(
+                        "{} {}",
+                        model.name,
+                        group_name.as_deref().unwrap_or_default()
+                    ),
+                )
+            })
             .collect::<Vec<_>>();
-        let mut matches = match_strings(
+        let mut matches = fuzzy_nucleo::match_strings_async(
             &candidates,
             query,
-            false,
-            true,
-            100,
+            fuzzy_nucleo::Case::Ignore,
+            fuzzy_nucleo::LengthPenalty::On,
+            model_list.len(),
             &Default::default(),
             executor,
         )
@@ -473,12 +483,12 @@ async fn fuzzy_search(
 
     match model_list {
         AgentModelList::Flat(model_list) => {
-            AgentModelList::Flat(fuzzy_search_list(model_list, &query, executor).await)
+            AgentModelList::Flat(fuzzy_search_list(model_list, None, &query, executor).await)
         }
         AgentModelList::Grouped(index_map) => {
             let groups =
                 futures::future::join_all(index_map.into_iter().map(|(group_name, models)| {
-                    fuzzy_search_list(models, &query, executor.clone())
+                    fuzzy_search_list(models, Some(group_name.0.clone()), &query, executor.clone())
                         .map(|results| (group_name, results))
                 }))
                 .await;
@@ -698,6 +708,16 @@ mod tests {
         // Fuzzy search - test with specific model name
         let results = fuzzy_search(models.clone(), "mistral".into(), cx.executor()).await;
         assert_models_eq(results, vec![("ollama", vec!["mistral"])]);
+
+        let models = create_model_list(vec![
+            ("OpenAI", vec!["GPT-5.6 Sol"]),
+            ("Anthropic", vec!["Claude Sonnet 4"]),
+        ]);
+        let results = fuzzy_search(models.clone(), "GPT 5.6".into(), cx.executor()).await;
+        assert_models_eq(results, vec![("OpenAI", vec!["GPT-5.6 Sol"])]);
+
+        let results = fuzzy_search(models, "openai".into(), cx.executor()).await;
+        assert_models_eq(results, vec![("OpenAI", vec!["GPT-5.6 Sol"])]);
     }
 
     #[gpui::test]
