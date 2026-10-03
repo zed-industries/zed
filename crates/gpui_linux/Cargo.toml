@@ -66,6 +66,7 @@ parking_lot.workspace = true
 smallvec.workspace = true
 smol.workspace = true
 strum.workspace = true
+theme.workspace = true
 url.workspace = true
 uuid.workspace = true
 
