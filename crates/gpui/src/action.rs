@@ -170,6 +170,15 @@ pub trait Action: Any + Send {
     {
         None
     }
+
+    /// Additional search keywords for this action. In Zed, these let the command palette
+    /// surface the action when the query matches a keyword rather than the action's name.
+    fn keywords() -> &'static [&'static str]
+    where
+        Self: Sized,
+    {
+        &[]
+    }
 }
 
 impl std::fmt::Debug for dyn Action {
@@ -237,6 +246,7 @@ pub(crate) struct ActionRegistry {
     deprecated_aliases: HashMap<&'static str, &'static str>, // deprecated name -> preferred name
     deprecation_messages: HashMap<&'static str, &'static str>, // action name -> deprecation message
     documentation: HashMap<&'static str, &'static str>, // action name -> documentation
+    keywords: HashMap<&'static str, &'static [&'static str]>, // action name -> search keywords
 }
 
 impl Default for ActionRegistry {
@@ -248,6 +258,7 @@ impl Default for ActionRegistry {
             all_names: Default::default(),
             deprecated_aliases: Default::default(),
             deprecation_messages: Default::default(),
+            keywords: Default::default(),
         };
 
         this.load_actions();
@@ -277,6 +288,7 @@ pub struct MacroActionData {
     pub deprecated_aliases: &'static [&'static str],
     pub deprecation_message: Option<&'static str>,
     pub documentation: Option<&'static str>,
+    pub keywords: &'static [&'static str],
 }
 
 inventory::collect!(MacroActionBuilder);
@@ -329,6 +341,9 @@ impl ActionRegistry {
         }
         if let Some(documentation) = action.documentation {
             self.documentation.insert(name, documentation);
+        }
+        if !action.keywords.is_empty() {
+            self.keywords.insert(name, action.keywords);
         }
     }
 
@@ -405,6 +420,10 @@ impl ActionRegistry {
 
     pub fn deprecation_messages(&self) -> &HashMap<&'static str, &'static str> {
         &self.deprecation_messages
+    }
+
+    pub fn keywords(&self) -> &HashMap<&'static str, &'static [&'static str]> {
+        &self.keywords
     }
 
     pub fn documentation(&self) -> &HashMap<&'static str, &'static str> {
