@@ -117,6 +117,47 @@ To open a local folder inside a WSL container, use the {#action projects::OpenFo
 
 To open a folder that's already located inside of a WSL container, use the {#action projects::OpenWsl} action and select the WSL distribution. The distribution will be added to the `Remote Projects` window where you will be able to open the folder.
 
+### Opening a folder from a WSL terminal
+
+Install Zed on Windows and keep the installer's **Add to PATH** option selected. WSL imports the Windows PATH by default, making Zed's `bin/zed` launcher available without installing the Linux editor or editing your shell's startup files. After installing, restart your terminal application so new WSL shells inherit the updated Windows PATH.
+
+From a WSL terminal, change to your project directory and run:
+
+```sh
+cd ~/projects/myproject
+zed .
+```
+
+The launcher opens the directory in the Windows editor using the current WSL distribution and user. On the first connection, Zed downloads and installs a matching remote server in that distribution, which can take some time.
+
+#### If `zed` is not found
+
+Check which command your shell resolves:
+
+```sh
+command -v zed
+```
+
+The result should point to the Windows installation's `bin/zed` script. If another installation provides the command, use the full path below or adjust your PATH order.
+
+For a default Windows installation, you can invoke the launcher directly. Replace `<WindowsUser>` with your Windows username:
+
+```sh
+"/mnt/c/Users/<WindowsUser>/AppData/Local/Programs/Zed/bin/zed" .
+```
+
+Adjust this path if you installed Zed elsewhere or changed WSL's Windows drive mount location. Use the `zed` shell script in `bin`, which passes the WSL connection information to the CLI. The `Zed.exe` in the parent directory is the editor application.
+
+If you disabled Windows PATH imports with `appendWindowsPath=false` in `/etc/wsl.conf`, you can add just Zed's `bin` directory to your WSL PATH. For Bash or Zsh, add the following to `~/.bashrc` or `~/.zshrc`, respectively, adjusting the path for your installation:
+
+```sh
+export PATH="$PATH:/mnt/c/Users/<WindowsUser>/AppData/Local/Programs/Zed/bin"
+```
+
+Open a new shell after saving the file. Launching the Windows editor also requires WSL interoperability to be enabled. See Microsoft's [WSL interoperability settings](https://learn.microsoft.com/en-us/windows/wsl/wsl-config#interop-settings).
+
+These instructions apply to a WSL terminal launched outside Zed. CLI support inside Zed's integrated remote terminals is covered by the [known limitations](#known-limitations).
+
 ## Port forwarding
 
 If you'd like to be able to connect to ports on your remote server from your local machine, you can configure port forwarding in your settings file. This is particularly useful for developing websites so you can load the site in your browser while working.
@@ -272,7 +313,7 @@ Note that we deliberately disallow some options (for example `-t` or `-T`) that 
 
 ## Known Limitations
 
-- You can't open files from the remote Terminal by typing the `zed` command.
+- Zed does not provide a `zed` command in its integrated remote terminals to open files in the connected editor. This is separate from [launching the Windows editor from an external WSL terminal](#opening-a-folder-from-a-wsl-terminal).
 
 ## See also
 
