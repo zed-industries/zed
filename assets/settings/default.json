@@ -1147,6 +1147,11 @@
     // Choices: project_diff, file_diff, view_file
     // Default: project_diff
     "entry_primary_click_action": "project_diff",
+    // Whether the commit message editor is shown in the git panel by default.
+    //
+    // Choices: expanded, collapsed
+    // Default: expanded
+    "commit_editor": "expanded",
   },
   "agent": {
     // Whether the inline assistant should use streaming tools, when available
@@ -1288,7 +1293,6 @@
       "write": {
         "name": "Write",
         "enable_all_context_servers": true,
-        // sorted to keep it diffable to custom profiles
         "tools": {
           "apply_code_action": true,
           "ask_user": false,
@@ -1320,7 +1324,6 @@
         "name": "Ask",
         // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
         // "enable_all_context_servers": true,
-        // sorted to keep it diffable to custom profiles
         "tools": {
           "ask_user": false,
           "create_thread": true,
@@ -1584,6 +1587,11 @@
     "include_ignored": "smart",
     // Whether to include text channels in file finder results.
     "include_channels": false,
+    // Whether to pre-fill the file finder's query with the text selected in the
+    // focused item (e.g. an editor or a terminal) when it is opened.
+    //
+    // Default: true
+    "prefill_query_from_selection": true,
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -1934,7 +1942,6 @@
     "mode": "eager",
     // Copilot-specific settings
     // "copilot": {
-    //   "enterprise_uri": "",
     //   "proxy": "",
     //   "proxy_no_verify": false,
     //   "enable_next_edit_suggestions": true,
@@ -1943,7 +1950,6 @@
     //   "prediction_debounce": 75
     // },
     "copilot": {
-      "enterprise_uri": null,
       "proxy": null,
       "proxy_no_verify": null,
       "enable_next_edit_suggestions": true,
@@ -2641,6 +2647,10 @@
       "format_on_save": "on",
       "language_servers": ["zls", "..."],
     },
+  },
+  // Settings shared by Copilot Chat and edit predictions.
+  "copilot": {
+    "enterprise_uri": null,
   },
   // Different settings for specific language models.
   "language_models": {
