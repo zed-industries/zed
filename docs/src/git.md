@@ -119,6 +119,10 @@ To view File History:
 - Right-click on an editor tab and select "View File History"
 - Use the Command Palette and search for "file history"
 
+## Tags
+
+To create a lightweight tag at `HEAD`, use {#action git::CreateTagAtHead} from the Command Palette. Tags are created locally and are not pushed automatically.
+
 ## Fetch, Push, and Pull
 
 Fetch, push, or pull from your Git repository in Zed via the buttons available on the Git Panel or via the Command Palette by looking at the respective actions: {#action git::Fetch}, {#action git::Push}, and {#action git::Pull}.
