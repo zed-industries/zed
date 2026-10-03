@@ -113,6 +113,10 @@ fn migrate_thread_metadata(cx: &mut App) -> Task<anyhow::Result<()>> {
         let existing_list = db.list()?;
         let existing_session_ids: HashSet<Arc<str>> = existing_list
             .into_iter()
+            .filter(|metadata| {
+                metadata.agent_id.as_ref() == ZED_AGENT_ID.as_ref()
+                    && metadata.remote_connection.is_none()
+            })
             .filter_map(|m| m.session_id.map(|s| s.0))
             .collect();
 
@@ -592,8 +596,34 @@ impl ThreadMetadataStore {
 
     /// Returns the metadata for a thread identified by its ACP session ID.
     pub fn entry_by_session(&self, session_id: &acp::SessionId) -> Option<&ThreadMetadata> {
-        let thread_id = self.threads_by_session.get(session_id)?;
-        self.threads.get(thread_id)
+        self.threads_by_session
+            .get(session_id)
+            .and_then(|thread_id| self.threads.get(thread_id))
+            .or_else(|| {
+                self.threads
+                    .values()
+                    .find(|metadata| metadata.session_id.as_ref() == Some(session_id))
+            })
+    }
+
+    pub fn entry_by_session_with_context(
+        &self,
+        session_id: &acp::SessionId,
+        agent_id: &AgentId,
+        remote_connection: Option<&RemoteConnectionOptions>,
+    ) -> Option<&ThreadMetadata> {
+        self.entry_by_session(session_id)
+            .filter(|metadata| {
+                &metadata.agent_id == agent_id
+                    && metadata.matches_remote_connection(remote_connection)
+            })
+            .or_else(|| {
+                self.threads.values().find(|metadata| {
+                    metadata.session_id.as_ref() == Some(session_id)
+                        && &metadata.agent_id == agent_id
+                        && metadata.matches_remote_connection(remote_connection)
+                })
+            })
     }
 
     /// Returns all threads.
@@ -2006,6 +2036,97 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_entry_by_session_falls_back_after_duplicate_delete(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mut first = make_metadata("shared-session", "First", Utc::now(), PathList::default());
+        first.agent_id = AgentId::new("agent-a");
+        let first_thread_id = first.thread_id;
+
+        let mut second = make_metadata("shared-session", "Second", Utc::now(), PathList::default());
+        second.agent_id = AgentId::new("agent-b");
+        let second_thread_id = second.thread_id;
+        let session_id = second.session_id.clone().unwrap();
+
+        cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(first, cx);
+                store.save(second, cx);
+                store.delete(second_thread_id, cx);
+            });
+        });
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            assert_eq!(
+                store
+                    .read(cx)
+                    .entry_by_session(&session_id)
+                    .map(|metadata| metadata.thread_id),
+                Some(first_thread_id)
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_entry_by_session_with_context_distinguishes_remote(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let session_id = acp::SessionId::new("shared-session");
+        let agent_id = AgentId::new("agent-a");
+        let mut local = make_metadata(
+            session_id.0.as_ref(),
+            "Local",
+            Utc::now(),
+            PathList::default(),
+        );
+        local.agent_id = agent_id.clone();
+        let local_thread_id = local.thread_id;
+
+        let remote_connection = RemoteConnectionOptions::Wsl(WslConnectionOptions {
+            distro_name: "Ubuntu".to_string(),
+            user: Some("zed".to_string()),
+        });
+        let mut remote = make_metadata(
+            session_id.0.as_ref(),
+            "Remote",
+            Utc::now(),
+            PathList::default(),
+        );
+        remote.agent_id = agent_id.clone();
+        remote.remote_connection = Some(remote_connection.clone());
+        let remote_thread_id = remote.thread_id;
+
+        cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(local, cx);
+                store.save(remote, cx);
+            });
+        });
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+            assert_eq!(
+                store
+                    .entry_by_session_with_context(&session_id, &agent_id, None)
+                    .map(|metadata| metadata.thread_id),
+                Some(local_thread_id)
+            );
+            assert_eq!(
+                store
+                    .entry_by_session_with_context(
+                        &session_id,
+                        &agent_id,
+                        Some(&remote_connection),
+                    )
+                    .map(|metadata| metadata.thread_id),
+                Some(remote_thread_id)
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_store_set_generated_title_clears_title_override(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -2421,6 +2542,77 @@ mod tests {
             list[0].session_id.as_ref().unwrap().0.as_ref(),
             "existing-session"
         );
+    }
+
+    #[gpui::test]
+    async fn test_migrate_thread_metadata_distinguishes_agent_and_remote_context(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let session_id = acp::SessionId::new("shared-session");
+        let project_paths = PathList::new(&[Path::new("/project-a")]);
+        let now = Utc::now();
+        let mut custom_metadata = make_metadata(
+            session_id.0.as_ref(),
+            "Custom Agent Thread",
+            now,
+            project_paths.clone(),
+        );
+        custom_metadata.agent_id = AgentId::new("custom-agent");
+        let mut remote_metadata = make_metadata(
+            session_id.0.as_ref(),
+            "Remote Native Thread",
+            now,
+            project_paths.clone(),
+        );
+        remote_metadata.remote_connection =
+            Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
+                distro_name: "Ubuntu".to_string(),
+                user: None,
+            }));
+
+        cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save_all(vec![custom_metadata, remote_metadata], cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let save_task = cx.update(|cx| {
+            ThreadStore::global(cx).update(cx, |store, cx| {
+                store.save_thread(
+                    session_id.clone(),
+                    make_db_thread("Local Native Thread", now),
+                    project_paths,
+                    cx,
+                )
+            })
+        });
+        save_task.await.unwrap();
+        cx.run_until_parked();
+
+        run_store_migrations(cx);
+
+        let matching = cx.update(|cx| {
+            ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entries()
+                .filter(|metadata| metadata.session_id.as_ref() == Some(&session_id))
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(matching.len(), 3);
+        assert!(matching.iter().any(|metadata| {
+            metadata.agent_id == *ZED_AGENT_ID && metadata.remote_connection.is_none()
+        }));
+        assert!(matching.iter().any(|metadata| {
+            metadata.agent_id.as_ref() == "custom-agent" && metadata.remote_connection.is_none()
+        }));
+        assert!(matching.iter().any(|metadata| {
+            metadata.agent_id == *ZED_AGENT_ID && metadata.remote_connection.is_some()
+        }));
     }
 
     #[gpui::test]

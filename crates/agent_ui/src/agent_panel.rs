@@ -1176,6 +1176,8 @@ impl AgentPanel {
                 .active_conversation_view()
                 .map(|cv| cv.read(cx).agent_key().clone())
                 .unwrap_or_else(|| self.selected_agent.clone());
+            let active_thread_agent_id = active_thread_agent.id();
+            let remote_connection = self.project.read(cx).remote_connection_options(cx);
             self.active_agent_thread(cx)
                 .map(|thread| {
                     let thread = thread.read(cx);
@@ -1201,8 +1203,16 @@ impl AgentPanel {
                     }
                     let conversation_view = self.active_conversation_view()?;
                     let session_id = conversation_view.read(cx).root_session_id.clone()?;
-                    let metadata = ThreadMetadataStore::try_global(cx)
-                        .and_then(|store| store.read(cx).entry_by_session(&session_id).cloned());
+                    let metadata = ThreadMetadataStore::try_global(cx).and_then(|store| {
+                        store
+                            .read(cx)
+                            .entry_by_session_with_context(
+                                &session_id,
+                                &active_thread_agent_id,
+                                remote_connection.as_ref(),
+                            )
+                            .cloned()
+                    });
                     Some(SerializedActiveThread {
                         session_id: Some(session_id.0.to_string()),
                         thread_id: active_thread_id,
@@ -1332,10 +1342,24 @@ impl AgentPanel {
                     }) {
                         Ok(Some((store, reload_task))) => {
                             reload_task.await;
+                            let agent_id = info.agent_type.id();
+                            let remote_connection = workspace
+                                .read_with(cx, |workspace, cx| {
+                                    workspace
+                                        .project()
+                                        .read(cx)
+                                        .remote_connection_options(cx)
+                                })
+                                .ok()
+                                .flatten();
                             let thread_id = store.read_with(cx, |store, _cx| {
                                 let primary = info.thread_id.and_then(|tid| store.entry(tid));
                                 let fallback = info.session_id.as_ref().and_then(|sid| {
-                                    store.entry_by_session(&acp::SessionId::new(sid.clone()))
+                                    store.entry_by_session_with_context(
+                                        &acp::SessionId::new(sid.clone()),
+                                        &agent_id,
+                                        remote_connection.as_ref(),
+                                    )
                                 });
                                 primary
                                     .or(fallback)
@@ -1508,6 +1532,7 @@ impl AgentPanel {
                 | project::Event::WorktreeOrderChanged
                 | project::Event::WorktreePathsChanged { .. } => {
                     this.ensure_native_agent_connection(cx);
+                    this.refresh_selected_agent_sessions(cx);
                     this.update_thread_work_dirs(cx);
                     this.persist_all_terminal_metadata(cx);
                     cx.notify();
@@ -1670,10 +1695,15 @@ impl AgentPanel {
         // Share links / clipboard imports enter with only a session id. If
         // this machine already has a metadata row for the session, route
         // through the normal thread-id path.
+        let remote_connection = self.project.read(cx).remote_connection_options(cx);
         let existing_thread_id = ThreadMetadataStore::try_global(cx).and_then(|store| {
             store
                 .read(cx)
-                .entry_by_session(&session_id)
+                .entry_by_session_with_context(
+                    &session_id,
+                    &agent::ZED_AGENT_ID,
+                    remote_connection.as_ref(),
+                )
                 .map(|m| m.thread_id)
         });
         if let Some(thread_id) = existing_thread_id {
@@ -5093,9 +5123,13 @@ impl Panel for AgentPanel {
     }
 
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let became_active = active && !self.is_active;
         self.is_active = active;
         if active {
             self.ensure_thread_initialized(window, cx);
+        }
+        if became_active {
+            self.refresh_selected_agent_sessions(cx);
         }
     }
 
@@ -5144,6 +5178,27 @@ impl Panel for AgentPanel {
 }
 
 impl AgentPanel {
+    fn refresh_selected_agent_sessions(&self, cx: &mut Context<Self>) {
+        if self.selected_agent.is_native() {
+            return;
+        }
+        let Some(connection) = self
+            .connection_store
+            .read(cx)
+            .connection(&self.selected_agent, cx)
+        else {
+            return;
+        };
+
+        crate::thread_import::sync_project_sessions(
+            connection.agent_id(),
+            connection,
+            self.project.clone(),
+            cx,
+        )
+        .detach_and_log_err(cx);
+    }
+
     fn ensure_thread_initialized(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(self.base_view, BaseView::Uninitialized) {
             if self.pending_terminal_spawn.is_some() {

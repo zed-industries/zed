@@ -72,18 +72,38 @@ fn init_test(cx: &mut TestAppContext) {
 fn assert_active_thread(sidebar: &Sidebar, session_id: &acp::SessionId, msg: &str) {
     let active = sidebar.active_entry.as_ref();
     let matches = active.is_some_and(|entry| {
-        matches!(entry, ActiveEntry::Thread { session_id: Some(active_session_id), .. } if active_session_id == session_id)
-            || sidebar.contents.entries.iter().any(|list_entry| {
-                matches!(list_entry, ListEntry::Thread(t)
-                    if t.metadata.session_id.as_ref() == Some(session_id)
-                        && entry.matches_entry(list_entry))
-            })
+        sidebar.contents.entries.iter().any(|list_entry| {
+            matches!(list_entry, ListEntry::Thread(t)
+                if t.metadata.session_id.as_ref() == Some(session_id)
+                    && entry.matches_entry(list_entry))
+        })
     });
     assert!(
         matches,
         "{msg}: expected active_entry for session {session_id:?}, got {:?}",
         active,
     );
+}
+
+fn archive_thread_by_session(
+    sidebar: &mut Sidebar,
+    session_id: &acp::SessionId,
+    window: &mut Window,
+    cx: &mut Context<Sidebar>,
+) {
+    let thread_ids = ThreadMetadataStore::global(cx)
+        .read(cx)
+        .entries()
+        .filter(|metadata| metadata.session_id.as_ref() == Some(session_id))
+        .map(|metadata| metadata.thread_id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        thread_ids.len(),
+        1,
+        "test session must resolve to exactly one ThreadId"
+    );
+    let thread_id = thread_ids[0];
+    sidebar.archive_thread(thread_id, window, cx);
 }
 
 #[track_caller]
@@ -8915,7 +8935,7 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
 
     // Archive thread 2.
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.archive_thread(&thread2_session_id, window, cx);
+        archive_thread_by_session(sidebar, &thread2_session_id, window, cx);
     });
 
     cx.run_until_parked();
@@ -9092,7 +9112,7 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
 
     // Archive the worktree thread (the only thread for /wt-feature-a).
     sidebar.update_in(cx, |sidebar: &mut Sidebar, window, cx| {
-        sidebar.archive_thread(&wt_thread_id, window, cx);
+        archive_thread_by_session(sidebar, &wt_thread_id, window, cx);
     });
 
     // archive_thread spawns a multi-layered chain of tasks (workspace
@@ -9757,7 +9777,7 @@ async fn test_archive_last_worktree_thread_not_blocked_by_remote_thread_at_same_
 
     // Archive the local worktree thread.
     sidebar.update_in(cx, |sidebar: &mut Sidebar, window, cx| {
-        sidebar.archive_thread(&wt_thread_id, window, cx);
+        archive_thread_by_session(sidebar, &wt_thread_id, window, cx);
     });
 
     cx.run_until_parked();
@@ -10254,7 +10274,8 @@ async fn test_archive_thread_keeps_metadata_but_hides_from_sidebar(cx: &mut Test
     );
 
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.archive_thread(
+        archive_thread_by_session(
+            sidebar,
             &acp::SessionId::new(Arc::from("thread-to-archive")),
             window,
             cx,
@@ -10306,7 +10327,7 @@ async fn test_archive_thread_drops_retained_conversation_view(cx: &mut TestAppCo
     });
 
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.archive_thread(&session_id, window, cx);
+        archive_thread_by_session(sidebar, &session_id, window, cx);
     });
     cx.run_until_parked();
 
@@ -10373,7 +10394,7 @@ async fn test_archive_thread_active_entry_management(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.archive_thread(&thread_a, window, cx);
+        archive_thread_by_session(sidebar, &thread_a, window, cx);
     });
     cx.run_until_parked();
 
@@ -10408,7 +10429,7 @@ async fn test_archive_thread_active_entry_management(cx: &mut TestAppContext) {
     });
 
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.archive_thread(&thread_b, window, cx);
+        archive_thread_by_session(sidebar, &thread_b, window, cx);
     });
     cx.run_until_parked();
 
@@ -10447,7 +10468,7 @@ async fn test_unarchive_only_shows_restored_thread(cx: &mut TestAppContext) {
 
     // Archive it.
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.archive_thread(&session_id, window, cx);
+        archive_thread_by_session(sidebar, &session_id, window, cx);
     });
     cx.run_until_parked();
 
@@ -10772,7 +10793,7 @@ async fn test_unarchive_into_existing_workspace_replaces_draft(cx: &mut TestAppC
 
     // Archive the thread — the group is left empty (no draft created).
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.archive_thread(&session_id, window, cx);
+        archive_thread_by_session(sidebar, &session_id, window, cx);
     });
     cx.run_until_parked();
 
@@ -10982,7 +11003,7 @@ async fn test_unarchive_after_removing_parent_project_group_restores_real_thread
     cx.run_until_parked();
 
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.archive_thread(&session_id, window, cx);
+        archive_thread_by_session(sidebar, &session_id, window, cx);
     });
 
     cx.run_until_parked();
@@ -11121,7 +11142,7 @@ async fn test_unarchive_does_not_create_duplicate_real_thread_metadata(cx: &mut 
     });
 
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.archive_thread(&session_id, window, cx);
+        archive_thread_by_session(sidebar, &session_id, window, cx);
     });
     cx.run_until_parked();
 
@@ -11227,7 +11248,7 @@ async fn test_switch_to_workspace_with_archived_thread_shows_no_active_entry(
 
     // Archive it while project-b is active.
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.archive_thread(&thread_a, window, cx);
+        archive_thread_by_session(sidebar, &thread_a, window, cx);
     });
     cx.run_until_parked();
 
@@ -11471,7 +11492,7 @@ async fn test_archive_last_thread_on_linked_worktree_does_not_create_new_thread_
 
     // Archive the worktree thread — it's the only thread using ochre-drift.
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.archive_thread(&worktree_thread_id, window, cx);
+        archive_thread_by_session(sidebar, &worktree_thread_id, window, cx);
     });
 
     cx.run_until_parked();
@@ -11601,7 +11622,7 @@ async fn test_archive_last_thread_on_linked_worktree_with_no_siblings_leaves_gro
 
     // Archive it — there are no other threads in the group.
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.archive_thread(&worktree_thread_id, window, cx);
+        archive_thread_by_session(sidebar, &worktree_thread_id, window, cx);
     });
 
     cx.run_until_parked();
@@ -11924,7 +11945,7 @@ async fn test_archive_thread_on_linked_worktree_selects_sibling_thread(cx: &mut 
 
     // Archive the worktree thread.
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.archive_thread(&worktree_thread_id, window, cx);
+        archive_thread_by_session(sidebar, &worktree_thread_id, window, cx);
     });
 
     cx.run_until_parked();
@@ -13405,7 +13426,7 @@ mod property_test {
             Operation::ArchiveThread { index } => {
                 let session_id = state.saved_thread_ids[index].clone();
                 sidebar.update_in(cx, |sidebar: &mut Sidebar, window, cx| {
-                    sidebar.archive_thread(&session_id, window, cx);
+                    archive_thread_by_session(sidebar, &session_id, window, cx);
                 });
                 cx.run_until_parked();
                 state.saved_thread_ids.remove(index);
@@ -14469,7 +14490,7 @@ async fn test_archive_removes_worktree_even_when_workspace_paths_diverge(cx: &mu
 
     // Archive the worktree thread.
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.archive_thread(&wt_thread_id, window, cx);
+        archive_thread_by_session(sidebar, &wt_thread_id, window, cx);
     });
 
     cx.run_until_parked();
@@ -14697,7 +14718,7 @@ async fn test_archive_mixed_workspace_closes_only_archived_worktree_items(cx: &m
     // Archive the feature-b thread.
     let fb_session_id = acp::SessionId::new(Arc::from("feature-b-thread"));
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.archive_thread(&fb_session_id, window, cx);
+        archive_thread_by_session(sidebar, &fb_session_id, window, cx);
     });
 
     cx.run_until_parked();
@@ -15174,7 +15195,7 @@ async fn test_remote_archive_thread_with_active_connection(
     );
 
     sidebar.update_in(cx, |sidebar: &mut Sidebar, window, cx| {
-        sidebar.archive_thread(&wt_thread_id, window, cx);
+        archive_thread_by_session(sidebar, &wt_thread_id, window, cx);
     });
     cx.run_until_parked();
     server_cx.run_until_parked();
@@ -15451,7 +15472,7 @@ async fn test_remote_archive_thread_with_disconnected_remote(
     });
 
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.archive_thread(&thread_id, window, cx);
+        archive_thread_by_session(sidebar, &thread_id, window, cx);
     });
     cx.run_until_parked();
 
