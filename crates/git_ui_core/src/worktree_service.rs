@@ -925,11 +925,6 @@ pub fn handle_switch_worktree(
 
     let (git_repos, non_git_paths) = classify_worktrees(project.read(cx), cx);
 
-    let git_repo_work_dirs: Vec<PathBuf> = git_repos
-        .iter()
-        .map(|repo| repo.read(cx).work_directory_abs_path.to_path_buf())
-        .collect();
-
     let display_name: SharedString = action.display_name.clone().into();
 
     workspace.set_active_worktree_creation(Some(display_name), true, cx);
@@ -939,7 +934,7 @@ pub fn handle_switch_worktree(
     cx.spawn_in(window, async move |_workspace_entity, mut cx| {
         let result = do_switch_worktree(
             worktree_path,
-            git_repo_work_dirs,
+            git_repos,
             non_git_paths,
             previous_state,
             workspace_handle.clone(),
@@ -1110,7 +1105,7 @@ async fn do_create_worktree(
 
 async fn do_switch_worktree(
     worktree_path: PathBuf,
-    git_repo_work_dirs: Vec<PathBuf>,
+    git_repos: Vec<Entity<Repository>>,
     non_git_paths: Vec<PathBuf>,
     previous_state: PreviousWorkspaceState,
     workspace: WeakEntity<Workspace>,
@@ -1118,12 +1113,47 @@ async fn do_switch_worktree(
     remote_connection_options: Option<RemoteConnectionOptions>,
     cx: &mut AsyncWindowContext,
 ) -> anyhow::Result<Entity<Workspace>> {
-    let path_remapping: Vec<(PathBuf, PathBuf)> = git_repo_work_dirs
-        .iter()
-        .map(|work_dir| (work_dir.clone(), worktree_path.clone()))
-        .collect();
+    let work_dirs: Vec<PathBuf> = cx.update(|_, cx| {
+        git_repos
+            .iter()
+            .map(|repo| repo.read(cx).work_directory_abs_path.to_path_buf())
+            .collect()
+    })?;
 
-    let mut all_paths = vec![worktree_path];
+    let worktree_receivers: Vec<_> = cx.update(|_, cx| {
+        git_repos
+            .iter()
+            .map(|repo| repo.update(cx, |repo, _cx| repo.worktrees()))
+            .collect()
+    })?;
+
+    let mut owning_repo = None;
+    for (index, result) in futures::future::join_all(worktree_receivers)
+        .await
+        .into_iter()
+        .enumerate()
+    {
+        if let Ok(Ok(worktrees)) = result
+            && worktrees
+                .iter()
+                .any(|worktree| worktree.path == worktree_path)
+        {
+            owning_repo = Some(index);
+            break;
+        }
+    }
+
+    let mut path_remapping: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(work_dirs.len());
+    let mut all_paths = vec![worktree_path.clone()];
+    for (index, work_dir) in work_dirs.iter().enumerate() {
+        if Some(index) == owning_repo {
+            path_remapping.push((work_dir.clone(), worktree_path.clone()));
+        } else {
+            path_remapping.push((work_dir.clone(), work_dir.clone()));
+            all_paths.push(work_dir.clone());
+        }
+    }
+
     let has_non_git = !non_git_paths.is_empty();
     all_paths.extend(non_git_paths.iter().cloned());
 
@@ -1706,6 +1736,96 @@ mod tests {
         assert!(
             !has_modal,
             "security modal should not show for a linked worktree created from a trusted main worktree"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_switch_worktree_keeps_sibling_git_repos(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        fs.insert_tree(
+            "/root",
+            json!({
+                "app": {
+                    ".git": {
+                        "worktrees": {
+                            "feature": {
+                                "HEAD": "ref: refs/heads/feature\n",
+                                "gitdir": path!("/root/app-feature/.git"),
+                            },
+                        },
+                    },
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                },
+                "app-feature": {
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                },
+                "deploy": {
+                    ".git": {},
+                    "README.md": "deploy",
+                },
+            }),
+        )
+        .await;
+
+        let app_root = PathBuf::from(path!("/root/app"));
+        let app_feature_root = PathBuf::from(path!("/root/app-feature"));
+        let deploy_root = PathBuf::from(path!("/root/deploy"));
+
+        let project =
+            Project::test(fs.clone(), [app_root.as_path(), deploy_root.as_path()], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        multi_workspace.update(cx, |multi_workspace, cx| {
+            multi_workspace.retain_active_workspace(cx);
+        });
+
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        workspace.update_in(cx, |workspace, window, cx| {
+            handle_switch_worktree(
+                workspace,
+                &zed_actions::SwitchWorktree {
+                    path: app_feature_root.clone(),
+                    display_name: "app-feature".to_string(),
+                },
+                window,
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let new_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let roots: Vec<PathBuf> = new_workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .project()
+                .read(cx)
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .collect()
+        });
+
+        assert!(
+            roots.contains(&deploy_root),
+            "sibling git root should survive the switch, got {roots:?}"
+        );
+        assert!(
+            roots.contains(&app_feature_root),
+            "destination worktree should be opened, got {roots:?}"
+        );
+        assert!(
+            !roots.contains(&app_root),
+            "source git root should be replaced, got {roots:?}"
         );
     }
 
