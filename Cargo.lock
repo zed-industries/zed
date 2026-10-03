@@ -18226,6 +18226,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "menu",
+ "paths",
  "picker",
  "project",
  "serde_json",

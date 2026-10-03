@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use session::DebugSession;
 
-use tasks_ui::{Spawn, TaskOverrides};
+use tasks_ui::Spawn;
 use ui::{FluentBuilder, InteractiveElement};
 use util::maybe;
 use workspace::{ShutdownDebugAdapters, Workspace};
@@ -423,30 +423,16 @@ fn spawn_task_or_modal(
         Spawn::ByName {
             task_name,
             reveal_target,
-        } => {
-            let overrides = reveal_target.map(|reveal_target| TaskOverrides {
-                reveal_target: Some(reveal_target),
-            });
-            let name = task_name.clone();
-            tasks_ui::spawn_tasks_filtered(
-                move |(_, task)| task.label.eq(&name),
-                overrides,
-                window,
-                cx,
-            )
-            .detach_and_log_err(cx)
-        }
+        } => tasks_ui::spawn_task_by_name(task_name.clone(), *reveal_target, window, cx)
+            .detach_and_log_err(cx),
         Spawn::ByTag {
             task_tag,
             reveal_target,
         } => {
-            let overrides = reveal_target.map(|reveal_target| TaskOverrides {
-                reveal_target: Some(reveal_target),
-            });
             let tag = task_tag.clone();
             tasks_ui::spawn_tasks_filtered(
                 move |(_, task)| task.tags.contains(&tag),
-                overrides,
+                *reveal_target,
                 window,
                 cx,
             )
