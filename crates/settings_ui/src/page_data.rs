@@ -4530,6 +4530,25 @@ fn window_and_layout_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Inline Menus",
+                description: "Keep menus on the same row as other title bar items when Show Menus is enabled (Windows and Linux only).",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("title_bar.inline_menus"),
+                    pick: |settings_content| {
+                        settings_content.title_bar.as_ref()?.inline_menus.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .title_bar
+                            .get_or_insert_default()
+                            .inline_menus = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::DynamicItem(DynamicItem {
                 discriminant: SettingItem {
                     files: USER,
