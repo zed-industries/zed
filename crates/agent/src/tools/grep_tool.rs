@@ -66,6 +66,28 @@ impl GrepToolInput {
 }
 
 const RESULTS_PER_PAGE: u32 = 20;
+/// Maximum line length for a match snippet before truncating (ripgrep-style max-columns).
+const MAX_LINE_LEN: usize = 500;
+/// Maximum total output bytes across all matches in a single page to prevent context window overflow.
+const MAX_OUTPUT_BYTES: usize = 64 * 1024;
+
+fn format_snippet<'a>(chunks: impl IntoIterator<Item = &'a str>) -> String {
+    let raw: String = chunks.into_iter().collect();
+    let mut formatted = String::with_capacity(raw.len().min(MAX_LINE_LEN * 4));
+    for (i, line) in raw.split('\n').enumerate() {
+        if i > 0 {
+            formatted.push('\n');
+        }
+        if line.len() > MAX_LINE_LEN {
+            let boundary = line.floor_char_boundary(MAX_LINE_LEN);
+            formatted.push_str(&line[..boundary]);
+            let _ = write!(formatted, "... [truncated {} chars]", line.len() - boundary);
+        } else {
+            formatted.push_str(line);
+        }
+    }
+    formatted
+}
 
 pub struct GrepTool {
     project: Entity<Project>,
@@ -322,7 +344,7 @@ impl AgentTool for GrepTool {
                     };
                     writeln!(output, "{line_label}").ok();
 
-                    let snippet: String = snapshot.text_for_range(range.clone()).collect();
+                    let snippet = format_snippet(snapshot.text_for_range(range.clone()));
                     output.push_str("```\n");
                     output.push_str(&snippet);
                     output.push_str("\n```\n");
@@ -363,6 +385,12 @@ impl AgentTool for GrepTool {
                         }
 
                     matches_found += 1;
+
+                    if output.len() >= MAX_OUTPUT_BYTES {
+                        output.push_str("\n... [Output limit reached. Refine include_pattern or regex for more results]\n");
+                        has_more_matches = true;
+                        break 'outer;
+                    }
                 }
             }
 
@@ -1408,6 +1436,73 @@ mod tests {
         assert!(
             paths.iter().all(|p| !p.contains("worktree2")),
             "Should not find any matches in worktree2"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_grep_tool_truncates_long_lines(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        let long_line = format!("prefix needle {}", "x".repeat(1000));
+        fs.insert_tree(
+            path!("/root"),
+            serde_json::json!({
+                "minified.js": long_line,
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let input = GrepToolInput {
+            regex: "needle".to_string(),
+            include_pattern: None,
+            offset: 0,
+            case_sensitive: false,
+        };
+
+        let result = run_grep_tool(input, project.clone(), cx).await;
+        assert!(result.contains("prefix needle"), "Should contain match prefix");
+        assert!(result.contains("... [truncated"), "Should contain truncation notice");
+        assert!(result.len() < 800, "Output should be bounded in length");
+    }
+
+    #[gpui::test]
+    async fn test_grep_tool_caps_output_bytes(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        let lines: Vec<String> = (0..500)
+            .map(|i| format!("line {i} needle {}", "a".repeat(400)))
+            .collect();
+        fs.insert_tree(
+            path!("/root"),
+            serde_json::json!({
+                "large.txt": lines.join("\n"),
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let input = GrepToolInput {
+            regex: "needle".to_string(),
+            include_pattern: None,
+            offset: 0,
+            case_sensitive: false,
+        };
+
+        let result = run_grep_tool(input, project.clone(), cx).await;
+        assert!(
+            result.contains("Output limit reached"),
+            "Should contain output limit notice, got: {result}"
+        );
+        assert!(
+            result.len() <= MAX_OUTPUT_BYTES + 4096,
+            "Output size should be capped near MAX_OUTPUT_BYTES"
         );
     }
 
