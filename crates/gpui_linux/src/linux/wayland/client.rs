@@ -44,6 +44,7 @@ use wayland_client::{
 use wayland_protocols::wp::pointer_gestures::zv1::client::{
     zwp_pointer_gesture_pinch_v1, zwp_pointer_gestures_v1,
 };
+use wayland_protocols::wp::presentation_time::client::{wp_presentation, wp_presentation_feedback};
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::{
     self, ZwpPrimarySelectionOfferV1,
 };
@@ -258,6 +259,7 @@ pub struct Globals {
     pub gesture_manager: Option<zwp_pointer_gestures_v1::ZwpPointerGesturesV1>,
     pub dialog: Option<xdg_wm_dialog_v1::XdgWmDialogV1>,
     pub system_bell: Option<xdg_system_bell_v1::XdgSystemBellV1>,
+    pub presentation: Option<wp_presentation::WpPresentation>,
     pub executor: ForegroundExecutor,
     pub frame_ping: Ping,
 }
@@ -308,6 +310,7 @@ impl Globals {
             gesture_manager: globals.bind(&qh, 1..=3, ()).ok(),
             dialog: globals.bind(&qh, dialog_v..=dialog_v, ()).ok(),
             system_bell: globals.bind(&qh, 1..=1, ()).ok(),
+            presentation: globals.bind(&qh, 1..=2, ()).ok(),
             executor,
             qh,
             frame_ping,
@@ -597,25 +600,51 @@ impl WaylandClientStatePtr {
     /// retry would spin against the frame-rate throttle that deferred the draw in the
     /// first place.
     pub fn schedule_frame_retry(&self, surface_id: &ObjectId) {
+        if let Err(err) = self.insert_window_timer(
+            surface_id,
+            Timer::from_duration(FRAME_RETRY_INTERVAL),
+            WaylandWindowStatePtr::retry_timer_fired,
+        ) {
+            log::error!("Failed to schedule frame retry: {err}");
+        }
+    }
+
+    /// Queue a refresh tick for `surface_id` at `deadline`, just in case the frame
+    /// callback is taking its time.
+    pub fn schedule_refresh_tick(&self, surface_id: &ObjectId, deadline: Instant) {
+        if let Err(err) = self.insert_window_timer(
+            surface_id,
+            Timer::from_deadline(deadline),
+            WaylandWindowStatePtr::refresh_timer_fired,
+        ) {
+            log::error!("Failed to schedule refresh tick: {err}");
+        }
+    }
+
+    fn insert_window_timer(
+        &self,
+        surface_id: &ObjectId,
+        timer: Timer,
+        fired: impl Fn(&WaylandWindowStatePtr, Instant) + 'static,
+    ) -> calloop::Result<()> {
         let client = self.get_client();
         let state = client.borrow();
         let surface_id = surface_id.clone();
         let this = self.clone();
-        if let Err(err) = state.loop_handle.insert_source(
-            Timer::from_duration(FRAME_RETRY_INTERVAL),
-            move |deadline, _, _| {
+        state
+            .loop_handle
+            .insert_source(timer, move |deadline, _, _| {
                 let Some(client) = this.0.upgrade() else {
                     return TimeoutAction::Drop;
                 };
                 let window = get_window(&mut client.borrow_mut(), &surface_id);
                 if let Some(window) = window {
-                    window.retry_timer_fired(deadline);
+                    fired(&window, deadline);
                 }
                 TimeoutAction::Drop
-            },
-        ) {
-            log::error!("Failed to schedule frame retry: {err}");
-        }
+            })
+            .map(|_| ())
+            .map_err(|err| err.error)
     }
 
     pub fn get_serial(&self, kind: SerialKind) -> Serial {
@@ -1611,6 +1640,7 @@ delegate_noop!(WaylandClientStatePtr: ignore zwp_text_input_manager_v3::ZwpTextI
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur::OrgKdeKwinBlur);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewporter::WpViewporter);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewport::WpViewport);
+delegate_noop!(WaylandClientStatePtr: ignore wp_presentation::WpPresentation);
 
 impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
     fn event(
@@ -1667,6 +1697,32 @@ fn frame_callback_instant(
     received_at
         .checked_sub(Duration::from_millis(u64::from(age_millis)))
         .unwrap_or(received_at)
+}
+
+impl Dispatch<wp_presentation_feedback::WpPresentationFeedback, ObjectId>
+    for WaylandClientStatePtr
+{
+    fn event(
+        this: &mut Self,
+        _: &wp_presentation_feedback::WpPresentationFeedback,
+        event: wp_presentation_feedback::Event,
+        surface_id: &ObjectId,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let wp_presentation_feedback::Event::Presented { refresh, .. } = event else {
+            return;
+        };
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+        let Some(window) = get_window(&mut state, surface_id) else {
+            return;
+        };
+        drop(state);
+
+        // Zero when the compositor has no refresh rate to report.
+        window.frame_presented((refresh != 0).then(|| Duration::from_nanos(refresh.into())));
+    }
 }
 
 pub(crate) fn get_window(
