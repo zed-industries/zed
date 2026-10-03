@@ -77,6 +77,7 @@ where
 {
     let element_id = config.id.take().unwrap_or_else(|| caller_location.into());
     let track_color = config.track_color;
+    let track_corner_radius = config.track_corner_radius;
     let has_border = config.border;
     let reveal_policy = config.reveal_policy;
 
@@ -88,6 +89,7 @@ where
     state.update(cx, |state, cx| {
         state.0.update(cx, |state, _cx| {
             state.update_colors(track_color, has_border);
+            state.track_corner_radius = track_corner_radius;
             state.reveal_policy = reveal_policy;
         })
     });
@@ -388,6 +390,7 @@ pub struct Scrollbars<T: ScrollableHandle = ScrollHandle> {
     style: Option<ScrollbarStyle>,
     reveal_policy: ScrollbarRevealPolicy,
     track_color: Option<Hsla>,
+    track_corner_radius: Pixels,
     border: bool,
 }
 
@@ -416,6 +419,7 @@ impl Scrollbars {
             style: None,
             reveal_policy: ScrollbarRevealPolicy::default(),
             track_color: None,
+            track_corner_radius: Pixels::ZERO,
             border: false,
         }
     }
@@ -456,6 +460,7 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
             visibility,
             get_visibility,
             track_color,
+            track_corner_radius,
             border,
             style,
             reveal_policy,
@@ -468,6 +473,7 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
             tracked_entity: tracked_entity_id,
             visibility,
             track_color,
+            track_corner_radius,
             border,
             get_visibility,
             style,
@@ -500,6 +506,13 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
         self.visibility = along.apply_to(self.visibility, ReservedSpace::StableTrack);
         self.track_color = Some(background_color);
         self.border = true;
+        self
+    }
+
+    /// Rounds the track's outer corners so it stays inside a rounded parent.
+    /// Use the parent's corner radius minus its border width.
+    pub fn track_corner_radius(mut self, radius: Pixels) -> Self {
+        self.track_corner_radius = radius;
         self
     }
 }
@@ -649,6 +662,7 @@ struct ScrollbarState<T: ScrollableHandle = ScrollHandle> {
     get_visibility: fn(&App) -> ShowScrollbar,
     visibility: Point<ReservedSpace>,
     track_color: Option<TrackColors>,
+    track_corner_radius: Pixels,
     reveal_policy: ScrollbarRevealPolicy,
     show_state: VisibilityState,
     style: ScrollbarStyle,
@@ -675,6 +689,7 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
                 background: color,
                 has_border: config.border,
             }),
+            track_corner_radius: config.track_corner_radius,
             show_behavior,
             get_visibility: config.get_visibility,
             style: config.style.unwrap_or_default(),
@@ -1421,6 +1436,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                 let state = self.state.read(cx);
                 let thumb_state = &state.thumb_state;
                 let style = state.style;
+                let track_corner_radius = state.track_corner_radius;
 
                 if thumb_state.is_dragging() {
                     capture_phase = DispatchPhase::Capture;
@@ -1494,9 +1510,23 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                             Hsla::transparent_black()
                         };
 
+                        let track_corners = match axis {
+                            ScrollbarAxis::Horizontal => Corners {
+                                bottom_left: track_corner_radius,
+                                bottom_right: track_corner_radius,
+                                ..Default::default()
+                            },
+                            ScrollbarAxis::Vertical => Corners {
+                                top_right: track_corner_radius,
+                                bottom_right: track_corner_radius,
+                                ..Default::default()
+                            },
+                        }
+                        .clamp_radii_for_quad_size(track_bounds.size);
+
                         window.paint_quad(quad(
                             *track_bounds,
-                            Corners::default(),
+                            track_corners,
                             track_color,
                             border_edges,
                             border_color,
