@@ -8,7 +8,7 @@ use std::{
 use collections::HashMap;
 use fs::{FakeFs, Fs};
 use futures::{FutureExt, StreamExt};
-use gpui::{AppContext, Entity, TestAppContext, WeakEntity, UpdateGlobal as _};
+use gpui::{AppContext, Entity, TestAppContext, UpdateGlobal as _, WeakEntity};
 use language::{
     Buffer, CodeLabel, DiagnosticSourceKind, FakeLspAdapter, HighlightId, LocalFile, rust_lang,
 };
