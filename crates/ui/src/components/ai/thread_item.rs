@@ -46,6 +46,7 @@ pub struct ThreadItem {
     title_generating: bool,
     highlight_positions: Vec<usize>,
     timestamp: SharedString,
+    handoff_from: Option<SharedString>,
     notified: bool,
     status: AgentThreadStatus,
     selected: bool,
@@ -81,6 +82,7 @@ impl ThreadItem {
             title_generating: false,
             highlight_positions: Vec::new(),
             timestamp: "".into(),
+            handoff_from: None,
             notified: false,
             status: AgentThreadStatus::default(),
             selected: false,
@@ -104,6 +106,12 @@ impl ThreadItem {
 
     pub fn timestamp(mut self, timestamp: impl Into<SharedString>) -> Self {
         self.timestamp = timestamp.into();
+        self
+    }
+
+    /// Names the agent the conversation was continued from.
+    pub fn handoff_from(mut self, label: impl Into<SharedString>) -> Self {
+        self.handoff_from = Some(label.into());
         self
     }
 
@@ -414,11 +422,13 @@ impl RenderOnce for ThreadItem {
 
         let has_worktree = !linked_worktrees.is_empty();
 
+        let handoff_from = self.handoff_from;
         let has_metadata = has_project_name
             || has_project_paths
             || has_worktree
             || has_diff_stats
-            || has_timestamp;
+            || has_timestamp
+            || handoff_from.is_some();
 
         v_flex()
             .id(self.id.clone())
@@ -603,6 +613,31 @@ impl RenderOnce for ThreadItem {
                                 Label::new(timestamp.clone())
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
+                            )
+                        })
+                        .when_some(handoff_from, |this, label| {
+                            this.when(
+                                has_project_name
+                                    || has_project_paths
+                                    || has_worktree
+                                    || has_diff_stats
+                                    || has_timestamp,
+                                |this| this.child(dot_separator()),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        Icon::new(IconName::ArrowRight)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new(format!("from {label}"))
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                            .truncate(),
+                                    ),
                             )
                         }),
                 )

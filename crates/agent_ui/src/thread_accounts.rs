@@ -9,7 +9,7 @@ use agent_accounts::AccountId;
 use anyhow::Context as _;
 use collections::HashMap;
 use db::kvp::KeyValueStore;
-use gpui::{App, AppContext as _, Global, Task, TaskExt as _};
+use gpui::{App, AppContext as _, Global, SharedString, Task, TaskExt as _};
 use project::AgentId;
 use serde::{Deserialize, Serialize};
 use util::ResultExt as _;
@@ -49,6 +49,13 @@ impl HandoffSource {
 struct RecentWrites(HashMap<ThreadId, ThreadAccountInfo>);
 
 impl Global for RecentWrites {}
+
+/// Names the agent and account a thread was continued from, if any.
+pub fn handoff_label(thread_id: ThreadId, cx: &App) -> Option<SharedString> {
+    let source = read(thread_id, cx)?.handoff_from?;
+    let agent = Agent::with_account(source.agent_id, source.account);
+    Some(crate::agent_panel::handoff_target_label(&agent, cx).into())
+}
 
 pub fn read(thread_id: ThreadId, cx: &App) -> Option<ThreadAccountInfo> {
     if let Some(info) = cx

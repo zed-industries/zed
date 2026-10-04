@@ -6314,6 +6314,10 @@ impl Sidebar {
             })
             .worktrees(worktrees)
             .timestamp(timestamp)
+            .when_some(
+                agent_ui::thread_accounts::handoff_label(thread.metadata.thread_id, cx),
+                |this, label| this.handoff_from(label),
+            )
             .highlight_positions(thread.highlight_positions.to_vec())
             .title_generating(title_generating)
             .notified(has_notification)
