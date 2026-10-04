@@ -1587,6 +1587,11 @@
     "include_ignored": "smart",
     // Whether to include text channels in file finder results.
     "include_channels": false,
+    // Whether to pre-fill the file finder's query with the text selected in the
+    // focused item (e.g. an editor or a terminal) when it is opened.
+    //
+    // Default: true
+    "prefill_query_from_selection": true,
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
