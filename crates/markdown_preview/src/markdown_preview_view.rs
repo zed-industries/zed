@@ -1768,6 +1768,39 @@ impl Item for MarkdownPreviewView {
     ) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
+
+    fn can_split(&self) -> bool {
+        true
+    }
+
+    fn clone_on_split(
+        &self,
+        _workspace_id: Option<WorkspaceId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<Entity<Self>>>
+    where
+        Self: Sized,
+    {
+        let Some(active_editor) = self.active_editor.as_ref() else {
+            return Task::ready(None);
+        };
+
+        let Some(project) = active_editor.editor.read(cx).project().clone() else {
+            return Task::ready(None);
+        };
+
+        let language_registry = project.read(cx).languages().clone();
+
+        Task::ready(Some(MarkdownPreviewView::new(
+            MarkdownPreviewMode::Default,
+            active_editor.editor.clone(),
+            self.workspace.clone(),
+            language_registry,
+            window,
+            cx,
+        )))
+    }
 }
 
 impl Render for MarkdownPreviewView {
