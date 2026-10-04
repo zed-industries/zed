@@ -376,12 +376,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent_accounts"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "collections",
+ "futures 0.3.34",
+ "http_client",
+ "log",
+ "pretty_assertions",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "sha2",
+ "smol",
+ "tempfile",
+ "util",
+]
+
+[[package]]
 name = "agent_servers"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
  "action_log",
  "agent-client-protocol",
+ "agent_accounts",
  "anyhow",
  "async-channel 2.5.0",
  "base64 0.22.1",
@@ -466,6 +488,7 @@ dependencies = [
  "action_log",
  "agent",
  "agent-client-protocol",
+ "agent_accounts",
  "agent_servers",
  "agent_settings",
  "agent_skills",
