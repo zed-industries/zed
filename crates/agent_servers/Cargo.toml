@@ -25,6 +25,7 @@ path = "src/agent_servers.rs"
 doctest = false
 
 [dependencies]
+agent_accounts.workspace = true
 acp_thread.workspace = true
 action_log.workspace = true
 async-channel.workspace = true

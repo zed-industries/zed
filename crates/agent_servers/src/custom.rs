@@ -1,5 +1,6 @@
 use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
+use agent_accounts::AccountId;
 use agent_client_protocol::schema::v1 as acp;
 use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::{Context as _, Result};
@@ -23,11 +24,22 @@ pub const CURSOR_ID: &str = "cursor";
 /// A generic agent server implementation for custom user-defined agents
 pub struct CustomAgentServer {
     agent_id: AgentId,
+    account: Option<AccountId>,
 }
 
 impl CustomAgentServer {
     pub fn new(agent_id: AgentId) -> Self {
-        Self { agent_id }
+        Self {
+            agent_id,
+            account: None,
+        }
+    }
+
+    /// Runs the agent with one of its provider's accounts instead of the
+    /// default one.
+    pub fn with_account(mut self, account: Option<AccountId>) -> Self {
+        self.account = account;
+        self
     }
 }
 
@@ -246,6 +258,10 @@ impl AgentServer for CustomAgentServer {
                 _ => {}
             }
         }
+        let env_overrides: collections::HashMap<String, String> =
+            agent_accounts::account_env(agent_id.as_ref(), self.account.as_ref())
+                .into_iter()
+                .collect();
         let store = delegate.store.downgrade();
         cx.spawn(async move |cx| {
             if is_registry_agent && agent_id.as_ref() == GEMINI_ID {
@@ -274,6 +290,7 @@ impl AgentServer for CustomAgentServer {
                 store.clone(),
                 default_mode,
                 default_config_options,
+                env_overrides,
                 cx,
             )
             .await?;
