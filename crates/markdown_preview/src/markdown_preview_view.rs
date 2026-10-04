@@ -3290,6 +3290,39 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn splitting_preview_clones_into_new_pane(cx: &mut TestAppContext) {
+        let (multi_workspace, _) = open_markdown_file(cx, "note.md", "# Note\n\nBody text\n").await;
+        let _preview = open_preview_for_active_editor(cx, &multi_workspace);
+        cx.run_until_parked();
+
+        let new_pane = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    workspace.split_and_clone(
+                        workspace.active_pane().clone(),
+                        workspace::SplitDirection::Right,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        new_pane.read_with(cx, |pane, _| {
+            assert!(
+                pane.active_item()
+                    .and_then(|item| item.downcast::<MarkdownPreviewView>())
+                    .is_some(),
+                "splitting a preivew should clone it into a new pane"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn close_and_return_to_editor_closes_preview_and_focuses_source_editor(
         cx: &mut TestAppContext,
     ) {
