@@ -379,6 +379,10 @@ impl Editor {
         self.delegate_open_excerpts = delegate;
     }
 
+    pub(super) fn delegates_open_excerpts(&self) -> bool {
+        self.delegate_open_excerpts
+    }
+
     pub(super) fn set_delegate_expand_excerpts(&mut self, delegate: bool) {
         self.delegate_expand_excerpts = delegate;
     }
