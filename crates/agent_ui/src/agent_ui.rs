@@ -1,6 +1,8 @@
 mod account_registry;
 mod account_selector;
 mod add_account_modal;
+mod usage_view;
+pub use usage_view::OpenAgentUsage;
 mod agent_configuration;
 pub mod agent_connection_store;
 mod agent_diff;
@@ -654,6 +656,7 @@ pub fn init(
     agent::ThreadStore::init_global(cx);
     prompt_store::init(cx);
     account_registry::AccountRegistry::init(cx);
+    usage_view::init(cx);
 
     cx.set_global(agent_skills::SkillsUpdatedHook(std::rc::Rc::new(|cx| {
         let workspaces: Vec<_> = workspace::AppState::global(cx)

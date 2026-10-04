@@ -254,6 +254,29 @@ impl QuotaRegistry {
             .clone()
     }
 
+    /// Fetches the accounts' quota again, even where a reading is fresh.
+    pub fn refresh(accounts: &[AgentAccount], cx: &mut App) {
+        if let Some(registry) = cx.try_global::<Self>() {
+            let stale_keys: Vec<_> = accounts
+                .iter()
+                .map(|account| (account.provider, account.home.clone()))
+                .filter(|key| {
+                    registry
+                        .entries
+                        .get(key)
+                        .is_some_and(|entry| !entry.fetching)
+                })
+                .collect();
+            let registry = cx.global_mut::<Self>();
+            for key in stale_keys {
+                if let Some(entry) = registry.entries.get_mut(&key) {
+                    entry.fetched_at = None;
+                }
+            }
+        }
+        Self::refresh_if_stale(accounts, cx);
+    }
+
     /// Fetches the accounts' quota in the background where the cached
     /// reading is missing or older than five minutes.
     pub fn refresh_if_stale(accounts: &[AgentAccount], cx: &mut App) {
