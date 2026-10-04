@@ -1213,17 +1213,12 @@ impl Item for Editor {
 
     fn tab_extra_context_menu_actions(
         &self,
+        is_active: bool,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<(SharedString, Box<dyn gpui::Action>)> {
-        let editor_id = cx.entity_id();
         // Inactive tabs aren't rendered, so the preview actions can't be dispatched to them.
-        let is_active_in_pane = self
-            .workspace()
-            .and_then(|workspace| workspace.read(cx).pane_for_item_id(editor_id))
-            .and_then(|pane| pane.read(cx).active_item())
-            .is_some_and(|item| item.item_id() == editor_id);
-        if !is_active_in_pane {
+        if !is_active {
             return Vec::new();
         }
 

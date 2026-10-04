@@ -1835,6 +1835,7 @@ impl Item for TerminalView {
 
     fn tab_extra_context_menu_actions(
         &self,
+        _is_active: bool,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<(SharedString, Box<dyn gpui::Action>)> {

@@ -397,8 +397,10 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
 
     /// Returns additional actions to add to the tab's context menu.
     /// Each entry is a label and an action to dispatch.
+    /// The containing pane may be updating, so use `is_active` instead of reading it.
     fn tab_extra_context_menu_actions(
         &self,
+        _is_active: bool,
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Vec<(SharedString, Box<dyn Action>)> {
@@ -580,6 +582,7 @@ pub trait ItemHandle: 'static + Send {
     ) -> bool;
     fn tab_extra_context_menu_actions(
         &self,
+        is_active: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<(SharedString, Box<dyn Action>)>;
@@ -1173,11 +1176,12 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn tab_extra_context_menu_actions(
         &self,
+        is_active: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<(SharedString, Box<dyn Action>)> {
         self.update(cx, |this, cx| {
-            this.tab_extra_context_menu_actions(window, cx)
+            this.tab_extra_context_menu_actions(is_active, window, cx)
         })
     }
 }

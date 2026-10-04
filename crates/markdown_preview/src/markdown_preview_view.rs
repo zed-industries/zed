@@ -1655,18 +1655,12 @@ impl Item for MarkdownPreviewView {
 
     fn tab_extra_context_menu_actions(
         &self,
+        is_active: bool,
         _window: &mut Window,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> Vec<(SharedString, Box<dyn Action>)> {
-        let preview_id = cx.entity_id();
         // Inactive tabs aren't rendered, so the action can't be dispatched to them.
-        let is_active_in_pane = self
-            .workspace
-            .upgrade()
-            .and_then(|workspace| workspace.read(cx).pane_for_item_id(preview_id))
-            .and_then(|pane| pane.read(cx).active_item())
-            .is_some_and(|item| item.item_id() == preview_id);
-        if !is_active_in_pane {
+        if !is_active {
             return Vec::new();
         }
         vec![("Show Source".into(), Box::new(CloseAndReturnToEditor))]
@@ -2230,7 +2224,8 @@ mod tests {
     use fs::FakeFs;
     use gpui::UpdateGlobal as _;
     use gpui::{
-        App, AppContext as _, Entity, Focusable as _, Modifiers, TestAppContext, WindowHandle, px,
+        App, AppContext as _, Entity, Focusable as _, Modifiers, MouseButton, MouseDownEvent,
+        MouseUpEvent, TestAppContext, VisualTestContext, WindowHandle, px,
     };
     use language::{Buffer, DiskState, Point};
     use project::{Project, ProjectPath};
@@ -3173,6 +3168,81 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn double_click_editor_tab_promotes_preview_tab(cx: &mut TestAppContext) {
+        let (multi_workspace, editor) = open_markdown_file(cx, "note.txt", "Plain text\n").await;
+        let pane = multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().read(cx).active_pane().clone()
+            })
+            .expect("workspace window should exist");
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        pane.update_in(cx, |pane, window, cx| {
+            pane.replace_preview_item_id(editor.entity_id(), window, cx);
+            assert_eq!(pane.preview_item_id(), Some(editor.entity_id()));
+            cx.notify();
+        });
+
+        double_click_tab(cx, "TAB-0");
+
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.preview_item_id(), None);
+            assert_eq!(pane.items_len(), 1);
+            assert_eq!(
+                pane.active_item().map(|item| item.item_id()),
+                Some(editor.entity_id())
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn double_click_markdown_preview_tab_keeps_items_open(cx: &mut TestAppContext) {
+        let (multi_workspace, editor) = open_markdown_file(cx, "note.md", "# Note\n").await;
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+        let pane = multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().read(cx).active_pane().clone()
+            })
+            .expect("workspace window should exist");
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        for (selector, item_id) in [
+            ("TAB-1", preview.entity_id()),
+            ("TAB-0", editor.entity_id()),
+            ("TAB-1", preview.entity_id()),
+        ] {
+            double_click_tab(cx, selector);
+
+            pane.read_with(cx, |pane, _| {
+                assert_eq!(pane.items_len(), 2);
+                assert_eq!(pane.active_item().map(|item| item.item_id()), Some(item_id));
+            });
+        }
+    }
+
+    fn double_click_tab(cx: &mut VisualTestContext, selector: &'static str) {
+        cx.run_until_parked();
+        for click_count in 1..=2 {
+            let position = cx
+                .debug_bounds(selector)
+                .expect("tab should be rendered")
+                .center();
+            cx.simulate_event(MouseDownEvent {
+                position,
+                button: MouseButton::Left,
+                modifiers: Modifiers::none(),
+                click_count,
+                first_mouse: false,
+            });
+            cx.simulate_event(MouseUpEvent {
+                position,
+                button: MouseButton::Left,
+                modifiers: Modifiers::none(),
+                click_count,
+            });
+        }
+    }
+
+    #[gpui::test]
     async fn tab_context_menu_offers_show_source(cx: &mut TestAppContext) {
         let (multi_workspace, _editor) =
             open_markdown_file(cx, "note.md", "# Note\n\nBody text\n").await;
@@ -3182,7 +3252,7 @@ mod tests {
         multi_workspace
             .update(cx, |_, window, cx| {
                 let actions = preview.update(cx, |preview, cx| {
-                    preview.tab_extra_context_menu_actions(window, cx)
+                    preview.tab_extra_context_menu_actions(true, window, cx)
                 });
                 let [(label, action)] = actions.as_slice() else {
                     panic!("expected exactly one tab menu action");
@@ -3207,7 +3277,7 @@ mod tests {
                     assert!(workspace.activate_item(&editor, true, true, window, cx));
                 });
                 let actions = preview.update(cx, |preview, cx| {
-                    preview.tab_extra_context_menu_actions(window, cx)
+                    preview.tab_extra_context_menu_actions(false, window, cx)
                 });
                 assert!(actions.is_empty());
             })
@@ -3234,7 +3304,7 @@ mod tests {
         multi_workspace
             .update(cx, |_, window, cx| {
                 let actions = editor.update(cx, |editor, cx| {
-                    editor.tab_extra_context_menu_actions(window, cx)
+                    editor.tab_extra_context_menu_actions(true, window, cx)
                 });
                 let [(label, _)] = actions.as_slice() else {
                     panic!("expected exactly one tab menu action");
@@ -3249,7 +3319,7 @@ mod tests {
         multi_workspace
             .update(cx, |_, window, cx| {
                 let actions = editor.update(cx, |editor, cx| {
-                    editor.tab_extra_context_menu_actions(window, cx)
+                    editor.tab_extra_context_menu_actions(false, window, cx)
                 });
                 assert!(actions.is_empty());
             })

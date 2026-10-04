@@ -2923,7 +2923,11 @@ impl Pane {
                 move |pane: &mut Self, event: &ClickEvent, window, cx| {
                     if event.click_count() > 1 {
                         pane.unpreview_item_if_preview(item_id);
-                        let extra_actions = item_handle.tab_extra_context_menu_actions(window, cx);
+                        let extra_actions = item_handle.tab_extra_context_menu_actions(
+                            ix == pane.active_item_index,
+                            window,
+                            cx,
+                        );
                         if let Some((_, action)) = extra_actions
                             .into_iter()
                             .find(|(label, _)| label.as_ref() == "Rename")
@@ -3106,7 +3110,8 @@ impl Pane {
             .menu(move |window, cx| {
                 let pane = pane.clone();
                 let menu_context = menu_context.clone();
-                let extra_actions = item_handle.tab_extra_context_menu_actions(window, cx);
+                let extra_actions =
+                    item_handle.tab_extra_context_menu_actions(is_active, window, cx);
                 ContextMenu::build(window, cx, move |mut menu, window, cx| {
                     let close_active_item_action = CloseActiveItem {
                         save_intent: None,
