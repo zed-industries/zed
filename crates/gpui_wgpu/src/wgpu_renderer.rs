@@ -2320,6 +2320,9 @@ pub struct WgpuHeadlessRenderer {
 impl WgpuHeadlessRenderer {
     pub fn new() -> anyhow::Result<Self> {
         let (context, target_format) = WgpuContext::new_headless()?;
+        // The device may be shared with earlier renderers; observe only errors raised from
+        // here on, including any while this renderer builds its pipelines.
+        let observed_error_generation = context.errors().current_generation();
         let atlas = Arc::new(WgpuAtlas::from_context(&context));
         let core = WgpuRendererCore::new(
             &context,
@@ -2332,7 +2335,7 @@ impl WgpuHeadlessRenderer {
             context,
             core,
             render_target: None,
-            observed_error_generation: 0,
+            observed_error_generation,
         })
     }
 

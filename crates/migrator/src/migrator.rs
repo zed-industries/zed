@@ -257,6 +257,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         MigrationType::Json(migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator),
         MigrationType::Json(migrations::m_2026_08_30::nest_markdown_preview_settings),
         MigrationType::Json(migrations::m_2026_09_16::nest_agent_threads_sidebar_settings),
+        MigrationType::Json(migrations::m_2026_09_29::move_copilot_enterprise_uri),
     ];
     run_migrations(text, migrations)
 }
@@ -463,6 +464,37 @@ mod tests {
     #[test]
     fn test_empty_content() {
         assert_migrate_settings("", None)
+    }
+
+    #[test]
+    fn test_copilot_enterprise_uri_migration_does_not_restore_deleted_destination() {
+        let input = r#"{
+            // Keep this comment.
+            "edit_predictions": { "copilot": { "enterprise_uri": "https://enterprise.example" } }
+        }"#;
+        let migrated = migrate_settings(input)
+            .expect("migration should succeed")
+            .expect("settings should change");
+        assert!(migrated.contains("// Keep this comment."));
+        let value: serde_json_lenient::Value =
+            parse_json_with_comments(&migrated).expect("migrated settings should parse");
+        let value = serde_json::to_value(value).expect("settings should convert to JSON");
+        assert_eq!(
+            value["copilot"]["enterprise_uri"],
+            "https://enterprise.example"
+        );
+        assert!(value.get("edit_predictions").is_none());
+
+        let mut value = value;
+        value
+            .as_object_mut()
+            .expect("settings should be an object")
+            .remove("copilot");
+        let without_destination = serde_json::to_string(&value).expect("settings should serialize");
+        assert_eq!(
+            migrate_settings(&without_destination).expect("migration should succeed"),
+            None
+        );
     }
 
     #[test]

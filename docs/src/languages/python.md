@@ -80,7 +80,7 @@ Other built-in language servers are:
 - [Pyright](https://github.com/microsoft/pyright)&mdash;The basis for basedpyright.
 - [PyLSP](https://github.com/python-lsp/python-lsp-server)&mdash;A plugin-based language server that integrates with tools like `pycodestyle`, `autopep8`, and `yapf`.
 
-These are disabled by default, but can be enabled in your settings.
+These are disabled by default and are not included by `"..."`. Enable them by listing them by name in your settings.
 
 Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Python, or add to your settings file:
 
@@ -89,8 +89,8 @@ Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages
   "languages": {
     "Python": {
       "language_servers": [
-        // Enable ty, disable basedpyright, and enable all
-        // other registered language servers (ruff, pylsp, pyright).
+        // Enable ty, disable basedpyright, and enable all other
+        // language servers that are enabled by default (e.g. ruff).
         "ty",
         "!basedpyright",
         "..."
