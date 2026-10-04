@@ -42,6 +42,11 @@ impl ThreadId {
     pub fn to_key_string(&self) -> String {
         self.0.hyphenated().to_string()
     }
+
+    /// Parses the form produced by [`Self::to_key_string`].
+    pub fn from_key_string(key: &str) -> Option<Self> {
+        uuid::Uuid::parse_str(key).ok().map(Self)
+    }
 }
 
 impl Bind for ThreadId {

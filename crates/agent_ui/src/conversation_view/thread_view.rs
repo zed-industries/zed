@@ -4880,6 +4880,16 @@ impl ThreadView {
                                     .flex_wrap()
                                     .gap_1()
                                     .children(self.render_token_usage(cx))
+                                    .children(self.server_view.upgrade().and_then(|view| {
+                                        crate::account_selector::render_account_selector(
+                                            view.read(cx).connection_key(),
+                                            !self.thread.read(cx).entries().is_empty(),
+                                            self.project
+                                                .upgrade()
+                                                .is_some_and(|project| project.read(cx).is_local()),
+                                            cx,
+                                        )
+                                    }))
                                     .children(self.profile_selector.clone())
                                     .map(|this| match self.config_options_view.clone() {
                                         Some(config_view) => this.child(config_view),
@@ -12825,6 +12835,18 @@ impl Render for ThreadView {
             .when(self.resumed_without_history, |this| {
                 this.child(Self::render_resume_notice(cx))
             })
+            .children(self.server_view.upgrade().and_then(|view| {
+                crate::account_selector::render_handoff_notice(view.read(cx).thread_id, cx)
+            }))
+            .children(self.server_view.upgrade().and_then(|view| {
+                let agent = view.read(cx).connection_key().clone();
+                let has_messages = !self.thread.read(cx).entries().is_empty();
+                let is_local = self
+                    .project
+                    .upgrade()
+                    .is_some_and(|project| project.read(cx).is_local());
+                crate::account_selector::render_quota_notice(&agent, has_messages, is_local, cx)
+            }))
             .map(|this| {
                 if has_messages {
                     this.flex_1()

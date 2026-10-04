@@ -27,6 +27,7 @@ unit-eval = []
 
 [dependencies]
 acp_thread.workspace = true
+agent_accounts.workspace = true
 action_log.workspace = true
 agent-client-protocol.workspace = true
 agent.workspace = true
