@@ -6,6 +6,7 @@ publish = false
 
 [lib]
 path = "src/language_core.rs"
+doctest = false
 
 [dependencies]
 anyhow.workspace = true

@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/sandbox.rs"
+doctest = false
 
 [features]
 # Builds `bwrap_test_helper`, the behavior helper driven by the NixOS sandbox

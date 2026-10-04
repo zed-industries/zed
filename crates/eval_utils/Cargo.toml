@@ -11,6 +11,7 @@ workspace = true
 [lib]
 path = "src/eval_utils.rs"
 doctest = false
+test = false
 
 [dependencies]
 gpui_platform.workspace = true
