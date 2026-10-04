@@ -1,0 +1,36 @@
+<svg width="400" height="155" viewBox="0 0 400 155" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow" markerWidth="5" markerHeight="6" refX="4" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0.5 0.5L3.5 3L0.5 5.5" stroke="black" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+  <g stroke="black" stroke-linecap="round" stroke-linejoin="round" opacity="0.12">
+    <path d="M74 87Q78 87 78 91V112Q78 116 82 116H104" marker-end="url(#arrow)"/>
+    <path d="M136 116H184" marker-end="url(#arrow)"/>
+    <path d="M216 116H240Q244 116 244 112V91Q244 87 248 87"/>
+    <path d="M54 40H82"/>
+    <path d="M136 40H184" marker-end="url(#arrow)"/>
+    <path d="M216 40H240Q244 40 244 44V77"/>
+    <g fill="black" fill-opacity="0.08">
+      <path d="M120 108L129 124H111Z"/>
+      <path d="M200 108L209 124H191Z"/>
+      <path d="M38 31L47 47H29Z"/>
+      <path d="M200 31L209 47H191Z"/>
+    </g>
+  </g>
+  <g stroke="black" stroke-linecap="round" stroke-linejoin="round" opacity="0.85">
+    <path d="M54 87H74Q78 87 78 83V44Q78 40 82 40H104" marker-end="url(#arrow)"/>
+    <path d="M120 57V69Q120 73 124 73H184" marker-end="url(#arrow)"/>
+    <path d="M216 73H240Q244 73 244 77V83Q244 87 248 87H272" marker-end="url(#arrow)"/>
+    <g fill="black" fill-opacity="0.08">
+      <path d="M38 78L47 94H29Z"/>
+      <path d="M120 31L129 47H111Z"/>
+      <path d="M200 62L209 78H191Z"/>
+    </g>
+  </g>
+  <g stroke="black" stroke-width="1.1" opacity="0.25">
+    <path d="M286 55H280V133H358V127"/>
+    <path d="M292 49V43H370V121H364"/>
+  </g>
+  <rect x="286" y="49" width="78" height="78" fill="black" fill-opacity="0.04" stroke="black" stroke-opacity="0.8" stroke-width="1.1"/>
+</svg>

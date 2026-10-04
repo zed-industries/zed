@@ -37,7 +37,6 @@ serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 shlex.workspace = true
-take-until.workspace = true
 tempfile.workspace = true
 unicase.workspace = true
 url.workspace = true

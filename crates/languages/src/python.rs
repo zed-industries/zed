@@ -372,6 +372,10 @@ impl LspAdapter for TyLspAdapter {
         Self::SERVER_NAME
     }
 
+    fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        language == "Python"
+    }
+
     async fn label_for_completion(
         &self,
         item: &lsp::CompletionItem,
@@ -663,6 +667,10 @@ impl PyrightLspAdapter {
 impl LspAdapter for PyrightLspAdapter {
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
+    }
+
+    fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        language == "Python"
     }
 
     async fn initialization_options(
@@ -1814,6 +1822,10 @@ const BINARY_DIR: &str = if cfg!(target_os = "windows") {
 impl LspAdapter for PyLspAdapter {
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
+    }
+
+    fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        language == "Python"
     }
 
     async fn process_completions(&self, items: &mut [lsp::CompletionItem]) {

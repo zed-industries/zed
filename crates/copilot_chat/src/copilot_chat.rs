@@ -2,7 +2,7 @@ pub mod copilot_oauth;
 mod model;
 pub mod responses;
 
-pub use model::{PROVIDER_ID, PROVIDER_NAME, create_language_model};
+pub use model::{PROVIDER_ID, PROVIDER_NAME, language_model, stream_completion};
 
 use std::sync::Arc;
 
@@ -768,7 +768,7 @@ impl CopilotChat {
             Self::get_auth_details(&copilot_chat, &mut cx).await?;
 
         let api_url = configuration.chat_completions_url(&api_endpoint);
-        stream_completion(
+        stream_chat_completion(
             client.clone(),
             oauth_token,
             api_url.into(),
@@ -1083,7 +1083,7 @@ async fn request_models(
     Ok(models)
 }
 
-async fn stream_completion(
+async fn stream_chat_completion(
     client: Arc<dyn HttpClient>,
     oauth_token: String,
     completion_url: Arc<str>,

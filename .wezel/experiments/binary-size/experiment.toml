@@ -1,0 +1,19 @@
+#:schema ../../schema.json
+
+description = "Measures stripped and unstripped release binary size"
+
+[step.cargo.build-release]
+command = "build"
+build_target = ["zed"]
+profile = "release"
+
+[step.filesize.measure-unstripped]
+glob = "target/release/zed"
+summary.unstripped-binary-size = { outcome = "target/release/zed" }
+
+[step.exec.strip-copy]
+cmd = "cp target/release/zed target/release/zed-stripped && strip target/release/zed-stripped"
+
+[step.filesize.measure-stripped]
+glob = "target/release/zed-stripped"
+summary.stripped-binary-size = { outcome = "target/release/zed-stripped" }

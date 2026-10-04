@@ -5,7 +5,7 @@ use crate::{
 };
 use fs::Fs;
 use gpui::{Entity, FocusHandle, SharedString};
-use language_model::IconOrSvg;
+use language_model::{IconOrSvg, LanguageModelRegistry};
 use picker::popover_menu::PickerPopoverMenu;
 use settings::update_settings_file;
 use std::sync::Arc;
@@ -30,7 +30,7 @@ impl AgentModelSelector {
                 language_model_selector(
                     {
                         let model_context = model_usage_context.clone();
-                        move |cx| model_context.configured_model(cx)
+                        move |cx| model_context.model(cx)
                     },
                     {
                         let fs = fs.clone();
@@ -74,7 +74,7 @@ impl AgentModelSelector {
         self.menu_handle.toggle(window, cx);
     }
 
-    pub fn active_model(&self, cx: &App) -> Option<language_model::ConfiguredModel> {
+    pub fn active_model(&self, cx: &App) -> Option<language_model::LanguageModel> {
         self.selector.read(cx).delegate.active_model(cx)
     }
 
@@ -90,10 +90,14 @@ impl Render for AgentModelSelector {
         let model = self.selector.read(cx).delegate.active_model(cx);
         let model_name = model
             .as_ref()
-            .map(|model| model.model.name().0)
+            .map(|model| model.name().0)
             .unwrap_or_else(|| SharedString::from("Select a Model"));
 
-        let provider_icon = model.as_ref().map(|model| model.provider.icon());
+        let provider_icon = model.as_ref().and_then(|model| {
+            LanguageModelRegistry::read_global(cx)
+                .provider(&model.provider_id)
+                .map(|provider| provider.icon())
+        });
         let color = if self.menu_handle.is_deployed() {
             Color::Accent
         } else {

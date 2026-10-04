@@ -160,6 +160,12 @@ impl AsyncApp {
         &self.background_executor
     }
 
+    /// Whether this app runs on the deterministic test scheduler. See
+    /// [`BackgroundExecutor::is_test`].
+    pub fn is_test(&self) -> bool {
+        self.background_executor.is_test()
+    }
+
     /// Get an executor which can be used to spawn futures in the foreground.
     pub fn foreground_executor(&self) -> &ForegroundExecutor {
         &self.foreground_executor

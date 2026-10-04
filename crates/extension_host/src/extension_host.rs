@@ -102,9 +102,6 @@ async fn with_remote_sync_timeout<T>(
     }
 }
 
-/// The current extension [`SchemaVersion`] supported by Zed.
-const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
-
 /// Extensions that should no longer be loaded or downloaded.
 ///
 /// These snippets should no longer be downloaded or loaded, because their
@@ -131,7 +128,7 @@ static SUPPRESSED_EXTENSIONS: LazyLock<FxHashSet<&str>> = LazyLock::new(|| {
 
 /// Returns the [`SchemaVersion`] range that is compatible with this version of Zed.
 pub fn schema_version_range() -> RangeInclusive<SchemaVersion> {
-    SchemaVersion::ZERO..=CURRENT_SCHEMA_VERSION
+    SchemaVersion::ZERO..=SchemaVersion::CURRENT
 }
 
 /// Returns whether the given extension version is compatible with this version of Zed.
@@ -140,7 +137,7 @@ pub fn is_version_compatible(
     extension_version: &ExtensionMetadata,
 ) -> bool {
     let schema_version = extension_version.manifest.schema_version.unwrap_or(0);
-    if CURRENT_SCHEMA_VERSION.0 < schema_version {
+    if SchemaVersion::CURRENT.0 < schema_version {
         return false;
     }
 
@@ -195,6 +192,15 @@ pub enum ExtensionOperation {
     Upgrade,
     Install,
     Remove,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExtensionStatus {
+    NotInstalled,
+    Installing,
+    Upgrading,
+    Installed(Arc<str>),
+    Removing,
 }
 
 #[derive(Clone)]
@@ -560,6 +566,27 @@ impl ExtensionStore {
         &self.extension_index.extensions
     }
 
+    /// Returns the status of the extension, where outstanding operations take
+    /// precedence over the installed state.
+    pub fn extension_status(&self, extension_id: &str) -> ExtensionStatus {
+        match self.outstanding_operations.get(extension_id) {
+            Some(ExtensionOperation::Install) => ExtensionStatus::Installing,
+            Some(ExtensionOperation::Remove) => ExtensionStatus::Removing,
+            Some(ExtensionOperation::Upgrade) => ExtensionStatus::Upgrading,
+            None => match self.extension_index.extensions.get(extension_id) {
+                Some(extension) => ExtensionStatus::Installed(extension.manifest.version.clone()),
+                None => ExtensionStatus::NotInstalled,
+            },
+        }
+    }
+
+    pub fn is_dev_extension(&self, extension_id: &str) -> bool {
+        self.extension_index
+            .extensions
+            .get(extension_id)
+            .is_some_and(|extension| extension.dev)
+    }
+
     pub fn dev_extensions(&self) -> impl Iterator<Item = &Arc<ExtensionManifest>> {
         self.extension_index
             .extensions
@@ -637,7 +664,7 @@ impl ExtensionStore {
         provides_filter: Option<&BTreeSet<ExtensionProvides>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
-        let version = CURRENT_SCHEMA_VERSION.to_string();
+        let version = SchemaVersion::CURRENT.to_string();
         let mut query = vec![("max_schema_version", version.as_str())];
         if let Some(search) = search {
             query.push(("filter", search));

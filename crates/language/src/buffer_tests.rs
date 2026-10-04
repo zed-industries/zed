@@ -3443,6 +3443,80 @@ fn test_language_scope_at_with_rust(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_language_scope_at_end_of_buffer(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    let make_language = || {
+        Language::new(
+            LanguageConfig {
+                name: "C".into(),
+                brackets: BracketPairConfig {
+                    pairs: vec![
+                        BracketPair {
+                            start: "{".into(),
+                            end: "}".into(),
+                            close: true,
+                            surround: true,
+                            newline: false,
+                        },
+                        BracketPair {
+                            start: "'".into(),
+                            end: "'".into(),
+                            close: true,
+                            surround: true,
+                            newline: false,
+                        },
+                    ],
+                    disabled_scopes_by_bracket_ix: vec![
+                        Vec::new(),
+                        vec!["string".into(), "comment".into()],
+                    ],
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_c::LANGUAGE.into()),
+        )
+        .with_override_query(
+            r#"
+                (comment) @comment.inclusive
+                [(string_literal) (char_literal)] @string
+            "#,
+        )
+        .unwrap()
+    };
+
+    // Comment runs to EOF: the quote pair must be disabled at EOF.
+    cx.new(|cx| {
+        let text = "// it ''";
+        let buffer = Buffer::local(text, cx).with_language(Arc::new(make_language()), cx);
+        let snapshot = buffer.snapshot();
+
+        let eof_config = snapshot.language_scope_at(text.len()).unwrap();
+        assert_eq!(
+            eof_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, false]
+        );
+
+        buffer
+    });
+
+    // Trailing newline: EOF is past the comment, so both pairs stay enabled.
+    cx.new(|cx| {
+        let text = "// it ''\n";
+        let buffer = Buffer::local(text, cx).with_language(Arc::new(make_language()), cx);
+        let snapshot = buffer.snapshot();
+
+        let eof_config = snapshot.language_scope_at(text.len()).unwrap();
+        assert_eq!(
+            eof_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, true]
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_language_scope_at_with_combined_injections(cx: &mut App) {
     init_settings(cx, |_| {});
 

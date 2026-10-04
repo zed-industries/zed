@@ -99,6 +99,44 @@ mod conflict_set_tests {
     }
 
     #[test]
+    fn test_parse_conflicts_with_empty_sides() {
+        let test_content = r#"
+            <<<<<<< HEAD
+            =======
+            their version
+            >>>>>>> branch
+            <<<<<<< HEAD
+            our version
+            =======
+            >>>>>>> branch
+        "#
+        .unindent();
+
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), test_content);
+        let conflict_snapshot = ConflictSet::parse(&buffer.snapshot());
+        assert_eq!(conflict_snapshot.conflicts.len(), 2);
+
+        for conflict in conflict_snapshot.conflicts.iter() {
+            for side in [&conflict.ours, &conflict.theirs] {
+                assert!(side.start.cmp(&side.end, &buffer).is_le(), "{side:?}");
+            }
+        }
+        assert_eq!(
+            conflict_snapshot.conflicts[0].ours.to_point(&buffer),
+            Point::new(1, 0)..Point::new(1, 0)
+        );
+        assert_eq!(
+            conflict_snapshot.conflicts[1].theirs.to_point(&buffer),
+            Point::new(7, 0)..Point::new(7, 0)
+        );
+
+        // Text typed into an empty side becomes part of that side.
+        let ours = conflict_snapshot.conflicts[0].ours.clone();
+        buffer.edit([(Point::new(1, 0)..Point::new(1, 0), "resolution\n")]);
+        assert_eq!(ours.to_point(&buffer), Point::new(1, 0)..Point::new(2, 0));
+    }
+
+    #[test]
     fn test_nested_conflict_markers() {
         // Create a buffer with nested conflict markers
         let test_content = r#"

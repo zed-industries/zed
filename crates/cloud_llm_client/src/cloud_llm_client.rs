@@ -91,7 +91,6 @@ impl FromStr for UsageLimit {
 #[strum(serialize_all = "snake_case")]
 pub enum LanguageModelProvider {
     Anthropic,
-    Baseten,
     OpenAi,
     Google,
     XAi,

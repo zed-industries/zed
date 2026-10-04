@@ -1,5 +1,5 @@
 mod components;
-mod extension_suggest;
+mod extension_suggestions;
 mod extension_version_selector;
 
 use std::sync::OnceLock;
@@ -11,7 +11,7 @@ use cloud_api_types::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use command_palette_hooks::CommandPaletteFilter;
 use editor::{Editor, EditorElement, EditorStyle};
-use extension_host::{ExtensionManifest, ExtensionStore};
+use extension_host::{ExtensionIndexEntry, ExtensionManifest, ExtensionStore};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use git::{GitHostingProviderRegistry, parse_git_remote_url};
 use gpui::{
@@ -29,8 +29,8 @@ use settings::{Settings, SettingsContent};
 use strum::IntoEnumIterator as _;
 use theme_settings::ThemeSettings;
 use ui::{
-    Banner, ContextMenu, Divider, ListItem, ListItemSpacing, ScrollableHandle, Switch,
-    ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple,
+    Banner, CommonAnimationExt, ContextMenu, Divider, ListItem, ListItemSpacing, ScrollableHandle,
+    Switch, ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple,
     WithScrollbar, prelude::*,
 };
 use util::ResultExt;
@@ -42,7 +42,7 @@ use workspace::{
 };
 use zed_actions::ExtensionCategoryFilter;
 
-use crate::components::{ExtensionCard, extension_provides_label, remote_extension_status};
+use crate::components::{ExtensionCard, extension_provides_label};
 use crate::extension_version_selector::{
     ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
 };
@@ -109,7 +109,7 @@ pub fn init(cx: &mut App) {
         update_rebuild_dev_extension_visibility(&store, cx);
     })
     .detach();
-    extension_suggest::init(cx);
+    extension_suggestions::init(cx);
 
     cx.observe_new(move |workspace: &mut Workspace, window, _cx| {
         if window.is_none() {
@@ -293,15 +293,6 @@ enum ExtensionFilter {
     NotInstalled,
 }
 
-impl ExtensionFilter {
-    pub fn include_dev_extensions(&self) -> bool {
-        match self {
-            Self::All | Self::Installed => true,
-            Self::NotInstalled => false,
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum Feature {
     AgentClaude,
@@ -371,22 +362,50 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
     })
 }
 
+#[derive(Clone, Copy)]
+enum DisplayedExtension {
+    /// Index into the installed search results. `remote_index` points to the
+    /// extension's metadata from the latest fetch, if it was part of it.
+    Installed {
+        index: usize,
+        remote_index: Option<usize>,
+    },
+    /// Index into the remote extensions.
+    Remote(usize),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExtensionFetchState {
+    Fetching,
+    Succeeded,
+    Failed,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FetchDebounce {
+    Immediate,
+    /// Debounce the fetch if there is a search query.
+    WhenSearching,
+}
+
 pub struct ExtensionsPage {
     workspace: WeakEntity<Workspace>,
+    extension_store: Entity<ExtensionStore>,
     provider_registry: Arc<GitHostingProviderRegistry>,
     list: UniformListScrollHandle,
-    is_fetching_extensions: bool,
-    fetch_failed: bool,
+    fetch_state: ExtensionFetchState,
     filter: ExtensionFilter,
-    remote_extension_entries: Vec<ExtensionMetadata>,
-    dev_extension_entries: Vec<Arc<ExtensionManifest>>,
-    filtered_remote_extension_indices: Vec<usize>,
-    filtered_dev_extension_indices: Vec<usize>,
+    /// Installed extensions matching the current search.
+    installed_search_results: Vec<ExtensionIndexEntry>,
+    /// Results of the latest fetch, empty if it failed.
+    remote_extensions: Vec<ExtensionMetadata>,
+    displayed_extensions: Vec<DisplayedExtension>,
     query_editor: Entity<Editor>,
     query_contains_error: bool,
     provides_filter: Option<ExtensionProvides>,
     _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
+    local_search_task: Option<Task<()>>,
     upsells: BTreeSet<Feature>,
 }
 
@@ -399,16 +418,16 @@ impl ExtensionsPage {
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
-            let store = ExtensionStore::global(cx);
+            let extension_store = ExtensionStore::global(cx);
             let workspace_handle = workspace.weak_handle();
             let subscriptions = [
-                cx.observe(&store, |_: &mut Self, _, cx| cx.notify()),
+                cx.observe(&extension_store, |_: &mut Self, _, cx| cx.notify()),
                 cx.subscribe_in(
-                    &store,
+                    &extension_store,
                     window,
                     move |this, _, event, window, cx| match event {
                         extension_host::Event::ExtensionsUpdated => {
-                            this.fetch_extensions_debounced(None, cx)
+                            this.update_local_search_results(cx)
                         }
                         extension_host::Event::ExtensionInstalled(extension_id) => this
                             .on_extension_installed(
@@ -437,28 +456,24 @@ impl ExtensionsPage {
 
             let mut this = Self {
                 workspace: workspace.weak_handle(),
+                extension_store,
                 provider_registry,
                 list: scroll_handle,
-                is_fetching_extensions: false,
-                fetch_failed: false,
+                fetch_state: ExtensionFetchState::Fetching,
                 filter: ExtensionFilter::All,
-                dev_extension_entries: Vec::new(),
-                filtered_remote_extension_indices: Vec::new(),
-                filtered_dev_extension_indices: Vec::new(),
-                remote_extension_entries: Vec::new(),
+                installed_search_results: Vec::new(),
+                remote_extensions: Vec::new(),
+                displayed_extensions: Vec::new(),
                 query_contains_error: false,
                 provides_filter,
                 extension_fetch_task: None,
+                local_search_task: None,
                 _subscriptions: subscriptions,
                 query_editor,
                 upsells: BTreeSet::default(),
             };
-            this.fetch_extensions(
-                this.search_query(cx),
-                Some(BTreeSet::from_iter(this.provides_filter)),
-                None,
-                cx,
-            );
+            this.update_local_search_results(cx);
+            this.fetch_extensions(FetchDebounce::Immediate, None, cx);
             this
         })
     }
@@ -476,7 +491,7 @@ impl ExtensionsPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let extension_store = ExtensionStore::global(cx).read(cx);
+        let extension_store = self.extension_store.read(cx);
         let themes = extension_store
             .extension_themes(extension_id)
             .map(|name| name.to_string())
@@ -515,43 +530,117 @@ impl ExtensionsPage {
         }
     }
 
-    fn filter_extension_entries(&mut self, cx: &mut Context<Self>) {
-        self.filtered_remote_extension_indices.clear();
-        self.filtered_remote_extension_indices.extend(
-            self.remote_extension_entries
+    /// Runs the search against the locally installed extensions, independently of
+    /// the remote fetch, so local results show up without waiting for the server.
+    fn update_local_search_results(&mut self, cx: &mut Context<Self>) {
+        let search = self.search_query(cx);
+        let mut installed_extensions = self
+            .extension_store
+            .read(cx)
+            .installed_extensions()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+
+        self.local_search_task = Some(cx.spawn(async move |this, cx| {
+            let results = match search.as_deref() {
+                None => {
+                    installed_extensions
+                        .sort_by_cached_key(|extension| extension.manifest.name.to_lowercase());
+                    installed_extensions
+                }
+                Some(search) => {
+                    if let Some(extension_id) = search.strip_prefix("id:") {
+                        installed_extensions
+                            .into_iter()
+                            .filter(|extension| extension.manifest.id.as_ref() == extension_id)
+                            .collect()
+                    } else {
+                        let match_candidates = installed_extensions
+                            .iter()
+                            .enumerate()
+                            .map(|(index, extension)| {
+                                StringMatchCandidate::new(index, &extension.manifest.name)
+                            })
+                            .collect::<Vec<_>>();
+                        let matches = match_strings(
+                            &match_candidates,
+                            search,
+                            false,
+                            true,
+                            match_candidates.len(),
+                            &Default::default(),
+                            cx.background_executor().clone(),
+                        )
+                        .await;
+                        matches
+                            .into_iter()
+                            .filter_map(|matched| {
+                                installed_extensions.get(matched.candidate_id).cloned()
+                            })
+                            .collect()
+                    }
+                }
+            };
+
+            this.update(cx, |this, cx| {
+                this.installed_search_results = results;
+                this.rebuild_displayed_extensions(cx);
+            })
+            .ok();
+        }));
+    }
+
+    fn rebuild_displayed_extensions(&mut self, cx: &mut Context<Self>) {
+        let installed_extensions = self.extension_store.read(cx).installed_extensions();
+        let provides_filter = self.provides_filter;
+
+        // Remote results can lag behind a provides filter change by one fetch, so
+        // the filter is applied locally as well.
+        let installed_rows =
+            self.installed_search_results
                 .iter()
                 .enumerate()
                 .filter(|(_, extension)| {
-                    if self.filter == ExtensionFilter::All {
-                        return true;
-                    }
+                    provides_filter
+                        .is_none_or(|provides| extension.manifest.provides().contains(&provides))
+                });
+        let remote_rows = self
+            .remote_extensions
+            .iter()
+            .enumerate()
+            .filter(|(_, extension)| {
+                provides_filter
+                    .is_none_or(|provides| extension.manifest.provides.contains(&provides))
+            });
+        let installed_row = |(index, extension): (usize, &ExtensionIndexEntry)| {
+            let remote_index = (!extension.dev).then(|| {
+                self.remote_extensions
+                    .iter()
+                    .position(|remote| remote.id == extension.manifest.id)
+            });
+            DisplayedExtension::Installed {
+                index,
+                remote_index: remote_index.flatten(),
+            }
+        };
+        let remote_row = |(index, _)| DisplayedExtension::Remote(index);
 
-                    let status = remote_extension_status(&extension.id, cx);
-                    match self.filter {
-                        ExtensionFilter::Installed => status.is_installed(),
-                        ExtensionFilter::NotInstalled => !status.is_installed(),
-                        ExtensionFilter::All => true,
-                    }
-                })
-                .filter(|(_, extension)| match self.provides_filter {
-                    Some(provides) => extension.manifest.provides.contains(&provides),
-                    None => true,
-                })
-                .map(|(ix, _)| ix),
-        );
-
-        self.filtered_dev_extension_indices.clear();
-        self.filtered_dev_extension_indices.extend(
-            self.dev_extension_entries
-                .iter()
-                .enumerate()
-                .filter(|(_, manifest)| match self.provides_filter {
-                    Some(provides) => manifest.provides().contains(&provides),
-                    None => true,
-                })
-                .map(|(ix, _)| ix),
-        );
-
+        self.displayed_extensions = match self.filter {
+            ExtensionFilter::All if self.fetch_state == ExtensionFetchState::Failed => {
+                installed_rows.map(installed_row).collect()
+            }
+            ExtensionFilter::All => installed_rows
+                .filter(|(_, extension)| extension.dev)
+                .map(installed_row)
+                .chain(remote_rows.map(remote_row))
+                .collect(),
+            ExtensionFilter::Installed => installed_rows.map(installed_row).collect(),
+            ExtensionFilter::NotInstalled => remote_rows
+                .filter(|(_, extension)| !installed_extensions.contains_key(&extension.id))
+                .map(remote_row)
+                .collect(),
+        };
         cx.notify();
     }
 
@@ -560,97 +649,79 @@ impl ExtensionsPage {
         cx.notify();
     }
 
+    /// Fetches the remote extensions for the current search. Any fetch still in
+    /// flight is cancelled.
     fn fetch_extensions(
         &mut self,
-        search: Option<String>,
-        provides_filter: Option<BTreeSet<ExtensionProvides>>,
-        on_complete: Option<Box<dyn FnOnce(&mut Self, &mut Context<Self>) + Send>>,
+        debounce: FetchDebounce,
+        on_complete: Option<Box<dyn FnOnce(&mut Self, &mut Context<Self>)>>,
         cx: &mut Context<Self>,
     ) {
-        self.is_fetching_extensions = true;
-        self.fetch_failed = false;
+        let search = self.search_query(cx);
+        let provides_filter = BTreeSet::from_iter(self.provides_filter);
+        self.fetch_state = ExtensionFetchState::Fetching;
         cx.notify();
 
-        let extension_store = ExtensionStore::global(cx);
+        self.extension_fetch_task = Some(cx.spawn(async move |this, cx| {
+            // Only debounce the fetching of extensions if we have a search
+            // query.
+            //
+            // If the search was just cleared then we can just reload the list
+            // of extensions without a debounce, which allows us to avoid seeing
+            // an intermittent flash of a "no extensions" state.
+            if debounce == FetchDebounce::WhenSearching && search.is_some() {
+                cx.background_executor()
+                    .timer(Duration::from_millis(250))
+                    .await;
+            }
 
-        let dev_extensions = extension_store
-            .read(cx)
-            .dev_extensions()
-            .cloned()
-            .collect::<Vec<_>>();
-
-        let remote_extensions =
-            if let Some(id) = search.as_ref().and_then(|s| s.strip_prefix("id:")) {
-                let versions =
-                    extension_store.update(cx, |store, cx| store.fetch_extension_versions(id, cx));
-                cx.foreground_executor().spawn(async move {
-                    let versions = versions.await?;
-                    let latest = versions
-                        .into_iter()
-                        .max_by_key(|v| v.published_at)
-                        .context("no extension found")?;
-                    Ok(vec![latest])
-                })
-            } else {
-                extension_store.update(cx, |store, cx| {
-                    store.fetch_extensions(search.as_deref(), provides_filter.as_ref(), cx)
-                })
+            let Ok(remote_extensions) = this.update(cx, |this, cx| {
+                let extension_store = &this.extension_store;
+                if let Some(id) = search
+                    .as_deref()
+                    .and_then(|search| search.strip_prefix("id:"))
+                {
+                    let versions = extension_store
+                        .update(cx, |store, cx| store.fetch_extension_versions(id, cx));
+                    cx.foreground_executor().spawn(async move {
+                        let versions = versions.await?;
+                        let latest = versions
+                            .into_iter()
+                            .max_by_key(|version| version.published_at)
+                            .context("no extension found")?;
+                        Ok(vec![latest])
+                    })
+                } else {
+                    extension_store.update(cx, |store, cx| {
+                        store.fetch_extensions(search.as_deref(), Some(&provides_filter), cx)
+                    })
+                }
+            }) else {
+                return;
             };
-
-        cx.spawn(async move |this, cx| {
-            let dev_extensions = if let Some(search) = search {
-                let match_candidates = dev_extensions
-                    .iter()
-                    .enumerate()
-                    .map(|(ix, manifest)| StringMatchCandidate::new(ix, &manifest.name))
-                    .collect::<Vec<_>>();
-
-                let matches = match_strings(
-                    &match_candidates,
-                    &search,
-                    false,
-                    true,
-                    match_candidates.len(),
-                    &Default::default(),
-                    cx.background_executor().clone(),
-                )
-                .await;
-                matches
-                    .into_iter()
-                    .map(|mat| dev_extensions[mat.candidate_id].clone())
-                    .collect()
-            } else {
-                dev_extensions
-            };
-
             let fetch_result = remote_extensions.await;
 
-            let result = this.update(cx, |this, cx| {
-                cx.notify();
-                this.dev_extension_entries = dev_extensions;
-                this.is_fetching_extensions = false;
-
+            this.update(cx, |this, cx| {
                 match fetch_result {
-                    Ok(extensions) => {
-                        this.fetch_failed = false;
-                        this.remote_extension_entries = extensions;
-                        this.filter_extension_entries(cx);
-                        if let Some(callback) = on_complete {
-                            callback(this, cx);
-                        }
-                        Ok(())
+                    Ok(remote_extensions) => {
+                        this.fetch_state = ExtensionFetchState::Succeeded;
+                        this.remote_extensions = remote_extensions;
                     }
-                    Err(err) => {
-                        this.fetch_failed = true;
-                        this.filter_extension_entries(cx);
-                        Err(err)
+                    Err(error) => {
+                        log::error!("failed to fetch extensions: {error:#}");
+                        this.fetch_state = ExtensionFetchState::Failed;
+                        this.remote_extensions.clear();
                     }
                 }
-            });
-
-            result?
-        })
-        .detach_and_log_err(cx);
+                this.rebuild_displayed_extensions(cx);
+                if this.fetch_state == ExtensionFetchState::Succeeded
+                    && let Some(on_complete) = on_complete
+                {
+                    on_complete(this, cx);
+                }
+            })
+            .ok();
+        }));
     }
 
     fn render_extensions(
@@ -659,71 +730,95 @@ impl ExtensionsPage {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<ExtensionCard> {
-        let dev_extension_entries_len = if self.filter.include_dev_extensions() {
-            self.filtered_dev_extension_indices.len()
-        } else {
-            0
-        };
+        let extension_store = self.extension_store.read(cx);
         range
-            .map(|ix| {
-                if ix < dev_extension_entries_len {
-                    let dev_ix = self.filtered_dev_extension_indices[ix];
-                    let extension = &self.dev_extension_entries[dev_ix];
-                    let repository_icon = extension
-                        .repository
-                        .as_deref()
-                        .map(|url| self.get_repository_icon(url));
-                    let card = ExtensionCard::for_dev(extension.clone(), cx);
-                    if let Some(icon) = repository_icon {
-                        card.repository_icon(icon)
-                    } else {
-                        card
-                    }
-                } else {
-                    let extension_ix =
-                        self.filtered_remote_extension_indices[ix - dev_extension_entries_len];
-                    let extension = &self.remote_extension_entries[extension_ix];
-                    self.render_remote_extension(extension, cx)
-                }
+            .filter_map(|index| {
+                let row = *self.displayed_extensions.get(index)?;
+                self.render_extension(row, extension_store, cx)
             })
             .collect()
     }
 
-    fn render_remote_extension(
+    fn render_extension(
         &self,
-        extension: &ExtensionMetadata,
-        cx: &mut Context<Self>,
-    ) -> ExtensionCard {
-        let repository_icon = self.get_repository_icon(&extension.manifest.repository);
-        let card = ExtensionCard::for_remote(extension, cx).repository_icon(repository_icon);
-        let this = cx.weak_entity();
+        row: DisplayedExtension,
+        extension_store: &ExtensionStore,
+        cx: &Context<Self>,
+    ) -> Option<ExtensionCard> {
+        let remote_index = match row {
+            DisplayedExtension::Installed {
+                index,
+                remote_index: None,
+            } => {
+                let extension = self.installed_search_results.get(index)?;
+                let manifest = extension.manifest.clone();
+                let repository_icon = manifest
+                    .repository
+                    .as_deref()
+                    .map(|url| self.get_repository_icon(url));
+                let card = if extension.dev {
+                    ExtensionCard::for_dev(manifest, extension_store)
+                } else {
+                    ExtensionCard::for_installed(manifest, extension_store)
+                };
+                return Some(match repository_icon {
+                    Some(icon) => card.repository_icon(icon),
+                    None => card,
+                });
+            }
+            DisplayedExtension::Installed {
+                remote_index: Some(remote_index),
+                ..
+            }
+            | DisplayedExtension::Remote(remote_index) => remote_index,
+        };
 
-        card.context_menu(move |extension_id, authors, window, cx| {
-            let this = this.upgrade()?;
-            Some(ContextMenu::build(window, cx, |context_menu, window, _| {
-                context_menu
-                    .entry(
-                        "Install Another Version...",
-                        None,
-                        window.handler_for(&this, {
-                            let extension_id = extension_id.clone();
-                            move |this, window, cx| {
-                                this.show_extension_version_list(extension_id.clone(), window, cx)
-                            }
-                        }),
-                    )
-                    .entry("Copy Extension ID", None, {
+        let extension = self.remote_extensions.get(remote_index)?;
+        let weak_self = cx.weak_entity();
+        Some(
+            ExtensionCard::for_remote(extension, extension_store, cx)
+                .repository_icon(self.get_repository_icon(&extension.manifest.repository))
+                .context_menu(move |extension_id, authors, window, cx| {
+                    let this = weak_self.upgrade()?;
+                    Some(Self::render_remote_extension_context_menu(
+                        &this,
+                        extension_id,
+                        authors,
+                        window,
+                        cx,
+                    ))
+                }),
+        )
+    }
+
+    fn render_remote_extension_context_menu(
+        this: &Entity<Self>,
+        extension_id: Arc<str>,
+        authors: SharedString,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, |context_menu, window, _| {
+            context_menu
+                .entry(
+                    "Install Another Version...",
+                    None,
+                    window.handler_for(this, {
                         let extension_id = extension_id.clone();
-                        move |_, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                extension_id.to_string(),
-                            ));
+                        move |this, window, cx| {
+                            this.show_extension_version_list(extension_id.clone(), window, cx)
                         }
-                    })
-                    .entry("Copy Author Info", None, move |_, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(authors.to_string()));
-                    })
-            }))
+                    }),
+                )
+                .entry("Copy Extension ID", None, {
+                    let extension_id = extension_id.clone();
+                    move |_, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(extension_id.to_string()));
+                    }
+                })
+                .entry("Copy Author Info", None, move |_, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(authors.to_string()));
+                })
         })
     }
 
@@ -738,10 +833,8 @@ impl ExtensionsPage {
         };
 
         cx.spawn_in(window, async move |this, cx| {
-            let extension_versions_task = this.update(cx, |_, cx| {
-                let extension_store = ExtensionStore::global(cx);
-
-                extension_store.update(cx, |store, cx| {
+            let extension_versions_task = this.update(cx, |this, cx| {
+                this.extension_store.update(cx, |store, cx| {
                     store.fetch_extension_versions(&extension_id, cx)
                 })
             })?;
@@ -788,7 +881,27 @@ impl ExtensionsPage {
             .border_color(editor_border)
             .rounded_md()
             .child(Icon::new(IconName::MagnifyingGlass).color(Color::Muted))
-            .child(self.render_text_input(&self.query_editor, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .child(self.render_text_input(&self.query_editor, cx)),
+            )
+            .when(self.fetch_state == ExtensionFetchState::Fetching, |this| {
+                this.child(
+                    Icon::new(IconName::LoadCircle)
+                        .size(IconSize::Small)
+                        .color(Color::Muted)
+                        .with_rotate_animation(2),
+                )
+            })
+    }
+
+    fn retry_button(&self, cx: &mut Context<Self>) -> Button {
+        Button::new("retry-fetch-extensions", "Retry")
+            .style(ButtonStyle::Outlined)
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.fetch_extensions(FetchDebounce::Immediate, None, cx);
+            }))
     }
 
     fn render_text_input(
@@ -836,7 +949,9 @@ impl ExtensionsPage {
     }
 
     fn refresh_search(&mut self, cx: &mut Context<Self>) {
-        self.fetch_extensions_debounced(
+        self.update_local_search_results(cx);
+        self.fetch_extensions(
+            FetchDebounce::WhenSearching,
             Some(Box::new(|this, cx| {
                 this.scroll_to_top(cx);
             })),
@@ -861,41 +976,6 @@ impl ExtensionsPage {
         self.refresh_search(cx);
     }
 
-    fn fetch_extensions_debounced(
-        &mut self,
-        on_complete: Option<Box<dyn FnOnce(&mut Self, &mut Context<Self>) + Send>>,
-        cx: &mut Context<ExtensionsPage>,
-    ) {
-        self.extension_fetch_task = Some(cx.spawn(async move |this, cx| {
-            let search = this
-                .update(cx, |this, cx| this.search_query(cx))
-                .ok()
-                .flatten();
-
-            // Only debounce the fetching of extensions if we have a search
-            // query.
-            //
-            // If the search was just cleared then we can just reload the list
-            // of extensions without a debounce, which allows us to avoid seeing
-            // an intermittent flash of a "no extensions" state.
-            if search.is_some() {
-                cx.background_executor()
-                    .timer(Duration::from_millis(250))
-                    .await;
-            };
-
-            this.update(cx, |this, cx| {
-                this.fetch_extensions(
-                    search,
-                    Some(BTreeSet::from_iter(this.provides_filter)),
-                    on_complete,
-                    cx,
-                );
-            })
-            .ok();
-        }));
-    }
-
     pub fn search_query(&self, cx: &mut App) -> Option<String> {
         let search = self.query_editor.read(cx).text(cx);
         if search.trim().is_empty() {
@@ -908,9 +988,15 @@ impl ExtensionsPage {
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let has_search = self.search_query(cx).is_some();
 
-        let message = if self.is_fetching_extensions {
+        // The `Installed` filter is fully local, so fetch progress and failure are
+        // only relevant to the other filters.
+        let fetch_is_relevant = self.filter != ExtensionFilter::Installed;
+        let fetch_failure_is_relevant =
+            self.fetch_state == ExtensionFetchState::Failed && fetch_is_relevant;
+        let is_loading = self.fetch_state == ExtensionFetchState::Fetching && fetch_is_relevant;
+        let message = if is_loading {
             "Loading extensions…"
-        } else if self.fetch_failed {
+        } else if fetch_failure_is_relevant {
             "Failed to load extensions. Please check your connection and try again."
         } else {
             match self.filter {
@@ -938,23 +1024,39 @@ impl ExtensionsPage {
             }
         };
 
-        h_flex()
-            .py_4()
-            .gap_1p5()
-            .when(self.fetch_failed, |this| {
-                this.child(
-                    Icon::new(IconName::Warning)
-                        .size(IconSize::Small)
-                        .color(Color::Warning),
-                )
+        v_flex()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .gap_3()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .when(is_loading, |this| {
+                        this.child(
+                            Icon::new(IconName::LoadCircle)
+                                .size(IconSize::Small)
+                                .color(Color::Accent)
+                                .with_rotate_animation(3),
+                        )
+                    })
+                    .when(fetch_failure_is_relevant, |this| {
+                        this.child(
+                            Icon::new(IconName::Warning)
+                                .size(IconSize::Small)
+                                .color(Color::Warning),
+                        )
+                    })
+                    .child(Label::new(message)),
+            )
+            .when(fetch_failure_is_relevant, |this| {
+                this.child(self.retry_button(cx))
             })
-            .child(Label::new(message))
     }
 
     fn update_settings(
         &mut self,
         selection: &ToggleState,
-
         cx: &mut Context<Self>,
         callback: impl 'static + Send + Fn(&mut SettingsContent, bool),
     ) {
@@ -1016,10 +1118,10 @@ impl ExtensionsPage {
 
     fn render_feature_upsell_banner(
         &self,
-        label: SharedString,
-        docs_url: SharedString,
+        label: &'static str,
+        docs_url: &'static str,
         vim: bool,
-        cx: &mut Context<Self>,
+        cx: &Context<Self>,
     ) -> impl IntoElement {
         let docs_url_button = Button::new("open_docs", "View Documentation")
             .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::Small))
@@ -1030,7 +1132,7 @@ impl ExtensionsPage {
                         source = "Feature Upsell",
                         url = docs_url,
                     );
-                    cx.open_url(&docs_url)
+                    cx.open_url(docs_url)
                 }
             });
 
@@ -1040,7 +1142,7 @@ impl ExtensionsPage {
             .child(
                 Banner::new()
                     .severity(Severity::Success)
-                    .child(Label::new(label).mt_0p5())
+                    .child(Label::new(SharedString::new_static(label)).mt_0p5())
                     .map(|this| {
                         if vim {
                             this.action_slot(
@@ -1088,125 +1190,117 @@ impl ExtensionsPage {
             .into_any_element()
     }
 
-    fn render_feature_upsells(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut container = v_flex();
-
-        for feature in &self.upsells {
-            let banner = match feature {
-                Feature::AgentClaude => self.render_feature_upsell_banner(
-                    "Claude Agent support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/ai/external-agents#claude-agent".into(),
-                    false,
-                    cx,
-                ),
-                Feature::AgentCodex => self.render_feature_upsell_banner(
-                    "Codex CLI support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/ai/external-agents#codex-cli".into(),
-                    false,
-                    cx,
-                ),
-                Feature::AgentGemini => self.render_feature_upsell_banner(
-                    "Gemini CLI support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/ai/external-agents#gemini-cli".into(),
-                    false,
-                    cx,
-                ),
-                Feature::ExtensionBasedpyright => self.render_feature_upsell_banner(
-                    "Basedpyright (Python language server) support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/languages/python#basedpyright".into(),
-                    false,
-                    cx,
-                ),
-                Feature::ExtensionRuff => self.render_feature_upsell_banner(
-                    "Ruff (linter for Python) support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/languages/python#code-formatting--linting".into(),
-                    false,
-                    cx,
-                ),
-                Feature::ExtensionTailwind => self.render_feature_upsell_banner(
-                    "Tailwind CSS support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/languages/tailwindcss".into(),
-                    false,
-                    cx,
-                ),
-                Feature::ExtensionTy => self.render_feature_upsell_banner(
-                    "Ty (Python language server) support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/languages/python".into(),
-                    false,
-                    cx,
-                ),
-                Feature::Git => self.render_feature_upsell_banner(
-                    "Zed comes with basic Git support—more features are coming in the future."
-                        .into(),
-                    "https://zed.dev/docs/git".into(),
-                    false,
-                    cx,
-                ),
-                Feature::LanguageBash => self.render_feature_upsell_banner(
-                    "Shell support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/languages/bash".into(),
-                    false,
-                    cx,
-                ),
-                Feature::LanguageC => self.render_feature_upsell_banner(
-                    "C support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/languages/c".into(),
-                    false,
-                    cx,
-                ),
-                Feature::LanguageCpp => self.render_feature_upsell_banner(
-                    "C++ support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/languages/cpp".into(),
-                    false,
-                    cx,
-                ),
-                Feature::LanguageGo => self.render_feature_upsell_banner(
-                    "Go support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/languages/go".into(),
-                    false,
-                    cx,
-                ),
-                Feature::LanguagePython => self.render_feature_upsell_banner(
-                    "Python support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/languages/python".into(),
-                    false,
-                    cx,
-                ),
-                Feature::LanguageReact => self.render_feature_upsell_banner(
-                    "React support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/languages/typescript".into(),
-                    false,
-                    cx,
-                ),
-                Feature::LanguageRust => self.render_feature_upsell_banner(
-                    "Rust support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/languages/rust".into(),
-                    false,
-                    cx,
-                ),
-                Feature::LanguageTypescript => self.render_feature_upsell_banner(
-                    "Typescript support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/languages/typescript".into(),
-                    false,
-                    cx,
-                ),
-                Feature::OpenIn => self.render_feature_upsell_banner(
-                    "Zed supports linking to a source line on GitHub and others.".into(),
-                    "https://zed.dev/docs/git#git-integrations".into(),
-                    false,
-                    cx,
-                ),
-                Feature::Vim => self.render_feature_upsell_banner(
-                    "Vim support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/vim".into(),
-                    true,
-                    cx,
-                ),
-            };
-            container = container.child(banner);
-        }
-
-        container
+    fn render_feature_upsells(&self, cx: &Context<Self>) -> impl IntoElement {
+        v_flex().children(self.upsells.iter().map(|feature| match feature {
+            Feature::AgentClaude => self.render_feature_upsell_banner(
+                "Claude Agent support is built-in to Zed!",
+                "https://zed.dev/docs/ai/external-agents#claude-agent",
+                false,
+                cx,
+            ),
+            Feature::AgentCodex => self.render_feature_upsell_banner(
+                "Codex CLI support is built-in to Zed!",
+                "https://zed.dev/docs/ai/external-agents#codex-cli",
+                false,
+                cx,
+            ),
+            Feature::AgentGemini => self.render_feature_upsell_banner(
+                "Gemini CLI support is built-in to Zed!",
+                "https://zed.dev/docs/ai/external-agents#gemini-cli",
+                false,
+                cx,
+            ),
+            Feature::ExtensionBasedpyright => self.render_feature_upsell_banner(
+                "Basedpyright (Python language server) support is built-in to Zed!",
+                "https://zed.dev/docs/languages/python#basedpyright",
+                false,
+                cx,
+            ),
+            Feature::ExtensionRuff => self.render_feature_upsell_banner(
+                "Ruff (linter for Python) support is built-in to Zed!",
+                "https://zed.dev/docs/languages/python#code-formatting--linting",
+                false,
+                cx,
+            ),
+            Feature::ExtensionTailwind => self.render_feature_upsell_banner(
+                "Tailwind CSS support is built-in to Zed!",
+                "https://zed.dev/docs/languages/tailwindcss",
+                false,
+                cx,
+            ),
+            Feature::ExtensionTy => self.render_feature_upsell_banner(
+                "Ty (Python language server) support is built-in to Zed!",
+                "https://zed.dev/docs/languages/python",
+                false,
+                cx,
+            ),
+            Feature::Git => self.render_feature_upsell_banner(
+                "Zed comes with basic Git support—more features are coming in the future.",
+                "https://zed.dev/docs/git",
+                false,
+                cx,
+            ),
+            Feature::LanguageBash => self.render_feature_upsell_banner(
+                "Shell support is built-in to Zed!",
+                "https://zed.dev/docs/languages/bash",
+                false,
+                cx,
+            ),
+            Feature::LanguageC => self.render_feature_upsell_banner(
+                "C support is built-in to Zed!",
+                "https://zed.dev/docs/languages/c",
+                false,
+                cx,
+            ),
+            Feature::LanguageCpp => self.render_feature_upsell_banner(
+                "C++ support is built-in to Zed!",
+                "https://zed.dev/docs/languages/cpp",
+                false,
+                cx,
+            ),
+            Feature::LanguageGo => self.render_feature_upsell_banner(
+                "Go support is built-in to Zed!",
+                "https://zed.dev/docs/languages/go",
+                false,
+                cx,
+            ),
+            Feature::LanguagePython => self.render_feature_upsell_banner(
+                "Python support is built-in to Zed!",
+                "https://zed.dev/docs/languages/python",
+                false,
+                cx,
+            ),
+            Feature::LanguageReact => self.render_feature_upsell_banner(
+                "React support is built-in to Zed!",
+                "https://zed.dev/docs/languages/typescript",
+                false,
+                cx,
+            ),
+            Feature::LanguageRust => self.render_feature_upsell_banner(
+                "Rust support is built-in to Zed!",
+                "https://zed.dev/docs/languages/rust",
+                false,
+                cx,
+            ),
+            Feature::LanguageTypescript => self.render_feature_upsell_banner(
+                "Typescript support is built-in to Zed!",
+                "https://zed.dev/docs/languages/typescript",
+                false,
+                cx,
+            ),
+            Feature::OpenIn => self.render_feature_upsell_banner(
+                "Zed supports linking to a source line on GitHub and others.",
+                "https://zed.dev/docs/git#git-integrations",
+                false,
+                cx,
+            ),
+            Feature::Vim => self.render_feature_upsell_banner(
+                "Vim support is built-in to Zed!",
+                "https://zed.dev/docs/vim",
+                true,
+                cx,
+            ),
+        }))
     }
 }
 
@@ -1416,7 +1510,7 @@ impl Render for ExtensionsPage {
                                                 "All",
                                                 cx.listener(|this, _event, _, cx| {
                                                     this.filter = ExtensionFilter::All;
-                                                    this.filter_extension_entries(cx);
+                                                    this.rebuild_displayed_extensions(cx);
                                                     this.scroll_to_top(cx);
                                                 }),
                                             ),
@@ -1424,7 +1518,7 @@ impl Render for ExtensionsPage {
                                                 "Installed",
                                                 cx.listener(|this, _event, _, cx| {
                                                     this.filter = ExtensionFilter::Installed;
-                                                    this.filter_extension_entries(cx);
+                                                    this.rebuild_displayed_extensions(cx);
                                                     this.scroll_to_top(cx);
                                                 }),
                                             ),
@@ -1432,7 +1526,7 @@ impl Render for ExtensionsPage {
                                                 "Not Installed",
                                                 cx.listener(|this, _event, _, cx| {
                                                     this.filter = ExtensionFilter::NotInstalled;
-                                                    this.filter_extension_entries(cx);
+                                                    this.rebuild_displayed_extensions(cx);
                                                     this.scroll_to_top(cx);
                                                 }),
                                             ),
@@ -1505,16 +1599,32 @@ impl Render for ExtensionsPage {
             )
             .child(self.render_feature_upsells(cx))
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
-                let mut count = self.filtered_remote_extension_indices.len();
-                if self.filter.include_dev_extensions() {
-                    count += self.filtered_dev_extension_indices.len();
-                }
+                let count = self.displayed_extensions.len();
 
                 if count == 0 {
                     this.child(self.render_empty_state(cx)).into_any_element()
                 } else {
                     let scroll_handle = &self.list;
-                    this.child(
+                    this.when(
+                        self.fetch_state == ExtensionFetchState::Failed
+                            && self.filter == ExtensionFilter::All,
+                        |this| {
+                            this.child(
+                                div().pt_4().child(
+                                    Banner::new()
+                                        .severity(Severity::Warning)
+                                        .child(
+                                            Label::new(
+                                                "Failed to load extensions. Showing installed extensions only.",
+                                            )
+                                            .mt_0p5(),
+                                        )
+                                        .action_slot(self.retry_button(cx)),
+                                ),
+                            )
+                        },
+                    )
+                    .child(
                         uniform_list("entries", count, cx.processor(Self::render_extensions))
                             .flex_grow_1()
                             .pb_4()

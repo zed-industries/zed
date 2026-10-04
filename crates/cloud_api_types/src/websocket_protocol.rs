@@ -14,6 +14,8 @@ pub enum MessageToClient {
     UserUpdated,
     /// The user's notifications were updated.
     NotificationsUpdated,
+    /// The user's settings were updated and should be refreshed.
+    SettingsUpdated,
 }
 
 impl MessageToClient {
@@ -52,6 +54,15 @@ mod tests {
             b"\x74NotificationsUpdated"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn settings_updated_message_round_trips_with_the_expected_wire_format() -> Result<()> {
+        let message = MessageToClient::SettingsUpdated;
+        let bytes = message.serialize()?;
+        assert_eq!(bytes, b"\x6fSettingsUpdated");
+        assert_eq!(MessageToClient::deserialize(&bytes)?, message);
         Ok(())
     }
 }

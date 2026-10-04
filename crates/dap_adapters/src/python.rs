@@ -6,7 +6,6 @@ use fs::RemoveOptions;
 use futures::{StreamExt, TryStreamExt};
 use gpui::http_client::AsyncBody;
 use gpui::{AsyncApp, SharedString};
-use json_dotpath::DotPaths;
 use language::{LanguageName, Toolchain};
 use paths::debug_adapters_dir;
 use serde_json::Value;
@@ -94,8 +93,9 @@ impl PythonDebugAdapter {
         let request = self.request_kind(&task_definition.config).await?;
 
         let mut configuration = task_definition.config.clone();
-        if let Ok(console) = configuration.dot_get_mut("console") {
+        if let Some(object) = configuration.as_object_mut() {
             // Use built-in Zed terminal if user did not explicitly provide a setting for console.
+            let console = object.entry("console").or_insert(Value::Null);
             if console.is_null() {
                 *console = Value::String("integratedTerminal".into());
             }

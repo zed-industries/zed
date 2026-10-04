@@ -1070,9 +1070,13 @@ impl CompletionsMenu {
                             .with_default_highlights(&style.text, main_highlights);
 
                         let suffix_label = if !suffix_text.is_empty() {
+                            let suffix_text_style = gpui::TextStyle {
+                                color: cx.theme().colors().text_muted,
+                                ..style.text.clone()
+                            };
                             Some(
                                 StyledText::new(suffix_text.to_string())
-                                    .with_default_highlights(&style.text, suffix_highlights),
+                                    .with_default_highlights(&suffix_text_style, suffix_highlights),
                             )
                         } else {
                             None
@@ -1801,7 +1805,11 @@ fn split_completion_label<'a>(
             }
             let shifted_start = range.start.saturating_sub(filter_range.end);
             let shifted_end = range.end - filter_range.end;
-            Some((shifted_start..shifted_end, *highlight))
+            let mut highlight = *highlight;
+            if highlight.color.is_none() {
+                highlight.fade_out = None;
+            }
+            Some((shifted_start..shifted_end, highlight))
         })
         .collect();
     (
@@ -2168,6 +2176,7 @@ mod tests {
 
     fn colored() -> HighlightStyle {
         HighlightStyle {
+            color: Some(gpui::red()),
             fade_out: Some(0.5),
             ..Default::default()
         }
@@ -2182,6 +2191,18 @@ mod tests {
         assert_eq!(suffix_text, ": String");
         assert_eq!(main_highlights, vec![]);
         assert_eq!(suffix_highlights, vec![(2..8, colored())]);
+    }
+
+    #[test]
+    fn test_split_completion_label_unfades_uncolored_suffix() {
+        let faded = HighlightStyle {
+            fade_out: Some(0.35),
+            ..Default::default()
+        };
+        let (_, (_, suffix_highlights)) =
+            split_completion_label("item detail", &(0..4), &[(4..11, faded)]);
+
+        assert_eq!(suffix_highlights, vec![(0..7, HighlightStyle::default())]);
     }
 
     #[test]

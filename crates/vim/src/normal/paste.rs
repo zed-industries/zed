@@ -1236,6 +1236,32 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_paste_multiple_clipboard_selections_at_end_of_file(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("012345678901234567890ˇ", Mode::Normal);
+
+        let clipboard_selections = [6, 3]
+            .into_iter()
+            .map(|len| editor::ClipboardSelection {
+                len,
+                is_entire_line: false,
+                first_line_indent: 0,
+                file_path: None,
+                line_range: None,
+            })
+            .collect::<Vec<_>>();
+        cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
+            "abcdef\nxyz".to_string(),
+            clipboard_selections,
+        ));
+
+        cx.simulate_keystrokes("p");
+        assert_eq!(cx.buffer_text(), "012345678901234567890abcdefxyz");
+    }
+
+    #[gpui::test]
     async fn test_paste_marks(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 

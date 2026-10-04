@@ -60,8 +60,14 @@ impl LinuxDispatcher {
 
                 let handle = event_loop.handle();
                 let timer_handle = event_loop.handle();
+                let signal = event_loop.get_signal();
                 handle
                     .insert_source(timer_channel, move |e, _, _| {
+                        // The dispatcher owning the sender is gone; timers already
+                        // scheduled would run tasks nothing can observe.
+                        if let channel::Event::Closed = e {
+                            signal.stop();
+                        }
                         if let channel::Event::Msg(timer) = e {
                             let mut runnable = Some(timer.runnable);
                             timer_handle

@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use crossbeam::queue::ArrayQueue;
+use crossbeam_queue::ArrayQueue;
 use log::warn;
 use rodio::{
     ChannelCount, Sample, SampleRate, Source, conversions::SampleRateConverter, nz,

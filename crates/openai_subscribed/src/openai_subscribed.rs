@@ -3,15 +3,16 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
-use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
+use gpui::{AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt as _,
     http::{HeaderName, HeaderValue},
 };
 use language_model::{
     CompactionResult, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
+    LanguageModelCompletionStream, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
+    LanguageModelToolChoiceSupport, RateLimiter,
 };
 use open_ai::{
     ReasoningEffort,
@@ -38,13 +39,18 @@ const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 const CREDENTIALS_KEY: &str = "https://chatgpt.com/backend-api/codex";
 const TOKEN_REFRESH_BUFFER_MS: u64 = Duration::from_mins(5).as_millis() as u64;
-/// Requests the complete account catalog without Codex CLI version filtering.
+/// Client compatibility version sent to the ChatGPT model catalog.
 ///
-/// The backend treats this exact version as an ungated sentinel. Other versions
-/// are compared with each model's `minimal_client_version`.
-const UNGATED_MODEL_CATALOG_CLIENT_VERSION: &str = "0.0.0";
-// Codex applies the same bound because model discovery is a startup-critical request.
-const MODEL_CATALOG_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+/// The backend compares this value with each model's `minimal_client_version`.
+const MODEL_CATALOG_CLIENT_VERSION: &str = "0.999.0";
+/// How long credential loading and sign-in wait for model discovery before
+/// continuing with the models known so far.
+///
+/// Model discovery is startup-critical, so this matches the 5s bound Codex uses.
+const MODEL_CATALOG_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+/// The authenticated catalog can take tens of seconds to respond, so the request
+/// keeps running in the background well past [`MODEL_CATALOG_WAIT_TIMEOUT`].
+const MODEL_CATALOG_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct CodexCredentials {
@@ -144,10 +150,8 @@ impl State {
                             .is_authenticated()
                             .then(|| state.refresh_model_catalog(cx))
                     })?;
-                    if let Some(refresh_models_task) = refresh_models_task
-                        && let Err(error) = refresh_models_task.await
-                    {
-                        log::warn!("Failed to refresh ChatGPT models: {error:#}");
+                    if let Some(refresh_models_task) = refresh_models_task {
+                        wait_for_model_catalog(refresh_models_task, cx).await;
                     }
                     this.update(cx, |state, cx| {
                         state.load_task = None;
@@ -165,7 +169,7 @@ impl State {
             load_task: Some(load_task),
             credentials_provider,
             http_client,
-            client_version: UNGATED_MODEL_CATALOG_CLIENT_VERSION.into(),
+            client_version: MODEL_CATALOG_CLIENT_VERSION.into(),
             available_models: ChatGptModel::all(),
             auth_generation: 0,
             model_catalog_generation: 0,
@@ -324,9 +328,7 @@ impl State {
                                 state.last_auth_error = None;
                                 state.refresh_model_catalog(cx)
                             })?;
-                            if let Err(error) = refresh_models_task.await {
-                                log::warn!("Failed to refresh ChatGPT models: {error:#}");
-                            }
+                            wait_for_model_catalog(refresh_models_task, cx).await;
                             this.update(cx, |state, cx| {
                                 state.sign_in_state = SignInState::Idle;
                                 cx.notify();
@@ -519,54 +521,28 @@ impl ChatGptModel {
     }
 }
 
-/// Creates a [`LanguageModel`] for `model` that authenticates through
-/// `state`'s credentials, refreshing them as needed.
-pub fn create_language_model(
-    model: ChatGptModel,
-    state: &Entity<State>,
-    cx: &App,
-) -> Arc<dyn LanguageModel> {
-    Arc::new(OpenAiSubscribedLanguageModel {
-        id: LanguageModelId::from(model.id().to_string()),
-        http_client: state.read(cx).http_client.clone(),
-        model,
-        state: state.clone(),
-        request_limiter: RateLimiter::new(4),
-    })
-}
-
-struct OpenAiSubscribedLanguageModel {
-    id: LanguageModelId,
-    model: ChatGptModel,
-    state: Entity<State>,
-    http_client: Arc<dyn HttpClient>,
-    request_limiter: RateLimiter,
-}
-
-impl OpenAiSubscribedLanguageModel {
-    fn codex_responses_request(
-        &self,
-        mut request: LanguageModelRequest,
-    ) -> Result<open_ai::responses::Request> {
-        if !self.model.supports_priority() {
-            request.speed = None;
-        }
-        let mut responses_request = into_open_ai_response(
-            request,
-            self.model.id(),
-            self.model.supports_parallel_tool_calls(),
-            self.model.supports_prompt_cache_key(),
-            None,
-            self.model.default_reasoning_effort(),
-            self.model
-                .supported_reasoning_efforts()
-                .contains(&ReasoningEffort::None),
-            &PROVIDER_ID,
-        )?;
-        responses_request.store = Some(false);
-        responses_request.instructions.get_or_insert_default();
-        Ok(responses_request)
+fn codex_responses_request(
+    model: &ChatGptModel,
+    mut request: LanguageModelRequest,
+) -> Result<open_ai::responses::Request> {
+    if !model.supports_priority() {
+        request.speed = None;
     }
+    let mut responses_request = into_open_ai_response(
+        request,
+        model.id(),
+        model.supports_parallel_tool_calls(),
+        model.supports_prompt_cache_key(),
+        None,
+        model.default_reasoning_effort(),
+        model
+            .supported_reasoning_efforts()
+            .contains(&ReasoningEffort::None),
+        &PROVIDER_ID,
+    )?;
+    responses_request.store = Some(false);
+    responses_request.instructions.get_or_insert_default();
+    Ok(responses_request)
 }
 
 fn codex_extra_headers(
@@ -742,223 +718,180 @@ async fn list_models(
     Ok(models.into_iter().map(ChatGptModel::from).collect())
 }
 
-impl LanguageModel for OpenAiSubscribedLanguageModel {
-    fn id(&self) -> LanguageModelId {
-        self.id.clone()
-    }
+/// Describes a ChatGPT subscription model as a [`LanguageModel`].
+pub fn language_model(model: &ChatGptModel) -> LanguageModel {
+    let default_effort = model.default_reasoning_effort();
+    let supported_effort_levels = model
+        .supported_reasoning_efforts()
+        .iter()
+        .copied()
+        .filter_map(|effort| {
+            let (name, value) = match effort {
+                ReasoningEffort::None => return None,
+                ReasoningEffort::Minimal => ("Minimal", "minimal"),
+                ReasoningEffort::Low => ("Low", "low"),
+                ReasoningEffort::Medium => ("Medium", "medium"),
+                ReasoningEffort::High => ("High", "high"),
+                ReasoningEffort::XHigh => ("Extra High", "xhigh"),
+                ReasoningEffort::Max => ("Max", "max"),
+            };
 
-    fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(self.model.display_name().to_string())
-    }
-
-    fn provider_id(&self) -> LanguageModelProviderId {
-        PROVIDER_ID
-    }
-
-    fn provider_name(&self) -> LanguageModelProviderName {
-        PROVIDER_NAME
-    }
-
-    fn supports_tools(&self) -> bool {
-        true
-    }
-
-    fn supports_images(&self) -> bool {
-        self.model.supports_images()
-    }
-
-    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
-        true
-    }
-
-    fn supports_streaming_tools(&self) -> bool {
-        true
-    }
-
-    fn supports_thinking(&self) -> bool {
-        true
-    }
-
-    fn supports_fast_mode(&self) -> bool {
-        self.model.supports_priority()
-    }
-
-    fn supports_server_side_compaction(&self) -> bool {
-        true
-    }
-
-    fn supports_explicit_compaction(&self) -> bool {
-        true
-    }
-
-    fn compact(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
-        let mut responses_request = match self.codex_responses_request(request) {
-            Ok(responses_request) => responses_request,
-            Err(error) => return async move { Err(error.into()) }.boxed(),
-        };
-        responses_request.context_management = None;
-        responses_request
-            .input
-            .push(ResponseInputItem::CompactionTrigger);
-
-        let state = self.state.downgrade();
-        let http_client = self.http_client.clone();
-        let request_limiter = self.request_limiter.clone();
-
-        cx.spawn(async move |cx| {
-            let creds = get_fresh_credentials(&state, &http_client, cx).await?;
-            let extra_headers =
-                codex_extra_headers(&creds, responses_request.prompt_cache_key.as_deref());
-            let access_token = creds.access_token.clone();
-            let response_stream = request_limiter
-                .stream(async move {
-                    stream_response(
-                        http_client.as_ref(),
-                        PROVIDER_NAME.0.as_str(),
-                        CODEX_BASE_URL,
-                        &access_token,
-                        responses_request,
-                        &extra_headers,
-                    )
-                    .await
-                    .map_err(LanguageModelCompletionError::from)
-                })
-                .await?;
-            let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
-            let mut event_stream = language_model::stream_in_background(
-                mapper.map_stream(response_stream.boxed()).boxed(),
-                cx.background_executor().clone(),
-            );
-            let mut compacted_context = None;
-            let mut usage = language_model::TokenUsage::default();
-
-            while let Some(event) = event_stream.next().await {
-                match event? {
-                    LanguageModelCompletionEvent::Compaction(
-                        language_model::CompactionUpdate::Finished(context),
-                    ) => {
-                        if compacted_context.replace(context).is_some() {
-                            return Err(LanguageModelCompletionError::Other(anyhow!(
-                                "ChatGPT subscription compaction returned multiple replacement contexts"
-                            )));
-                        }
-                    }
-                    LanguageModelCompletionEvent::UsageUpdate(updated_usage) => {
-                        usage = updated_usage;
-                    }
-                    _ => {}
-                }
-            }
-
-            let context = compacted_context.ok_or_else(|| {
-                LanguageModelCompletionError::Other(anyhow!(
-                    "ChatGPT subscription compaction returned no replacement context"
-                ))
-            })?;
-            Ok(CompactionResult { context, usage })
-        })
-        .boxed()
-    }
-
-    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
-        let default_effort = self.model.default_reasoning_effort();
-        self.model
-            .supported_reasoning_efforts()
-            .iter()
-            .copied()
-            .filter_map(|effort| {
-                let (name, value) = match effort {
-                    ReasoningEffort::None => return None,
-                    ReasoningEffort::Minimal => ("Minimal", "minimal"),
-                    ReasoningEffort::Low => ("Low", "low"),
-                    ReasoningEffort::Medium => ("Medium", "medium"),
-                    ReasoningEffort::High => ("High", "high"),
-                    ReasoningEffort::XHigh => ("Extra High", "xhigh"),
-                    ReasoningEffort::Max => ("Max", "max"),
-                };
-
-                Some(LanguageModelEffortLevel {
-                    name: name.into(),
-                    value: value.into(),
-                    is_default: Some(effort) == default_effort,
-                })
+            Some(LanguageModelEffortLevel {
+                name: name.into(),
+                value: value.into(),
+                is_default: Some(effort) == default_effort,
             })
-            .collect()
-    }
-
-    fn telemetry_id(&self) -> String {
-        format!("openai-subscribed/{}", self.model.id())
-    }
-
-    fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
-    }
-
-    fn max_output_tokens(&self) -> Option<u64> {
-        self.model.max_output_tokens()
-    }
-
-    fn stream_completion(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            futures::stream::BoxStream<
-                'static,
-                Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
-            >,
-            LanguageModelCompletionError,
-        >,
-    > {
-        let responses_request = match self.codex_responses_request(request) {
-            Ok(responses_request) => responses_request,
-            Err(error) => return async move { Err(error.into()) }.boxed(),
-        };
-
-        let state = self.state.downgrade();
-        let http_client = self.http_client.clone();
-        let request_limiter = self.request_limiter.clone();
-        let executor = cx.background_executor().clone();
-
-        let future = cx.spawn(async move |cx| {
-            let creds = get_fresh_credentials(&state, &http_client, cx).await?;
-            let extra_headers =
-                codex_extra_headers(&creds, responses_request.prompt_cache_key.as_deref());
-
-            let access_token = creds.access_token.clone();
-            request_limiter
-                .stream(async move {
-                    stream_response(
-                        http_client.as_ref(),
-                        PROVIDER_NAME.0.as_str(),
-                        CODEX_BASE_URL,
-                        &access_token,
-                        responses_request,
-                        &extra_headers,
-                    )
-                    .await
-                    .map_err(LanguageModelCompletionError::from)
-                })
-                .await
-        });
-
-        async move {
-            let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
-            Ok(language_model::stream_in_background(
-                mapper.map_stream(future.await?.boxed()).boxed(),
-                executor,
-            ))
-        }
-        .boxed()
+        })
+        .collect();
+    LanguageModel {
+        supports_tools: true,
+        supports_images: model.supports_images(),
+        tool_choice_support: LanguageModelToolChoiceSupport::ALL,
+        supports_streaming_tools: true,
+        supports_thinking: true,
+        supports_fast_mode: model.supports_priority(),
+        supports_server_side_compaction: true,
+        supports_explicit_compaction: true,
+        supported_effort_levels,
+        max_output_tokens: model.max_output_tokens(),
+        ..LanguageModel::new(
+            LanguageModelId::from(model.id().to_string()),
+            LanguageModelName::from(model.display_name().to_string()),
+            PROVIDER_ID,
+            PROVIDER_NAME,
+            format!("openai-subscribed/{}", model.id()),
+            model.max_token_count(),
+        )
     }
 }
 
+/// Compacts `request`'s conversation with the ChatGPT model `model`, using
+/// `state`'s credentials, which are refreshed as needed.
+pub fn compact(
+    model: &ChatGptModel,
+    state: &Entity<State>,
+    request_limiter: &RateLimiter,
+    request: LanguageModelRequest,
+    cx: &AsyncApp,
+) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
+    let mut responses_request = match codex_responses_request(model, request) {
+        Ok(responses_request) => responses_request,
+        Err(error) => return async move { Err(error.into()) }.boxed(),
+    };
+    responses_request.context_management = None;
+    responses_request
+        .input
+        .push(ResponseInputItem::CompactionTrigger);
+
+    let http_client = state.read_with(cx, |state, _| state.http_client.clone());
+    let state = state.downgrade();
+    let request_limiter = request_limiter.clone();
+
+    cx.spawn(async move |cx| {
+        let creds = get_fresh_credentials(&state, &http_client, cx).await?;
+        let extra_headers =
+            codex_extra_headers(&creds, responses_request.prompt_cache_key.as_deref());
+        let access_token = creds.access_token.clone();
+        let response_stream = request_limiter
+            .stream(async move {
+                stream_response(
+                    http_client.as_ref(),
+                    PROVIDER_NAME.0.as_str(),
+                    CODEX_BASE_URL,
+                    &access_token,
+                    responses_request,
+                    &extra_headers,
+                )
+                .await
+                .map_err(LanguageModelCompletionError::from)
+            })
+            .await?;
+        let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
+        let mut event_stream = language_model::stream_in_background(
+            mapper.map_stream(response_stream.boxed()).boxed(),
+            cx.background_executor().clone(),
+        );
+        let mut compacted_context = None;
+        let mut usage = language_model::TokenUsage::default();
+
+        while let Some(event) = event_stream.next().await {
+            match event? {
+                LanguageModelCompletionEvent::Compaction(
+                    language_model::CompactionUpdate::Finished(context),
+                ) => {
+                    if compacted_context.replace(context).is_some() {
+                        return Err(LanguageModelCompletionError::Other(anyhow!(
+                            "ChatGPT subscription compaction returned multiple replacement contexts"
+                        )));
+                    }
+                }
+                LanguageModelCompletionEvent::UsageUpdate(updated_usage) => {
+                    usage = updated_usage;
+                }
+                _ => {}
+            }
+        }
+
+        let context = compacted_context.ok_or_else(|| {
+            LanguageModelCompletionError::Other(anyhow!(
+                "ChatGPT subscription compaction returned no replacement context"
+            ))
+        })?;
+        Ok(CompactionResult { context, usage })
+    })
+    .boxed()
+}
+
+/// Streams a completion of `request` from the ChatGPT model `model`, using
+/// `state`'s credentials, which are refreshed as needed.
+pub fn stream_completion(
+    model: &ChatGptModel,
+    state: &Entity<State>,
+    request_limiter: &RateLimiter,
+    request: LanguageModelRequest,
+    cx: &AsyncApp,
+) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>> {
+    let responses_request = match codex_responses_request(model, request) {
+        Ok(responses_request) => responses_request,
+        Err(error) => return async move { Err(error.into()) }.boxed(),
+    };
+
+    let http_client = state.read_with(cx, |state, _| state.http_client.clone());
+    let state = state.downgrade();
+    let request_limiter = request_limiter.clone();
+    let executor = cx.background_executor().clone();
+
+    let future = cx.spawn(async move |cx| {
+        let creds = get_fresh_credentials(&state, &http_client, cx).await?;
+        let extra_headers =
+            codex_extra_headers(&creds, responses_request.prompt_cache_key.as_deref());
+
+        let access_token = creds.access_token.clone();
+        request_limiter
+            .stream(async move {
+                stream_response(
+                    http_client.as_ref(),
+                    PROVIDER_NAME.0.as_str(),
+                    CODEX_BASE_URL,
+                    &access_token,
+                    responses_request,
+                    &extra_headers,
+                )
+                .await
+                .map_err(LanguageModelCompletionError::from)
+            })
+            .await
+    });
+
+    async move {
+        let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
+        Ok(language_model::stream_in_background(
+            mapper.map_stream(future.await?.boxed()).boxed(),
+            executor,
+        ))
+    }
+    .boxed()
+}
 async fn get_fresh_credentials(
     state: &WeakEntity<State>,
     http_client: &Arc<dyn HttpClient>,
@@ -1231,6 +1164,31 @@ async fn exchange_code(
     serde_json::from_str::<TokenResponse>(&body).context("Failed to parse token response")
 }
 
+/// Waits up to [`MODEL_CATALOG_WAIT_TIMEOUT`] for a model catalog refresh.
+///
+/// A slower refresh is left running and replaces the available models once it
+/// completes, so a slow catalog never holds up authentication or sign-in.
+async fn wait_for_model_catalog(refresh: Task<Result<(), Arc<anyhow::Error>>>, cx: &mut AsyncApp) {
+    let mut refresh = refresh.fuse();
+    let mut wait_timeout = cx
+        .background_executor()
+        .timer(MODEL_CATALOG_WAIT_TIMEOUT)
+        .fuse();
+    futures::select! {
+        result = refresh => log_model_catalog_error(result),
+        () = wait_timeout => {
+            cx.spawn(async move |_| log_model_catalog_error(refresh.await))
+                .detach();
+        }
+    }
+}
+
+fn log_model_catalog_error(result: Result<(), Arc<anyhow::Error>>) {
+    if let Err(error) = result {
+        log::warn!("Failed to refresh ChatGPT models: {error:#}");
+    }
+}
+
 async fn refresh_token(
     client: &Arc<dyn HttpClient>,
     refresh_token: &str,
@@ -1358,6 +1316,7 @@ mod tests {
     use super::*;
     use gpui::{AppContext as _, TestAppContext};
     use http_client::FakeHttpClient;
+    use language_model::DEFAULT_MODEL_CONCURRENCY;
     use parking_lot::Mutex;
     use std::future::Future;
     use std::pin::Pin;
@@ -1726,7 +1685,9 @@ mod tests {
         let http: Arc<dyn HttpClient> = FakeHttpClient::create(|request| async move {
             assert_eq!(
                 request.uri().to_string(),
-                "https://chatgpt.com/backend-api/codex/models?client_version=0.0.0"
+                format!(
+                    "https://chatgpt.com/backend-api/codex/models?client_version={MODEL_CATALOG_CLIENT_VERSION}"
+                )
             );
             Ok(http_client::Response::builder()
                 .status(200)
@@ -1960,9 +1921,95 @@ mod tests {
             .await
             .expect_err("model discovery should time out");
         assert!(
-            error.to_string().contains("timed out after 5s"),
+            error.to_string().contains("timed out after 60s"),
             "unexpected model discovery error: {error:#}"
         );
+    }
+
+    #[gpui::test]
+    async fn test_slow_model_catalog_does_not_block_initial_load(cx: &mut TestAppContext) {
+        let creds_json = serde_json::to_vec(&make_fresh_credentials()).unwrap();
+        let creds_provider = Arc::new(FakeCredentialsProvider::new());
+        creds_provider
+            .storage
+            .lock()
+            .replace(("Bearer".to_string(), creds_json));
+
+        let (release_catalog, catalog_released) = futures::channel::oneshot::channel::<()>();
+        let catalog_released = Arc::new(Mutex::new(Some(catalog_released)));
+        let http: Arc<dyn HttpClient> = FakeHttpClient::create(move |_| {
+            let catalog_released = catalog_released.lock().take();
+            async move {
+                if let Some(catalog_released) = catalog_released {
+                    catalog_released
+                        .await
+                        .expect("catalog request should be released");
+                }
+                Ok(http_client::Response::builder().status(200).body(
+                    http_client::AsyncBody::from(
+                        serde_json::json!({
+                            "models": [{
+                                "slug": "gpt-slow-account-model",
+                                "display_name": "Slow Account Model",
+                                "default_reasoning_level": "medium",
+                                "supported_reasoning_levels": [],
+                                "visibility": "list",
+                                "priority": 0,
+                                "additional_speed_tiers": [],
+                                "service_tiers": [],
+                                "context_window": 128_000,
+                                "max_context_window": null,
+                                "input_modalities": ["text"]
+                            }]
+                        })
+                        .to_string(),
+                    ),
+                )?)
+            }
+        });
+
+        let state = cx.new(|cx| State::new(http, creds_provider, cx));
+        let load_task = cx
+            .read(|cx| state.read(cx).load_task())
+            .expect("constructor should start the credentials load");
+        let fallback_model_ids = ChatGptModel::all()
+            .iter()
+            .map(|model| model.id().to_owned())
+            .collect::<Vec<_>>();
+        let available_model_ids = |cx: &TestAppContext| {
+            cx.read(|cx| {
+                state
+                    .read(cx)
+                    .available_models()
+                    .iter()
+                    .map(|model| model.id().to_owned())
+                    .collect::<Vec<_>>()
+            })
+        };
+
+        cx.run_until_parked();
+        cx.executor().advance_clock(MODEL_CATALOG_WAIT_TIMEOUT);
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let state = state.read(cx);
+            assert!(
+                state.load_task().is_none(),
+                "load should finish without waiting for the model catalog"
+            );
+            assert!(state.is_authenticated());
+            assert!(state.model_catalog_error().is_none());
+        });
+        load_task.await.expect("load should succeed");
+        assert_eq!(available_model_ids(cx), fallback_model_ids);
+
+        cx.executor().advance_clock(Duration::from_secs(25));
+        release_catalog
+            .send(())
+            .expect("catalog request should still be pending");
+        cx.run_until_parked();
+
+        assert_eq!(available_model_ids(cx), ["gpt-slow-account-model"]);
+        cx.read(|cx| assert!(state.read(cx).model_catalog_error().is_none()));
     }
 
     #[gpui::test]
@@ -2106,9 +2153,10 @@ mod tests {
         let mut credentials = make_fresh_credentials();
         credentials.account_id = Some("account-123".to_string());
         let state = make_state(http, Some(credentials), cx);
-        let model = cx.read(|cx| create_language_model(ChatGptModel::Gpt55, &state, cx));
-        assert!(model.supports_server_side_compaction());
-        assert!(model.supports_explicit_compaction());
+        let language_model = language_model(&ChatGptModel::Gpt55);
+        assert!(language_model.supports_server_side_compaction());
+        assert!(language_model.supports_explicit_compaction());
+        let request_limiter = RateLimiter::new(DEFAULT_MODEL_CONCURRENCY);
 
         let request = LanguageModelRequest {
             messages: vec![language_model::LanguageModelRequestMessage {
@@ -2122,12 +2170,17 @@ mod tests {
             ..Default::default()
         };
         let async_cx = cx.to_async();
-        let events = model
-            .stream_completion(request, &async_cx)
-            .await
-            .expect("the response stream should start")
-            .collect::<Vec<_>>()
-            .await;
+        let events = stream_completion(
+            &ChatGptModel::Gpt55,
+            &state,
+            &request_limiter,
+            request,
+            &async_cx,
+        )
+        .await
+        .expect("the response stream should start")
+        .collect::<Vec<_>>()
+        .await;
 
         assert_eq!(compaction_request_count.load(Ordering::SeqCst), 1);
         assert!(matches!(
@@ -2199,7 +2252,7 @@ mod tests {
 
         let http: Arc<dyn HttpClient> = http_client;
         let state = make_state(http, Some(make_fresh_credentials()), cx);
-        let model = cx.read(|cx| create_language_model(ChatGptModel::Gpt55, &state, cx));
+        let request_limiter = RateLimiter::new(DEFAULT_MODEL_CONCURRENCY);
         let request = LanguageModelRequest {
             messages: vec![language_model::LanguageModelRequestMessage {
                 role: language_model::Role::User,
@@ -2212,10 +2265,15 @@ mod tests {
             ..Default::default()
         };
 
-        let result = model
-            .compact(request, &cx.to_async())
-            .await
-            .expect("manual compaction should succeed");
+        let result = compact(
+            &ChatGptModel::Gpt55,
+            &state,
+            &request_limiter,
+            request,
+            &cx.to_async(),
+        )
+        .await
+        .expect("manual compaction should succeed");
         let language_model::CompactedContext::ProviderState(compaction_state) = result.context
         else {
             panic!("expected provider compaction state");

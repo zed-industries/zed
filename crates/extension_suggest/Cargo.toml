@@ -1,0 +1,19 @@
+[package]
+name = "extension_suggest"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/extension_suggest.rs"
+doctest = false
+
+[dependencies]
+path.workspace = true
+
+[dev-dependencies]
+path = { workspace = true, features = ["test-support"] }

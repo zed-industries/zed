@@ -15,7 +15,7 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Subscription,
     Task, WeakEntity, actions,
 };
-use language::language_settings::{AllLanguageSettings, CopilotSettings};
+use language::language_settings::{AllLanguageSettings, CopilotEditPredictionSettings};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16, ToPointUtf16,
     language_settings::{EditPredictionProvider, all_language_settings},
@@ -479,7 +479,10 @@ impl Copilot {
         cx.notify();
     }
 
-    fn build_env(&self, copilot_settings: &CopilotSettings) -> Option<HashMap<String, String>> {
+    fn build_env(
+        &self,
+        copilot_settings: &CopilotEditPredictionSettings,
+    ) -> Option<HashMap<String, String>> {
         let proxy_url = copilot_settings.proxy.clone()?;
         let no_verify = copilot_settings.proxy_no_verify;
         let http_or_https_proxy = if proxy_url.starts_with("http:") {
@@ -1311,24 +1314,13 @@ fn notify_did_change_config_to_server(
         .copilot
         .clone();
 
-    if let Some(copilot_chat) = copilot_chat::CopilotChat::global(cx) {
-        copilot_chat.update(cx, |chat, cx| {
-            chat.set_configuration(
-                copilot_chat::CopilotChatConfiguration {
-                    enterprise_uri: copilot_settings.enterprise_uri.clone(),
-                },
-                cx,
-            );
-        });
-    }
-
     let settings = json!({
         "http": {
             "proxy": copilot_settings.proxy,
             "proxyStrictSSL": !copilot_settings.proxy_no_verify.unwrap_or(false)
         },
         "github-enterprise": {
-            "uri": copilot_settings.enterprise_uri
+            "uri": settings::CopilotSettings::get_global(cx).enterprise_uri
         }
     });
 

@@ -3315,6 +3315,18 @@ async fn test_inlay_hint_refresh_is_forwarded(
                         padding_right: None,
                         data: None,
                     },
+                    lsp::InlayHint {
+                        position: lsp::Position::new(1091, 1091),
+                        label: lsp::InlayHintLabel::String(
+                            "out-of-bounds parameter hint".to_string(),
+                        ),
+                        kind: Some(lsp::InlayHintKind::PARAMETER),
+                        text_edits: None,
+                        tooltip: None,
+                        padding_left: None,
+                        padding_right: None,
+                        data: None,
+                    },
                 ]))
             }
         })

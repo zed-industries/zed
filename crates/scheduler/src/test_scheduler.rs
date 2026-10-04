@@ -159,6 +159,7 @@ impl TestScheduler {
     }
 
     pub fn new(config: TestSchedulerConfig) -> Self {
+        crate::TEST_SCHEDULER_CREATED.store(true, std::sync::atomic::Ordering::Relaxed);
         Self {
             rng: Arc::new(Mutex::new(StdRng::seed_from_u64(config.seed))),
             state: Arc::new(Mutex::new(SchedulerState {

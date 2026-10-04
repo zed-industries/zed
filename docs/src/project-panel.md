@@ -31,8 +31,9 @@ to `false` to open permanent tabs with a single click or {#action project_panel:
 ### Auto-reveal
 
 By default, switching to a file in the editor will automatically highlight it in the
-project panel and scroll it into view. This can be disabled with the
-`project_panel.auto_reveal_entries` setting.
+project panel and scroll it into view. This
+[auto-reveal behavior](./reference/all-settings.md#auto-reveal-entries) can be
+disabled with the `project_panel.auto_reveal_entries` setting.
 
 ### Sticky Scroll
 

@@ -875,19 +875,25 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     /// Set a key that can be used to look up this element's bounds
-    /// in the [`crate::VisualTestContext::debug_bounds`] map
-    /// This is a noop in release builds
+    /// in the [`crate::VisualTestContext::debug_bounds`] map.
+    ///
+    /// Selectors are only recorded in debug builds with the `test-support`
+    /// feature. Elsewhere this is a no-op, so `test-support` can stay enabled
+    /// in release builds without the per-frame cost.
+    #[cfg(any(test, all(debug_assertions, feature = "test-support")))]
     fn debug_selector(mut self, f: impl FnOnce() -> String) -> Self {
         self.interactivity().debug_selector = Some(f());
         self
     }
 
-    #[cfg(not(any(test, feature = "test-support")))]
     /// Set a key that can be used to look up this element's bounds
-    /// in the [`crate::VisualTestContext::debug_bounds`] map
-    /// This is a noop in release builds
+    /// in the [`crate::VisualTestContext::debug_bounds`] map.
+    ///
+    /// Selectors are only recorded in debug builds with the `test-support`
+    /// feature. Elsewhere this is a no-op, so `test-support` can stay enabled
+    /// in release builds without the per-frame cost.
+    #[cfg(not(any(test, all(debug_assertions, feature = "test-support"))))]
     #[inline]
     fn debug_selector(self, _: impl FnOnce() -> String) -> Self {
         self
@@ -2194,7 +2200,7 @@ pub struct Interactivity {
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, all(debug_assertions, feature = "test-support")))]
     pub(crate) debug_selector: Option<String>,
 }
 
@@ -2517,7 +2523,7 @@ impl Interactivity {
 
                 let style = self.compute_style_internal(hitbox, element_state.as_mut(), window, cx);
 
-                #[cfg(any(feature = "test-support", test))]
+                #[cfg(any(test, all(debug_assertions, feature = "test-support")))]
                 if let Some(debug_selector) = &self.debug_selector {
                     window
                         .next_frame

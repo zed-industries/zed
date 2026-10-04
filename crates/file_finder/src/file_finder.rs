@@ -25,7 +25,7 @@ use project::{
     PathMatchCandidateSet, Project, ProjectPath, WorktreeId, worktree_store::WorktreeStore,
 };
 
-use settings::{ModalWidthContent, Settings, SettingsStore};
+use settings::{ModalWidthContent, SeedQuerySetting, Settings, SettingsStore};
 use std::{
     borrow::Cow,
     cmp, mem,
@@ -84,10 +84,12 @@ impl FileFinder {
         workspace.register_action(
             |workspace, action: &workspace::ToggleFileFinder, window, cx| {
                 let Some(file_finder) = workspace.active_modal::<Self>(cx) else {
+                    let seed_query = Self::seed_query(workspace, window, cx);
                     Self::open(
                         workspace,
                         action.separate_history,
                         action.include_ignored,
+                        seed_query,
                         window,
                         cx,
                     )
@@ -109,6 +111,7 @@ impl FileFinder {
         workspace: &mut Workspace,
         separate_history: bool,
         include_ignored: Option<bool>,
+        seed_query: Option<String>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<()> {
@@ -166,14 +169,53 @@ impl FileFinder {
                             cx,
                         );
 
-                        FileFinder::new(delegate, window, cx)
+                        FileFinder::new(delegate, seed_query, window, cx)
                     });
                 })
                 .ok();
         })
     }
 
-    fn new(delegate: FileFinderDelegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// The query to pre-fill the finder with from the user's latest selection,
+    /// when `prefill_query_from_selection` is enabled. The focused pane's item
+    /// (e.g. a terminal in a dock) is consulted before the active center pane's
+    /// item, so the selection next to the focus wins.
+    fn seed_query(
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Option<String> {
+        if !FileFinderSettings::get_global(cx).prefill_query_from_selection {
+            return None;
+        }
+
+        let focused_item = workspace.focused_pane(window, cx).read(cx).active_item();
+        let active_item = workspace
+            .active_item(cx)
+            .filter(|active| match &focused_item {
+                Some(focused) => focused.item_id() != active.item_id(),
+                None => true,
+            });
+
+        focused_item
+            .into_iter()
+            .chain(active_item)
+            .find_map(|item| {
+                let query = item.to_searchable_item_handle(cx)?.query_suggestion(
+                    Some(SeedQuerySetting::Selection),
+                    window,
+                    cx,
+                );
+                sanitize_file_query(&query)
+            })
+    }
+
+    fn new(
+        delegate: FileFinderDelegate,
+        seed_query: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let modal_max_width_setting = FileFinderSettings::get_global(cx).modal_max_width;
 
         let project = delegate.project.clone();
@@ -184,8 +226,12 @@ impl FileFinder {
                 .initial_width(Rems::from_pixels(modal_max_width, window))
         });
         let picker_focus_handle = picker.focus_handle(cx);
-        picker.update(cx, |picker, _| {
+        picker.update(cx, |picker, cx| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
+            if let Some(seed_query) = seed_query {
+                picker.set_query(&seed_query, window, cx);
+                picker.select_query(window, cx);
+            }
         });
         Self {
             picker,
@@ -326,6 +372,15 @@ impl FileFinder {
         let small_width = picker::DEFAULT_MODAL_WIDTH.to_pixels(window.rem_size());
         width_setting.to_pixels(small_width, window.viewport_size().width)
     }
+}
+
+const MAX_SEED_QUERY_LENGTH: usize = 100;
+
+/// Flattens a selection into a single-line file query, capped to a sane length,
+/// since the selection seeds a file-name lookup.
+fn sanitize_file_query(selection: &str) -> Option<String> {
+    let query = selection.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!query.is_empty()).then(|| query.chars().take(MAX_SEED_QUERY_LENGTH).collect())
 }
 
 impl EventEmitter<DismissEvent> for FileFinder {}

@@ -59,7 +59,7 @@ use workspace::{
     item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
     searchable::{
         Direction, FilteredSearchRange, SearchEvent, SearchToken, SearchableItem,
-        SearchableItemHandle,
+        SearchableItemHandle, SelectSearchOptions,
     },
 };
 use workspace::{
@@ -1216,6 +1216,17 @@ impl Item for Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<(SharedString, Box<dyn gpui::Action>)> {
+        let editor_id = cx.entity_id();
+        // Inactive tabs aren't rendered, so the preview actions can't be dispatched to them.
+        let is_active_in_pane = self
+            .workspace()
+            .and_then(|workspace| workspace.read(cx).pane_for_item_id(editor_id))
+            .and_then(|pane| pane.read(cx).active_item())
+            .is_some_and(|item| item.item_id() == editor_id);
+        if !is_active_in_pane {
+            return Vec::new();
+        }
+
         let mut actions = Vec::new();
 
         let is_markdown = self
@@ -2121,12 +2132,18 @@ impl SearchableItem for Editor {
         self.expect_bounds_change = self.last_bounds;
     }
 
-    fn set_search_is_case_sensitive(
+    fn set_select_search_options(
         &mut self,
-        case_sensitive: Option<bool>,
+        select_search_options: Option<SelectSearchOptions>,
         _cx: &mut Context<Self>,
     ) {
-        self.select_next_is_case_sensitive = case_sensitive;
+        if self.select_next_options == select_search_options {
+            return;
+        }
+
+        self.select_next_options = select_search_options;
+        self.select_next_state = None;
+        self.select_prev_state = None;
     }
 }
 

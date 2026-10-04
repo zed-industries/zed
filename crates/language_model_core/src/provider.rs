@@ -5,10 +5,6 @@ pub const ANTHROPIC_PROVIDER_ID: LanguageModelProviderId =
 pub const ANTHROPIC_PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("Anthropic");
 
-pub const BASETEN_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("baseten");
-pub const BASETEN_PROVIDER_NAME: LanguageModelProviderName =
-    LanguageModelProviderName::new("Baseten");
-
 pub const OPEN_AI_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openai");
 pub const OPEN_AI_PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("OpenAI");
@@ -29,8 +25,6 @@ pub fn provider_name_for_id(provider_id: &LanguageModelProviderId) -> LanguageMo
         OPEN_AI_PROVIDER_NAME
     } else if provider_id == &ANTHROPIC_PROVIDER_ID {
         ANTHROPIC_PROVIDER_NAME
-    } else if provider_id == &BASETEN_PROVIDER_ID {
-        BASETEN_PROVIDER_NAME
     } else if provider_id == &GOOGLE_PROVIDER_ID {
         GOOGLE_PROVIDER_NAME
     } else if provider_id == &X_AI_PROVIDER_ID {

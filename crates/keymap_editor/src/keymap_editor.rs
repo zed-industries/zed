@@ -503,6 +503,33 @@ fn keystrokes_match_exactly(
         })
 }
 
+fn keystroke_matches_partially(
+    query: &KeybindingKeystroke,
+    candidate: &KeybindingKeystroke,
+) -> bool {
+    let query = query.inner();
+    let candidate = candidate.inner();
+    let key_matches = query.key.is_empty()
+        || query.key == candidate.key
+        // Releasing a modifier records it as a key. Partial search must still find shortcuts
+        // using that modifier, just as it does while the modifier is held.
+        || match query.key.as_str() {
+            "control" => candidate.modifiers.control,
+            "alt" => candidate.modifiers.alt,
+            "shift" => candidate.modifiers.shift,
+            "platform" => candidate.modifiers.platform,
+            "function" => candidate.modifiers.function,
+            _ => false,
+        };
+
+    query.modifiers.is_subset_of(&candidate.modifiers)
+        && key_matches
+        && query
+            .key_char
+            .as_ref()
+            .is_none_or(|key_char| key_char == &candidate.key)
+}
+
 fn disabled_binding_matches_context(
     disabled_binding: &gpui::KeyBinding,
     binding: &gpui::KeyBinding,
@@ -759,16 +786,7 @@ impl KeymapEditor {
                                         {
                                             let query = &keystroke_query[query_cursor];
                                             let keystroke = &keystrokes[keystroke_cursor];
-                                            let matches = query
-                                                .inner()
-                                                .modifiers
-                                                .is_subset_of(&keystroke.inner().modifiers)
-                                                && ((query.inner().key.is_empty()
-                                                    || query.inner().key == keystroke.inner().key)
-                                                    && query.inner().key_char.as_ref().is_none_or(
-                                                        |q_kc| q_kc == &keystroke.inner().key,
-                                                    ));
-                                            if matches {
+                                            if keystroke_matches_partially(query, keystroke) {
                                                 found_count += 1;
                                                 query_cursor += 1;
                                             }
@@ -4100,6 +4118,124 @@ mod tests {
             })
             .map(|(index, _)| index)
             .collect()
+    }
+
+    #[test]
+    fn test_partial_keystroke_matching() {
+        // A released modifier becomes a key, but must still act as a modifier in partial searches.
+        for (query, binding, expected) in [
+            ("ctrl", "ctrl-f1", true),
+            ("alt", "alt-f1", true),
+            ("shift", "shift-f1", true),
+            ("cmd", "cmd-f1", true),
+            ("fn", "fn-f1", true),
+            ("ctrl", "ctrl", true),
+            ("ctrl", "alt-f1", false),
+            ("alt", "shift-f1", false),
+            ("shift", "cmd-f1", false),
+            ("cmd", "fn-f1", false),
+            ("fn", "ctrl-f1", false),
+            ("ctrl-shift", "ctrl-shift-f1", true),
+            ("ctrl-shift", "shift-f1", false),
+            ("f1", "ctrl-f1", true),
+            ("ctrl-f1", "ctrl-shift-f1", true),
+            ("ctrl-f1", "f1", false),
+            ("f1", "f2", false),
+            ("a->a", "ctrl-a", true),
+            ("a->å", "ctrl-a", false),
+        ] {
+            let query = KeybindingKeystroke::from_keystroke(
+                gpui::Keystroke::parse(query).expect("valid query"),
+            );
+            let binding = KeybindingKeystroke::from_keystroke(
+                gpui::Keystroke::parse(binding).expect("valid binding"),
+            );
+            assert_eq!(
+                keystroke_matches_partially(&query, &binding),
+                expected,
+                "query: {query:?}, binding: {binding:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_modifier_search_keeps_matching_shortcuts_after_release(cx: &mut TestAppContext) {
+        let keymap_content = r#"[{"bindings": {
+            "ctrl-k": "zed::OpenKeymap",
+            "ctrl": "zed::OpenKeymap"
+        }}]"#;
+        let (_fs, keymap_editor, mut cx) = setup_keymap_editor(cx, keymap_content).await;
+        let workspace = keymap_editor.read_with(&cx, |editor, _| editor.workspace.clone());
+        // Mount and activate the editor so keystroke search installs its interceptor.
+        workspace
+            .update_in(&mut cx, |workspace, window, cx| {
+                workspace.add_item_to_active_pane(
+                    Box::new(keymap_editor.clone()),
+                    None,
+                    true,
+                    window,
+                    cx,
+                );
+                window.activate_window();
+            })
+            .expect("workspace exists");
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        keymap_editor.update_in(&mut cx, |editor, window, cx| {
+            editor.toggle_keystroke_search(&ToggleKeystrokeSearch, window, cx);
+            editor.toggle_exact_keystroke_matching(&ToggleExactKeystrokeMatching, window, cx);
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        // While held, Control is a modifier query that finds Ctrl-K.
+        cx.simulate_modifiers_change(gpui::Modifiers::control());
+        cx.run_until_parked();
+        keymap_editor.read_with(&cx, |editor, cx| {
+            assert_eq!(visible_rows_for_action(editor, "zed::OpenKeymap").len(), 1);
+            let query = editor.current_keystroke_query(cx);
+            assert_eq!(query.len(), 1);
+            assert!(query[0].key().is_empty());
+            assert!(query[0].modifiers().control);
+        });
+
+        // On release, Control becomes a key but partial search must match both forms.
+        cx.simulate_modifiers_change(gpui::Modifiers::none());
+        cx.run_until_parked();
+        keymap_editor.read_with(&cx, |editor, cx| {
+            let query = editor.current_keystroke_query(cx);
+            assert_eq!(query.len(), 1);
+            assert_eq!(query[0].key(), "control");
+            assert!(!query[0].modifiers().modified());
+            assert_eq!(
+                visible_rows_for_action(editor, "zed::OpenKeymap").len(),
+                2,
+                "Control must find both the standalone binding and Ctrl-K; query: {:?}",
+                query
+            );
+        });
+
+        // Exact search narrows the same query to the standalone Control binding.
+        keymap_editor.update_in(&mut cx, |editor, window, cx| {
+            editor.toggle_exact_keystroke_matching(&ToggleExactKeystrokeMatching, window, cx);
+        });
+        cx.run_until_parked();
+        keymap_editor.read_with(&cx, |editor, _| {
+            let rows = visible_rows_for_action(editor, "zed::OpenKeymap");
+            assert_eq!(rows.len(), 1);
+            let binding = &editor.keybindings[editor.matches[rows[0]].candidate_id];
+            let keystrokes = binding.keystrokes().expect("binding has keystrokes");
+            assert_eq!(keystrokes.len(), 1);
+            assert_eq!(keystrokes[0].key(), "control");
+        });
+
+        // Returning to partial search restores both matches.
+        keymap_editor.update_in(&mut cx, |editor, window, cx| {
+            editor.toggle_exact_keystroke_matching(&ToggleExactKeystrokeMatching, window, cx);
+        });
+        cx.run_until_parked();
+        keymap_editor.read_with(&cx, |editor, _| {
+            assert_eq!(visible_rows_for_action(editor, "zed::OpenKeymap").len(), 2);
+        });
     }
 
     #[gpui::test]

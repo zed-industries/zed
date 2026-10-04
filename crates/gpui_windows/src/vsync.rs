@@ -4,6 +4,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use gpui::FrameRequestSource;
 use gpui_util::ResultExt;
 use windows::Win32::{
     Foundation::HWND,
@@ -37,7 +38,7 @@ impl VSyncProvider {
         Self { interval, f }
     }
 
-    pub(crate) fn wait_for_vsync(&self) {
+    pub(crate) fn wait_for_vsync(&self) -> FrameRequestSource {
         let vsync_start = Instant::now();
         let wait_succeeded = (self.f)();
         let elapsed = vsync_start.elapsed();
@@ -51,6 +52,9 @@ impl VSyncProvider {
         if !wait_succeeded || elapsed < VSYNC_INTERVAL_THRESHOLD {
             log::trace!("VSyncProvider::wait_for_vsync() took less time than expected");
             std::thread::sleep(self.interval);
+            FrameRequestSource::LocalSchedule
+        } else {
+            FrameRequestSource::NativeCallback
         }
     }
 }
@@ -78,4 +82,38 @@ fn get_dwm_interval() -> Result<Duration> {
 fn retrieve_duration(counts: u64, ticks_per_second: u64) -> Duration {
     let ticks_per_microsecond = ticks_per_second / 1_000_000;
     Duration::from_micros(counts / ticks_per_microsecond)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn successful_compositor_wait_reports_native_callback() {
+        let provider = VSyncProvider {
+            interval: Duration::ZERO,
+            f: Box::new(|| {
+                std::thread::sleep(VSYNC_INTERVAL_THRESHOLD * 2);
+                true
+            }),
+        };
+
+        assert_eq!(
+            provider.wait_for_vsync(),
+            FrameRequestSource::NativeCallback
+        );
+    }
+
+    #[test]
+    fn failed_compositor_wait_reports_local_schedule_even_after_threshold() {
+        let provider = VSyncProvider {
+            interval: Duration::ZERO,
+            f: Box::new(|| {
+                std::thread::sleep(VSYNC_INTERVAL_THRESHOLD * 2);
+                false
+            }),
+        };
+
+        assert_eq!(provider.wait_for_vsync(), FrameRequestSource::LocalSchedule);
+    }
 }

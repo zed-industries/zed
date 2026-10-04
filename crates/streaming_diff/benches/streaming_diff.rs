@@ -1,7 +1,6 @@
-use criterion::{
-    BatchSize, BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
-};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
+use std::hint::black_box;
 use streaming_diff::StreamingDiff;
 
 const SEED: u64 = 0x5EED_5EED;

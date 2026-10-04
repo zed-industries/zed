@@ -87,7 +87,7 @@ To get all the features (autocomplete, linting, etc.) from the [Tailwind CSS lan
 }
 ```
 
-With these settings, you will get completions for Tailwind CSS classes in HTML `class` attributes. Examples:
+With these settings, you will get completions for [Tailwind CSS](./tailwindcss.md) classes in HTML `class` attributes. Examples:
 
 ```html
 <div class="flex items-center <completion here>">

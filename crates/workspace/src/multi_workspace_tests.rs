@@ -368,7 +368,7 @@ async fn test_open_directory_in_existing_window_respects_auto_open_setting(
 
     cx.update(|cx| {
         let mut settings = AgentSettings::get_global(cx).clone();
-        settings.threads_sidebar_auto_open = false;
+        settings.threads_sidebar.auto_open = false;
         AgentSettings::override_global(settings, cx);
     });
 
@@ -391,7 +391,7 @@ async fn test_open_directory_in_existing_window_respects_auto_open_setting(
         .read_with(cx, |mw, _cx| {
             assert!(
                 !mw.sidebar_open(),
-                "the sidebar must stay closed when `threads_sidebar_auto_open` is disabled",
+                "the sidebar must stay closed when `threads_sidebar.auto_open` is disabled",
             );
             assert_eq!(
                 mw.workspaces().count(),

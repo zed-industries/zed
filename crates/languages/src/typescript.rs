@@ -875,6 +875,10 @@ impl LspAdapter for TypeScriptLspAdapter {
             (LanguageName::new_static("TSX"), "typescriptreact".into()),
         ])
     }
+
+    fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        matches!(language.as_ref(), "TypeScript" | "JavaScript" | "TSX")
+    }
 }
 
 async fn get_cached_ts_server_binary(

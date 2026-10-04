@@ -8,13 +8,17 @@
 
 use std::{
     borrow::Cow,
+    ffi::OsStr,
     path::{Path, PathBuf},
 };
 
+use crate::path_component::{Component, Components, Prefix, PrefixExt, iter_after};
 use crate::rel_path::RelPath;
 
 pub mod abs_path;
+mod path_component;
 pub mod rel_path;
+mod windows_prefix;
 
 pub trait PathExt {
     fn to_rel_path_buf(&self) -> anyhow::Result<rel_path::RelPathBuf>;
@@ -257,175 +261,30 @@ impl PathStyle {
         )
     }
 
-    pub fn file_name(self, path: &Path) -> Option<&str> {
-        if self == PathStyle::local() {
-            return path.file_name().and_then(|n| n.to_str());
-        }
-        let path_string = path.to_str()?;
-        let parent_length = self.parent(path)?.to_str()?.len();
-        let remainder = path_string.get(parent_length..)?;
-        let is_verbatim = self.is_windows() && path_string.as_bytes().starts_with(br"\\?\");
-        let is_body_separator = |character: char| {
-            if is_verbatim {
-                character == '\\'
-            } else {
-                self.separators_ch().contains(&character)
-            }
-        };
-
-        let component = remainder
-            .rsplit(is_body_separator)
-            .find(|component| !component.is_empty() && (is_verbatim || *component != "."))?;
-        if matches!(component, "." | "..") {
-            None
-        } else {
-            Some(component)
-        }
+    pub fn file_name<'a>(&self, path: &'a Path) -> Option<&'a OsStr> {
+        self.components(path).next_back().and_then(|p| match p {
+            Component::Normal(p) => Some(p),
+            _ => None,
+        })
     }
 
-    pub fn parent(self, path: &Path) -> Option<&Path> {
-        if self == PathStyle::local() {
-            return path.parent();
-        }
-        let path = path.to_str()?;
-        let path_bytes = path.as_bytes();
-        let is_windows = self.is_windows();
-
-        const DRIVE_PREFIX_LENGTH: usize = 2;
-        const UNC_PREFIX_LENGTH: usize = 2;
-        const VERBATIM_PREFIX: &[u8] = br"\\?\";
-        const VERBATIM_UNC_PREFIX: &[u8] = br"\\?\UNC\";
-        const DEVICE_PREFIX: &[u8] = br"\\.\";
-
-        let is_separator = |byte: u8| byte == b'/' || is_windows && byte == b'\\';
-        let is_verbatim = is_windows && path_bytes.starts_with(VERBATIM_PREFIX);
-        let has_unc_prefix = path_bytes
-            .get(..UNC_PREFIX_LENGTH)
-            .is_some_and(|prefix| prefix.iter().all(|byte| is_separator(*byte)));
-        // Verbatim paths treat '/' as a literal character, so only '\' separates body components.
-        let is_body_separator = |byte: u8| {
-            if is_verbatim {
-                byte == b'\\'
-            } else {
-                is_separator(byte)
+    pub fn parent<'a>(&self, path: &'a Path) -> Option<&'a Path> {
+        let mut comps = self.components(path);
+        let comp = comps.next_back();
+        comp.and_then(|p| match p {
+            Component::Normal(_) | Component::CurDir | Component::ParentDir => {
+                Some(comps.as_path())
             }
-        };
+            _ => None,
+        })
+    }
 
-        let component_end = |component_start: usize| {
-            path_bytes
-                .get(component_start..)
-                .and_then(|remainder| remainder.iter().position(|byte| is_body_separator(*byte)))
-                .map_or(path_bytes.len(), |position| component_start + position)
-        };
-
-        // Windows prefixes, in precedence order: \\?\UNC\, \\?\ (verbatim), \\.\ (device),
-        // \\ (UNC), drive letter. The device prefix must be matched before the generic UNC
-        // check because it also starts with two separators.
-        let prefix_end = {
-            if !is_windows {
-                0
-            } else if path_bytes.starts_with(VERBATIM_UNC_PREFIX) {
-                let server_end = component_end(VERBATIM_UNC_PREFIX.len());
-                let share_start = server_end.saturating_add(1).min(path_bytes.len());
-                if share_start < path_bytes.len() {
-                    component_end(share_start)
-                } else {
-                    server_end
-                }
-            } else if is_verbatim {
-                let drive_start = VERBATIM_PREFIX.len();
-                let drive_end = drive_start + DRIVE_PREFIX_LENGTH;
-                let has_drive_prefix = path_bytes
-                    .get(drive_start)
-                    .is_some_and(u8::is_ascii_alphabetic)
-                    && path_bytes.get(drive_start + 1) == Some(&b':');
-
-                // A drive letter only counts as a prefix when followed by a separator or end
-                // of path; otherwise (e.g. `\\?\C:foo`) the whole first component is the prefix.
-                if has_drive_prefix
-                    && path_bytes
-                        .get(drive_end)
-                        .is_none_or(|byte| is_separator(*byte))
-                {
-                    drive_end
-                } else {
-                    component_end(drive_start)
-                }
-            } else if path_bytes.starts_with(DEVICE_PREFIX) {
-                component_end(DEVICE_PREFIX.len())
-            } else if has_unc_prefix {
-                let server_end = component_end(UNC_PREFIX_LENGTH);
-                let share_start = server_end.saturating_add(1).min(path_bytes.len());
-                let share_end = component_end(share_start);
-                // A UNC prefix requires a share name; `\\server` without one is treated as a
-                // relative path, so its prefix is empty.
-                if server_end > UNC_PREFIX_LENGTH && share_end > share_start {
-                    share_end
-                } else {
-                    0
-                }
-            } else if path_bytes.first().is_some_and(u8::is_ascii_alphabetic)
-                && path_bytes.get(1) == Some(&b':')
-            {
-                DRIVE_PREFIX_LENGTH
-            } else {
-                0
-            }
-        };
-
-        // Uses is_separator rather than is_body_separator: after a verbatim drive prefix,
-        // '/' still counts as the root separator (e.g. `\\?\C:/foo`) even though '/' does
-        // not separate body components.
-        let has_root = path_bytes
-            .get(prefix_end)
-            .is_some_and(|byte| is_separator(*byte));
-        // The leading `.`/`./` is absorbed into the body (e.g. `./a` → parent `.`).
-        let starts_with_current_directory = prefix_end == 0
-            && !has_root
-            && path_bytes.first() == Some(&b'.')
-            && (path_bytes.len() == 1 || path_bytes.get(1).is_some_and(|byte| is_separator(*byte)));
-        let body_start =
-            prefix_end + usize::from(has_root) + usize::from(starts_with_current_directory);
-
-        // Loop because trimming a trailing '.' (e.g. `foo/.`) can expose a separator to trim,
-        // and vice versa (`foo/./`). Verbatim paths never treat '.' as a current-directory
-        // component, hence the !is_verbatim check below.
-        let trim_trailing = |mut end: usize| {
-            loop {
-                while end > body_start && is_body_separator(path_bytes[end - 1]) {
-                    end -= 1;
-                }
-
-                let is_trailing_current_directory = !is_verbatim
-                    && end > body_start
-                    && path_bytes[end - 1] == b'.'
-                    && (end - 1 == body_start
-                        || end
-                            .checked_sub(2)
-                            .and_then(|index| path_bytes.get(index))
-                            .is_some_and(|byte| is_body_separator(*byte)));
-                if is_trailing_current_directory {
-                    end -= 1;
-                } else {
-                    return end;
-                }
-            }
-        };
-
-        let body_end = trim_trailing(path_bytes.len());
-        // An empty body means the path is root- or prefix-only and has no parent; only a
-        // bare current-directory component (`.`/`./`) has `""` as its parent.
-        if body_end == body_start {
-            return starts_with_current_directory.then_some(Path::new(""));
-        }
-
-        let parent_end = path_bytes
-            .get(body_start..body_end)?
-            .iter()
-            .rposition(|byte| is_body_separator(*byte))
-            .map_or(body_start, |position| trim_trailing(body_start + position));
-
-        Some(Path::new(path.get(..parent_end)?))
+    pub fn starts_with<P: AsRef<Path>>(&self, path: P, prefix: P) -> bool {
+        iter_after(
+            self.components(path.as_ref()),
+            self.components(prefix.as_ref()),
+        )
+        .is_some()
     }
 
     pub fn strip_prefix<'a>(
@@ -465,6 +324,51 @@ impl PathStyle {
         } else {
             None
         }
+    }
+}
+
+// This part contains the methods adopted from the std lib
+// to make the pub api of `PathStyle` compatible with `Path`
+impl PathStyle {
+    fn components<'a>(&self, path: &'a Path) -> Components<'a> {
+        Components::new(*self, path)
+    }
+
+    fn parse_prefix<'a>(&self, path: &'a OsStr) -> Option<Prefix<'a>> {
+        match self {
+            PathStyle::Unix => None,
+            PathStyle::Windows => windows_prefix::parse_prefix(path),
+        }
+    }
+
+    fn has_prefixes(&self) -> bool {
+        match self {
+            PathStyle::Unix => false,
+            PathStyle::Windows => true,
+        }
+    }
+
+    fn is_sep_byte(&self, b: u8) -> bool {
+        match self {
+            Self::Unix => b == b'/',
+            Self::Windows => b == b'\\' || b == b'/',
+        }
+    }
+
+    fn is_verbatim_sep(&self, b: u8) -> bool {
+        match self {
+            Self::Unix => self.is_sep_byte(b),
+            Self::Windows => b == b'\\',
+        }
+    }
+
+    fn has_physical_root(&self, s: &[u8], prefix: Option<Prefix<'_>>) -> bool {
+        let path = if let Some(p) = prefix {
+            &s[p.len()..]
+        } else {
+            s
+        };
+        !path.is_empty() && self.is_sep_byte(path[0])
     }
 }
 
@@ -692,6 +596,82 @@ mod tests {
     }
 
     #[test]
+    fn test_unix_path_style_starts_with() {
+        let unix_paths_and_prefixes = [
+            ("", "", true),
+            ("foo", "", true),
+            ("", "foo", false),
+            ("foo", "foo", true),
+            ("foo/", "foo", true),
+            ("foo//", "foo", true),
+            ("foo///", "foo", true),
+            ("foo/.", "foo", true),
+            ("foo/./bar", "foo/bar", true),
+            ("foo/.//bar", "foo/bar", true),
+            ("foo//./bar", "foo/bar", true),
+            ("foo/bar", "foo", true),
+            ("foo/bar", "foobar", false),
+            ("foo/bar/baz", "foo/bar", true),
+            ("foo/bar", "foo/bar/baz", false),
+            ("./foo/bar/", ".", true),
+            ("/etc/passwd", "/etc", true),
+            ("/etc/passwd", "/etc/", true),
+            ("/etc/passwd", "/etc/passwd", true),
+            ("/etc/passwd", "/etc/passwd/", true),
+            ("/etc/passwd", "/etc/passwd///", true),
+            ("/etc/passwd", "/e", false),
+            ("/etc/passwd", "/etc/passwd.txt", false),
+            ("/etc/foo.rs", "/etc/foo", false),
+        ];
+
+        for (path, prefix, expected) in unix_paths_and_prefixes {
+            assert_eq!(
+                PathStyle::Unix.starts_with(Path::new(path), Path::new(prefix)),
+                expected,
+                "{path:?}.starts_with({prefix:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn test_windows_path_style_starts_with() {
+        let windows_paths_and_prefixes = [
+            (
+                r"C:\src\rust\cargo-test\test\Cargo.toml",
+                r"c:\src\rust\cargo-test\test",
+                true,
+            ),
+            (r"C:\foo\.\bar.txt", r"C:\foo\bar.txt", true),
+            (r"C:\foo\.", r"C:\foo", true),
+            (r"\\server\share", r"\\server", false),
+            (r"\\server\share\foo.txt", r"\\server", false),
+            (r"\\server\share\foo.txt", r"\\server\share", true),
+            (r"\\server\share\foo.txt", r"\\server\share\", true),
+            (r"\\server\share\foo.txt", r"\\server\share/", true),
+            (r"\\server\share\foo.txt", r"\\server\other", false),
+            (r"\\server\share\foo.txt", r"\\SERVER\share", false),
+            (r"\\?\C:\foo\.\bar.txt", r"\\?\C:\foo\bar.txt", false),
+            (r"\\?\C:\foo.txt", r"\\?\C:\", true),
+            (
+                r"\\?\UNC\server\share\foo.txt",
+                r"\\?\UNC\server\share",
+                true,
+            ),
+            (r"\\?\UNC\server\share\foo.txt", r"\\?\UNC\server\", false),
+            (r"\\?\bar\foo.txt", r"\\?\bar", true),
+            (r"\\?\C:\foo/bar.txt", r"\\?\C:\foo", false),
+        ];
+
+        for (path, prefix, expected) in windows_paths_and_prefixes {
+            assert_eq!(
+                PathStyle::Windows.starts_with(Path::new(path), Path::new(prefix)),
+                expected,
+                "{path:?}.starts_with({prefix:?})"
+            );
+        }
+    }
+
+    #[test]
     fn test_unix_path_style_file_name() {
         let unix_paths_and_filenames = [
             (Path::new(""), None),
@@ -708,7 +688,7 @@ mod tests {
         ];
 
         for (path, filename) in unix_paths_and_filenames {
-            assert_eq!(PathStyle::Unix.file_name(path), filename);
+            assert_eq!(PathStyle::Unix.file_name(path), filename.map(OsStr::new));
         }
     }
 
@@ -731,13 +711,13 @@ mod tests {
             (Path::new("//server/share/foo.txt"), Some("foo.txt")),
             (Path::new(r"\\?\bar"), None),
             (Path::new(r"\\?\bar\foo.txt"), Some("foo.txt")),
-            (Path::new(r"\\?\C:/foo/bar"), Some("foo/bar")),
+            (Path::new(r"\\?\C:/foo/bar"), None),
             (Path::new(r"\\.\device"), None),
             (Path::new(r"\\.\device\foo.txt"), Some("foo.txt")),
         ];
 
         for (path, filename) in windows_paths_and_filenames {
-            assert_eq!(PathStyle::Windows.file_name(path), filename);
+            assert_eq!(PathStyle::Windows.file_name(path), filename.map(OsStr::new));
         }
     }
 
@@ -801,7 +781,7 @@ mod tests {
                 Some(r"\\?\UNC\server\share\"),
             ),
             (r"\\?\C:\foo.txt", Some(r"\\?\C:\")),
-            (r"\\?\C:/foo/bar", Some(r"\\?\C:/")),
+            (r"\\?\C:/foo/bar", None),
             (r"\\.\device", None),
             (r"\\.\device\foo.txt", Some(r"\\.\device\")),
             (".", Some("")),
@@ -823,16 +803,22 @@ mod tests {
         use std::os::unix::ffi::OsStrExt;
 
         let path = Path::new(OsStr::from_bytes(b"/home/user/\xff\xfe/repo/file.txt"));
-        assert_eq!(PathStyle::Unix.file_name(path), Some("file.txt"));
+        assert_eq!(
+            PathStyle::Unix.file_name(path),
+            Some(OsStr::new("file.txt"))
+        );
         assert_eq!(
             PathStyle::Unix.parent(path),
             Some(Path::new(OsStr::from_bytes(b"/home/user/\xff\xfe/repo")))
         );
 
-        let invalid_filename_path = Path::new(OsStr::from_bytes(b"/home/user/repo/\xff\xfe.txt"));
-        assert_eq!(PathStyle::Unix.file_name(invalid_filename_path), None);
+        let another_path = Path::new(OsStr::from_bytes(b"/home/user/repo/\xff\xfe.txt"));
         assert_eq!(
-            PathStyle::Unix.parent(invalid_filename_path),
+            PathStyle::Unix.file_name(another_path),
+            Some(OsStr::from_bytes(b"\xff\xfe.txt"))
+        );
+        assert_eq!(
+            PathStyle::Unix.parent(another_path),
             Some(Path::new("/home/user/repo"))
         );
     }
@@ -851,8 +837,14 @@ mod tests {
         let os_str = OsString::from_wide(&wide);
         let path = Path::new(&os_str);
 
-        assert_eq!(PathStyle::Windows.file_name(path), Some("file.txt"));
+        assert_eq!(
+            PathStyle::Windows.file_name(path),
+            Some(OsStr::new("file.txt"))
+        );
         let parent = PathStyle::Windows.parent(path).unwrap();
-        assert_eq!(PathStyle::Windows.file_name(parent), Some("repo"));
+        assert_eq!(
+            PathStyle::Windows.file_name(parent),
+            Some(OsStr::new("repo"))
+        );
     }
 }

@@ -183,7 +183,7 @@ Where you might notice differences:
 
 In PyCharm, you select a Python interpreter through a GUI, and PyCharm manages the connection between your project and that interpreter. It shows available packages, lets you install new ones, and keeps track of which environment each project uses.
 
-Zed handles virtual environments through its toolchain system:
+Zed handles virtual environments through its [toolchain system](../toolchains.md):
 
 - Zed automatically discovers virtual environments in common locations (`.venv`, `venv`, `.env`, `env`)
 - When a virtual environment is detected, the terminal auto-activates it

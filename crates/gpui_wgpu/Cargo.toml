@@ -14,7 +14,9 @@ doctest = false
 
 [features]
 default = []
+bench-support = ["gpui/bench-support", "dep:image"]
 font-kit = ["dep:font-kit"]
+test-support = ["gpui/test-support", "dep:image"]
 
 [dependencies]
 gpui.workspace = true
@@ -24,6 +26,7 @@ collections.workspace = true
 cosmic-text = "0.19.0"
 etagere.workspace = true
 itertools.workspace = true
+image = { workspace = true, optional = true }
 log.workspace = true
 parking_lot.workspace = true
 profiling.workspace = true
@@ -45,7 +48,8 @@ wgpu = { workspace = true, features = ["webgl"] }
 
 [dev-dependencies]
 criterion.workspace = true
-gpui = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["bench-support"] }
+image.workspace = true
 naga = { version = "29.0.4", features = ["wgsl-in"] }
 
 [[bench]]

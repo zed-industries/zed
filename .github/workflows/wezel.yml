@@ -1,0 +1,43 @@
+name: Wezel assigned run
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Fiflok run ID
+        required: true
+        type: string
+      experiment_name:
+        description: Experiment to run
+        required: true
+        type: string
+      commit_sha:
+        description: Assigned commit
+        required: true
+        type: string
+      project_dir:
+        description: Directory containing the Wezel project
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: "ubuntu-latest"
+    concurrency:
+      group: wezel-run-${{ inputs.run_id }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit_sha }}
+      - name: Install Linux build dependencies
+        run: ./script/linux
+      - uses: wezel-build/gh-action@49be2cba2eaa12f1b99ae1c3ee9af3c815cb3125 # v1.0.1
+        with:
+          token: ${{ secrets.WEZEL_RUNNER_TOKEN }}
+          run-id: ${{ inputs.run_id }}
+          experiment-name: ${{ inputs.experiment_name }}
+          project-dir: ${{ inputs.project_dir }}
