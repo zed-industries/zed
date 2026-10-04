@@ -1,4 +1,4 @@
-use std::num::NonZeroUsize;
+use std::{num::NonZeroUsize, path::PathBuf};
 
 use collections::HashMap;
 use schemars::JsonSchema;
@@ -7,7 +7,8 @@ use settings_macros::{MergeFrom, with_fallible_options};
 
 use crate::{
     CenteredPaddingSettings, CommandAliasTarget, DelayMs, DockPosition, DockSide, InactiveOpacity,
-    ShowIndentGuides, ShowScrollbar, serialize_optional_f32_with_two_decimal_places,
+    ShowIndentGuides, ShowScrollbar, serialize_f32_with_two_decimal_places,
+    serialize_optional_f32_with_two_decimal_places,
 };
 
 #[with_fallible_options]
@@ -172,6 +173,82 @@ pub struct WorkspaceSettingsContent {
     /// Whether the focused panel follows the mouse location
     /// Default: false
     pub focus_follows_mouse: Option<FocusFollowsMouse>,
+    /// Images drawn over regions of the window, keyed by region: `window`, `title_bar`,
+    /// `center`, `status_bar`, `left_dock`, `right_dock`, `bottom_dock`, or a panel key
+    /// such as `project_panel` or `terminal_panel`.
+    ///
+    /// Default: {}
+    #[serde(default)]
+    pub background_images: HashMap<String, BackgroundImageContent>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct BackgroundImageContent {
+    /// Whether the image is shown.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
+    /// Path to a PNG, JPEG, GIF, WebP, BMP or other image file.
+    /// `~` expands to the home directory and relative paths resolve against Zed's config directory.
+    pub path: Option<BackgroundImagePath>,
+    /// Opacity of the image, from 0 to 1.
+    ///
+    /// Default: 0.25
+    pub opacity: Option<BackgroundImageOpacity>,
+    /// How the image is scaled within its region.
+    ///
+    /// Default: cover
+    pub fit: Option<BackgroundImageFit>,
+    /// Whether the image is drawn above the region's content or below it.
+    /// Drawing below only shows through theme colors made translucent via `theme_overrides`.
+    ///
+    /// Default: above
+    pub layer: Option<BackgroundImageLayer>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(transparent)]
+pub struct BackgroundImagePath(pub PathBuf);
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(transparent)]
+pub struct BackgroundImageOpacity(
+    #[serde(serialize_with = "serialize_f32_with_two_decimal_places")] pub f32,
+);
+
+impl BackgroundImageOpacity {
+    pub const DEFAULT: Self = Self(0.25);
+}
+
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum BackgroundImageFit {
+    /// Scale the image to cover the whole region, cropping it if needed.
+    #[default]
+    Cover,
+    /// Scale the image to fit inside the region, keeping its aspect ratio.
+    Contain,
+    /// Stretch the image to fill the region.
+    Fill,
+    /// Like `contain`, but never scale the image up.
+    ScaleDown,
+    /// Keep the image at its original size.
+    None,
+}
+
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum BackgroundImageLayer {
+    /// Draw the image over the region's content.
+    #[default]
+    Above,
+    /// Draw the image under the region's content.
+    Below,
 }
 
 #[with_fallible_options]

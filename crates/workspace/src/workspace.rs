@@ -1,4 +1,5 @@
 pub mod active_file_name;
+pub mod background_image;
 pub mod dock;
 pub mod history_manager;
 pub mod invalid_item_view;
@@ -45,6 +46,7 @@ pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
+use background_image::background_layers;
 use client::{
     ChannelId, Client, ErrorExt, ParticipantIndex, Status, TypedEnvelope, User, UserStore,
     proto::{self, ErrorCode, PanelId, PeerId},
@@ -993,6 +995,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     component::init();
     theme_preview::init(cx);
     toast_layer::init(cx);
+    background_image::init(cx);
     history_manager::init(app_state.fs.clone(), cx);
 
     cx.on_app_quit(flush_windows_serialization_on_quit).detach();
@@ -8878,6 +8881,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
+        let background = background_layers(["center"], cx);
         div()
             .id("editor-region")
             .role(gpui::Role::Main)
@@ -8886,6 +8890,7 @@ impl Workspace {
                 this.track_focus(&self.region_focus_handles.editor)
             })
             .size_full()
+            .children(background.below)
             .child(self.center.render(
                 self.zoomed.as_ref(),
                 self.maximized_pane.as_ref(),
@@ -8893,6 +8898,7 @@ impl Workspace {
                 window,
                 cx,
             ))
+            .children(background.above)
     }
 
     pub fn for_window(window: &Window, cx: &App) -> Option<Entity<Workspace>> {
@@ -9598,6 +9604,7 @@ impl Render for Workspace {
             .map(|(_, notification)| notification.entity_id())
             .collect::<Vec<_>>();
         let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
+        let titlebar_background = background_layers(["title_bar"], cx);
 
         let pane_render_context = PaneRenderContext {
             follower_states: &self.follower_states,
@@ -9652,7 +9659,9 @@ impl Render for Workspace {
                             },
                         ))
                         .w_full()
-                        .child(item),
+                        .children(titlebar_background.below)
+                        .child(item)
+                        .children(titlebar_background.above),
                 )
             })
             .on_modifiers_changed(move |_, _, cx| {

@@ -28,7 +28,7 @@ const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 use crate::open_remote_project_with_existing_connection;
 use crate::{
     CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, OpenMode,
-    Panel, Workspace, WorkspaceId, client_side_decorations,
+    Panel, Workspace, WorkspaceId, background_image::background_layers, client_side_decorations,
     persistence::model::MultiWorkspaceState,
 };
 
@@ -2071,6 +2071,7 @@ impl Render for MultiWorkspace {
         let workspace = self.workspace().clone();
         let workspace_key_context = workspace.update(cx, |workspace, cx| workspace.key_context(cx));
         let root = workspace.update(cx, |workspace, cx| workspace.actions(h_flex(), window, cx));
+        let background = background_layers(["window"], cx);
 
         client_side_decorations(
             root.key_context(workspace_key_context)
@@ -2169,6 +2170,7 @@ impl Render for MultiWorkspace {
                         ))
                     },
                 )
+                .children(background.below)
                 .children(left_sidebar)
                 .child(
                     div()
@@ -2179,6 +2181,7 @@ impl Render for MultiWorkspace {
                         .child(self.workspace().clone()),
                 )
                 .children(right_sidebar)
+                .children(background.above)
                 .child(self.workspace().read(cx).modal_layer.clone())
                 .children(self.sidebar_overlay.as_ref().map(|view| {
                     deferred(div().absolute().size_full().inset_0().occlude().child(

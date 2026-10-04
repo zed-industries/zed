@@ -193,6 +193,54 @@ TBD: Centered layout related settings
 ```
 -->
 
+### Background Images
+
+Draw images over regions of the window. Each key is a region: `window`, `title_bar`, `center`, `status_bar`, `left_dock`, `right_dock`, `bottom_dock`, or a panel: `project_panel`, `outline_panel`, `git_panel`, `terminal_panel`, `agent_panel`, `debug_panel` or `collaboration_panel`. A panel key takes precedence over the dock it is shown in.
+
+```json [settings]
+{
+  "background_images": {
+    "window": { "path": "~/Pictures/wallpaper.jpg", "opacity": 0.1 },
+    "terminal_panel": {
+      // Defaults to true
+      "enabled": true,
+      // Relative paths resolve against Zed's config directory.
+      "path": "backgrounds/cat.gif",
+      // From 0 to 1. Defaults to 0.25
+      "opacity": 0.2,
+      // cover (default), contain, fill, scale_down or none
+      "fit": "contain",
+      // above (default) or below
+      "layer": "above"
+    }
+  }
+}
+```
+
+The window, project panel and terminal panel images can also be set from {#action zed::OpenSettings} under Appearance > Background Images, which shows how much memory each image uses and limits the opacity to 0.5 so the interface stays readable.
+
+PNG, JPEG, GIF, WebP, BMP, TIFF and ICO images are supported. Animated GIF and WebP images play unless reduced motion is enabled. Every frame of an animated image is kept in memory (about 32 MB per 1920×1080 frame), so prefer short, small animations.
+
+Images are drawn above the content by default, which works with any theme. To draw an image below the content instead, set `"layer": "below"` and make the region's colors translucent with [theme overrides](./themes.md#theme-overrides):
+
+```json [settings]
+{
+  "background_images": {
+    "center": { "path": "~/Pictures/wallpaper.jpg", "opacity": 1, "layer": "below" }
+  },
+  "theme_overrides": {
+    "One Dark": {
+      "editor.background": "#282c34cc",
+      "editor.gutter.background": "#282c34cc",
+      "tab_bar.background": "#21252bcc",
+      "tab.active_background": "#282c34cc",
+      "tab.inactive_background": "#21252bcc",
+      "toolbar.background": "#282c34cc"
+    }
+  }
+}
+```
+
 ## Editor
 
 ```json [settings]

@@ -89,6 +89,26 @@
     // Values are clamped to the [0.0, 1.0] range.
     "inactive_opacity": 1.0,
   },
+  // Images drawn over regions of the window, keyed by region:
+  //   window, title_bar, center, status_bar, left_dock, right_dock, bottom_dock,
+  //   or a panel key such as project_panel, terminal_panel, git_panel or outline_panel.
+  // A panel key takes precedence over the dock it is shown in.
+  //
+  // Each image supports:
+  //   "enabled": Whether the image is shown. Defaults to true
+  //   "path": PNG, JPEG, GIF, WebP, BMP... Supports `~` and paths relative to Zed's config directory.
+  //   "opacity": From 0 to 1. Defaults to 0.25
+  //   "fit": How the image is scaled. Defaults to "cover"
+  //     choices: cover, contain, fill, scale_down, none
+  //   "layer": Whether the image is drawn over or under the content. Defaults to "above"
+  //     choices: above, below ("below" only shows through translucent colors set in "theme_overrides")
+  //
+  // Example:
+  // {
+  //   "window": { "path": "~/Pictures/wallpaper.jpg", "opacity": 0.1 },
+  //   "terminal_panel": { "path": "backgrounds/cat.gif", "fit": "contain" }
+  // }
+  "background_images": {},
   // Layout mode of the bottom dock. Defaults to "contained"
   //   choices: contained, full, left_aligned, right_aligned
   "bottom_dock_layout": "contained",

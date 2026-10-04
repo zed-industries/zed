@@ -1,6 +1,6 @@
 use crate::{
     ItemHandle, MultiWorkspace, Pane, SidebarSide, ToggleWorkspaceSidebar,
-    sidebar_side_context_menu,
+    background_image::background_layers, sidebar_side_context_menu,
 };
 use gpui::{
     Anchor, AnyView, App, Context, Decorations, Entity, FocusHandle, Focusable, IntoElement,
@@ -115,6 +115,7 @@ impl Focusable for StatusBar {
 impl Render for StatusBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let sidebar = SidebarStatus::query(&self.multi_workspace, cx);
+        let background = background_layers(["status_bar"], cx);
 
         h_flex()
             .id("status-bar")
@@ -181,8 +182,10 @@ impl Render for StatusBar {
                     .border_b(px(1.0))
                     .border_color(cx.theme().colors().status_bar_background),
             })
+            .children(background.below)
             .child(self.render_left_tools(&sidebar, cx))
             .child(self.render_right_tools(&sidebar, cx))
+            .children(background.above)
     }
 }
 
