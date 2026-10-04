@@ -40,6 +40,8 @@ pub enum QuotaStatus {
     TokenExpired,
     /// A profile with an identity but no readable login.
     SignedOut,
+    /// Signed in with an API key: billed per token, without a quota.
+    ApiKey,
     Unavailable(String),
 }
 
@@ -84,6 +86,7 @@ impl AccountQuota {
             QuotaStatus::TokenStale => Some("login refreshes on next run".into()),
             QuotaStatus::TokenExpired => Some("login expired".into()),
             QuotaStatus::SignedOut => Some("signed out".into()),
+            QuotaStatus::ApiKey => Some("API key".into()),
         }
     }
 }
@@ -294,7 +297,7 @@ struct ClaudeUsage {
     five_hour: Option<ClaudeWindow>,
     seven_day: Option<ClaudeWindow>,
     seven_day_sonnet: Option<ClaudeWindow>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     limits: Vec<ClaudeLimit>,
 }
 
@@ -371,7 +374,7 @@ async fn fetch_codex(home: &Path, http: Arc<dyn HttpClient>) -> Result<AccountQu
         tokens.and_then(|tokens| Some((tokens.access_token?, tokens.account_id)))
     else {
         // API-key logins have no subscription quota.
-        return Ok(AccountQuota::with_status(QuotaStatus::Ok));
+        return Ok(AccountQuota::with_status(QuotaStatus::ApiKey));
     };
     let mut request = Request::builder()
         .method(Method::GET)
@@ -417,7 +420,7 @@ struct CodexAdditionalLimit {
 struct CodexUsage {
     plan_type: Option<String>,
     rate_limit: Option<CodexRateLimit>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     additional_rate_limits: Vec<CodexAdditionalLimit>,
 }
 
@@ -500,7 +503,7 @@ fn parse_codex_usage(body: &str, now: DateTime<Utc>) -> Result<(Vec<QuotaWindow>
 
 async fn fetch_grok(home: &Path, http: Arc<dyn HttpClient>) -> Result<AccountQuota> {
     let Ok(auth) = std::fs::read_to_string(home.join("auth.json")) else {
-        return Ok(AccountQuota::with_status(QuotaStatus::SignedOut));
+        return Ok(AccountQuota::with_status(grok_without_login(home)));
     };
     let auth: serde_json::Value = serde_json::from_str(&auth).context("parsing Grok auth")?;
     let Some(entry) = auth
@@ -548,6 +551,22 @@ async fn fetch_grok(home: &Path, http: Arc<dyn HttpClient>) -> Result<AccountQuo
     }
     let window = parse_grok_quota(&body, Utc::now())?;
     Ok(finish(vec![window], plan))
+}
+
+/// Grok also runs on an API key, from `XAI_API_KEY` or a model entry in its
+/// `config.toml`, without any account login.
+fn grok_without_login(home: &Path) -> QuotaStatus {
+    let key_in_env = std::env::var("XAI_API_KEY").is_ok_and(|key| !key.is_empty());
+    let key_in_config = std::fs::read_to_string(home.join("config.toml")).is_ok_and(|config| {
+        config
+            .lines()
+            .any(|line| line.trim_start().starts_with("api_key") && line.contains('='))
+    });
+    if key_in_env || key_in_config {
+        QuotaStatus::ApiKey
+    } else {
+        QuotaStatus::SignedOut
+    }
 }
 
 fn parse_flexible_time(value: &serde_json::Value) -> Option<DateTime<Utc>> {
@@ -715,6 +734,15 @@ fn parse_grok_quota(body: &[u8], now: DateTime<Utc>) -> Result<QuotaWindow> {
 }
 
 // --------------------------------------------------------------- helpers
+
+/// The usage endpoints send `null` for lists they have nothing for.
+fn null_as_empty<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
+}
 
 async fn send(http: &Arc<dyn HttpClient>, request: Request<AsyncBody>) -> Result<(u16, String)> {
     let mut response = http.send(request).await?;
@@ -898,6 +926,32 @@ mod tests {
         assert_eq!(
             window.resets_at,
             Utc.timestamp_opt(2_000_000_000, 0).single()
+        );
+    }
+
+    #[test]
+    fn grok_api_key_without_login() {
+        let temp = tempfile::tempdir().unwrap();
+        assert_eq!(grok_without_login(temp.path()), QuotaStatus::SignedOut);
+        std::fs::write(
+            temp.path().join("config.toml"),
+            "[model.\"grok-4.7\"]\napi_key = \"x\"\n",
+        )
+        .unwrap();
+        assert_eq!(grok_without_login(temp.path()), QuotaStatus::ApiKey);
+    }
+
+    #[test]
+    fn null_lists_parse_as_empty() {
+        let (windows, _) = parse_codex_usage(
+            r#"{"rate_limit":{"primary_window":{"used_percent":5}},"additional_rate_limits":null}"#,
+            Utc::now(),
+        )
+        .unwrap();
+        assert_eq!(windows.len(), 1);
+        assert_eq!(
+            parse_claude_usage(r#"{"limits":null}"#).unwrap(),
+            Vec::new()
         );
     }
 

@@ -239,9 +239,7 @@ impl AgentUsageView {
             return None;
         }
         let agent_id = self.agent_for(provider, cx);
-        let add_account = AddAgentAccount {
-            agent: agent_id,
-        };
+        let add_account = AddAgentAccount { agent: agent_id };
         let header = h_flex()
             .justify_between()
             .child(
@@ -338,6 +336,7 @@ impl AgentUsageView {
 
         let plan = quota.as_ref().and_then(|quota| quota.plan.clone());
         let status_badge = quota.as_ref().and_then(|quota| match quota.status {
+            QuotaStatus::ApiKey => Some("API"),
             QuotaStatus::TokenExpired => Some("Sign-in expired"),
             QuotaStatus::SignedOut => Some("Signed out"),
             QuotaStatus::Unavailable(_) if provider != AccountProvider::Cursor => {
@@ -351,16 +350,26 @@ impl AgentUsageView {
             .child(
                 h_flex()
                     .gap_1p5()
-                    .min_w_0()
+                    .flex_none()
                     .children(radio)
-                    .child(Label::new(name).truncate())
+                    .child(Label::new(name))
                     .children(plan.map(|plan| badge(plan.to_uppercase().into(), Color::Muted, cx)))
-                    .children(status_badge.map(|text| badge(text.into(), Color::Warning, cx))),
+                    .children(status_badge.map(|text| {
+                        let color = if text == "API" {
+                            Color::Muted
+                        } else {
+                            Color::Warning
+                        };
+                        badge(text.into(), color, cx)
+                    })),
             )
             .child(
-                Label::new(account.home_label.clone())
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
+                div().min_w_0().flex_1().flex().justify_end().child(
+                    Label::new(account.home_label.clone())
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .truncate(),
+                ),
             );
 
         let body = match &quota {
@@ -375,6 +384,7 @@ impl AgentUsageView {
                     "Refreshes when {} next runs.",
                     provider.display_name()
                 )),
+                QuotaStatus::ApiKey => message("Billed per token."),
                 QuotaStatus::TokenExpired | QuotaStatus::SignedOut => message(&format!(
                     "Sign in by running `{}` in a terminal.",
                     login_command(account)
@@ -399,19 +409,24 @@ impl AgentUsageView {
                 .into_any_element()
         } else {
             let account = account.clone();
-            Button::new(
-                SharedString::from(format!("make-default-{id_suffix}")),
-                "Make default",
-            )
-            .label_size(LabelSize::Small)
-            .style(ButtonStyle::Outlined)
-            .on_click(move |_, _, cx| AccountRegistry::set_preferred(&account, cx))
-            .into_any_element()
+            h_flex()
+                .child(
+                    Button::new(
+                        SharedString::from(format!("make-default-{id_suffix}")),
+                        "Make default",
+                    )
+                    .label_size(LabelSize::Small)
+                    .style(ButtonStyle::Outlined)
+                    .on_click(move |_, _, cx| AccountRegistry::set_preferred(&account, cx)),
+                )
+                .into_any_element()
         };
 
         v_flex()
             .p_3()
             .gap_2()
+            .min_w_0()
+            .overflow_hidden()
             .rounded_md()
             .border_1()
             .border_color(if is_preferred && several {
@@ -478,6 +493,8 @@ impl AgentUsageView {
             });
 
         let header = h_flex()
+            .flex_wrap()
+            .gap_2()
             .justify_between()
             .child(
                 h_flex()
@@ -834,7 +851,7 @@ fn quota_row(window: &QuotaWindow, cx: &App) -> impl IntoElement {
         .id(SharedString::from(format!("quota-{}", window.id)))
         .gap_3()
         .child(
-            div().w(px(130.)).child(
+            div().w(px(88.)).flex_none().child(
                 Label::new(window.label.clone())
                     .size(LabelSize::Small)
                     .truncate(),
@@ -843,6 +860,7 @@ fn quota_row(window: &QuotaWindow, cx: &App) -> impl IntoElement {
         .child(
             div()
                 .flex_1()
+                .min_w(px(24.))
                 .h(px(3.))
                 .rounded_full()
                 .bg(cx.theme().colors().element_background)
@@ -856,13 +874,14 @@ fn quota_row(window: &QuotaWindow, cx: &App) -> impl IntoElement {
         )
         .child(
             div()
-                .w(px(40.))
+                .w(px(36.))
+                .flex_none()
                 .flex()
                 .justify_end()
                 .child(Label::new(format!("{}%", window.used_percent)).size(LabelSize::Small)),
         )
         .child(
-            div().w(px(70.)).flex().justify_end().children(
+            div().w(px(58.)).flex_none().flex().justify_end().children(
                 reset
                     .clone()
                     .map(|(text, _)| Label::new(text).size(LabelSize::Small).color(Color::Muted)),
