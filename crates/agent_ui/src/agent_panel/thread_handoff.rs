@@ -16,8 +16,8 @@ use agent_accounts::{
 use agent_client_protocol::schema::v1 as acp;
 use chrono::Utc;
 use futures::FutureExt as _;
-use gpui::{App, Context, SharedString, TaskExt as _, Window};
-use project::AgentId;
+use gpui::{App, Context, Entity, SharedString, TaskExt as _, Window};
+use project::{AgentId, Project};
 use workspace::{PathList, Toast, notifications::NotificationId};
 
 use super::AgentPanel;
@@ -163,42 +163,7 @@ impl AgentPanel {
         else {
             return Vec::new();
         };
-        let is_local_project = self.project.read(cx).is_local();
-        let agent_server_store = self.project.read(cx).agent_server_store().read(cx);
-        let registry_store = project::AgentRegistryStore::try_global(cx);
-        let mut targets = Vec::new();
-        for agent_id in agent_server_store.external_agents() {
-            let display_name = agent_server_store
-                .agent_display_name(agent_id)
-                .or_else(|| {
-                    registry_store
-                        .as_ref()
-                        .and_then(|store| store.read(cx).agent(agent_id))
-                        .map(|agent| agent.name().clone())
-                })
-                .unwrap_or_else(|| agent_id.0.clone());
-            let accounts = if is_local_project {
-                AccountRegistry::accounts_for_agent(agent_id.as_ref(), cx)
-            } else {
-                Vec::new()
-            };
-            if accounts.len() > 1 {
-                for account in accounts {
-                    targets.push((
-                        Agent::with_account(agent_id.clone(), account.id()),
-                        SharedString::from(format!(
-                            "{display_name} · {}",
-                            account_label_with_quota(&account, cx)
-                        )),
-                    ));
-                }
-            } else {
-                targets.push((Agent::with_account(agent_id.clone(), None), display_name));
-            }
-        }
-        targets.retain(|(agent, _)| *agent != current);
-        targets.sort_by_key(|(_, label)| label.to_lowercase());
-        targets
+        handoff_targets(&current, &self.project, cx)
     }
 
     /// Opens a terminal thread whose shell runs agent CLIs with an account.
@@ -477,4 +442,48 @@ pub(crate) fn target_label(agent: &Agent, cx: &gpui::App) -> String {
         ),
         None => name,
     }
+}
+
+/// Every agent and account a thread with `current` can be continued with.
+pub(crate) fn handoff_targets(
+    current: &Agent,
+    project: &Entity<Project>,
+    cx: &App,
+) -> Vec<(Agent, SharedString)> {
+    let is_local_project = project.read(cx).is_local();
+    let agent_server_store = project.read(cx).agent_server_store().read(cx);
+    let registry_store = project::AgentRegistryStore::try_global(cx);
+    let mut targets = Vec::new();
+    for agent_id in agent_server_store.external_agents() {
+        let display_name = agent_server_store
+            .agent_display_name(agent_id)
+            .or_else(|| {
+                registry_store
+                    .as_ref()
+                    .and_then(|store| store.read(cx).agent(agent_id))
+                    .map(|agent| agent.name().clone())
+            })
+            .unwrap_or_else(|| agent_id.0.clone());
+        let accounts = if is_local_project {
+            AccountRegistry::accounts_for_agent(agent_id.as_ref(), cx)
+        } else {
+            Vec::new()
+        };
+        if accounts.len() > 1 {
+            for account in accounts {
+                targets.push((
+                    Agent::with_account(agent_id.clone(), account.id()),
+                    SharedString::from(format!(
+                        "{display_name} · {}",
+                        account_label_with_quota(&account, cx)
+                    )),
+                ));
+            }
+        } else {
+            targets.push((Agent::with_account(agent_id.clone(), None), display_name));
+        }
+    }
+    targets.retain(|(agent, _)| agent != current);
+    targets.sort_by_key(|(_, label)| label.to_lowercase());
+    targets
 }

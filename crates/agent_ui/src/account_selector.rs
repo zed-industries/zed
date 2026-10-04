@@ -1,6 +1,7 @@
 //! The account picker shown next to the mode and model selectors.
 
-use gpui::{AnyElement, App};
+use gpui::{AnyElement, App, Entity};
+use project::Project;
 use ui::{
     Button, Callout, CalloutBorderPosition, ContextMenu, ContextMenuEntry, PopoverMenu, Severity,
     Tooltip, prelude::*,
@@ -188,4 +189,78 @@ pub(crate) fn render_quota_notice(
             )
             .into_any_element(),
     )
+}
+
+/// After the agent reported the thread's account out of quota or credits,
+/// offers to continue the conversation with another account or agent.
+pub(crate) fn render_usage_limit_notice(
+    agent: &Agent,
+    project: &Entity<Project>,
+    cx: &App,
+) -> AnyElement {
+    let agent_id = agent.id();
+    let current_label = AccountRegistry::label(agent_id.as_ref(), agent.account(), cx);
+    let alternative = project
+        .read(cx)
+        .is_local()
+        .then(|| QuotaRegistry::any_alternative(agent_id.as_ref(), agent.account(), cx))
+        .flatten();
+    let targets = crate::agent_panel::handoff_targets(agent, project, cx);
+
+    let mut actions = h_flex().gap_1();
+    if let Some(alternative) = &alternative {
+        let action = ContinueThreadWith {
+            agent: agent_id,
+            account: alternative.id(),
+        };
+        actions = actions.child(
+            Button::new(
+                "usage-limit-switch-account",
+                format!("Continue with {}", alternative.label()),
+            )
+            .label_size(LabelSize::Small)
+            .on_click(move |_, window, cx| window.dispatch_action(Box::new(action.clone()), cx)),
+        );
+    }
+    if !targets.is_empty() {
+        actions = actions.child(
+            PopoverMenu::new("usage-limit-continue-with")
+                .trigger(
+                    Button::new("usage-limit-continue-with-trigger", "Continue with…")
+                        .label_size(LabelSize::Small)
+                        .end_icon(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
+                )
+                .anchor(gpui::Anchor::BottomRight)
+                .menu(move |window, cx| {
+                    let targets = targets.clone();
+                    Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
+                        for (target, label) in &targets {
+                            let Agent::Custom { id, account } = target else {
+                                continue;
+                            };
+                            menu = menu.action(
+                                label.clone(),
+                                Box::new(ContinueThreadWith {
+                                    agent: id.clone(),
+                                    account: account.clone(),
+                                }),
+                            );
+                        }
+                        menu
+                    }))
+                }),
+        );
+    }
+
+    Callout::new()
+        .border_position(CalloutBorderPosition::Bottom)
+        .severity(Severity::Warning)
+        .icon(IconName::Warning)
+        .title(format!("{current_label} is out of quota"))
+        .description(
+            "Continue this conversation with another account or agent; it moves there \
+             with its history and this thread stays as it is.",
+        )
+        .actions_slot(actions)
+        .into_any_element()
 }

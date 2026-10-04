@@ -212,6 +212,50 @@ impl QuotaRegistry {
         }
     }
 
+    /// Records that the agent reported the account out of quota, until the
+    /// next reading replaces it.
+    pub fn mark_exhausted(agent_id: &str, account: Option<&AccountId>, cx: &mut App) {
+        let Some(found) = AccountRegistry::accounts_for_agent(agent_id, cx)
+            .into_iter()
+            .find(|candidate| candidate.id().as_ref() == account)
+        else {
+            return;
+        };
+        let quota = AccountQuota {
+            status: QuotaStatus::Ok,
+            windows: vec![agent_accounts::quota::QuotaWindow {
+                id: "reported".into(),
+                label: "Limit".into(),
+                used_percent: 100,
+                resets_at: None,
+            }],
+            plan: None,
+        };
+        cx.default_global::<Self>().entries.insert(
+            (found.provider, found.home),
+            QuotaEntry {
+                quota: Some(quota),
+                fetched_at: Some(Instant::now()),
+                fetching: false,
+            },
+        );
+    }
+
+    /// Another account of the agent to move to after it ran out: the one with
+    /// the most quota left, else any account not known to be exhausted.
+    pub fn any_alternative(
+        agent_id: &str,
+        current: Option<&AccountId>,
+        cx: &App,
+    ) -> Option<AgentAccount> {
+        Self::best_alternative(agent_id, current, cx).or_else(|| {
+            AccountRegistry::accounts_for_agent(agent_id, cx)
+                .into_iter()
+                .filter(|account| account.id().as_ref() != current)
+                .find(|account| !Self::is_exhausted(account, cx))
+        })
+    }
+
     /// Whether the account's last reading crossed the auto-switch threshold.
     pub fn is_exhausted(account: &AgentAccount, cx: &App) -> bool {
         let threshold = AgentAccountsSettings::get_global(cx).auto_switch_threshold_percent;
@@ -348,6 +392,29 @@ mod tests {
                 account_label_with_quota(&default, cx),
                 "/h/.claude (default) — Session (5h) 95%"
             );
+        });
+    }
+
+    #[gpui::test]
+    fn reported_limits_exclude_the_account(cx: &mut TestAppContext) {
+        init(cx, "{}");
+        let default = account("/h/.claude", true);
+        let unknown = account("/h/.claude-unknown", false);
+        let spent = account("/h/.claude-spent", false);
+        set_accounts(
+            cx,
+            vec![
+                (default.clone(), None),
+                (spent.clone(), None),
+                (unknown.clone(), None),
+            ],
+        );
+        cx.update(|cx| {
+            QuotaRegistry::mark_exhausted("claude-acp", None, cx);
+            QuotaRegistry::mark_exhausted("claude-acp", spent.id().as_ref(), cx);
+            assert!(QuotaRegistry::is_exhausted(&default, cx));
+            let alternative = QuotaRegistry::any_alternative("claude-acp", None, cx).unwrap();
+            assert_eq!(alternative.home, unknown.home);
         });
     }
 

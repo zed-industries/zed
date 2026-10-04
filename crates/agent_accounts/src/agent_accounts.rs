@@ -276,6 +276,26 @@ pub fn account_env(agent_id: &str, account: Option<&AccountId>) -> Vec<(String, 
     }
 }
 
+/// Whether an agent's error says the account ran out of quota or credits,
+/// as opposed to a transient rate limit worth retrying.
+pub fn is_usage_limit_error(message: &str) -> bool {
+    const MARKERS: &[&str] = &[
+        "usagelimitexceeded",
+        "usage_limit_exceeded",
+        "usage limit",
+        "out of credits",
+        "insufficient credits",
+        "credit balance is too low",
+        "hit your limit",
+        "limit reached",
+        "quota exceeded",
+        "exceeded your current quota",
+        "insufficient_quota",
+    ];
+    let message = message.to_lowercase();
+    MARKERS.iter().any(|marker| message.contains(marker))
+}
+
 /// A short label for an account id when its discovery details are unknown.
 pub fn fallback_account_label(account: &AccountId, home_dir: &Path) -> String {
     tilde_label(account.home(), home_dir)
@@ -389,5 +409,25 @@ mod tests {
         let cursor = new_account_home(AccountProvider::Cursor, "work", home);
         prepare_account_home(AccountProvider::Cursor, &cursor).unwrap();
         assert!(cursor.join(".cursor").is_dir());
+    }
+
+    #[test]
+    fn recognizes_usage_limit_errors() {
+        for message in [
+            r#"Internal error: {"message": "Your workspace is out of credits.", "codexErrorInfo": "usageLimitExceeded"}"#,
+            "Claude AI usage limit reached|1791080690",
+            "You've hit your limit · resets 5pm",
+            "Your credit balance is too low to access the Anthropic API.",
+            "insufficient_quota",
+        ] {
+            assert!(is_usage_limit_error(message), "{message}");
+        }
+        for message in [
+            "Rate limit exceeded, retrying",
+            "Authentication required",
+            "overloaded",
+        ] {
+            assert!(!is_usage_limit_error(message), "{message}");
+        }
     }
 }

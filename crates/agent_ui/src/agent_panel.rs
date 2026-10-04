@@ -361,6 +361,7 @@ struct SerializedActiveThread {
 }
 
 mod thread_handoff;
+pub(crate) use thread_handoff::handoff_targets;
 pub(crate) use thread_handoff::target_label as handoff_target_label;
 
 pub fn init(cx: &mut App) {

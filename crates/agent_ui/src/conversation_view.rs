@@ -162,6 +162,18 @@ pub(crate) enum ThreadError {
     },
 }
 
+impl ThreadError {
+    /// Whether the agent says its account ran out of quota or credits.
+    pub(crate) fn is_usage_limit(&self) -> bool {
+        match self {
+            Self::Other { message, .. } | Self::ProviderRejection { message } => {
+                agent_accounts::is_usage_limit_error(message)
+            }
+            _ => false,
+        }
+    }
+}
+
 impl From<anyhow::Error> for ThreadError {
     fn from(error: anyhow::Error) -> Self {
         if error.is::<MaxOutputTokensError>() {

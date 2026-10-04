@@ -2135,6 +2135,16 @@ impl ThreadView {
     ) {
         let error = error.into();
         self.emit_thread_error_telemetry(&error, cx);
+        if error.is_usage_limit()
+            && let Some(view) = self.server_view.upgrade()
+        {
+            let agent = view.read(cx).connection_key().clone();
+            crate::account_registry::QuotaRegistry::mark_exhausted(
+                agent.id().as_ref(),
+                agent.account(),
+                cx,
+            );
+        }
         self.thread_error = Some(error);
         cx.notify();
     }
@@ -12839,6 +12849,13 @@ impl Render for ThreadView {
                 crate::account_selector::render_handoff_notice(view.read(cx).thread_id, cx)
             }))
             .children(self.server_view.upgrade().and_then(|view| {
+                if self
+                    .thread_error
+                    .as_ref()
+                    .is_some_and(|error| error.is_usage_limit())
+                {
+                    return None;
+                }
                 let agent = view.read(cx).connection_key().clone();
                 let has_messages = !self.thread.read(cx).entries().is_empty();
                 let is_local = self
@@ -12847,6 +12864,19 @@ impl Render for ThreadView {
                     .is_some_and(|project| project.read(cx).is_local());
                 crate::account_selector::render_quota_notice(&agent, has_messages, is_local, cx)
             }))
+            .children(
+                self.thread_error
+                    .as_ref()
+                    .filter(|error| error.is_usage_limit())
+                    .and_then(|_| {
+                        let view = self.server_view.upgrade()?;
+                        let project = self.project.upgrade()?;
+                        let agent = view.read(cx).connection_key().clone();
+                        Some(crate::account_selector::render_usage_limit_notice(
+                            &agent, &project, cx,
+                        ))
+                    }),
+            )
             .map(|this| {
                 if has_messages {
                     this.flex_1()
