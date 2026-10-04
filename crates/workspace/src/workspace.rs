@@ -6913,7 +6913,7 @@ impl Workspace {
                     .absolute()
                     .right_3()
                     .bottom_3()
-                    .w_112()
+                    .w_128()
                     .h_full()
                     .flex()
                     .flex_col()
