@@ -84,6 +84,7 @@ impl AddAccountModal {
             agent: self.agent_id.to_string(),
             home: agent_accounts::fallback_account_label(&AccountId::new(&home), home_dir),
             name: Some(name),
+            default: None,
         };
         update_settings_file(<dyn Fs>::global(cx), cx, move |content, _| {
             content

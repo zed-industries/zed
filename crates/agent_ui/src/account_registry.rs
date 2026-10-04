@@ -15,6 +15,8 @@ use settings::{RegisterSetting, Settings};
 pub struct AgentAccountsSettings {
     pub discover: bool,
     pub accounts: Vec<ConfiguredAccount>,
+    /// The account new threads use, per provider, when none is picked.
+    pub preferred: HashMap<AccountProvider, PathBuf>,
     pub auto_switch: bool,
     pub auto_switch_threshold_percent: f32,
 }
@@ -23,9 +25,18 @@ impl Settings for AgentAccountsSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let content = content.agent_accounts.clone().unwrap_or_default();
         let home_dir = util::paths::home_dir();
-        let accounts = content
-            .accounts
-            .unwrap_or_default()
+        let entries = content.accounts.unwrap_or_default();
+        let preferred = entries
+            .iter()
+            .filter(|entry| entry.default == Some(true))
+            .filter_map(|entry| {
+                Some((
+                    AccountProvider::for_agent(&entry.agent)?,
+                    agent_accounts::expand_home(&entry.home, home_dir),
+                ))
+            })
+            .collect();
+        let accounts = entries
             .into_iter()
             .filter_map(|entry| {
                 let Some(provider) = AccountProvider::for_agent(&entry.agent) else {
@@ -46,6 +57,7 @@ impl Settings for AgentAccountsSettings {
         Self {
             discover: content.discover.unwrap_or(true),
             accounts,
+            preferred,
             auto_switch: auto_switch.enabled.unwrap_or(false),
             auto_switch_threshold_percent: auto_switch.threshold_percent.unwrap_or(95.0),
         }
@@ -133,8 +145,73 @@ impl AccountRegistry {
         accounts
     }
 
+    /// The account a new thread uses: an explicit pick, else the configured
+    /// default account if it still exists, else the CLI's own home (`None`).
+    pub fn resolve(agent_id: &str, account: Option<AccountId>, cx: &App) -> Option<AccountId> {
+        match account {
+            Some(account) if account.is_system() => None,
+            Some(account) => Some(account),
+            None => Self::preferred_account(agent_id, cx).and_then(|account| account.id()),
+        }
+    }
+
+    /// The account marked as default for new threads, or the CLI's own home.
+    pub fn preferred_account(agent_id: &str, cx: &App) -> Option<AgentAccount> {
+        let provider = AccountProvider::for_agent(agent_id)?;
+        let accounts = Self::accounts_for_agent(agent_id, cx);
+        let preferred = AgentAccountsSettings::get_global(cx)
+            .preferred
+            .get(&provider);
+        preferred
+            .and_then(|home| accounts.iter().find(|account| &account.home == home))
+            .or_else(|| accounts.iter().find(|account| account.is_default))
+            .cloned()
+    }
+
+    pub fn is_preferred(account: &AgentAccount, cx: &App) -> bool {
+        Self::preferred_account(account.provider.agent_id(), cx)
+            .is_some_and(|preferred| preferred.home == account.home)
+    }
+
+    /// Makes the account the default for new threads of its agent.
+    pub fn set_preferred(account: &AgentAccount, cx: &App) {
+        let provider = account.provider;
+        let home = account.home.clone();
+        let is_system = account.is_default;
+        let label = agent_accounts::fallback_account_label(
+            &AccountId::new(&account.home),
+            util::paths::home_dir(),
+        );
+        settings::update_settings_file(<dyn fs::Fs>::global(cx), cx, move |content, _| {
+            let home_dir = util::paths::home_dir();
+            let entries = content
+                .agent_accounts
+                .get_or_insert_default()
+                .accounts
+                .get_or_insert_default();
+            let mut found = false;
+            for entry in entries.iter_mut() {
+                if AccountProvider::for_agent(&entry.agent) != Some(provider) {
+                    continue;
+                }
+                let is_this = agent_accounts::expand_home(&entry.home, home_dir) == home;
+                found |= is_this;
+                entry.default = (is_this && !is_system).then_some(true);
+            }
+            if !found && !is_system {
+                entries.push(settings::AgentAccountSettingsContent {
+                    agent: provider.agent_id().to_string(),
+                    home: label,
+                    name: None,
+                    default: Some(true),
+                });
+            }
+        });
+    }
+
     /// A short label for an account of the given agent.
     pub fn label(agent_id: &str, account: Option<&AccountId>, cx: &App) -> String {
+        let account = account.filter(|account| !account.is_system());
         let accounts = Self::accounts_for_agent(agent_id, cx);
         let found = accounts
             .iter()
@@ -286,7 +363,7 @@ impl QuotaRegistry {
 /// Shows an account with its quota, e.g. "me@work.dev — Session (5h) 42%".
 pub fn account_label_with_quota(account: &AgentAccount, cx: &App) -> String {
     let mut label = account.label();
-    if account.is_default {
+    if AccountRegistry::is_preferred(account, cx) {
         label.push_str(" (default)");
     }
     if let Some(summary) = QuotaRegistry::quota(account, cx).and_then(|quota| quota.summary()) {
@@ -426,6 +503,34 @@ mod tests {
         set_accounts(cx, vec![(default, Some(quota(99))), (unknown, None)]);
         cx.update(|cx| {
             assert!(QuotaRegistry::best_alternative("claude-acp", None, cx).is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn default_account_applies_only_without_an_explicit_pick(cx: &mut TestAppContext) {
+        init(
+            cx,
+            r#"{"agent_accounts": {"accounts": [
+                {"agent": "claude-acp", "home": "/h/.claude-work", "default": true}
+            ]}}"#,
+        );
+        let system = account("/h/.claude", true);
+        let work = account("/h/.claude-work", false);
+        set_accounts(cx, vec![(system.clone(), None), (work.clone(), None)]);
+        cx.update(|cx| {
+            assert!(AccountRegistry::is_preferred(&work, cx));
+            assert!(!AccountRegistry::is_preferred(&system, cx));
+            assert_eq!(AccountRegistry::resolve("claude-acp", None, cx), work.id());
+            assert_eq!(
+                AccountRegistry::resolve("claude-acp", Some(AccountId::system()), cx),
+                None
+            );
+            assert_eq!(
+                AccountRegistry::resolve("claude-acp", work.id(), cx),
+                work.id()
+            );
+            // Agents without accounts keep the CLI's own home.
+            assert_eq!(AccountRegistry::resolve("gemini", None, cx), None);
         });
     }
 

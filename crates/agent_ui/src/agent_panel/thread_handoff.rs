@@ -54,6 +54,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let target_account = AccountRegistry::resolve(target_agent_id.as_ref(), target_account, cx);
         if self.pending_handoff.is_some() {
             self.show_handoff_message("A conversation is already being moved.", cx);
             return;
@@ -472,7 +473,7 @@ pub(crate) fn handoff_targets(
         if accounts.len() > 1 {
             for account in accounts {
                 targets.push((
-                    Agent::with_account(agent_id.clone(), account.id()),
+                    Agent::with_account(agent_id.clone(), Some(account.selection())),
                     SharedString::from(format!(
                         "{display_name} · {}",
                         account_label_with_quota(&account, cx)
@@ -483,7 +484,10 @@ pub(crate) fn handoff_targets(
             targets.push((Agent::with_account(agent_id.clone(), None), display_name));
         }
     }
-    targets.retain(|(agent, _)| agent != current);
+    targets.retain(|(agent, _)| {
+        agent.id() != current.id()
+            || agent.account().filter(|account| !account.is_system()) != current.account()
+    });
     targets.sort_by_key(|(_, label)| label.to_lowercase());
     targets
 }

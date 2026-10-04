@@ -799,6 +799,11 @@ pub struct AgentAccountSettingsContent {
     pub home: String,
     /// A name to show instead of the account's email or directory.
     pub name: Option<String>,
+    /// Whether new threads of the agent use this account unless another
+    /// one is picked. Without one, the agent's own home is used.
+    ///
+    /// Default: false
+    pub default: Option<bool>,
 }
 
 #[with_fallible_options]

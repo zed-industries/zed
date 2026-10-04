@@ -50,7 +50,19 @@ impl AccountId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Picks the CLI's own home explicitly, as opposed to leaving the
+    /// choice to the configured default account.
+    pub fn system() -> Self {
+        Self(SYSTEM_ACCOUNT.into())
+    }
+
+    pub fn is_system(&self) -> bool {
+        self.as_str() == SYSTEM_ACCOUNT
+    }
 }
+
+const SYSTEM_ACCOUNT: &str = "system";
 
 impl std::fmt::Display for AccountId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -169,6 +181,12 @@ impl AgentAccount {
         (!self.is_default).then(|| AccountId::new(&self.home))
     }
 
+    /// The account as an explicit choice: the CLI's own home is
+    /// [`AccountId::system`].
+    pub fn selection(&self) -> AccountId {
+        self.id().unwrap_or_else(AccountId::system)
+    }
+
     pub fn label(&self) -> String {
         self.name
             .clone()
@@ -271,7 +289,9 @@ pub fn expand_home(path: &str, home_dir: &Path) -> PathBuf {
 /// The environment to add to an agent process for the given account.
 pub fn account_env(agent_id: &str, account: Option<&AccountId>) -> Vec<(String, String)> {
     match (AccountProvider::for_agent(agent_id), account) {
-        (Some(provider), Some(account)) => provider.account_env(account.as_str()),
+        (Some(provider), Some(account)) if !account.is_system() => {
+            provider.account_env(account.as_str())
+        }
         _ => Vec::new(),
     }
 }
@@ -344,6 +364,7 @@ mod tests {
             ]
         );
         assert!(account_env("gemini", Some(&account)).is_empty());
+        assert!(account_env(CLAUDE_AGENT_ID, Some(&AccountId::system())).is_empty());
     }
 
     #[test]

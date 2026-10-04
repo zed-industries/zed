@@ -71,8 +71,8 @@ pub(crate) fn render_account_selector(
                         "Account"
                     });
                     for account in &accounts {
-                        let account_id = account.id();
-                        let is_current = account_id == current;
+                        let account_id = Some(account.selection());
+                        let is_current = account.id() == current;
                         let label = account_label_with_quota(account, cx);
                         let action: Box<dyn gpui::Action> = if has_messages {
                             Box::new(ContinueThreadWith {
@@ -161,12 +161,12 @@ pub(crate) fn render_quota_notice(
     let action: Box<dyn gpui::Action> = if has_messages {
         Box::new(ContinueThreadWith {
             agent: agent_id,
-            account: alternative.id(),
+            account: Some(alternative.selection()),
         })
     } else {
         Box::new(NewExternalAgentThread {
             agent: agent_id,
-            account: alternative.id(),
+            account: Some(alternative.selection()),
         })
     };
     let button_label = format!("Continue with {}", alternative.label());
@@ -211,7 +211,7 @@ pub(crate) fn render_usage_limit_notice(
     if let Some(alternative) = &alternative {
         let action = ContinueThreadWith {
             agent: agent_id,
-            account: alternative.id(),
+            account: Some(alternative.selection()),
         };
         actions = actions.child(
             Button::new(
