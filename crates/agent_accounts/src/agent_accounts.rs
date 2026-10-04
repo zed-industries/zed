@@ -10,6 +10,7 @@
 mod discovery;
 pub mod handoff;
 pub mod quota;
+pub mod usage_history;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -76,7 +77,7 @@ impl From<&str> for AccountId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AccountProvider {
     Claude,
     Codex,
