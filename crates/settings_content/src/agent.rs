@@ -768,6 +768,55 @@ impl From<&str> for LanguageModelProviderSetting {
     }
 }
 
+/// Login profiles ("accounts") for external agents, such as several Claude
+/// Code config directories.
+#[with_fallible_options]
+#[derive(Default, PartialEq, Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug)]
+pub struct AgentAccountsSettingsContent {
+    /// Whether to look for profile directories (`~/.claude-*`, `~/.codex-*`,
+    /// …) automatically.
+    ///
+    /// Default: true
+    pub discover: Option<bool>,
+    /// Profiles to offer in addition to the discovered ones. An entry with
+    /// the same home as a discovered profile renames it.
+    ///
+    /// Default: []
+    pub accounts: Option<Vec<AgentAccountSettingsContent>>,
+    /// Switching to another account when the current one runs out of quota.
+    pub auto_switch: Option<AgentAccountAutoSwitchSettingsContent>,
+}
+
+/// One login profile of an external agent.
+#[with_fallible_options]
+#[derive(Default, PartialEq, Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug)]
+pub struct AgentAccountSettingsContent {
+    /// The agent the profile belongs to: "claude-acp", "codex-acp", or the
+    /// id of a Grok or Cursor agent server.
+    pub agent: String,
+    /// The profile's home directory (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
+    /// `GROK_HOME`, …). `~` is expanded.
+    pub home: String,
+    /// A name to show instead of the account's email or directory.
+    pub name: Option<String>,
+}
+
+#[with_fallible_options]
+#[derive(Default, PartialEq, Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug)]
+pub struct AgentAccountAutoSwitchSettingsContent {
+    /// Whether to offer continuing with another account of the same agent
+    /// when the current account's quota is almost used up, and to start new
+    /// threads with the account that has the most quota left.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+    /// The used percentage of any quota window at which an account counts as
+    /// exhausted.
+    ///
+    /// Default: 95
+    pub threshold_percent: Option<f32>,
+}
+
 #[with_fallible_options]
 #[derive(Default, PartialEq, Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug)]
 #[serde(transparent)]
