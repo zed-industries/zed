@@ -470,8 +470,21 @@ impl WgpuContext {
 
     #[cfg(not(target_family = "wasm"))]
     pub fn instance(display: Option<Box<dyn wgpu::wgt::WgpuHasDisplayHandle>>) -> wgpu::Instance {
+        Self::instance_with_backends(display, wgpu::Backends::VULKAN | wgpu::Backends::GL)
+    }
+
+    /// Creates an instance with only the given backends enabled.
+    ///
+    /// Creating an instance initializes every enabled backend. On Linux the GL
+    /// backend loads EGL and Mesa (libgallium, libLLVM), which adds roughly
+    /// 80 MB of resident memory even when rendering ends up using Vulkan.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn instance_with_backends(
+        display: Option<Box<dyn wgpu::wgt::WgpuHasDisplayHandle>>,
+        backends: wgpu::Backends,
+    ) -> wgpu::Instance {
         wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
+            backends,
             flags: wgpu::InstanceFlags::default(),
             backend_options: wgpu::BackendOptions::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
