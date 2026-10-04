@@ -2707,7 +2707,7 @@ dependencies = [
 [[package]]
 name = "calloop"
 version = "0.14.3"
-source = "git+https://github.com/zed-industries/calloop#eb6b4fd17b9af5ecc226546bdd04185391b3e265"
+source = "git+https://github.com/zed-industries/calloop?rev=3759371fee14c40066d64777e2a36b6ffcc22590#3759371fee14c40066d64777e2a36b6ffcc22590"
 dependencies = [
  "bitflags 2.13.1",
  "polling",
@@ -5548,7 +5548,6 @@ dependencies = [
  "codestral",
  "command_palette_hooks",
  "copilot",
- "copilot_chat",
  "copilot_ui",
  "edit_prediction",
  "edit_prediction_types",
@@ -7636,7 +7635,6 @@ dependencies = [
  "anyhow",
  "as-raw-xcb-connection",
  "ashpd",
- "bitflags 2.13.1",
  "bytemuck",
  "calloop",
  "calloop-wayland-source",
@@ -9785,7 +9783,6 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "http_client",
- "language",
  "language_model",
  "language_models_cloud",
  "llama_cpp",
@@ -17166,7 +17163,6 @@ version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523"
 dependencies = [
- "borsh",
  "serde_core",
 ]
 
@@ -18132,6 +18128,8 @@ dependencies = [
  "picker",
  "project",
  "proptest",
+ "schemars 1.0.4",
+ "serde",
  "serde_json",
  "text",
  "ui",

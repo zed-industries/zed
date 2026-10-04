@@ -338,16 +338,16 @@ pub trait AgentSessionModes {
 
 pub trait AgentSessionConfigOptions {
     /// Get all current config options with their state
-    fn config_options(&self) -> Vec<acp_v1::SessionConfigOption>;
+    fn config_options(&self) -> Vec<acp_v2::SessionConfigOption>;
 
     /// Set a config option value
     /// Returns the full updated list of config options
     fn set_config_option(
         &self,
-        config_id: acp_v1::SessionConfigId,
-        value: acp_v1::SessionConfigOptionValue,
+        config_id: acp_v2::SessionConfigId,
+        value: acp_v2::SessionConfigOptionValue,
         cx: &mut App,
-    ) -> Task<Result<Vec<acp_v1::SessionConfigOption>>>;
+    ) -> Task<Result<Vec<acp_v2::SessionConfigOption>>>;
 
     /// Whenever the config options are updated the receiver will be notified.
     /// Optional for agents that don't update their config options dynamically.
@@ -621,6 +621,26 @@ impl PermissionOptions {
             PermissionOptions::Flat(options) => options.is_empty(),
             PermissionOptions::Dropdown(options) => options.is_empty(),
             PermissionOptions::DropdownWithPatterns { choices, .. } => choices.is_empty(),
+        }
+    }
+
+    pub fn option_for_id(
+        &self,
+        id: &acp_v1::PermissionOptionId,
+    ) -> Option<&acp_v1::PermissionOption> {
+        match self {
+            Self::Flat(options) => options.iter().find(|option| &option.option_id == id),
+            Self::Dropdown(choices) | Self::DropdownWithPatterns { choices, .. } => {
+                choices.iter().find_map(|choice| {
+                    if &choice.allow.option_id == id {
+                        Some(&choice.allow)
+                    } else if &choice.deny.option_id == id {
+                        Some(&choice.deny)
+                    } else {
+                        None
+                    }
+                })
+            }
         }
     }
 

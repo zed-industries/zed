@@ -2089,7 +2089,7 @@ async fn test_language_servers_disabled_by_default(cx: &mut gpui::TestAppContext
             "Rust",
             FakeLspAdapter {
                 name: "opt-in-server",
-                enabled_by_default: false,
+                opt_in_languages: HashSet::from_iter([LanguageName::new_static("Rust")]),
                 ..Default::default()
             },
         );
