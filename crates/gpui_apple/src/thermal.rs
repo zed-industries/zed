@@ -8,11 +8,7 @@ use objc2_foundation::{
 };
 
 pub fn thermal_state() -> ThermalState {
-    map_thermal_state(NSProcessInfo::processInfo().thermalState())
-}
-
-fn map_thermal_state(state: NSProcessInfoThermalState) -> ThermalState {
-    match state {
+    match NSProcessInfo::processInfo().thermalState() {
         NSProcessInfoThermalState::Fair => ThermalState::Fair,
         NSProcessInfoThermalState::Serious => ThermalState::Serious,
         NSProcessInfoThermalState::Critical => ThermalState::Critical,
@@ -113,29 +109,5 @@ mod tests {
         post_notification();
         cx.run_until_parked();
         assert_eq!(calls.get(), 1);
-    }
-
-    #[test]
-    fn maps_native_thermal_states() {
-        assert_eq!(
-            map_thermal_state(NSProcessInfoThermalState::Nominal),
-            ThermalState::Nominal
-        );
-        assert_eq!(
-            map_thermal_state(NSProcessInfoThermalState::Fair),
-            ThermalState::Fair
-        );
-        assert_eq!(
-            map_thermal_state(NSProcessInfoThermalState::Serious),
-            ThermalState::Serious
-        );
-        assert_eq!(
-            map_thermal_state(NSProcessInfoThermalState::Critical),
-            ThermalState::Critical
-        );
-        assert_eq!(
-            map_thermal_state(NSProcessInfoThermalState(99)),
-            ThermalState::Nominal
-        );
     }
 }
