@@ -108,7 +108,7 @@ pub struct NewProfileMode {
 pub struct ManageProfilesModal {
     fs: Arc<dyn Fs>,
     context_server_registry: Entity<ContextServerRegistry>,
-    active_model: Option<Arc<dyn LanguageModel>>,
+    active_model: Option<LanguageModel>,
     focus_handle: FocusHandle,
     mode: Mode,
     _settings_subscription: Subscription,
@@ -144,7 +144,7 @@ impl ManageProfilesModal {
 
     pub fn new(
         fs: Arc<dyn Fs>,
-        active_model: Option<Arc<dyn LanguageModel>>,
+        active_model: Option<LanguageModel>,
         context_server_registry: Entity<ContextServerRegistry>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -244,13 +244,11 @@ impl ManageProfilesModal {
                                 let provider_id = language_model::LanguageModelProviderId(
                                     gpui::SharedString::from(selection.provider.0.clone()),
                                 );
-                                let provider = registry.provider(&provider_id)?;
-                                let model = provider
+                                registry
+                                    .provider(&provider_id)?
                                     .provided_models(cx)
-                                    .iter()
-                                    .find(|m| m.id().0 == selection.model.as_str())?
-                                    .clone();
-                                Some(language_model::ConfiguredModel { provider, model })
+                                    .into_iter()
+                                    .find(|m| m.id().0 == selection.model.as_str())
                             })
                     }
                 },
