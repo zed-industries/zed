@@ -287,7 +287,19 @@ impl Project {
         cwd: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
-        self.create_terminal_shell_internal(cwd, false, cx)
+        self.create_terminal_shell_internal(cwd, false, HashMap::default(), cx)
+    }
+
+    /// Like [`Self::create_terminal_shell`], with variables that win over the
+    /// directory and settings environment (for example an agent account's
+    /// home directory).
+    pub fn create_terminal_shell_with_env(
+        &mut self,
+        cwd: Option<PathBuf>,
+        extra_env: HashMap<String, String>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Terminal>>> {
+        self.create_terminal_shell_internal(cwd, false, extra_env, cx)
     }
 
     /// Creates a local terminal even if the project is remote.
@@ -304,7 +316,7 @@ impl Project {
             // Local project: use project directory like normal terminals
             self.active_project_directory(cx).map(|p| p.to_path_buf())
         };
-        self.create_terminal_shell_internal(working_directory, true, cx)
+        self.create_terminal_shell_internal(working_directory, true, HashMap::default(), cx)
     }
 
     /// Internal method for creating terminal shells.
@@ -314,6 +326,7 @@ impl Project {
         &mut self,
         cwd: Option<PathBuf>,
         force_local: bool,
+        extra_env: HashMap<String, String>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let path = cwd.map(|p| Arc::from(&*p));
@@ -404,6 +417,7 @@ impl Project {
             let shell_kind = ShellKind::new(&shell_program, path_style.is_windows());
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
+            env.extend(extra_env);
 
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
