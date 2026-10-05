@@ -29,6 +29,14 @@ impl Editor {
         self.text_style_refinement = Some(style);
     }
 
+    pub fn set_hover_links_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.hover_links_enabled = enabled;
+        if !enabled {
+            self.hide_hovered_link(cx);
+        }
+        cx.notify();
+    }
+
     /// called by the Element so we know what style we were most recently rendered with.
     pub fn set_style(&mut self, style: EditorStyle, window: &mut Window, cx: &mut Context<Self>) {
         // We intentionally do not inform the display map about the minimap style

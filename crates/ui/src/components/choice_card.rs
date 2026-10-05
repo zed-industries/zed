@@ -19,6 +19,7 @@ pub struct ChoiceCard {
     kind: ChoiceCardKind,
     label: SharedString,
     description: Option<SharedString>,
+    content: Option<AnyElement>,
     is_selected: bool,
     invalid: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
@@ -45,6 +46,11 @@ impl ChoiceCard {
         Self::new(id, ChoiceCardKind::Checkbox, label, is_selected)
     }
 
+    pub fn content(mut self, content: impl IntoElement) -> Self {
+        self.content = Some(content.into_any_element());
+        self
+    }
+
     fn new(
         id: impl Into<ElementId>,
         kind: ChoiceCardKind,
@@ -56,6 +62,7 @@ impl ChoiceCard {
             kind,
             label: label.into(),
             description: None,
+            content: None,
             is_selected,
             invalid: false,
             on_click: None,
@@ -204,24 +211,26 @@ impl RenderOnce for ChoiceCard {
             .py_1()
             .hover(move |this| this.bg(hover_background))
             .focus_visible(move |this| this.border_color(focused_border_color))
-            .when_some(self.on_click, |this, on_click| {
-                this.tab_index(0).cursor_pointer().on_click(on_click)
+            .when_some(self.on_click, |card, on_click| {
+                card.tab_index(0).cursor_pointer().on_click(on_click)
             })
             .child(indicator)
-            .child(
-                v_flex()
-                    .min_w_0()
-                    .flex_1()
-                    .gap_0p5()
-                    .child(Label::new(self.label).size(LabelSize::Small))
-                    .when_some(self.description, |this, description| {
-                        this.child(
-                            Label::new(description)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        )
-                    }),
-            )
+            .child(v_flex().min_w_0().flex_1().map(|content| {
+                if let Some(custom_content) = self.content {
+                    content.child(custom_content)
+                } else {
+                    content
+                        .gap_0p5()
+                        .child(Label::new(self.label).size(LabelSize::Small))
+                        .when_some(self.description, |content, description| {
+                            content.child(
+                                Label::new(description)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                        })
+                }
+            }))
     }
 }
 

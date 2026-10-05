@@ -183,7 +183,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let hovered_link_modifier = Editor::is_cmd_or_ctrl_pressed(&modifiers, cx);
-        if !hovered_link_modifier || self.has_pending_selection() {
+        if !self.hover_links_enabled || !hovered_link_modifier || self.has_pending_selection() {
             self.hide_hovered_link(cx);
             return;
         }
@@ -229,6 +229,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
+        if !self.hover_links_enabled {
+            return;
+        }
         let kind = if modifiers.shift {
             GotoDefinitionKind::Type
         } else {
