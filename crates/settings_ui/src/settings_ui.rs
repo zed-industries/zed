@@ -3678,7 +3678,6 @@ impl SettingsWindow {
                         };
                         let spacer_height =
                             (bounds.size.height - last_item.size.height).max(px(0.));
-                        let settings_window = settings_window.clone();
                         cx.defer(move |cx| {
                             settings_window
                                 .update(cx, |this, cx| {
