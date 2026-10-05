@@ -1800,7 +1800,7 @@ pub mod tests {
                 LanguageConfig {
                     name: name.into(),
                     matcher: (LanguageMatcher {
-                        path_suffixes: vec![path_suffix.to_string()],
+                        path_suffixes: vec![path_suffix.into()],
                         ..Default::default()
                     })
                     .into(),
@@ -5418,7 +5418,7 @@ let c = 3;"#
                 LanguageConfig {
                     name: name.into(),
                     matcher: (LanguageMatcher {
-                        path_suffixes: vec![path_suffix.to_string()],
+                        path_suffixes: vec![path_suffix.into()],
                         ..Default::default()
                     })
                     .into(),
