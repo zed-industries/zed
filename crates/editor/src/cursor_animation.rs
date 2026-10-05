@@ -598,6 +598,35 @@ fn nearly_equal(left: f32, right: f32) -> bool {
     (left - right).abs() <= GEOMETRY_EPSILON
 }
 
+pub(crate) fn animated_corners_overlap_target(
+    target_bounds: Bounds<Pixels>,
+    corners: &[Point<Pixels>; 4],
+) -> bool {
+    let min_x = corners
+        .iter()
+        .map(|p| p.x)
+        .min()
+        .expect("the corners argument is a 4 item array, which should always have an x min");
+    let max_x = corners
+        .iter()
+        .map(|p| p.x)
+        .max()
+        .expect("the corners argument is a 4 item array, which should always have an x max");
+    let min_y = corners
+        .iter()
+        .map(|p| p.y)
+        .min()
+        .expect("the corners argument is a 4 item array, which should always have an y min");
+    let max_y = corners
+        .iter()
+        .map(|p| p.y)
+        .max()
+        .expect("the corners argument is a 4 item array, which should always have an x max");
+    let animated_bounds = Bounds::from_corners(point(min_x, min_y), point(max_x, max_y));
+
+    animated_bounds.intersects(&target_bounds)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -868,6 +897,57 @@ mod tests {
             viewport(0.0),
             now,
         );
+    }
+
+    #[test]
+    fn one_cell_movement_overlaps_target_only_after_advancing() {
+        let now = Instant::now();
+        let mut state = CursorAnimationState::default();
+        let target = bounds_with_width(8.0, 0.0, 8.0);
+        state.update(
+            logical_position(0, 0),
+            bounds_with_width(0.0, 0.0, 8.0),
+            viewport(0.0),
+            now,
+        );
+
+        let corners = state
+            .update(logical_position(0, 1), target, viewport(0.0), now)
+            .unwrap();
+        assert!(!animated_corners_overlap_target(target, &corners));
+
+        let corners = state
+            .update(
+                logical_position(0, 1),
+                target,
+                viewport(0.0),
+                now + Duration::from_millis(16),
+            )
+            .unwrap();
+        assert!(animated_corners_overlap_target(target, &corners));
+
+        let mut vertical_state = CursorAnimationState::default();
+        let vertical_target = bounds_with_width(0.0, 20.0, 8.0);
+        vertical_state.update(
+            logical_position(0, 0),
+            bounds_with_width(0.0, 0.0, 8.0),
+            viewport(0.0),
+            now,
+        );
+        let corners = vertical_state
+            .update(logical_position(1, 0), vertical_target, viewport(0.0), now)
+            .unwrap();
+        assert!(!animated_corners_overlap_target(vertical_target, &corners));
+
+        let corners = vertical_state
+            .update(
+                logical_position(1, 0),
+                vertical_target,
+                viewport(0.0),
+                now + Duration::from_millis(16),
+            )
+            .unwrap();
+        assert!(animated_corners_overlap_target(vertical_target, &corners));
     }
 
     #[test]

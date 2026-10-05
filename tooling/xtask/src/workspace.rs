@@ -16,6 +16,9 @@ mod tests {
 
     use super::load_workspace;
 
+    /// Direct dependencies forbidden in workspace packages, paired with the reason shown on failure.
+    const FORBIDDEN_DIRECT_DEPENDENCIES: &[(&str, &str)] = &[("block", "use `block2` instead")];
+
     /// Crates that must not depend on each other, directly or transitively:
     /// such edges chain large UI crates one after another and serialize the
     /// build, badly hurting incremental compile times. Dev-dependencies are
@@ -34,6 +37,74 @@ mod tests {
         ("sidebar", "git_ui"),
         ("title_bar", "git_ui"),
     ];
+
+    #[test]
+    fn no_forbidden_direct_dependencies() {
+        let workspace = load_workspace().expect("failed to load cargo metadata");
+        let mut violations = Vec::new();
+
+        for package in workspace.workspace_packages() {
+            for dependency in &package.dependencies {
+                let Some((_, reason)) = FORBIDDEN_DIRECT_DEPENDENCIES
+                    .iter()
+                    .find(|(name, _)| *name == dependency.name)
+                else {
+                    continue;
+                };
+                violations.push(format!(
+                    "{} directly depends on `{}`; {reason}",
+                    package.name, dependency.name
+                ));
+            }
+        }
+
+        assert_eq!(
+            violations,
+            Vec::<String>::new(),
+            "forbidden direct dependencies:\n{}",
+            violations.join("\n"),
+        );
+    }
+
+    #[test]
+    fn no_test_support_in_non_dev_dependencies() {
+        let workspace = load_workspace().expect("failed to load cargo metadata");
+        let mut violations = Vec::new();
+
+        for package in workspace.workspace_packages() {
+            for dependency in &package.dependencies {
+                if dependency.kind == DependencyKind::Development
+                    || !dependency
+                        .features
+                        .iter()
+                        .any(|feature| feature == "test-support")
+                {
+                    continue;
+                }
+
+                let manifest = package
+                    .manifest_path
+                    .strip_prefix(&workspace.workspace_root)
+                    .unwrap_or(&package.manifest_path);
+                let name = dependency.rename.as_deref().unwrap_or(&dependency.name);
+                let target = dependency
+                    .target
+                    .as_ref()
+                    .map(|target| format!(" for {target}"))
+                    .unwrap_or_default();
+                violations.push(format!(
+                    "{manifest}: `{name}` enables `test-support` in {:?} dependencies{target}",
+                    dependency.kind,
+                ));
+            }
+        }
+
+        assert!(
+            violations.is_empty(),
+            "non-dev dependencies must not enable `test-support`; \
+             use dev-dependencies or explicit feature forwarding instead:\n{violations:?}",
+        );
+    }
 
     #[test]
     fn no_forbidden_dependencies_between_feature_crates() {
