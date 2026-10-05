@@ -14,7 +14,8 @@ use std::{
 };
 
 use gpui::{
-    App, AppContext, Entity, FocusHandle, Focusable, ListAlignment, ListState, Point, Task, Window,
+    App, AppContext, Entity, FocusHandle, Focusable, ListAlignment, ListState, MouseDownEvent,
+    Point, Task, Window,
 };
 use ui::{
     AbsoluteLength, ResizableColumnsState, SharedString, TableInteractionState,
@@ -354,6 +355,40 @@ impl TableView {
         }
     }
 
+    pub(crate) fn handle_cell_mouse_down(
+        &mut self,
+        cell: DataCellId,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.is_selection_enabled() {
+            return;
+        }
+
+        self.focus_handle.focus(window, cx);
+        let anchor = if event.modifiers.shift {
+            self.selection.map(|sel| sel.anchor).unwrap_or(cell)
+        } else {
+            cell
+        };
+        self.selection = Some(CellSelection::new(anchor, cell));
+        cx.notify();
+    }
+
+    pub(crate) fn handle_cell_mouse_move(&mut self, cell: DataCellId, cx: &mut Context<Self>) {
+        if !self.is_selection_enabled() {
+            return;
+        }
+
+        if let Some(selection) = &mut self.selection {
+            if selection.focus != cell {
+                selection.focus = cell;
+                cx.notify();
+            }
+        }
+    }
+
     pub(crate) fn scroll_to_reveal_row(&self, row: usize, direction: NavigationDirection) {
         let row_count = self.engine.d2d_mapping().visible_row_count();
         if row_count == 0 {
@@ -548,6 +583,46 @@ mod tests {
         })
     }
 
+    fn mouse_down_cell(
+        view: &Entity<TableView>,
+        row: usize,
+        col: usize,
+        shift: bool,
+        cx: &mut VisualTestContext,
+    ) {
+        cx.update(|window, cx| {
+            let event = gpui::MouseDownEvent {
+                button: gpui::MouseButton::Left,
+                modifiers: gpui::Modifiers {
+                    shift,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            view.update(cx, |this, cx| {
+                this.handle_cell_mouse_down(
+                    DataCellId::new(DataRow(row), AnyColumn(col)),
+                    &event,
+                    window,
+                    cx,
+                );
+            });
+        });
+    }
+
+    fn mouse_drag_cell(
+        view: &Entity<TableView>,
+        row: usize,
+        col: usize,
+        cx: &mut VisualTestContext,
+    ) {
+        cx.update(|_, cx| {
+            view.update(cx, |this, cx| {
+                this.handle_cell_mouse_move(DataCellId::new(DataRow(row), AnyColumn(col)), cx);
+            });
+        });
+    }
+
     #[test]
     fn test_cell_selection_display_bounds() {
         let mut d2d = DisplayToDataMapping::default();
@@ -640,5 +715,29 @@ mod tests {
         // 5. Clear selection
         dispatch(&view, &ClearSelection, cx);
         assert_eq!(selection_bounds(&view, cx), None);
+    }
+
+    #[gpui::test]
+    fn test_mouse_cell_selection_and_drag(cx: &mut TestAppContext) {
+        let (view, cx) = setup_test_view(cx, 10, 5);
+        let cell = |row, column| DataCellId::new(DataRow(row), AnyColumn(column));
+
+        // 1. Mouse down on (2, 1) creates single cell selection
+        mouse_down_cell(&view, 2, 1, false, cx);
+        assert_eq!(selection_cells(&view, cx), Some((cell(2, 1), cell(2, 1))));
+
+        // 2. Dragging across to (4, 3) extends focus while preserving anchor
+        mouse_drag_cell(&view, 4, 3, cx);
+        assert_eq!(selection_cells(&view, cx), Some((cell(2, 1), cell(4, 3))));
+        assert_eq!(selection_bounds(&view, cx), Some((2..=4, 1..=3)));
+
+        // 3. Shift+Click on (6, 4) extends selection from current anchor
+        mouse_down_cell(&view, 6, 4, true, cx);
+        assert_eq!(selection_cells(&view, cx), Some((cell(2, 1), cell(6, 4))));
+        assert_eq!(selection_bounds(&view, cx), Some((2..=6, 1..=4)));
+
+        // 4. Click without Shift resets to single cell selection
+        mouse_down_cell(&view, 0, 0, false, cx);
+        assert_eq!(selection_cells(&view, cx), Some((cell(0, 0), cell(0, 0))));
     }
 }

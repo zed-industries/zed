@@ -157,6 +157,7 @@ impl TableView {
                 )
                 .child(TableView::create_selectable_cell(
                     display_cell_id,
+                    data_cell_id,
                     cell_content,
                     this.settings.vertical_alignment,
                     cx,
