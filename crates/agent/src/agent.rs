@@ -4070,7 +4070,7 @@ mod internal_tests {
         let task = cx.update(|cx| {
             tool.run(
                 ToolInput::resolved(SandboxedTerminalToolInput {
-                    command: "true".to_string(),
+                    command: "read -r line </dev/tty".to_string(),
                     cd: temp_dir.path().to_string_lossy().into_owned(),
                     ..Default::default()
                 }),
@@ -4107,11 +4107,10 @@ mod internal_tests {
             "the full terminal tool path should create a real PTY"
         );
 
+        historical_terminal.update(cx, |terminal, _cx| terminal.input(b"\n".to_vec()));
+
         let result = task.await.expect("native terminal tool call succeeds");
-        assert!(
-            result.contains("Command executed successfully."),
-            "unexpected terminal tool result: {result}"
-        );
+        assert_eq!(result, "Command executed successfully.");
         assert!(
             historical_terminal.read_with(cx, |terminal, _cx| {
                 terminal.is_pty() && terminal.pid_getter().is_some()
