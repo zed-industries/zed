@@ -980,6 +980,7 @@ pub struct SettingsWindow {
     search_index: Option<Arc<SearchIndex>>,
     list_state: ListState,
     bottom_spacer_height: Pixels,
+    pending_content_scroll: Option<usize>,
     shown_errors: HashSet<String>,
     pub(crate) hidden_deleted_skill_directory_paths: HashSet<PathBuf>,
     pub(crate) regex_validation_error: Option<String>,
@@ -2023,6 +2024,7 @@ impl SettingsWindow {
             sandbox_host_validation_error: None,
             list_state,
             bottom_spacer_height: px(0.),
+            pending_content_scroll: None,
             last_copied_link_path: None,
             provider_configuration_views: HashMap::default(),
             configuring_provider: None,
@@ -2524,6 +2526,7 @@ impl SettingsWindow {
     }
 
     fn reset_list_state(&mut self) {
+        self.pending_content_scroll = None;
         let mut visible_items_count = self.visible_page_items().count();
 
         if visible_items_count > 0 {
@@ -2650,6 +2653,7 @@ impl SettingsWindow {
     }
 
     fn open_navbar_entry_page(&mut self, navbar_entry: usize) {
+        self.pending_content_scroll = None;
         // Navigating to another page dismisses the transient "copied share
         // link" checkmark shown on a Skills page row.
         self.last_copied_skill_directory_path = None;
@@ -3389,7 +3393,7 @@ impl SettingsWindow {
     }
 
     fn scroll_to_content_item(
-        &self,
+        &mut self,
         content_item_index: usize,
         _window: &mut Window,
         cx: &mut Context<Self>,
@@ -3398,6 +3402,7 @@ impl SettingsWindow {
             .visible_page_items()
             .position(|(index, _)| index == content_item_index)
             .unwrap_or(0);
+        self.pending_content_scroll = Some(if index == 0 { 0 } else { index + 1 });
         if index == 0 {
             if let Some(scroll_handle) = self.current_sub_page_scroll_handle() {
                 scroll_handle.set_offset(point(px(0.), px(0.)));
@@ -3684,6 +3689,15 @@ impl SettingsWindow {
                                     if this.bottom_spacer_height != spacer_height {
                                         this.bottom_spacer_height = spacer_height;
                                         this.list_state.remeasure_items(count - 1..count);
+                                        // The first layout may clamp navigation before the spacer is measured.
+                                        if let Some(item_ix) = this.pending_content_scroll {
+                                            this.list_state.scroll_to(gpui::ListOffset {
+                                                item_ix,
+                                                offset_in_item: px(0.),
+                                            });
+                                        }
+                                        cx.notify();
+                                    } else if this.pending_content_scroll.take().is_some() {
                                         cx.notify();
                                     }
                                 })
@@ -4271,7 +4285,10 @@ impl SettingsWindow {
     }
 
     fn update_navbar_entry_from_scroll_position(&mut self, window: &Window) {
-        if self.navbar_entries.get(self.navbar_entry).is_none() || !self.sub_page_stack.is_empty() {
+        if self.pending_content_scroll.is_some()
+            || self.navbar_entries.get(self.navbar_entry).is_none()
+            || !self.sub_page_stack.is_empty()
+        {
             return;
         }
 
@@ -5454,6 +5471,7 @@ pub mod test {
                 search_index: None,
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
                 bottom_spacer_height: px(0.),
+                pending_content_scroll: None,
                 shown_errors: HashSet::default(),
                 hidden_deleted_skill_directory_paths: HashSet::default(),
                 regex_validation_error: None,
@@ -5594,6 +5612,7 @@ pub mod test {
             search_index: None,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
             bottom_spacer_height: px(0.),
+            pending_content_scroll: None,
             shown_errors: HashSet::default(),
             hidden_deleted_skill_directory_paths: HashSet::default(),
             regex_validation_error: None,
@@ -5830,6 +5849,81 @@ pub mod test {
             );
             list_state.scroll_to(gpui::ListOffset::default());
         }
+    }
+    #[gpui::test]
+    fn navbar_navigation_survives_initial_spacer_correction(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        let settings_window = cx.update(|window, cx| {
+            register_settings(cx);
+            cx.new(|cx| {
+                let mut this = parse("v First*\n- One\nv Second\n- First\n- Last", window, cx);
+                this.build_content_handles(window, cx);
+                this.list_state = ListState::new(0, gpui::ListAlignment::Top, px(0.)).measure_all();
+                this.reset_list_state();
+                this
+            })
+        });
+        struct TestPage(Entity<SettingsWindow>);
+        impl Render for TestPage {
+            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                v_flex()
+                    .size_full()
+                    .child(div().h(px(40.)).flex_shrink_0())
+                    .child(div().flex_1().min_h_0().size_full().child(self.0.update(
+                        cx,
+                        |this, cx| {
+                            this.update_navbar_entry_from_scroll_position(window);
+                            this.render_current_page_items(window, cx)
+                                .into_any_element()
+                        },
+                    )))
+            }
+        }
+        let view = cx.update(|_, cx| cx.new(|_| TestPage(settings_window.clone())));
+        // Navigate before any layout has measured the spacer, then revisit the page.
+        for target in [4, 1, 4] {
+            cx.update(|window, cx| {
+                settings_window.update(cx, |this, cx| {
+                    this.open_and_scroll_to_navbar_entry(target, None, false, window, cx);
+                });
+            });
+            for frame in 0..3 {
+                cx.draw(
+                    point(px(0.), px(0.)),
+                    gpui::size(px(400.), px(400.)),
+                    |_, _| view.clone().into_any_element(),
+                );
+                if target == 4 && frame == 0 {
+                    settings_window.read_with(cx, |this, _| {
+                        assert_eq!(this.navbar_entry, target);
+                    });
+                }
+                cx.run_until_parked();
+                settings_window.read_with(cx, |this, _| {
+                    assert_eq!(this.navbar_entry, target);
+                });
+            }
+            settings_window.read_with(cx, |this, _| {
+                assert!(this.pending_content_scroll.is_none());
+                if target == 4 {
+                    let header = this.list_state.bounds_for_item(2).unwrap();
+                    assert_eq!(header.top(), this.list_state.viewport_bounds().top());
+                }
+            });
+        }
+        // Once explicit navigation settles, manual scrolling should drive selection again.
+        settings_window.read_with(cx, |this, _| {
+            this.list_state.scroll_to(gpui::ListOffset::default());
+        });
+        for _ in 0..2 {
+            cx.draw(
+                point(px(0.), px(0.)),
+                gpui::size(px(400.), px(400.)),
+                |_, _| view.clone().into_any_element(),
+            );
+            cx.run_until_parked();
+        }
+        settings_window.read_with(cx, |this, _| assert_eq!(this.navbar_entry, 3));
     }
     #[gpui::test]
     fn navbar_selection_near_headers_and_at_page_end(cx: &mut gpui::TestAppContext) {
