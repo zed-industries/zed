@@ -4239,7 +4239,7 @@ impl SettingsWindow {
     }
 
     fn update_navbar_entry_from_scroll_position(&mut self, window: &Window) {
-        if !self.sub_page_stack.is_empty() {
+        if self.navbar_entries.get(self.navbar_entry).is_none() || !self.sub_page_stack.is_empty() {
             return;
         }
 
