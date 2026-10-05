@@ -46,6 +46,7 @@ use project::{
     FakeFs, Project, ProjectPath,
     bookmark_store::{BookmarkStore, BookmarkStoreEvent, SerializedBookmark},
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
+    lsp_store::lsp_ext_command::{DocsUrls, LspOpenDocs},
     project_settings::LspSettings,
     trusted_worktrees::{PathTrust, TrustedWorktrees},
 };
@@ -69,7 +70,7 @@ use unindent::Unindent;
 use util::{
     assert_set_eq, path,
     rel_path::rel_path,
-    test::{TextRangeMarker, marked_text_ranges, marked_text_ranges_by, sample_text},
+    test::{TempTree, TextRangeMarker, marked_text_ranges, marked_text_ranges_by, sample_text},
 };
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MultiWorkspace, NavigationEntry, OpenOptions,
@@ -21118,7 +21119,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         LanguageConfig {
             name: "Rust".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
+                path_suffixes: vec!["rs".into()],
                 ..Default::default()
             })
             .into(),
@@ -21570,7 +21571,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["ts".to_string()],
+                path_suffixes: vec!["ts".into()],
                 ..Default::default()
             })
             .into(),
@@ -25645,7 +25646,7 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["ts".to_string()],
+                path_suffixes: vec!["ts".into()],
                 ..LanguageMatcher::default()
             })
             .into(),
@@ -28613,7 +28614,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut TestAppContext) {
         LanguageConfig {
             name: "Rust".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
+                path_suffixes: vec!["rs".into()],
                 ..Default::default()
             })
             .into(),
@@ -28884,7 +28885,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
         LanguageConfig {
             name: language_name.clone(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
+                path_suffixes: vec!["rs".into()],
                 ..Default::default()
             })
             .into(),
@@ -30190,7 +30191,7 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["ts".to_string()],
+                path_suffixes: vec!["ts".into()],
                 ..Default::default()
             })
             .into(),
@@ -30281,7 +30282,7 @@ async fn test_document_format_with_prettier_explicit_language(cx: &mut TestAppCo
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["ts".to_string()],
+                path_suffixes: vec!["ts".into()],
                 ..LanguageMatcher::default()
             })
             .into(),
@@ -30384,7 +30385,7 @@ async fn test_range_format_with_prettier(cx: &mut TestAppContext) {
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["ts".to_string()],
+                path_suffixes: vec!["ts".into()],
                 ..Default::default()
             })
             .into(),
@@ -30461,7 +30462,7 @@ async fn test_range_format_with_prettier_explicit_language(cx: &mut TestAppConte
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["ts".to_string()],
+                path_suffixes: vec!["ts".into()],
                 ..LanguageMatcher::default()
             })
             .into(),
@@ -39268,7 +39269,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["ts".to_string()],
+                path_suffixes: vec!["ts".into()],
                 ..Default::default()
             })
             .into(),
@@ -40103,7 +40104,7 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
         LanguageConfig {
             name: "HTML".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["html".to_string()],
+                path_suffixes: vec!["html".into()],
                 ..LanguageMatcher::default()
             })
             .into(),
@@ -40227,7 +40228,7 @@ async fn test_linked_edits_on_typing_punctuation(cx: &mut TestAppContext) {
         LanguageConfig {
             name: "TSX".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["tsx".to_string()],
+                path_suffixes: vec!["tsx".into()],
                 ..LanguageMatcher::default()
             })
             .into(),
@@ -40299,7 +40300,7 @@ async fn test_linked_edits_on_typing_dash_in_custom_element_name(cx: &mut TestAp
         LanguageConfig {
             name: "TSX".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["tsx".to_string()],
+                path_suffixes: vec!["tsx".into()],
                 ..LanguageMatcher::default()
             })
             .into(),
@@ -40362,7 +40363,7 @@ async fn test_linked_edits_on_typing_dot_without_language_override(cx: &mut Test
         LanguageConfig {
             name: "HTML".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["html".to_string()],
+                path_suffixes: vec!["html".into()],
                 ..LanguageMatcher::default()
             })
             .into(),
@@ -48409,7 +48410,7 @@ async fn test_tsx_nested_jsx_member_expression_highlights(cx: &mut TestAppContex
             LanguageConfig {
                 name: "TSX".into(),
                 matcher: (LanguageMatcher {
-                    path_suffixes: vec!["tsx".to_string()],
+                    path_suffixes: vec!["tsx".into()],
                     ..LanguageMatcher::default()
                 })
                 .into(),
@@ -49642,6 +49643,79 @@ async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut Test
             "a rewrap after release keeps the last settled pair frozen"
         );
     });
+}
+
+#[gpui::test]
+async fn test_open_docs(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let docs_urls = Arc::new(Mutex::new(DocsUrls::default()));
+    let mut cx = EditorLspTestContext::new_with_adapter(
+        Arc::into_inner(rust_lang()).expect("Rust language should have a single owner"),
+        FakeLspAdapter {
+            name: "rust-analyzer",
+            initializer: Some(Box::new({
+                let docs_urls = docs_urls.clone();
+                move |server| {
+                    let docs_urls = docs_urls.clone();
+                    server.set_request_handler::<LspOpenDocs, _, _>(move |_, _| {
+                        let response = std::mem::take(&mut *docs_urls.lock());
+                        async move { Ok(Some(response)) }
+                    });
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+        cx,
+    )
+    .await;
+    cx.set_state("fn «mainˇ»() {}");
+
+    let tree = TempTree::new(json!({
+        "index.html": "",
+        "docs é # %20": { "struct.Example.html": "" }
+    }));
+    let root_url = url::Url::from_directory_path(tree.path())
+        .expect("temporary directory should have a file URL");
+    let local_url = format!("{root_url}index.html");
+    let encoded_url = format!("{root_url}docs%20%C3%A9%20%23%20%2520/struct.Example.html");
+
+    cx.dispatch_action(OpenDocs);
+    cx.run_until_parked();
+    assert_eq!(cx.opened_url(), None);
+
+    for (index, (local, prefer_local)) in [
+        (Some(local_url.clone()), true),
+        (Some(encoded_url.clone()), true),
+        (Some(format!("{local_url}#method.example")), true),
+        (
+            Some(format!("{encoded_url}?search=a%20b#method.example")),
+            true,
+        ),
+        (Some(format!("{root_url}missing.html")), false),
+        (None, false),
+        (Some(String::new()), false),
+        (Some("other:é".to_owned()), false),
+        (Some("file://[invalid".to_owned()), false),
+        (Some(local_url.replacen("file:", "other:", 1)), false),
+        (Some(format!("{local_url}%00")), false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let web = format!("https://docs.rs/example/{index}/example/struct.Example.html");
+        let expected_url = if prefer_local {
+            local.clone().expect("local documentation URL should exist")
+        } else {
+            web.clone()
+        };
+        *docs_urls.lock() = DocsUrls {
+            local,
+            web: Some(web),
+        };
+        cx.dispatch_action(OpenDocs);
+        cx.run_until_parked();
+        assert_eq!(cx.opened_url(), Some(expected_url), "case {index}");
+    }
 }
 
 #[gpui::test]

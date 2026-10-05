@@ -6,14 +6,13 @@ use copilot_chat::{
 };
 use futures::{FutureExt as _, future::BoxFuture};
 use gpui::{App, AsyncApp, Entity, Subscription, Task};
-use language::language_settings::all_language_settings;
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelClient, LanguageModelCompletionError,
     LanguageModelCompletionStream, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, ModelRateLimiters,
     ProviderSettingsView, unavailable_error,
 };
-use settings::SettingsStore;
+use settings::{CopilotSettings, Settings, SettingsStore};
 use ui::prelude::*;
 
 pub struct CopilotChatLanguageModelProvider {
@@ -43,13 +42,8 @@ impl CopilotChatLanguageModelProvider {
                 _copilot_chat_subscription: copilot_chat_subscription,
                 _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                     if let Some(copilot_chat) = CopilotChat::global(cx) {
-                        let language_settings = all_language_settings(None, cx);
                         let configuration = CopilotChatConfiguration {
-                            enterprise_uri: language_settings
-                                .edit_predictions
-                                .copilot
-                                .enterprise_uri
-                                .clone(),
+                            enterprise_uri: CopilotSettings::get_global(cx).enterprise_uri.clone(),
                         };
                         copilot_chat.update(cx, |chat, cx| {
                             chat.set_configuration(configuration, cx);

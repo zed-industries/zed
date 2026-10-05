@@ -45,6 +45,7 @@ There are several third-party Zed packages for various Linux distributions and p
 - Arch: [`zed`](https://archlinux.org/packages/extra/x86_64/zed/)
 - Arch (AUR): [`zed-git`](https://aur.archlinux.org/packages/zed-git), [`zed-preview`](https://aur.archlinux.org/packages/zed-preview), [`zed-preview-bin`](https://aur.archlinux.org/packages/zed-preview-bin)
 - Fedora/Ultramarine (Terra): [`zed`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/stable), [`zed-preview`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/preview), [`zed-nightly`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/nightly)
+- Homebrew: [`zed`](https://formulae.brew.sh/cask/zed), [`zed@preview`](https://formulae.brew.sh/cask/zed@preview)
 - Manjaro: [`zed`](https://manjaristas.org/branch_compare?q=zed)
 - Conda: [`zed`](https://anaconda.org/conda-forge/zed)
 - Nix: `zed-editor` ([unstable](https://search.nixos.org/packages?channel=unstable&show=zed-editor))
