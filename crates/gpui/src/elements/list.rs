@@ -1720,13 +1720,13 @@ impl sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for Height {
 mod test {
 
     use gpui::{ScrollDelta, ScrollWheelEvent};
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
     use crate::{
         self as gpui, AppContext, Bounds, Context, Element, FollowMode, InteractiveElement,
-        IntoElement, ListState, Render, Styled, TestAppContext, Window, canvas, div, list, point,
-        px, size,
+        IntoElement, ListState, Pixels, Render, Styled, TestAppContext, Window, canvas, div, list,
+        point, px, size,
     };
 
     #[gpui::test]
@@ -2969,5 +2969,52 @@ mod test {
              the bottom of its track, even when content has grown during the drag \
              (so frozen_bottom < live_bottom)"
         );
+    }
+
+    #[gpui::test]
+    fn test_horizontal_padding_insets_items(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(3, crate::ListAlignment::Top, px(10.));
+        let item_bounds = Rc::new(RefCell::new(Vec::new()));
+
+        struct TestView {
+            state: ListState,
+            item_bounds: Rc<RefCell<Vec<Bounds<Pixels>>>>,
+        }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let item_bounds = self.item_bounds.clone();
+                list(self.state.clone(), move |_, _, _| {
+                    let item_bounds = item_bounds.clone();
+                    canvas(
+                        move |bounds, _, _| item_bounds.borrow_mut().push(bounds),
+                        |_, _, _, _| {},
+                    )
+                    .h(px(20.))
+                    .w_full()
+                    .into_any()
+                })
+                .pl(px(10.))
+                .pr(px(30.))
+                .w_full()
+                .h_full()
+            }
+        }
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+            cx.new(|_| TestView {
+                state: state.clone(),
+                item_bounds: item_bounds.clone(),
+            })
+            .into_any_element()
+        });
+
+        let item_bounds = item_bounds.borrow();
+        assert_eq!(item_bounds.len(), 3);
+        for bounds in item_bounds.iter() {
+            assert_eq!(bounds.origin.x, px(10.));
+            assert_eq!(bounds.size.width, px(60.));
+        }
     }
 }
