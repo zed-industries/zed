@@ -46,6 +46,7 @@ use project::{
     FakeFs, Project, ProjectPath,
     bookmark_store::{BookmarkStore, BookmarkStoreEvent, SerializedBookmark},
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
+    lsp_store::lsp_ext_command::{DocsUrls, LspOpenDocs},
     project_settings::LspSettings,
     trusted_worktrees::{PathTrust, TrustedWorktrees},
 };
@@ -69,7 +70,7 @@ use unindent::Unindent;
 use util::{
     assert_set_eq, path,
     rel_path::rel_path,
-    test::{TextRangeMarker, marked_text_ranges, marked_text_ranges_by, sample_text},
+    test::{TempTree, TextRangeMarker, marked_text_ranges, marked_text_ranges_by, sample_text},
 };
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MultiWorkspace, NavigationEntry, OpenOptions,
@@ -49535,6 +49536,79 @@ async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut Test
             "a rewrap after release keeps the last settled pair frozen"
         );
     });
+}
+
+#[gpui::test]
+async fn test_open_docs(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let docs_urls = Arc::new(Mutex::new(DocsUrls::default()));
+    let mut cx = EditorLspTestContext::new_with_adapter(
+        Arc::into_inner(rust_lang()).expect("Rust language should have a single owner"),
+        FakeLspAdapter {
+            name: "rust-analyzer",
+            initializer: Some(Box::new({
+                let docs_urls = docs_urls.clone();
+                move |server| {
+                    let docs_urls = docs_urls.clone();
+                    server.set_request_handler::<LspOpenDocs, _, _>(move |_, _| {
+                        let response = std::mem::take(&mut *docs_urls.lock());
+                        async move { Ok(Some(response)) }
+                    });
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+        cx,
+    )
+    .await;
+    cx.set_state("fn «mainˇ»() {}");
+
+    let tree = TempTree::new(json!({
+        "index.html": "",
+        "docs é # %20": { "struct.Example.html": "" }
+    }));
+    let root_url = url::Url::from_directory_path(tree.path())
+        .expect("temporary directory should have a file URL");
+    let local_url = format!("{root_url}index.html");
+    let encoded_url = format!("{root_url}docs%20%C3%A9%20%23%20%2520/struct.Example.html");
+
+    cx.dispatch_action(OpenDocs);
+    cx.run_until_parked();
+    assert_eq!(cx.opened_url(), None);
+
+    for (index, (local, prefer_local)) in [
+        (Some(local_url.clone()), true),
+        (Some(encoded_url.clone()), true),
+        (Some(format!("{local_url}#method.example")), true),
+        (
+            Some(format!("{encoded_url}?search=a%20b#method.example")),
+            true,
+        ),
+        (Some(format!("{root_url}missing.html")), false),
+        (None, false),
+        (Some(String::new()), false),
+        (Some("other:é".to_owned()), false),
+        (Some("file://[invalid".to_owned()), false),
+        (Some(local_url.replacen("file:", "other:", 1)), false),
+        (Some(format!("{local_url}%00")), false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let web = format!("https://docs.rs/example/{index}/example/struct.Example.html");
+        let expected_url = if prefer_local {
+            local.clone().expect("local documentation URL should exist")
+        } else {
+            web.clone()
+        };
+        *docs_urls.lock() = DocsUrls {
+            local,
+            web: Some(web),
+        };
+        cx.dispatch_action(OpenDocs);
+        cx.run_until_parked();
+        assert_eq!(cx.opened_url(), Some(expected_url), "case {index}");
+    }
 }
 
 #[gpui::test]
