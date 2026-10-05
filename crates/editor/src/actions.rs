@@ -962,6 +962,10 @@ actions!(
         SaveLocation,
         /// Toggles breadcrumbs display.
         ToggleBreadcrumb,
+        /// Opens the breadcrumb navigation menu on the symbols at the caret's level, or on the
+        /// file's directory when the file has no symbols. Where the editor has no breadcrumb bar,
+        /// opens the outline instead.
+        OpenBreadcrumbNavigation,
     ]
 );
 

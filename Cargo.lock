@@ -5614,6 +5614,8 @@ dependencies = [
  "multi_buffer",
  "ordered-float 5.5.0",
  "parking_lot",
+ "picker",
+ "postage",
  "pretty_assertions",
  "project",
  "proptest",
@@ -13604,7 +13606,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "db",
- "editor",
  "gpui",
  "language",
  "menu",
