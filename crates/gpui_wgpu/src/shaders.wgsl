@@ -954,6 +954,7 @@ struct Shadow {
     corner_radii: Corners,
     content_mask: Bounds,
     color: Hsla,
+    pad: vec2<u32>,
 }
 @group(1) @binding(0) var<storage, read> b_shadows: array<Shadow>;
 
