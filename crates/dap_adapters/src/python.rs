@@ -6,7 +6,6 @@ use fs::{Fs, RemoveOptions};
 use futures::{StreamExt, TryStreamExt};
 use gpui::http_client::AsyncBody;
 use gpui::{AsyncApp, SharedString};
-use json_dotpath::DotPaths;
 use language::{LanguageName, Toolchain};
 use log::warn;
 use paths::debug_adapters_dir;
@@ -15,7 +14,7 @@ use smol::fs::File;
 use smol::io::AsyncReadExt;
 use smol::lock::OnceCell;
 use std::ffi::OsString;
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 use std::str::FromStr;
 use std::{
     ffi::OsStr,
@@ -104,7 +103,7 @@ impl PythonDebugAdapter {
     const LANGUAGE_NAME: &'static str = "Python";
 
     async fn generate_debugpy_arguments<'a>(
-        host: &'a Ipv4Addr,
+        host: &'a IpAddr,
         port: u16,
         launch_mode: DebugpyLaunchMode<'a>,
         user_installed_path: Option<&'a Path>,
@@ -156,8 +155,9 @@ impl PythonDebugAdapter {
         let request = self.request_kind(&task_definition.config).await?;
 
         let mut configuration = task_definition.config.clone();
-        if let Ok(console) = configuration.dot_get_mut("console") {
+        if let Some(object) = configuration.as_object_mut() {
             // Use built-in Zed terminal if user did not explicitly provide a setting for console.
+            let console = object.entry("console").or_insert(Value::Null);
             if console.is_null() {
                 *console = Value::String("integratedTerminal".into());
             }
@@ -445,7 +445,7 @@ impl PythonDebugAdapter {
             }
 
             if let Some(hostname) = config_host {
-                tcp_connection.host = Some(hostname.parse().context("hostname must be IPv4")?);
+                tcp_connection.host = Some(hostname.parse().context("invalid IP address")?);
             }
             tcp_connection.port = config_port;
             DebugpyLaunchMode::AttachWithConnect { host: config_host }
@@ -1039,7 +1039,7 @@ mod tests {
                 .contains("Cannot have two different ports")
         );
 
-        let host = Ipv4Addr::new(127, 0, 0, 1);
+        let host = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
         let config_with_host_conflict = json!({
             "request": "attach",
             "connect": {
@@ -1083,7 +1083,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_attach_with_connect_mode_generates_correct_arguments() {
-        let host = Ipv4Addr::new(127, 0, 0, 1);
+        let host = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
         let port = 5678;
 
         let args_without_host = PythonDebugAdapter::generate_debugpy_arguments(
@@ -1136,7 +1136,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_debugpy_install_path_cases() {
-        let host = Ipv4Addr::new(127, 0, 0, 1);
+        let host = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
         let port = 5678;
 
         // Case 1: User-defined debugpy path (highest precedence)

@@ -10,14 +10,14 @@ workspace = true
 
 [lib]
 path = "src/buffer_diff.rs"
+doctest = false
 
 [features]
 test-support = ["settings"]
 
 [dependencies]
 clock.workspace = true
-futures.workspace = true
-git2.workspace = true
+imara-diff.workspace = true
 gpui.workspace = true
 language.workspace = true
 log.workspace = true
@@ -40,5 +40,5 @@ text = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 zlog.workspace = true
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["tracing"]

@@ -1,7 +1,7 @@
-use std::{fs, path::Path};
+use std::fs;
 
 use anyhow::Context as _;
-use gpui::{App, AppContext as _, Context, Entity, Window};
+use gpui::{App, AppContext as _, Context, Entity, TaskExt, Window};
 use language::{Capability, Language, proto::serialize_anchor};
 use multi_buffer::MultiBuffer;
 use project::{
@@ -14,6 +14,7 @@ use project::{
 };
 use rpc::proto;
 use text::ToPointUtf16;
+use url::Url;
 
 use crate::{
     CancelFlycheck, ClearFlycheck, Editor, ExpandMacroRecursively, GoToParentModule,
@@ -88,7 +89,8 @@ pub fn go_to_parent_module(
             let request = proto::LspExtGoToParentModule {
                 project_id,
                 buffer_id: buffer_id.to_proto(),
-                position: Some(serialize_anchor(&trigger_anchor.text_anchor)),
+                position: Some(serialize_anchor(&trigger_anchor)),
+                server_id: server_to_query.to_proto(),
             };
             let response = client
                 .request(request)
@@ -106,13 +108,16 @@ pub fn go_to_parent_module(
             .context("go to parent module via collab")?
         } else {
             let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-            let position = trigger_anchor.text_anchor.to_point_utf16(&buffer_snapshot);
+            let position = trigger_anchor.to_point_utf16(&buffer_snapshot);
             project
                 .update(cx, |project, cx| {
                     project.request_lsp(
                         buffer,
                         project::LanguageServerToQuery::Other(server_to_query),
-                        project::lsp_store::lsp_ext_command::GoToParentModule { position },
+                        project::lsp_store::lsp_ext_command::GoToParentModule {
+                            position,
+                            server_id: server_to_query,
+                        },
                         cx,
                     )
                 })
@@ -168,7 +173,8 @@ pub fn expand_macro_recursively(
             let request = proto::LspExtExpandMacro {
                 project_id,
                 buffer_id: buffer_id.to_proto(),
-                position: Some(serialize_anchor(&trigger_anchor.text_anchor)),
+                position: Some(serialize_anchor(&trigger_anchor)),
+                server_id: server_to_query.to_proto(),
             };
             let response = client
                 .request(request)
@@ -180,13 +186,16 @@ pub fn expand_macro_recursively(
             }
         } else {
             let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-            let position = trigger_anchor.text_anchor.to_point_utf16(&buffer_snapshot);
+            let position = trigger_anchor.to_point_utf16(&buffer_snapshot);
             project
                 .update(cx, |project, cx| {
                     project.request_lsp(
                         buffer,
                         project::LanguageServerToQuery::Other(server_to_query),
-                        ExpandMacro { position },
+                        ExpandMacro {
+                            position,
+                            server_id: server_to_query,
+                        },
                         cx,
                     )
                 })
@@ -195,10 +204,7 @@ pub fn expand_macro_recursively(
         };
 
         if macro_expansion.is_empty() {
-            log::info!(
-                "Empty macro expansion for position {:?}",
-                trigger_anchor.text_anchor
-            );
+            log::info!("Empty macro expansion for position {:?}", trigger_anchor);
             return Ok(());
         }
 
@@ -260,7 +266,8 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
             let request = proto::LspExtOpenDocs {
                 project_id,
                 buffer_id: buffer_id.to_proto(),
-                position: Some(serialize_anchor(&trigger_anchor.text_anchor)),
+                position: Some(serialize_anchor(&trigger_anchor)),
+                server_id: server_to_query.to_proto(),
             };
             let response = client
                 .request(request)
@@ -272,13 +279,16 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
             }
         } else {
             let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-            let position = trigger_anchor.text_anchor.to_point_utf16(&buffer_snapshot);
+            let position = trigger_anchor.to_point_utf16(&buffer_snapshot);
             project
                 .update(cx, |project, cx| {
                     project.request_lsp(
                         buffer,
                         project::LanguageServerToQuery::Other(server_to_query),
-                        project::lsp_store::lsp_ext_command::OpenDocs { position },
+                        project::lsp_store::lsp_ext_command::OpenDocs {
+                            position,
+                            server_id: server_to_query,
+                        },
                         cx,
                     )
                 })
@@ -287,25 +297,27 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
         };
 
         if docs_urls.is_empty() {
-            log::debug!(
-                "Empty docs urls for position {:?}",
-                trigger_anchor.text_anchor
-            );
+            log::debug!("Empty docs urls for position {:?}", trigger_anchor);
             return Ok(());
         }
 
-        workspace.update(cx, |_workspace, cx| {
-            // Check if the local document exists, otherwise fallback to the online document.
-            // Open with the default browser.
-            if let Some(local_url) = docs_urls.local
-                && fs::metadata(Path::new(&local_url[8..])).is_ok()
-            {
-                cx.open_url(&local_url);
-                return;
-            }
+        // Check if the local document exists, otherwise fallback to the online document.
+        let url = if let Some(local_url) = docs_urls.local
+            && let Ok(url) = Url::parse(&local_url)
+            && url.scheme() == "file"
+            && let Ok(path) = url.to_file_path()
+            && cx
+                .background_spawn(async move { fs::metadata(path).is_ok() })
+                .await
+        {
+            Some(local_url)
+        } else {
+            docs_urls.web
+        };
 
-            if let Some(web_url) = docs_urls.web {
-                cx.open_url(&web_url);
+        workspace.update(cx, |_workspace, cx| {
+            if let Some(url) = url {
+                cx.open_url(&url);
             }
         });
         anyhow::Ok(())
@@ -322,16 +334,18 @@ fn cancel_flycheck_action(
     let Some(project) = &editor.project else {
         return;
     };
+    let multibuffer_snapshot = editor
+        .buffer
+        .read_with(cx, |buffer, cx| buffer.snapshot(cx));
     let buffer_id = editor
         .selections
         .disjoint_anchors_arc()
         .iter()
         .find_map(|selection| {
-            let buffer_id = selection
-                .start
-                .text_anchor
-                .buffer_id
-                .or(selection.end.text_anchor.buffer_id)?;
+            let buffer_id = multibuffer_snapshot
+                .anchor_to_buffer_anchor(selection.start)?
+                .0
+                .buffer_id;
             let project = project.read(cx);
             let entry_id = project
                 .buffer_for_id(buffer_id, cx)?
@@ -351,16 +365,18 @@ fn run_flycheck_action(
     let Some(project) = &editor.project else {
         return;
     };
+    let multibuffer_snapshot = editor
+        .buffer
+        .read_with(cx, |buffer, cx| buffer.snapshot(cx));
     let buffer_id = editor
         .selections
         .disjoint_anchors_arc()
         .iter()
         .find_map(|selection| {
-            let buffer_id = selection
-                .start
-                .text_anchor
-                .buffer_id
-                .or(selection.end.text_anchor.buffer_id)?;
+            let buffer_id = multibuffer_snapshot
+                .anchor_to_buffer_anchor(selection.head())?
+                .0
+                .buffer_id;
             let project = project.read(cx);
             let entry_id = project
                 .buffer_for_id(buffer_id, cx)?
@@ -380,16 +396,18 @@ fn clear_flycheck_action(
     let Some(project) = &editor.project else {
         return;
     };
+    let multibuffer_snapshot = editor
+        .buffer
+        .read_with(cx, |buffer, cx| buffer.snapshot(cx));
     let buffer_id = editor
         .selections
         .disjoint_anchors_arc()
         .iter()
         .find_map(|selection| {
-            let buffer_id = selection
-                .start
-                .text_anchor
-                .buffer_id
-                .or(selection.end.text_anchor.buffer_id)?;
+            let buffer_id = multibuffer_snapshot
+                .anchor_to_buffer_anchor(selection.head())?
+                .0
+                .buffer_id;
             let project = project.read(cx);
             let entry_id = project
                 .buffer_for_id(buffer_id, cx)?

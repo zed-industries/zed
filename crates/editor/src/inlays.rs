@@ -45,6 +45,7 @@ impl InlaySplice {
 #[derive(Debug, Clone)]
 pub struct Inlay {
     pub id: InlayId,
+    // TODO this could be an ExcerptAnchor
     pub position: Anchor,
     pub content: InlayContent,
 }
@@ -157,7 +158,7 @@ impl Editor {
     ) {
         if let Some(inlay_hints) = &mut self.inlay_hints {
             for id_to_remove in to_remove {
-                inlay_hints.added_hints.remove(id_to_remove);
+                inlay_hints.remove_inlay(id_to_remove);
             }
         }
         self.display_map.update(cx, |display_map, cx| {

@@ -6,7 +6,7 @@ use futures::future::join_all;
 use gpui::{App, Context, HighlightStyle, Task};
 use itertools::Itertools as _;
 use language::language_settings::LanguageSettings;
-use language::{Buffer, OutlineItem};
+use language::{Buffer, LanguageAwareStyling, OutlineItem, highlight_ranges_from_text};
 use multi_buffer::{
     Anchor, AnchorRangeExt as _, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot,
     ToOffset as _,
@@ -62,10 +62,10 @@ impl Editor {
         multi_buffer_snapshot: &MultiBufferSnapshot,
         cx: &Context<Self>,
     ) -> bool {
-        let Some(excerpt) = multi_buffer_snapshot.excerpt_containing(cursor..cursor) else {
+        let Some((anchor, _)) = multi_buffer_snapshot.anchor_to_buffer_anchor(cursor) else {
             return false;
         };
-        let Some(buffer) = self.buffer.read(cx).buffer(excerpt.buffer_id()) else {
+        let Some(buffer) = self.buffer.read(cx).buffer(anchor.buffer_id) else {
             return false;
         };
         lsp_symbols_enabled(buffer.read(cx), cx)
@@ -77,19 +77,12 @@ impl Editor {
         &self,
         cursor: Anchor,
         multi_buffer_snapshot: &MultiBufferSnapshot,
-        cx: &Context<Self>,
+        _cx: &Context<Self>,
     ) -> Option<(BufferId, Vec<OutlineItem<Anchor>>)> {
-        let excerpt = multi_buffer_snapshot.excerpt_containing(cursor..cursor)?;
-        let excerpt_id = excerpt.id();
-        let buffer_id = excerpt.buffer_id();
-        if Some(buffer_id) != cursor.text_anchor.buffer_id {
-            return None;
-        }
-        let buffer = self.buffer.read(cx).buffer(buffer_id)?;
-        let buffer_snapshot = buffer.read(cx).snapshot();
-        let cursor_text_anchor = cursor.text_anchor;
-
-        let all_items = self.lsp_document_symbols.get(&buffer_id)?;
+        let (cursor_text_anchor, buffer) = multi_buffer_snapshot.anchor_to_buffer_anchor(cursor)?;
+        let all_items = self
+            .lsp_document_symbols
+            .get(&cursor_text_anchor.buffer_id)?;
         if all_items.is_empty() {
             return None;
         }
@@ -97,34 +90,39 @@ impl Editor {
         let mut symbols = all_items
             .iter()
             .filter(|item| {
-                item.range
-                    .start
-                    .cmp(&cursor_text_anchor, &buffer_snapshot)
-                    .is_le()
-                    && item
-                        .range
-                        .end
-                        .cmp(&cursor_text_anchor, &buffer_snapshot)
-                        .is_ge()
+                item.range.start.cmp(&cursor_text_anchor, buffer).is_le()
+                    && item.range.end.cmp(&cursor_text_anchor, buffer).is_ge()
             })
-            .map(|item| OutlineItem {
-                depth: item.depth,
-                range: Anchor::range_in_buffer(excerpt_id, item.range.clone()),
-                source_range_for_text: Anchor::range_in_buffer(
-                    excerpt_id,
-                    item.source_range_for_text.clone(),
-                ),
-                text: item.text.clone(),
-                highlight_ranges: item.highlight_ranges.clone(),
-                name_ranges: item.name_ranges.clone(),
-                body_range: item
-                    .body_range
-                    .as_ref()
-                    .map(|r| Anchor::range_in_buffer(excerpt_id, r.clone())),
-                annotation_range: item
-                    .annotation_range
-                    .as_ref()
-                    .map(|r| Anchor::range_in_buffer(excerpt_id, r.clone())),
+            .filter_map(|item| {
+                let range_start = multi_buffer_snapshot.anchor_in_buffer(item.range.start)?;
+                let range_end = multi_buffer_snapshot.anchor_in_buffer(item.range.end)?;
+                let source_range_for_text_start =
+                    multi_buffer_snapshot.anchor_in_buffer(item.source_range_for_text.start)?;
+                let source_range_for_text_end =
+                    multi_buffer_snapshot.anchor_in_buffer(item.source_range_for_text.end)?;
+                Some(OutlineItem {
+                    depth: item.depth,
+                    range: range_start..range_end,
+                    selection_range: multi_buffer_snapshot
+                        .anchor_in_buffer(item.selection_range.start)?
+                        ..multi_buffer_snapshot.anchor_in_buffer(item.selection_range.end)?,
+                    source_range_for_text: source_range_for_text_start..source_range_for_text_end,
+                    text: item.text.clone(),
+                    highlight_ranges: item.highlight_ranges.clone(),
+                    name_ranges: item.name_ranges.clone(),
+                    body_range: item.body_range.as_ref().and_then(|r| {
+                        Some(
+                            multi_buffer_snapshot.anchor_in_buffer(r.start)?
+                                ..multi_buffer_snapshot.anchor_in_buffer(r.end)?,
+                        )
+                    }),
+                    annotation_range: item.annotation_range.as_ref().and_then(|r| {
+                        Some(
+                            multi_buffer_snapshot.anchor_in_buffer(r.start)?
+                                ..multi_buffer_snapshot.anchor_in_buffer(r.end)?,
+                        )
+                    }),
+                })
             })
             .collect::<Vec<_>>();
 
@@ -135,7 +133,7 @@ impl Editor {
             retain
         });
 
-        Some((buffer_id, symbols))
+        Some((buffer.remote_id(), symbols))
     }
 
     /// Fetches document symbols from the LSP for buffers that have the setting
@@ -150,14 +148,15 @@ impl Editor {
         if !self.lsp_data_enabled() {
             return;
         }
-        let Some(project) = self.project.clone() else {
+        let Some(project) = self.project.as_ref().map(|p| p.downgrade()) else {
             return;
         };
 
         let buffers_to_query = self
-            .visible_excerpts(true, cx)
+            .visible_buffers(cx)
             .into_iter()
-            .filter_map(|(_, (buffer, _, _))| {
+            .filter(|buffer| self.is_lsp_relevant(buffer.read(cx).file(), cx))
+            .filter_map(|buffer| {
                 let id = buffer.read(cx).remote_id();
                 if for_buffer.is_none_or(|target| target == id)
                     && lsp_symbols_enabled(buffer.read(cx), cx)
@@ -195,9 +194,9 @@ impl Editor {
                     .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
                     .await;
 
-                let Some(tasks) = editor
-                    .update(cx, |_, cx| {
-                        project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+                let Some(tasks) = project
+                    .update(cx, |project, cx| {
+                        project.lsp_store().update(cx, |lsp_store, cx| {
                             buffers_to_query
                                 .into_iter()
                                 .map(|buffer| {
@@ -220,12 +219,20 @@ impl Editor {
                         let display_snapshot =
                             editor.display_map.update(cx, |map, cx| map.snapshot(cx));
                         let mut highlighted_results = results;
-                        for items in highlighted_results.values_mut() {
+                        for (buffer_id, items) in highlighted_results.iter_mut() {
+                            let language = editor
+                                .buffer
+                                .read(cx)
+                                .buffer(*buffer_id)
+                                .and_then(|buffer| buffer.read(cx).language().cloned());
                             for item in items {
                                 if let Some(highlights) =
                                     highlights_from_buffer(&display_snapshot, &item, &syntax)
                                 {
                                     item.highlight_ranges = highlights;
+                                } else if let Some(language) = &language {
+                                    item.highlight_ranges =
+                                        highlight_ranges_from_text(&item.text, language, &syntax);
                                 }
                             }
                         }
@@ -267,16 +274,53 @@ fn highlights_from_buffer(
             item.source_range_for_text.start,
             item.source_range_for_text.end,
         ]);
-    let Some(anchor_range) = maybe!({
+    let anchor_range = maybe!({
         Some(
             (*multi_buffer_source_range_anchors.get(0)?)?
                 ..(*multi_buffer_source_range_anchors.get(1)?)?,
         )
-    }) else {
-        return None;
-    };
+    });
+    let buffer_snapshot =
+        multi_buffer_snapshot.buffer_for_id(item.source_range_for_text.start.buffer_id)?;
+    let can_reuse_buffer_highlight_offsets = buffer_snapshot
+        .text_for_range(item.source_range_for_text.clone())
+        .flat_map(str::bytes)
+        .eq(outline_text.bytes());
+    if can_reuse_buffer_highlight_offsets {
+        let visible_range = anchor_range
+            .as_ref()
+            .and_then(|_| {
+                multi_buffer_snapshot
+                    .buffer_anchor_range_to_anchor_range(item.source_range_for_text.clone())
+            })
+            .map(|range| range.to_offset(multi_buffer_snapshot))
+            .filter(|range| range.end.0.checked_sub(range.start.0) == Some(outline_text.len()));
+        let highlights = if let Some(range) = visible_range {
+            display_snapshot.combined_highlights(range, syntax_theme)
+        } else {
+            let mut offset = 0;
+            buffer_snapshot
+                .chunks(
+                    item.source_range_for_text.clone(),
+                    LanguageAwareStyling {
+                        tree_sitter: true,
+                        diagnostics: false,
+                    },
+                )
+                .filter_map(|chunk| {
+                    let start = offset;
+                    offset += chunk.text.len();
+                    chunk
+                        .syntax_highlight_id
+                        .and_then(|id| syntax_theme.get(id))
+                        .map(|style| (start..offset, *style))
+                })
+                .collect::<Vec<_>>()
+        };
+        return (!highlights.is_empty()).then_some(highlights);
+    }
 
-    let selection_point_range = anchor_range.to_point(multi_buffer_snapshot);
+    let selection_point_range = anchor_range?.to_point(multi_buffer_snapshot);
     let mut search_start = selection_point_range.start;
     search_start.column = 0;
     let search_start_offset = search_start.to_offset(&multi_buffer_snapshot);
@@ -288,7 +332,7 @@ fn highlights_from_buffer(
         .collect::<String>();
 
     let mut outline_text_highlights = Vec::new();
-    match search_text.find(outline_text) {
+    match search_text.find(outline_text.as_str()) {
         Some(start_index) => {
             let multibuffer_start = search_start_offset + MultiBufferOffset(start_index);
             let multibuffer_end = multibuffer_start + MultiBufferOffset(outline_text.len());
@@ -334,13 +378,28 @@ mod tests {
     };
 
     use futures::StreamExt as _;
-    use gpui::TestAppContext;
-    use settings::DocumentSymbols;
+    use gpui::{
+        App, AppContext as _, FontWeight, HighlightStyle, Hsla, SharedString, TestAppContext, font,
+        px,
+    };
+    use language::{Buffer, Capability, OutlineItem, highlight_ranges_from_text};
+    use languages::rust_lang;
+    use lsp::LanguageServerId;
+    use multi_buffer::{ExcerptRange, MultiBuffer, PathKey, ToPoint};
+    use project::{lsp_store::TokenType, project_settings::DiagnosticSeverity};
+    use settings::{DocumentSymbols, SettingsStore};
+    use text::Point;
+    use theme::SyntaxTheme;
     use util::path;
-    use zed_actions::editor::{MoveDown, MoveUp};
+    use workspace::item::{Item, ItemEvent};
+    use zed_actions::editor::MoveDown;
 
+    use super::highlights_from_buffer;
     use crate::{
         Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT,
+        display_map::{
+            DisplayMap, FoldPlaceholder, HighlightStyleInterner, SemanticTokenHighlight,
+        },
         editor_tests::{init_test, update_test_language_settings},
         test::editor_lsp_test_context::EditorLspTestContext,
     };
@@ -353,6 +412,16 @@ mod tests {
             .1
             .iter()
             .map(|s| s.text.as_str())
+            .collect()
+    }
+
+    fn breadcrumb_texts(editor: &Editor, cx: &App) -> Vec<String> {
+        editor
+            .breadcrumbs(cx)
+            .expect("Should have breadcrumbs")
+            .0
+            .into_iter()
+            .map(|segment| segment.text.to_string())
             .collect()
     }
 
@@ -384,6 +453,216 @@ mod tests {
             } else {
                 Some(children)
             },
+        }
+    }
+
+    #[gpui::test]
+    async fn test_document_symbol_highlights_across_excerpts(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let syntax = SyntaxTheme::new_test([("function", Hsla::blue())]);
+        let language = rust_lang();
+        language.set_theme(&syntax);
+        let semantic_style = HighlightStyle {
+            font_weight: Some(FontWeight::BOLD),
+            ..HighlightStyle::default()
+        };
+        let function_style = HighlightStyle::color(Hsla::blue());
+
+        for (prefix, label, name_range) in [
+            (
+                "\t",
+                "pub(super) async fn handle_resolve_inlay_hint",
+                20..45,
+            ),
+            ("\t", "pub(super) async fn résolve", 20..28),
+            (
+                "\tconst LABEL: &str = \"pub(super) async fn résolve\"; ",
+                "pub(super) async fn résolve",
+                20..28,
+            ),
+        ] {
+            let buffer = cx.new(|cx| {
+                Buffer::local(
+                    format!("{prefix}{label}() {{\n    let probe = ();\n}}\n"),
+                    cx,
+                )
+                .with_language(language.clone(), cx)
+            });
+            cx.condition(&buffer, |buffer, _| !buffer.is_parsing())
+                .await;
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+            let item = OutlineItem {
+                depth: 0,
+                range: snapshot.anchor_after(0)..snapshot.anchor_before(snapshot.len()),
+                selection_range: snapshot.anchor_after(prefix.len() + name_range.start)
+                    ..snapshot.anchor_before(prefix.len() + name_range.end),
+                source_range_for_text: snapshot.anchor_after(prefix.len())
+                    ..snapshot.anchor_before(prefix.len() + label.len()),
+                text: SharedString::from(label),
+                highlight_ranges: Vec::new(),
+                name_ranges: vec![name_range.clone()],
+                body_range: None,
+                annotation_range: None,
+            };
+            let label_start = Point::new(0, prefix.len() as u32);
+            let label_end = Point::new(0, (prefix.len() + label.len()) as u32);
+            let name_start = Point::new(0, (prefix.len() + name_range.start) as u32);
+            for (ranges, expected_style) in [
+                (vec![Point::new(1, 0)..Point::new(1, 19)], function_style),
+                (
+                    vec![label_start..label_end],
+                    function_style.highlight(semantic_style),
+                ),
+                (
+                    vec![Point::new(0, name_start.column + 1)..label_end],
+                    function_style,
+                ),
+                (
+                    vec![
+                        label_start..Point::new(0, name_start.column - 1),
+                        name_start..label_end,
+                    ],
+                    function_style,
+                ),
+            ] {
+                let multibuffer = cx.new(|cx| {
+                    let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+                    multibuffer.set_excerpt_ranges_for_path(
+                        PathKey::sorted(0),
+                        buffer.clone(),
+                        &snapshot,
+                        ranges
+                            .iter()
+                            .cloned()
+                            .map(ExcerptRange::new)
+                            .collect::<Vec<_>>(),
+                        cx,
+                    );
+                    multibuffer
+                });
+                let display_map = cx.new(|cx| {
+                    DisplayMap::new(
+                        multibuffer,
+                        font("Helvetica"),
+                        px(14.0),
+                        None,
+                        1,
+                        1,
+                        FoldPlaceholder::test(),
+                        DiagnosticSeverity::Warning,
+                        cx,
+                    )
+                });
+                display_map.update(cx, |display_map, cx| {
+                    let display_snapshot = display_map.snapshot(cx);
+                    if let Some(range) = display_snapshot
+                        .buffer()
+                        .buffer_anchor_range_to_anchor_range(item.selection_range.clone())
+                    {
+                        let mut interner = HighlightStyleInterner::default();
+                        let token = SemanticTokenHighlight {
+                            range,
+                            style: interner.intern(semantic_style),
+                            token_type: TokenType(0),
+                            token_modifiers: 0,
+                            server_id: LanguageServerId(0),
+                            precedence: 0,
+                        };
+                        Arc::make_mut(&mut display_map.semantic_token_highlights).insert(
+                            snapshot.remote_id(),
+                            (Arc::from([token]), Arc::new(interner)),
+                        );
+                    }
+                    assert_eq!(
+                        highlights_from_buffer(&display_map.snapshot(cx), &item, &syntax),
+                        Some(vec![(name_range.clone(), expected_style)]),
+                        "prefix {prefix:?}, label {label:?}, excerpts {ranges:?}",
+                    );
+                });
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_nonverbatim_document_symbols_outside_excerpts(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let syntax = SyntaxTheme::new_test([("keyword", Hsla::blue()), ("type", Hsla::green())]);
+        let language = rust_lang();
+        language.set_theme(&syntax);
+        let keyword = HighlightStyle::color(Hsla::blue());
+        let type_style = HighlightStyle::color(Hsla::green());
+        for (source, label, selection, expected) in [
+            (
+                "impl<T> Trait<T>\n    for Type<T> {\n    fn probe() {}\n}\n",
+                "impl Trait<T> for Type<T>",
+                Point::new(1, 8)..Point::new(1, 15),
+                vec![
+                    (0..4, keyword),
+                    (5..10, type_style),
+                    (11..12, type_style),
+                    (14..17, keyword),
+                    (18..22, type_style),
+                    (23..24, type_style),
+                ],
+            ),
+            (
+                "impl\n    Simplify {\n    fn probe() {}\n}\n",
+                "impl Simplify",
+                Point::new(1, 4)..Point::new(1, 12),
+                vec![(0..4, keyword), (5..13, type_style)],
+            ),
+        ] {
+            let buffer = cx.new(|cx| Buffer::local(source, cx).with_language(language.clone(), cx));
+            cx.condition(&buffer, |buffer, _| !buffer.is_parsing())
+                .await;
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+            let selection =
+                snapshot.anchor_after(selection.start)..snapshot.anchor_before(selection.end);
+            let item = OutlineItem {
+                depth: 0,
+                range: snapshot.anchor_after(0)..snapshot.anchor_before(snapshot.len()),
+                selection_range: selection.clone(),
+                source_range_for_text: selection,
+                text: SharedString::from(label),
+                highlight_ranges: Vec::new(),
+                name_ranges: vec![0..label.len()],
+                body_range: None,
+                annotation_range: None,
+            };
+            let multibuffer = cx.new(|cx| {
+                let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+                multibuffer.set_excerpt_ranges_for_path(
+                    PathKey::sorted(0),
+                    buffer.clone(),
+                    &snapshot,
+                    vec![ExcerptRange::new(
+                        Point::new(2, 0)..Point::new(2, snapshot.line_len(2)),
+                    )],
+                    cx,
+                );
+                multibuffer
+            });
+            let display_map = cx.new(|cx| {
+                DisplayMap::new(
+                    multibuffer,
+                    font("Helvetica"),
+                    px(14.0),
+                    None,
+                    1,
+                    1,
+                    FoldPlaceholder::test(),
+                    DiagnosticSeverity::Warning,
+                    cx,
+                )
+            });
+            let highlights = display_map
+                .update(cx, |display_map, cx| {
+                    highlights_from_buffer(&display_map.snapshot(cx), &item, &syntax)
+                })
+                .unwrap_or_else(|| highlight_ranges_from_text(label, &language, &syntax));
+            assert_eq!(highlights, expected, "label {label:?}");
         }
     }
 
@@ -541,15 +820,10 @@ mod tests {
             );
         });
 
-        // Step 3: Switch back to tree-sitter
+        // Step 3: Switch back to tree-sitter, the symbols should refresh
+        // without any extra selection changes
         update_test_language_settings(&mut cx.cx.cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::Off);
-        });
-        cx.run_until_parked();
-
-        // Force another selection change
-        cx.update_editor(|editor, window, cx| {
-            editor.move_up(&MoveUp, window, cx);
         });
         cx.run_until_parked();
 
@@ -759,7 +1033,7 @@ mod tests {
         assert!(symbol_request.next().await.is_some());
         cx.run_until_parked();
 
-        cx.update_editor(|editor, _window, _cx| {
+        cx.update_editor(|editor, _window, cx| {
             let (_, symbols) = editor
                 .outline_symbols_at_cursor
                 .as_ref()
@@ -767,7 +1041,19 @@ mod tests {
             assert_eq!(symbols.len(), 1);
 
             let symbol = &symbols[0];
+            let multi_buffer_snapshot = editor.buffer.read(cx).snapshot(cx);
             assert_eq!(symbol.text, "fn test");
+            assert_eq!(
+                symbol
+                    .selection_range
+                    .start
+                    .to_point(&multi_buffer_snapshot),
+                Point::new(1, 3)
+            );
+            assert_eq!(
+                symbol.selection_range.end.to_point(&multi_buffer_snapshot),
+                Point::new(1, 7)
+            );
 
             // Verify all highlight ranges are valid byte boundaries in the text
             for (range, _style) in &symbol.highlight_ranges {
@@ -791,6 +1077,82 @@ mod tests {
                     symbol.text
                 );
             }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_lsp_document_symbols_fall_back_to_reparsed_text_highlights(
+        cx: &mut TestAppContext,
+    ) {
+        use ui::ActiveTheme as _;
+
+        init_test(cx, |_| {});
+
+        update_test_language_settings(cx, &|settings| {
+            settings.defaults.document_symbols = Some(DocumentSymbols::On);
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                document_symbol_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .project
+                .as_ref()
+                .expect("editor should have a project")
+                .read(cx)
+                .languages()
+                .set_theme(cx.theme().clone());
+        });
+        let mut symbol_request = cx
+            .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::DocumentSymbolResponse::Nested(vec![
+                        nested_symbol(
+                            "impl ZzzMissing",
+                            lsp::SymbolKind::OBJECT,
+                            lsp_range(0, 0, 0, 12),
+                            lsp_range(0, 3, 0, 7),
+                            Vec::new(),
+                        ),
+                    ])))
+                },
+            );
+
+        cx.set_state("fn teˇst() {}\n");
+        assert!(symbol_request.next().await.is_some());
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            let (_, symbols) = editor
+                .outline_symbols_at_cursor
+                .as_ref()
+                .expect("Should have outline symbols");
+            assert_eq!(symbols.len(), 1);
+            let symbol = &symbols[0];
+            assert_eq!(symbol.text, "impl ZzzMissing");
+
+            let language = editor
+                .buffer
+                .read(cx)
+                .as_singleton()
+                .expect("singleton buffer")
+                .read(cx)
+                .language()
+                .cloned()
+                .expect("buffer language");
+            let expected = highlight_ranges_from_text(&symbol.text, &language, cx.theme().syntax());
+            assert_eq!(
+                expected.first().map(|(range, _)| range.clone()),
+                Some(0..4),
+                "reparsing the symbol text should highlight the `impl` keyword"
+            );
+            assert_eq!(symbol.highlight_ranges, expected);
         });
     }
 
@@ -877,6 +1239,261 @@ mod tests {
             request_count.load(atomic::Ordering::Acquire),
             0,
             "Should not have made any LSP document symbol requests when setting is off"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_highlights_update_on_theme_change(cx: &mut TestAppContext) {
+        use collections::IndexMap;
+        use gpui::{Hsla, Rgba, UpdateGlobal as _};
+        use theme_settings::{HighlightStyleContent, ThemeStyleContent};
+        use ui::ActiveTheme as _;
+
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+
+        // Set the initial theme with a red keyword color and sync it to the
+        // language registry so tree-sitter highlight maps are up to date.
+        let red_color: Hsla = Rgba {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        }
+        .into();
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.experimental_theme_overrides = Some(ThemeStyleContent {
+                        syntax: IndexMap::from_iter([(
+                            "keyword".to_string(),
+                            HighlightStyleContent {
+                                color: Some("#ff0000".into()),
+                                background_color: None,
+                                font_style: None,
+                                font_weight: None,
+                            },
+                        )]),
+                        ..ThemeStyleContent::default()
+                    });
+                });
+            });
+        });
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .project
+                .as_ref()
+                .expect("editor should have a project")
+                .read(cx)
+                .languages()
+                .set_theme(cx.theme().clone());
+        });
+        cx.set_state("fn maˇin() {}");
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            let breadcrumbs = editor
+                .breadcrumbs_inner(cx)
+                .expect("Should have breadcrumbs");
+            let symbol_segment = breadcrumbs
+                .iter()
+                .find(|b| b.text.as_ref() == "fn main")
+                .expect("Should have 'fn main' breadcrumb");
+            let keyword_highlight = symbol_segment
+                .highlights
+                .iter()
+                .find(|(range, _)| &symbol_segment.text[range.clone()] == "fn")
+                .expect("Should have a highlight for the 'fn' keyword");
+            assert_eq!(
+                keyword_highlight.1.color,
+                Some(red_color),
+                "The 'fn' keyword should have red color"
+            );
+        });
+
+        // Change the theme to use a blue keyword color. This simulates a user
+        // switching themes. The language registry set_theme call mirrors what
+        // the application does in main.rs on theme change.
+        let blue_color: Hsla = Rgba {
+            r: 0.0,
+            g: 0.0,
+            b: 1.0,
+            a: 1.0,
+        }
+        .into();
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.experimental_theme_overrides = Some(ThemeStyleContent {
+                        syntax: IndexMap::from_iter([(
+                            "keyword".to_string(),
+                            HighlightStyleContent {
+                                color: Some("#0000ff".into()),
+                                background_color: None,
+                                font_style: None,
+                                font_weight: None,
+                            },
+                        )]),
+                        ..ThemeStyleContent::default()
+                    });
+                });
+            });
+        });
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .project
+                .as_ref()
+                .expect("editor should have a project")
+                .read(cx)
+                .languages()
+                .set_theme(cx.theme().clone());
+        });
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            let breadcrumbs = editor
+                .breadcrumbs_inner(cx)
+                .expect("Should have breadcrumbs after theme change");
+            let symbol_segment = breadcrumbs
+                .iter()
+                .find(|b| b.text.as_ref() == "fn main")
+                .expect("Should have 'fn main' breadcrumb after theme change");
+            let keyword_highlight = symbol_segment
+                .highlights
+                .iter()
+                .find(|(range, _)| &symbol_segment.text[range.clone()] == "fn")
+                .expect("Should have a highlight for the 'fn' keyword after theme change");
+            assert_eq!(
+                keyword_highlight.1.color,
+                Some(blue_color),
+                "The 'fn' keyword should have blue color after theme change"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumbs_keep_file_name_without_lsp_symbols(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        update_test_language_settings(cx, &|settings| {
+            settings.defaults.document_symbols = Some(DocumentSymbols::On);
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                document_symbol_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+        let mut symbol_request = cx
+            .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::DocumentSymbolResponse::Nested(Vec::new())))
+                },
+            );
+
+        cx.set_state("fn maˇin() {\n    let x = 1;\n}\n");
+        assert!(symbol_request.next().await.is_some());
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            assert_eq!(
+                breadcrumb_texts(editor, cx),
+                vec![path!("dir/file.rs").to_string()],
+                "Breadcrumbs should fall back to the file name when the language server returns no symbols"
+            );
+
+            editor.set_breadcrumb_header("Last 1000 lines in the log".to_string());
+            assert_eq!(
+                breadcrumb_texts(editor, cx),
+                vec!["Last 1000 lines in the log".to_string()],
+                "A custom breadcrumb header should never disappear"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumbs_refresh_on_document_symbols_setting_change(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                document_symbol_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+        let mut symbol_request = cx
+            .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::DocumentSymbolResponse::Nested(Vec::new())))
+                },
+            );
+
+        cx.set_state("fn maˇin() {\n    let x = 1;\n}\n");
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            assert_eq!(
+                breadcrumb_texts(editor, cx),
+                vec![path!("dir/file.rs").to_string(), "fn main".to_string()],
+                "With tree-sitter symbols, breadcrumbs should show the file name and the symbol"
+            );
+        });
+
+        let breadcrumb_updates = Arc::new(atomic::AtomicUsize::new(0));
+        let editor = cx.editor.clone();
+        let _subscription = cx.update(|_, cx| {
+            cx.subscribe(&editor, {
+                let breadcrumb_updates = breadcrumb_updates.clone();
+                move |_, event, _| {
+                    Editor::to_item_events(event, &mut |item_event| {
+                        if item_event == ItemEvent::UpdateBreadcrumbs {
+                            breadcrumb_updates.fetch_add(1, atomic::Ordering::AcqRel);
+                        }
+                    });
+                }
+            })
+        });
+
+        update_test_language_settings(&mut cx.cx.cx, &|settings| {
+            settings.defaults.document_symbols = Some(DocumentSymbols::On);
+        });
+        assert!(symbol_request.next().await.is_some());
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            assert_eq!(
+                breadcrumb_texts(editor, cx),
+                vec![path!("dir/file.rs").to_string()],
+                "After enabling LSP symbols that return nothing, breadcrumbs should keep the file name"
+            );
+        });
+        assert!(
+            breadcrumb_updates.load(atomic::Ordering::Acquire) > 0,
+            "Breadcrumbs should refresh on the setting change, without extra selection changes"
+        );
+
+        breadcrumb_updates.store(0, atomic::Ordering::Release);
+        update_test_language_settings(&mut cx.cx.cx, &|settings| {
+            settings.defaults.document_symbols = Some(DocumentSymbols::Off);
+        });
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            assert_eq!(
+                breadcrumb_texts(editor, cx),
+                vec![path!("dir/file.rs").to_string(), "fn main".to_string()],
+                "After disabling LSP symbols, tree-sitter breadcrumbs should return"
+            );
+        });
+        assert!(
+            breadcrumb_updates.load(atomic::Ordering::Acquire) > 0,
+            "Breadcrumbs should refresh on the setting change, without extra selection changes"
         );
     }
 }

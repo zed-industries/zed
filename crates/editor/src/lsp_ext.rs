@@ -3,19 +3,18 @@ use std::time::Duration;
 
 use crate::Editor;
 use collections::{HashMap, HashSet};
-use gpui::AsyncApp;
+use futures::TryFutureExt;
 use gpui::{App, Entity, Task};
+use gpui::{AsyncApp, FutureExt};
 use language::Buffer;
 use language::Language;
 use lsp::LanguageServerId;
 use lsp::LanguageServerName;
-use multi_buffer::Anchor;
 use project::LanguageServerToQuery;
 use project::LocationLink;
 use project::Project;
 use project::TaskSourceKind;
 use project::lsp_store::lsp_ext_command::GetLspRunnables;
-use smol::future::FutureExt as _;
 use task::ResolvedTask;
 use task::TaskContext;
 use text::BufferId;
@@ -27,7 +26,12 @@ pub(crate) fn find_specific_language_server_in_selection<F>(
     cx: &mut App,
     filter_language: F,
     language_server_name: LanguageServerName,
-) -> Option<(Anchor, Arc<Language>, LanguageServerId, Entity<Buffer>)>
+) -> Option<(
+    text::Anchor,
+    Arc<Language>,
+    LanguageServerId,
+    Entity<Buffer>,
+)>
 where
     F: Fn(&Language) -> bool,
 {
@@ -40,19 +44,15 @@ where
         .iter()
         .find_map(|selection| {
             let multi_buffer = multi_buffer.read(cx);
-            let (position, buffer) = multi_buffer
-                .buffer_for_anchor(selection.head(), cx)
-                .map(|buffer| (selection.head(), buffer))
-                .or_else(|| {
-                    multi_buffer
-                        .buffer_for_anchor(selection.tail(), cx)
-                        .map(|buffer| (selection.tail(), buffer))
-                })?;
+            let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+            let (position, buffer) = multi_buffer_snapshot
+                .anchor_to_buffer_anchor(selection.head())
+                .and_then(|(anchor, _)| Some((anchor, multi_buffer.buffer(anchor.buffer_id)?)))?;
             if !seen_buffer_ids.insert(buffer.read(cx).remote_id()) {
                 return None;
             }
 
-            let language = buffer.read(cx).language_at(position.text_anchor)?;
+            let language = buffer.read(cx).language_at(position)?;
             if filter_language(&language) {
                 let server_id = buffer.update(cx, |buffer, cx| {
                     project
@@ -108,7 +108,7 @@ pub fn lsp_tasks(
             let buffers = buffer_ids
                 .iter()
                 .filter(|&&buffer_id| match for_position {
-                    Some(for_position) => for_position.buffer_id == Some(buffer_id),
+                    Some(for_position) => for_position.buffer_id == buffer_id,
                     None => true,
                 })
                 .filter_map(|&buffer_id| project.read(cx).buffer_for_id(buffer_id, cx))
@@ -151,6 +151,7 @@ pub fn lsp_tasks(
                             GetLspRunnables {
                                 buffer_id,
                                 position: for_position,
+                                server_id,
                             },
                             cx,
                         )
@@ -164,22 +165,20 @@ pub fn lsp_tasks(
                             },
                         ));
                     }
-                    lsp_tasks
-                        .entry(source_kind)
-                        .or_insert_with(Vec::new)
-                        .append(&mut new_lsp_tasks);
+                    if !new_lsp_tasks.is_empty() {
+                        lsp_tasks
+                            .entry(source_kind)
+                            .or_insert_with(Vec::new)
+                            .append(&mut new_lsp_tasks);
+                    }
                 }
             }
             lsp_tasks.into_iter().collect()
         })
-        .race({
-            // `lsp::DEFAULT_LSP_REQUEST_TIMEOUT` is larger than we want for the modal to open fast
-            let timer = cx.background_executor().timer(Duration::from_millis(200));
-            async move {
-                timer.await;
-                log::info!("Timed out waiting for LSP tasks");
-                Vec::new()
-            }
+        .with_timeout(Duration::from_millis(200), &cx.background_executor())
+        .unwrap_or_else(|_| {
+            log::debug!("Timed out waiting for LSP tasks");
+            Vec::new()
         })
         .await
     })
@@ -194,7 +193,7 @@ mod tests {
     use language::{FakeLspAdapter, Language};
     use languages::rust_lang;
     use lsp::{LanguageServerId, LanguageServerName};
-    use multi_buffer::{Anchor, MultiBuffer};
+    use multi_buffer::MultiBuffer;
     use project::{FakeFs, Project};
     use util::path;
 
@@ -236,7 +235,7 @@ mod tests {
         let filter = |language: &Language| language.name().as_ref() == "Rust";
 
         let assert_result = |result: Option<(
-            Anchor,
+            text::Anchor,
             Arc<Language>,
             LanguageServerId,
             Entity<language::Buffer>,

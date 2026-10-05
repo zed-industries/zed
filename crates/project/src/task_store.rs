@@ -19,7 +19,7 @@ use util::ResultExt;
 
 use crate::{
     BasicContextProvider, Inventory, ProjectEnvironment, buffer_store::BufferStore,
-    worktree_store::WorktreeStore,
+    git_store::GitStore, worktree_store::WorktreeStore,
 };
 
 // platform-dependent warning
@@ -33,6 +33,7 @@ pub struct StoreState {
     task_inventory: Entity<Inventory>,
     buffer_store: WeakEntity<BufferStore>,
     worktree_store: Entity<WorktreeStore>,
+    git_store: Entity<GitStore>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
 }
 
@@ -129,7 +130,7 @@ impl TaskStore {
                         .payload
                         .task_variables
                         .into_iter()
-                        .filter_map(|(k, v)| Some((k.parse().log_err()?, v))),
+                        .filter_map(|(k, v)| Some((k.parse().ok()?, v))),
                 );
 
                 let snapshot = location.buffer.read(cx).snapshot();
@@ -144,7 +145,7 @@ impl TaskStore {
             };
             store.task_context_for_location(captured_variables, location, cx)
         });
-        let task_context = context_task.await.unwrap_or_default();
+        let task_context = context_task.await?.unwrap_or_default();
         Ok(proto::TaskContext {
             project_env: task_context.project_env.into_iter().collect(),
             cwd: task_context
@@ -163,6 +164,7 @@ impl TaskStore {
         worktree_store: Entity<WorktreeStore>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         environment: Entity<ProjectEnvironment>,
+        git_store: Entity<GitStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::Functional(StoreState {
@@ -172,6 +174,7 @@ impl TaskStore {
             },
             task_inventory: Inventory::new(cx),
             buffer_store,
+            git_store,
             toolchain_store,
             worktree_store,
         })
@@ -183,6 +186,7 @@ impl TaskStore {
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         upstream_client: AnyProtoClient,
         project_id: u64,
+        git_store: Entity<GitStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::Functional(StoreState {
@@ -192,6 +196,7 @@ impl TaskStore {
             },
             task_inventory: Inventory::new(cx),
             buffer_store,
+            git_store,
             toolchain_store,
             worktree_store,
         })
@@ -202,11 +207,12 @@ impl TaskStore {
         captured_variables: TaskVariables,
         location: Location,
         cx: &mut App,
-    ) -> Task<Option<TaskContext>> {
+    ) -> Task<anyhow::Result<Option<TaskContext>>> {
         match self {
             TaskStore::Functional(state) => match &state.mode {
                 StoreMode::Local { environment, .. } => local_task_context_for_location(
                     state.worktree_store.clone(),
+                    state.git_store.clone(),
                     state.toolchain_store.clone(),
                     environment.clone(),
                     captured_variables,
@@ -220,13 +226,14 @@ impl TaskStore {
                     *project_id,
                     upstream_client.clone(),
                     state.worktree_store.clone(),
+                    state.git_store.clone(),
                     captured_variables,
                     location,
                     state.toolchain_store.clone(),
                     cx,
                 ),
             },
-            TaskStore::Noop => Task::ready(None),
+            TaskStore::Noop => Task::ready(Ok(None)),
         }
     }
 
@@ -302,12 +309,13 @@ impl TaskStore {
 
 fn local_task_context_for_location(
     worktree_store: Entity<WorktreeStore>,
+    git_store: Entity<GitStore>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
     environment: Entity<ProjectEnvironment>,
     captured_variables: TaskVariables,
     location: Location,
     cx: &App,
-) -> Task<Option<TaskContext>> {
+) -> Task<anyhow::Result<Option<TaskContext>>> {
     let worktree_id = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
     let worktree_abs_path = worktree_id
         .and_then(|worktree_id| worktree_store.read(cx).worktree_for_id(worktree_id, cx))
@@ -329,21 +337,21 @@ fn local_task_context_for_location(
                     worktree_store.clone(),
                     location,
                     project_env.clone(),
-                    BasicContextProvider::new(worktree_store),
+                    BasicContextProvider::new(worktree_store, git_store),
                     toolchain_store,
                     cx,
                 )
             })
-            .await
-            .log_err()?;
+            .await?;
+
         // Remove all custom entries starting with _, as they're not intended for use by the end user.
         task_variables.sweep();
 
-        Some(TaskContext {
+        Ok(Some(TaskContext {
             project_env: project_env.unwrap_or_default(),
             cwd: worktree_abs_path.map(|p| p.to_path_buf()),
             task_variables,
-        })
+        }))
     })
 }
 
@@ -351,18 +359,19 @@ fn remote_task_context_for_location(
     project_id: u64,
     upstream_client: AnyProtoClient,
     worktree_store: Entity<WorktreeStore>,
+    git_store: Entity<GitStore>,
     captured_variables: TaskVariables,
     location: Location,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
     cx: &mut App,
-) -> Task<Option<TaskContext>> {
+) -> Task<anyhow::Result<Option<TaskContext>>> {
     cx.spawn(async move |cx| {
         // We need to gather a client context, as the headless one may lack certain information (e.g. tree-sitter parsing is disabled there, so symbols are not available).
         let mut remote_context = cx
             .update(|cx| {
                 let worktree_root = worktree_root(&worktree_store, &location, cx);
 
-                BasicContextProvider::new(worktree_store).build_context(
+                BasicContextProvider::new(worktree_store, git_store).build_context(
                     &TaskVariables::default(),
                     ContextLocation {
                         fs: None,
@@ -392,8 +401,8 @@ fn remote_task_context_for_location(
                 .map(|(k, v)| (k.to_string(), v))
                 .collect(),
         });
-        let task_context = context_task.await.log_err()?;
-        Some(TaskContext {
+        let task_context = context_task.await?;
+        Ok(Some(TaskContext {
             cwd: task_context.cwd.map(PathBuf::from),
             task_variables: task_context
                 .task_variables
@@ -409,7 +418,7 @@ fn remote_task_context_for_location(
                 )
                 .collect(),
             project_env: task_context.project_env.into_iter().collect(),
-        })
+        }))
     })
 }
 
@@ -487,8 +496,7 @@ fn combine_task_variables(
                         cx,
                     )
                 })
-                .await
-                .context("building provider context")?,
+                .await?,
             );
         }
         Ok(captured_variables)

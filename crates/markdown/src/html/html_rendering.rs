@@ -1,6 +1,8 @@
 use std::ops::Range;
 
-use gpui::{App, FontStyle, FontWeight, StrikethroughStyle, TextStyleRefinement, UnderlineStyle};
+use gpui::{
+    App, FontStyle, FontWeight, StrikethroughStyle, TextAlign, TextStyleRefinement, UnderlineStyle,
+};
 use pulldown_cmark::Alignment;
 use ui::prelude::*;
 
@@ -79,9 +81,20 @@ impl MarkdownElement {
 
         match element {
             ParsedHtmlElement::Paragraph(paragraph) => {
-                self.push_markdown_paragraph(builder, &source_range, markdown_end);
-                self.render_html_paragraph(paragraph, source_allocator, builder, cx, markdown_end);
-                builder.pop_div();
+                self.push_markdown_paragraph(
+                    builder,
+                    &source_range,
+                    markdown_end,
+                    paragraph.text_align,
+                );
+                self.render_html_paragraph(
+                    &paragraph.contents,
+                    source_allocator,
+                    builder,
+                    cx,
+                    markdown_end,
+                );
+                self.pop_markdown_paragraph(builder);
             }
             ParsedHtmlElement::Heading(heading) => {
                 self.push_markdown_heading(
@@ -89,6 +102,7 @@ impl MarkdownElement {
                     heading.level,
                     &heading.source_range,
                     markdown_end,
+                    heading.text_align,
                 );
                 self.render_html_paragraph(
                     &heading.contents,
@@ -103,7 +117,12 @@ impl MarkdownElement {
                 self.render_html_list(list, source_allocator, builder, markdown_end, cx);
             }
             ParsedHtmlElement::BlockQuote(block_quote) => {
-                self.push_markdown_block_quote(builder, &block_quote.source_range, markdown_end);
+                self.push_markdown_block_quote(
+                    builder,
+                    None,
+                    &block_quote.source_range,
+                    markdown_end,
+                );
                 self.render_html_elements(
                     &block_quote.children,
                     source_allocator,
@@ -117,7 +136,7 @@ impl MarkdownElement {
                 self.render_html_table(table, source_allocator, builder, markdown_end, cx);
             }
             ParsedHtmlElement::Image(image) => {
-                self.render_html_image(image, builder);
+                self.render_html_image(image, builder, cx);
             }
         }
     }
@@ -194,18 +213,18 @@ impl MarkdownElement {
         let total_rows = table.header.len() + table.body.len();
         let mut grid_occupied = vec![vec![false; max_column_count]; total_rows];
 
+        builder.push_div(div().flex(), &table.source_range, markdown_end);
         builder.push_div(
             div()
                 .id(("html-table", table.source_range.start))
+                .min_w_0()
                 .grid()
-                .grid_cols(max_column_count as u16)
                 .when(self.style.table_columns_min_size, |this| {
-                    this.grid_cols_min_content(max_column_count as u16)
+                    this.w_full().grid_cols_min_content(max_column_count as u16)
                 })
                 .when(!self.style.table_columns_min_size, |this| {
-                    this.grid_cols(max_column_count as u16)
+                    this.grid_cols_max_content(max_column_count as u16)
                 })
-                .w_full()
                 .mb_2()
                 .border(px(1.5))
                 .border_color(cx.theme().colors().border)
@@ -228,14 +247,24 @@ impl MarkdownElement {
                 }
 
                 let max_span = max_column_count.saturating_sub(column_index);
+                let text_align = match cell.alignment {
+                    Alignment::Left => TextAlign::Left,
+                    Alignment::Center => TextAlign::Center,
+                    Alignment::Right => TextAlign::Right,
+                    _ => self.style.base_text_style.text_align,
+                };
+
                 let mut cell_div = div()
                     .col_span(cell.col_span.min(max_span) as u16)
                     .row_span(cell.row_span.min(total_rows - row_index) as u16)
+                    .flex()
+                    .flex_col()
                     .when(column_index > 0, |this| this.border_l_1())
                     .when(row_index > 0, |this| this.border_t_1())
                     .border_color(cx.theme().colors().border)
                     .px_2()
                     .py_1()
+                    .h_full()
                     .when(cell.is_header, |this| {
                         this.bg(cx.theme().colors().title_bar_background)
                     })
@@ -249,7 +278,22 @@ impl MarkdownElement {
                     _ => cell_div,
                 };
 
+                builder.push_text_style(TextStyleRefinement {
+                    text_align: Some(text_align),
+                    ..Default::default()
+                });
                 builder.push_div(cell_div, &table.source_range, markdown_end);
+                builder.push_div(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .w_full()
+                        .justify_center()
+                        .text_align(text_align),
+                    &table.source_range,
+                    markdown_end,
+                );
                 self.render_html_paragraph(
                     &cell.children,
                     source_allocator,
@@ -258,6 +302,8 @@ impl MarkdownElement {
                     markdown_end,
                 );
                 builder.pop_div();
+                builder.pop_div();
+                builder.pop_text_style();
 
                 for row_offset in 0..cell.row_span {
                     for column_offset in 0..cell.col_span {
@@ -296,6 +342,7 @@ impl MarkdownElement {
         }
 
         builder.pop_div();
+        builder.pop_div();
     }
 
     fn render_html_paragraph(
@@ -312,7 +359,7 @@ impl MarkdownElement {
                     self.render_html_text(text, source_allocator, builder, cx);
                 }
                 HtmlParagraphChunk::Image(image) => {
-                    self.render_html_image(image, builder);
+                    self.render_html_image(image, builder, cx);
                 }
             }
         }
@@ -345,9 +392,7 @@ impl MarkdownElement {
         boundaries.sort_unstable();
         boundaries.dedup();
 
-        for segment in boundaries.windows(2) {
-            let start = segment[0];
-            let end = segment[1];
+        for &[start, end] in boundaries.array_windows::<2>() {
             if start >= end {
                 continue;
             }
@@ -403,11 +448,11 @@ impl MarkdownElement {
         }
     }
 
-    fn render_html_image(&self, image: &HtmlImage, builder: &mut MarkdownElementBuilder) {
+    fn render_html_image(&self, image: &HtmlImage, builder: &mut MarkdownElementBuilder, cx: &App) {
         let Some(source) = self
             .image_resolver
             .as_ref()
-            .and_then(|resolve| resolve(image.dest_url.as_ref()))
+            .and_then(|resolve| resolve(image.dest_url.as_ref(), cx))
         else {
             return;
         };
@@ -416,6 +461,8 @@ impl MarkdownElement {
             builder,
             &image.source_range,
             source,
+            image.dest_url.clone(),
+            image.alt_text.clone(),
             image.width,
             image.height,
         );
@@ -513,6 +560,8 @@ mod tests {
         });
     }
 
+    use crate::WrapButtonVisibility;
+
     fn render_markdown_text(markdown: &str, cx: &mut TestAppContext) -> crate::RenderedText {
         struct TestWindow;
 
@@ -534,6 +583,7 @@ mod tests {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
                         copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
                         border: false,
                     },
                 )
@@ -594,6 +644,7 @@ mod tests {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
                         copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
                         border: false,
                     },
                 )

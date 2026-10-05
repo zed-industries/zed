@@ -5,6 +5,12 @@
 (type_spec
   name: (type_identifier) @type.definition)
 
+((type_identifier) @type.builtin
+  (#any-of? @type.builtin
+    "any" "bool" "byte" "comparable" "complex64" "complex128" "error" "float32" "float64" "int"
+    "int8" "int16" "int32" "int64" "rune" "string" "uint" "uint8" "uint16" "uint32" "uint64"
+    "uintptr"))
+
 (field_identifier) @property
 
 (package_identifier) @namespace
@@ -22,6 +28,12 @@
 (call_expression
   function: (selector_expression
     field: (field_identifier) @function.method.call))
+
+((call_expression
+  function: (identifier) @function.builtin)
+  (#any-of? @function.builtin
+    "append" "cap" "clear" "close" "complex" "copy" "delete" "imag" "len" "make" "max" "min" "new"
+    "panic" "print" "println" "real" "recover"))
 
 (function_declaration
   name: (identifier) @function)
@@ -89,32 +101,35 @@
 ] @operator
 
 [
-  "break"
-  "case"
   "chan"
   "const"
+  "func"
+  "import"
+  "interface"
+  "map"
+  "package"
+  "struct"
+  "type"
+  "var"
+] @keyword
+
+[
+  "break"
+  "case"
   "continue"
   "default"
   "defer"
   "else"
   "fallthrough"
   "for"
-  "func"
   "go"
   "goto"
   "if"
-  "import"
-  "interface"
-  "map"
-  "package"
   "range"
   "return"
   "select"
-  "struct"
   "switch"
-  "type"
-  "var"
-] @keyword
+] @keyword.control
 
 [
   (interpreted_string_literal)

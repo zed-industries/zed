@@ -30,7 +30,7 @@
     ] @function.method))
 
 (new_expression
-  constructor: (identifier) @type)
+  constructor: (identifier) @type.class)
 
 (nested_type_identifier
   module: (identifier) @type)
@@ -97,6 +97,26 @@
       (identifier)
       (shorthand_property_identifier_pattern)
     ]) @variable.parameter))
+
+(required_parameter
+  (_
+    (object_assignment_pattern
+      left: (shorthand_property_identifier_pattern) @variable.parameter)))
+
+(required_parameter
+  (_
+    (assignment_pattern
+      left: (identifier) @variable.parameter)))
+
+(optional_parameter
+  (_
+    (object_assignment_pattern
+      left: (shorthand_property_identifier_pattern) @variable.parameter)))
+
+(optional_parameter
+  (_
+    (assignment_pattern
+      left: (identifier) @variable.parameter)))
 
 (optional_parameter
   (identifier) @variable.parameter)
@@ -328,26 +348,62 @@
 ; JSX elements
 (jsx_opening_element
   [
-    (identifier) @type
+    (identifier) @type @tag.component.jsx
     (member_expression
-      object: (identifier) @type
-      property: (property_identifier) @type)
+      object: (identifier) @type @tag.component.jsx
+      property: (property_identifier) @type @tag.component.jsx)
+    (member_expression
+      object: (member_expression
+        object: (identifier) @type @tag.component.jsx
+        property: (property_identifier) @type @tag.component.jsx)
+      property: (property_identifier) @type @tag.component.jsx)
+    (member_expression
+      object: (member_expression
+        object: (member_expression
+          object: (identifier) @type @tag.component.jsx
+          property: (property_identifier) @type @tag.component.jsx)
+        property: (property_identifier) @type @tag.component.jsx)
+      property: (property_identifier) @type @tag.component.jsx)
   ])
 
 (jsx_closing_element
   [
-    (identifier) @type
+    (identifier) @type @tag.component.jsx
     (member_expression
-      object: (identifier) @type
-      property: (property_identifier) @type)
+      object: (identifier) @type @tag.component.jsx
+      property: (property_identifier) @type @tag.component.jsx)
+    (member_expression
+      object: (member_expression
+        object: (identifier) @type @tag.component.jsx
+        property: (property_identifier) @type @tag.component.jsx)
+      property: (property_identifier) @type @tag.component.jsx)
+    (member_expression
+      object: (member_expression
+        object: (member_expression
+          object: (identifier) @type @tag.component.jsx
+          property: (property_identifier) @type @tag.component.jsx)
+        property: (property_identifier) @type @tag.component.jsx)
+      property: (property_identifier) @type @tag.component.jsx)
   ])
 
 (jsx_self_closing_element
   [
-    (identifier) @type
+    (identifier) @type @tag.component.jsx
     (member_expression
-      object: (identifier) @type
-      property: (property_identifier) @type)
+      object: (identifier) @type @tag.component.jsx
+      property: (property_identifier) @type @tag.component.jsx)
+    (member_expression
+      object: (member_expression
+        object: (identifier) @type @tag.component.jsx
+        property: (property_identifier) @type @tag.component.jsx)
+      property: (property_identifier) @type @tag.component.jsx)
+    (member_expression
+      object: (member_expression
+        object: (member_expression
+          object: (identifier) @type @tag.component.jsx
+          property: (property_identifier) @type @tag.component.jsx)
+        property: (property_identifier) @type @tag.component.jsx)
+      property: (property_identifier) @type @tag.component.jsx)
   ])
 
 (jsx_opening_element

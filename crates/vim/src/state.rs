@@ -15,9 +15,10 @@ use editor::display_map::{is_invisible, replacement};
 use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer, ToPoint as EditorToPoint};
 use gpui::{
     Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, DismissEvent, Entity,
-    EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
+    EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TaskExt, TextStyle,
+    WeakEntity,
 };
-use language::{Buffer, BufferEvent, BufferId, Chunk, Point};
+use language::{Buffer, BufferEvent, BufferId, Chunk, LanguageAwareStyling, Point};
 
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
@@ -78,6 +79,15 @@ impl Mode {
     pub fn is_helix(&self) -> bool {
         matches!(self, Self::HelixNormal | Self::HelixSelect)
     }
+
+    /// `HelixNormal` qualifies because its cursor is itself a one-character selection.
+    pub fn has_selection(&self) -> bool {
+        self.is_visual() || matches!(self, Self::HelixNormal)
+    }
+
+    pub fn is_normal(&self) -> bool {
+        matches!(self, Self::Normal | Self::HelixNormal)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -112,6 +122,8 @@ pub enum Operator {
         /// Represents whether the opening bracket was used for the target
         /// object.
         opening: bool,
+        /// Computed anchors for the opening and closing bracket characters,
+        bracket_anchors: Vec<Option<(Anchor, Anchor)>>,
     },
     DeleteSurrounds,
     Mark,
@@ -138,6 +150,7 @@ pub enum Operator {
     RecordRegister,
     ReplayRegister,
     ToggleComments,
+    ToggleBlockComments,
     ReplaceWithRegister,
     Exchange,
     HelixMatch,
@@ -152,6 +165,25 @@ pub enum Operator {
         replaced_char: Option<char>,
     },
     HelixSurroundDelete,
+    HelixJump {
+        behaviour: HelixJumpBehaviour,
+        first_char: Option<char>,
+        labels: Vec<HelixJumpLabel>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HelixJumpLabel {
+    pub label: [char; 2],
+    pub range: Range<Anchor>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HelixJumpBehaviour {
+    Move,
+    MoveToWordStart,
+    Extend,
+    ExtendToWordStart,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -417,23 +449,24 @@ impl MarksState {
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) {
-        let new_points: HashMap<String, Vec<Point>> =
-            if let Some(anchors) = self.buffer_marks.get(&buffer.read(cx).remote_id()) {
-                anchors
-                    .iter()
-                    .map(|(name, anchors)| {
-                        (
-                            name.clone(),
-                            buffer
-                                .read(cx)
-                                .summaries_for_anchors::<Point, _>(anchors)
-                                .collect(),
-                        )
-                    })
-                    .collect()
-            } else {
-                HashMap::default()
-            };
+        let new_points: HashMap<String, Vec<Point>> = if let Some(anchors) =
+            self.buffer_marks.get(&buffer.read(cx).remote_id())
+        {
+            anchors
+                .iter()
+                .map(|(name, anchors)| {
+                    let snapshot = buffer.read(cx);
+                    (
+                        name.clone(),
+                        snapshot
+                            .summaries_for_anchors_unordered::<Point, _>(anchors.iter().copied())
+                            .collect(),
+                    )
+                })
+                .collect()
+        } else {
+            HashMap::default()
+        };
         let old_points = self.serialized_marks.get(&path);
         if old_points == Some(&new_points) {
             return;
@@ -492,7 +525,14 @@ impl MarksState {
         {
             let buffer_marks = old_marks
                 .into_iter()
-                .map(|(k, v)| (k, v.into_iter().map(|anchor| anchor.text_anchor).collect()))
+                .map(|(k, v)| {
+                    (
+                        k,
+                        v.into_iter()
+                            .filter_map(|anchor| anchor.raw_text_anchor())
+                            .collect(),
+                    )
+                })
                 .collect();
             self.buffer_marks
                 .insert(buffer.read(cx).remote_id(), buffer_marks);
@@ -569,6 +609,7 @@ impl MarksState {
         anchors: Vec<Anchor>,
         cx: &mut Context<Self>,
     ) {
+        let multibuffer_snapshot = multibuffer.read(cx).snapshot(cx);
         let buffer = multibuffer.read(cx).as_singleton();
         let abs_path = buffer.as_ref().and_then(|b| self.path_for_buffer(b, cx));
 
@@ -602,7 +643,7 @@ impl MarksState {
             name.clone(),
             anchors
                 .into_iter()
-                .map(|anchor| anchor.text_anchor)
+                .filter_map(|anchor| Some(multibuffer_snapshot.anchor_to_buffer_anchor(anchor)?.0))
                 .collect(),
         );
         if !self.watched_buffers.contains_key(&buffer_id) {
@@ -629,12 +670,13 @@ impl MarksState {
                 return Some(Mark::Local(anchors.get(name)?.clone()));
             }
 
-            let (excerpt_id, buffer_id, _) = multi_buffer.read(cx).read(cx).as_singleton()?;
-            if let Some(anchors) = self.buffer_marks.get(&buffer_id) {
+            let multibuffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+            let buffer_snapshot = multibuffer_snapshot.as_singleton()?;
+            if let Some(anchors) = self.buffer_marks.get(&buffer_snapshot.remote_id()) {
                 let text_anchors = anchors.get(name)?;
                 let anchors = text_anchors
                     .iter()
-                    .map(|anchor| Anchor::in_buffer(excerpt_id, *anchor))
+                    .filter_map(|anchor| multibuffer_snapshot.anchor_in_excerpt(*anchor))
                     .collect();
                 return Some(Mark::Local(anchors));
             }
@@ -895,14 +937,13 @@ impl VimGlobals {
                 }
             }
             '%' => editor.and_then(|editor| {
-                let selection = editor
-                    .selections
-                    .newest::<Point>(&editor.display_snapshot(cx));
-                if let Some((_, buffer, _)) = editor
-                    .buffer()
-                    .read(cx)
-                    .excerpt_containing(selection.head(), cx)
-                {
+                let multibuffer = editor.buffer().read(cx);
+                let snapshot = multibuffer.snapshot(cx);
+                let selection = editor.selections.newest_anchor();
+                let buffer = snapshot
+                    .anchor_to_buffer_anchor(selection.head())
+                    .and_then(|(text_anchor, _)| multibuffer.buffer(text_anchor.buffer_id));
+                if let Some(buffer) = buffer {
                     buffer
                         .read(cx)
                         .file()
@@ -1070,9 +1111,11 @@ impl Operator {
             Operator::RecordRegister => "q",
             Operator::ReplayRegister => "@",
             Operator::ToggleComments => "gc",
+            Operator::ToggleBlockComments => "gb",
             Operator::HelixMatch => "helix_m",
             Operator::HelixNext { .. } => "helix_next",
             Operator::HelixPrevious { .. } => "helix_previous",
+            Operator::HelixJump { .. } => "gw",
             Operator::HelixSurroundAdd => "helix_ms",
             Operator::HelixSurroundReplace { .. } => "helix_mr",
             Operator::HelixSurroundDelete => "helix_md",
@@ -1100,6 +1143,7 @@ impl Operator {
             Operator::HelixMatch => "m".to_string(),
             Operator::HelixNext { .. } => "]".to_string(),
             Operator::HelixPrevious { .. } => "[".to_string(),
+            Operator::HelixJump { .. } => "gw".to_string(),
             Operator::HelixSurroundAdd => "ms".to_string(),
             Operator::HelixSurroundReplace {
                 replaced_char: None,
@@ -1130,7 +1174,8 @@ impl Operator {
             | Operator::ChangeSurrounds {
                 target: Some(_), ..
             }
-            | Operator::DeleteSurrounds => true,
+            | Operator::DeleteSurrounds
+            | Operator::HelixJump { .. } => true,
             Operator::Change
             | Operator::Delete
             | Operator::Yank
@@ -1149,6 +1194,7 @@ impl Operator {
             | Operator::ChangeSurrounds { target: None, .. }
             | Operator::OppositeCase
             | Operator::ToggleComments
+            | Operator::ToggleBlockComments
             | Operator::HelixMatch
             | Operator::HelixNext { .. }
             | Operator::HelixPrevious { .. } => false,
@@ -1172,6 +1218,7 @@ impl Operator {
             | Operator::Rot13
             | Operator::Rot47
             | Operator::ToggleComments
+            | Operator::ToggleBlockComments
             | Operator::ReplaceWithRegister
             | Operator::Rewrap
             | Operator::ShellCommand
@@ -1199,7 +1246,8 @@ impl Operator {
             | Operator::Register
             | Operator::RecordRegister
             | Operator::ReplayRegister
-            | Operator::HelixMatch => false,
+            | Operator::HelixMatch
+            | Operator::HelixJump { .. } => false,
         }
     }
 }
@@ -1216,6 +1264,10 @@ pub struct RegistersViewDelegate {
 
 impl PickerDelegate for RegistersViewDelegate {
     type ListItem = Div;
+
+    fn name() -> &'static str {
+        "registers view"
+    }
 
     fn match_count(&self) -> usize {
         self.matches.len()
@@ -1376,15 +1428,13 @@ impl RegistersView {
                 })
             }
         });
-        matches.sort_by(|a, b| a.name.cmp(&b.name));
+        matches.sort_by_key(|m| m.name);
         let delegate = RegistersViewDelegate {
             selected_index: 0,
             matches,
         };
 
-        Picker::nonsearchable_uniform_list(delegate, window, cx)
-            .width(rems(36.))
-            .modal(true)
+        Picker::nonsearchable_uniform_list(delegate, window, cx).initial_width(rems(36.))
     }
 }
 
@@ -1430,6 +1480,10 @@ pub struct MarksViewDelegate {
 
 impl PickerDelegate for MarksViewDelegate {
     type ListItem = Div;
+
+    fn name() -> &'static str {
+        "marks view"
+    }
 
     fn match_count(&self) -> usize {
         self.matches.len()
@@ -1496,7 +1550,10 @@ impl PickerDelegate for MarksViewDelegate {
                                     position.row,
                                     snapshot.line_len(MultiBufferRow(position.row)),
                                 ),
-                            true,
+                            LanguageAwareStyling {
+                                tree_sitter: true,
+                                diagnostics: true,
+                            },
                         );
                         matches.push(MarksMatch {
                             name: name.clone(),
@@ -1522,7 +1579,10 @@ impl PickerDelegate for MarksViewDelegate {
                             let chunks = snapshot.chunks(
                                 Point::new(position.row, 0)
                                     ..Point::new(position.row, snapshot.line_len(position.row)),
-                                true,
+                                LanguageAwareStyling {
+                                    tree_sitter: true,
+                                    diagnostics: true,
+                                },
                             );
 
                             matches.push(MarksMatch {
@@ -1739,9 +1799,7 @@ impl MarksView {
             matches,
             workspace,
         };
-        Picker::nonsearchable_uniform_list(delegate, window, cx)
-            .width(rems(36.))
-            .modal(true)
+        Picker::nonsearchable_uniform_list(delegate, window, cx).initial_width(rems(36.))
     }
 }
 

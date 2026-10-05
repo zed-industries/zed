@@ -6,7 +6,7 @@ pub mod proto_conversions;
 mod registry;
 pub mod transport;
 
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 
 pub use dap_types::*;
 use debugger_settings::DebuggerSettings;
@@ -26,7 +26,7 @@ use task::{DebugScenario, TcpArgumentsTemplate};
 
 pub async fn configure_tcp_connection(
     tcp_connection: TcpArgumentsTemplate,
-) -> anyhow::Result<(Ipv4Addr, u16, Option<u64>)> {
+) -> anyhow::Result<(IpAddr, u16, Option<u64>)> {
     let host = tcp_connection.host();
     let timeout = tcp_connection.timeout;
 

@@ -8,6 +8,8 @@ license = "GPL-3.0-or-later"
 [lib]
 path = "src/settings_macros.rs"
 proc-macro = true
+test = false
+doctest = false
 
 [lints]
 workspace = true

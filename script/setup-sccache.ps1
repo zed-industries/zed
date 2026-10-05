@@ -1,18 +1,42 @@
 #Requires -Version 5.1
 $ErrorActionPreference = "Stop"
 
-$SCCACHE_VERSION = "v0.10.0"
+$SCCACHE_VERSION = "v0.16.0"
 $SCCACHE_DIR = "./target/sccache"
 
 function Install-Sccache {
     New-Item -ItemType Directory -Path $SCCACHE_DIR -Force | Out-Null
 
     $sccachePath = Join-Path $SCCACHE_DIR "sccache.exe"
-
+    $expectedVersion = "sccache $($SCCACHE_VERSION.Substring(1))"
+    $installedVersion = $null
     if (Test-Path $sccachePath) {
-        Write-Host "sccache already cached: $(& $sccachePath --version)"
+        try {
+            $installedVersion = & $sccachePath --version
+        }
+        catch {
+            Write-Host "Cached sccache binary is invalid; reinstalling"
+            $installedVersion = $null
+        }
+    }
+
+    if ($installedVersion -eq $expectedVersion) {
+        Write-Host "sccache already cached: $installedVersion"
     }
     else {
+        if ($installedVersion) {
+            Write-Host "Stopping cached $installedVersion server before upgrading..."
+            try {
+                & $sccachePath --stop-server *> $null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "No running sccache server to stop"
+                }
+            }
+            catch {
+                Write-Host "No running sccache server to stop"
+            }
+        }
+
         Write-Host "Installing sccache ${SCCACHE_VERSION} from GitHub releases..."
 
         $arch = if ([Environment]::Is64BitOperatingSystem) { "x86_64" } else { "i686" }
@@ -90,7 +114,7 @@ function Configure-Sccache {
     $env:SCCACHE_BUCKET = $bucket
     $env:SCCACHE_REGION = "auto"
     $env:SCCACHE_S3_KEY_PREFIX = $keyPrefix
-    $env:SCCACHE_BASEDIR = $baseDir
+    $env:SCCACHE_BASEDIRS = $baseDir
     $env:AWS_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
     $env:AWS_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
     $env:RUSTC_WRAPPER = $sccacheBin
@@ -102,7 +126,7 @@ function Configure-Sccache {
             "SCCACHE_BUCKET=$($env:SCCACHE_BUCKET)"
             "SCCACHE_REGION=$($env:SCCACHE_REGION)"
             "SCCACHE_S3_KEY_PREFIX=$($env:SCCACHE_S3_KEY_PREFIX)"
-            "SCCACHE_BASEDIR=$($env:SCCACHE_BASEDIR)"
+            "SCCACHE_BASEDIRS=$($env:SCCACHE_BASEDIRS)"
             "AWS_ACCESS_KEY_ID=$($env:AWS_ACCESS_KEY_ID)"
             "AWS_SECRET_ACCESS_KEY=$($env:AWS_SECRET_ACCESS_KEY)"
             "RUSTC_WRAPPER=$($env:RUSTC_WRAPPER)"
@@ -121,7 +145,7 @@ function Show-Config {
     Write-Host "SCCACHE_ENDPOINT: $($env:SCCACHE_ENDPOINT ?? '<not set>')"
     Write-Host "SCCACHE_REGION: $($env:SCCACHE_REGION ?? '<not set>')"
     Write-Host "SCCACHE_S3_KEY_PREFIX: $($env:SCCACHE_S3_KEY_PREFIX ?? '<not set>')"
-    Write-Host "SCCACHE_BASEDIR: $($env:SCCACHE_BASEDIR ?? '<not set>')"
+    Write-Host "SCCACHE_BASEDIRS: $($env:SCCACHE_BASEDIRS ?? '<not set>')"
 
     if ($env:AWS_ACCESS_KEY_ID) {
         Write-Host "AWS_ACCESS_KEY_ID: <set>"

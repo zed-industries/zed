@@ -19,7 +19,6 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
-derive_more.workspace = true
 gpui.workspace = true
 syntax_theme.workspace = true
 palette = { workspace = true, default-features = false, features = ["std"] }

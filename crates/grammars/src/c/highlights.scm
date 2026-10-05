@@ -1,5 +1,6 @@
 [
   "const"
+  "constexpr"
   "enum"
   "extern"
   "inline"
@@ -38,7 +39,7 @@
   "#ifndef"
   "#include"
   (preproc_directive)
-] @preproc
+] @keyword.preproc @preproc
 
 [
   "="

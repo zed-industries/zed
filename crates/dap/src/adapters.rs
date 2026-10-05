@@ -18,7 +18,7 @@ use std::{
     borrow::Borrow,
     ffi::OsStr,
     fmt::Debug,
-    net::Ipv4Addr,
+    net::IpAddr,
     ops::Deref,
     path::{Path, PathBuf},
     sync::Arc,
@@ -106,7 +106,7 @@ impl<'a> From<&'a str> for DebugAdapterName {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TcpArguments {
-    pub host: Ipv4Addr,
+    pub host: IpAddr,
     pub port: u16,
     pub timeout: Option<u64>,
 }
@@ -294,7 +294,7 @@ pub async fn download_adapter_from_github(
     log::debug!(
         "Downloading adapter {} from {}",
         adapter_name,
-        &github_version.url,
+        github_version.url,
     );
     delegate.output_to_console(format!("Downloading from {}...", github_version.url));
 

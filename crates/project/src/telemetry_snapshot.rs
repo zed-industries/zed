@@ -77,7 +77,7 @@ impl TelemetryWorktreeSnapshot {
                     repo.update(cx, |repo, _| {
                         let current_branch =
                             repo.branch.as_ref().map(|branch| branch.name().to_owned());
-                        repo.send_job(None, |state, _| async move {
+                        repo.send_job("telemetry_snapshot", None, |state, _| async move {
                             let RepositoryState::Local(LocalRepositoryState { backend, .. }) =
                                 state
                             else {

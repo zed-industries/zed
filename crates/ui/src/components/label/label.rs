@@ -1,5 +1,9 @@
+use std::borrow::Cow;
+use std::ops::Range;
+
+use crate::utils::replace_control_characters;
 use crate::{LabelLike, prelude::*};
-use gpui::StyleRefinement;
+use gpui::{HighlightStyle, StyleRefinement, StyledText};
 
 /// A struct representing a label element in the UI.
 ///
@@ -33,6 +37,7 @@ use gpui::StyleRefinement;
 pub struct Label {
     base: LabelLike,
     label: SharedString,
+    render_code_spans: bool,
 }
 
 impl Label {
@@ -49,7 +54,15 @@ impl Label {
         Self {
             base: LabelLike::new(),
             label: label.into(),
+            render_code_spans: false,
         }
+    }
+
+    /// When enabled, text wrapped in backticks (e.g. `` `code` ``) will be
+    /// rendered in the buffer (monospace) font.
+    pub fn render_code_spans(mut self) -> Self {
+        self.render_code_spans = true;
+        self
     }
 
     /// Sets the text of the [`Label`].
@@ -60,6 +73,19 @@ impl Label {
     /// Truncates the label from the start, keeping the end visible.
     pub fn truncate_start(mut self) -> Self {
         self.base = self.base.truncate_start();
+        self
+    }
+
+    /// Truncates overflowing text with an ellipsis (`…`) in the middle if needed.
+    pub fn truncate_middle(mut self) -> Self {
+        self.base = self.base.truncate_middle();
+        self
+    }
+
+    /// Wraps the text and truncates it with an ellipsis (`…`) at the end of
+    /// the last visible line if it exceeds the given number of lines.
+    pub fn line_clamp(mut self, lines: usize) -> Self {
+        self.base = self.base.line_clamp(lines);
         self
     }
 }
@@ -215,7 +241,9 @@ impl LabelCommon for Label {
     }
 
     fn single_line(mut self) -> Self {
-        self.label = SharedString::from(self.label.replace('\n', "⏎"));
+        if let Cow::Owned(replaced) = replace_control_characters(&self.label) {
+            self.label = SharedString::from(replaced);
+        }
         self.base = self.base.single_line();
         self
     }
@@ -233,8 +261,120 @@ impl LabelCommon for Label {
 }
 
 impl RenderOnce for Label {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if self.render_code_spans {
+            if let Some((stripped, code_ranges)) = parse_backtick_spans(&self.label) {
+                let buffer_font_family = theme::theme_settings(cx).buffer_font(cx).family.clone();
+                let background_color = cx.theme().colors().element_background;
+
+                let highlights = code_ranges.iter().map(|range| {
+                    (
+                        range.clone(),
+                        HighlightStyle {
+                            background_color: Some(background_color),
+                            ..Default::default()
+                        },
+                    )
+                });
+
+                let font_overrides = code_ranges
+                    .iter()
+                    .map(|range| (range.clone(), buffer_font_family.clone()));
+
+                return self.base.child(
+                    StyledText::new(stripped)
+                        .with_highlights(highlights)
+                        .with_font_family_overrides(font_overrides),
+                );
+            }
+        }
         self.base.child(self.label)
+    }
+}
+
+/// Parses backtick-delimited code spans from a string.
+///
+/// Returns `None` if there are no matched backtick pairs.
+/// Otherwise returns the text with backticks stripped and the byte ranges
+/// of the code spans in the stripped string.
+fn parse_backtick_spans(text: &str) -> Option<(SharedString, Vec<Range<usize>>)> {
+    if !text.contains('`') {
+        return None;
+    }
+
+    let mut stripped = String::with_capacity(text.len());
+    let mut code_ranges = Vec::new();
+    let mut in_code = false;
+    let mut code_start = 0;
+
+    for ch in text.chars() {
+        if ch == '`' {
+            if in_code {
+                code_ranges.push(code_start..stripped.len());
+            } else {
+                code_start = stripped.len();
+            }
+            in_code = !in_code;
+        } else {
+            stripped.push(ch);
+        }
+    }
+
+    if code_ranges.is_empty() {
+        return None;
+    }
+
+    Some((SharedString::from(stripped), code_ranges))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_single_line_replaces_control_characters() {
+        // File names are allowed to contain these, and rendering them verbatim
+        // breaks the layout of tabs and project panel entries.
+        let label = Label::new("a\nb\rc\td").single_line();
+        assert_eq!(label.label, "a⏎b␍c␉d");
+    }
+
+    #[test]
+    fn test_single_line_leaves_printable_text_alone() {
+        let label = Label::new("main.rs").single_line();
+        assert_eq!(label.label, "main.rs");
+    }
+
+    #[test]
+    fn test_parse_backtick_spans_no_backticks() {
+        assert_eq!(parse_backtick_spans("plain text"), None);
+    }
+
+    #[test]
+    fn test_parse_backtick_spans_single_span() {
+        let (text, ranges) = parse_backtick_spans("use `zed` to open").unwrap();
+        assert_eq!(text.as_ref(), "use zed to open");
+        assert_eq!(ranges, vec![4..7]);
+    }
+
+    #[test]
+    fn test_parse_backtick_spans_multiple_spans() {
+        let (text, ranges) = parse_backtick_spans("flags `-e` or `-n`").unwrap();
+        assert_eq!(text.as_ref(), "flags -e or -n");
+        assert_eq!(ranges, vec![6..8, 12..14]);
+    }
+
+    #[test]
+    fn test_parse_backtick_spans_unmatched_backtick() {
+        // A trailing unmatched backtick should not produce a code range
+        assert_eq!(parse_backtick_spans("trailing `backtick"), None);
+    }
+
+    #[test]
+    fn test_parse_backtick_spans_empty_span() {
+        let (text, ranges) = parse_backtick_spans("empty `` span").unwrap();
+        assert_eq!(text.as_ref(), "empty  span");
+        assert_eq!(ranges, vec![6..6]);
     }
 }
 
@@ -243,13 +383,13 @@ impl Component for Label {
         ComponentScope::Typography
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A text label component that supports various styles, sizes, and formatting options.")
+    fn description() -> &'static str {
+        "A text label component that supports various styles, \
+        sizes, and formatting options."
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
+        v_flex()
                 .gap_6()
                 .children(vec![
                     example_group_with_title(
@@ -296,6 +436,5 @@ impl Component for Label {
                     ),
                 ])
                 .into_any_element()
-        )
     }
 }

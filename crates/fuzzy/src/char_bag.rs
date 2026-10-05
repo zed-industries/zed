@@ -1,5 +1,9 @@
 use std::iter::FromIterator;
 
+pub fn simple_lowercase(c: char) -> char {
+    c.to_lowercase().next().unwrap_or(c)
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct CharBag(u64);
 
@@ -9,7 +13,7 @@ impl CharBag {
     }
 
     fn insert(&mut self, c: char) {
-        let c = c.to_ascii_lowercase();
+        let c = simple_lowercase(c);
         if c.is_ascii_lowercase() {
             let mut count = self.0;
             let idx = c as u8 - b'a';

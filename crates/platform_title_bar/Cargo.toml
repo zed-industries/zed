@@ -11,9 +11,9 @@ workspace = true
 [lib]
 path = "src/platform_title_bar.rs"
 doctest = false
+test = false
 
 [dependencies]
-feature_flags.workspace = true
 gpui.workspace = true
 project.workspace = true
 settings.workspace = true

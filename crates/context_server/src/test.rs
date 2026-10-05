@@ -27,7 +27,9 @@ fn create_initialize_response(server_name: String) -> InitializeResponse {
         protocol_version: ProtocolVersion(crate::types::LATEST_PROTOCOL_VERSION.to_string()),
         server_info: Implementation {
             name: server_name,
+            title: None,
             version: "1.0.0".to_string(),
+            description: None,
         },
         capabilities: ServerCapabilities::default(),
         meta: None,

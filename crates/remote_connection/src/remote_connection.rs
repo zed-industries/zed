@@ -19,7 +19,7 @@ use ui::{
     prelude::*,
 };
 use ui_input::{ERASED_EDITOR_FACTORY, ErasedEditor};
-use workspace::{DismissDecision, ModalView};
+use workspace::{DismissDecision, ModalView, Workspace};
 
 pub struct RemoteConnectionPrompt {
     connection_string: SharedString,
@@ -28,6 +28,7 @@ pub struct RemoteConnectionPrompt {
     is_devcontainer: bool,
     status_message: Option<SharedString>,
     prompt: Option<(Entity<Markdown>, oneshot::Sender<EncryptedPassword>)>,
+    prompt_cancellation_task: Option<Task<()>>,
     cancellation: Option<oneshot::Sender<()>>,
     editor: Arc<dyn ErasedEditor>,
     is_password_prompt: bool,
@@ -72,6 +73,7 @@ impl RemoteConnectionPrompt {
             status_message: None,
             cancellation: None,
             prompt: None,
+            prompt_cancellation_task: None,
             is_password_prompt: false,
             is_masked: true,
         }
@@ -85,6 +87,7 @@ impl RemoteConnectionPrompt {
         &mut self,
         prompt: String,
         tx: oneshot::Sender<EncryptedPassword>,
+        cancellation: oneshot::Receiver<()>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -95,6 +98,14 @@ impl RemoteConnectionPrompt {
 
         let markdown = cx.new(|cx| Markdown::new_text(prompt.into(), cx));
         self.prompt = Some((markdown, tx));
+        self.prompt_cancellation_task = Some(cx.spawn(async move |this, cx| {
+            cancellation.await.ok();
+            this.update(cx, |this, cx| {
+                this.prompt.take();
+                cx.notify();
+            })
+            .ok();
+        }));
         self.status_message.take();
         window.focus(&self.editor.focus_handle(cx), cx);
         cx.notify();
@@ -107,6 +118,7 @@ impl RemoteConnectionPrompt {
 
     pub fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((_, tx)) = self.prompt.take() {
+            self.prompt_cancellation_task.take();
             self.status_message = Some("Connecting".into());
 
             let pw = self.editor.text(cx);
@@ -241,7 +253,7 @@ impl RemoteConnectionModal {
                 (options.distro_name.clone(), None, true, false)
             }
             RemoteConnectionOptions::Docker(options) => (options.name.clone(), None, false, true),
-            #[cfg(any(test, feature = "test-support"))]
+            #[cfg(feature = "test-support")]
             RemoteConnectionOptions::Mock(options) => {
                 (format!("mock-{}", options.id), None, false, false)
             }
@@ -394,7 +406,7 @@ impl Render for RemoteConnectionModal {
                         .child(Label::new("Cancel"))
                         .end_slot(
                             KeyBinding::for_action_in(&menu::Cancel, &self.focus_handle(cx), cx)
-                                .size(rems_from_px(12.)),
+                                .size(rems_from_px(12_f32)),
                         )
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.dismiss(&menu::Cancel, window, cx);
@@ -452,6 +464,7 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
         &self,
         prompt: String,
         tx: oneshot::Sender<EncryptedPassword>,
+        cancellation: oneshot::Receiver<()>,
         cx: &mut AsyncApp,
     ) {
         let mut known_password = self.known_password.clone();
@@ -461,7 +474,7 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
             self.window
                 .update(cx, |_, window, cx| {
                     self.ui.update(cx, |modal, cx| {
-                        modal.set_prompt(prompt, tx, window, cx);
+                        modal.set_prompt(prompt, tx, cancellation, window, cx);
                     })
                 })
                 .ok();
@@ -536,6 +549,160 @@ impl RemoteClientDelegate {
     }
 }
 
+/// Shows a [`RemoteConnectionModal`] on the given workspace and establishes
+/// a remote connection. This is a convenience wrapper around
+/// [`RemoteConnectionModal`] and [`connect`] suitable for use as the
+/// `connect_remote` callback in [`MultiWorkspace::find_or_create_workspace`].
+///
+/// When the global connection pool already has a live connection for the
+/// given options, the modal is skipped entirely and the connection is
+/// reused silently.
+pub fn connect_with_modal(
+    workspace: &Entity<Workspace>,
+    connection_options: RemoteConnectionOptions,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<Result<Option<Entity<RemoteClient>>>> {
+    if remote::has_active_connection(&connection_options, cx) {
+        return connect_reusing_pool(connection_options, cx);
+    }
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.toggle_modal(window, cx, |window, cx| {
+            RemoteConnectionModal::new(&connection_options, Vec::new(), window, cx)
+        });
+        let Some(modal) = workspace.active_modal::<RemoteConnectionModal>(cx) else {
+            return Task::ready(Err(anyhow::anyhow!(
+                "Failed to open remote connection dialog"
+            )));
+        };
+        let prompt = modal.read(cx).prompt.clone();
+        connect(
+            ConnectionIdentifier::setup(),
+            connection_options,
+            prompt,
+            window,
+            cx,
+        )
+    })
+}
+
+/// Dismisses any active [`RemoteConnectionModal`] on the given workspace.
+///
+/// This should be called after a remote connection attempt completes
+/// (success or failure) when the modal was shown on a workspace that may
+/// outlive the connection flow — for example, when the modal is shown
+/// on a local workspace before switching to a newly-created remote
+/// workspace.
+pub fn dismiss_connection_modal(workspace: &Entity<Workspace>, cx: &mut gpui::AsyncWindowContext) {
+    workspace
+        .update_in(cx, |workspace, _window, cx| {
+            if let Some(modal) = workspace.active_modal::<RemoteConnectionModal>(cx) {
+                modal.update(cx, |modal, cx| modal.finished(cx));
+            }
+        })
+        .ok();
+}
+
+/// Creates a [`RemoteClient`] by reusing an existing connection from the
+/// global pool. No interactive UI is shown. This should only be called
+/// when [`remote::has_active_connection`] returns `true`.
+pub fn connect_reusing_pool(
+    connection_options: RemoteConnectionOptions,
+    cx: &mut App,
+) -> Task<Result<Option<Entity<RemoteClient>>>> {
+    let delegate: Arc<dyn remote::RemoteClientDelegate> = Arc::new(BackgroundRemoteClientDelegate);
+
+    cx.spawn(async move |cx| {
+        let connection = remote::connect(connection_options, delegate.clone(), cx).await?;
+
+        let (_cancel_guard, cancel_rx) = oneshot::channel::<()>();
+        cx.update(|cx| {
+            RemoteClient::new(
+                ConnectionIdentifier::setup(),
+                connection,
+                cancel_rx,
+                delegate,
+                cx,
+            )
+        })
+        .await
+    })
+}
+
+/// Delegate for remote connections that reuse an existing pooled
+/// connection. Password prompts are not expected (the SSH transport
+/// is already established), but server binary downloads are supported
+/// via [`AutoUpdater`].
+struct BackgroundRemoteClientDelegate;
+
+impl remote::RemoteClientDelegate for BackgroundRemoteClientDelegate {
+    fn ask_password(
+        &self,
+        prompt: String,
+        _tx: oneshot::Sender<EncryptedPassword>,
+        _cancellation: oneshot::Receiver<()>,
+        _cx: &mut AsyncApp,
+    ) {
+        log::warn!(
+            "Pooled remote connection unexpectedly requires a password \
+             (prompt: {prompt})"
+        );
+    }
+
+    fn set_status(&self, _status: Option<&str>, _cx: &mut AsyncApp) {}
+
+    fn download_server_binary_locally(
+        &self,
+        platform: RemotePlatform,
+        release_channel: ReleaseChannel,
+        version: Option<Version>,
+        cx: &mut AsyncApp,
+    ) -> Task<anyhow::Result<PathBuf>> {
+        cx.spawn(async move |cx| {
+            AutoUpdater::download_remote_server_release(
+                release_channel,
+                version.clone(),
+                platform.os.as_str(),
+                platform.arch.as_str(),
+                |_status, _cx| {},
+                cx,
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "Downloading remote server binary (version: {}, os: {}, arch: {})",
+                    version
+                        .as_ref()
+                        .map(|v| format!("{v}"))
+                        .unwrap_or("unknown".to_string()),
+                    platform.os,
+                    platform.arch,
+                )
+            })
+        })
+    }
+
+    fn get_download_url(
+        &self,
+        platform: RemotePlatform,
+        release_channel: ReleaseChannel,
+        version: Option<Version>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<Option<String>>> {
+        cx.spawn(async move |cx| {
+            AutoUpdater::get_remote_server_release_url(
+                release_channel,
+                version,
+                platform.os.as_str(),
+                platform.arch.as_str(),
+                cx,
+            )
+            .await
+        })
+    }
+}
+
 pub fn connect(
     unique_identifier: ConnectionIdentifier,
     connection_options: RemoteConnectionOptions,
@@ -573,3 +740,114 @@ pub fn connect(
 }
 
 use anyhow::Context as _;
+
+#[cfg(test)]
+mod tests {
+    use editor::Editor;
+    use gpui::TestAppContext;
+    use settings::SettingsStore;
+
+    use super::*;
+
+    #[gpui::test]
+    fn clears_prompt_when_password_request_is_cancelled(cx: &mut TestAppContext) {
+        initialize_test(cx);
+
+        let window = cx.add_window(|window, cx| Editor::single_line(window, cx));
+        let prompt = window
+            .update(cx, |_, window, cx| {
+                cx.new(|cx| {
+                    RemoteConnectionPrompt::new(
+                        "example.com".to_string(),
+                        None,
+                        false,
+                        false,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .expect("test window should remain open");
+
+        let (response_sender, _response_receiver) = oneshot::channel();
+        let (cancellation_sender, cancellation) = oneshot::channel();
+        window
+            .update(cx, |_, window, cx| {
+                prompt.update(cx, |prompt, cx| {
+                    prompt.set_prompt(
+                        "Confirm user presence".to_string(),
+                        response_sender,
+                        cancellation,
+                        window,
+                        cx,
+                    );
+                });
+            })
+            .expect("test window should remain open");
+
+        drop(cancellation_sender);
+        cx.run_until_parked();
+
+        assert!(prompt.read_with(cx, |prompt, _| prompt.prompt.is_none()));
+    }
+
+    #[gpui::test]
+    fn stale_cancellation_does_not_clear_replacement_prompt(cx: &mut TestAppContext) {
+        initialize_test(cx);
+
+        let window = cx.add_window(|window, cx| Editor::single_line(window, cx));
+        let prompt = window
+            .update(cx, |_, window, cx| {
+                cx.new(|cx| {
+                    RemoteConnectionPrompt::new(
+                        "example.com".to_string(),
+                        None,
+                        false,
+                        false,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .expect("test window should remain open");
+
+        let (first_response_sender, _first_response_receiver) = oneshot::channel();
+        let (first_cancellation_sender, first_cancellation) = oneshot::channel();
+        let (second_response_sender, _second_response_receiver) = oneshot::channel();
+        let (_second_cancellation_sender, second_cancellation) = oneshot::channel();
+        window
+            .update(cx, |_, window, cx| {
+                prompt.update(cx, |prompt, cx| {
+                    prompt.set_prompt(
+                        "First prompt".to_string(),
+                        first_response_sender,
+                        first_cancellation,
+                        window,
+                        cx,
+                    );
+                    prompt.set_prompt(
+                        "Second prompt".to_string(),
+                        second_response_sender,
+                        second_cancellation,
+                        window,
+                        cx,
+                    );
+                });
+            })
+            .expect("test window should remain open");
+
+        drop(first_cancellation_sender);
+        cx.run_until_parked();
+
+        assert!(prompt.read_with(cx, |prompt, _| prompt.prompt.is_some()));
+    }
+
+    fn initialize_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+    }
+}

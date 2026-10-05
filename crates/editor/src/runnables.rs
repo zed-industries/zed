@@ -8,14 +8,8 @@ use gpui::{
 };
 use language::{Buffer, BufferRow, Runnable};
 use lsp::LanguageServerName;
-use multi_buffer::{
-    Anchor, BufferOffset, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot, ToPoint as _,
-};
-use project::{
-    Location, Project, TaskSourceKind,
-    debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
-    project_settings::ProjectSettings,
-};
+use multi_buffer::{Anchor, BufferOffset, MultiBufferRow, MultiBufferSnapshot, ToPoint as _};
+use project::{Location, Project, TaskSourceKind, project_settings::ProjectSettings};
 use settings::Settings as _;
 use smallvec::SmallVec;
 use task::{ResolvedTask, RunnableTag, TaskContext, TaskTemplate, TaskVariables, VariableName};
@@ -24,12 +18,14 @@ use ui::{Clickable as _, Color, IconButton, IconSize, Toggleable as _};
 
 use crate::{
     CodeActionSource, Editor, EditorSettings, EditorStyle, RangeToAnchorExt, SpawnNearestTask,
-    ToggleCodeActions, UPDATE_DEBOUNCE, display_map::DisplayRow,
+    ToggleCodeActions, UPDATE_DEBOUNCE,
+    display_map::{DisplayPoint, DisplayRow},
 };
 
 #[derive(Debug)]
 pub(super) struct RunnableData {
     runnables: HashMap<BufferId, (Global, BTreeMap<BufferRow, RunnableTasks>)>,
+    task_statuses: HashMap<(BufferId, BufferRow), RunnableTaskStatus>,
     invalidate_buffer_data: HashSet<BufferId>,
     runnables_update_task: Task<()>,
 }
@@ -38,6 +34,7 @@ impl RunnableData {
     pub fn new() -> Self {
         Self {
             runnables: HashMap::default(),
+            task_statuses: HashMap::default(),
             invalidate_buffer_data: HashSet::default(),
             runnables_update_task: Task::ready(()),
         }
@@ -54,6 +51,42 @@ impl RunnableData {
         self.runnables
             .values()
             .flat_map(|(_, tasks)| tasks.values())
+    }
+
+    pub fn task_status(
+        &self,
+        (buffer_id, buffer_row): (BufferId, BufferRow),
+    ) -> Option<RunnableTaskStatus> {
+        self.task_statuses.get(&(buffer_id, buffer_row)).copied()
+    }
+
+    pub fn set_task_status(
+        &mut self,
+        (buffer_id, buffer_row): (BufferId, BufferRow),
+        status: RunnableTaskStatus,
+    ) {
+        self.task_statuses.insert((buffer_id, buffer_row), status);
+    }
+
+    pub fn clear_task_status(&mut self, (buffer_id, buffer_row): (BufferId, BufferRow)) {
+        self.task_statuses.remove(&(buffer_id, buffer_row));
+    }
+
+    pub fn task_key_for_offset(
+        &self,
+        buffer_id: BufferId,
+        offset: BufferOffset,
+    ) -> Option<(BufferId, BufferRow)> {
+        let (_, tasks_by_row) = self.runnables.get(&buffer_id)?;
+        tasks_by_row
+            .iter()
+            .find(|(_, tasks)| tasks.context_range.contains(&offset))
+            .or_else(|| {
+                tasks_by_row
+                    .iter()
+                    .find(|(_, tasks)| tasks.context_range.start >= offset)
+            })
+            .map(|(row, _)| (buffer_id, *row))
     }
 
     pub fn has_cached(&self, buffer_id: BufferId, version: &Global) -> bool {
@@ -75,6 +108,24 @@ impl RunnableData {
             .or_insert_with(|| (version, BTreeMap::default()))
             .1
             .insert(buffer_row, tasks);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RunnableTaskStatus {
+    Running,
+    Passed,
+    Failed,
+}
+
+impl From<workspace::tasks::ScheduledTaskResult> for RunnableTaskStatus {
+    fn from(result: workspace::tasks::ScheduledTaskResult) -> Self {
+        match result {
+            workspace::tasks::ScheduledTaskResult::Success => Self::Passed,
+            workspace::tasks::ScheduledTaskResult::Failure
+            | workspace::tasks::ScheduledTaskResult::SpawnFailed
+            | workspace::tasks::ScheduledTaskResult::Cancelled => Self::Failed,
+        }
     }
 }
 
@@ -124,11 +175,14 @@ impl Editor {
             return;
         }
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
-            let buffer_id = buffer.read(cx).remote_id();
+            let buffer_read = buffer.read(cx);
+            if buffer_read.file().is_none() {
+                self.clear_runnables(None);
+                return;
+            }
+            let buffer_id = buffer_read.remote_id();
             if invalidate_buffer_data != Some(buffer_id)
-                && self
-                    .runnables
-                    .has_cached(buffer_id, &buffer.read(cx).version())
+                && self.runnables.has_cached(buffer_id, &buffer_read.version())
             {
                 return;
             }
@@ -165,7 +219,7 @@ impl Editor {
                     .update(cx, |editor, cx| {
                         let multi_buffer = editor.buffer().read(cx);
                         if multi_buffer.is_singleton() {
-                            Some((multi_buffer.snapshot(cx), Anchor::min()..Anchor::max()))
+                            Some((multi_buffer.snapshot(cx), Anchor::Min..Anchor::Max))
                         } else {
                             let display_snapshot =
                                 editor.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -209,16 +263,8 @@ impl Editor {
                     .fold(HashMap::default(), |mut acc, (kind, location, task)| {
                         let buffer = location.target.buffer;
                         let buffer_snapshot = buffer.read(cx).snapshot();
-                        let offset = multi_buffer_snapshot.excerpts().find_map(
-                            |(excerpt_id, snapshot, _)| {
-                                if snapshot.remote_id() == buffer_snapshot.remote_id() {
-                                    multi_buffer_snapshot
-                                        .anchor_in_excerpt(excerpt_id, location.target.range.start)
-                                } else {
-                                    None
-                                }
-                            },
-                        );
+                        let offset =
+                            multi_buffer_snapshot.anchor_in_excerpt(location.target.range.start);
                         if let Some(offset) = offset {
                             let task_buffer_range =
                                 location.target.range.to_point(&buffer_snapshot);
@@ -318,21 +364,45 @@ impl Editor {
             return;
         };
 
+        let buffer_id = buffer.read(cx).remote_id();
+        let editor = cx.weak_entity();
         let reveal_strategy = action.reveal;
         let task_context = Self::build_tasks_context(&project, &buffer, buffer_row, &tasks, cx);
         cx.spawn_in(window, async move |_, cx| {
-            let context = task_context.await?;
+            let context = task_context.await.ok().flatten()?;
             let (task_source_kind, mut resolved_task) = tasks.resolve(&context).next()?;
 
             let resolved = &mut resolved_task.resolved;
             resolved.reveal = reveal_strategy;
 
+            editor
+                .update(cx, |editor, cx| {
+                    editor.set_runnable_task_status(
+                        buffer_id,
+                        buffer_row,
+                        RunnableTaskStatus::Running,
+                        cx,
+                    );
+                })
+                .ok();
             workspace
                 .update_in(cx, |workspace, window, cx| {
-                    workspace.schedule_resolved_task(
+                    workspace.schedule_resolved_task_with_completion(
                         task_source_kind,
                         resolved_task,
                         false,
+                        move |result, cx| {
+                            editor
+                                .update(cx, |editor, cx| {
+                                    editor.set_runnable_task_status(
+                                        buffer_id,
+                                        buffer_row,
+                                        RunnableTaskStatus::from(result),
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                        },
                         window,
                         cx,
                     );
@@ -345,11 +415,68 @@ impl Editor {
     pub fn clear_runnables(&mut self, for_buffer: Option<BufferId>) {
         if let Some(buffer_id) = for_buffer {
             self.runnables.runnables.remove(&buffer_id);
+            self.runnables
+                .task_statuses
+                .retain(|(status_buffer_id, _), _| *status_buffer_id != buffer_id);
         } else {
             self.runnables.runnables.clear();
+            self.runnables.task_statuses.clear();
         }
         self.runnables.invalidate_buffer_data.clear();
         self.runnables.runnables_update_task = Task::ready(());
+    }
+
+    pub(crate) fn runnable_task_status(
+        &self,
+        buffer_id: BufferId,
+        buffer_row: BufferRow,
+    ) -> Option<RunnableTaskStatus> {
+        self.runnables.task_status((buffer_id, buffer_row))
+    }
+
+    pub(crate) fn set_runnable_task_status(
+        &mut self,
+        buffer_id: BufferId,
+        buffer_row: BufferRow,
+        status: RunnableTaskStatus,
+        cx: &mut Context<Self>,
+    ) {
+        self.runnables
+            .set_task_status((buffer_id, buffer_row), status);
+        cx.notify();
+    }
+
+    pub(crate) fn clear_runnable_task_status(
+        &mut self,
+        buffer_id: BufferId,
+        buffer_row: BufferRow,
+        cx: &mut Context<Self>,
+    ) {
+        self.runnables.clear_task_status((buffer_id, buffer_row));
+        cx.notify();
+    }
+
+    pub(crate) fn runnable_task_key_for_display_row(
+        &self,
+        display_row: DisplayRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(BufferId, BufferRow)> {
+        let snapshot = self.snapshot(window, cx);
+        let multibuffer_row =
+            MultiBufferRow(DisplayPoint::new(display_row, 0).to_point(&snapshot).row);
+        let (buffer_snapshot, range) = snapshot
+            .buffer_snapshot()
+            .buffer_line_for_row(multibuffer_row)?;
+        Some((buffer_snapshot.remote_id(), range.start.row))
+    }
+
+    pub(crate) fn runnable_task_key_for_offset(
+        &self,
+        buffer_id: BufferId,
+        offset: BufferOffset,
+    ) -> Option<(BufferId, BufferRow)> {
+        self.runnables.task_key_for_offset(buffer_id, offset)
     }
 
     pub fn task_context(&self, window: &mut Window, cx: &mut App) -> Task<Option<TaskContext>> {
@@ -369,20 +496,23 @@ impl Editor {
             (selection, buffer, snapshot)
         };
         let selection_range = selection.range();
-        let start = editor_snapshot
+        let Some((_, range)) = editor_snapshot
             .display_snapshot
             .buffer_snapshot()
-            .anchor_after(selection_range.start)
-            .text_anchor;
-        let end = editor_snapshot
-            .display_snapshot
-            .buffer_snapshot()
-            .anchor_after(selection_range.end)
-            .text_anchor;
-        let location = Location {
-            buffer,
-            range: start..end,
+            .anchor_range_to_buffer_anchor_range(
+                editor_snapshot
+                    .display_snapshot
+                    .buffer_snapshot()
+                    .anchor_after(selection_range.start)
+                    ..editor_snapshot
+                        .display_snapshot
+                        .buffer_snapshot()
+                        .anchor_before(selection_range.end),
+            )
+        else {
+            return Task::ready(None);
         };
+        let location = Location { buffer, range };
         let captured_variables = {
             let mut variables = TaskVariables::default();
             let buffer = location.buffer.read(cx);
@@ -413,11 +543,12 @@ impl Editor {
             variables
         };
 
-        project.update(cx, |project, cx| {
+        let task = project.update(cx, |project, cx| {
             project.task_store().update(cx, |task_store, cx| {
                 task_store.task_context_for_location(captured_variables, location, cx)
             })
-        })
+        });
+        cx.background_spawn(async move { task.await.ok().flatten() })
     }
 
     pub fn lsp_task_sources(
@@ -430,9 +561,9 @@ impl Editor {
             return HashMap::default();
         }
         let buffers = if visible_only {
-            self.visible_excerpts(true, cx)
-                .into_values()
-                .map(|(buffer, _, _)| buffer)
+            self.visible_buffers(cx)
+                .into_iter()
+                .filter(|buffer| self.is_lsp_relevant(buffer.read(cx).file(), cx))
                 .collect()
         } else {
             self.buffer().read(cx).all_buffers()
@@ -482,19 +613,15 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<(Entity<Buffer>, u32, Arc<RunnableTasks>)> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let offset = self
-            .selections
-            .newest::<MultiBufferOffset>(&self.display_snapshot(cx))
-            .head();
-        let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
-        let offset = excerpt.map_offset_to_buffer(offset);
-        let buffer_id = excerpt.buffer().remote_id();
+        let anchor = self.selections.newest_anchor().head();
+        let (anchor, buffer_snapshot) = snapshot.anchor_to_buffer_anchor(anchor)?;
+        let offset = anchor.to_offset(buffer_snapshot);
 
-        let layer = excerpt.buffer().syntax_layer_at(offset)?;
+        let layer = buffer_snapshot.syntax_layer_at(offset)?;
         let mut cursor = layer.node().walk();
 
-        while cursor.goto_first_child_for_byte(offset.0).is_some() {
-            if cursor.node().end_byte() == offset.0 {
+        while cursor.goto_first_child_for_byte(offset).is_some() {
+            if cursor.node().end_byte() == offset {
                 cursor.goto_next_sibling();
             }
         }
@@ -503,18 +630,18 @@ impl Editor {
         loop {
             let node = cursor.node();
             let node_range = node.byte_range();
-            let symbol_start_row = excerpt.buffer().offset_to_point(node.start_byte()).row;
+            let symbol_start_row = buffer_snapshot.offset_to_point(node.start_byte()).row;
 
             // Check if this node contains our offset
-            if node_range.start <= offset.0 && node_range.end >= offset.0 {
+            if node_range.start <= offset && node_range.end >= offset {
                 // If it contains offset, check for task
                 if let Some(tasks) = self
                     .runnables
                     .runnables
-                    .get(&buffer_id)
+                    .get(&buffer_snapshot.remote_id())
                     .and_then(|(_, tasks)| tasks.get(&symbol_start_row))
                 {
-                    let buffer = self.buffer.read(cx).buffer(buffer_id)?;
+                    let buffer = self.buffer.read(cx).buffer(buffer_snapshot.remote_id())?;
                     return Some((buffer, symbol_start_row, Arc::new(tasks.to_owned())));
                 }
             }
@@ -526,44 +653,53 @@ impl Editor {
         None
     }
 
-    pub fn render_run_indicator(
+    pub(crate) fn render_run_indicator(
         &self,
         _style: &EditorStyle,
         is_active: bool,
+        active_breakpoint: Option<Anchor>,
+        task_status: Option<RunnableTaskStatus>,
         row: DisplayRow,
-        breakpoint: Option<(Anchor, Breakpoint, Option<BreakpointSessionState>)>,
         cx: &mut Context<Self>,
     ) -> IconButton {
-        let color = Color::Muted;
-        let position = breakpoint.as_ref().map(|(anchor, _, _)| *anchor);
+        let (icon, color) = match task_status {
+            Some(RunnableTaskStatus::Running) => (ui::IconName::PlayOutlined, Color::Accent),
+            Some(RunnableTaskStatus::Passed) => (ui::IconName::Check, Color::Success),
+            Some(RunnableTaskStatus::Failed) => (ui::IconName::XCircle, Color::Error),
+            None => (ui::IconName::PlayOutlined, Color::Muted),
+        };
 
-        IconButton::new(
-            ("run_indicator", row.0 as usize),
-            ui::IconName::PlayOutlined,
-        )
-        .shape(ui::IconButtonShape::Square)
-        .icon_size(IconSize::XSmall)
-        .icon_color(color)
-        .toggle_state(is_active)
-        .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
-            let quick_launch = match e {
-                ClickEvent::Keyboard(_) => true,
-                ClickEvent::Mouse(e) => e.down.button == MouseButton::Left,
-            };
+        IconButton::new(("run_indicator", row.0 as usize), icon)
+            .shape(ui::IconButtonShape::Square)
+            .icon_size(IconSize::XSmall)
+            .icon_color(color)
+            .toggle_state(is_active)
+            .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
+                let quick_launch = match e {
+                    ClickEvent::Keyboard(_) => true,
+                    ClickEvent::Mouse(e) => e.down.button == MouseButton::Left,
+                    ClickEvent::Touch(_) => true,
+                };
 
-            window.focus(&editor.focus_handle(cx), cx);
-            editor.toggle_code_actions(
-                &ToggleCodeActions {
-                    deployed_from: Some(CodeActionSource::RunMenu(row)),
-                    quick_launch,
-                },
-                window,
-                cx,
-            );
-        }))
-        .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-            editor.set_breakpoint_context_menu(row, position, event.position(), window, cx);
-        }))
+                window.focus(&editor.focus_handle(cx), cx);
+                editor.toggle_code_actions(
+                    &ToggleCodeActions {
+                        deployed_from: Some(CodeActionSource::RunMenu(row)),
+                        quick_launch,
+                    },
+                    window,
+                    cx,
+                );
+            }))
+            .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
+                editor.set_gutter_context_menu(
+                    row,
+                    active_breakpoint,
+                    event.position(),
+                    window,
+                    cx,
+                );
+            }))
     }
 
     fn insert_runnables(
@@ -727,13 +863,16 @@ mod tests {
     use lsp::LanguageServerName;
     use multi_buffer::{MultiBuffer, PathKey};
     use project::{
-        FakeFs, Project,
-        lsp_store::lsp_ext_command::{CargoRunnableArgs, Runnable, RunnableArgs, RunnableKind},
+        FakeFs, Project, ProjectPath,
+        lsp_store::lsp_ext_command::{
+            CargoRunnableArgs, Runnable, RunnableArgs, ShellRunnableArgs,
+        },
     };
     use serde_json::json;
     use task::{TaskTemplate, TaskTemplates};
     use text::Point;
     use util::path;
+    use util::rel_path::rel_path;
 
     use crate::{
         Editor, UPDATE_DEBOUNCE, editor_tests::init_test, scroll::scroll_amount::ScrollAmount,
@@ -1040,7 +1179,6 @@ mod tests {
                             lsp::Position::new(3, 1),
                         ),
                     }),
-                    kind: RunnableKind::Cargo,
                     args: RunnableArgs::Cargo(CargoRunnableArgs {
                         environment: Default::default(),
                         cwd: path!("/project").into(),
@@ -1093,6 +1231,249 @@ mod tests {
             labels,
             Vec::<(text::BufferId, language::BufferRow, Vec<String>)>::new(),
             "Runnables should be removed after #[test] is deleted and LSP returns empty"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_no_runnables_for_unsaved_buffer(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({})).await;
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang_with_task_context());
+
+        let rust_language = language_registry.language_for_name("Rust").await.unwrap();
+        let buffer = cx.new(|cx| {
+            let mut buffer = language::Buffer::local(
+                indoc! {"
+                    fn main() {
+                        println!(\"hello\");
+                    }
+
+                    #[test]
+                    fn test_one() {
+                        assert!(true);
+                    }
+                "},
+                cx,
+            );
+            buffer.set_language(Some(rust_language), cx);
+            buffer
+        });
+
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+        let editor = cx.add_window(|window, cx| {
+            build_editor_with_project(project.clone(), multi_buffer, window, cx)
+        });
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.refresh_runnables(None, window, cx);
+            })
+            .expect("editor update");
+        cx.executor().advance_clock(UPDATE_DEBOUNCE);
+        cx.executor().run_until_parked();
+
+        let labels = editor
+            .update(cx, |editor, _, _| collect_runnable_labels(editor))
+            .expect("editor update");
+        assert_eq!(
+            labels,
+            Vec::<(text::BufferId, language::BufferRow, Vec<String>)>::new(),
+            "No runnables should appear for an unsaved buffer without a file on disk"
+        );
+
+        let worktree_id = project.update(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .next()
+                .expect("worktree")
+                .read(cx)
+                .id()
+        });
+        project
+            .update(cx, |project, cx| {
+                project.save_buffer_as(
+                    buffer.clone(),
+                    ProjectPath {
+                        worktree_id,
+                        path: rel_path("main.rs").into(),
+                    },
+                    cx,
+                )
+            })
+            .await
+            .expect("save buffer as");
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.refresh_runnables(None, window, cx);
+            })
+            .expect("editor update");
+        cx.executor().advance_clock(UPDATE_DEBOUNCE);
+        cx.executor().run_until_parked();
+
+        let labels = editor
+            .update(cx, |editor, _, _| collect_runnable_labels(editor))
+            .expect("editor update");
+        assert!(
+            !labels.is_empty(),
+            "Runnables should appear after the buffer is saved to disk"
+        );
+    }
+
+    // Verifies that a shell runnable from rust-analyzer produces
+    // a task template that uses the shell program and args.
+    #[gpui::test]
+    async fn test_shell_runnable_produces_correct_task_template(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "main.rs": indoc! {"
+                    #[test]
+                    fn test_one() {
+                        assert!(true);
+                    }
+                "},
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang_with_lsp_task_context());
+
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: FAKE_LSP_NAME,
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+        let editor = cx.add_window(|window, cx| {
+            build_editor_with_project(project.clone(), multi_buffer, window, cx)
+        });
+
+        let fake_server = fake_servers.next().await.expect("fake LSP server");
+
+        use project::lsp_store::lsp_ext_command::Runnables;
+        fake_server.set_request_handler::<Runnables, _, _>(move |params, _| async move {
+            let text = params.text_document.uri.path().to_string();
+            if text.contains("main.rs") {
+                let uri = lsp::Uri::from_file_path(path!("/project/main.rs")).expect("valid uri");
+                Ok(vec![Runnable {
+                    label: "nextest test_one".into(),
+                    location: Some(lsp::LocationLink {
+                        origin_selection_range: None,
+                        target_uri: uri,
+                        target_range: lsp::Range::new(
+                            lsp::Position::new(0, 0),
+                            lsp::Position::new(3, 1),
+                        ),
+                        target_selection_range: lsp::Range::new(
+                            lsp::Position::new(0, 0),
+                            lsp::Position::new(3, 1),
+                        ),
+                    }),
+                    args: RunnableArgs::Shell(ShellRunnableArgs {
+                        environment: Default::default(),
+                        cwd: path!("/project").into(),
+                        program: "cargo".into(),
+                        args: vec![
+                            "nextest".into(),
+                            "run".into(),
+                            "--package".into(),
+                            "my-crate".into(),
+                            "--lib".into(),
+                            "--".into(),
+                            "test_one".into(),
+                            "--exact".into(),
+                        ],
+                    }),
+                }])
+            } else {
+                Ok(Vec::new())
+            }
+        });
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.refresh_runnables(None, window, cx);
+            })
+            .expect("editor update");
+        cx.executor().advance_clock(UPDATE_DEBOUNCE);
+        cx.executor().run_until_parked();
+
+        let labels = editor
+            .update(cx, |editor, _, _| collect_runnable_labels(editor))
+            .expect("editor update");
+        assert_eq!(
+            labels,
+            vec![(buffer_id, 0, vec!["nextest test_one".to_string()])],
+            "shell runnable should appear for #[test] fn"
+        );
+
+        let templates = editor
+            .update(cx, |editor, _, _| {
+                editor
+                    .runnables
+                    .runnables
+                    .iter()
+                    .flat_map(|(_, (_, tasks))| {
+                        tasks.values().flat_map(|runnable_tasks| {
+                            runnable_tasks
+                                .templates
+                                .iter()
+                                .map(|(_, template)| {
+                                    (
+                                        template.label.clone(),
+                                        template.command.clone(),
+                                        template.args.clone(),
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .expect("editor update");
+
+        let (label, command, args) = templates
+            .iter()
+            .find(|(label, _, _)| label == "nextest test_one")
+            .expect("shell runnable task template should exist");
+        assert_eq!(label, "nextest test_one");
+        assert_eq!(command, "cargo");
+        assert_eq!(
+            args,
+            &[
+                "nextest",
+                "run",
+                "--package",
+                "my-crate",
+                "--lib",
+                "--",
+                "test_one",
+                "--exact",
+            ],
+            "shell runnable should preserve program args"
         );
     }
 }

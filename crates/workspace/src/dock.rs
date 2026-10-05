@@ -1,18 +1,20 @@
+use crate::focus_follows_mouse::FocusFollowsMouse as _;
 use crate::persistence::model::DockData;
-use crate::{DraggedDock, Event, ModalLayer, Pane};
+use crate::status_bar::HideStatusItem;
+use crate::{DraggedDock, Event, FocusFollowsMouse, ModalLayer, Pane, WorkspaceSettings};
 use crate::{Workspace, status_bar::StatusItemView};
 use anyhow::Context as _;
 use client::proto;
 use db::kvp::KeyValueStore;
 
 use gpui::{
-    Action, AnyView, App, Axis, Context, Corner, Entity, EntityId, EventEmitter, FocusHandle,
+    Action, Anchor, AnyView, App, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement,
     Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window, deferred, div,
     px,
 };
 use serde::{Deserialize, Serialize};
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore, TerminalDockPosition};
 use std::sync::Arc;
 use ui::{
     ContextMenu, CountBadge, Divider, DividerColor, IconButton, Tooltip, prelude::*,
@@ -34,10 +36,21 @@ pub use proto::PanelId;
 pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn persistent_name() -> &'static str;
     fn panel_key() -> &'static str;
+    /// The `Focusable::focus_handle` root identifies the panel's subtree for containment checks
+    /// and must be tracked by the panel's root element. This method returns the handle that should
+    /// receive focus when the panel is activated, such as a filter, commit, or message editor; it
+    /// must be a focus-tree descendant of the root or containment checks such as Zen-mode auto-close
+    /// and toggle-focus will misbehave.
+    fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
+        self.focus_handle(cx)
+    }
     fn position(&self, window: &Window, cx: &App) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
     fn set_position(&mut self, position: DockPosition, window: &mut Window, cx: &mut Context<Self>);
     fn default_size(&self, window: &Window, cx: &App) -> Pixels;
+    fn min_size(&self, _window: &Window, _cx: &App) -> Option<Pixels> {
+        None
+    }
     fn initial_size_state(&self, _window: &Window, _cx: &App) -> PanelSizeState {
         PanelSizeState::default()
     }
@@ -82,6 +95,12 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn is_agent_panel(&self) -> bool {
         false
     }
+    /// Returns metadata describing how to hide this panel's button from the
+    /// status bar by writing to user settings. Implementors should return
+    /// `None` if the panel button cannot be hidden through settings.
+    fn hide_button_setting(&self, _: &App) -> Option<HideStatusItem> {
+        None
+    }
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -97,6 +116,7 @@ pub trait PanelHandle: Send + Sync {
     fn remote_id(&self) -> Option<proto::PanelId>;
     fn pane(&self, cx: &App) -> Option<Entity<Pane>>;
     fn default_size(&self, window: &Window, cx: &App) -> Pixels;
+    fn min_size(&self, window: &Window, cx: &App) -> Option<Pixels>;
     fn initial_size_state(&self, window: &Window, cx: &App) -> PanelSizeState;
     fn size_state_changed(&self, window: &mut Window, cx: &mut App);
     fn supports_flexible_size(&self, cx: &App) -> bool;
@@ -107,10 +127,13 @@ pub trait PanelHandle: Send + Sync {
     fn toggle_action(&self, window: &Window, cx: &App) -> Box<dyn Action>;
     fn icon_label(&self, window: &Window, cx: &App) -> Option<String>;
     fn panel_focus_handle(&self, cx: &App) -> FocusHandle;
+    /// See `Panel::activation_focus_handle`.
+    fn activation_focus_handle(&self, cx: &App) -> FocusHandle;
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &App) -> u32;
     fn enabled(&self, cx: &App) -> bool;
     fn is_agent_panel(&self, cx: &App) -> bool;
+    fn hide_button_setting(&self, cx: &App) -> Option<HideStatusItem>;
     fn move_to_next_position(&self, window: &mut Window, cx: &mut App) {
         let current_position = self.position(window, cx);
         let next_position = [
@@ -180,6 +203,10 @@ where
         self.read(cx).default_size(window, cx)
     }
 
+    fn min_size(&self, window: &Window, cx: &App) -> Option<Pixels> {
+        self.read(cx).min_size(window, cx)
+    }
+
     fn initial_size_state(&self, window: &Window, cx: &App) -> PanelSizeState {
         self.read(cx).initial_size_state(window, cx)
     }
@@ -224,6 +251,10 @@ where
         self.read(cx).focus_handle(cx)
     }
 
+    fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
+        self.read(cx).activation_focus_handle(cx)
+    }
+
     fn activation_priority(&self, cx: &App) -> u32 {
         self.read(cx).activation_priority()
     }
@@ -234,6 +265,10 @@ where
 
     fn is_agent_panel(&self, cx: &App) -> bool {
         self.read(cx).is_agent_panel()
+    }
+
+    fn hide_button_setting(&self, cx: &App) -> Option<HideStatusItem> {
+        self.read(cx).hide_button_setting(cx)
     }
 }
 
@@ -252,10 +287,31 @@ pub struct Dock {
     is_open: bool,
     active_panel_index: Option<usize>,
     focus_handle: FocusHandle,
-    pub(crate) serialized_dock: Option<DockData>,
+    focus_follows_mouse: FocusFollowsMouse,
+    restoration: DockRestoreState,
     zoom_layer_open: bool,
     modal_layer: Entity<ModalLayer>,
     _subscriptions: [Subscription; 2],
+}
+
+enum DockRestoreState {
+    Restoring { pending: Option<DockData> },
+    Finished,
+}
+
+impl DockRestoreState {
+    fn pending(&self) -> Option<&DockData> {
+        match self {
+            Self::Restoring { pending } => pending.as_ref(),
+            Self::Finished => None,
+        }
+    }
+
+    fn discard_pending(&mut self) {
+        if let Self::Restoring { pending } = self {
+            *pending = None;
+        }
+    }
 }
 
 impl Focusable for Dock {
@@ -291,6 +347,16 @@ impl Into<settings::DockPosition> for DockPosition {
     }
 }
 
+impl From<TerminalDockPosition> for DockPosition {
+    fn from(value: TerminalDockPosition) -> Self {
+        match value {
+            TerminalDockPosition::Left => DockPosition::Left,
+            TerminalDockPosition::Bottom => DockPosition::Bottom,
+            TerminalDockPosition::Right => DockPosition::Right,
+        }
+    }
+}
+
 impl DockPosition {
     fn label(&self) -> &'static str {
         match self {
@@ -318,7 +384,7 @@ pub struct PanelSizeState {
 struct PanelEntry {
     panel: Arc<dyn PanelHandle>,
     size_state: PanelSizeState,
-    _subscriptions: [Subscription; 3],
+    _subscriptions: [Subscription; 4],
 }
 
 pub struct PanelButtons {
@@ -327,6 +393,15 @@ pub struct PanelButtons {
 }
 
 pub(crate) const PANEL_SIZE_STATE_KEY: &str = "dock_panel_size";
+
+fn panel_uses_flexible_width(
+    position: DockPosition,
+    panel: &dyn PanelHandle,
+    window: &Window,
+    cx: &App,
+) -> bool {
+    position.axis() == Axis::Horizontal && panel.has_flexible_size(window, cx)
+}
 
 fn resize_panel_entry(
     position: DockPosition,
@@ -337,8 +412,8 @@ fn resize_panel_entry(
     cx: &mut App,
 ) -> (&'static str, PanelSizeState) {
     let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
-    let use_flex = entry.panel.has_flexible_size(window, cx) && position.axis() == Axis::Horizontal;
-    if use_flex {
+    let uses_flexible_width = panel_uses_flexible_width(position, entry.panel.as_ref(), window, cx);
+    if uses_flexible_width {
         entry.size_state.flex = flex;
     } else {
         entry.size_state.size = size;
@@ -360,7 +435,10 @@ impl Dock {
             let focus_subscription =
                 cx.on_focus(&focus_handle, window, |dock: &mut Dock, window, cx| {
                     if let Some(active_entry) = dock.active_panel_entry() {
-                        active_entry.panel.panel_focus_handle(cx).focus(window, cx)
+                        active_entry
+                            .panel
+                            .activation_focus_handle(cx)
+                            .focus(window, cx)
                     }
                 });
             let zoom_subscription = cx.subscribe(&workspace, |dock, workspace, e: &Event, cx| {
@@ -376,8 +454,9 @@ impl Dock {
                 active_panel_index: None,
                 is_open: false,
                 focus_handle: focus_handle.clone(),
+                focus_follows_mouse: WorkspaceSettings::get_global(cx).focus_follows_mouse,
                 _subscriptions: [focus_subscription, zoom_subscription],
-                serialized_dock: None,
+                restoration: DockRestoreState::Restoring { pending: None },
                 zoom_layer_open: false,
                 modal_layer,
             }
@@ -487,11 +566,23 @@ impl Dock {
             .and_then(|index| self.panel_entries.get(index))
     }
 
+    fn active_panel_entry_mut(&mut self) -> Option<&mut PanelEntry> {
+        self.active_panel_index
+            .and_then(|index| self.panel_entries.get_mut(index))
+    }
+
     pub fn active_panel_index(&self) -> Option<usize> {
         self.active_panel_index
     }
 
     pub fn set_open(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if open != self.is_open {
+            self.restoration.discard_pending();
+        }
+        self.set_open_internal(open, window, cx);
+    }
+
+    fn set_open_internal(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
         if open != self.is_open {
             self.is_open = open;
             if let Some(active_panel) = self.active_panel_entry() {
@@ -612,6 +703,29 @@ impl Dock {
                         .ok();
                 }
             }),
+            {
+                let panel = panel.clone();
+                let mut last_default_size = panel.read(cx).default_size(window, cx);
+
+                cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
+                    let default_size = panel.read(cx).default_size(window, cx);
+                    if default_size == last_default_size {
+                        return;
+                    }
+                    last_default_size = default_size;
+
+                    let panel_id = Entity::entity_id(&panel);
+                    if let Some(entry) = this
+                        .panel_entries
+                        .iter_mut()
+                        .find(|entry| entry.panel.panel_id() == panel_id)
+                    {
+                        entry.size_state.size = None;
+                        entry.panel.size_state_changed(window, cx);
+                        cx.notify();
+                    }
+                })
+            },
             cx.subscribe_in(
                 &panel,
                 window,
@@ -620,7 +734,7 @@ impl Dock {
                         this.set_panel_zoomed(&panel.to_any(), true, window, cx);
                         if !PanelHandle::panel_focus_handle(panel, cx).contains_focused(window, cx)
                         {
-                            window.focus(&panel.focus_handle(cx), cx);
+                            window.focus(&panel.read(cx).activation_focus_handle(cx), cx);
                         }
                         workspace
                             .update(cx, |workspace, cx| {
@@ -652,7 +766,7 @@ impl Dock {
                         {
                             this.set_open(true, window, cx);
                             this.activate_panel(ix, window, cx);
-                            window.focus(&panel.read(cx).focus_handle(cx), cx);
+                            window.focus(&panel.read(cx).activation_focus_handle(cx), cx);
                         }
                     }
                     PanelEvent::Close => {
@@ -700,34 +814,82 @@ impl Dock {
             },
         );
 
-        self.restore_state(window, cx);
+        self.replay_pending_serialized_state(window, cx);
 
         if panel.read(cx).starts_open(window, cx) {
-            self.activate_panel(index, window, cx);
-            self.set_open(true, window, cx);
+            self.activate_panel_internal(index, window, cx);
+            self.set_open_internal(true, window, cx);
         }
 
         cx.notify();
         index
     }
 
-    pub fn restore_state(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if let Some(serialized) = self.serialized_dock.clone() {
-            if let Some(active_panel) = serialized.active_panel.filter(|_| serialized.visible)
-                && let Some(idx) = self.panel_index_for_persistent_name(active_panel.as_str(), cx)
-            {
-                self.activate_panel(idx, window, cx);
+    pub(crate) fn restore_serialized_state(
+        &mut self,
+        serialized: DockData,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match &mut self.restoration {
+            DockRestoreState::Restoring { pending } => {
+                *pending = Some(serialized);
+                self.replay_pending_serialized_state(window, cx);
             }
-
-            if serialized.zoom
-                && let Some(panel) = self.active_panel()
-            {
-                panel.set_zoomed(true, window, cx)
+            DockRestoreState::Finished => {
+                let active_panel_missing = serialized
+                    .active_panel
+                    .as_deref()
+                    .filter(|_| serialized.visible)
+                    .is_some_and(|name| self.panel_index_for_persistent_name(name, cx).is_none());
+                if !active_panel_missing {
+                    self.apply_serialized_state(&serialized, window, cx);
+                }
             }
-            self.set_open(serialized.visible, window, cx);
-            return true;
         }
-        false
+    }
+
+    fn replay_pending_serialized_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(serialized) = self.restoration.pending().cloned() else {
+            return;
+        };
+        let waiting_for_active_panel = serialized
+            .active_panel
+            .as_deref()
+            .filter(|_| serialized.visible)
+            .is_some_and(|name| self.panel_index_for_persistent_name(name, cx).is_none());
+        if waiting_for_active_panel {
+            self.set_open_internal(serialized.visible, window, cx);
+        } else {
+            self.apply_serialized_state(&serialized, window, cx);
+            self.restoration.discard_pending();
+        }
+    }
+
+    fn apply_serialized_state(
+        &mut self,
+        serialized: &DockData,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(active_panel) = serialized
+            .active_panel
+            .as_deref()
+            .filter(|_| serialized.visible)
+            && let Some(idx) = self.panel_index_for_persistent_name(active_panel, cx)
+        {
+            self.activate_panel_internal(idx, window, cx);
+        }
+        if serialized.zoom
+            && let Some(panel) = self.active_panel()
+        {
+            panel.set_zoomed(true, window, cx)
+        }
+        self.set_open_internal(serialized.visible, window, cx);
+    }
+
+    pub(crate) fn finish_restoration(&mut self) {
+        self.restoration = DockRestoreState::Finished;
     }
 
     pub fn remove_panel<T: Panel>(
@@ -774,6 +936,18 @@ impl Dock {
     }
 
     pub fn activate_panel(&mut self, panel_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if Some(panel_ix) != self.active_panel_index {
+            self.restoration.discard_pending();
+        }
+        self.activate_panel_internal(panel_ix, window, cx);
+    }
+
+    fn activate_panel_internal(
+        &mut self,
+        panel_ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if Some(panel_ix) != self.active_panel_index {
             if let Some(active_panel) = self.active_panel_entry() {
                 active_panel.panel.set_active(false, window, cx);
@@ -917,18 +1091,17 @@ impl Dock {
         cx.notify();
     }
 
-    pub fn resize_active_panel(
+    fn resize_active_panel(
         &mut self,
         size: Option<Pixels>,
         flex: Option<f32>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(index) = self.active_panel_index
-            && let Some(entry) = self.panel_entries.get_mut(index)
-        {
+        let position = self.position;
+        if let Some(entry) = self.active_panel_entry_mut() {
             let (panel_key, size_state) =
-                resize_panel_entry(self.position, entry, size, flex, window, cx);
+                resize_panel_entry(position, entry, size, flex, window, cx);
 
             let workspace = self.workspace.clone();
             cx.defer(move |cx| {
@@ -942,18 +1115,85 @@ impl Dock {
         }
     }
 
-    pub fn resize_all_panels(
+    /// Resizes the active panel and, when this dock is included in
+    /// `resize_all_panels_in_dock`, all panels using the same sizing mode.
+    pub fn resize_panel_sizes(
         &mut self,
         size: Option<Pixels>,
         flex: Option<f32>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let size_states_to_persist: Vec<_> = self
-            .panel_entries
-            .iter_mut()
-            .map(|entry| resize_panel_entry(self.position, entry, size, flex, window, cx))
-            .collect();
+        if self.should_resize_all_panels(cx) {
+            self.resize_all_panels(size, flex, window, cx);
+        } else {
+            self.resize_active_panel(size, flex, window, cx);
+        }
+    }
+
+    /// Resets the active panel and, when this dock is included in
+    /// `resize_all_panels_in_dock`, all panels using the same sizing mode.
+    pub fn reset_panel_sizes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.should_resize_all_panels(cx) {
+            self.reset_all_panel_sizes(window, cx);
+        } else {
+            self.reset_active_panel_size(window, cx);
+        }
+    }
+
+    fn reset_active_panel_size(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let state = PanelSizeState::default();
+        self.resize_active_panel(state.size, state.flex, window, cx);
+    }
+
+    fn reset_all_panel_sizes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_entry) = self.active_panel_entry() else {
+            return;
+        };
+        let size =
+            (!panel_uses_flexible_width(self.position, active_entry.panel.as_ref(), window, cx))
+                .then(|| active_entry.panel.default_size(window, cx));
+        self.resize_all_panels(size, None, window, cx);
+    }
+
+    fn should_resize_all_panels(&self, cx: &App) -> bool {
+        WorkspaceSettings::get_global(cx)
+            .resize_all_panels_in_dock
+            .contains(&self.position)
+    }
+
+    fn resize_all_panels(
+        &mut self,
+        size: Option<Pixels>,
+        flex: Option<f32>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(active_panel_index) = self.active_panel_index else {
+            return;
+        };
+
+        let active_panel_uses_flexible_width = {
+            let Some(active_entry) = self.panel_entries.get(active_panel_index) else {
+                return;
+            };
+            panel_uses_flexible_width(self.position, active_entry.panel.as_ref(), window, cx)
+        };
+        let mut size_states_to_persist = Vec::new();
+        for entry in &mut self.panel_entries {
+            if panel_uses_flexible_width(self.position, entry.panel.as_ref(), window, cx)
+                == active_panel_uses_flexible_width
+            {
+                size_states_to_persist.push(resize_panel_entry(
+                    self.position,
+                    entry,
+                    size,
+                    flex,
+                    window,
+                    cx,
+                ));
+            }
+        }
 
         let workspace = self.workspace.clone();
         cx.defer(move |cx| {
@@ -984,11 +1224,13 @@ impl Dock {
         dispatch_context
     }
 
-    pub fn clamp_panel_size(&mut self, max_size: Pixels, window: &Window, cx: &mut App) {
+    pub fn clamp_panel_size(&mut self, max_size: Pixels, window: &Window, cx: &mut Context<Self>) {
         let max_size = (max_size - RESIZE_HANDLE_SIZE).abs();
+        let mut clamped = false;
         for entry in &mut self.panel_entries {
-            let use_flexible = entry.panel.has_flexible_size(window, cx);
-            if use_flexible {
+            let uses_flexible_width =
+                panel_uses_flexible_width(self.position, entry.panel.as_ref(), window, cx);
+            if uses_flexible_width {
                 continue;
             }
 
@@ -998,7 +1240,11 @@ impl Dock {
                 .unwrap_or_else(|| entry.panel.default_size(window, cx));
             if size > max_size {
                 entry.size_state.size = Some(max_size.max(RESIZE_HANDLE_SIZE));
+                clamped = true;
             }
+        }
+        if clamped {
+            cx.notify();
         }
     }
 
@@ -1043,7 +1289,7 @@ impl Render for Dock {
                         MouseButton::Left,
                         cx.listener(|dock, e: &MouseUpEvent, window, cx| {
                             if e.click_count == 2 {
-                                dock.resize_active_panel(None, None, window, cx);
+                                dock.reset_panel_sizes(window, cx);
                                 dock.workspace
                                     .update(cx, |workspace, cx| {
                                         workspace.serialize_workspace(window, cx);
@@ -1086,8 +1332,10 @@ impl Render for Dock {
             };
 
             div()
+                .id("dock-panel")
                 .key_context(dispatch_context)
                 .track_focus(&self.focus_handle(cx))
+                .focus_follows_mouse(self.focus_follows_mouse, cx)
                 .flex()
                 .bg(cx.theme().colors().panel_background)
                 .border_color(cx.theme().colors().border)
@@ -1121,6 +1369,7 @@ impl Render for Dock {
                 })
         } else {
             div()
+                .id("dock-panel")
                 .key_context(dispatch_context)
                 .track_focus(&self.focus_handle(cx))
         }
@@ -1146,8 +1395,8 @@ impl Render for PanelButtons {
         let dock_position = dock.position;
 
         let (menu_anchor, menu_attach) = match dock.position {
-            DockPosition::Left => (Corner::BottomLeft, Corner::TopLeft),
-            DockPosition::Bottom | DockPosition::Right => (Corner::BottomRight, Corner::TopRight),
+            DockPosition::Left => (Anchor::BottomLeft, Anchor::TopLeft),
+            DockPosition::Bottom | DockPosition::Right => (Anchor::BottomRight, Anchor::TopRight),
         };
 
         let dock_entity = self.dock.clone();
@@ -1198,6 +1447,7 @@ impl Render for PanelButtons {
                                 DockPosition::Bottom,
                             ];
 
+                            let panel_hide = panel.hide_button_setting(cx);
                             ContextMenu::build(window, cx, |mut menu, _, cx| {
                                 let mut has_position_entries = false;
                                 for position in POSITIONS {
@@ -1269,6 +1519,12 @@ impl Render for PanelButtons {
                                         },
                                     );
                                 }
+                                if let Some(hide) = panel_hide {
+                                    menu = crate::status_bar::add_hide_button_entry(
+                                        menu.separator(),
+                                        hide,
+                                    );
+                                }
                                 menu
                             })
                         })
@@ -1280,6 +1536,8 @@ impl Render for PanelButtons {
                             let button = IconButton::new((name, is_active_button as u64), icon)
                                 .icon_size(IconSize::Small)
                                 .toggle_state(is_active_button)
+                                .tab_index(0isize)
+                                .aria_label(icon_tooltip)
                                 .on_click({
                                     let action = action.boxed_clone();
                                     move |_, window, cx| {
@@ -1335,6 +1593,12 @@ impl StatusItemView for PanelButtons {
     ) {
         // Nothing to do, panel buttons don't depend on the active center item
     }
+
+    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+        // Panel buttons are hidden on a per-panel basis through each panel
+        // button's own context menu.
+        None
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1347,6 +1611,7 @@ pub mod test {
         pub zoomed: bool,
         pub active: bool,
         pub focus_handle: FocusHandle,
+        pub activation_focus_handle: Option<FocusHandle>,
         pub default_size: Pixels,
         pub flexible: bool,
         pub activation_priority: u32,
@@ -1362,6 +1627,7 @@ pub mod test {
                 zoomed: false,
                 active: false,
                 focus_handle: cx.focus_handle(),
+                activation_focus_handle: None,
                 default_size: px(300.),
                 flexible: false,
                 activation_priority,
@@ -1378,15 +1644,37 @@ pub mod test {
                 ..Self::new(position, activation_priority, cx)
             }
         }
+
+        pub fn new_with_activation_child(
+            position: DockPosition,
+            activation_priority: u32,
+            cx: &mut App,
+        ) -> Self {
+            Self {
+                activation_focus_handle: Some(cx.focus_handle()),
+                ..Self::new(position, activation_priority, cx)
+            }
+        }
     }
 
     impl Render for TestPanel {
         fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            div().id("test").track_focus(&self.focus_handle(cx))
+            div()
+                .id("test")
+                .track_focus(&self.focus_handle(cx))
+                .children(self.activation_focus_handle.iter().map(|focus_handle| {
+                    div().id("test-activation-child").track_focus(focus_handle)
+                }))
         }
     }
 
     impl Panel for TestPanel {
+        fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
+            self.activation_focus_handle
+                .clone()
+                .unwrap_or_else(|| self.focus_handle(cx))
+        }
+
         fn persistent_name() -> &'static str {
             "TestPanel"
         }

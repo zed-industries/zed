@@ -10,6 +10,8 @@ workspace = true
 
 [lib]
 path = "src/onboarding.rs"
+test = false
+doctest = false
 
 [features]
 default = []
@@ -17,6 +19,8 @@ default = []
 [dependencies]
 anyhow.workspace = true
 client.workspace = true
+cloud_api_types.workspace = true
+collections.workspace = true
 component.workspace = true
 db.workspace = true
 documented.workspace = true
@@ -42,3 +46,6 @@ zlog.workspace = true
 
 [dev-dependencies]
 db = {workspace = true, features = ["test-support"]}
+
+[package.metadata.cargo-shear]
+ignored = ["component", "documented"]

@@ -6,7 +6,7 @@ description: "Overview of programming language support in Zed, including built-i
 # Language Support in Zed
 
 Zed supports hundreds of programming languages and text formats.
-Some work out-of-the box and others rely on 3rd party extensions.
+Some work out-of-the-box and others rely on [3rd party extensions](./extensions/installing-extensions.md).
 
 > The ones included out-of-the-box, natively built into Zed, are marked with \*.
 
@@ -15,7 +15,7 @@ Some work out-of-the box and others rely on 3rd party extensions.
 - [Ansible](./languages/ansible.md)
 - [AsciiDoc](./languages/asciidoc.md)
 - [Astro](./languages/astro.md)
-- [Bash](./languages/bash.md)
+- [Bash](./languages/bash.md) \*
 - [Biome](./languages/biome.md)
 - [C](./languages/c.md) \*
 - [C++](./languages/cpp.md) \*
@@ -29,6 +29,7 @@ Some work out-of-the box and others rely on 3rd party extensions.
 - [Elixir](./languages/elixir.md)
 - [Elm](./languages/elm.md)
 - [Emmet](./languages/emmet.md)
+- [Env](./languages/env.md) \*
 - [Erlang](./languages/erlang.md)
 - [Fish](./languages/fish.md)
 - [GDScript](./languages/gdscript.md)
@@ -66,6 +67,7 @@ Some work out-of-the box and others rely on 3rd party extensions.
 - [Scala](./languages/scala.md)
 - [Scheme](./languages/scheme.md)
 - [Shell Script](./languages/sh.md)
+- [Standard ML](./languages/sml.md)
 - [Svelte](./languages/svelte.md)
 - [Swift](./languages/swift.md)
 - [Tailwind CSS](./languages/tailwindcss.md) \*
@@ -76,7 +78,7 @@ Some work out-of-the box and others rely on 3rd party extensions.
 - [Vue](./languages/vue.md)
 - [XML](./languages/xml.md)
 - [YAML](./languages/yaml.md) \*
-- [Yara](./languages/yarn.md)
+- [YARA](./languages/yara.md)
 - [Yarn](./languages/yarn.md)
 - [Zig](./languages/zig.md)
 

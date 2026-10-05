@@ -41,7 +41,7 @@ You can configure this globally or per-language:
 }
 ```
 
-> **Note:** Changing the `semantic_tokens` mode may require a language server restart to take effect. Use the `lsp: restart language servers` command from the command palette if highlighting doesn't update immediately.
+> **Note:** Changing the `semantic_tokens` mode may require a language server restart to take effect. Use the {#action editor::RestartLanguageServer} command from the command palette if highlighting doesn't update immediately.
 
 ## Customizing Token Colors
 
@@ -150,7 +150,7 @@ Zed's default semantic token rules map standard LSP token types to common theme 
 - `class` → `type.class`, `class`, or `type` style (first found)
 - `comment` with `documentation` modifier → `comment.documentation` or `comment.doc` style
 
-The full default configuration can be shown in Zed with the `zed: show default semantic token rules` command.
+The full default configuration can be shown in Zed with the {#action zed::ShowDefaultSemanticTokenRules} command.
 
 ## Standard Token Types
 
@@ -184,7 +184,7 @@ For the complete specification, see the [LSP Semantic Tokens documentation](http
 
 ## Inspecting Semantic Tokens
 
-To see semantic tokens applied to your code in real-time, use the `dev: open highlights tree view` command from the command palette. This opens a panel showing all highlights (including semantic tokens) for the current buffer, making it easier to understand which tokens are being applied and debug your custom rules.
+To see semantic tokens applied to your code in real-time, use the {#action dev::OpenHighlightsTreeView} command from the command palette. This opens a panel showing all highlights (including semantic tokens) for the current buffer, making it easier to understand which tokens are being applied and debug your custom rules.
 
 ## Troubleshooting
 
@@ -192,12 +192,12 @@ To see semantic tokens applied to your code in real-time, use the `dev: open hig
 
 1. Ensure `semantic_tokens` is set to `"combined"` or `"full"` for the language
 2. Verify the language server supports semantic tokens (not all do)
-3. Try restarting the language server with `lsp: restart language servers`
-4. Check the LSP logs (`workspace: open lsp log`) for errors
+3. Try restarting the language server with {#action editor::RestartLanguageServer}
+4. Check the LSP logs ({#action dev::OpenLanguageServerLogs}) for errors
 
 ### Colors not updating after changing settings
 
-Changes to `semantic_tokens` mode may require a language server restart. Use `lsp: restart language servers` from the command palette.
+Changes to `semantic_tokens` mode may require a language server restart. Use {#action editor::RestartLanguageServer} from the command palette.
 
 ### Theme styles not being applied
 

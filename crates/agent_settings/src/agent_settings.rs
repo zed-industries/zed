@@ -1,28 +1,41 @@
 mod agent_profile;
+mod user_agents_md;
 
+use std::cmp::Ordering::{Equal, Greater, Less};
+use std::fmt;
 use std::path::{Component, Path};
 use std::sync::{Arc, LazyLock};
 
-use agent_client_protocol::ModelId;
+use anyhow::Context as _;
 use collections::{HashSet, IndexMap};
 use fs::Fs;
-use gpui::{App, Pixels, px};
+use futures::channel::oneshot;
+use gpui::{App, Pixels, SharedString, px};
 use language_model::LanguageModel;
 use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection, NewThreadLocation,
-    NotifyWhenAgentWaiting, RegisterSetting, Settings, SettingsContent, SettingsStore,
-    SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
-    update_settings_file,
+    DockPosition, DockSide, IntoGpui, LanguageModelParameters, LanguageModelSelection,
+    NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
+    SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
+    update_settings_file, update_settings_file_with_completion,
 };
+use util::ResultExt as _;
 
 pub use crate::agent_profile::*;
+pub use crate::user_agents_md::{UserAgentsMd, UserAgentsMdState, init as init_user_agents_md};
 
 pub const SUMMARIZE_THREAD_PROMPT: &str = include_str!("prompts/summarize_thread_prompt.txt");
 pub const SUMMARIZE_THREAD_DETAILED_PROMPT: &str =
     include_str!("prompts/summarize_thread_detailed_prompt.txt");
+pub const COMPACTION_PROMPT: &str = include_str!("prompts/compaction_prompt.txt");
+
+/// Bounds on the width of the threads list. They constrain the configured
+/// default as well as the width the user drags to, so that no width the sidebar
+/// can hold is able to crowd out the editor or collapse the list.
+pub const THREADS_LIST_MIN_WIDTH: Pixels = px(200.0);
+pub const THREADS_LIST_MAX_WIDTH: Pixels = px(800.0);
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PanelLayout {
@@ -31,7 +44,6 @@ pub struct PanelLayout {
     pub(crate) outline_panel_dock: Option<DockSide>,
     pub(crate) collaboration_panel_dock: Option<DockPosition>,
     pub(crate) git_panel_dock: Option<DockPosition>,
-    pub(crate) notification_panel_button: Option<bool>,
 }
 
 impl PanelLayout {
@@ -41,7 +53,6 @@ impl PanelLayout {
         outline_panel_dock: Some(DockSide::Right),
         collaboration_panel_dock: Some(DockPosition::Right),
         git_panel_dock: Some(DockPosition::Right),
-        notification_panel_button: Some(false),
     };
 
     const EDITOR: Self = Self {
@@ -50,7 +61,6 @@ impl PanelLayout {
         outline_panel_dock: Some(DockSide::Left),
         collaboration_panel_dock: Some(DockPosition::Left),
         git_panel_dock: Some(DockPosition::Left),
-        notification_panel_button: Some(true),
     };
 
     pub fn is_agent_layout(&self) -> bool {
@@ -68,7 +78,6 @@ impl PanelLayout {
             outline_panel_dock: content.outline_panel.as_ref().and_then(|p| p.dock),
             collaboration_panel_dock: content.collaboration_panel.as_ref().and_then(|p| p.dock),
             git_panel_dock: content.git_panel.as_ref().and_then(|p| p.dock),
-            notification_panel_button: content.notification_panel.as_ref().and_then(|p| p.button),
         }
     }
 
@@ -78,7 +87,6 @@ impl PanelLayout {
         settings.outline_panel.get_or_insert_default().dock = self.outline_panel_dock;
         settings.collaboration_panel.get_or_insert_default().dock = self.collaboration_panel_dock;
         settings.git_panel.get_or_insert_default().dock = self.git_panel_dock;
-        settings.notification_panel.get_or_insert_default().button = self.notification_panel_button;
     }
 
     fn write_diff_to(&self, current_merged: &PanelLayout, settings: &mut SettingsContent) {
@@ -98,10 +106,6 @@ impl PanelLayout {
         if self.git_panel_dock != current_merged.git_panel_dock {
             settings.git_panel.get_or_insert_default().dock = self.git_panel_dock;
         }
-        if self.notification_panel_button != current_merged.notification_panel_button {
-            settings.notification_panel.get_or_insert_default().button =
-                self.notification_panel_button;
-        }
     }
 
     fn backfill_to(&self, user_layout: &PanelLayout, settings: &mut SettingsContent) {
@@ -120,10 +124,6 @@ impl PanelLayout {
         }
         if user_layout.git_panel_dock.is_none() {
             settings.git_panel.get_or_insert_default().dock = self.git_panel_dock;
-        }
-        if user_layout.notification_panel_button.is_none() {
-            settings.notification_panel.get_or_insert_default().button =
-                self.notification_panel_button;
         }
     }
 }
@@ -145,39 +145,118 @@ impl WindowLayout {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AutoCompactThreshold {
+    /// Compact once the context window is at least this full, as a fraction in
+    /// the range `(0.0, 1.0]`.
+    Percentage(f64),
+    /// Compact once at least this many tokens have been used.
+    TokensUsed(u64),
+    /// Compact once fewer than this many tokens remain in the context window.
+    TokensRemaining(u64),
+}
+
+impl AutoCompactThreshold {
+    /// The threshold used when none is configured, or when the configured value
+    /// is invalid (90% of the context window).
+    pub const DEFAULT: Self = Self::Percentage(0.9);
+}
+
+impl fmt::Display for AutoCompactThreshold {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Percentage(percent) => write!(formatter, "{}%", percent * 100.0),
+            Self::TokensUsed(tokens) => write!(formatter, "{tokens}"),
+            Self::TokensRemaining(tokens) => write!(formatter, "-{tokens}"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AutoCompactSettings {
+    pub enabled: bool,
+    pub threshold: AutoCompactThreshold,
+}
+
+fn parse_auto_compact_threshold(raw: &str) -> anyhow::Result<AutoCompactThreshold> {
+    let trimmed = raw.trim();
+    if let Some(percent) = trimmed.strip_suffix('%') {
+        let value: f64 = percent
+            .trim_end()
+            .parse()
+            .with_context(|| format!("invalid auto_compact threshold percentage {raw:?}"))?;
+        anyhow::ensure!(
+            value > 0.0 && value <= 100.0,
+            "auto_compact threshold percentage must be between 0% and 100%, got {raw:?}"
+        );
+        Ok(AutoCompactThreshold::Percentage(value / 100.0))
+    } else {
+        let tokens: i64 = trimmed.parse().with_context(|| {
+            format!(
+                "invalid auto_compact threshold {raw:?}; \
+                 expected a percentage like \"90%\" or an integer number of tokens"
+            )
+        })?;
+        match tokens.cmp(&0) {
+            Greater => Ok(AutoCompactThreshold::TokensUsed(tokens as u64)),
+            Less => Ok(AutoCompactThreshold::TokensRemaining(tokens.unsigned_abs())),
+            Equal => {
+                anyhow::bail!("auto_compact threshold of 0 is not valid")
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, RegisterSetting)]
 pub struct AgentSettings {
     pub enabled: bool,
     pub button: bool,
     pub dock: DockPosition,
     pub flexible: bool,
-    pub sidebar_side: SidebarDockPosition,
+    pub max_idle_retained_threads: usize,
+    pub threads_sidebar: ThreadsSidebarSettings,
     pub default_width: Pixels,
     pub default_height: Pixels,
+    pub max_content_width: Option<Pixels>,
     pub default_model: Option<LanguageModelSelection>,
+    pub subagent_model: Option<LanguageModelSelection>,
     pub inline_assistant_model: Option<LanguageModelSelection>,
     pub inline_assistant_use_streaming_tools: bool,
     pub commit_message_model: Option<LanguageModelSelection>,
+    pub commit_message_include_project_rules: bool,
+    pub commit_message_instructions: Option<String>,
     pub thread_summary_model: Option<LanguageModelSelection>,
+    pub compaction_model: Option<LanguageModelSelection>,
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub favorite_models: Vec<LanguageModelSelection>,
     pub default_profile: AgentProfileId,
     pub profiles: IndexMap<AgentProfileId, AgentProfileSettings>,
 
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
-    pub play_sound_when_agent_done: bool,
+    pub play_sound_when_agent_done: PlaySoundWhenAgentDone,
+    pub prevent_idle_sleep: bool,
     pub single_file_review: bool,
     pub model_parameters: Vec<LanguageModelParameters>,
+    pub auto_compact: AutoCompactSettings,
     pub enable_feedback: bool,
     pub expand_edit_card: bool,
     pub expand_terminal_card: bool,
+    pub terminal_init_command: Option<String>,
     pub thinking_display: ThinkingBlockDisplay,
     pub cancel_generation_on_terminal_stop: bool,
     pub use_modifier_to_send: bool,
     pub message_editor_min_lines: usize,
     pub show_turn_stats: bool,
+    pub show_merge_conflict_indicator: bool,
     pub tool_permissions: ToolPermissions,
-    pub new_thread_location: NewThreadLocation,
+    pub sandbox_permissions: SandboxPermissions,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ThreadsSidebarSettings {
+    pub auto_open: bool,
+    pub position: SidebarDockPosition,
+    pub default_width: Pixels,
 }
 
 impl AgentSettings {
@@ -185,7 +264,7 @@ impl AgentSettings {
         self.enabled && !DisableAiSettings::get_global(cx).disable_ai
     }
 
-    pub fn temperature_for_model(model: &Arc<dyn LanguageModel>, cx: &App) -> Option<f32> {
+    pub fn temperature_for_model(model: &LanguageModel, cx: &App) -> Option<f32> {
         let settings = Self::get_global(cx);
         for setting in settings.model_parameters.iter().rev() {
             if let Some(provider) = &setting.provider
@@ -204,7 +283,7 @@ impl AgentSettings {
     }
 
     pub fn sidebar_side(&self) -> SidebarSide {
-        match self.sidebar_side {
+        match self.threads_sidebar.position {
             SidebarDockPosition::Left => SidebarSide::Left,
             SidebarDockPosition::Right => SidebarSide::Right,
         }
@@ -214,13 +293,54 @@ impl AgentSettings {
         self.message_editor_min_lines * 2
     }
 
-    pub fn favorite_model_ids(&self) -> HashSet<ModelId> {
+    pub fn favorite_model_ids(&self) -> HashSet<SharedString> {
         self.favorite_models
             .iter()
-            .map(|sel| ModelId::new(format!("{}/{}", sel.provider.0, sel.model)))
+            .map(|sel| SharedString::from(format!("{}/{}", sel.provider.0, sel.model)))
             .collect()
     }
+}
 
+pub fn language_model_to_selection(
+    model: &LanguageModel,
+    override_selection: Option<&LanguageModelSelection>,
+) -> LanguageModelSelection {
+    let provider = model.provider_id().0.to_string().into();
+    let model_name = model.id().0.to_string();
+    match override_selection {
+        Some(current) => LanguageModelSelection {
+            provider,
+            model: model_name,
+            enable_thinking: current.enable_thinking && model.supports_thinking(),
+            effort: current
+                .effort
+                .clone()
+                .filter(|value| {
+                    model
+                        .supported_effort_levels()
+                        .iter()
+                        .any(|level| level.value.as_ref() == value.as_str())
+                })
+                .or_else(|| {
+                    model
+                        .default_effort_level()
+                        .map(|effort| effort.value.to_string())
+                }),
+            speed: current.speed.filter(|_| model.supports_fast_mode()),
+        },
+        None => LanguageModelSelection {
+            provider,
+            model: model_name,
+            enable_thinking: model.supports_thinking(),
+            effort: model
+                .default_effort_level()
+                .map(|effort| effort.value.to_string()),
+            speed: None,
+        },
+    }
+}
+
+impl AgentSettings {
     pub fn get_layout(cx: &App) -> WindowLayout {
         let store = cx.global::<SettingsStore>();
         let merged = store.merged_settings();
@@ -253,26 +373,30 @@ impl AgentSettings {
         });
     }
 
-    pub fn set_layout(layout: WindowLayout, fs: Arc<dyn Fs>, cx: &App) {
+    pub fn set_layout(
+        layout: WindowLayout,
+        fs: Arc<dyn Fs>,
+        cx: &App,
+    ) -> oneshot::Receiver<anyhow::Result<()>> {
         let merged = PanelLayout::read_from(cx.global::<SettingsStore>().merged_settings());
 
         match layout {
             WindowLayout::Agent(None) => {
-                update_settings_file(fs, cx, move |settings, _cx| {
+                update_settings_file_with_completion(fs, cx, move |settings, _cx| {
                     PanelLayout::AGENT.write_diff_to(&merged, settings);
-                });
+                })
             }
             WindowLayout::Editor(None) => {
-                update_settings_file(fs, cx, move |settings, _cx| {
+                update_settings_file_with_completion(fs, cx, move |settings, _cx| {
                     PanelLayout::EDITOR.write_diff_to(&merged, settings);
-                });
+                })
             }
             WindowLayout::Agent(Some(saved))
             | WindowLayout::Editor(Some(saved))
             | WindowLayout::Custom(saved) => {
-                update_settings_file(fs, cx, move |settings, _cx| {
+                update_settings_file_with_completion(fs, cx, move |settings, _cx| {
                     saved.write_to(settings);
-                });
+                })
             }
         }
     }
@@ -296,6 +420,59 @@ impl std::fmt::Display for AgentProfileId {
 impl Default for AgentProfileId {
     fn default() -> Self {
         Self("write".into())
+    }
+}
+
+/// Persistent "allow always" sandbox grants for agent-run terminal commands.
+///
+/// Coverage decisions for these grants are made in
+/// `agent::sandboxing::ThreadSandboxGrants::covers_with_persistent`, which
+/// combines them with the in-memory per-thread grants. `write_paths` are
+/// stored as minimal, lexically-normalized subtrees (see
+/// [`compile_sandbox_permissions`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SandboxPermissions {
+    /// Allow sandboxed commands to reach any host over the network.
+    pub allow_all_hosts: bool,
+    /// Hosts sandboxed commands may always reach, in canonical form (exact
+    /// hostnames or leading-`*.` subdomain wildcards). Parsed/validated where
+    /// consumed (`agent::sandboxing`).
+    pub network_hosts: Vec<String>,
+    pub allow_fs_write_all: bool,
+    /// Persistently run agent terminal commands outside the OS sandbox. This is
+    /// the model-facing "off switch": when set, the sandboxed terminal tool is
+    /// not exposed and the system prompt omits the sandbox section, so the
+    /// model uses the plain `terminal` tool (on Windows, WSL sandbox setup is
+    /// skipped). Distinct from the model-requested `unsandboxed: true` escape
+    /// approved "once" or "for this thread", which keeps the sandboxed
+    /// tool/prompt in place — see `agent::sandboxing`.
+    pub allow_unsandboxed: bool,
+    /// Directory subtree grants, each paired with the canonical
+    /// (symlink-resolved) target established when the grant was approved.
+    pub write_paths: Vec<settings::GrantedWritePath>,
+    /// Whether sandbox escalation prompts warn about domains or write paths
+    /// that contain potentially confusable Unicode characters (homoglyphs,
+    /// invisible characters, or bidirectional overrides). Enabled by default.
+    pub warn_confusable_unicode: bool,
+    /// Whether to warn (Windows/WSL only) when a sandbox grant targets a file on
+    /// a Windows-hosted (DrvFs) filesystem, whose sandbox-integrity guarantees
+    /// are weaker than a distro-native filesystem. Enabled by default.
+    pub warn_ntfs_grants: bool,
+}
+
+impl Default for SandboxPermissions {
+    fn default() -> Self {
+        Self {
+            allow_all_hosts: false,
+            network_hosts: Vec::new(),
+            allow_fs_write_all: false,
+            allow_unsandboxed: false,
+            write_paths: Vec::new(),
+            // The confusable-Unicode warning is a safety net, so it defaults on.
+            warn_confusable_unicode: true,
+            // The weaker-guarantee warning for Windows-hosted grants defaults on.
+            warn_ntfs_grants: true,
+        }
     }
 }
 
@@ -592,21 +769,44 @@ pub fn normalize_path(raw: &str) -> String {
 impl Settings for AgentSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let agent = content.agent.clone().unwrap();
+        let threads_sidebar = agent.threads_sidebar.unwrap();
         Self {
             enabled: agent.enabled.unwrap(),
             button: agent.button.unwrap(),
             dock: agent.dock.unwrap(),
-            sidebar_side: agent.sidebar_side.unwrap(),
-            default_width: px(agent.default_width.unwrap()),
-            default_height: px(agent.default_height.unwrap()),
+            max_idle_retained_threads: agent.max_idle_retained_threads.unwrap(),
+            threads_sidebar: ThreadsSidebarSettings {
+                auto_open: threads_sidebar.auto_open.unwrap(),
+                position: threads_sidebar.position.unwrap(),
+                // Clamped once here so that every reader gets a width the sidebar can
+                // actually hold, rather than each call site having to remember to.
+                default_width: threads_sidebar
+                    .default_width
+                    .unwrap()
+                    .into_gpui()
+                    .clamp(THREADS_LIST_MIN_WIDTH, THREADS_LIST_MAX_WIDTH),
+            },
+            default_width: agent.default_width.unwrap().into_gpui(),
+            default_height: agent.default_height.unwrap().into_gpui(),
+            max_content_width: if agent.limit_content_width.unwrap() {
+                Some(agent.max_content_width.unwrap().into_gpui())
+            } else {
+                None
+            },
             flexible: agent.flexible.unwrap(),
             default_model: Some(agent.default_model.unwrap()),
+            subagent_model: agent.subagent_model,
             inline_assistant_model: agent.inline_assistant_model,
             inline_assistant_use_streaming_tools: agent
                 .inline_assistant_use_streaming_tools
                 .unwrap_or(true),
+            commit_message_include_project_rules: agent
+                .commit_message_include_project_rules
+                .unwrap(),
             commit_message_model: agent.commit_message_model,
+            commit_message_instructions: agent.commit_message_instructions,
             thread_summary_model: agent.thread_summary_model,
+            compaction_model: agent.compaction_model,
             inline_alternatives: agent.inline_alternatives.unwrap_or_default(),
             favorite_models: agent.favorite_models,
             default_profile: AgentProfileId(agent.default_profile.unwrap()),
@@ -618,21 +818,106 @@ impl Settings for AgentSettings {
                 .collect(),
 
             notify_when_agent_waiting: agent.notify_when_agent_waiting.unwrap(),
-            play_sound_when_agent_done: agent.play_sound_when_agent_done.unwrap(),
+            play_sound_when_agent_done: agent.play_sound_when_agent_done.unwrap_or_default(),
+            prevent_idle_sleep: agent.prevent_idle_sleep.unwrap(),
             single_file_review: agent.single_file_review.unwrap(),
             model_parameters: agent.model_parameters,
+            auto_compact: {
+                let auto_compact = agent.auto_compact.unwrap();
+                let threshold = parse_auto_compact_threshold(&auto_compact.threshold.unwrap().0)
+                    .log_err()
+                    .unwrap_or(AutoCompactThreshold::DEFAULT);
+                AutoCompactSettings {
+                    enabled: auto_compact.enabled.unwrap(),
+                    threshold,
+                }
+            },
             enable_feedback: agent.enable_feedback.unwrap(),
             expand_edit_card: agent.expand_edit_card.unwrap(),
             expand_terminal_card: agent.expand_terminal_card.unwrap(),
+            terminal_init_command: agent
+                .terminal_init_command
+                .filter(|command| !command.trim().is_empty()),
             thinking_display: agent.thinking_display.unwrap(),
             cancel_generation_on_terminal_stop: agent.cancel_generation_on_terminal_stop.unwrap(),
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
             show_turn_stats: agent.show_turn_stats.unwrap(),
+            show_merge_conflict_indicator: agent.show_merge_conflict_indicator.unwrap(),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
-            new_thread_location: agent.new_thread_location.unwrap_or_default(),
+            sandbox_permissions: compile_sandbox_permissions(agent.sandbox_permissions),
         }
     }
+}
+
+fn compile_sandbox_permissions(
+    content: Option<settings::SandboxPermissionsContent>,
+) -> SandboxPermissions {
+    let Some(content) = content else {
+        return SandboxPermissions::default();
+    };
+
+    let mut write_paths: Vec<settings::GrantedWritePath> = Vec::new();
+    for entry in content.write_paths.map(|paths| paths.0).unwrap_or_default() {
+        // Normalize away `..`/`.` before storing, since coverage checks are
+        // purely lexical; drop entries whose requested (or resolved) path
+        // escapes the filesystem root.
+        let Ok(requested) = util::paths::normalize_lexically(&entry.requested) else {
+            continue;
+        };
+        let granted = match entry.resolved {
+            Some(resolved) => {
+                let Ok(resolved) = util::paths::normalize_lexically(&resolved) else {
+                    continue;
+                };
+                settings::GrantedWritePath::resolved_on_fs(requested, resolved, entry.on_windows_fs)
+            }
+            None => settings::GrantedWritePath::from_requested(requested),
+        };
+        insert_granted_subtree(&mut write_paths, granted);
+    }
+
+    let network_hosts = content
+        .network_hosts
+        .map(|hosts| hosts.0)
+        .unwrap_or_default();
+
+    SandboxPermissions {
+        allow_all_hosts: content.allow_all_hosts.unwrap_or(false),
+        network_hosts,
+        allow_fs_write_all: content.allow_fs_write_all.unwrap_or(false),
+        allow_unsandboxed: content.allow_unsandboxed.unwrap_or(false),
+        write_paths,
+        warn_confusable_unicode: content.warn_confusable_unicode.unwrap_or(true),
+        warn_ntfs_grants: content.warn_ntfs_grants.unwrap_or(true),
+    }
+}
+
+/// Subtree-insert mirroring [`util::paths::insert_subtree`], but over
+/// [`settings::GrantedWritePath`] entries compared by their canonical
+/// (symlink-resolved) grant path — the path actually enforced at write time.
+///
+/// Insertion is a no-op when the new grant's canonical path is already covered
+/// by an existing entry; otherwise the new grant is added and any existing
+/// entries whose canonical path is a descendant of it are pruned. Containment
+/// is purely lexical, so callers should normalize paths first.
+fn insert_granted_subtree(
+    subtrees: &mut Vec<settings::GrantedWritePath>,
+    granted: settings::GrantedWritePath,
+) {
+    if subtrees.iter().any(|existing| {
+        granted
+            .canonical_or_requested()
+            .starts_with(existing.canonical_or_requested())
+    }) {
+        return;
+    }
+    subtrees.retain(|existing| {
+        !existing
+            .canonical_or_requested()
+            .starts_with(granted.canonical_or_requested())
+    });
+    subtrees.push(granted);
 }
 
 fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -> ToolPermissions {
@@ -732,17 +1017,55 @@ fn compile_regex_rules(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, UpdateGlobal};
+    use gpui::{TestAppContext, UpdateGlobal, px};
     use serde_json::json;
-    use settings::ToolPermissionMode;
-    use settings::ToolPermissionsContent;
+    use settings::{ToolPermissionMode, ToolPermissionsContent};
+    use std::path::PathBuf;
 
-    fn set_agent_v2_defaults(cx: &mut gpui::App) {
-        SettingsStore::update_global(cx, |store, cx| {
-            store.update_default_settings(cx, |defaults| {
-                PanelLayout::AGENT.write_to(defaults);
-            });
-        });
+    #[test]
+    fn test_parse_auto_compact_threshold() {
+        use AutoCompactThreshold::*;
+
+        assert_eq!(
+            parse_auto_compact_threshold("90%").unwrap(),
+            Percentage(0.9)
+        );
+        assert_eq!(AutoCompactThreshold::DEFAULT, Percentage(0.9));
+        assert_eq!(
+            parse_auto_compact_threshold("  92.5% ").unwrap(),
+            Percentage(0.925)
+        );
+        assert_eq!(
+            parse_auto_compact_threshold("95.5%").unwrap(),
+            Percentage(0.955)
+        );
+        assert_eq!(
+            parse_auto_compact_threshold("100%").unwrap(),
+            Percentage(1.0)
+        );
+        // Token counts must be integers; a non-integer token value is invalid.
+        assert!(parse_auto_compact_threshold("100.5").is_err());
+        assert_eq!(
+            parse_auto_compact_threshold("100000").unwrap(),
+            TokensUsed(100_000)
+        );
+        assert_eq!(
+            parse_auto_compact_threshold("-20000").unwrap(),
+            TokensRemaining(20_000)
+        );
+
+        assert_eq!(Percentage(0.9).to_string(), "90%");
+        assert_eq!(Percentage(0.925).to_string(), "92.5%");
+        assert_eq!(TokensUsed(100_000).to_string(), "100000");
+        assert_eq!(TokensRemaining(20_000).to_string(), "-20000");
+
+        // 0 is invalid in every form.
+        assert!(parse_auto_compact_threshold("0").is_err());
+        assert!(parse_auto_compact_threshold("0%").is_err());
+        // Out-of-range percentages and bare decimals are invalid.
+        assert!(parse_auto_compact_threshold("150%").is_err());
+        assert!(parse_auto_compact_threshold("0.8").is_err());
+        assert!(parse_auto_compact_threshold("eighty percent").is_err());
     }
 
     #[test]
@@ -764,6 +1087,318 @@ mod tests {
     fn test_invalid_regex_returns_none() {
         let result = CompiledRegex::new("[invalid(regex", false);
         assert!(result.is_none());
+    }
+
+    #[gpui::test]
+    fn test_prevent_idle_sleep_defaults_to_true_and_follows_user_settings(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+        assert!(AgentSettings::get_global(cx).prevent_idle_sleep);
+
+        for (content, expected) in [
+            (r#"{"agent": {"prevent_idle_sleep": false}}"#, false),
+            (r#"{"agent": {"prevent_idle_sleep": true}}"#, true),
+            (r#"{"agent": {"prevent_idle_sleep": null}}"#, true),
+            (r#"{"agent": {}}"#, true),
+        ] {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(content, cx)
+                    .expect("user settings should load");
+            });
+            assert_eq!(
+                AgentSettings::get_global(cx).prevent_idle_sleep,
+                expected,
+                "{content}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_threads_sidebar_settings(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        for (content, expected_position, expected_width) in [
+            (r#"{}"#, SidebarDockPosition::Left, px(300.)),
+            (
+                r#"{ "agent": { "threads_sidebar": { "position": "right", "default_width": 360 } } }"#,
+                SidebarDockPosition::Right,
+                px(360.),
+            ),
+            (
+                r#"{ "agent": { "threads_sidebar": { "position": "right" } } }"#,
+                SidebarDockPosition::Right,
+                px(300.),
+            ),
+            (
+                r#"{ "agent": { "threads_sidebar": { "default_width": 360 } } }"#,
+                SidebarDockPosition::Left,
+                px(360.),
+            ),
+            (
+                r#"{ "agent": { "threads_sidebar": { "position": null, "default_width": null } } }"#,
+                SidebarDockPosition::Left,
+                px(300.),
+            ),
+            (
+                r#"{ "agent": { "threads_sidebar": null } }"#,
+                SidebarDockPosition::Left,
+                px(300.),
+            ),
+            (
+                r#"{ "agent": { "threads_sidebar": { "default_width": 5 } } }"#,
+                SidebarDockPosition::Left,
+                THREADS_LIST_MIN_WIDTH,
+            ),
+            (
+                r#"{ "agent": { "threads_sidebar": { "default_width": 5000 } } }"#,
+                SidebarDockPosition::Left,
+                THREADS_LIST_MAX_WIDTH,
+            ),
+        ] {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(content, cx)
+                    .expect("user settings load");
+            });
+            let settings = AgentSettings::get_global(cx);
+            assert_eq!(
+                settings.threads_sidebar.position, expected_position,
+                "{content}"
+            );
+            assert_eq!(
+                settings.threads_sidebar.default_width, expected_width,
+                "{content}"
+            );
+            assert_eq!(
+                settings.sidebar_side(),
+                match expected_position {
+                    SidebarDockPosition::Left => SidebarSide::Left,
+                    SidebarDockPosition::Right => SidebarSide::Right,
+                },
+                "{content}"
+            );
+            assert_eq!(settings.default_width, px(640.), "{content}");
+            assert!(settings.threads_sidebar.auto_open, "{content}");
+        }
+
+        for (value, expected) in [("false", false), ("true", true), ("null", true)] {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(
+                        &format!(r#"{{"agent":{{"threads_sidebar":{{"auto_open":{value}}}}}}}"#),
+                        cx,
+                    )
+                    .expect("user settings load");
+            });
+            assert_eq!(
+                AgentSettings::get_global(cx).threads_sidebar.auto_open,
+                expected
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_threads_sidebar_settings_edit_and_reset_clears_legacy_keys(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        #[derive(Clone, Copy)]
+        enum Field {
+            Position,
+            DefaultWidth,
+            AutoOpen,
+        }
+
+        let cases = [
+            (Field::Position, "sidebar_side"),
+            (Field::DefaultWidth, "threads_sidebar_default_width"),
+            (Field::AutoOpen, "threads_sidebar_auto_open"),
+        ];
+
+        let content = r#"
+            {
+                // This comment and the unrelated setting should survive edits.
+                "agent": {
+                    "sidebar_side": "right",
+                    "threads_sidebar_default_width": 420,
+                    "threads_sidebar_auto_open": true,
+                    "threads_sidebar": {
+                        "position": "left",
+                        "default_width": 360,
+                        "auto_open": false
+                    }
+                },
+                "unrelated": { "keep": true }
+            }
+        "#;
+
+        for (field, legacy_key) in cases {
+            let mut rewrite = |old_text: String, set_value: bool| {
+                SettingsStore::update_global(cx, |store, _| {
+                    store
+                        .new_text_for_update(old_text, |settings| {
+                            let agent = settings.agent.get_or_insert_default();
+                            match field {
+                                Field::Position => agent.set_threads_sidebar_position(
+                                    set_value.then_some(SidebarDockPosition::Right),
+                                ),
+                                Field::DefaultWidth => agent.set_threads_sidebar_default_width(
+                                    set_value.then_some(500.0.into()),
+                                ),
+                                Field::AutoOpen => {
+                                    agent.set_threads_sidebar_auto_open(set_value.then_some(true))
+                                }
+                            }
+                        })
+                        .expect("settings update should succeed")
+                })
+            };
+            let assert_legacy_edit = |text: &str| {
+                let value: serde_json_lenient::Value =
+                    serde_json_lenient::from_str(text).expect("rewritten settings are valid");
+                let agent = value
+                    .get("agent")
+                    .and_then(serde_json_lenient::Value::as_object)
+                    .expect("agent settings should remain an object");
+                assert!(
+                    !agent.contains_key(legacy_key),
+                    "{legacy_key} was not removed"
+                );
+                for sibling in [
+                    "sidebar_side",
+                    "threads_sidebar_default_width",
+                    "threads_sidebar_auto_open",
+                ] {
+                    if sibling != legacy_key {
+                        assert!(agent.contains_key(sibling), "{sibling} was not preserved");
+                    }
+                }
+                assert_eq!(
+                    value
+                        .get("unrelated")
+                        .and_then(serde_json_lenient::Value::as_object)
+                        .and_then(|object| object.get("keep"))
+                        .and_then(serde_json_lenient::Value::as_bool),
+                    Some(true)
+                );
+                assert!(text.contains("This comment and the unrelated setting"));
+            };
+
+            let reset_text = rewrite(content.to_string(), false);
+            assert_legacy_edit(&reset_text);
+            let set_text = rewrite(content.to_string(), true);
+            assert_legacy_edit(&set_text);
+            let reset_after_set_text = rewrite(set_text, false);
+            assert_legacy_edit(&reset_after_set_text);
+
+            let expected_width = match field {
+                Field::DefaultWidth => px(300.),
+                Field::Position | Field::AutoOpen => px(360.),
+            };
+            let expected_auto_open = matches!(field, Field::AutoOpen);
+            for rewritten in [reset_text, reset_after_set_text] {
+                SettingsStore::update_global(cx, |store, cx| {
+                    let result = store.set_user_settings(&rewritten, cx);
+                    assert!(result.parse_error().is_none(), "settings should parse");
+                });
+                let settings = AgentSettings::get_global(cx);
+                assert_eq!(settings.threads_sidebar.position, SidebarDockPosition::Left);
+                assert_eq!(settings.threads_sidebar.default_width, expected_width);
+                assert_eq!(settings.threads_sidebar.auto_open, expected_auto_open);
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_max_idle_retained_threads_defaults_to_five_and_follows_user_settings(
+        cx: &mut gpui::App,
+    ) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        assert_eq!(
+            AgentSettings::get_global(cx).max_idle_retained_threads,
+            5,
+            "default.json supplies the retained thread limit"
+        );
+
+        for (content, expected) in [
+            (r#"{ "agent": { "max_idle_retained_threads": 0 } }"#, 0),
+            (r#"{ "agent": { "max_idle_retained_threads": 12 } }"#, 12),
+            (r#"{ "agent": { "max_idle_retained_threads": null } }"#, 5),
+            (r#"{ "agent": {} }"#, 5),
+        ] {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(content, cx)
+                    .expect("user settings should load");
+            });
+            assert_eq!(
+                AgentSettings::get_global(cx).max_idle_retained_threads,
+                expected,
+                "{content}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_terminal_init_command_filters_empty_without_trimming(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        SettingsStore::update_global(cx, |store, cx| {
+            let new_text = store
+                .new_text_for_update("{}".to_string(), |settings| {
+                    settings.agent.get_or_insert_default().terminal_init_command =
+                        Some(" claude --resume ".to_string());
+                })
+                .unwrap();
+            assert!(
+                new_text.contains(r#""terminal_init_command": " claude --resume ""#),
+                "updated settings JSON should include terminal_init_command, got {new_text}"
+            );
+            store.set_user_settings(&new_text, cx).unwrap();
+        });
+        assert_eq!(
+            AgentSettings::get_global(cx)
+                .terminal_init_command
+                .as_deref(),
+            Some(" claude --resume ")
+        );
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(r#"{ "agent": { "terminal_init_command": "   " } }"#, cx)
+                .unwrap();
+        });
+        assert!(
+            AgentSettings::get_global(cx)
+                .terminal_init_command
+                .is_none()
+        );
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(r#"{ "agent": { "terminal_init_command": null } }"#, cx)
+                .unwrap();
+        });
+        assert!(
+            AgentSettings::get_global(cx)
+                .terminal_init_command
+                .is_none()
+        );
     }
 
     #[test]
@@ -815,6 +1450,147 @@ mod tests {
         let permissions = compile_tool_permissions(None);
         assert!(permissions.tools.is_empty());
         assert_eq!(permissions.default, ToolPermissionMode::Confirm);
+    }
+
+    #[test]
+    fn test_sandbox_permissions_empty() {
+        let permissions = compile_sandbox_permissions(None);
+        assert_eq!(permissions, SandboxPermissions::default());
+        // The confusable-Unicode warning is a safety net, so it's on by default.
+        assert!(permissions.warn_confusable_unicode);
+    }
+
+    #[test]
+    fn test_sandbox_permissions_warn_confusable_unicode_can_be_disabled() {
+        let content: settings::SandboxPermissionsContent =
+            serde_json::from_value(json!({ "warn_confusable_unicode": false })).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+        assert!(!permissions.warn_confusable_unicode);
+
+        // Omitting the key keeps the warning enabled.
+        let content: settings::SandboxPermissionsContent =
+            serde_json::from_value(json!({})).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+        assert!(permissions.warn_confusable_unicode);
+    }
+
+    #[test]
+    fn test_sandbox_permissions_parsing_and_pruning() {
+        let json = json!({
+            "allow_all_hosts": true,
+            "network_hosts": ["github.com", "*.npmjs.org"],
+            "allow_unsandboxed": true,
+            "write_paths": [
+                "/tmp/build/cache",
+                "/tmp/build",
+                "/var/log"
+            ]
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        assert!(permissions.allow_all_hosts);
+        assert_eq!(
+            permissions.network_hosts,
+            vec!["github.com".to_string(), "*.npmjs.org".to_string()]
+        );
+        assert!(!permissions.allow_fs_write_all);
+        assert!(permissions.allow_unsandboxed);
+        assert_eq!(
+            permissions.write_paths,
+            vec![
+                settings::GrantedWritePath::from_requested(PathBuf::from("/tmp/build")),
+                settings::GrantedWritePath::from_requested(PathBuf::from("/var/log")),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_sandbox_permissions_normalizes_and_prunes_parent_traversal() {
+        let json = json!({
+            "write_paths": [
+                "/tmp/build/../build/cache",
+                "/tmp/build",
+            ]
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        // `/tmp/build/../build/cache` normalizes to `/tmp/build/cache`, which is
+        // then pruned as a redundant child of `/tmp/build`.
+        assert_eq!(
+            permissions.write_paths,
+            vec![settings::GrantedWritePath::from_requested(PathBuf::from(
+                "/tmp/build"
+            ))]
+        );
+    }
+
+    #[test]
+    fn test_sandbox_permissions_bare_string_has_no_resolved() {
+        let json = json!({
+            "write_paths": ["/tmp/build"]
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        assert_eq!(
+            permissions.write_paths,
+            vec![settings::GrantedWritePath::from_requested(PathBuf::from(
+                "/tmp/build"
+            ))]
+        );
+        assert_eq!(permissions.write_paths[0].resolved, None);
+    }
+
+    #[test]
+    fn test_sandbox_permissions_object_preserves_resolved() {
+        let json = json!({
+            "write_paths": [
+                { "requested": "/tmp/link", "resolved": "/tmp/real" }
+            ]
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        assert_eq!(
+            permissions.write_paths,
+            vec![settings::GrantedWritePath::resolved(
+                PathBuf::from("/tmp/link"),
+                PathBuf::from("/tmp/real"),
+            )]
+        );
+        assert_eq!(
+            permissions.write_paths[0].resolved,
+            Some(PathBuf::from("/tmp/real"))
+        );
+    }
+
+    #[test]
+    fn test_sandbox_permissions_dedup_keys_on_resolved_path() {
+        // The requested paths are unrelated, but the resolved (canonical)
+        // targets form a subtree, so dedup must prune by the resolved path.
+        let json = json!({
+            "write_paths": [
+                { "requested": "/tmp/link/cache", "resolved": "/tmp/real/cache" },
+                { "requested": "/tmp/other", "resolved": "/tmp/real" },
+            ]
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        assert_eq!(
+            permissions.write_paths,
+            vec![settings::GrantedWritePath::resolved(
+                PathBuf::from("/tmp/other"),
+                PathBuf::from("/tmp/real"),
+            )]
+        );
     }
 
     #[test]
@@ -1225,9 +2001,6 @@ mod tests {
         project::DisableAiSettings::register(cx);
         AgentSettings::register(cx);
 
-        // Test defaults are editor layout; switch to agent V2.
-        set_agent_v2_defaults(cx);
-
         // Should be Agent with an empty user layout (user hasn't customized).
         let layout = AgentSettings::get_layout(cx);
         let WindowLayout::Agent(Some(user_layout)) = layout else {
@@ -1253,7 +2026,6 @@ mod tests {
         assert_eq!(user_layout.outline_panel_dock, None);
         assert_eq!(user_layout.collaboration_panel_dock, None);
         assert_eq!(user_layout.git_panel_dock, None);
-        assert_eq!(user_layout.notification_panel_button, None);
 
         // User sets a combination that doesn't match either preset:
         // agent on the left but project panel also on the left.
@@ -1361,9 +2133,6 @@ mod tests {
             project::DisableAiSettings::register(cx);
             AgentSettings::register(cx);
 
-            // Apply the agent V2 defaults.
-            set_agent_v2_defaults(cx);
-
             // User has agent=left (matches preset) and project_panel=left (does not)
             SettingsStore::update_global(cx, |store, cx| {
                 store
@@ -1380,8 +2149,10 @@ mod tests {
             let layout = AgentSettings::get_layout(cx);
             assert!(matches!(layout, WindowLayout::Custom(_)));
 
-            AgentSettings::set_layout(WindowLayout::agent(), fs.clone(), cx);
-        });
+            AgentSettings::set_layout(WindowLayout::agent(), fs.clone(), cx)
+        })
+        .await
+        .ok();
 
         cx.run_until_parked();
 
@@ -1452,7 +2223,7 @@ mod tests {
 
         cx.run_until_parked();
 
-        // Read back the file and apply it, then switch to agent V2 defaults.
+        // Read back the file and apply it.
         let written = fs.load(paths::settings_file().as_path()).await.unwrap();
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
@@ -1476,10 +2247,6 @@ mod tests {
                 Some(DockPosition::Left)
             );
             assert_eq!(user_layout.git_panel_dock, Some(DockPosition::Left));
-            assert_eq!(user_layout.notification_panel_button, Some(true));
-
-            // Now switch defaults to agent V2.
-            set_agent_v2_defaults(cx);
 
             // Even though defaults are now agent, the backfilled user settings
             // keep everything in the editor layout. The user's experience

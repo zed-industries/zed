@@ -1,7 +1,7 @@
 use crate::{
     ActiveDebugLine, Anchor, Autoscroll, BufferSerialization, Capability, Editor, EditorEvent,
-    EditorSettings, ExcerptId, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot,
-    NavigationData, ReportEditorEvent, SelectionEffects, ToPoint as _,
+    EditorSettings, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot, NavigationData,
+    ReportEditorEvent, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{EditorDb, SerializedEditor},
@@ -11,48 +11,59 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use file_icons::FileIcons;
 use fs::MTime;
-use futures::future::try_join_all;
+use futures::{channel::oneshot, future::try_join_all};
 use git::status::GitSummary;
 use gpui::{
     AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, Font,
     IntoElement, ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
 };
 use language::{
-    Bias, Buffer, BufferRow, CharKind, CharScopeContext, HighlightedText, LocalFile, Point,
-    SelectionGoal, proto::serialize_anchor as serialize_text_anchor,
+    Bias, Buffer, BufferRow, CharKind, CharScopeContext, HighlightedText, LocalFile, PLAIN_TEXT,
+    Point, SelectionGoal,
+    language_settings::{FormatOnSave, LanguageSettings},
+    proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::MultiBufferOffset;
+use multi_buffer::{BufferOffset, MultiBufferOffset, MultiBufferRow, PathKey};
 use project::{
-    File, Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
-    project_settings::ProjectSettings, search::SearchQuery,
+    File, Project, ProjectItem as _, ProjectPath,
+    git_store::GitStore,
+    lsp_store::{FormatTrigger, LanguageServerShowDocumentRequest},
+    project_settings::ProjectSettings,
+    search::SearchQuery,
 };
+use rope::TextSummary;
 use rpc::proto::{self, update_view};
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
     borrow::Cow,
     cmp::{self, Ordering},
-    iter,
+    num::NonZeroU32,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use text::{BufferId, BufferSnapshot, Selection};
+use text::{BufferId, BufferSnapshot, OffsetRangeExt, Selection, ToPoint as _};
 use ui::{IconDecorationKind, prelude::*};
-use util::{ResultExt, TryFutureExt, paths::PathExt};
+use util::{
+    ResultExt, TryFutureExt, debug_panic,
+    paths::{PathExt, UrlExt as _},
+    rel_path::RelPath,
+};
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 use workspace::{
-    CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    CollaboratorId, ItemId, ItemNavHistory, OpenOptions, OpenVisible, ToolbarItemLocation, ViewId,
+    Workspace, WorkspaceId,
     invalid_item_view::InvalidItemView,
     item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
     searchable::{
         Direction, FilteredSearchRange, SearchEvent, SearchToken, SearchableItem,
-        SearchableItemHandle,
+        SearchableItemHandle, SelectSearchOptions,
     },
 };
 use workspace::{
-    Pane, WorkspaceSettings,
+    Pane, TabBarSettings, WorkspaceSettings,
     item::{FollowEvent, ProjectItemKind},
     searchable::SearchOptions,
 };
@@ -83,10 +94,11 @@ impl FollowableItem for Editor {
         };
 
         let buffer_ids = state
-            .excerpts
+            .path_excerpts
             .iter()
             .map(|excerpt| excerpt.buffer_id)
             .collect::<HashSet<_>>();
+
         let buffers = project.update(cx, |project, cx| {
             buffer_ids
                 .iter()
@@ -99,6 +111,10 @@ impl FollowableItem for Editor {
                 .await
                 .debug_assert_ok("leaders don't share views for unshared buffers")?;
 
+            let path_excerpts =
+                deserialize_path_excerpts_and_wait_for_anchors(state.path_excerpts, &buffers, cx)
+                    .await?;
+
             let editor = cx.update(|window, cx| {
                 let multibuffer = cx.new(|cx| {
                     let mut multibuffer;
@@ -106,38 +122,18 @@ impl FollowableItem for Editor {
                         multibuffer = MultiBuffer::singleton(buffers.pop().unwrap(), cx)
                     } else {
                         multibuffer = MultiBuffer::new(project.read(cx).capability());
-                        let mut sorted_excerpts = state.excerpts.clone();
-                        sorted_excerpts.sort_by_key(|e| e.id);
-                        let sorted_excerpts = sorted_excerpts.into_iter().peekable();
-
-                        for excerpt in sorted_excerpts {
-                            let Ok(buffer_id) = BufferId::new(excerpt.buffer_id) else {
+                        for (path_key, buffer_id, ranges) in path_excerpts {
+                            let Some(buffer) =
+                                buffers.iter().find(|b| b.read(cx).remote_id() == buffer_id)
+                            else {
                                 continue;
                             };
-
-                            let mut insert_position = ExcerptId::min();
-                            for e in &state.excerpts {
-                                if e.id == excerpt.id {
-                                    break;
-                                }
-                                if e.id < excerpt.id {
-                                    insert_position = ExcerptId::from_proto(e.id);
-                                }
-                            }
-
-                            let buffer =
-                                buffers.iter().find(|b| b.read(cx).remote_id() == buffer_id);
-
-                            let Some(excerpt) = deserialize_excerpt_range(excerpt) else {
-                                continue;
-                            };
-
-                            let Some(buffer) = buffer else { continue };
-
-                            multibuffer.insert_excerpts_with_ids_after(
-                                insert_position,
+                            let buffer_snapshot = buffer.read(cx).snapshot();
+                            multibuffer.update_path_excerpts(
+                                path_key,
                                 buffer.clone(),
-                                [excerpt],
+                                &buffer_snapshot,
+                                &ranges,
                                 cx,
                             );
                         }
@@ -158,6 +154,7 @@ impl FollowableItem for Editor {
                 })
             })?;
 
+            editor.update(cx, |editor, cx| editor.text(cx));
             update_editor_from_message(
                 editor.downgrade(),
                 project,
@@ -215,38 +212,43 @@ impl FollowableItem for Editor {
         let display_snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let scroll_anchor = self.scroll_manager.native_anchor(&display_snapshot, cx);
         let buffer = self.buffer.read(cx);
-        let excerpts = buffer
-            .read(cx)
-            .excerpts()
-            .map(|(id, buffer, range)| proto::Excerpt {
-                id: id.to_proto(),
-                buffer_id: buffer.remote_id().into(),
-                context_start: Some(serialize_text_anchor(&range.context.start)),
-                context_end: Some(serialize_text_anchor(&range.context.end)),
-                primary_start: Some(serialize_text_anchor(&range.primary.start)),
-                primary_end: Some(serialize_text_anchor(&range.primary.end)),
-            })
-            .collect();
         let snapshot = buffer.snapshot(cx);
+        let mut path_excerpts: Vec<proto::PathExcerpts> = Vec::new();
+        for excerpt in snapshot.excerpts() {
+            if let Some(prev_entry) = path_excerpts.last_mut()
+                && prev_entry.buffer_id == excerpt.context.start.buffer_id.to_proto()
+            {
+                prev_entry.ranges.push(serialize_excerpt_range(excerpt));
+            } else if let Some(path_key) = snapshot.path_for_buffer(excerpt.context.start.buffer_id)
+            {
+                path_excerpts.push(proto::PathExcerpts {
+                    path_key: Some(serialize_path_key(path_key)),
+                    buffer_id: excerpt.context.start.buffer_id.to_proto(),
+                    ranges: vec![serialize_excerpt_range(excerpt)],
+                });
+            }
+        }
 
         Some(proto::view::Variant::Editor(proto::view::Editor {
             singleton: buffer.is_singleton(),
             title: buffer.explicit_title().map(ToOwned::to_owned),
-            excerpts,
-            scroll_top_anchor: Some(serialize_anchor(&scroll_anchor.anchor, &snapshot)),
+            excerpts: Vec::new(),
+            scroll_top_anchor: Some(serialize_anchor(&scroll_anchor.anchor)),
             scroll_x: scroll_anchor.offset.x,
             scroll_y: scroll_anchor.offset.y,
             selections: self
                 .selections
                 .disjoint_anchors_arc()
                 .iter()
-                .map(|s| serialize_selection(s, &snapshot))
+                .map(serialize_selection)
                 .collect(),
             pending_selection: self
                 .selections
                 .pending_anchor()
                 .as_ref()
-                .map(|s| serialize_selection(s, &snapshot)),
+                .copied()
+                .map(serialize_selection),
+            path_excerpts,
         }))
     }
 
@@ -277,56 +279,52 @@ impl FollowableItem for Editor {
 
         match update {
             proto::update_view::Variant::Editor(update) => match event {
-                EditorEvent::ExcerptsAdded {
+                EditorEvent::BufferRangesUpdated {
                     buffer,
-                    predecessor,
-                    excerpts,
+                    path_key,
+                    ranges,
                 } => {
-                    let buffer_id = buffer.read(cx).remote_id();
-                    let mut excerpts = excerpts.iter();
-                    if let Some((id, range)) = excerpts.next() {
-                        update.inserted_excerpts.push(proto::ExcerptInsertion {
-                            previous_excerpt_id: Some(predecessor.to_proto()),
-                            excerpt: serialize_excerpt(buffer_id, id, range),
-                        });
-                        update.inserted_excerpts.extend(excerpts.map(|(id, range)| {
-                            proto::ExcerptInsertion {
-                                previous_excerpt_id: None,
-                                excerpt: serialize_excerpt(buffer_id, id, range),
-                            }
-                        }))
-                    }
+                    let buffer_id = buffer.read(cx).remote_id().to_proto();
+                    let path_key = serialize_path_key(path_key);
+                    let ranges = ranges
+                        .iter()
+                        .cloned()
+                        .map(serialize_excerpt_range)
+                        .collect::<Vec<_>>();
+                    update.updated_paths.push(proto::PathExcerpts {
+                        path_key: Some(path_key),
+                        buffer_id,
+                        ranges,
+                    });
                     true
                 }
-                EditorEvent::ExcerptsRemoved { ids, .. } => {
+                EditorEvent::BuffersRemoved { removed_buffer_ids } => {
                     update
-                        .deleted_excerpts
-                        .extend(ids.iter().copied().map(ExcerptId::to_proto));
+                        .deleted_buffers
+                        .extend(removed_buffer_ids.iter().copied().map(BufferId::to_proto));
                     true
                 }
                 EditorEvent::ScrollPositionChanged { autoscroll, .. } if !autoscroll => {
                     let display_snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-                    let snapshot = self.buffer.read(cx).snapshot(cx);
                     let scroll_anchor = self.scroll_manager.native_anchor(&display_snapshot, cx);
-                    update.scroll_top_anchor =
-                        Some(serialize_anchor(&scroll_anchor.anchor, &snapshot));
+                    update.scroll_top_anchor = Some(serialize_anchor(&scroll_anchor.anchor));
                     update.scroll_x = scroll_anchor.offset.x;
                     update.scroll_y = scroll_anchor.offset.y;
                     true
                 }
                 EditorEvent::SelectionsChanged { .. } => {
-                    let snapshot = self.buffer.read(cx).snapshot(cx);
                     update.selections = self
                         .selections
                         .disjoint_anchors_arc()
                         .iter()
-                        .map(|s| serialize_selection(s, &snapshot))
+                        .map(serialize_selection)
                         .collect();
                     update.pending_selection = self
                         .selections
                         .pending_anchor()
                         .as_ref()
-                        .map(|s| serialize_selection(s, &snapshot));
+                        .copied()
+                        .map(serialize_selection);
                     true
                 }
                 _ => false,
@@ -370,7 +368,7 @@ impl FollowableItem for Editor {
     ) {
         let buffer = self.buffer.read(cx);
         let buffer = buffer.read(cx);
-        let Some(position) = buffer.as_singleton_anchor(location) else {
+        let Some(position) = buffer.anchor_in_excerpt(location) else {
             return;
         };
         let selection = Selection {
@@ -382,7 +380,7 @@ impl FollowableItem for Editor {
         };
         drop(buffer);
         self.set_selections_from_remote(vec![selection], None, window, cx);
-        self.request_autoscroll_remotely(Autoscroll::fit(), cx);
+        self.request_autoscroll_remotely(Autoscroll::focused(), cx);
     }
 }
 
@@ -394,9 +392,9 @@ async fn update_editor_from_message(
 ) -> Result<()> {
     // Open all of the buffers of which excerpts were added to the editor.
     let inserted_excerpt_buffer_ids = message
-        .inserted_excerpts
+        .updated_paths
         .iter()
-        .filter_map(|insertion| Some(insertion.excerpt.as_ref()?.buffer_id))
+        .map(|insertion| insertion.buffer_id)
         .collect::<HashSet<_>>();
     let inserted_excerpt_buffers = project.update(cx, |project, cx| {
         inserted_excerpt_buffer_ids
@@ -404,69 +402,51 @@ async fn update_editor_from_message(
             .map(|id| BufferId::new(id).map(|id| project.open_buffer_by_id(id, cx)))
             .collect::<Result<Vec<_>>>()
     })?;
-    let _inserted_excerpt_buffers = try_join_all(inserted_excerpt_buffers).await?;
+    let inserted_excerpt_buffers = try_join_all(inserted_excerpt_buffers).await?;
+
+    let updated_paths = deserialize_path_excerpts_and_wait_for_anchors(
+        message.updated_paths,
+        &inserted_excerpt_buffers,
+        cx,
+    )
+    .await?;
 
     // Update the editor's excerpts.
-    this.update(cx, |editor, cx| {
+    let buffer_snapshot = this.update(cx, |editor, cx| {
         editor.buffer.update(cx, |multibuffer, cx| {
-            let mut removed_excerpt_ids = message
-                .deleted_excerpts
-                .into_iter()
-                .map(ExcerptId::from_proto)
-                .collect::<Vec<_>>();
-            removed_excerpt_ids.sort_by({
-                let multibuffer = multibuffer.read(cx);
-                move |a, b| a.cmp(b, &multibuffer)
-            });
-
-            let mut insertions = message.inserted_excerpts.into_iter().peekable();
-            while let Some(insertion) = insertions.next() {
-                let Some(excerpt) = insertion.excerpt else {
-                    continue;
-                };
-                let Some(previous_excerpt_id) = insertion.previous_excerpt_id else {
-                    continue;
-                };
-                let buffer_id = BufferId::new(excerpt.buffer_id)?;
+            for (path_key, buffer_id, ranges) in updated_paths {
                 let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
                     continue;
                 };
 
-                let adjacent_excerpts = iter::from_fn(|| {
-                    let insertion = insertions.peek()?;
-                    if insertion.previous_excerpt_id.is_none()
-                        && insertion.excerpt.as_ref()?.buffer_id == u64::from(buffer_id)
-                    {
-                        insertions.next()?.excerpt
-                    } else {
-                        None
-                    }
-                });
-
-                multibuffer.insert_excerpts_with_ids_after(
-                    ExcerptId::from_proto(previous_excerpt_id),
-                    buffer,
-                    [excerpt]
-                        .into_iter()
-                        .chain(adjacent_excerpts)
-                        .filter_map(deserialize_excerpt_range),
-                    cx,
-                );
+                let buffer_snapshot = buffer.read(cx).snapshot();
+                multibuffer.update_path_excerpts(path_key, buffer, &buffer_snapshot, &ranges, cx);
             }
 
-            multibuffer.remove_excerpts(removed_excerpt_ids, cx);
-            anyhow::Ok(())
+            for buffer_id in message
+                .deleted_buffers
+                .into_iter()
+                .filter_map(|buffer_id| BufferId::new(buffer_id).ok())
+            {
+                multibuffer.remove_excerpts_for_buffer(buffer_id, cx);
+            }
+
+            multibuffer.snapshot(cx)
         })
-    })??;
+    })?;
 
     // Deserialize the editor state.
     let selections = message
         .selections
         .into_iter()
-        .filter_map(deserialize_selection)
+        .filter_map(|selection| deserialize_selection(selection, &buffer_snapshot))
         .collect::<Vec<_>>();
-    let pending_selection = message.pending_selection.and_then(deserialize_selection);
-    let scroll_top_anchor = message.scroll_top_anchor.and_then(deserialize_anchor);
+    let pending_selection = message
+        .pending_selection
+        .and_then(|selection| deserialize_selection(selection, &buffer_snapshot));
+    let scroll_top_anchor = message
+        .scroll_top_anchor
+        .and_then(|selection| deserialize_anchor(selection, &buffer_snapshot));
 
     // Wait until the buffer has received all of the operations referenced by
     // the editor's new state.
@@ -503,79 +483,153 @@ async fn update_editor_from_message(
     Ok(())
 }
 
-fn serialize_excerpt(
-    buffer_id: BufferId,
-    id: &ExcerptId,
-    range: &ExcerptRange<language::Anchor>,
-) -> Option<proto::Excerpt> {
-    Some(proto::Excerpt {
-        id: id.to_proto(),
-        buffer_id: buffer_id.into(),
-        context_start: Some(serialize_text_anchor(&range.context.start)),
-        context_end: Some(serialize_text_anchor(&range.context.end)),
-        primary_start: Some(serialize_text_anchor(&range.primary.start)),
-        primary_end: Some(serialize_text_anchor(&range.primary.end)),
-    })
-}
-
-fn serialize_selection(
-    selection: &Selection<Anchor>,
-    buffer: &MultiBufferSnapshot,
-) -> proto::Selection {
+fn serialize_selection(selection: &Selection<Anchor>) -> proto::Selection {
     proto::Selection {
         id: selection.id as u64,
-        start: Some(serialize_anchor(&selection.start, buffer)),
-        end: Some(serialize_anchor(&selection.end, buffer)),
+        start: Some(serialize_anchor(&selection.start)),
+        end: Some(serialize_anchor(&selection.end)),
         reversed: selection.reversed,
     }
 }
 
-fn serialize_anchor(anchor: &Anchor, buffer: &MultiBufferSnapshot) -> proto::EditorAnchor {
-    proto::EditorAnchor {
-        excerpt_id: buffer.latest_excerpt_id(anchor.excerpt_id).to_proto(),
-        anchor: Some(serialize_text_anchor(&anchor.text_anchor)),
+fn serialize_anchor(anchor: &Anchor) -> proto::EditorAnchor {
+    match anchor {
+        Anchor::Min => proto::EditorAnchor {
+            excerpt_id: None,
+            anchor: Some(proto::Anchor {
+                replica_id: 0,
+                timestamp: 0,
+                offset: 0,
+                bias: proto::Bias::Left as i32,
+                buffer_id: None,
+            }),
+        },
+        Anchor::Excerpt(_) => proto::EditorAnchor {
+            excerpt_id: None,
+            anchor: anchor.raw_text_anchor().map(|a| serialize_text_anchor(&a)),
+        },
+        Anchor::Max => proto::EditorAnchor {
+            excerpt_id: None,
+            anchor: Some(proto::Anchor {
+                replica_id: u32::MAX,
+                timestamp: u32::MAX,
+                offset: u64::MAX,
+                bias: proto::Bias::Right as i32,
+                buffer_id: None,
+            }),
+        },
     }
 }
 
+fn serialize_excerpt_range(range: ExcerptRange<language::Anchor>) -> proto::ExcerptRange {
+    let context_start = language::proto::serialize_anchor(&range.context.start);
+    let context_end = language::proto::serialize_anchor(&range.context.end);
+    let primary_start = language::proto::serialize_anchor(&range.primary.start);
+    let primary_end = language::proto::serialize_anchor(&range.primary.end);
+    proto::ExcerptRange {
+        context_start: Some(context_start),
+        context_end: Some(context_end),
+        primary_start: Some(primary_start),
+        primary_end: Some(primary_end),
+    }
+}
+
+async fn deserialize_path_excerpts_and_wait_for_anchors(
+    path_excerpts: Vec<proto::PathExcerpts>,
+    buffers: &[Entity<Buffer>],
+    cx: &mut AsyncWindowContext,
+) -> Result<Vec<(PathKey, BufferId, Vec<ExcerptRange<language::Anchor>>)>> {
+    let path_excerpts = path_excerpts
+        .into_iter()
+        .filter_map(|path_with_ranges| {
+            let path_key = path_with_ranges.path_key.and_then(deserialize_path_key)?;
+            let buffer_id = BufferId::new(path_with_ranges.buffer_id).ok()?;
+            let ranges = path_with_ranges
+                .ranges
+                .into_iter()
+                .filter_map(deserialize_excerpt_range)
+                .collect::<Vec<_>>();
+            Some((path_key, buffer_id, ranges))
+        })
+        .collect::<Vec<_>>();
+
+    let wait_for_anchors = cx.update(|_, cx| {
+        buffers
+            .iter()
+            .map(|buffer| {
+                let buffer_id = buffer.read(cx).remote_id();
+                let anchors = path_excerpts
+                    .iter()
+                    .filter(|(_, id, _)| *id == buffer_id)
+                    .flat_map(|(_, _, ranges)| {
+                        ranges.iter().flat_map(|range| {
+                            [
+                                range.context.start,
+                                range.context.end,
+                                range.primary.start,
+                                range.primary.end,
+                            ]
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                buffer.update(cx, |buffer, _| buffer.wait_for_anchors(anchors))
+            })
+            .collect::<Vec<_>>()
+    })?;
+    // Without this wait, resolving these anchors later can race ahead of the
+    // leader's pending buffer ops and trip `panic_bad_anchor` on a stale
+    // snapshot.
+    try_join_all(wait_for_anchors).await?;
+
+    Ok(path_excerpts)
+}
+
 fn deserialize_excerpt_range(
-    excerpt: proto::Excerpt,
-) -> Option<(ExcerptId, ExcerptRange<language::Anchor>)> {
+    excerpt_range: proto::ExcerptRange,
+) -> Option<ExcerptRange<language::Anchor>> {
     let context = {
-        let start = language::proto::deserialize_anchor(excerpt.context_start?)?;
-        let end = language::proto::deserialize_anchor(excerpt.context_end?)?;
+        let start = language::proto::deserialize_anchor(excerpt_range.context_start?)?;
+        let end = language::proto::deserialize_anchor(excerpt_range.context_end?)?;
         start..end
     };
-    let primary = excerpt
+    let primary = excerpt_range
         .primary_start
-        .zip(excerpt.primary_end)
+        .zip(excerpt_range.primary_end)
         .and_then(|(start, end)| {
             let start = language::proto::deserialize_anchor(start)?;
             let end = language::proto::deserialize_anchor(end)?;
             Some(start..end)
         })
         .unwrap_or_else(|| context.clone());
-    Some((
-        ExcerptId::from_proto(excerpt.id),
-        ExcerptRange { context, primary },
-    ))
+    Some(ExcerptRange { context, primary })
 }
 
-fn deserialize_selection(selection: proto::Selection) -> Option<Selection<Anchor>> {
+fn deserialize_selection(
+    selection: proto::Selection,
+    buffer: &MultiBufferSnapshot,
+) -> Option<Selection<Anchor>> {
     Some(Selection {
         id: selection.id as usize,
-        start: deserialize_anchor(selection.start?)?,
-        end: deserialize_anchor(selection.end?)?,
+        start: deserialize_anchor(selection.start?, buffer)?,
+        end: deserialize_anchor(selection.end?, buffer)?,
         reversed: selection.reversed,
         goal: SelectionGoal::None,
     })
 }
 
-fn deserialize_anchor(anchor: proto::EditorAnchor) -> Option<Anchor> {
-    let excerpt_id = ExcerptId::from_proto(anchor.excerpt_id);
-    Some(Anchor::in_buffer(
-        excerpt_id,
-        language::proto::deserialize_anchor(anchor.anchor?)?,
-    ))
+fn deserialize_anchor(anchor: proto::EditorAnchor, buffer: &MultiBufferSnapshot) -> Option<Anchor> {
+    let anchor = anchor.anchor?;
+    if let Some(buffer_id) = anchor.buffer_id
+        && BufferId::new(buffer_id).is_ok()
+    {
+        let text_anchor = language::proto::deserialize_anchor(anchor)?;
+        buffer.anchor_in_buffer(text_anchor)
+    } else {
+        match proto::Bias::try_from(anchor.bias).ok()? {
+            proto::Bias::Left => Some(Anchor::Min),
+            proto::Bias::Right => Some(Anchor::Max),
+        }
+    }
 }
 
 impl Item for Editor {
@@ -638,20 +692,25 @@ impl Item for Editor {
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
-        self.buffer()
-            .read(cx)
+        let multi_buffer = self.buffer().read(cx);
+        if let Some(file) = multi_buffer
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).file())
             .and_then(|file| File::from_dyn(Some(file)))
-            .map(|file| {
+        {
+            Some(
                 file.worktree
                     .read(cx)
                     .absolutize(&file.path)
                     .compact()
                     .to_string_lossy()
                     .into_owned()
-                    .into()
-            })
+                    .into(),
+            )
+        } else {
+            let title = multi_buffer.title(cx);
+            (!title.is_empty()).then(|| title.to_string().into())
+        }
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -668,7 +727,22 @@ impl Item for Editor {
     }
 
     fn suggested_filename(&self, cx: &App) -> SharedString {
-        self.buffer.read(cx).title(cx).to_string().into()
+        let multi_buffer = self.buffer.read(cx);
+        let title = multi_buffer.title(cx);
+        if let Some(buffer) = multi_buffer.as_singleton() {
+            let buffer = buffer.read(cx);
+            if buffer.file().is_none()
+                && let Some(language) = buffer.language()
+                && *language != *PLAIN_TEXT
+                && let Some(suffix) = language.path_suffixes().first()
+                && !suffix.is_empty()
+                && !title.ends_with(&format!(".{suffix}"))
+            {
+                return format!("{title}.{suffix}").into();
+            }
+        }
+
+        title.to_string().into()
     }
 
     fn tab_icon(&self, _: &Window, cx: &App) -> Option<Icon> {
@@ -693,11 +767,10 @@ impl Item for Editor {
                     let buffer_id = buffer.remote_id();
                     let project = self.project()?.read(cx);
                     let entry = project.entry_for_path(&path, cx)?;
-                    let (repo, repo_path) = project
+                    let status = project
                         .git_store()
                         .read(cx)
-                        .repository_and_path_for_buffer_id(buffer_id, cx)?;
-                    let status = repo.read(cx).status_for_path(&repo_path)?.status;
+                        .display_status_for_buffer_id(buffer_id, cx)?;
 
                     Some(entry_git_aware_label_color(
                         status.summary(),
@@ -718,7 +791,10 @@ impl Item for Editor {
                 return None;
             }
 
-            Some(util::truncate_and_trailoff(description, MAX_TAB_TITLE_LEN))
+            Some(util::truncate_and_trailoff(
+                description,
+                params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
+            ))
         });
 
         // Whether the file was saved in the past but is now deleted.
@@ -730,20 +806,36 @@ impl Item for Editor {
             .is_some_and(|file| file.disk_state().is_deleted());
 
         h_flex()
-            .gap_2()
+            .gap_1()
+            .when(!params.selected, |tab| tab.track_focus(&self.focus_handle))
+            .when(params.truncate_title_middle, |this| {
+                this.w_full().min_w_0().overflow_hidden()
+            })
             .child(
-                Label::new(util::truncate_and_trailoff(
-                    &self.title(cx),
-                    MAX_TAB_TITLE_LEN,
-                ))
+                Label::new(if params.truncate_title_middle {
+                    self.title(cx).to_string()
+                } else {
+                    util::truncate_and_trailoff(
+                        &self.title(cx),
+                        params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
+                    )
+                })
+                .single_line()
                 .color(label_color)
+                .when(params.truncate_title_middle, |this| {
+                    this.truncate_middle().flex_1()
+                })
                 .when(params.preview, |this| this.italic())
                 .when(was_deleted, |this| this.strikethrough()),
             )
             .when_some(description, |this, description| {
                 this.child(
                     Label::new(description)
+                        .single_line()
                         .size(LabelSize::XSmall)
+                        .when(params.truncate_title_middle, |this| {
+                            this.truncate_start().flex_shrink()
+                        })
                         .color(Color::Muted),
                 )
             })
@@ -765,6 +857,10 @@ impl Item for Editor {
             true => ItemBufferKind::Singleton,
             false => ItemBufferKind::Multibuffer,
         }
+    }
+
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.active_buffer(cx)?.read(cx).project_path(cx)
     }
 
     fn can_save_as(&self, cx: &App) -> bool {
@@ -845,6 +941,9 @@ impl Item for Editor {
     }
 
     fn can_save(&self, cx: &App) -> bool {
+        if self.read_only(cx) {
+            return false;
+        }
         let buffer = &self.buffer().read(cx);
         if let Some(buffer) = buffer.as_singleton() {
             buffer.read(cx).project_path(cx).is_some()
@@ -860,6 +959,9 @@ impl Item for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if self.read_only(cx) {
+            return Task::ready(Ok(()));
+        }
         // Add meta data tracking # of auto saves
         if options.autosave {
             self.report_editor_event(ReportEditorEvent::Saved { auto_saved: true }, None, cx);
@@ -878,22 +980,39 @@ impl Item for Editor {
         } else {
             buffers
                 .into_iter()
-                .filter(|buffer| buffer.read(cx).is_dirty())
+                // Skip untitled buffers: a multi-buffer (e.g. project search results) can
+                // excerpt a buffer with no file on disk, which can only be persisted via
+                // `save_as`. Trying to save it here errors and aborts the whole save.
+                .filter(|buffer| {
+                    let buffer = buffer.read(cx);
+                    buffer.is_dirty() && !buffer.read_only() && buffer.file().is_some()
+                })
                 .collect()
+        };
+
+        let format_trigger = if options.force_format {
+            FormatTrigger::Manual
+        } else {
+            FormatTrigger::Save
         };
 
         cx.spawn_in(window, async move |this, cx| {
             if options.format {
-                this.update_in(cx, |editor, window, cx| {
-                    editor.perform_format(
-                        project.clone(),
-                        FormatTrigger::Save,
-                        FormatTarget::Buffers(buffers_to_save.clone()),
-                        window,
+                let format_task = this.update_in(cx, |editor, window, cx| {
+                    let format_target = compute_format_target(
+                        &buffers_to_save,
+                        format_trigger,
+                        editor.buffer(),
+                        project.read(cx).git_store(),
                         cx,
-                    )
-                })?
-                .await?;
+                    );
+                    format_target.map(|target| {
+                        editor.perform_format(project.clone(), format_trigger, target, window, cx)
+                    })
+                })?;
+                if let Some(format_task) = format_task {
+                    format_task.await?;
+                }
             }
 
             if !buffers_to_save.is_empty() {
@@ -970,7 +1089,7 @@ impl Item for Editor {
     }
 
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
-        if self.show_breadcrumbs && self.buffer().read(cx).is_singleton() {
+        if self.breadcrumbs_visible() && self.buffer().read(cx).is_singleton() {
             ToolbarItemLocation::PrimaryLeft
         } else {
             ToolbarItemLocation::Hidden
@@ -989,6 +1108,20 @@ impl Item for Editor {
         }
     }
 
+    fn breadcrumb_prefix(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        (!TabBarSettings::get_global(cx).show && ItemSettings::get_global(cx).file_icons)
+            .then(|| {
+                path_for_buffer(&self.buffer, 0, true, cx)
+                    .and_then(|path| FileIcons::get_icon(Path::new(&*path), cx))
+            })
+            .flatten()
+            .map(|icon_path| Icon::from_path(icon_path).into_any_element())
+    }
+
     fn added_to_workspace(
         &mut self,
         workspace: &mut Workspace,
@@ -999,10 +1132,10 @@ impl Item for Editor {
         if let Some(workspace_entity) = &workspace.weak_handle().upgrade() {
             cx.subscribe(
                 workspace_entity,
-                |editor, _, event: &workspace::Event, _cx| {
+                |editor, _, event: &workspace::Event, cx| {
                     if let workspace::Event::ModalOpened = event {
                         editor.mouse_context_menu.take();
-                        editor.inline_blame_popover.take();
+                        editor.hide_blame_popover(true, cx);
                     }
                 },
             )
@@ -1058,11 +1191,11 @@ impl Item for Editor {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 
-            EditorEvent::BreadcrumbsChanged => {
+            EditorEvent::BreadcrumbsChanged | EditorEvent::OutlineSymbolsChanged => {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 
-            EditorEvent::DirtyChanged => {
+            EditorEvent::DirtyChanged | EditorEvent::CapabilityChanged => {
                 f(ItemEvent::UpdateTab);
             }
 
@@ -1071,7 +1204,7 @@ impl Item for Editor {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 
-            EditorEvent::ExcerptsAdded { .. } | EditorEvent::ExcerptsRemoved { .. } => {
+            EditorEvent::BufferRangesUpdated { .. } | EditorEvent::BuffersRemoved { .. } => {
                 f(ItemEvent::Edit);
             }
 
@@ -1195,6 +1328,7 @@ impl SerializableItem for Editor {
             } => window.spawn(cx, {
                 let project = project.clone();
                 async move |cx| {
+                    let content_language_detection_enabled = language.is_none();
                     let language_registry =
                         project.read_with(cx, |project, _| project.languages().clone());
 
@@ -1217,6 +1351,9 @@ impl SerializableItem for Editor {
 
                     // Then set the text so that the dirty bit is set correctly
                     buffer.update(cx, |buffer, cx| {
+                        if content_language_detection_enabled {
+                            buffer.set_content_language_detection_enabled(true);
+                        }
                         buffer.set_language_registry(language_registry);
                         buffer.set_text(contents, cx);
                         if let Some(entry) = buffer.peek_undo_stack() {
@@ -1306,12 +1443,18 @@ impl SerializableItem for Editor {
             SerializedEditor {
                 abs_path: None,
                 contents: None,
+                language,
                 ..
             } => window.spawn(cx, async move |cx| {
                 let buffer = project
                     .update(cx, |project, cx| project.create_buffer(None, true, cx))
                     .await
                     .context("Failed to create buffer")?;
+                if language.is_none() {
+                    buffer.update(cx, |buffer, _| {
+                        buffer.set_content_language_detection_enabled(true);
+                    });
+                }
 
                 cx.update(|window, cx| {
                     cx.new(|cx| {
@@ -1330,7 +1473,6 @@ impl SerializableItem for Editor {
         workspace: &mut Workspace,
         item_id: ItemId,
         closing: bool,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let buffer_serialization = self.buffer_serialization?;
@@ -1366,35 +1508,37 @@ impl SerializableItem for Editor {
 
         let is_dirty = buffer.read(cx).is_dirty();
         let mtime = buffer.read(cx).saved_mtime();
+        let content_language_detection_enabled =
+            buffer.read(cx).content_language_detection_enabled();
 
         let snapshot = buffer.read(cx).snapshot();
 
         let db = EditorDb::global(cx);
-        Some(cx.spawn_in(window, async move |_this, cx| {
-            cx.background_spawn(async move {
-                let (contents, language) = if serialize_dirty_buffers && is_dirty {
-                    let contents = snapshot.text();
-                    let language = snapshot.language().map(|lang| lang.name().to_string());
-                    (Some(contents), language)
-                } else {
-                    (None, None)
-                };
+        Some(cx.background_spawn(async move {
+            let (contents, language) = if serialize_dirty_buffers && is_dirty {
+                let contents = snapshot.text();
+                let language = snapshot.language().and_then(|language| {
+                    if content_language_detection_enabled && *language == *PLAIN_TEXT {
+                        None
+                    } else {
+                        Some(language.name().to_string())
+                    }
+                });
+                (Some(contents), language)
+            } else {
+                (None, None)
+            };
 
-                let editor = SerializedEditor {
-                    abs_path,
-                    contents,
-                    language,
-                    mtime,
-                };
-                log::debug!("Serializing editor {item_id:?} in workspace {workspace_id:?}");
-                db.save_serialized_editor(item_id, workspace_id, editor)
-                    .await
-                    .context("failed to save serialized editor")
-            })
-            .await
-            .context("failed to save contents of buffer")?;
-
-            Ok(())
+            let editor = SerializedEditor {
+                abs_path,
+                contents,
+                language,
+                mtime,
+            };
+            log::debug!("Serializing editor {item_id:?} in workspace {workspace_id:?}");
+            db.save_serialized_editor(item_id, workspace_id, editor)
+                .await
+                .context("failed to save serialized editor")
         }))
     }
 
@@ -1402,7 +1546,10 @@ impl SerializableItem for Editor {
         self.should_serialize_buffer()
             && matches!(
                 event,
-                EditorEvent::Saved | EditorEvent::DirtyChanged | EditorEvent::BufferEdited
+                EditorEvent::Saved
+                    | EditorEvent::DirtyChanged
+                    | EditorEvent::BufferEdited
+                    | EditorEvent::FileHandleChanged
             )
     }
 }
@@ -1434,9 +1581,9 @@ impl ProjectItem for Editor {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut editor = Self::for_buffer(buffer.clone(), Some(project), window, cx);
+        let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
 
-        if let Some((excerpt_id, _, snapshot)) =
-            editor.buffer().read(cx).snapshot(cx).as_singleton()
+        if let Some(buffer_snapshot) = editor.buffer().read(cx).snapshot(cx).as_singleton()
             && WorkspaceSettings::get(None, cx).restore_on_file_reopen
             && let Some(restoration_data) = Self::project_item_kind()
                 .and_then(|kind| pane.as_ref()?.project_item_restoration_data.get(&kind))
@@ -1448,7 +1595,7 @@ impl ProjectItem for Editor {
         {
             if !restoration_data.folds.is_empty() {
                 editor.fold_ranges(
-                    clip_ranges(&restoration_data.folds, snapshot),
+                    clip_ranges(&restoration_data.folds, buffer_snapshot),
                     false,
                     window,
                     cx,
@@ -1456,12 +1603,11 @@ impl ProjectItem for Editor {
             }
             if !restoration_data.selections.is_empty() {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges(clip_ranges(&restoration_data.selections, snapshot));
+                    s.select_ranges(clip_ranges(&restoration_data.selections, buffer_snapshot));
                 });
             }
             let (top_row, offset) = restoration_data.scroll_position;
-            let anchor =
-                Anchor::in_buffer(excerpt_id, snapshot.anchor_before(Point::new(top_row, 0)));
+            let anchor = multibuffer_snapshot.anchor_before(Point::new(top_row, 0));
             editor.set_scroll_anchor(ScrollAnchor { anchor, offset }, window, cx);
         }
 
@@ -1531,6 +1677,41 @@ impl Editor {
                 })
             });
         });
+    }
+}
+
+// Replace-all commonly expands several hits against the same line.
+#[derive(Default)]
+struct SearchHitContext {
+    row: Option<u32>,
+    text: String,
+}
+
+impl SearchHitContext {
+    fn for_hit(
+        &mut self,
+        snapshot: &MultiBufferSnapshot,
+        hit: &Range<Anchor>,
+    ) -> (&str, Range<usize>) {
+        let start = hit.start.to_point(snapshot);
+        let end = hit.end.to_point(snapshot);
+        let range = if start.row == end.row {
+            if self.row != Some(start.row) {
+                self.text.clear();
+                self.text.extend(snapshot.text_for_range(
+                    Point::new(start.row, 0)
+                        ..Point::new(start.row, snapshot.line_len(MultiBufferRow(start.row))),
+                ));
+                self.row = Some(start.row);
+            }
+            start.column as usize..end.column as usize
+        } else {
+            self.row = None;
+            self.text.clear();
+            self.text.extend(snapshot.text_for_range(start..end));
+            0..self.text.len()
+        };
+        (&self.text, range)
     }
 }
 
@@ -1624,6 +1805,7 @@ impl SearchableItem for Editor {
                 regex: true,
                 replacement: false,
                 selection: false,
+                select_all: true,
                 find_in_results: true,
             }
         } else {
@@ -1633,13 +1815,20 @@ impl SearchableItem for Editor {
                 regex: true,
                 replacement: true,
                 selection: true,
+                select_all: true,
                 find_in_results: false,
             }
         }
     }
 
-    fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
-        let setting = EditorSettings::get_global(cx).seed_search_query_from_cursor;
+    fn query_suggestion(
+        &mut self,
+        seed_query_override: Option<SeedQuerySetting>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
+        let setting = seed_query_override
+            .unwrap_or_else(|| EditorSettings::get_global(cx).seed_search_query_from_cursor);
         let snapshot = self.snapshot(window, cx);
         let selection = self.selections.newest_adjusted(&snapshot.display_snapshot);
         let buffer_snapshot = snapshot.buffer_snapshot();
@@ -1681,9 +1870,14 @@ impl SearchableItem for Editor {
         } else {
             Autoscroll::fit()
         };
-        self.change_selections(SelectionEffects::scroll(autoscroll), window, cx, |s| {
-            s.select_ranges([range]);
-        })
+        self.change_selections(
+            SelectionEffects::scroll(autoscroll).from_search(true),
+            window,
+            cx,
+            |s| {
+                s.select_ranges([range]);
+            },
+        )
     }
 
     fn select_matches(
@@ -1706,19 +1900,20 @@ impl SearchableItem for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let text = self.buffer.read(cx);
-        let text = text.snapshot(cx);
-        let text = text.text_for_range(identifier.clone()).collect::<Vec<_>>();
-        let text: Cow<_> = if text.len() == 1 {
-            text.first().cloned().unwrap().into()
+        let replacement = if query.replacement_requires_context() {
+            let snapshot = self.buffer.read(cx).snapshot(cx);
+            let mut context = SearchHitContext::default();
+            let (line, hit) = context.for_hit(&snapshot, identifier);
+            query
+                .replacement_for(line, hit)
+                .map(|replacement| Arc::<str>::from(&*replacement))
         } else {
-            let joined_chunks = text.join("");
-            joined_chunks.into()
+            query.replacement().map(Arc::<str>::from)
         };
 
-        if let Some(replacement) = query.replacement_for(&text) {
+        if let Some(replacement) = replacement {
             self.transact(window, cx, |this, _, cx| {
-                this.edit([(identifier.clone(), Arc::from(&*replacement))], cx);
+                this.edit([(identifier.clone(), replacement)], cx);
             });
         }
     }
@@ -1730,26 +1925,18 @@ impl SearchableItem for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let text = self.buffer.read(cx);
-        let text = text.snapshot(cx);
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         let mut edits = vec![];
 
         // A regex might have replacement variables so we cannot apply
         // the same replacement to all matches
-        if query.is_regex() {
+        if query.replacement_requires_context() {
+            let mut context = SearchHitContext::default();
             edits = matches
                 .filter_map(|m| {
-                    let text = text.text_for_range(m.clone()).collect::<Vec<_>>();
-
-                    let text: Cow<_> = if text.len() == 1 {
-                        text.first().cloned().unwrap().into()
-                    } else {
-                        let joined_chunks = text.join("");
-                        joined_chunks.into()
-                    };
-
+                    let (line, hit) = context.for_hit(&snapshot, m);
                     query
-                        .replacement_for(&text)
+                        .replacement_for(line, hit)
                         .map(|replacement| (m.clone(), Arc::from(&*replacement)))
                 })
                 .collect();
@@ -1763,6 +1950,10 @@ impl SearchableItem for Editor {
             });
         }
     }
+
+    /// Takes the current cursor position and finds the next match in the
+    /// provided `direction`, the provide `count` number of times, wrapping
+    /// around if necessary.
     fn match_index_for_direction(
         &mut self,
         matches: &[Range<Anchor>],
@@ -1773,45 +1964,48 @@ impl SearchableItem for Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> usize {
-        let buffer = self.buffer().read(cx).snapshot(cx);
-        let current_index_position = if self.selections.disjoint_anchors_arc().len() == 1 {
+        if count == 0 {
+            return current_index;
+        }
+
+        let cursor = if self.selections.disjoint_anchors_arc().len() == 1 {
             self.selections.newest_anchor().head()
         } else {
             matches[current_index].start
         };
 
-        let mut count = count % matches.len();
-        if count == 0 {
-            return current_index;
-        }
-        match direction {
-            Direction::Next => {
-                if matches[current_index]
-                    .start
-                    .cmp(&current_index_position, &buffer)
-                    .is_gt()
-                {
-                    count -= 1
-                }
+        let buffer = self.buffer().read(cx).snapshot(cx);
+        let new_idx = match direction {
+            Direction::Next => matches
+                .iter()
+                .position(|m| m.start.cmp(&cursor, &buffer).is_gt())
+                .unwrap_or(0),
+            Direction::Prev => matches
+                .iter()
+                .rposition(|m| m.end.cmp(&cursor, &buffer).is_lt())
+                .unwrap_or(matches.len() - 1),
+        } as isize;
 
-                (current_index + count) % matches.len()
-            }
-            Direction::Prev => {
-                if matches[current_index]
-                    .end
-                    .cmp(&current_index_position, &buffer)
-                    .is_lt()
-                {
-                    count -= 1;
-                }
+        // We'll use `count - 1` because the first jump to the next or previous
+        // match already happens in the scenario above, when we find the next or
+        // previous match starting from the cursor position.
+        let count = count.saturating_sub(1);
+        let count = match direction {
+            Direction::Prev => -(count as isize),
+            Direction::Next => count as isize,
+        };
 
-                if current_index >= count {
-                    current_index - count
-                } else {
-                    matches.len() - (count - current_index)
-                }
-            }
-        }
+        let new_idx = (new_idx + count) % matches.len() as isize;
+        let new_idx = if new_idx.is_negative() {
+            // We need a `matches.len() - 1` here in case `next_idx` has now been
+            // set to `0`, otherwise we'd end up returning `matches.len()`, which
+            // would be out of bounds.
+            new_idx + (matches.len() - 1) as isize
+        } else {
+            new_idx
+        };
+        assert!(new_idx < matches.len() as isize);
+        new_idx as usize
     }
 
     fn find_matches(
@@ -1828,6 +2022,7 @@ impl SearchableItem for Editor {
                 ranges.iter().cloned().collect::<Vec<_>>()
             });
 
+        let executor = cx.background_executor().clone();
         cx.background_spawn(async move {
             let mut ranges = Vec::new();
 
@@ -1836,36 +2031,70 @@ impl SearchableItem for Editor {
             } else {
                 search_within_ranges
             };
-
+            let num_cpus = executor.num_cpus();
             for range in search_within_ranges {
-                for (search_buffer, search_range, excerpt_id, deleted_hunk_anchor) in
+                for (search_buffer, search_range, deleted_hunk_anchor) in
                     buffer.range_to_buffer_ranges_with_deleted_hunks(range)
                 {
-                    ranges.extend(
-                        query
-                            .search(
-                                search_buffer,
-                                Some(search_range.start.0..search_range.end.0),
-                            )
-                            .await
-                            .into_iter()
-                            .map(|match_range| {
-                                if let Some(deleted_hunk_anchor) = deleted_hunk_anchor {
-                                    let start = search_buffer
-                                        .anchor_after(search_range.start + match_range.start);
-                                    let end = search_buffer
-                                        .anchor_before(search_range.start + match_range.end);
-                                    deleted_hunk_anchor.with_diff_base_anchor(start)
-                                        ..deleted_hunk_anchor.with_diff_base_anchor(end)
-                                } else {
-                                    let start = search_buffer
-                                        .anchor_after(search_range.start + match_range.start);
-                                    let end = search_buffer
-                                        .anchor_before(search_range.start + match_range.end);
-                                    Anchor::range_in_buffer(excerpt_id, start..end)
-                                }
-                            }),
-                    );
+                    let query = query.clone();
+
+                    let mut results = Vec::new();
+                    executor
+                        .scoped(|scope| {
+                            for search_range in chunk_search_range(
+                                search_buffer.text.clone(),
+                                &query,
+                                num_cpus as u32,
+                                search_range,
+                            ) {
+                                let query = query.clone();
+                                let buffer = buffer.clone();
+
+                                let (tx, rx) = oneshot::channel();
+                                results.push(rx);
+                                scope.spawn(async move {
+                                    let chunk_result = query
+                                        .search(
+                                            search_buffer,
+                                            Some(search_range.start..search_range.end),
+                                        )
+                                        .await
+                                        .into_iter()
+                                        .filter_map(|match_range| {
+                                            if let Some(deleted_hunk_anchor) = deleted_hunk_anchor {
+                                                let start = search_buffer.anchor_after(
+                                                    search_range.start + match_range.start,
+                                                );
+                                                let end = search_buffer.anchor_before(
+                                                    search_range.start + match_range.end,
+                                                );
+                                                Some(
+                                                    deleted_hunk_anchor.with_diff_base_anchor(start)
+                                                        ..deleted_hunk_anchor
+                                                            .with_diff_base_anchor(end),
+                                                )
+                                            } else {
+                                                let start = search_buffer.anchor_after(
+                                                    search_range.start + match_range.start,
+                                                );
+                                                let end = search_buffer.anchor_before(
+                                                    search_range.start + match_range.end,
+                                                );
+                                                buffer.anchor_range_in_buffer(start..end)
+                                            }
+                                        })
+                                        .collect::<Vec<_>>();
+                                    _ = tx.send(chunk_result);
+                                });
+                            }
+                        })
+                        .await;
+
+                    for rx in results {
+                        if let Ok(results) = rx.await {
+                            ranges.extend(results);
+                        }
+                    }
                 }
             }
 
@@ -1893,12 +2122,18 @@ impl SearchableItem for Editor {
         self.expect_bounds_change = self.last_bounds;
     }
 
-    fn set_search_is_case_sensitive(
+    fn set_select_search_options(
         &mut self,
-        case_sensitive: Option<bool>,
+        select_search_options: Option<SelectSearchOptions>,
         _cx: &mut Context<Self>,
     ) {
-        self.select_next_is_case_sensitive = case_sensitive;
+        if self.select_next_options == select_search_options {
+            return;
+        }
+
+        self.select_next_options = select_search_options;
+        self.select_next_state = None;
+        self.select_prev_state = None;
     }
 }
 
@@ -1929,6 +2164,75 @@ pub fn active_match_index(
                 Ok(i) | Err(i) => Some(cmp::min(i, ranges.len() - 1)),
             },
         }
+    }
+}
+
+/// Opens a path-like target (e.g. `items.rs:100:5`) in the workspace, moving the cursor
+/// to the one-based row/column if present. Returns whether the target was opened.
+pub async fn open_resolved_target(
+    workspace: &WeakEntity<Workspace>,
+    open_target: &workspace::path_link::OpenTarget,
+    cx: &mut AsyncWindowContext,
+) -> Result<bool> {
+    let path_to_open = open_target.path();
+    let mut opened_items = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_paths(
+                vec![path_to_open.path.clone()],
+                workspace::OpenOptions {
+                    visible: Some(workspace::OpenVisible::OnlyDirectories),
+                    ..Default::default()
+                },
+                None,
+                window,
+                cx,
+            )
+        })
+        .context("workspace update")?
+        .await;
+    if opened_items.len() != 1 {
+        debug_panic!(
+            "Received {} items for one path {path_to_open:?}",
+            opened_items.len(),
+        );
+    }
+    let Some(opened_item) = opened_items.pop() else {
+        return Ok(false);
+    };
+
+    if open_target.is_file() {
+        let Some(opened_item) = opened_item else {
+            return Ok(false);
+        };
+        let opened_item =
+            opened_item.with_context(|| format!("opening {:?}", path_to_open.path))?;
+        if let Some(row) = path_to_open.row
+            && let Some(editor) = opened_item.downcast::<Editor>()
+        {
+            let column = path_to_open.column.unwrap_or(0);
+            editor
+                .downgrade()
+                .update_in(cx, |editor, window, cx| {
+                    if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                        let point = buffer.read(cx).snapshot().point_from_external_input(
+                            row.saturating_sub(1),
+                            column.saturating_sub(1),
+                        );
+                        editor.go_to_singleton_buffer_point(point, window, cx);
+                    }
+                })
+                .log_err();
+        }
+        Ok(true)
+    } else if open_target.is_dir() {
+        workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |_, cx| {
+                cx.emit(project::Event::ActivateProjectPanel);
+            })
+        })?;
+        Ok(true)
+    } else {
+        Ok(false)
     }
 }
 
@@ -2050,6 +2354,233 @@ fn restore_serialized_buffer_contents(
     }
 }
 
+fn serialize_path_key(path_key: &PathKey) -> proto::PathKey {
+    proto::PathKey {
+        sort_prefix: path_key.sort_prefix,
+        path: path_key.path.as_unix_str().to_owned(),
+    }
+}
+
+fn deserialize_path_key(path_key: proto::PathKey) -> Option<PathKey> {
+    Some(PathKey {
+        sort_prefix: path_key.sort_prefix,
+        path: RelPath::from_unix_str(&path_key.path).ok()?.into(),
+    })
+}
+
+fn chunk_search_range(
+    buffer: BufferSnapshot,
+    query: &SearchQuery,
+    num_cpus: u32,
+    initial_range: Range<BufferOffset>,
+) -> Box<dyn Iterator<Item = Range<usize>> + 'static> {
+    let range = initial_range.to_offset(&buffer);
+    if range.is_empty() {
+        return Box::new(std::iter::empty());
+    }
+
+    let summary: TextSummary = buffer.text_summary_for_range(initial_range);
+    let num_chunks = if !query.is_regex() && !query.as_str().contains('\n') {
+        NonZeroU32::new(summary.lines.row.saturating_add(1).min(num_cpus.max(1)))
+    } else {
+        NonZeroU32::new(1)
+    };
+
+    let Some(num_chunks) = num_chunks else {
+        return Box::new(std::iter::empty());
+    };
+
+    let mut chunk_start = range.start;
+    let rope = buffer.as_rope().clone();
+    let range_end = range.end;
+    let average_chunk_length = summary.len.div_ceil(num_chunks.get() as usize);
+    Box::new(std::iter::from_fn(move || {
+        if chunk_start >= range_end {
+            return None;
+        }
+        let candidate_position = chunk_start + average_chunk_length;
+        let adjusted = rope.ceil_char_boundary(candidate_position);
+        let mut as_point = rope.offset_to_point(adjusted);
+        as_point.row += 1;
+        as_point.column = 0;
+        let end_offset = buffer.point_to_offset(as_point).min(range_end);
+        let ret = chunk_start..end_offset;
+        chunk_start = end_offset;
+        Some(ret)
+    }))
+}
+
+/// Decides what to format based on the `format_on_save` settings of the saved buffers.
+///
+/// In the modifications modes, only lines with unstaged changes are formatted.
+/// When no git diff is available for a buffer, `modifications` skips formatting while `modifications_if_available`
+/// falls back to formatting entire buffers.
+/// When a diff is available but empty, nothing is formatted in either mode.
+fn compute_format_target(
+    buffers: &HashSet<Entity<Buffer>>,
+    trigger: FormatTrigger,
+    multi_buffer: &Entity<MultiBuffer>,
+    git_store: &Entity<GitStore>,
+    cx: &App,
+) -> Option<FormatTarget> {
+    if trigger == FormatTrigger::Manual {
+        return Some(FormatTarget::Buffers(buffers.clone()));
+    }
+
+    let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+    let git_store = git_store.read(cx);
+
+    let mut fall_back_to_full_format = false;
+    let mut modified_ranges: Vec<Range<Point>> = Vec::new();
+
+    for buffer_entity in buffers.iter() {
+        let buffer = buffer_entity.read(cx);
+        let settings = LanguageSettings::for_buffer(buffer, cx);
+        match settings.format_on_save {
+            FormatOnSave::On | FormatOnSave::Off => {
+                return Some(FormatTarget::Buffers(buffers.clone()));
+            }
+            FormatOnSave::Modifications | FormatOnSave::ModificationsIfAvailable => {}
+        }
+
+        let Some(diff_snapshot) = git_store
+            .get_unstaged_diff(buffer.remote_id(), cx)
+            .map(|diff| diff.read(cx).snapshot(cx))
+        else {
+            if settings.format_on_save == FormatOnSave::ModificationsIfAvailable {
+                fall_back_to_full_format = true;
+            }
+            continue;
+        };
+
+        let anchor_ranges = compute_modified_ranges(&buffer.snapshot(), &diff_snapshot);
+        let flat_anchors = anchor_ranges
+            .iter()
+            .flat_map(|range| [range.start, range.end])
+            .collect::<Vec<_>>();
+        let multi_buffer_anchors =
+            multi_buffer_snapshot.text_anchors_to_visible_anchors(flat_anchors);
+        for pair in multi_buffer_anchors.chunks_exact(2) {
+            let (Some(start), Some(end)) = (&pair[0], &pair[1]) else {
+                continue;
+            };
+            modified_ranges
+                .push(start.to_point(&multi_buffer_snapshot)..end.to_point(&multi_buffer_snapshot));
+        }
+    }
+
+    if fall_back_to_full_format {
+        Some(FormatTarget::Buffers(buffers.clone()))
+    } else if modified_ranges.is_empty() {
+        None
+    } else {
+        Some(FormatTarget::Ranges(modified_ranges))
+    }
+}
+
+/// Computes the buffer ranges that have unstaged changes, expanded to full lines and
+/// with adjacent hunks merged, for use with format-on-save. An empty result means the
+/// buffer has no formatable modifications.
+fn compute_modified_ranges(
+    buffer_snapshot: &language::BufferSnapshot,
+    diff_snapshot: &buffer_diff::BufferDiffSnapshot,
+) -> Vec<Range<text::Anchor>> {
+    let mut merged: Vec<Range<text::Anchor>> = Vec::new();
+    for hunk in diff_snapshot.hunks(buffer_snapshot) {
+        let range = hunk.buffer_range;
+        if range.start.cmp(&range.end, buffer_snapshot).is_eq() {
+            // Deletion-only hunks produce no buffer content to format.
+            continue;
+        }
+        let start_point = range.start.to_point(buffer_snapshot);
+        let end_point = range.end.to_point(buffer_snapshot);
+        let start_row = start_point.row;
+        let end_row = if end_point.column == 0 && end_point.row > start_point.row {
+            end_point.row - 1
+        } else {
+            end_point.row
+        };
+        let line_start = text::Point::new(start_row, 0);
+        let line_end = text::Point::new(end_row, buffer_snapshot.line_len(end_row));
+        let expanded =
+            buffer_snapshot.anchor_before(line_start)..buffer_snapshot.anchor_after(line_end);
+
+        if let Some(last) = merged.last_mut() {
+            let last_end_point = last.end.to_point(buffer_snapshot);
+            if start_row <= last_end_point.row + 1 {
+                if expanded.end.to_point(buffer_snapshot) > last_end_point {
+                    last.end = expanded.end;
+                }
+                continue;
+            }
+        }
+        merged.push(expanded);
+    }
+    merged
+}
+
+pub(crate) fn handle_lsp_show_document(
+    workspace: &mut Workspace,
+    request: &LanguageServerShowDocumentRequest,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Task<()> {
+    let request = request.clone();
+    if request.external {
+        cx.open_url(request.uri.as_str());
+        request.respond(true);
+        return Task::ready(());
+    }
+    let Ok(abs_path) = request.uri.to_file_path_ext(workspace.path_style(cx)) else {
+        log::error!(
+            "language server requested to show document with unsupported uri {}",
+            request.uri.as_str()
+        );
+        request.respond(false);
+        return Task::ready(());
+    };
+    let open_task = workspace.open_abs_path(
+        abs_path,
+        OpenOptions {
+            visible: Some(OpenVisible::None),
+            focus: Some(request.take_focus),
+            ..OpenOptions::default()
+        },
+        window,
+        cx,
+    );
+    cx.spawn_in(window, async move |_, cx| {
+        let success = match open_task.await {
+            Ok(item) => match item.downcast::<Editor>().zip(request.selection) {
+                Some((editor, selection)) => editor
+                    .update_in(cx, |editor, window, cx| {
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
+                        let range = language::range_from_lsp(selection);
+                        let start = snapshot.point_utf16_to_offset(
+                            snapshot.clip_point_utf16(range.start, Bias::Left),
+                        );
+                        let end = snapshot.point_utf16_to_offset(
+                            snapshot.clip_point_utf16(range.end, Bias::Left),
+                        );
+                        editor.change_selections(
+                            SelectionEffects::scroll(Autoscroll::center()),
+                            window,
+                            cx,
+                            |selections| selections.select_ranges([start..end]),
+                        );
+                    })
+                    .is_ok(),
+                None => true,
+            },
+            Err(error) => {
+                log::error!("failed to show document for a language server: {error:#}");
+                false
+            }
+        };
+        request.respond(success);
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use crate::editor_tests::init_test;
@@ -2063,16 +2594,215 @@ mod tests {
     use project::FakeFs;
     use serde_json::json;
     use std::path::{Path, PathBuf};
-    use util::{path, rel_path::RelPath};
+    use util::{path, paths::PathWithPosition, rel_path::RelPath};
+    use workspace::path_link::{OpenTarget, OpenTargetFoundBy};
 
     #[gpui::test]
     fn test_path_for_file(cx: &mut App) {
         let file: Arc<dyn language::File> = Arc::new(TestFile {
-            path: RelPath::empty().into(),
+            path: RelPath::empty_arc(),
             root_name: String::new(),
             local_root: None,
         });
         assert_eq!(path_for_file(&file, 0, false, cx), None);
+    }
+
+    #[gpui::test]
+    fn test_chunk_search_range_multi_line(cx: &mut App) {
+        let text = "line one\nline two\nline three\nline four\nline five\nline six\n";
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        let snapshot = buffer.read(cx).snapshot();
+
+        let chunks = chunk_search_range_for_test(&snapshot, "line", 4, 0..text.len());
+
+        assert_chunks_are_contiguous(&chunks, 0..text.len());
+        assert!(
+            chunks.len() <= 4,
+            "got {} chunks, expected <= num_cpus (4)",
+            chunks.len()
+        );
+        for chunk in &chunks {
+            let end = chunk.end;
+            assert!(
+                end == text.len() || text.as_bytes()[end - 1] == b'\n',
+                "chunk ending at {end} is not a line boundary",
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_chunk_search_range_single_line(cx: &mut App) {
+        let text = "hello world hello again";
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        let snapshot = buffer.read(cx).snapshot();
+
+        let chunks = chunk_search_range_for_test(&snapshot, "hello", 4, 0..text.len());
+        assert_chunks_are_contiguous(&chunks, 0..text.len());
+    }
+
+    #[gpui::test]
+    fn test_chunk_search_range_empty_range(cx: &mut App) {
+        let buffer = cx.new(|cx| Buffer::local("hello world", cx));
+        let snapshot = buffer.read(cx).snapshot();
+
+        let chunks = chunk_search_range_for_test(&snapshot, "hello", 4, 5..5);
+        assert!(chunks.is_empty());
+    }
+
+    #[gpui::test]
+    fn test_chunk_search_range_does_not_start_at_zero(cx: &mut App) {
+        let line = "abcdefghij\n";
+        let text = line.repeat(20);
+        let buffer = cx.new(|cx| Buffer::local(text.clone(), cx));
+        let snapshot = buffer.read(cx).snapshot();
+
+        let start = line.len() * 7;
+        let end = line.len() * 14;
+        let chunks = chunk_search_range_for_test(&snapshot, "abc", 4, start..end);
+
+        assert_chunks_are_contiguous(&chunks, start..end);
+    }
+
+    fn chunk_search_range_for_test(
+        snapshot: &language::BufferSnapshot,
+        query: &str,
+        num_cpus: u32,
+        range: Range<usize>,
+    ) -> Vec<Range<usize>> {
+        let query = SearchQuery::text(
+            query,
+            false,
+            false,
+            false,
+            Default::default(),
+            Default::default(),
+            false,
+            None,
+        )
+        .unwrap();
+        chunk_search_range(
+            snapshot.text.clone(),
+            &query,
+            num_cpus,
+            BufferOffset(range.start)..BufferOffset(range.end),
+        )
+        .collect()
+    }
+
+    #[track_caller]
+    fn assert_chunks_are_contiguous(chunks: &[Range<usize>], expected: Range<usize>) {
+        assert!(!chunks.is_empty(), "expected at least one chunk");
+        assert_eq!(
+            chunks.first().unwrap().start,
+            expected.start,
+            "first chunk does not start at {}",
+            expected.start
+        );
+        assert_eq!(
+            chunks.last().unwrap().end,
+            expected.end,
+            "last chunk does not end at {}",
+            expected.end
+        );
+        for chunk in chunks {
+            assert!(chunk.start < chunk.end, "empty chunk: {:?}", chunk);
+        }
+        for window in chunks.windows(2) {
+            assert_eq!(
+                window[0].end, window[1].start,
+                "gap or overlap between chunks {:?} and {:?}",
+                window[0], window[1],
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_suggested_filename_uses_language_extension_for_untitled_buffer(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.update(|cx| {
+            cx.new(|cx| Buffer::local("", cx).with_language(languages::rust_lang(), cx))
+        });
+        let (editor, cx) =
+            cx.add_window_view(|window, cx| Editor::for_buffer(buffer, None, window, cx));
+
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.suggested_filename(cx).as_ref(), "untitled.rs");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_suggested_filename_appends_extension_to_content_title(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.update(|cx| {
+            cx.new(|cx| {
+                Buffer::local("sadsdsads\nmore text", cx).with_language(languages::rust_lang(), cx)
+            })
+        });
+        let (editor, cx) =
+            cx.add_window_view(|window, cx| Editor::for_buffer(buffer, None, window, cx));
+
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.tab_content_text(0, cx).as_ref(), "sadsdsads");
+            assert_eq!(editor.suggested_filename(cx).as_ref(), "sadsdsads.rs");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_suggested_filename_does_not_duplicate_extension(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.update(|cx| {
+            cx.new(|cx| {
+                Buffer::local("main.rs\nfn main() {}", cx).with_language(languages::rust_lang(), cx)
+            })
+        });
+        let (editor, cx) =
+            cx.add_window_view(|window, cx| Editor::for_buffer(buffer, None, window, cx));
+
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.suggested_filename(cx).as_ref(), "main.rs");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_suggested_filename_keeps_content_title_for_plain_text(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.update(|cx| {
+            cx.new(|cx| {
+                Buffer::local("shopping list\nmilk", cx)
+                    .with_language(language::PLAIN_TEXT.clone(), cx)
+            })
+        });
+        let (editor, cx) =
+            cx.add_window_view(|window, cx| Editor::for_buffer(buffer, None, window, cx));
+
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.suggested_filename(cx).as_ref(), "shopping list");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_suggested_filename_keeps_content_title_without_language(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.update(|cx| cx.new(|cx| Buffer::local("shopping list\nmilk", cx)));
+        let (editor, cx) =
+            cx.add_window_view(|window, cx| Editor::for_buffer(buffer, None, window, cx));
+
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.suggested_filename(cx).as_ref(), "shopping list");
+        });
     }
 
     async fn deserialize_editor(
@@ -2229,6 +2959,7 @@ mod tests {
                     buffer.language().map(|lang| lang.name()),
                     Some("Rust".into())
                 ); // Language should be set to Rust
+                assert!(!buffer.content_language_detection_enabled());
                 assert!(buffer.file().is_none()); // The buffer should not have an associated file
             });
         }
@@ -2303,6 +3034,7 @@ mod tests {
 
                 let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
                 assert!(buffer.file().is_none());
+                assert!(buffer.content_language_detection_enabled());
             });
         }
 
@@ -2359,6 +3091,81 @@ mod tests {
                 assert!(buffer.file().is_some());
             });
         }
+    }
+
+    // Verify that renaming an open file emits EditorEvent::FileHandleChanged so that
+    // the workspace re-serializes the editor with the updated path.
+    #[gpui::test]
+    async fn test_file_handle_changed_on_rename(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        use util::rel_path::rel_path;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "file.rs": "fn main() {}" }))
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/file.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let received_file_handle_changed = Rc::new(RefCell::new(false));
+        let (editor, cx) = cx.add_window_view({
+            let project = project.clone();
+            let received_file_handle_changed = received_file_handle_changed.clone();
+            move |window, cx| {
+                let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
+                editor.set_should_serialize(true, cx);
+                let entity = cx.entity();
+                cx.subscribe_in(&entity, window, move |_, _, event: &EditorEvent, _, _| {
+                    if matches!(event, EditorEvent::FileHandleChanged) {
+                        *received_file_handle_changed.borrow_mut() = true;
+                    }
+                })
+                .detach();
+                editor
+            }
+        });
+
+        cx.run_until_parked();
+
+        let (entry_id, worktree_id) = project.update(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            let worktree = worktree.read(cx);
+            let entry = worktree.entry_for_path(rel_path("file.rs")).unwrap();
+            (entry.id, worktree.id())
+        });
+
+        project
+            .update(cx, |project, cx| {
+                project.rename_entry(entry_id, (worktree_id, rel_path("renamed.rs")).into(), cx)
+            })
+            .await
+            .unwrap();
+
+        cx.run_until_parked();
+
+        assert!(
+            *received_file_handle_changed.borrow(),
+            "EditorEvent::FileHandleChanged must be emitted when the open file is renamed"
+        );
+
+        editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+            let path = buffer.read(cx).file().unwrap().path();
+            assert!(
+                path.as_std_path().ends_with("renamed.rs"),
+                "buffer path must reflect the renamed file, got {path:?}"
+            );
+        });
     }
 
     // Regression test for https://github.com/zed-industries/zed/issues/35947
@@ -2430,5 +3237,267 @@ mod tests {
             pane_items_before, pane_items_after,
             "Editor::deserialize should not add items to panes as a side effect"
         );
+    }
+
+    #[gpui::test]
+    async fn test_open_resolved_target_at_non_ascii_column(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "src": {
+                    "main.rs": "first\naéøbc\n",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let open_target = OpenTarget::Path(
+            PathWithPosition {
+                path: PathBuf::from(path!("/root/src/main.rs")),
+                row: Some(2),
+                column: Some(4),
+            },
+            false,
+            OpenTargetFoundBy::BackgroundPathResolution,
+        );
+
+        let opened = workspace
+            .update_in(cx, |_, window, cx| {
+                cx.spawn_in(window, async move |workspace, cx| {
+                    open_resolved_target(&workspace, &open_target, cx).await
+                })
+            })
+            .await
+            .expect("opening the target should succeed");
+        assert!(opened, "target should open as a file");
+
+        let editor = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.act_as::<Editor>(cx))
+                .expect("active item should be an editor")
+        });
+        let cursor = editor.update_in(cx, |editor, _, cx| {
+            editor
+                .selections
+                .newest::<language::Point>(&editor.display_snapshot(cx))
+                .head()
+        });
+        // Column 4 is the fourth character of `aéøbc` (the `b`), which starts at byte 5.
+        assert_eq!(cursor, language::Point::new(1, 5));
+    }
+
+    #[gpui::test]
+    fn test_compute_modified_ranges_git_diff(cx: &mut gpui::TestAppContext) {
+        let base_text = "line0\nline1\nline2\nline3\nline4\nline5\nline6\n";
+        // Modify line1 and line5 to create two non-adjacent hunks.
+        let buffer_text = "line0\nMOD1\nline2\nline3\nline4\nMOD5\nline6\n";
+
+        let buffer = cx.new(|cx| language::Buffer::local(buffer_text, cx));
+        let diff_snapshot = buffer.update(cx, |buffer, cx| {
+            let diff = cx.new(|cx| {
+                buffer_diff::BufferDiff::new_with_base_text(base_text, &buffer.text_snapshot(), cx)
+            });
+            diff.read(cx).snapshot(cx)
+        });
+
+        let ranges = buffer.update(cx, |buffer, _cx| {
+            compute_modified_ranges(&buffer.snapshot(), &diff_snapshot)
+        });
+
+        assert_eq!(ranges.len(), 2, "expected 2 non-adjacent ranges");
+
+        buffer.update(cx, |buffer, _cx| {
+            let text_snapshot: &text::BufferSnapshot = buffer;
+            let r0 = ranges[0].start.to_point(text_snapshot)..ranges[0].end.to_point(text_snapshot);
+            let r1 = ranges[1].start.to_point(text_snapshot)..ranges[1].end.to_point(text_snapshot);
+            assert_eq!(r0.start.row, 1, "first hunk should start at row 1");
+            assert_eq!(r0.end.row, 1, "first hunk should end at row 1");
+            assert_eq!(r1.start.row, 5, "second hunk should start at row 5");
+            assert_eq!(r1.end.row, 5, "second hunk should end at row 5");
+        });
+    }
+
+    #[gpui::test]
+    fn test_compute_modified_ranges_unchanged_buffer(cx: &mut gpui::TestAppContext) {
+        let buffer_text = "line0\nline1\nline2\n";
+        let buffer = cx.new(|cx| language::Buffer::local(buffer_text, cx));
+        let diff_snapshot = buffer.update(cx, |buffer, cx| {
+            let diff = cx.new(|cx| {
+                buffer_diff::BufferDiff::new_with_base_text(
+                    buffer_text,
+                    &buffer.text_snapshot(),
+                    cx,
+                )
+            });
+            diff.read(cx).snapshot(cx)
+        });
+
+        let ranges = buffer.update(cx, |buffer, _cx| {
+            compute_modified_ranges(&buffer.snapshot(), &diff_snapshot)
+        });
+
+        assert_eq!(
+            ranges,
+            Vec::new(),
+            "buffer that matches its diff base should produce no modified ranges"
+        );
+    }
+
+    #[gpui::test]
+    fn test_compute_modified_ranges_deletion_only(cx: &mut gpui::TestAppContext) {
+        let base_text = "line0\nline1\nline2\n";
+        // Buffer has line1 deleted (pure deletion).
+        let buffer_text = "line0\nline2\n";
+
+        let buffer = cx.new(|cx| language::Buffer::local(buffer_text, cx));
+        let diff_snapshot = buffer.update(cx, |buffer, cx| {
+            let diff = cx.new(|cx| {
+                buffer_diff::BufferDiff::new_with_base_text(base_text, &buffer.text_snapshot(), cx)
+            });
+            diff.read(cx).snapshot(cx)
+        });
+
+        // Verify the diff has a deletion hunk.
+        let hunk_count = buffer.update(cx, |buffer, _cx| {
+            let text_snapshot: &text::BufferSnapshot = buffer;
+            diff_snapshot.hunks(text_snapshot).count()
+        });
+        assert!(hunk_count > 0, "diff should have hunks");
+
+        let ranges = buffer.update(cx, |buffer, _cx| {
+            compute_modified_ranges(&buffer.snapshot(), &diff_snapshot)
+        });
+
+        assert_eq!(
+            ranges,
+            Vec::new(),
+            "deletion-only hunks should be skipped, leaving no ranges"
+        );
+    }
+
+    #[gpui::test]
+    fn test_compute_modified_ranges_adjacent_hunks(cx: &mut gpui::TestAppContext) {
+        let base_text = "line0\nline1\nline2\nline3\nline4\n";
+        // Modify lines 2 and 3 which are adjacent; they should merge into one range.
+        let buffer_text = "line0\nline1\nMOD2\nMOD3\nline4\n";
+
+        let buffer = cx.new(|cx| language::Buffer::local(buffer_text, cx));
+        let diff_snapshot = buffer.update(cx, |buffer, cx| {
+            let diff = cx.new(|cx| {
+                buffer_diff::BufferDiff::new_with_base_text(base_text, &buffer.text_snapshot(), cx)
+            });
+            diff.read(cx).snapshot(cx)
+        });
+
+        let ranges = buffer.update(cx, |buffer, _cx| {
+            compute_modified_ranges(&buffer.snapshot(), &diff_snapshot)
+        });
+
+        assert_eq!(
+            ranges.len(),
+            1,
+            "adjacent hunks (rows 2 and 3) should be merged into one range"
+        );
+        buffer.update(cx, |buffer, _cx| {
+            let text_snapshot: &text::BufferSnapshot = buffer;
+            let r = ranges[0].start.to_point(text_snapshot)..ranges[0].end.to_point(text_snapshot);
+            assert_eq!(r.start.row, 2, "merged range should start at row 2");
+            assert_eq!(r.end.row, 3, "merged range should end at row 3");
+        });
+    }
+
+    // Regression test for a multi-buffer (e.g. project search results) that excerpts
+    // an untitled buffer alongside a file-backed one. Saving used to error out with
+    // "buffer doesn't have a file", which aborted `workspace: reload` and quit flows.
+    #[gpui::test]
+    async fn test_save_multi_buffer_with_untitled_buffer_skips_untitled(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({ "file.txt": "the cat sat" }))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        let file_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/file.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let untitled_buffer = project.update(cx, |project, cx| {
+            project.create_local_buffer("the cat", None, false, cx)
+        });
+
+        // Make both buffers dirty so both are candidates to be saved.
+        file_buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "X")], None, cx);
+        });
+        untitled_buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "Y")], None, cx);
+        });
+
+        let multi_buffer = cx.new(|cx| {
+            let mut multi_buffer = MultiBuffer::new(project.read(cx).capability());
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                file_buffer.clone(),
+                [Point::new(0, 0)..Point::new(0, 3)],
+                0,
+                cx,
+            );
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(1),
+                untitled_buffer.clone(),
+                [Point::new(0, 0)..Point::new(0, 3)],
+                0,
+                cx,
+            );
+            multi_buffer
+        });
+        let editor = cx.new_window_entity(|window, cx| {
+            Editor::for_multibuffer(multi_buffer, Some(project.clone()), window, cx)
+        });
+        cx.run_until_parked();
+
+        editor.update(cx, |editor, cx| {
+            assert!(!editor.buffer().read(cx).is_singleton());
+        });
+
+        let save = editor.update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: false,
+                    force_format: false,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        });
+        save.await
+            .expect("saving a multi-buffer that excerpts an untitled buffer should not error");
+        cx.run_until_parked();
+
+        // The file-backed buffer is saved; the untitled buffer is skipped and stays dirty.
+        file_buffer.update(cx, |buffer, _| assert!(!buffer.is_dirty()));
+        untitled_buffer.update(cx, |buffer, _| {
+            assert!(buffer.file().is_none());
+            assert!(buffer.is_dirty());
+        });
     }
 }

@@ -1,4 +1,5 @@
 import os
+import subprocess
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
@@ -39,9 +40,15 @@ def main(
     # but we can place it in our env when running the script locally, for convenience
     token = github_token or os.getenv("GITHUB_ACCESS_TOKEN")
     if not token:
-        raise typer.BadParameter(
-            "GitHub token is required. Pass --github-token or set GITHUB_ACCESS_TOKEN env var."
-        )
+        try:
+            result = subprocess.run(
+                ["gh", "auth", "token"], capture_output=True, text=True, check=True
+            )
+            token = result.stdout.strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            raise typer.BadParameter(
+                "GitHub token is required. Pass --github-token, set GITHUB_ACCESS_TOKEN env var, or log in with `gh auth login`."
+            )
 
     headers = {
         "Authorization": f"token {token}",

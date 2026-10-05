@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+which gh >/dev/null || brew install gh
+
+case "${1:-}" in
+  preview | stable)
+    channel="$1"
+    ;;
+  *)
+    echo "Usage: $0 preview|stable [--from-main]" >&2
+    exit 1
+    ;;
+esac
+
+case "${2:-}" in
+  "")
+    from_main=false
+    ;;
+  --from-main)
+    from_main=true
+    ;;
+  *)
+    echo "Usage: $0 preview|stable [--from-main]" >&2
+    exit 1
+    ;;
+esac
+
+version=$(./script/get-released-version "$channel")
+branch=$(echo "$version" | sed -E 's/^([0-9]+)\.([0-9]+)\.[0-9]+$/v\1.\2.x/')
+workflow_ref="$branch"
+if [ "$from_main" = true ]; then
+  workflow_ref="main"
+fi
+
+echo "Triggering docs build for $channel ($branch) using workflow from $workflow_ref"
+echo "This will publish docs from $branch before the next release."
+echo "Only continue if $branch has no unreleased feature-specific docs."
+read -r -p "Continue? [y/N] " confirmation
+case "$confirmation" in
+  y | Y | yes | YES)
+    ;;
+  *)
+    echo "Cancelled."
+    exit 1
+    ;;
+esac
+
+gh workflow run "deploy_docs.yml" --ref "$workflow_ref" -f channel="$channel" -f checkout_ref="$branch"
+echo "Follow along at: https://github.com/zed-industries/zed/actions/workflows/deploy_docs.yml"

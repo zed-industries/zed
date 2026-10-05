@@ -58,6 +58,41 @@ mod tests {
         fs.unpause_events_and_flush();
         assert_eq!(rx.next().await.as_deref(), Some("A"));
     }
+
+    #[gpui::test]
+    async fn test_watch_config_file_reloads_when_parent_dir_is_symlink(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let config_settings_path = PathBuf::from("/root/.config/zed/settings.json");
+        let target_settings_path = PathBuf::from("/root/dotfiles/zed/settings.json");
+
+        fs.insert_tree(
+            Path::new("/root"),
+            json!({
+                ".config": {},
+                "dotfiles": {
+                    "zed": {
+                        "settings.json": "A"
+                    }
+                }
+            }),
+        )
+        .await;
+
+        fs.create_symlink(
+            Path::new("/root/.config/zed"),
+            PathBuf::from("/root/dotfiles/zed"),
+        )
+        .await
+        .unwrap();
+
+        let (mut rx, _task) =
+            watch_config_file(&cx.background_executor, fs.clone(), config_settings_path);
+        assert_eq!(rx.next().await.as_deref(), Some("A"));
+
+        fs.insert_file(&target_settings_path, b"B".to_vec()).await;
+        assert_eq!(rx.next().await.as_deref(), Some("B"));
+    }
 }
 
 pub const EMPTY_THEME_NAME: &str = "empty-theme";
@@ -89,42 +124,48 @@ pub fn visual_test_settings() -> String {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-pub fn test_settings() -> String {
-    let mut value =
-        crate::parse_json_with_comments::<serde_json::Value>(crate::default_settings().as_ref())
-            .unwrap();
-    #[cfg(not(target_os = "windows"))]
-    util::merge_non_null_json_value_into(
-        serde_json::json!({
-            "ui_font_family": "Courier",
-            "ui_font_features": {},
-            "ui_font_size": 14,
-            "ui_font_fallback": [],
-            "buffer_font_family": "Courier",
-            "buffer_font_features": {},
-            "buffer_font_size": 14,
-            "buffer_font_fallbacks": [],
-            "theme": EMPTY_THEME_NAME,
-        }),
-        &mut value,
-    );
-    #[cfg(target_os = "windows")]
-    util::merge_non_null_json_value_into(
-        serde_json::json!({
-            "ui_font_family": "Courier New",
-            "ui_font_features": {},
-            "ui_font_size": 14,
-            "ui_font_fallback": [],
-            "buffer_font_family": "Courier New",
-            "buffer_font_features": {},
-            "buffer_font_size": 14,
-            "buffer_font_fallbacks": [],
-            "theme": EMPTY_THEME_NAME,
-        }),
-        &mut value,
-    );
-    value.as_object_mut().unwrap().remove("languages");
-    serde_json::to_string(&value).unwrap()
+pub fn test_settings() -> &'static str {
+    static CACHED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let mut value = crate::parse_json_with_comments::<serde_json::Value>(
+            crate::default_settings().as_ref(),
+        )
+        .unwrap();
+        #[cfg(not(target_os = "windows"))]
+        util::merge_non_null_json_value_into(
+            serde_json::json!({
+                "format_on_save": "on",
+                "ui_font_family": "Courier",
+                "ui_font_features": {},
+                "ui_font_size": 14,
+                "ui_font_fallback": [],
+                "buffer_font_family": "Courier",
+                "buffer_font_features": {},
+                "buffer_font_size": 14,
+                "buffer_font_fallbacks": [],
+                "theme": EMPTY_THEME_NAME,
+            }),
+            &mut value,
+        );
+        #[cfg(target_os = "windows")]
+        util::merge_non_null_json_value_into(
+            serde_json::json!({
+                "format_on_save": "on",
+                "ui_font_family": "Courier New",
+                "ui_font_features": {},
+                "ui_font_size": 14,
+                "ui_font_fallback": [],
+                "buffer_font_family": "Courier New",
+                "buffer_font_features": {},
+                "buffer_font_size": 14,
+                "buffer_font_fallbacks": [],
+                "theme": EMPTY_THEME_NAME,
+            }),
+            &mut value,
+        );
+        value.as_object_mut().unwrap().remove("languages");
+        serde_json::to_string(&value).unwrap()
+    });
+    &CACHED
 }
 
 pub fn watch_config_file(
@@ -134,6 +175,7 @@ pub fn watch_config_file(
 ) -> (mpsc::UnboundedReceiver<String>, gpui::Task<()>) {
     let (tx, rx) = mpsc::unbounded();
     let task = executor.spawn(async move {
+        let path = fs.canonicalize(&path).await.unwrap_or_else(|_| path);
         let (events, _) = fs.watch(&path, Duration::from_millis(100)).await;
         futures::pin_mut!(events);
 
@@ -196,8 +238,9 @@ pub fn watch_config_dir(
                             }
                             Some(PathEventKind::Rescan) => {
                                 for file_path in &config_paths {
-                                    let contents = fs.load(file_path).await.unwrap_or_default();
-                                    if tx.unbounded_send(contents).is_err() {
+                                    if let Ok(contents) = fs.load(file_path).await
+                                        && tx.unbounded_send(contents).is_err()
+                                    {
                                         return;
                                     }
                                 }
@@ -208,8 +251,9 @@ pub fn watch_config_dir(
                         && event.path == dir_path
                     {
                         for file_path in &config_paths {
-                            let contents = fs.load(file_path).await.unwrap_or_default();
-                            if tx.unbounded_send(contents).is_err() {
+                            if let Ok(contents) = fs.load(file_path).await
+                                && tx.unbounded_send(contents).is_err()
+                            {
                                 return;
                             }
                         }
@@ -227,5 +271,13 @@ pub fn update_settings_file(
     cx: &App,
     update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
 ) {
-    SettingsStore::global(cx).update_settings_file(fs, update);
+    SettingsStore::global(cx).update_settings_file(fs, update)
+}
+
+pub fn update_settings_file_with_completion(
+    fs: Arc<dyn Fs>,
+    cx: &App,
+    update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
+) -> futures::channel::oneshot::Receiver<anyhow::Result<()>> {
+    SettingsStore::global(cx).update_settings_file_with_completion(fs, update)
 }

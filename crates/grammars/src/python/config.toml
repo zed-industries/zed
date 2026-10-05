@@ -4,6 +4,7 @@ path_suffixes = ["py", "pyi", "mpy"]
 first_line_pattern = '^#!.*((\bpython[0-9.]*\b)|(\buv run\b))'
 modeline_aliases = ["py"]
 line_comments = ["# "]
+block_comment = { start = "\"\"\"", end = "\"\"\"", prefix = "", tab_size = 1 }
 autoclose_before = ";:.,=}])>"
 brackets = [
     { start = "f\"", end = "\"", close = true, newline = false, not_in = ["string", "comment"] },
