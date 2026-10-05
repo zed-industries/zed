@@ -521,16 +521,14 @@ fn general_page(cx: &App) -> SettingsPage {
         [
             SettingsPageItem::SectionHeader("Extensions"),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Extension Suggestions",
-                description: "Whether Zed suggests installing extensions for the languages of the files you open.",
+                title: "Suggest Extensions",
+                description: "Whether to suggest installing extensions based on the files you open.",
                 field: Box::new(SettingField {
                     organization_override: None,
-                    json_path: Some("extension_suggestions"),
-                    pick: |settings_content| {
-                        Some(&settings_content.extension.extension_suggestions)
-                    },
+                    json_path: Some("suggest_extensions"),
+                    pick: |settings_content| Some(&settings_content.extension.suggest_extensions),
                     write: |settings_content, value, _| {
-                        settings_content.extension.extension_suggestions = value.unwrap_or(true);
+                        settings_content.extension.suggest_extensions = value.unwrap_or(true);
                     },
                 }),
                 metadata: None,
