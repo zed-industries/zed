@@ -1483,8 +1483,7 @@ impl Element for List {
                         window,
                         cx,
                     );
-                    let max_element_width =
-                        layout_response.max_item_width + padding.left + padding.right;
+                    let max_element_width = layout_response.max_item_width;
 
                     let summary = state.items.summary();
                     let total_height = summary.height;
