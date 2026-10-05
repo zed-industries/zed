@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/rope.rs"
+doctest = false
 
 [dependencies]
 heapless.workspace = true
@@ -33,5 +34,5 @@ zlog.workspace = true
 name = "rope_benchmark"
 harness = false
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["tracing"]

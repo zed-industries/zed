@@ -8,6 +8,7 @@
 //!
 //! A theme is a collection of colors used to build a consistent appearance for UI components across the application.
 
+mod buffer_line_height;
 mod color_space;
 mod default_colors;
 mod fallback_themes;
@@ -31,6 +32,7 @@ use gpui::{
 };
 use serde::Deserialize;
 
+pub use crate::buffer_line_height::*;
 pub use crate::color_space::*;
 pub use crate::default_colors::*;
 pub use crate::fallback_themes::{apply_status_color_defaults, apply_theme_color_defaults};
@@ -51,6 +53,8 @@ pub const DEFAULT_DARK_THEME: &str = "One Dark";
 pub const CLIENT_SIDE_DECORATION_ROUNDING: Pixels = px(10.0);
 /// Defines window shadow size for platforms that use client side decorations.
 pub const CLIENT_SIDE_DECORATION_SHADOW: Pixels = px(10.0);
+/// Defines window border width for platforms that use client side decorations.
+pub const CLIENT_SIDE_DECORATION_BORDER: Pixels = px(1.0);
 
 /// Styling helpers for elements that follow client-side window decorations.
 pub trait ClientDecorationsExt: Styled {

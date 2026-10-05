@@ -38,7 +38,7 @@ where php
 
 ## Choosing a language server
 
-The PHP extension uses [LSP language servers](https://microsoft.github.io/language-server-protocol) with Phpactor as the default. If you want to use other language servers that support Zed (e.g. Intelephense or PHP Tools), make sure to follow the documentation on how to implement it.
+The PHP extension uses [LSP language servers](https://microsoft.github.io/language-server-protocol) with Phpactor as the default. If you want to use other language servers that support Zed (e.g. Intelephense, PHP Tools or PHPantom), make sure to follow the documentation on how to implement it.
 
 ### Intelephense
 
@@ -50,7 +50,13 @@ Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages
 {
   "languages": {
     "PHP": {
-      "language_servers": ["intelephense", "!phpactor", "!phptools", "..."]
+      "language_servers": [
+        "intelephense",
+        "!phpactor",
+        "!phptools",
+        "!phpantom",
+        "..."
+      ]
     }
   }
 }
@@ -82,7 +88,13 @@ Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages
 {
   "languages": {
     "PHP": {
-      "language_servers": ["phptools", "!intelephense", "!phpactor", "..."]
+      "language_servers": [
+        "phptools",
+        "!intelephense",
+        "!phpactor",
+        "!phpantom",
+        "..."
+      ]
     }
   }
 }
@@ -118,7 +130,33 @@ Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages
 {
   "languages": {
     "PHP": {
-      "language_servers": ["phpactor", "!intelephense", "!phptools", "..."]
+      "language_servers": [
+        "phpactor",
+        "!intelephense",
+        "!phptools",
+        "!phpantom",
+        "..."
+      ]
+    }
+  }
+}
+```
+
+### PHPantom
+
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > PHP, or add to your settings file:
+
+```json [settings]
+{
+  "languages": {
+    "PHP": {
+      "language_servers": [
+        "phpantom",
+        "!phpactor",
+        "!intelephense",
+        "!phptools",
+        "..."
+      ]
     }
   }
 }

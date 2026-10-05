@@ -3,11 +3,11 @@ use credentials_provider::CredentialsProvider;
 use env_var::EnvVar;
 use futures::{FutureExt, future};
 use gpui::{AsyncApp, Context, SharedString, Task};
+use gpui_util::ResultExt as _;
 use std::{
     fmt::{Display, Formatter},
     sync::Arc,
 };
-use util::ResultExt as _;
 
 use crate::AuthenticateError;
 

@@ -8,6 +8,9 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[lib]
+doctest = false
+
 [features]
 test-support = [
     "load-grammars"
@@ -59,13 +62,14 @@ snippet.workspace = true
 task.workspace = true
 terminal.workspace = true
 theme.workspace = true
-tree-sitter = { workspace = true, optional = true }
+tree-sitter = { workspace = true, optional = true , features = ["wasm"] }
 tree-sitter-gitcommit = { workspace = true, optional = true }
 url.workspace = true
 util.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 tempfile = { workspace = true}
 settings = { workspace = true, features = ["test-support"] }
@@ -78,5 +82,5 @@ tree-sitter-go.workspace = true
 tree-sitter-python.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
-tree-sitter.workspace = true
+tree-sitter = { workspace = true, features = ["wasm"] }
 unindent.workspace = true

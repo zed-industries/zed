@@ -10,10 +10,7 @@ use strum::IntoEnumIterator;
 use wayland_client::{Connection, protocol::wl_data_offer::WlDataOffer};
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
 
-use crate::linux::{
-    WaylandClientStatePtr,
-    platform::{PIPE_READ_TIMEOUT, read_fd_with_timeout},
-};
+use crate::linux::platform::{PIPE_READ_TIMEOUT, read_fd_with_timeout};
 use gpui::{ClipboardEntry, ClipboardItem, Image, ImageFormat, hash};
 
 /// Text mime types that we'll offer to other programs.
@@ -26,7 +23,7 @@ pub(crate) const ALLOWED_TEXT_MIME_TYPES: [&str; 2] = ["text/plain;charset=utf-8
 
 pub(crate) struct Clipboard {
     connection: Connection,
-    loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
+    loop_handle: LoopHandle<'static, ()>,
     self_mime: String,
 
     // Internal clipboard
@@ -139,10 +136,7 @@ impl<T: ReceiveData> DataOffer<T> {
 }
 
 impl Clipboard {
-    pub fn new(
-        connection: Connection,
-        loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
-    ) -> Self {
+    pub fn new(connection: Connection, loop_handle: LoopHandle<'static, ()>) -> Self {
         Self {
             connection,
             loop_handle,
@@ -182,7 +176,7 @@ impl Clipboard {
 
     pub fn send(&self, _mime_type: String, fd: OwnedFd) {
         if let Some(text) = self.contents.as_ref().and_then(|contents| contents.text()) {
-            self.send_internal(fd, text.as_bytes().to_owned());
+            self.send_bytes(fd, text.as_bytes().to_owned());
         }
     }
 
@@ -192,7 +186,7 @@ impl Clipboard {
             .as_ref()
             .and_then(|contents| contents.text())
         {
-            self.send_internal(fd, text.as_bytes().to_owned());
+            self.send_bytes(fd, text.as_bytes().to_owned());
         }
     }
 
@@ -232,7 +226,7 @@ impl Clipboard {
         Some(item)
     }
 
-    fn send_internal(&self, fd: OwnedFd, bytes: Vec<u8>) {
+    pub fn send_bytes(&self, fd: OwnedFd, bytes: Vec<u8>) {
         let mut written = 0;
         self.loop_handle
             .insert_source(

@@ -1,7 +1,7 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use fuzzy::CharBag;
+use path::{PathStyle, rel_path::RelPath};
 use std::sync::atomic::AtomicBool;
-use util::{paths::PathStyle, rel_path::RelPath};
 
 const DIRS: &[&str] = &[
     "src",
@@ -233,7 +233,11 @@ fn generate_nucleo_path_candidates(
     paths
         .iter()
         .map(|path| {
-            fuzzy_nucleo::PathMatchCandidate::new(RelPath::unix(path).unwrap(), false, None)
+            fuzzy_nucleo::PathMatchCandidate::new(
+                RelPath::from_unix_str(path).unwrap(),
+                false,
+                None,
+            )
         })
         .collect()
 }
@@ -245,7 +249,7 @@ fn generate_fuzzy_path_candidates(
         .iter()
         .map(|path| fuzzy::PathMatchCandidate {
             is_dir: false,
-            path: RelPath::unix(path).unwrap(),
+            path: RelPath::from_unix_str(path).unwrap(),
             char_bag: CharBag::from(path.as_str()),
         })
         .collect()
@@ -302,7 +306,7 @@ fn bench_path_matching(criterion: &mut Criterion) {
                             query,
                             case,
                             size,
-                            PathStyle::Posix,
+                            PathStyle::Unix,
                         )
                     },
                     BatchSize::SmallInput,
@@ -325,7 +329,7 @@ fn bench_path_matching(criterion: &mut Criterion) {
                             query,
                             false,
                             size,
-                            PathStyle::Posix,
+                            PathStyle::Unix,
                         )
                     },
                     BatchSize::SmallInput,

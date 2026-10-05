@@ -2,11 +2,14 @@
 mod syntax_map_tests;
 
 use crate::{
-    Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry, QUERY_CURSORS, with_parser,
+    CaptureId, Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry, QUERY_CURSORS,
+    with_parser,
 };
 use collections::HashMap;
 use futures::FutureExt;
 use gpui::SharedString;
+use language_core::highlight_map::HighlightCaptureRef;
+use smallvec::SmallVec;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering, Reverse},
@@ -73,7 +76,7 @@ impl Drop for SyntaxSnapshot {
 pub struct SyntaxMapCaptures<'a> {
     layers: Vec<SyntaxMapCapturesLayer<'a>>,
     active_layer_count: usize,
-    grammars: Vec<&'a Grammar>,
+    grammars: Vec<&'a Arc<Grammar>>,
 }
 
 #[derive(Default)]
@@ -90,6 +93,73 @@ pub struct SyntaxMapCapture<'a> {
     pub grammar_index: usize,
 }
 
+pub(crate) struct HighlightCaptureRegion {
+    pub range: Range<usize>,
+    pub stack: SmallVec<[HighlightCaptureRef; 4]>,
+}
+
+pub(crate) fn flattened_highlight_regions(
+    mut captures: SyntaxMapCaptures<'_>,
+    range: Range<usize>,
+) -> Vec<HighlightCaptureRegion> {
+    let capture_refs = iter::from_fn(move || {
+        let capture = captures.next()?;
+        Some((
+            capture.node.byte_range(),
+            HighlightCaptureRef {
+                grammar_index: capture.grammar_index,
+                capture_id: CaptureId(capture.index),
+            },
+        ))
+    });
+    flatten_capture_regions(range, capture_refs)
+}
+
+fn flatten_capture_regions(
+    range: Range<usize>,
+    mut captures: impl Iterator<Item = (Range<usize>, HighlightCaptureRef)>,
+) -> Vec<HighlightCaptureRegion> {
+    let mut result = Vec::new();
+    let mut stack = Vec::<(Range<usize>, HighlightCaptureRef)>::new();
+    let mut offset = range.start;
+    let mut next_capture = captures.next();
+    loop {
+        stack.retain(|(capture_range, _)| capture_range.end > offset);
+        while let Some((capture_range, capture_ref)) = next_capture.take() {
+            if capture_range.start > offset {
+                next_capture = Some((capture_range, capture_ref));
+                break;
+            }
+            if capture_range.end > offset {
+                stack.push((capture_range, capture_ref));
+            }
+            next_capture = captures.next();
+        }
+        let mut next_boundary = range.end;
+        if let Some(min_end) = stack
+            .iter()
+            .map(|(capture_range, _)| capture_range.end)
+            .min()
+        {
+            next_boundary = next_boundary.min(min_end);
+        }
+        if let Some((capture_range, _)) = &next_capture {
+            next_boundary = next_boundary.min(capture_range.start);
+        }
+        if !stack.is_empty() && next_boundary > offset {
+            result.push(HighlightCaptureRegion {
+                range: offset..next_boundary,
+                stack: stack.iter().map(|(_, capture_ref)| *capture_ref).collect(),
+            });
+        }
+        if next_boundary >= range.end {
+            break;
+        }
+        offset = next_boundary;
+    }
+    result
+}
+
 #[derive(Debug)]
 pub struct SyntaxMapMatch<'a> {
     pub language: Arc<Language>,
@@ -101,7 +171,7 @@ pub struct SyntaxMapMatch<'a> {
 
 struct SyntaxMapCapturesLayer<'a> {
     depth: usize,
-    captures: QueryCaptures<'a, 'a, TextProvider<'a>, &'a [u8]>,
+    captures: QueryCaptures<'a, 'a, 'static, TextProvider<'a>, &'a [u8]>,
     next_capture: Option<QueryCapture<'a>>,
     grammar_index: usize,
     _query_cursor: QueryCursorHandle,
@@ -113,7 +183,7 @@ struct SyntaxMapMatchesLayer<'a> {
     next_pattern_index: usize,
     next_captures: Vec<QueryCapture<'a>>,
     has_next: bool,
-    matches: QueryMatches<'a, 'a, TextProvider<'a>, &'a [u8]>,
+    matches: QueryMatches<'a, 'a, 'static, TextProvider<'a>, &'a [u8]>,
     query: &'a Query,
     grammar_index: usize,
     _query_cursor: QueryCursorHandle,
@@ -150,6 +220,16 @@ impl SyntaxLayerContent {
         match self {
             SyntaxLayerContent::Parsed { tree, .. } => Some(tree),
             SyntaxLayerContent::Pending { .. } => None,
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    fn language_name(&self) -> SharedString {
+        match self {
+            SyntaxLayerContent::Parsed { language, .. } => language.name().0,
+            SyntaxLayerContent::Pending { language_name } => {
+                SharedString::from(language_name.clone())
+            }
         }
     }
 }
@@ -240,6 +320,21 @@ enum ParseMode {
     Combined {
         parent_layer_range: Range<usize>,
         parent_layer_changed_ranges: Vec<Range<usize>>,
+    },
+}
+
+/// Identifies a set of injection matches that should share a single syntax layer.
+#[derive(PartialEq, Eq, Hash)]
+enum InjectionGroupKey {
+    /// Every match of an `injection.combined` pattern for a given language shares one
+    /// layer spanning the whole parent layer.
+    Combined(LanguageId),
+    /// Every match whose `@injection.host` capture resolves to the same node shares one
+    /// layer spanning that node. This keeps interpolated strings such as Python
+    /// f-strings, which produce one match per string fragment, in a single layer.
+    Host {
+        language: LanguageId,
+        host_range: Range<usize>,
     },
 }
 
@@ -551,7 +646,7 @@ impl SyntaxSnapshot {
 
         let mut changed_regions = ChangeRegionSet::default();
         let mut queue = BinaryHeap::new();
-        let mut combined_injection_ranges = HashMap::default();
+        let mut injection_groups = HashMap::default();
         queue.push(ParseStep {
             depth: 0,
             language: ParseStepLanguage::Loaded {
@@ -850,25 +945,29 @@ impl SyntaxSnapshot {
                             registry,
                             step.depth + 1,
                             &expanded_ranges,
-                            &mut combined_injection_ranges,
+                            &mut injection_groups,
                             &mut queue,
                         );
                     }
 
-                    let included_sub_ranges: Option<Vec<Range<Anchor>>> = if is_combined {
-                        Some(
-                            included_ranges
-                                .into_iter()
-                                .filter(|r| r.start_byte < r.end_byte)
-                                .map(|r| {
-                                    text.anchor_before(r.start_byte + step_start_byte)
-                                        ..text.anchor_after(r.end_byte + step_start_byte)
-                                })
-                                .collect(),
-                        )
-                    } else {
-                        None
-                    };
+                    // Layers built from more than one included range don't cover their
+                    // whole span, so record the sub-ranges to let callers tell which
+                    // offsets actually belong to this layer.
+                    let included_sub_ranges: Option<Vec<Range<Anchor>>> =
+                        if is_combined || included_ranges.len() > 1 {
+                            Some(
+                                included_ranges
+                                    .into_iter()
+                                    .filter(|r| r.start_byte < r.end_byte)
+                                    .map(|r| {
+                                        text.anchor_before(r.start_byte + step_start_byte)
+                                            ..text.anchor_after(r.end_byte + step_start_byte)
+                                    })
+                                    .collect(),
+                            )
+                        } else {
+                            None
+                        };
                     SyntaxLayerContent::Parsed {
                         tree,
                         language,
@@ -901,22 +1000,34 @@ impl SyntaxSnapshot {
 
     #[cfg(debug_assertions)]
     fn check_invariants(&self, text: &BufferSnapshot) {
+        let out_of_order = |reason: &str| -> ! {
+            let mut dump = format!("layers out of order: {reason}\nlayers:\n");
+            for layer in self.layers.iter() {
+                dump.push_str(&format!(
+                    "  depth={} range={:?} language={} id={:?}\n",
+                    layer.depth,
+                    layer.range.to_offset(text),
+                    layer.content.language_name(),
+                    layer.content.language_id(),
+                ));
+            }
+            panic!("{dump}");
+        };
+
         let mut max_depth = 0;
         let mut prev_layer: Option<(Range<Anchor>, Option<LanguageId>)> = None;
         for layer in self.layers.iter() {
             match Ord::cmp(&layer.depth, &max_depth) {
-                Ordering::Less => {
-                    panic!("layers out of order")
-                }
+                Ordering::Less => out_of_order("depth decreased"),
                 Ordering::Equal => {
                     if let Some((prev_range, prev_language_id)) = prev_layer {
                         match layer.range.start.cmp(&prev_range.start, text) {
-                            Ordering::Less => panic!("layers out of order"),
+                            Ordering::Less => out_of_order("start decreased"),
                             Ordering::Equal => match layer.range.end.cmp(&prev_range.end, text) {
-                                Ordering::Less => panic!("layers out of order"),
+                                Ordering::Less => out_of_order("end decreased at equal start"),
                                 Ordering::Equal => {
                                     if layer.content.language_id() < prev_language_id {
-                                        panic!("layers out of order")
+                                        out_of_order("language id decreased at equal range")
                                     }
                                 }
                                 Ordering::Greater => {}
@@ -1160,7 +1271,7 @@ impl<'a> SyntaxMapCaptures<'a> {
         result
     }
 
-    pub fn grammars(&self) -> &[&'a Grammar] {
+    pub fn grammars(&self) -> &[&'a Arc<Grammar>] {
         &self.grammars
     }
 
@@ -1561,7 +1672,7 @@ fn get_injections(
     language_registry: &Arc<LanguageRegistry>,
     depth: usize,
     changed_ranges: &[Range<usize>],
-    combined_injection_ranges: &mut HashMap<LanguageId, (Arc<Language>, Vec<tree_sitter::Range>)>,
+    injection_groups: &mut HashMap<InjectionGroupKey, (Arc<Language>, Vec<tree_sitter::Range>)>,
     queue: &mut BinaryHeap<ParseStep>,
 ) {
     let mut query_cursor = QueryCursorHandle::new();
@@ -1569,7 +1680,7 @@ fn get_injections(
 
     // Ensure that a `ParseStep` is created for every combined injection language, even
     // if there currently no matches for that injection.
-    combined_injection_ranges.clear();
+    injection_groups.clear();
     for pattern in &config.patterns {
         if let (Some(language_name), true) = (pattern.language.as_ref(), pattern.combined)
             && let Some(language) = language_registry
@@ -1577,7 +1688,10 @@ fn get_injections(
                 .now_or_never()
                 .and_then(|language| language.ok())
         {
-            combined_injection_ranges.insert(language.id, (language, Vec::new()));
+            injection_groups.insert(
+                InjectionGroupKey::Combined(language.id),
+                (language, Vec::new()),
+            );
         }
     }
 
@@ -1606,6 +1720,11 @@ fn get_injections(
 
             prev_match = Some((mat.pattern_index, content_range.clone()));
             let combined = config.patterns[mat.pattern_index].combined;
+
+            let host_range = config
+                .host_capture_ix
+                .and_then(|ix| mat.nodes_for_capture_index(ix).next())
+                .map(|host_node| host_node.byte_range());
 
             let mut step_range = content_range.clone();
             let language_name =
@@ -1636,11 +1755,23 @@ fn get_injections(
                     .now_or_never()
                     .and_then(|language| language.ok());
                 let range = text.anchor_before(step_range.start)..text.anchor_after(step_range.end);
+
                 if let Some(language) = language {
-                    if combined {
-                        combined_injection_ranges
-                            .entry(language.id)
-                            .or_insert_with(|| (language.clone(), vec![]))
+                    let group_key = if let Some(host_range) = host_range {
+                        Some(InjectionGroupKey::Host {
+                            language: language.id,
+                            host_range,
+                        })
+                    } else if combined {
+                        Some(InjectionGroupKey::Combined(language.id))
+                    } else {
+                        None
+                    };
+
+                    if let Some(group_key) = group_key {
+                        injection_groups
+                            .entry(group_key)
+                            .or_insert_with(|| (language.clone(), Vec::new()))
                             .1
                             .extend(content_ranges);
                     } else {
@@ -1667,19 +1798,34 @@ fn get_injections(
         }
     }
 
-    for (_, (language, mut included_ranges)) in combined_injection_ranges.drain() {
+    for (group_key, (language, mut included_ranges)) in injection_groups.drain() {
         included_ranges.sort_unstable_by(|a, b| {
             Ord::cmp(&a.start_byte, &b.start_byte).then_with(|| Ord::cmp(&a.end_byte, &b.end_byte))
         });
+        // Overlapping changed ranges can yield the same match more than once, and
+        // `set_included_ranges` rejects overlapping ranges.
+        included_ranges.dedup();
+
+        let (range, mode) = match group_key {
+            InjectionGroupKey::Combined(_) => (
+                outer_range.clone(),
+                ParseMode::Combined {
+                    parent_layer_range: outer_range.to_offset(text),
+                    parent_layer_changed_ranges: changed_ranges.to_vec(),
+                },
+            ),
+            InjectionGroupKey::Host { host_range, .. } => (
+                text.anchor_before(host_range.start)..text.anchor_after(host_range.end),
+                ParseMode::Single,
+            ),
+        };
+
         queue.push(ParseStep {
             depth,
             language: ParseStepLanguage::Loaded { language },
-            range: outer_range.clone(),
+            range,
             included_ranges,
-            mode: ParseMode::Combined {
-                parent_layer_range: node.start_byte()..node.end_byte(),
-                parent_layer_changed_ranges: changed_ranges.to_vec(),
-            },
+            mode,
         })
     }
 }

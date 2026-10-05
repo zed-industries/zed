@@ -71,12 +71,26 @@ pub trait Notification:
 pub struct SuppressEvent;
 
 impl Workspace {
+    pub fn has_notification(&self, id: &NotificationId) -> bool {
+        self.notifications
+            .iter()
+            .any(|(existing_id, _)| existing_id == id)
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn notification_ids(&self) -> Vec<NotificationId> {
         self.notifications
             .iter()
             .map(|(id, _)| id)
             .cloned()
+            .collect()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn notification_views(&self) -> Vec<AnyView> {
+        self.notifications
+            .iter()
+            .map(|(_, view)| view.clone())
             .collect()
     }
 
@@ -428,7 +442,7 @@ fn workspace_error_notification_id() -> NotificationId {
     NotificationId::unique::<WorkspaceErrorNotification>()
 }
 
-fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+pub fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let settings = ThemeSettings::get_global(cx);
     let ui_font_family = settings.ui_font.family.clone();
     let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
@@ -528,8 +542,12 @@ pub mod simple_message_notification {
                     if let Some(auto_hide) = this.auto_hide.as_mut() {
                         auto_hide.finish_timer();
                         if !auto_hide.hovered {
-                            auto_hide.start_fading_out();
-                            cx.notify();
+                            if cx.reduce_motion() {
+                                cx.emit(DismissEvent);
+                            } else {
+                                auto_hide.start_fading_out();
+                                cx.notify();
+                            }
                         }
                     }
                 }) {
@@ -956,7 +974,7 @@ pub mod simple_message_notification {
                 cx.emit(DismissEvent);
             }
 
-            if self.needs_animation_frame() {
+            if self.needs_animation_frame() && !cx.reduce_motion() {
                 window.request_animation_frame();
             }
 

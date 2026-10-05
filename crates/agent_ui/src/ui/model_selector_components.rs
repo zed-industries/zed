@@ -243,7 +243,7 @@ impl RenderOnce for ModelSelectorFooter {
                     .style(ButtonStyle::Outlined)
                     .key_binding(
                         KeyBinding::for_action_in(action.as_ref(), &focus_handle, cx)
-                            .map(|kb| kb.size(rems_from_px(12.))),
+                            .map(|kb| kb.size(rems_from_px(12_f32))),
                     )
                     .on_click(move |_, window, cx| {
                         window.dispatch_action(action.boxed_clone(), cx);

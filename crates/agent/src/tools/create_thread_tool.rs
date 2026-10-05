@@ -11,19 +11,19 @@ use crate::{AgentTool, SiblingThreadRequest, ThreadEnvironment, ToolCallEventStr
 
 /// Create a new agent thread that runs in parallel with this one.
 ///
-/// Use this to kick off separable pieces of work without interrupting the current
-/// conversation. The new thread appears in the agent sidebar just like a thread
-/// the user created themselves, and runs independently — you will NOT receive
-/// its output and you cannot interact with it afterwards. Use `spawn_agent`
-/// instead if you need the results back.
+/// Only use this after the user explicitly asks for or approves another thread.
+/// The new thread appears in the agent sidebar just like a thread the user created
+/// themselves, and runs independently — you will NOT receive its output and you
+/// cannot interact with it afterwards. Use `spawn_agent` instead if you need the
+/// results back.
 ///
 /// A successful call returns only the title, agent ID, and model used; there is
 /// currently no way to look up or control a sibling thread by session ID.
 ///
 /// ### When to use
-/// - The user asks you to start another thread, investigation, or exploration on the side.
-/// - You notice a separable task (refactor, bug fix, investigation) that shouldn't
-///   derail the current conversation but is worth pursuing.
+/// - The user explicitly asks you to create or start another thread.
+/// - You may suggest a new thread for a separable task, but call this tool only
+///   after the user explicitly agrees.
 ///
 /// ### Prompt design
 /// The new thread has no access to this conversation's history. Include in `prompt`

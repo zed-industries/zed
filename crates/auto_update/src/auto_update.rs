@@ -3,8 +3,8 @@ use client::Client;
 use db::kvp::KeyValueStore;
 use futures_lite::StreamExt;
 use gpui::{
-    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, Global, Task, TaskExt,
-    Window, actions,
+    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Global,
+    Task, TaskExt, Window, actions,
 };
 use http_client::{HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
@@ -173,6 +173,11 @@ impl AutoUpdateStatus {
     }
 }
 
+pub enum AutoUpdateEvent {
+    /// A manual check received a release response and found no newer version.
+    UpToDate,
+}
+
 pub struct AutoUpdater {
     status: AutoUpdateStatus,
     current_version: Version,
@@ -180,6 +185,7 @@ pub struct AutoUpdater {
     pending_poll: Option<Task<Option<()>>>,
     quit_subscription: Option<gpui::Subscription>,
     update_check_type: UpdateCheckType,
+    _wake_subscription: gpui::Subscription,
     dismissed_status: Option<AutoUpdateStatus>,
 }
 
@@ -418,6 +424,8 @@ impl UpdateCheckType {
     }
 }
 
+impl EventEmitter<AutoUpdateEvent> for AutoUpdater {}
+
 impl AutoUpdater {
     pub fn get(cx: &mut App) -> Option<Entity<Self>> {
         cx.default_global::<GlobalAutoUpdate>().0.clone()
@@ -441,6 +449,16 @@ impl AutoUpdater {
         })
         .detach();
 
+        // A download or check that was in flight when the machine went to sleep
+        // is almost certainly riding a TCP connection that silently died during
+        // suspend, so it would otherwise appear to stall indefinitely.
+        let wake_subscription = cx.on_system_wake({
+            let this = cx.entity().downgrade();
+            move |cx| {
+                this.update(cx, |this, cx| this.restart_after_wake(cx)).ok();
+            }
+        });
+
         Self {
             status: AutoUpdateStatus::Idle,
             current_version,
@@ -448,8 +466,25 @@ impl AutoUpdater {
             pending_poll: None,
             quit_subscription,
             update_check_type: UpdateCheckType::Automatic,
+            _wake_subscription: wake_subscription,
             dismissed_status: None,
         }
+    }
+
+    fn restart_after_wake(&mut self, cx: &mut Context<Self>) {
+        // Only network phases can be safely restarted. `Installing` is a local
+        // operation (mounting a dmg, rsync, etc.) that must not be interrupted.
+        if !matches!(
+            self.status,
+            AutoUpdateStatus::Checking | AutoUpdateStatus::Downloading { .. }
+        ) {
+            return;
+        }
+
+        let check_type = self.update_check_type;
+        self.pending_poll.take();
+        self.status = AutoUpdateStatus::Idle;
+        self.poll(check_type, cx);
     }
 
     pub fn start_polling(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -735,11 +770,15 @@ impl AutoUpdater {
 
         let Some(newer_version) = newer_version else {
             this.update(cx, |this, cx| {
-                let status = match previous_status {
+                this.status = match previous_status {
                     AutoUpdateStatus::Updated { .. } => previous_status,
-                    _ => AutoUpdateStatus::Idle,
+                    _ => {
+                        if this.update_check_type.is_manual() {
+                            cx.emit(AutoUpdateEvent::UpToDate);
+                        }
+                        AutoUpdateStatus::Idle
+                    }
                 };
-                this.status = status;
                 cx.notify();
             });
             return Ok(());
@@ -1464,7 +1503,9 @@ mod tests {
         );
         let will_restart = cx.expect_restart();
         cx.update(|cx| cx.restart());
-        let path = will_restart.await.unwrap().unwrap();
+        let (path, arguments) = will_restart.await.unwrap();
+        assert!(arguments.is_empty());
+        let path = path.unwrap();
         assert_eq!(path, tmp_dir.path().join("zed"));
         assert_eq!(std::fs::read_to_string(path).unwrap(), "<fake-zed-update>");
     }

@@ -16,8 +16,8 @@ use indoc::indoc;
 
 pub fn run_bundling() -> Workflow {
     let bundle = ReleaseBundleJobs {
-        linux_aarch64: bundle_linux(Arch::AARCH64, None, &[]),
-        linux_x86_64: bundle_linux(Arch::X86_64, None, &[]),
+        linux_aarch64: bundle_linux(Arch::AARCH64, None, false, &[]),
+        linux_x86_64: bundle_linux(Arch::X86_64, None, false, &[]),
         bwrap_linux_aarch64: build_static_bwrap(Arch::AARCH64, &[]),
         bwrap_linux_x86_64: build_static_bwrap(Arch::X86_64, &[]),
         mac_aarch64: bundle_mac(Arch::AARCH64, None, &[]),
@@ -62,10 +62,26 @@ pub(crate) fn bundle_mac(
     release_channel: Option<ReleaseChannel>,
     deps: &[&NamedJob],
 ) -> NamedJob {
+    pub fn print_macos_toolchain() -> Step<Run> {
+        named::bash(indoc! {r#"
+            sw_vers
+            xcode-select -p
+            xcodebuild -version
+            xcrun --sdk macosx --show-sdk-version
+            xcrun --sdk macosx --show-sdk-path
+            xcrun clang --version
+            printf 'DEVELOPER_DIR=%s\n' "${DEVELOPER_DIR-<unset>}"
+            printf 'SDKROOT=%s\n' "${SDKROOT-<unset>}"
+            printf 'MACOSX_DEPLOYMENT_TARGET=%s\n' "${MACOSX_DEPLOYMENT_TARGET-<unset>}"
+        "#})
+    }
+
     pub fn bundle_mac(arch: Arch) -> Step<Run> {
-        named::bash(&format!("./script/bundle-mac {arch}-apple-darwin"))
+        let target = Platform::Mac.target_triple(arch);
+        named::bash(&format!("./script/bundle-mac {target}"))
     }
     let platform = Platform::Mac;
+    let target = platform.target_triple(arch);
     let artifact_name = match arch {
         Arch::X86_64 => assets::MAC_X86_64,
         Arch::AARCH64 => assets::MAC_AARCH64,
@@ -87,9 +103,10 @@ pub(crate) fn bundle_mac(
             .add_step(steps::setup_node())
             .add_step(steps::setup_sentry())
             .add_step(steps::clear_target_dir_if_large(runners::Platform::Mac))
+            .add_step(print_macos_toolchain())
             .add_step(bundle_mac(arch))
             .add_step(upload_artifact(&format!(
-                "target/{arch}-apple-darwin/release/{artifact_name}"
+                "target/{target}/release/{artifact_name}"
             )))
             .add_step(upload_artifact(&format!(
                 "target/{remote_server_artifact_name}"
@@ -149,6 +166,7 @@ pub(crate) fn build_static_bwrap(arch: Arch, deps: &[&NamedJob]) -> NamedJob {
 pub(crate) fn bundle_linux(
     arch: Arch,
     release_channel: Option<ReleaseChannel>,
+    require_sentry: bool,
     deps: &[&NamedJob],
 ) -> NamedJob {
     let platform = Platform::Linux;
@@ -174,7 +192,11 @@ pub(crate) fn bundle_linux(
             })
             .add_step(steps::setup_sentry())
             .map(steps::install_linux_dependencies)
-            .add_step(steps::script("./script/bundle-linux"))
+            .add_step(steps::script(if require_sentry {
+                "./script/bundle-linux --require-sentry"
+            } else {
+                "./script/bundle-linux"
+            }))
             .add_step(upload_artifact(&format!("target/release/{artifact_name}")))
             .add_step(upload_artifact(&format!(
                 "target/{remote_server_artifact_name}"
