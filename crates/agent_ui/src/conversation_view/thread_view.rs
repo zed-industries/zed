@@ -5,7 +5,7 @@ use crate::{
     thread_metadata_store::{ThreadId, ThreadMetadataStore},
 };
 use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use acp_thread::{
     Elicitation, ElicitationEntryId, ElicitationStatus, ForegroundActivity,
@@ -608,6 +608,7 @@ pub struct ThreadView {
     pub editing_message: Option<usize>,
     pub message_queue: MessageQueue,
     pub turn_fields: TurnFields,
+    elapsed_label_tracker: ElapsedLabelTracker,
     pub discarded_partial_edits: HashSet<acp_v1::ToolCallId>,
     pub is_loading_contents: bool,
     pub new_server_version_available: Option<SharedString>,
@@ -671,6 +672,26 @@ pub struct TurnFields {
     pub turn_started_at: Option<Instant>,
     pub turn_tokens: Option<u64>,
     pub reported_activity_generation: Option<u64>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct ElapsedLabelTracker(Rc<Cell<Option<Instant>>>);
+
+impl ElapsedLabelTracker {
+    fn reset(&self) {
+        self.0.set(None);
+    }
+
+    fn track(&self, started_at: Instant, threshold: Duration) {
+        let update_at = started_at.checked_add(threshold).unwrap_or(started_at);
+        if self.0.get().is_none_or(|current| update_at < current) {
+            self.0.set(Some(update_at));
+        }
+    }
+
+    fn should_update(&self, now: Instant) -> bool {
+        self.0.get().is_some_and(|update_at| now > update_at)
+    }
 }
 
 /// How a tool call is rendered relative to its surroundings.
@@ -796,6 +817,7 @@ impl ThreadView {
         code_span_resolver: AgentCodeSpanResolver,
         thread_store: Option<Entity<ThreadStore>>,
         initial_content: Option<AgentInitialContent>,
+        elapsed_label_tracker: ElapsedLabelTracker,
         mut subscriptions: Vec<Subscription>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1027,6 +1049,7 @@ impl ThreadView {
             editing_message: None,
             message_queue: MessageQueue::default(),
             turn_fields: TurnFields::default(),
+            elapsed_label_tracker,
             discarded_partial_edits: HashSet::default(),
             is_loading_contents: false,
             new_server_version_available: None,
@@ -1414,14 +1437,24 @@ impl ThreadView {
     fn initialize_turn(&mut self, cx: &mut Context<Self>) -> usize {
         self.turn_fields.turn_generation += 1;
         let generation = self.turn_fields.turn_generation;
-        self.turn_fields.turn_started_at = Some(Instant::now());
+        self.turn_fields.turn_started_at = Some(cx.background_executor().now());
         self.turn_fields.last_turn_duration = None;
         self.turn_fields.last_turn_tokens = None;
         self.turn_fields.turn_tokens = Some(0);
         self.turn_fields._turn_timer_task = Some(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
-                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                if this
+                    .update(cx, |this, cx| {
+                        if this
+                            .elapsed_label_tracker
+                            .should_update(cx.background_executor().now())
+                        {
+                            cx.notify();
+                        }
+                    })
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -1429,15 +1462,16 @@ impl ThreadView {
         generation
     }
 
-    pub fn stop_turn(&mut self, generation: usize, _cx: &mut Context<Self>) {
+    pub fn stop_turn(&mut self, generation: usize, cx: &mut Context<Self>) {
         if self.turn_fields.turn_generation != generation {
             return;
         }
+        let now = cx.background_executor().now();
         self.turn_fields.last_turn_duration = self
             .turn_fields
             .turn_started_at
             .take()
-            .map(|started| started.elapsed());
+            .map(|started| now.saturating_duration_since(started));
         self.turn_fields.last_turn_tokens = self.turn_fields.turn_tokens.take();
         self.turn_fields._turn_timer_task = None;
     }
@@ -3347,6 +3381,8 @@ impl ThreadView {
         if next_attempt_in.is_zero() {
             return None;
         }
+        self.elapsed_label_tracker
+            .track(cx.background_executor().now(), Duration::ZERO);
 
         let next_attempt_in_secs = next_attempt_in.as_secs() + 1;
 
@@ -7764,10 +7800,17 @@ impl ThreadView {
 
     fn render_generating(&self, confirmation: bool, cx: &App) -> impl IntoElement {
         let show_stats = AgentSettings::get_global(cx).show_turn_stats;
+        if show_stats && let Some(started_at) = self.turn_fields.turn_started_at {
+            self.elapsed_label_tracker
+                .track(started_at, STOPWATCH_THRESHOLD);
+        }
         let elapsed_label = show_stats
             .then(|| {
                 self.turn_fields.turn_started_at.and_then(|started_at| {
-                    let elapsed = started_at.elapsed();
+                    let elapsed = cx
+                        .background_executor()
+                        .now()
+                        .saturating_duration_since(started_at);
                     (elapsed > STOPWATCH_THRESHOLD).then(|| duration_alt_display(elapsed))
                 })
             })
@@ -8342,6 +8385,8 @@ impl ThreadView {
         let time_elapsed = if let Some(output) = output {
             output.ended_at.duration_since(started_at)
         } else {
+            self.elapsed_label_tracker
+                .track(started_at, crate::ui::ELAPSED_DISPLAY_THRESHOLD);
             started_at.elapsed()
         };
 
@@ -12813,6 +12858,8 @@ impl ThreadView {
 
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.elapsed_label_tracker.reset();
+
         // Keep the message editor's local slash commands in sync with the
         // current availability of feedback/sharing, which can change between
         // renders (settings, connection state, feature flags).
@@ -13411,6 +13458,20 @@ mod tests {
                 expected,
             );
         }
+    }
+
+    #[test]
+    fn elapsed_label_tracker_starts_updating_after_its_threshold() {
+        let tracker = ElapsedLabelTracker::default();
+        let started_at = Instant::now();
+        let threshold = Duration::from_secs(10);
+
+        tracker.track(started_at, threshold);
+        assert!(!tracker.should_update(started_at + threshold));
+        assert!(tracker.should_update(started_at + threshold + Duration::from_millis(1)));
+
+        tracker.reset();
+        assert!(!tracker.should_update(started_at + threshold + Duration::from_secs(1)));
     }
 
     fn native_command(name: &str) -> acp_v1::AvailableCommand {
