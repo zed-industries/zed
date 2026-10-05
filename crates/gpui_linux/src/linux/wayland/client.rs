@@ -1524,11 +1524,6 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                 {
                     output.release();
                 }
-                let windows = state.windows.values().cloned().collect::<Vec<_>>();
-                drop(state);
-                for window in windows {
-                    window.handle_output_removed(&id);
-                }
             }
             _ => {}
         }
@@ -1688,18 +1683,8 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
                 }
             }
             wl_output::Event::Done => {
-                let Some(complete) = in_progress_output.complete() else {
-                    return;
-                };
-                let id = output.id();
-                if state.outputs.get(&id) == Some(&complete) {
-                    return;
-                }
-                state.outputs.insert(id.clone(), complete.clone());
-                let windows = state.windows.values().cloned().collect::<Vec<_>>();
-                drop(state);
-                for window in windows {
-                    window.handle_output_changed(&id, &complete);
+                if let Some(complete) = in_progress_output.complete() {
+                    state.outputs.insert(output.id(), complete);
                 }
             }
             _ => {}

@@ -41,11 +41,11 @@ use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSIO
 use xkbcommon::xkb::{self as xkbc, STATE_LAYOUT_EFFECTIVE};
 
 use super::{
-    ButtonOrScroll, CrtcMode, ScrollDirection, X11Display, X11WindowStatePtr, XcbAtoms,
-    XimCallbackEvent, XimHandler, button_or_scroll_from_event_detail, check_reply,
+    ButtonOrScroll, ScrollDirection, X11Display, X11WindowStatePtr, XcbAtoms, XimCallbackEvent,
+    XimHandler, button_or_scroll_from_event_detail, check_reply,
     clipboard::{self, Clipboard},
-    get_reply, get_valuator_axis_index, handle_connection_error, mode_refresh_interval,
-    modifiers_from_state, pressed_button_from_mask, query_crtc_modes, xcb_flush,
+    get_reply, get_valuator_axis_index, handle_connection_error, modifiers_from_state,
+    pressed_button_from_mask, xcb_flush,
 };
 
 use crate::linux::{
@@ -203,8 +203,6 @@ pub struct X11ClientState {
     pub(crate) resource_database: Database,
     pub(crate) atoms: XcbAtoms,
     pub(crate) windows: HashMap<xproto::Window, WindowRef>,
-    /// Enabled monitors of the root screen, refreshed on RandR changes.
-    crtcs: Vec<CrtcMode>,
     pub(crate) mouse_focused_window: Option<xproto::Window>,
     pub(crate) keyboard_focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
@@ -473,17 +471,6 @@ impl X11Client {
 
         let screen = &xcb_connection.setup().roots[x_root_index];
         let compositor_gpu = detect_compositor_gpu(&xcb_connection, screen);
-        check_reply(
-            || "Failed to select RandR notifications",
-            xcb_connection.randr_select_input(
-                screen.root,
-                randr::NotifyMask::SCREEN_CHANGE | randr::NotifyMask::CRTC_CHANGE,
-            ),
-        )
-        .log_err();
-        let crtcs = query_crtc_modes(&xcb_connection, screen.root)
-            .log_err()
-            .unwrap_or_default();
 
         let xcb_connection = Rc::new(xcb_connection);
 
@@ -566,7 +553,6 @@ impl X11Client {
             resource_database,
             atoms,
             windows: HashMap::default(),
-            crtcs,
             mouse_focused_window: None,
             keyboard_focused_window: None,
             xkb: xkb_state,
@@ -996,27 +982,6 @@ impl X11Client {
                     .set_bounds(bounds)
                     .context("X11: Failed to set window bounds")
                     .log_err();
-                let crtcs = self.0.borrow().crtcs.clone();
-                window.update_display_refresh_interval(&crtcs);
-            }
-            Event::RandrScreenChangeNotify(_) | Event::RandrNotify(_) => {
-                let (crtcs, windows) = {
-                    let mut state = self.0.borrow_mut();
-                    let root = state.xcb_connection.setup().roots[state.x_root_index].root;
-                    let crtcs = query_crtc_modes(&state.xcb_connection, root)
-                        .log_err()
-                        .unwrap_or_default();
-                    state.crtcs = crtcs.clone();
-                    let windows = state
-                        .windows
-                        .values()
-                        .map(|window| window.window.clone())
-                        .collect::<Vec<_>>();
-                    (crtcs, windows)
-                };
-                for window in windows {
-                    window.update_display_refresh_interval(&crtcs);
-                }
             }
             Event::PropertyNotify(event) => {
                 let window = self.get_window(event.window)?;
@@ -1720,7 +1685,6 @@ impl LinuxClient for X11Client {
             is_mapped: false,
         };
 
-        window.0.update_display_refresh_interval(&state.crtcs);
         state.windows.insert(x_window, window_ref);
         Ok(Box::new(window))
     }
@@ -2205,11 +2169,14 @@ impl X11ClientState {
 // Adapted from:
 // https://docs.rs/winit/0.29.11/src/winit/platform_impl/linux/x11/monitor.rs.html#103-111
 pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
-    let Some(refresh_interval) = mode_refresh_interval(mode) else {
+    if mode.dot_clock == 0 || mode.htotal == 0 || mode.vtotal == 0 {
         return Duration::from_millis(16);
-    };
-    log::info!("Refreshing every {}ms", refresh_interval.as_millis());
-    refresh_interval
+    }
+
+    let millihertz = mode.dot_clock as u64 * 1_000 / (mode.htotal as u64 * mode.vtotal as u64);
+    let micros = 1_000_000_000 / millihertz;
+    log::info!("Refreshing every {}ms", micros / 1_000);
+    Duration::from_micros(micros)
 }
 
 /// Applies a mapped/obscured change to the refresh loop and reports the

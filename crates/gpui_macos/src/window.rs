@@ -472,18 +472,6 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
             window_did_change_screen as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
-            sel!(screensDidSleep:),
-            screens_did_sleep as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(screensDidWake:),
-            screens_did_wake as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(screenParametersDidChange:),
-            screen_parameters_did_change as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
             sel!(windowDidBecomeKey:),
             window_did_change_key_status as extern "C" fn(&Object, Sel, id),
         );
@@ -687,7 +675,6 @@ struct MacWindowState {
     last_visibility: Option<WindowVisibility>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
-    display_changed_callback: Option<Box<dyn FnMut()>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
@@ -1125,7 +1112,6 @@ impl MacWindow {
                 last_visibility: None,
                 resize_callback: None,
                 moved_callback: None,
-                display_changed_callback: None,
                 should_close_callback: None,
                 close_callback: None,
                 appearance_changed_callback: None,
@@ -1167,7 +1153,6 @@ impl MacWindow {
                 Arc::into_raw(window.0.clone()) as *const c_void,
             );
             native_window.setDelegate_(native_window);
-            register_display_observers(native_window);
             (*native_view).set_ivar(
                 WINDOW_STATE_IVAR,
                 Arc::into_raw(window.0.clone()) as *const c_void,
@@ -1405,9 +1390,7 @@ impl Drop for MacWindow {
         this.frame_source.take();
         unsafe {
             this.native_window.setDelegate_(nil);
-            unregister_display_observers(this.native_window);
         }
-        this.display_changed_callback.take();
         this.input_handler.take();
         // A delivery task queued by `report_visibility` may still run after the
         // GPUI window is gone; without a callback it has nothing to notify.
@@ -2054,10 +2037,6 @@ impl PlatformWindow for MacWindow {
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.0.as_ref().lock().moved_callback = Some(callback);
-    }
-
-    fn on_display_changed(&self, callback: Box<dyn FnMut()>) {
-        self.0.as_ref().lock().display_changed_callback = Some(callback);
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
@@ -3134,78 +3113,6 @@ extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
     lock.start_display_link();
     drop(lock);
     update_window_scale_factor(&window_state);
-    report_display_change(&window_state);
-}
-
-const SCREENS_DID_SLEEP_NOTIFICATION: &str = "NSWorkspaceScreensDidSleepNotification";
-const SCREENS_DID_WAKE_NOTIFICATION: &str = "NSWorkspaceScreensDidWakeNotification";
-// Posted when a display is added, removed, rearranged, or changes mode,
-// including its refresh rate.
-const SCREEN_PARAMETERS_NOTIFICATION: &str = "NSApplicationDidChangeScreenParametersNotification";
-
-unsafe fn register_display_observers(native_window: id) {
-    unsafe {
-        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-        let workspace_center: id = msg_send![workspace, notificationCenter];
-        let _: () = msg_send![workspace_center, addObserver: native_window
-            selector: sel!(screensDidSleep:)
-            name: ns_string(SCREENS_DID_SLEEP_NOTIFICATION)
-            object: nil
-        ];
-        let _: () = msg_send![workspace_center, addObserver: native_window
-            selector: sel!(screensDidWake:)
-            name: ns_string(SCREENS_DID_WAKE_NOTIFICATION)
-            object: nil
-        ];
-        let center: id = msg_send![class!(NSNotificationCenter), defaultCenter];
-        let _: () = msg_send![center, addObserver: native_window
-            selector: sel!(screenParametersDidChange:)
-            name: ns_string(SCREEN_PARAMETERS_NOTIFICATION)
-            object: nil
-        ];
-    }
-}
-
-unsafe fn unregister_display_observers(native_window: id) {
-    unsafe {
-        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-        let workspace_center: id = msg_send![workspace, notificationCenter];
-        let _: () = msg_send![workspace_center, removeObserver: native_window];
-        let center: id = msg_send![class!(NSNotificationCenter), defaultCenter];
-        let _: () = msg_send![center, removeObserver: native_window];
-    }
-}
-
-extern "C" fn screens_did_sleep(this: &Object, _: Sel, _: id) {
-    crate::display::set_screens_asleep(true);
-    report_display_change(&unsafe { get_window_state(this) });
-}
-
-extern "C" fn screens_did_wake(this: &Object, _: Sel, _: id) {
-    crate::display::set_screens_asleep(false);
-    report_display_change(&unsafe { get_window_state(this) });
-}
-
-extern "C" fn screen_parameters_did_change(this: &Object, _: Sel, _: id) {
-    report_display_change(&unsafe { get_window_state(this) });
-}
-
-fn report_display_change(window_state: &Arc<Mutex<MacWindowState>>) {
-    let executor = window_state.lock().foreground_executor.clone();
-    // AppKit can post screen changes while GPUI is updating a window, e.g.
-    // from `setFrame:`, so deliver after that update completes.
-    executor
-        .spawn({
-            let window_state = window_state.clone();
-            async move {
-                let callback = window_state.lock().display_changed_callback.take();
-                if let Some(mut callback) = callback {
-                    callback();
-                    window_state.lock().display_changed_callback = Some(callback);
-                }
-            }
-        })
-        .detach();
 }
 
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {

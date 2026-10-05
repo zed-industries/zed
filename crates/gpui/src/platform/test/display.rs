@@ -12,21 +12,14 @@ pub(crate) struct TestDisplay {
 
 impl TestDisplay {
     pub fn new() -> Self {
-        Self::with_state(
-            DisplayId(1),
-            DisplayState {
+        TestDisplay {
+            id: DisplayId(1),
+            uuid: uuid::Uuid::new_v4(),
+            bounds: Bounds::from_corners(Point::default(), Point::new(px(1920.), px(1080.))),
+            state: DisplayState {
                 refresh_interval: Some(Duration::from_secs(1) / 60),
                 power: DisplayPower::On,
             },
-        )
-    }
-
-    pub fn with_state(id: DisplayId, state: DisplayState) -> Self {
-        TestDisplay {
-            id,
-            uuid: uuid::Uuid::new_v4(),
-            bounds: Bounds::from_corners(Point::default(), Point::new(px(1920.), px(1080.))),
-            state,
         }
     }
 }

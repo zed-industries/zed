@@ -459,9 +459,8 @@ pub trait PlatformDisplay: Debug {
     /// Get the bounds for this display
     fn bounds(&self) -> Bounds<Pixels>;
 
-    /// The display's current refresh interval and power state. Changes are
-    /// reported to the windows on the display through
-    /// [`PlatformWindow::on_display_changed`].
+    /// The display's current refresh interval and power state, read from the
+    /// platform when called.
     fn state(&self) -> DisplayState;
 
     /// Get the visible bounds for this display, excluding taskbar/dock areas.
@@ -1107,11 +1106,6 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_moved(&self, callback: Box<dyn FnMut()>);
-    /// Registers the callback invoked when [`Self::display`] or the
-    /// [`PlatformDisplay::state`] of that display may have changed. Calls may
-    /// be spurious; GPUI rereads both and ignores calls that change neither.
-    /// The callback runs on the main thread outside of any window update.
-    fn on_display_changed(&self, callback: Box<dyn FnMut()>);
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);

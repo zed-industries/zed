@@ -14,19 +14,7 @@ use gpui::{
     Bounds, DisplayId, DisplayPower, DisplayState, Pixels, PlatformDisplay, point, px, size,
 };
 use objc::{msg_send, sel, sel_impl};
-use std::sync::atomic::{AtomicBool, Ordering};
 use uuid::Uuid;
-
-/// Set from `NSWorkspaceScreensDidSleepNotification` and cleared on
-/// `NSWorkspaceScreensDidWakeNotification`. macOS sleeps all displays
-/// together, and `CGDisplayIsAsleep` is not documented to have caught up by
-/// the time the notification is delivered, so the notification is trusted
-/// over it.
-static SCREENS_ASLEEP: AtomicBool = AtomicBool::new(false);
-
-pub(crate) fn set_screens_asleep(asleep: bool) {
-    SCREENS_ASLEEP.store(asleep, Ordering::Relaxed);
-}
 
 #[derive(Debug)]
 pub(crate) struct MacDisplay(pub(crate) CGDirectDisplayID);
@@ -144,7 +132,7 @@ impl PlatformDisplay for MacDisplay {
                 .display_mode()
                 .and_then(|mode| DisplayState::refresh_interval_from_hz(mode.refresh_rate()))
         });
-        let power = if SCREENS_ASLEEP.load(Ordering::Relaxed) || display.is_asleep() {
+        let power = if display.is_asleep() {
             DisplayPower::Off
         } else {
             DisplayPower::On

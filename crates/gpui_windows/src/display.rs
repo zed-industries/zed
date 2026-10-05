@@ -2,7 +2,6 @@ use gpui_util::ResultExt;
 use itertools::Itertools;
 use smallvec::SmallVec;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU8, Ordering};
 use uuid::Uuid;
 use windows::{
     Win32::{
@@ -21,31 +20,6 @@ use gpui::{
     Bounds, DevicePixels, DisplayId, DisplayPower, DisplayState, Pixels, PlatformDisplay, point,
     size,
 };
-
-/// The console display state from the most recent `GUID_CONSOLE_DISPLAY_STATE`
-/// notification. Windows reports one state for all displays attached to the
-/// console session, and sends it as soon as a window registers.
-static CONSOLE_DISPLAY_POWER: AtomicU8 = AtomicU8::new(CONSOLE_DISPLAY_POWER_UNKNOWN);
-const CONSOLE_DISPLAY_POWER_UNKNOWN: u8 = u8::MAX;
-
-/// Records the `Data` of a `GUID_CONSOLE_DISPLAY_STATE` power setting change.
-pub(crate) fn set_console_display_state(data: u32) {
-    let power = match data {
-        // 0 is off, 1 is on, and 2 is dimmed, which still presents.
-        0 => DisplayPower::Off as u8,
-        1 | 2 => DisplayPower::On as u8,
-        _ => CONSOLE_DISPLAY_POWER_UNKNOWN,
-    };
-    CONSOLE_DISPLAY_POWER.store(power, Ordering::Relaxed);
-}
-
-fn console_display_power() -> DisplayPower {
-    match CONSOLE_DISPLAY_POWER.load(Ordering::Relaxed) {
-        power if power == DisplayPower::Off as u8 => DisplayPower::Off,
-        power if power == DisplayPower::On as u8 => DisplayPower::On,
-        _ => DisplayPower::Unknown,
-    }
-}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WindowsDisplay {
@@ -184,7 +158,9 @@ impl PlatformDisplay for WindowsDisplay {
     fn state(&self) -> DisplayState {
         DisplayState {
             refresh_interval: refresh_interval_for_device(&self.device_name),
-            power: console_display_power(),
+            // Windows reports console display power only through
+            // `GUID_CONSOLE_DISPLAY_STATE` notifications, not by query.
+            power: DisplayPower::Unknown,
         }
     }
 }

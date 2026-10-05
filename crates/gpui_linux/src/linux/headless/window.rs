@@ -213,8 +213,6 @@ impl PlatformWindow for HeadlessWindow {
 
     fn on_moved(&self, _callback: Box<dyn FnMut()>) {}
 
-    fn on_display_changed(&self, _callback: Box<dyn FnMut()>) {}
-
     fn on_should_close(&self, _callback: Box<dyn FnMut() -> bool>) {}
 
     fn on_close(&self, _callback: Box<dyn FnOnce()>) {}

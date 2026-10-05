@@ -8,22 +8,21 @@ use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
     Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
-    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, DisplayState, Edges, Effect,
-    Entity, EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId,
-    GpuSpecs, Hsla, InputHandler, InputPreference, IsZero, KeyBinding, KeyContext, KeyDownEvent,
-    KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers,
-    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
-    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
-    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
-    SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
-    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
-    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point, prelude::*, px, rems,
-    size, transparent_black,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
+    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
+    Hsla, InputHandler, InputPreference, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
+    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
+    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
+    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
+    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
+    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -1161,7 +1160,6 @@ pub struct Window {
     pub(crate) removed: bool,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: Option<DisplayId>,
-    display_state: DisplayState,
     is_resizable: bool,
     is_minimizable: bool,
     sprite_atlas: Arc<dyn PlatformAtlas>,
@@ -1575,11 +1573,7 @@ impl Window {
             SystemWindowTabController::add_tab(cx, handle.window_id(), tabs);
         }
 
-        let display = platform_window.display();
-        let display_id = display.as_ref().map(|display| display.id());
-        let display_state = display.map_or(DisplayState::UNKNOWN, |display| display.state());
-        #[cfg(feature = "profiler")]
-        profiler::journal::record_window_display(handle.window_id(), display_id, display_state);
+        let display_id = platform_window.display().map(|display| display.id());
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
         let modifiers = platform_window.modifiers();
@@ -1909,14 +1903,6 @@ impl Window {
                     .log_err();
             }
         }));
-        platform_window.on_display_changed(Box::new({
-            let mut cx = cx.to_async();
-            move || {
-                handle
-                    .update(&mut cx, |_, window, _| window.refresh_display())
-                    .log_err();
-            }
-        }));
         platform_window.on_appearance_changed(Box::new({
             let cx = cx.to_async();
             let foreground_executor = cx.foreground_executor().clone();
@@ -2072,7 +2058,6 @@ impl Window {
             removed: false,
             platform_window,
             display_id,
-            display_state,
             is_resizable,
             is_minimizable,
             sprite_atlas,
@@ -2222,39 +2207,6 @@ impl Window {
         if self.invalidator.is_dirty() || self.needs_present.get() {
             profiler::journal::record_frame_pending(self.handle.window_id(), Instant::now());
         }
-    }
-
-    /// Rereads the window's display and that display's state from the
-    /// platform.
-    pub(crate) fn refresh_display(&mut self) {
-        let display = self.platform_window.display();
-        self.set_display(display.as_deref());
-    }
-
-    fn set_display(&mut self, display: Option<&dyn PlatformDisplay>) {
-        let display_id = display.map(|display| display.id());
-        let display_state = display.map_or(DisplayState::UNKNOWN, |display| display.state());
-        if (display_id, display_state) == (self.display_id, self.display_state) {
-            return;
-        }
-        self.display_id = display_id;
-        self.display_state = display_state;
-        log::debug!(
-            "window {:?} display changed: {display_id:?} {display_state:?}",
-            self.handle.window_id()
-        );
-        #[cfg(feature = "profiler")]
-        profiler::journal::record_window_display(
-            self.handle.window_id(),
-            display_id,
-            display_state,
-        );
-    }
-
-    /// The refresh interval and power state of the display this window is
-    /// on, as last reported by the platform.
-    pub fn display_state(&self) -> DisplayState {
-        self.display_state
     }
 
     /// Whether the platform is presenting this window's frames (see
@@ -2769,12 +2721,7 @@ impl Window {
     pub fn bounds_changed(&mut self, cx: &mut App) {
         self.scale_factor = self.platform_window.scale_factor();
         self.viewport_size = self.platform_window.content_size();
-        // Resizes and moves are frequent, so only a change of display rereads
-        // its state here; state changes arrive through `on_display_changed`.
-        let display = self.platform_window.display();
-        if display.as_ref().map(|display| display.id()) != self.display_id {
-            self.set_display(display.as_deref());
-        }
+        self.display_id = self.platform_window.display().map(|display| display.id());
         self.mouse_position = self.platform_window.mouse_position();
 
         self.refresh();
@@ -7987,109 +7934,6 @@ mod tests {
             .update(cx, |_, window, _| assert!(window.is_visible()))
             .unwrap();
         assert_eq!(test_window.frame_wake_count(), frame_wake_count);
-    }
-
-    /// The window caches its display's state from platform notifications,
-    /// and display power is tracked separately from window visibility.
-    #[gpui::test]
-    fn test_window_display_state(cx: &mut TestAppContext) {
-        use crate::{DisplayId, DisplayPower, DisplayState, WindowVisibility};
-
-        let window = cx.add_window(|_, _| EmptyView);
-        let test_window = cx.test_window(window.into());
-        let display_state = |cx: &mut TestAppContext| {
-            window
-                .update(cx, |_, window, _| window.display_state())
-                .unwrap()
-        };
-        assert_eq!(
-            display_state(cx).refresh_interval,
-            Some(Duration::from_secs(1) / 60)
-        );
-
-        let fast_display = DisplayState {
-            refresh_interval: Some(Duration::from_secs(1) / 120),
-            power: DisplayPower::On,
-        };
-        test_window.simulate_display_change(DisplayId(2), fast_display);
-        assert_eq!(display_state(cx), fast_display);
-
-        let display_off = DisplayState {
-            power: DisplayPower::Off,
-            ..fast_display
-        };
-        test_window.simulate_display_change(DisplayId(2), display_off);
-        assert_eq!(display_state(cx), display_off);
-        window
-            .update(cx, |_, window, _| {
-                assert_eq!(window.visibility(), WindowVisibility::Visible)
-            })
-            .unwrap();
-
-        test_window.simulate_visibility_change(WindowVisibility::Hidden);
-        assert_eq!(display_state(cx), display_off);
-    }
-
-    #[cfg(feature = "profiler")]
-    #[gpui::test]
-    fn test_display_changes_are_journaled(cx: &mut TestAppContext) {
-        use crate::profiler::journal::{self, ForegroundJournalEntry, FrameStateChange};
-        use crate::{DisplayId, DisplayPower, DisplayState, WindowVisibility};
-
-        let (journal, _guard) = journal::install_test_foreground_journal(256, 4);
-        let mut collector = journal.collector();
-        let display_changes = |collector: &mut journal::ForegroundJournalCollector| {
-            collector
-                .collect_unseen()
-                .entries
-                .into_iter()
-                .filter_map(|entry| match entry {
-                    ForegroundJournalEntry::FrameState(FrameStateChange::DisplayChanged {
-                        window_id,
-                        display_id,
-                        display_state,
-                        ..
-                    }) => Some((window_id, display_id, display_state)),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-        };
-
-        let window = cx.add_window(|_, _| EmptyView);
-        let window_id = window.window_id();
-        let initial_state = window
-            .update(cx, |_, window, _| window.display_state())
-            .unwrap();
-        assert_eq!(
-            display_changes(&mut collector),
-            [(window_id, Some(DisplayId(1)), initial_state)]
-        );
-
-        let test_window = cx.test_window(window.into());
-        let fast_display = DisplayState {
-            refresh_interval: Some(Duration::from_secs(1) / 144),
-            power: DisplayPower::On,
-        };
-        test_window.simulate_display_change(DisplayId(2), fast_display);
-        // Spurious notifications are not changes.
-        test_window.simulate_display_change(DisplayId(2), fast_display);
-        assert_eq!(
-            display_changes(&mut collector),
-            [(window_id, Some(DisplayId(2)), fast_display)]
-        );
-
-        test_window.simulate_visibility_change(WindowVisibility::Hidden);
-        assert_eq!(display_changes(&mut collector), []);
-
-        let display_off = DisplayState {
-            power: DisplayPower::Off,
-            ..fast_display
-        };
-        test_window.simulate_display_change(DisplayId(2), display_off);
-        assert_eq!(
-            display_changes(&mut collector),
-            [(window_id, Some(DisplayId(2)), display_off)]
-        );
     }
 
     #[gpui::test]
