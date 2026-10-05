@@ -354,7 +354,7 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
         LanguageConfig {
             name: "INI".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["config".to_string()],
+                path_suffixes: vec!["config".into()],
                 ..Default::default()
             })
             .into(),

@@ -624,13 +624,21 @@ impl LanguageRegistry {
         cx: &App,
     ) -> Option<LanguageId> {
         let user_file_types = all_language_settings(Some(file), cx);
-        let path = file.file_system_abs_path(cx);
-
-        self.language_for_file_internal(&path, content, Some(&user_file_types.file_types))
+        self.language_for_file_internal(
+            Some(file.file_name(cx)),
+            &[&file.full_path(cx), &file.file_system_abs_path(cx)],
+            content,
+            Some(&user_file_types.file_types),
+        )
     }
 
     pub fn language_for_file_path(self: &Arc<Self>, path: &Path) -> Option<LanguageId> {
-        self.language_for_file_internal(path, None, None)
+        self.language_for_file_internal(
+            path.file_name().and_then(|filename| filename.to_str()),
+            &[path],
+            None,
+            None,
+        )
     }
 
     #[ztracing::instrument(skip_all)]
@@ -652,14 +660,17 @@ impl LanguageRegistry {
 
     fn language_for_file_internal(
         self: &Arc<Self>,
-        path: &Path,
+        filename: Option<&str>,
+        paths: &[&Path],
         content: Option<&Rope>,
         user_file_types: Option<&FxHashMap<Arc<str>, (GlobSet, Vec<String>)>>,
     ) -> Option<LanguageId> {
-        self.state
-            .read()
-            .available_languages
-            .find_for_file(path, content, user_file_types)
+        self.state.read().available_languages.find_for_file(
+            filename,
+            paths,
+            content,
+            user_file_types,
+        )
     }
 
     #[ztracing::instrument(skip_all)]

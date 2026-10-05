@@ -240,19 +240,20 @@ impl AvailableLanguages {
 
     pub(super) fn find_for_file(
         &self,
-        path: &Path,
+        filename: Option<&str>,
+        paths: &[&Path],
         content: Option<&Rope>,
         user_file_types: Option<&FxHashMap<Arc<str>, (GlobSet, Vec<String>)>>,
     ) -> Option<LanguageId> {
-        let filename = path.file_name().and_then(|filename| filename.to_str());
         // `Path.extension()` returns None for files with a leading '.'
         // and no other extension which is not the desired behavior here,
         // as we want `.zshrc` to result in extension being `Some("zshrc")`
         let extension = filename.and_then(|filename| filename.split('.').next_back());
-        let path_suffixes = [extension, filename, path.to_str()]
-            .iter()
+        let path_suffixes = [extension, filename]
+            .into_iter()
+            .chain(paths.iter().map(|path| path.to_str()))
             .filter_map(|suffix| suffix.map(|suffix| (suffix, globset::Candidate::new(suffix))))
-            .collect::<SmallVec<[_; 3]>>();
+            .collect::<SmallVec<[_; 4]>>();
         let content = LazyCell::new(|| {
             content.map(|content| {
                 let end = content.clip_point(Point::new(0, 256), Bias::Left);
