@@ -8469,8 +8469,8 @@ impl Repository {
 
     fn restart_auto_fetch_timer(&mut self, cx: &mut Context<Self>) {
         let git_settings = &ProjectSettings::get_global(cx).git;
-        let enabled = git_settings.auto_fetch;
-        let interval_secs = git_settings.auto_fetch_interval_secs;
+        let enabled = git_settings.auto_fetch.enabled;
+        let interval_secs = git_settings.auto_fetch.interval_secs;
 
         if self.auto_fetch.enabled == enabled && self.auto_fetch.interval_secs == interval_secs {
             return;

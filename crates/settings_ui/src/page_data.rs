@@ -7759,17 +7759,37 @@ fn version_control_page() -> SettingsPage {
                     description: "Automatically fetch from all remotes in the background.",
                     field: Box::new(SettingField::<bool> {
                         organization_override: None,
-                        json_path: Some("git.auto_fetch"),
-                        pick: |settings_content| settings_content.git.as_ref()?.auto_fetch.as_ref(),
+                        json_path: Some("git.auto_fetch.enabled"),
+                        pick: |settings_content| {
+                            settings_content
+                                .git
+                                .as_ref()?
+                                .auto_fetch
+                                .as_ref()?
+                                .enabled
+                                .as_ref()
+                        },
                         write: |settings_content, value, _| {
-                            settings_content.git.get_or_insert_default().auto_fetch = value;
+                            settings_content
+                                .git
+                                .get_or_insert_default()
+                                .auto_fetch
+                                .get_or_insert_default()
+                                .enabled = value;
                         },
                     }),
                     metadata: None,
                 },
                 pick_discriminant: |settings_content| {
-                    let enabled = settings_content.git.as_ref()?.auto_fetch.unwrap_or(false);
-                    Some(if enabled { 1 } else { 0 })
+                    Some(
+                        *settings_content
+                            .git
+                            .as_ref()?
+                            .auto_fetch
+                            .as_ref()?
+                            .enabled
+                            .as_ref()? as usize,
+                    )
                 },
                 fields: vec![
                     vec![],
@@ -7779,19 +7799,23 @@ fn version_control_page() -> SettingsPage {
                         description: "How often to fetch from all remotes, in seconds. (min: 15)",
                         field: Box::new(SettingField::<u64> {
                             organization_override: None,
-                            json_path: Some("git.auto_fetch_interval_secs"),
+                            json_path: Some("git.auto_fetch.interval_secs"),
                             pick: |settings_content| {
                                 settings_content
                                     .git
                                     .as_ref()?
-                                    .auto_fetch_interval_secs
+                                    .auto_fetch
+                                    .as_ref()?
+                                    .interval_secs
                                     .as_ref()
                             },
                             write: |settings_content, value, _| {
                                 settings_content
                                     .git
                                     .get_or_insert_default()
-                                    .auto_fetch_interval_secs = value;
+                                    .auto_fetch
+                                    .get_or_insert_default()
+                                    .interval_secs = value;
                             },
                         }),
                         metadata: None,

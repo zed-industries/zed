@@ -12690,7 +12690,7 @@ mod tests {
             SettingsStore::update_global(cx, |store, cx| {
                 store
                     .set_user_settings(
-                        r#"{"git": {"auto_fetch": true, "auto_fetch_interval_secs": 20}}"#,
+                        r#"{"git": {"auto_fetch": {"enabled": true, "interval_secs": 20}}}"#,
                         cx,
                     )
                     .unwrap();
@@ -12759,7 +12759,7 @@ mod tests {
             SettingsStore::update_global(cx, |store, cx| {
                 store
                     .set_user_settings(
-                        r#"{"git": {"auto_fetch": true, "auto_fetch_interval_secs": 20, "inline_blame": {"enabled": false}}}"#,
+                        r#"{"git": {"auto_fetch": {"enabled": true, "interval_secs": 20}, "inline_blame": {"enabled": false}}}"#,
                         cx,
                     )
                     .unwrap();
@@ -12793,7 +12793,7 @@ mod tests {
             SettingsStore::update_global(cx, |store, cx| {
                 store
                     .set_user_settings(
-                        r#"{"git": {"auto_fetch": false, "auto_fetch_interval_secs": 20}}"#,
+                        r#"{"git": {"auto_fetch": {"enabled": false, "interval_secs": 20}}}"#,
                         cx,
                     )
                     .unwrap();
@@ -12814,7 +12814,7 @@ mod tests {
             SettingsStore::update_global(cx, |store, cx| {
                 store
                     .set_user_settings(
-                        r#"{"git": {"auto_fetch": true, "auto_fetch_interval_secs": 30}}"#,
+                        r#"{"git": {"auto_fetch": {"enabled": true, "interval_secs": 30}}}"#,
                         cx,
                     )
                     .unwrap();
