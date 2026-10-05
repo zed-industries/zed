@@ -376,9 +376,18 @@ impl TransportDelegate {
                 .clone()
                 .and_then(|body| serde_json::from_value::<ErrorResponse>(body).ok())
                 .and_then(|response| {
-                    response
-                        .error
-                        .map(|msg| interpolate_message(&msg.format, msg.variables.as_ref()))
+                    response.error.map(|msg| {
+                        let Some(variables) = msg
+                            .variables
+                            .as_ref()
+                            .and_then(serde_json::Value::as_object)
+                            .filter(|variables| !variables.is_empty())
+                        else {
+                            return msg.format;
+                        };
+
+                        interpolate_message(msg.format, variables)
+                    })
                 })
                 .or_else(|| response.message.clone())
             {
@@ -473,14 +482,12 @@ impl TransportDelegate {
     }
 }
 
-//{name} placeholders that must be filled here
-fn interpolate_message(format: &str, variables: Option<&serde_json::Value>) -> String {
-    let Some(vars) = variables.and_then(|value| value.as_object()) else {
-        return format.to_string();
-    };
-
+fn interpolate_message(
+    format: String,
+    variables: &serde_json::Map<String, serde_json::Value>,
+) -> String {
     let mut out = String::with_capacity(format.len());
-    let mut rest = format;
+    let mut rest = format.as_str();
 
     loop {
         let Some(start) = rest.find('{') else {
@@ -497,10 +504,14 @@ fn interpolate_message(format: &str, variables: Option<&serde_json::Value>) -> S
         };
 
         let name = &placeholder[1..end];
-        match vars.get(name) {
-            Some(serde_json::Value::String(value)) => out.push_str(value),
-            Some(value) => out.push_str(&value.to_string()),
-            None => out.push_str(&placeholder[..=end]),
+        if name.is_empty() || name.contains('{') {
+            out.push_str(&placeholder[..=end]);
+        } else {
+            match variables.get(name) {
+                Some(serde_json::Value::String(value)) => out.push_str(value),
+                Some(value) => out.push_str(&value.to_string()),
+                None => out.push_str(&placeholder[..=end]),
+            }
         }
 
         rest = &placeholder[end + 1..];
@@ -1066,22 +1077,46 @@ mod tests {
 
     #[test]
     fn test_interpolate_message() {
-        let vars = json!({ "msg": "boom", "name": "zed", "number": 42, "enabled": true });
+        let variables = serde_json::Map::from_iter([
+            ("".into(), json!("wrong")),
+            ("{name".into(), json!("wrong")),
+            ("msg".into(), json!("boom")),
+            ("name".into(), json!("zed")),
+            ("number".into(), json!(42)),
+            ("enabled".into(), json!(true)),
+        ]);
 
-        assert_eq!(interpolate_message("{msg}", Some(&vars)), "boom");
+        assert_eq!(interpolate_message("{msg}".into(), &variables), "boom");
         assert_eq!(
-            interpolate_message("{name} says {msg}, {name}", Some(&vars)),
+            interpolate_message("{name} says {msg}, {name}".into(), &variables),
             "zed says boom, zed"
         );
         assert_eq!(
-            interpolate_message("{number} {enabled}", Some(&vars)),
+            interpolate_message("{number} {enabled}".into(), &variables),
             "42 true"
         );
 
         // and the unknown ones are left as is here
-        assert_eq!(interpolate_message("hi {nope}", Some(&vars)), "hi {nope}");
-        assert_eq!(interpolate_message("hi {name}", None), "hi {name}");
-        assert_eq!(interpolate_message("oops {msg", Some(&vars)), "oops {msg");
+        assert_eq!(
+            interpolate_message("hi {nope}".into(), &variables),
+            "hi {nope}"
+        );
+        assert_eq!(
+            interpolate_message("oops {msg".into(), &variables),
+            "oops {msg"
+        );
+        assert_eq!(
+            interpolate_message("stray } {name}".into(), &variables),
+            "stray } zed"
+        );
+        assert_eq!(
+            interpolate_message("nested {{name}}".into(), &variables),
+            "nested {{name}}"
+        );
+        assert_eq!(
+            interpolate_message("empty {}".into(), &variables),
+            "empty {}"
+        );
     }
 
     #[test]
@@ -1103,5 +1138,25 @@ mod tests {
 
         let error = TransportDelegate::process_response(response).unwrap_err();
         assert_eq!(error.to_string(), "use binary option");
+    }
+
+    #[test]
+    fn test_process_response_preserves_error_without_variables() {
+        let response = Response {
+            seq: 1,
+            request_seq: 1,
+            success: false,
+            command: "launch".into(),
+            body: Some(json!({
+                "error": {
+                    "id": 1,
+                    "format": "plain error"
+                }
+            })),
+            message: Some("cancelled".into()),
+        };
+
+        let error = TransportDelegate::process_response(response).unwrap_err();
+        assert_eq!(error.to_string(), "plain error");
     }
 }
