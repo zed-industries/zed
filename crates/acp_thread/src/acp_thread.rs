@@ -1,3 +1,4 @@
+pub mod commands;
 pub mod config_options;
 mod connection;
 pub mod content;
@@ -118,11 +119,11 @@ impl CommandCategory {
     }
 }
 
-pub fn meta_with_command_category(category: CommandCategory) -> acp_v1::Meta {
-    acp_v1::Meta::from_iter([(COMMAND_CATEGORY_META_KEY.into(), category.as_str().into())])
+pub fn meta_with_command_category(category: CommandCategory) -> acp_v2::Meta {
+    acp_v2::Meta::from_iter([(COMMAND_CATEGORY_META_KEY.into(), category.as_str().into())])
 }
 
-pub fn command_category_from_meta(meta: &Option<acp_v1::Meta>) -> Option<CommandCategory> {
+pub fn command_category_from_meta(meta: &Option<acp_v2::Meta>) -> Option<CommandCategory> {
     meta.as_ref()
         .and_then(|m| m.get(COMMAND_CATEGORY_META_KEY))
         .and_then(|v| v.as_str())
@@ -3386,7 +3387,7 @@ pub struct AcpThread {
     token_usage: Option<TokenUsage>,
     cost: Option<SessionCost>,
     prompt_capabilities: acp_v1::PromptCapabilities,
-    available_commands: Vec<acp_v1::AvailableCommand>,
+    available_commands: Vec<acp_v2::AvailableCommand>,
     _observe_prompt_capabilities: Task<anyhow::Result<()>>,
     _idle_sleep_subscriptions: Vec<Subscription>,
     terminals: HashMap<acp_v1::TerminalId, Entity<Terminal>>,
@@ -3394,7 +3395,7 @@ pub struct AcpThread {
     pending_terminal_exit: HashMap<acp_v1::TerminalId, acp_v1::TerminalExitStatus>,
     had_error: bool,
     /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
-    draft_prompt: Option<Vec<acp_v1::ContentBlock>>,
+    draft_prompt: Option<Vec<acp_v2::ContentBlock>>,
     /// The initial scroll position for the thread view, set during session registration.
     ui_scroll_position: Option<gpui::ListOffset>,
     /// A cursor over retained source, rather than a second text store, lets the UI
@@ -3526,7 +3527,7 @@ pub enum AcpThreadEvent {
     LoadError(LoadError),
     PromptCapabilitiesUpdated,
     Refusal,
-    AvailableCommandsUpdated(Vec<acp_v1::AvailableCommand>),
+    AvailableCommandsUpdated(Vec<acp_v2::AvailableCommand>),
     ModeUpdated(acp_v1::SessionModeId),
     ConfigOptionsUpdated(Vec<acp_v2::SessionConfigOption>),
     WorkingDirectoriesUpdated,
@@ -3739,21 +3740,30 @@ impl AcpThread {
         self.prompt_capabilities.clone()
     }
 
-    pub fn available_commands(&self) -> &[acp_v1::AvailableCommand] {
+    pub fn available_commands(&self) -> &[acp_v2::AvailableCommand] {
         &self.available_commands
+    }
+
+    pub fn update_available_commands(
+        &mut self,
+        commands: Vec<acp_v2::AvailableCommand>,
+        cx: &mut Context<Self>,
+    ) {
+        self.available_commands = commands.clone();
+        cx.emit(AcpThreadEvent::AvailableCommandsUpdated(commands));
     }
 
     pub fn is_draft_thread(&self) -> bool {
         self.entries().is_empty()
     }
 
-    pub fn draft_prompt(&self) -> Option<&[acp_v1::ContentBlock]> {
+    pub fn draft_prompt(&self) -> Option<&[acp_v2::ContentBlock]> {
         self.draft_prompt.as_deref()
     }
 
     pub fn set_draft_prompt(
         &mut self,
-        prompt: Option<Vec<acp_v1::ContentBlock>>,
+        prompt: Option<Vec<acp_v2::ContentBlock>>,
         cx: &mut Context<Self>,
     ) {
         cx.emit(AcpThreadEvent::PromptUpdated);
@@ -3979,7 +3989,7 @@ impl AcpThread {
 
     fn register_submission(
         &mut self,
-        content: Arc<[acp_v1::ContentBlock]>,
+        content: Arc<[acp_v2::ContentBlock]>,
         cx: &mut Context<Self>,
     ) -> SubmissionId {
         let id = self.submissions.register(content);
@@ -4289,8 +4299,10 @@ impl AcpThread {
                 available_commands,
                 ..
             }) => {
-                self.available_commands = available_commands.clone();
-                cx.emit(AcpThreadEvent::AvailableCommandsUpdated(available_commands));
+                self.update_available_commands(
+                    commands::from_v1(available_commands).map_err(acp_v1::Error::from)?,
+                    cx,
+                );
             }
             acp_v1::SessionUpdate::CurrentModeUpdate(acp_v1::CurrentModeUpdate {
                 current_mode_id,
@@ -6011,7 +6023,7 @@ impl AcpThread {
 
     pub fn send(
         &mut self,
-        message: Vec<acp_v1::ContentBlock>,
+        message: Vec<acp_v2::ContentBlock>,
         cx: &mut Context<Self>,
     ) -> Submission {
         self.submit(message, true, cx)
@@ -6023,7 +6035,7 @@ impl AcpThread {
     /// typed command isn't sent to the model as an ordinary user turn.
     pub fn send_command(
         &mut self,
-        message: Vec<acp_v1::ContentBlock>,
+        message: Vec<acp_v2::ContentBlock>,
         cx: &mut Context<Self>,
     ) -> Submission {
         self.submit(message, false, cx)
@@ -6031,7 +6043,7 @@ impl AcpThread {
 
     fn submit(
         &mut self,
-        message: Vec<acp_v1::ContentBlock>,
+        message: Vec<acp_v2::ContentBlock>,
         push_user_message: bool,
         cx: &mut Context<Self>,
     ) -> Submission {
@@ -6046,26 +6058,32 @@ impl AcpThread {
         }
     }
 
+    pub fn validate_prompt_content(&self, content: &[acp_v2::ContentBlock]) -> Result<()> {
+        if self.submissions.receipt_transport().is_some() {
+            Ok(())
+        } else {
+            self.connection.validate_prompt_content(content)
+        }
+    }
+
     fn send_inner(
         &mut self,
         id: SubmissionId,
-        message: Vec<acp_v1::ContentBlock>,
+        message: Vec<acp_v2::ContentBlock>,
         push_user_message: bool,
         cx: &mut Context<Self>,
     ) -> Submission {
+        let request =
+            acp_v2::PromptRequest::new(acp_v2::SessionId::new(self.session_id.0.clone()), message);
+        if let Err(error) = self.validate_prompt_content(&request.prompt) {
+            return self.track_submission(id, cx, async move |_, _| Err(error));
+        }
         let language_registry = self.project.read(cx).languages().clone();
         let path_style = self.project.read(cx).path_style(cx);
         let mut block = MessageContent::default();
-        for chunk in &message {
-            let chunk = match content::from_v1(chunk.clone()) {
-                Ok(chunk) => chunk,
-                Err(error) => {
-                    return self.track_submission(id, cx, async move |_, _| Err(error));
-                }
-            };
-            block.append_prompt(chunk, &language_registry, path_style, cx);
+        for chunk in &request.prompt {
+            block.append_prompt(chunk.clone(), &language_registry, path_style, cx);
         }
-        let request = acp_v1::PromptRequest::new(self.session_id.clone(), message);
         let git_store = self.project.read(cx).git_store().clone();
 
         let client_user_message_ids = self.connection.client_user_message_ids(cx);
@@ -6119,7 +6137,13 @@ impl AcpThread {
     }
 
     pub fn can_retry(&self, cx: &App) -> bool {
-        !self.uses_reported_activity() && self.connection.retry(&self.session_id, cx).is_some()
+        !self.uses_reported_activity()
+            && self.connection.retry(&self.session_id, cx).is_some()
+            && self
+                .submissions
+                .latest_id()
+                .and_then(|id| self.submissions.get(id))
+                .is_none_or(|submission| self.validate_prompt_content(&submission.content).is_ok())
     }
 
     pub fn retry(&mut self, cx: &mut Context<Self>) -> Submission {
@@ -6129,11 +6153,14 @@ impl AcpThread {
             .and_then(|id| self.submissions.get(id))
             .map(|submission| submission.content.clone())
             .unwrap_or_default();
-        let id = self.register_submission(content, cx);
+        let id = self.register_submission(content.clone(), cx);
         if self.uses_reported_activity() {
             return self.track_submission(id, cx, async move |_, _| {
                 Err(anyhow!("Receipt-driven retry is not supported"))
             });
+        }
+        if let Err(error) = self.validate_prompt_content(&content) {
+            return self.track_submission(id, cx, async move |_, _| Err(error));
         }
         self.run_turn(id, cx, async move |this, cx| {
             this.update(cx, |this, cx| {
@@ -10381,6 +10408,88 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    async fn test_unsupported_legacy_prompt_preserves_running_turn(cx: &mut TestAppContext) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(StubAgentConnection::new().with_retry());
+        let thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project,
+                    PathList::new(&[Path::new(path!("/test"))]),
+                    cx,
+                )
+            })
+            .await
+            .expect("legacy session");
+        let complete = connection.defer_next_prompt_response();
+        let running = thread.update(cx, |thread, cx| {
+            thread.send(vec!["keep running".into()], cx)
+        });
+        cx.run_until_parked();
+        let before = thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.status(), ThreadStatus::Generating);
+            (
+                thread.turn_id,
+                thread.entries.len(),
+                thread.activity_generation(),
+            )
+        });
+        assert!(thread.read_with(cx, |thread, cx| thread.can_retry(cx)));
+
+        let source = vec![acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
+            "_future",
+            std::collections::BTreeMap::from([(
+                "payload".into(),
+                json!({"private": [null, true]}),
+            )]),
+        ))];
+        let rejected = thread.update(cx, |thread, cx| thread.send(source.clone(), cx));
+        let rejected_id = rejected.id;
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.status(), ThreadStatus::Generating);
+            assert_eq!(
+                (
+                    thread.turn_id,
+                    thread.entries.len(),
+                    thread.activity_generation()
+                ),
+                before
+            );
+            let record = thread.submission(rejected_id).expect("rejected submission");
+            assert_eq!(record.content.as_ref(), source.as_slice());
+            assert!(matches!(record.state, SubmissionState::Failed(_)));
+        });
+        assert!(rejected.await.is_err());
+        assert!(!thread.read_with(cx, |thread, cx| thread.can_retry(cx)));
+        let retry = thread.update(cx, |thread, cx| thread.retry(cx));
+        let retry_id = retry.id;
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                (
+                    thread.turn_id,
+                    thread.entries.len(),
+                    thread.activity_generation()
+                ),
+                before
+            );
+            let record = thread.submission(retry_id).expect("rejected retry");
+            assert_eq!(record.content.as_ref(), source.as_slice());
+            assert!(matches!(record.state, SubmissionState::Failed(_)));
+        });
+        assert!(retry.await.is_err());
+        complete
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+            .expect("the original turn must still be pending");
+        assert!(matches!(
+            running.await.expect("original turn completes"),
+            Some(SubmissionResponse::LegacyCompleted(_))
+        ));
+    }
+
     async fn new_receipt_test_thread(
         cx: &mut TestAppContext,
     ) -> (Entity<AcpThread>, Rc<StubAgentConnection>) {
@@ -10430,7 +10539,18 @@ mod tests {
         });
 
         let first_sender = connection.defer_next_receipt_response();
-        let first = thread.update(cx, |thread, cx| thread.send(vec!["outgoing".into()], cx));
+        let outgoing = vec![
+            "outgoing".into(),
+            acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
+                "_future",
+                std::collections::BTreeMap::from([
+                    ("payload".into(), json!({"nested": [null, true]})),
+                    ("_meta".into(), json!({"origin": "outgoing"})),
+                ]),
+            )),
+        ];
+        let first = thread.update(cx, |thread, cx| thread.send(outgoing.clone(), cx));
+        assert_eq!(connection.take_receipt_prompt().as_ref(), Some(&outgoing));
         let first_id = first.id;
         thread.read_with(cx, |thread, _| {
             assert_eq!(thread.latest_submission_id(), Some(first_id));
@@ -10440,7 +10560,7 @@ mod tests {
             ));
             assert_eq!(
                 thread.submission(first_id).expect("first").content.as_ref(),
-                &["outgoing".into()]
+                outgoing.as_slice()
             );
             assert!(thread.entries().is_empty());
             assert!(thread.has_unsettled_submissions());
@@ -11945,7 +12065,7 @@ mod tests {
             move |request, thread, mut cx| {
                 let received_prompt = received_prompt.clone();
                 async move {
-                    if let Some(acp_v1::ContentBlock::Text(text)) = request.prompt.first() {
+                    if let Some(acp_v2::ContentBlock::Text(text)) = request.prompt.first() {
                         *received_prompt.borrow_mut() = Some(text.text.clone());
                     }
                     // Simulate a native command producing its own thread entry
@@ -12017,7 +12137,9 @@ mod tests {
                 .without_truncate_support()
                 .on_user_message(|request, thread, mut cx| {
                     async move {
-                        let prompt = request.prompt.first().cloned().unwrap_or_else(|| "".into());
+                        let prompt = content::to_v1(
+                            request.prompt.first().cloned().unwrap_or_else(|| "".into()),
+                        )?;
 
                         thread.update(&mut cx, |thread, cx| {
                             thread
@@ -14998,7 +15120,7 @@ mod tests {
                         fs.write(Path::new(&filename), b"").await?;
                     }
 
-                    let acp_v1::ContentBlock::Text(content) = &request.prompt[0] else {
+                    let acp_v2::ContentBlock::Text(content) = &request.prompt[0] else {
                         panic!("expected text content block");
                     };
                     thread.update(&mut cx, |thread, cx| {
@@ -15439,7 +15561,7 @@ mod tests {
                         return Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::Refusal));
                     }
 
-                    let acp_v1::ContentBlock::Text(content) = &request.prompt[0] else {
+                    let acp_v2::ContentBlock::Text(content) = &request.prompt[0] else {
                         panic!("expected text content block");
                     };
                     thread.update(&mut cx, |thread, cx| {
@@ -16149,9 +16271,10 @@ mod tests {
 
     fn request_test_session_elicitation(
         thread: WeakEntity<AcpThread>,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         cx: &mut AsyncApp,
     ) -> Result<Task<acp_v1::CreateElicitationResponse>> {
+        let session_id = acp_v1::SessionId::new(session_id.0);
         thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
@@ -16955,7 +17078,7 @@ mod tests {
         on_user_message: Option<
             Rc<
                 dyn Fn(
-                        acp_v1::PromptRequest,
+                        acp_v2::PromptRequest,
                         WeakEntity<AcpThread>,
                         AsyncApp,
                     )
@@ -16990,7 +17113,7 @@ mod tests {
         fn on_user_message(
             mut self,
             handler: impl Fn(
-                acp_v1::PromptRequest,
+                acp_v2::PromptRequest,
                 WeakEntity<AcpThread>,
                 AsyncApp,
             ) -> LocalBoxFuture<'static, Result<acp_v1::PromptResponse>>
@@ -17064,11 +17187,12 @@ mod tests {
 
         fn prompt(
             &self,
-            params: acp_v1::PromptRequest,
+            params: acp_v2::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp_v1::PromptResponse>> {
             let sessions = self.sessions.lock();
-            let thread = sessions.get(&params.session_id).unwrap();
+            let session_id = acp_v1::SessionId::new(params.session_id.0.clone());
+            let thread = sessions.get(&session_id).unwrap();
             if let Some(handler) = &self.on_user_message {
                 let handler = handler.clone();
                 let thread = thread.clone();
@@ -17151,7 +17275,7 @@ mod tests {
         fn prompt(
             &self,
             _client_user_message_id: ClientUserMessageId,
-            params: acp_v1::PromptRequest,
+            params: acp_v2::PromptRequest,
             cx: &mut App,
         ) -> Task<Result<acp_v1::PromptResponse>> {
             self.connection.prompt(params, cx)
@@ -17688,7 +17812,7 @@ mod tests {
             move |params, _thread, _cx| {
                 let first_complete_rx = first_complete_rx.borrow_mut().take();
                 let is_first = params.prompt.iter().any(
-                    |c| matches!(c, acp_v1::ContentBlock::Text(t) if t.text.contains("first")),
+                    |c| matches!(c, acp_v2::ContentBlock::Text(t) if t.text.contains("first")),
                 );
                 let second_complete_rx = if is_first {
                     None
@@ -17851,7 +17975,7 @@ mod tests {
             move |params, thread, mut cx| {
                 let first_complete_rx = first_complete_rx.borrow_mut().take();
                 let is_first = params.prompt.iter().any(|content| {
-                    matches!(content, acp_v1::ContentBlock::Text(text) if text.text.contains("first"))
+                    matches!(content, acp_v2::ContentBlock::Text(text) if text.text.contains("first"))
                 });
                 let compaction_id = compaction_id.clone();
 

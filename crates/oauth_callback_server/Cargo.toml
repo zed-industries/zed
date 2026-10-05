@@ -19,6 +19,6 @@ anyhow.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 futures.workspace = true
-log.workspace = true
+log = { workspace = true, features = ["serde"] }
 tiny_http.workspace = true
 url.workspace = true

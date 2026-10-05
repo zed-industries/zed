@@ -9,7 +9,7 @@ license = "Apache-2.0"
 doctest = false
 
 [dependencies]
-log.workspace = true
+log = { workspace = true, features = ["serde"] }
 anyhow.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]

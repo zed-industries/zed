@@ -517,6 +517,26 @@ fn general_page(cx: &App) -> SettingsPage {
         ]
     }
 
+    fn extensions_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Extensions"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Suggest Extensions",
+                description: "Whether to suggest installing extensions based on the files you open.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("suggest_extensions"),
+                    pick: |settings_content| Some(&settings_content.extension.suggest_extensions),
+                    write: |settings_content, value, _| {
+                        settings_content.extension.suggest_extensions = value.unwrap_or(true);
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     SettingsPage {
         title: "General",
         items: concat_sections!(
@@ -527,6 +547,7 @@ fn general_page(cx: &App) -> SettingsPage {
             scoped_settings_section(),
             privacy_section(),
             auto_update_section(),
+            extensions_section(),
         )
         .into(),
     }

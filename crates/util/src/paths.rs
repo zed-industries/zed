@@ -59,31 +59,7 @@ pub trait PathExt {
     where
         Self: From<&'a Path>,
     {
-        #[cfg(target_family = "wasm")]
-        {
-            std::str::from_utf8(bytes)
-                .map(Path::new)
-                .map(Into::into)
-                .map_err(Into::into)
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::prelude::OsStrExt;
-            Ok(Self::from(Path::new(OsStr::from_bytes(bytes))))
-        }
-        #[cfg(windows)]
-        {
-            use anyhow::Context;
-            use tendril::fmt::{Format, WTF8};
-            WTF8::validate(bytes)
-                .then(|| {
-                    // Safety: bytes are valid WTF-8 sequence.
-                    Self::from(Path::new(unsafe {
-                        OsStr::from_encoded_bytes_unchecked(bytes)
-                    }))
-                })
-                .with_context(|| format!("Invalid WTF-8 sequence: {bytes:?}"))
-        }
+        path::try_from_bytes::<Self>(bytes)
     }
 
     /// Converts a local path to one that can be used inside of WSL.
