@@ -159,18 +159,6 @@ impl TestPlatform {
         self.report_display_event(DisplayEvent::Removed(display_id));
     }
 
-    pub(crate) fn simulate_display_refresh_interval_change(
-        &self,
-        display_id: DisplayId,
-        refresh_interval: Option<Duration>,
-    ) {
-        self.set_display_refresh_interval(display_id, refresh_interval);
-        self.report_display_event(DisplayEvent::RefreshIntervalChanged {
-            display_id,
-            refresh_interval,
-        });
-    }
-
     fn set_display_refresh_interval(
         &self,
         display_id: DisplayId,

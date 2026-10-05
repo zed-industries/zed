@@ -487,16 +487,6 @@ impl TestAppContext {
         self.test_platform.simulate_display_removed(display_id);
     }
 
-    /// Simulates a display's refresh interval changing.
-    pub fn simulate_display_refresh_interval_change(
-        &self,
-        display_id: DisplayId,
-        refresh_interval: Option<Duration>,
-    ) {
-        self.test_platform
-            .simulate_display_refresh_interval_change(display_id, refresh_interval);
-    }
-
     /// Simulates the platform moving the window to another display.
     pub fn simulate_window_move_to_display(
         &self,

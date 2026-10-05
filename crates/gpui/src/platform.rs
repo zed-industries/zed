@@ -129,41 +129,23 @@ pub enum DisplayEvent {
     /// A display was disconnected. Windows on it are moved to another
     /// display by the platform.
     Removed(DisplayId),
-    /// A display's refresh interval changed, including to or from unknown.
-    RefreshIntervalChanged {
-        /// The display whose refresh interval changed.
-        display_id: DisplayId,
-        /// The new interval, as [`Platform::display_refresh_interval`] now
-        /// reports it.
-        refresh_interval: Option<Duration>,
-    },
 }
 
-/// The events that turn one snapshot of each connected display's refresh
-/// interval into the next, for platforms whose display notifications don't say
-/// what changed.
-pub fn display_events(
-    previous: &HashMap<DisplayId, Option<Duration>>,
-    current: &HashMap<DisplayId, Option<Duration>>,
+/// The events that turn one snapshot of the connected displays into the next,
+/// for platforms whose display notifications don't say what changed.
+pub fn display_events<T>(
+    previous: &HashMap<DisplayId, T>,
+    current: &HashMap<DisplayId, T>,
 ) -> Vec<DisplayEvent> {
     let removed = previous
         .keys()
         .filter(|id| !current.contains_key(id))
         .map(|id| DisplayEvent::Removed(*id));
-    let added_or_changed =
-        current
-            .iter()
-            .filter_map(|(id, refresh_interval)| match previous.get(id) {
-                None => Some(DisplayEvent::Added(*id)),
-                Some(previous) if previous != refresh_interval => {
-                    Some(DisplayEvent::RefreshIntervalChanged {
-                        display_id: *id,
-                        refresh_interval: *refresh_interval,
-                    })
-                }
-                Some(_) => None,
-            });
-    removed.chain(added_or_changed).collect()
+    let added = current
+        .keys()
+        .filter(|id| !previous.contains_key(id))
+        .map(|id| DisplayEvent::Added(*id));
+    removed.chain(added).collect()
 }
 
 /// Converts a refresh rate in hertz to the time between refreshes, rejecting
@@ -404,9 +386,8 @@ pub trait Platform: 'static {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
-    /// Registers the callback invoked when a display is added or removed, or
-    /// its [`Self::display_refresh_interval`] changes. The callback runs on
-    /// the main thread.
+    /// Registers the callback invoked when a display is added or removed. The
+    /// callback runs on the main thread.
     fn on_display_change(&self, callback: Box<dyn FnMut(DisplayEvent)>);
     /// The time between a display's refreshes, as last reported by the
     /// platform's display notifications. Variable refresh rate displays report
@@ -3655,18 +3636,8 @@ mod tests {
 
     #[test]
     fn test_display_events() {
-        let sixty_hertz = Some(Duration::from_secs(1) / 60);
-        let one_hundred_twenty_hertz = Some(Duration::from_secs(1) / 120);
-        let previous = HashMap::from_iter([
-            (DisplayId(1), sixty_hertz),
-            (DisplayId(2), sixty_hertz),
-            (DisplayId(3), None),
-        ]);
-        let current = HashMap::from_iter([
-            (DisplayId(1), sixty_hertz),
-            (DisplayId(3), one_hundred_twenty_hertz),
-            (DisplayId(4), None),
-        ]);
+        let previous = HashMap::from_iter([(DisplayId(1), ()), (DisplayId(2), ())]);
+        let current = HashMap::from_iter([(DisplayId(1), ()), (DisplayId(3), ())]);
         let events = display_events(&previous, &current)
             .into_iter()
             .collect::<HashSet<_>>();
@@ -3674,11 +3645,7 @@ mod tests {
             events,
             HashSet::from_iter([
                 DisplayEvent::Removed(DisplayId(2)),
-                DisplayEvent::RefreshIntervalChanged {
-                    display_id: DisplayId(3),
-                    refresh_interval: one_hundred_twenty_hertz,
-                },
-                DisplayEvent::Added(DisplayId(4)),
+                DisplayEvent::Added(DisplayId(3)),
             ])
         );
         assert_eq!(display_events(&current, &current), []);

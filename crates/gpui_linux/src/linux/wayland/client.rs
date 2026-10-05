@@ -1801,18 +1801,10 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
                     return;
                 };
                 let id = output.id();
-                let event = match state.outputs.insert(id.clone(), complete.clone()) {
-                    None => DisplayEvent::Added(display_id_for_output(&id)),
-                    Some(previous) if previous.refresh_interval != complete.refresh_interval => {
-                        DisplayEvent::RefreshIntervalChanged {
-                            display_id: display_id_for_output(&id),
-                            refresh_interval: complete.refresh_interval,
-                        }
-                    }
-                    Some(_) => return,
-                };
-                drop(state);
-                this.report_display_event(event);
+                if state.outputs.insert(id.clone(), complete).is_none() {
+                    drop(state);
+                    this.report_display_event(DisplayEvent::Added(display_id_for_output(&id)));
+                }
             }
             _ => {}
         }
