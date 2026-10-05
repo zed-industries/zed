@@ -47,6 +47,7 @@ use project::{
         GlobalLogStore, LanguageServerKind, LanguageServerLogKey, LogKind, LogStore,
     },
     search::{SearchQuery, SearchResult},
+    worktree_store::WorktreeStoreEvent,
 };
 use remote::{ConnectionState, RemoteClient, RemoteClientEvent};
 use rpc::proto;
@@ -3007,6 +3008,90 @@ async fn test_adding_then_removing_then_adding_worktrees(
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[1].path.as_unix_str(), "README.md")
     })
+}
+
+#[gpui::test]
+async fn test_removing_missing_worktree_does_not_send_project_update(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                "README.md": "# project 1",
+            },
+            "outside.txt": "not part of the project",
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+    let (outside_worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/outside.txt"), false, cx)
+        })
+        .await
+        .unwrap();
+    let outside_worktree_id = outside_worktree.read_with(cx, |worktree, _| worktree.id());
+    cx.run_until_parked();
+
+    let server_worktree_store =
+        headless.read_with(server_cx, |headless, _| headless.worktree_store.clone());
+    server_worktree_store.read_with(server_cx, |worktree_store, cx| {
+        assert!(
+            worktree_store
+                .worktree_for_id(outside_worktree_id, cx)
+                .is_some()
+        );
+    });
+
+    // Releasing the client's handle removes the worktree on the server.
+    cx.update(|_| drop(outside_worktree));
+    cx.run_until_parked();
+    server_worktree_store.read_with(server_cx, |worktree_store, cx| {
+        assert!(
+            worktree_store
+                .worktree_for_id(outside_worktree_id, cx)
+                .is_none()
+        );
+    });
+
+    let project_updates_sent = Arc::new(AtomicUsize::new(0));
+    let _subscription = server_cx.update(|cx| {
+        let project_updates_sent = project_updates_sent.clone();
+        cx.subscribe(&server_worktree_store, move |_, event, _| {
+            if matches!(event, WorktreeStoreEvent::WorktreeUpdateSent(_)) {
+                project_updates_sent.fetch_add(1, Ordering::SeqCst);
+            }
+        })
+    });
+
+    // The client asks for the same removal again whenever it releases a handle
+    // that it re-created from a project update sent before the removal.
+    let proto_client = project.read_with(cx, |project, cx| {
+        project.remote_client().unwrap().read(cx).proto_client()
+    });
+    proto_client
+        .request(proto::RemoveWorktree {
+            worktree_id: outside_worktree_id.to_proto(),
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        project_updates_sent.load(Ordering::SeqCst),
+        0,
+        "removing a worktree that is already gone must not announce the unchanged worktrees again"
+    );
 }
 
 #[gpui::test]
