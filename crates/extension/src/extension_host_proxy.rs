@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use fs::Fs;
 use gpui::{App, EntityId, Global, ReadGlobal, SharedString, Task};
-use language::{BinaryStatus, LanguageLoader, LanguageMatcher, LanguageName};
+use language::{BinaryStatus, LanguageName, LanguageRegistration};
 use lsp::LanguageServerName;
 use parking_lot::RwLock;
 
@@ -228,39 +228,28 @@ impl ExtensionGrammarProxy for ExtensionHostProxy {
 }
 
 pub trait ExtensionLanguageProxy: Send + Sync + 'static {
-    fn register_language(
-        &self,
-        language: LanguageName,
-        grammar: Option<Arc<str>>,
-        matcher: Arc<LanguageMatcher>,
-        hidden: bool,
-        load: LanguageLoader,
-    ) -> bool;
-
-    fn is_language_registered(&self, language: &LanguageName) -> bool;
-
-    fn remove_languages(
+    fn update_languages(
         &self,
         languages_to_remove: &[LanguageName],
         grammars_to_remove: &[Arc<str>],
-    );
+        registrations: Vec<LanguageRegistration>,
+    ) -> Vec<bool>;
+
+    fn is_language_registered(&self, language: &LanguageName) -> bool;
 }
 
 impl ExtensionLanguageProxy for ExtensionHostProxy {
-    #[ztracing::instrument(skip_all, fields(lang = language.0.as_str()))]
-    fn register_language(
+    #[ztracing::instrument(skip_all)]
+    fn update_languages(
         &self,
-        language: LanguageName,
-        grammar: Option<Arc<str>>,
-        matcher: Arc<LanguageMatcher>,
-        hidden: bool,
-        load: LanguageLoader,
-    ) -> bool {
+        languages_to_remove: &[LanguageName],
+        grammars_to_remove: &[Arc<str>],
+        registrations: Vec<LanguageRegistration>,
+    ) -> Vec<bool> {
         let Some(proxy) = self.language_proxy.read().clone() else {
-            return false;
+            return vec![false; registrations.len()];
         };
-
-        proxy.register_language(language, grammar, matcher, hidden, load)
+        proxy.update_languages(languages_to_remove, grammars_to_remove, registrations)
     }
 
     fn is_language_registered(&self, language: &LanguageName) -> bool {
@@ -269,18 +258,6 @@ impl ExtensionLanguageProxy for ExtensionHostProxy {
         };
 
         proxy.is_language_registered(language)
-    }
-
-    fn remove_languages(
-        &self,
-        languages_to_remove: &[LanguageName],
-        grammars_to_remove: &[Arc<str>],
-    ) {
-        let Some(proxy) = self.language_proxy.read().clone() else {
-            return;
-        };
-
-        proxy.remove_languages(languages_to_remove, grammars_to_remove)
     }
 }
 

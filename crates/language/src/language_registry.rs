@@ -41,6 +41,14 @@ pub struct LanguageRegistry {
     lsp_binary_status_tx: ServerStatusSender,
 }
 
+pub struct LanguageRegistration {
+    pub name: LanguageName,
+    pub grammar_name: Option<Arc<str>>,
+    pub matcher: Arc<LanguageMatcher>,
+    pub hidden: bool,
+    pub load: LanguageLoader,
+}
+
 struct LanguageRegistryState {
     next_language_server_id: usize,
     languages: Vec<Arc<Language>>,
@@ -176,9 +184,7 @@ impl LanguageRegistry {
         languages_to_remove: &[LanguageName],
         grammars_to_remove: &[Arc<str>],
     ) {
-        self.state
-            .write()
-            .remove_languages(languages_to_remove, grammars_to_remove)
+        self.update_extension_languages(languages_to_remove, grammars_to_remove, Vec::new());
     }
 
     pub fn remove_lsp_adapter(&self, language_name: &LanguageName, name: &LanguageServerName) {
@@ -457,6 +463,70 @@ impl LanguageRegistry {
         state.reload_count += 1;
         *state.subscription.0.borrow_mut() = ();
         true
+    }
+
+    /// Removes and registers extension languages and removes grammars as a single
+    /// update, so that observers are only notified once.
+    ///
+    /// Returns, for each registration, whether the language was registered. A
+    /// registration is rejected if a language with the same name is registered
+    /// outside of extensions.
+    pub fn update_extension_languages(
+        &self,
+        languages_to_remove: &[LanguageName],
+        grammars_to_remove: &[Arc<str>],
+        registrations: Vec<LanguageRegistration>,
+    ) -> Vec<bool> {
+        let state = &mut *self.state.write();
+
+        let mut invalidated = state
+            .available_languages
+            .remove_extension_languages(languages_to_remove);
+        let registered = registrations
+            .into_iter()
+            .map(|registration| {
+                let name = registration.name;
+                match state.available_languages.register(
+                    name.clone(),
+                    registration.grammar_name,
+                    registration.matcher,
+                    registration.hidden,
+                    None,
+                    registration.load,
+                    LanguageOrigin::Extension,
+                ) {
+                    Some(was_loaded) => {
+                        if was_loaded {
+                            invalidated.push(name);
+                        }
+                        true
+                    }
+                    None => {
+                        log::warn!(
+                            "not registering extension language {name}: a language with this name is already registered outside of extensions"
+                        );
+                        false
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+
+        state
+            .languages
+            .retain(|language| !invalidated.contains(&language.name()));
+        state.grammars.retain(|name, grammar| {
+            !grammars_to_remove.contains(name) || matches!(grammar, AvailableGrammar::Native(_))
+        });
+
+        let changed = !languages_to_remove.is_empty()
+            || !grammars_to_remove.is_empty()
+            || registered.iter().any(|registered| *registered);
+        if changed {
+            state.version += 1;
+            state.reload_count += 1;
+            *state.subscription.0.borrow_mut() = ();
+        }
+        registered
     }
 
     /// Adds grammars to the registry. Language configurations reference a grammar by name. The
@@ -1054,28 +1124,6 @@ impl LanguageRegistryState {
         }
 
         *lsp_adapters = new_lsp_adapters;
-    }
-
-    fn remove_languages(
-        &mut self,
-        languages_to_remove: &[LanguageName],
-        grammars_to_remove: &[Arc<str>],
-    ) {
-        if languages_to_remove.is_empty() && grammars_to_remove.is_empty() {
-            return;
-        }
-
-        let removed_languages = self
-            .available_languages
-            .remove_extension_languages(languages_to_remove);
-        self.languages
-            .retain(|language| !removed_languages.contains(&language.name()));
-        self.grammars.retain(|name, grammar| {
-            !grammars_to_remove.contains(name) || matches!(grammar, AvailableGrammar::Native(_))
-        });
-        self.version += 1;
-        self.reload_count += 1;
-        *self.subscription.0.borrow_mut() = ();
     }
 
     /// Mark the given language as having been loaded, so that the
