@@ -270,6 +270,8 @@ pub struct SettingsContent {
 
     pub language_models: Option<AllLanguageModelSettingsContent>,
 
+    pub copilot: Option<CopilotSettingsContent>,
+
     pub outline_panel: Option<OutlinePanelSettingsContent>,
 
     pub project_panel: Option<ProjectPanelSettingsContent>,
@@ -406,7 +408,7 @@ fallible_options::flattened_deserialize!(SettingsContent {
         agent_servers, audio, auto_update, base_keymap, collaboration_panel, debugger, diagnostics,
         git,
         global_lsp_settings, image_viewer, markdown_preview, repl, helix_mode, hide_mouse,
-        journal, log, line_indicator_format, language_models, outline_panel, project_panel,
+        journal, log, line_indicator_format, language_models, copilot, outline_panel, project_panel,
         node, proxy, reduce_motion, server_url, credentials_url, session, telemetry, terminal,
         title_bar, vim_mode, calls, which_key, vim, modeline_lines, feature_flags,
         instrumentation,
@@ -811,6 +813,34 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: project_diff
     pub entry_primary_click_action: Option<GitPanelClickBehavior>,
+
+    /// Whether the commit message editor is shown in the Git panel by default.
+    ///
+    /// Default: expanded
+    pub commit_editor: Option<GitPanelCommitEditor>,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPanelCommitEditor {
+    /// Show the commit message editor.
+    #[default]
+    Expanded,
+    /// Hide the commit message editor, leaving only the commit button row.
+    Collapsed,
 }
 
 #[derive(
@@ -960,6 +990,11 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: false
     pub include_channels: Option<bool>,
+    /// Whether to pre-fill the file finder's query with the text selected in the
+    /// focused item (e.g. an editor or a terminal) when it is opened.
+    ///
+    /// Default: true
+    pub prefill_query_from_selection: Option<bool>,
 }
 
 #[derive(

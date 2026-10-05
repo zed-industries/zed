@@ -255,16 +255,15 @@ If your organization uses GitHub Copilot Enterprise, you can configure Zed to us
 
 ```json [settings]
 {
-  "edit_predictions": {
-    "copilot": {
-      "enterprise_uri": "https://your.enterprise.domain"
-    }
+  "copilot": {
+    "enterprise_uri": "https://your.enterprise.domain"
   }
 }
 ```
 
 Replace `"https://your.enterprise.domain"` with the URL provided by your GitHub Enterprise administrator (e.g., `https://foo.ghe.com`).
 
+This setting applies to both Copilot edit predictions and Copilot Chat.
 Once set, Zed routes Copilot requests through your enterprise endpoint.
 When you sign in by clicking the Copilot icon in the status bar, you are redirected to your configured enterprise URL to complete authentication.
 All other Copilot features and usage remain the same.
