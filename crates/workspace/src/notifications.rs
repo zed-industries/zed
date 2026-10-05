@@ -487,7 +487,7 @@ pub mod simple_message_notification {
         ScrollHandle, SharedString, Styled, Task,
     };
     use ui::{
-        ButtonLike, ContextMenu, CopyButton, PopoverMenu, SplitButton, SplitButtonStyle, Tooltip,
+        ContextMenu, CopyButton, PopoverMenu, SplitButton, SplitButtonStyle, Tooltip,
         WithScrollbar, prelude::*,
     };
     use util::ResultExt as _;
