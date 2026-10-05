@@ -877,7 +877,7 @@ mod tests {
         LanguageConfig {
             name: name.into(),
             matcher: LanguageMatcher {
-                path_suffixes: vec![path_suffix.to_string()],
+                path_suffixes: vec![path_suffix.into()],
                 ..LanguageMatcher::default()
             }
             .into(),
