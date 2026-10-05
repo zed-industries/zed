@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -5,8 +6,10 @@ use cloud_api_types::websocket_protocol::{PROTOCOL_VERSION, PROTOCOL_VERSION_HEA
 use futures::channel::mpsc::unbounded;
 use futures::stream::{SplitSink, SplitStream};
 use futures::{FutureExt as _, SinkExt as _, StreamExt as _, TryStreamExt as _};
-use gpui::{App, Task};
+use futures_lite::future::yield_now;
+use gpui::{App, AppContext, Task};
 use http_client::http::request;
+use tokio_rustls::TlsConnector;
 use yawc::frame::Frame;
 use yawc::{TcpWebSocket, WebSocket};
 
@@ -31,7 +34,7 @@ impl Connection {
         let rx = self.rx.fuse();
         let (message_tx, message_rx) = unbounded();
         let executor = cx.background_executor().clone();
-        let task = cx.spawn(async move |_cx| {
+        let task = cx.background_spawn(async move {
             let keepalive_timer = executor.timer(KEEPALIVE_INTERVAL).fuse();
             futures::pin_mut!(keepalive_timer, rx);
 
@@ -52,6 +55,8 @@ impl Connection {
                         }
                     }
                 }
+
+                yield_now().await;
             }
         });
 
@@ -77,7 +82,12 @@ impl CloudApiClient {
         let authorization_header = format!("{} {}", credentials.user_id, credentials.access_token);
 
         Ok(gpui_tokio::Tokio::spawn_result(cx, async move {
+            // Use the same TLS configuration as the rest of Zed (the platform
+            // certificate verifier), instead of yawc's default connector which only
+            // trusts the bundled webpki roots and ignores the system trust store.
+            let tls_connector = TlsConnector::from(Arc::new(http_client_tls::tls_config()));
             let websocket = WebSocket::connect(connect_url)
+                .with_connector(tls_connector)
                 .with_request(
                     request::Builder::new()
                         .header("Authorization", authorization_header)

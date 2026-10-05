@@ -883,7 +883,7 @@ impl Render for DeleteBranchTooltip {
             Tooltip::with_meta_in(
                 "Delete Branch",
                 Some(&branch_picker::DeleteBranch),
-                "Hold alt to force delete",
+                concat!("Hold ", ui::alt_key_name!(), " to force delete"),
                 &self.focus_handle,
                 cx,
             )

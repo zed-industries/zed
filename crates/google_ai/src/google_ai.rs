@@ -4,12 +4,14 @@ use anyhow::{Result, anyhow, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+    StatusCode, http::HeaderMap,
 };
-pub use language_model_core::ModelMode as GoogleModelMode;
+pub use language_model_core::{GOOGLE_AI_API_URL as API_URL, ModelMode as GoogleModelMode};
+use language_model_core::{
+    GOOGLE_PROVIDER_NAME, LanguageModelCompletionError, ProviderErrorCategory,
+};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub mod completion;
-
-pub const API_URL: &str = "https://generativelanguage.googleapis.com";
 
 pub async fn stream_generate_content(
     client: &dyn HttpClient,
@@ -17,7 +19,7 @@ pub async fn stream_generate_content(
     api_key: &str,
     mut request: GenerateContentRequest,
     extra_headers: &CustomHeaders,
-) -> Result<BoxStream<'static, Result<GenerateContentResponse>>> {
+) -> Result<BoxStream<'static, Result<GenerateContentResponse>>, LanguageModelCompletionError> {
     let api_key = api_key.trim();
     validate_generate_content_request(&request)?;
 
@@ -32,8 +34,25 @@ pub async fn stream_generate_content(
         .uri(uri)
         .header("Content-Type", "application/json")
         .extra_headers(extra_headers)
-        .body(AsyncBody::from(serde_json::to_string(&request)?))?;
-    let mut response = client.send(request).await?;
+        .body(AsyncBody::from(serde_json::to_string(&request).map_err(
+            |error| LanguageModelCompletionError::SerializeRequest {
+                provider: GOOGLE_PROVIDER_NAME,
+                error,
+            },
+        )?))
+        .map_err(|error| LanguageModelCompletionError::BuildRequestBody {
+            provider: GOOGLE_PROVIDER_NAME,
+            error,
+        })?;
+    let mut response =
+        client
+            .send(request)
+            .await
+            .map_err(|error| LanguageModelCompletionError::HttpSend {
+                provider: GOOGLE_PROVIDER_NAME,
+                host: api_url.to_string(),
+                error,
+            })?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
         Ok(reader
@@ -66,13 +85,122 @@ pub async fn stream_generate_content(
             })
             .boxed())
     } else {
-        let mut text = String::new();
-        response.body_mut().read_to_string(&mut text).await?;
-        Err(anyhow!(
-            "error during streamGenerateContent, status code: {:?}, body: {}",
-            response.status(),
-            text
-        ))
+        let status = response.status();
+        let headers = response.headers().clone();
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|error| LanguageModelCompletionError::ApiReadResponseError {
+                provider: GOOGLE_PROVIDER_NAME,
+                error,
+            })?;
+        Err(completion_error_from_response(status, &headers, body))
+    }
+}
+
+fn completion_error_from_response(
+    status: StatusCode,
+    headers: &HeaderMap,
+    body: String,
+) -> LanguageModelCompletionError {
+    let retry_after = headers
+        .get(http_client::http::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok()?.parse::<u64>().ok())
+        .map(std::time::Duration::from_secs);
+    let parsed_error = serde_json::from_str::<GoogleErrorEnvelope>(&body)
+        .ok()
+        .map(|envelope| envelope.error);
+    let message = parsed_error
+        .as_ref()
+        .map(|error| error.message.clone())
+        .unwrap_or(body);
+    let code = parsed_error.and_then(|error| error.status);
+    let category = ProviderErrorCategory::from_http_status(status, &message);
+
+    LanguageModelCompletionError::from_provider_response(
+        GOOGLE_PROVIDER_NAME,
+        Some(status),
+        code,
+        message,
+        retry_after,
+        category,
+    )
+}
+
+#[derive(Deserialize)]
+struct GoogleErrorEnvelope {
+    error: GoogleError,
+}
+
+#[derive(Deserialize)]
+struct GoogleError {
+    message: String,
+    status: Option<String>,
+}
+
+#[cfg(test)]
+mod provider_error_tests {
+    use super::*;
+
+    #[test]
+    fn google_rejections_preserve_wire_details_and_semantic_category() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http_client::http::header::RETRY_AFTER,
+            http_client::http::HeaderValue::from_static("7"),
+        );
+        let error = completion_error_from_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &headers,
+            r#"{"error":{"code":503,"message":"The model is overloaded. Please try again later.","status":"UNAVAILABLE"}}"#
+                .to_string(),
+        );
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: Some(StatusCode::SERVICE_UNAVAILABLE),
+                code: Some(code),
+                message,
+                retry_after: Some(retry_after),
+                category: ProviderErrorCategory::Overloaded,
+            } if provider == GOOGLE_PROVIDER_NAME
+                && code == "UNAVAILABLE"
+                && message == "The model is overloaded. Please try again later."
+                && retry_after == std::time::Duration::from_secs(7)
+        ));
+    }
+
+    #[test]
+    fn google_rejections_use_shared_http_classification() {
+        for (status, expected_category) in [
+            (
+                StatusCode::UNAUTHORIZED,
+                ProviderErrorCategory::Authentication,
+            ),
+            (
+                StatusCode::PAYMENT_REQUIRED,
+                ProviderErrorCategory::PaymentRequired,
+            ),
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                ProviderErrorCategory::RateLimit,
+            ),
+        ] {
+            let error = completion_error_from_response(
+                status,
+                &HeaderMap::new(),
+                r#"{"error":{"code":0,"message":"rejected","status":"REJECTED"}}"#.to_string(),
+            );
+            assert!(matches!(
+                error,
+                LanguageModelCompletionError::ProviderRejection { category, .. }
+                    if category == expected_category
+            ));
+        }
     }
 }
 
@@ -452,7 +580,14 @@ pub enum FunctionCallingMode {
 pub struct FunctionDeclaration {
     pub name: String,
     pub description: String,
-    pub parameters: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<serde_json::Value>,
+    #[serde(
+        rename = "parametersJsonSchema",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parameters_json_schema: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Default)]
@@ -499,34 +634,9 @@ impl<'de> Deserialize<'de> for ModelName {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq, Eq, strum::EnumIter)]
 pub enum Model {
-    #[serde(
-        rename = "gemini-2.5-flash-lite",
-        alias = "gemini-2.5-flash-lite-preview-06-17",
-        alias = "gemini-2.0-flash-lite-preview"
-    )]
-    Gemini25FlashLite,
-    #[serde(
-        rename = "gemini-2.5-flash",
-        alias = "gemini-2.0-flash-thinking-exp",
-        alias = "gemini-2.5-flash-preview-04-17",
-        alias = "gemini-2.5-flash-preview-05-20",
-        alias = "gemini-2.5-flash-preview-latest",
-        alias = "gemini-2.0-flash"
-    )]
+    #[serde(rename = "gemini-3.5-flash-lite")]
     #[default]
-    Gemini25Flash,
-    #[serde(
-        rename = "gemini-2.5-pro",
-        alias = "gemini-2.0-pro-exp",
-        alias = "gemini-2.5-pro-preview-latest",
-        alias = "gemini-2.5-pro-exp-03-25",
-        alias = "gemini-2.5-pro-preview-03-25",
-        alias = "gemini-2.5-pro-preview-05-06",
-        alias = "gemini-2.5-pro-preview-06-05"
-    )]
-    Gemini25Pro,
-    #[serde(rename = "gemini-3.1-flash-lite")]
-    Gemini31FlashLite,
+    Gemini35FlashLite,
     #[serde(rename = "gemini-3-flash-preview")]
     Gemini3Flash,
     #[serde(rename = "gemini-3.5-flash")]
@@ -535,7 +645,9 @@ pub enum Model {
     Gemini36Flash,
     #[serde(rename = "gemini-3.7-flash")]
     Gemini37Flash,
-    #[serde(rename = "gemini-3.1-pro-preview", alias = "gemini-3-pro-preview")]
+    #[serde(rename = "gemini-3.8-flash")]
+    Gemini38Flash,
+    #[serde(rename = "gemini-3.1-pro-preview")]
     Gemini31Pro,
     #[serde(rename = "custom")]
     Custom {
@@ -550,33 +662,29 @@ pub enum Model {
 
 impl Model {
     pub fn default_fast() -> Self {
-        Self::Gemini31FlashLite
+        Self::Gemini35FlashLite
     }
 
     pub fn id(&self) -> &str {
         match self {
-            Self::Gemini25FlashLite => "gemini-2.5-flash-lite",
-            Self::Gemini25Flash => "gemini-2.5-flash",
-            Self::Gemini25Pro => "gemini-2.5-pro",
-            Self::Gemini31FlashLite => "gemini-3.1-flash-lite",
+            Self::Gemini35FlashLite => "gemini-3.5-flash-lite",
             Self::Gemini3Flash => "gemini-3-flash-preview",
             Self::Gemini35Flash => "gemini-3.5-flash",
             Self::Gemini36Flash => "gemini-3.6-flash",
             Self::Gemini37Flash => "gemini-3.7-flash",
+            Self::Gemini38Flash => "gemini-3.8-flash",
             Self::Gemini31Pro => "gemini-3.1-pro-preview",
             Self::Custom { name, .. } => name,
         }
     }
     pub fn request_id(&self) -> &str {
         match self {
-            Self::Gemini25FlashLite => "gemini-2.5-flash-lite",
-            Self::Gemini25Flash => "gemini-2.5-flash",
-            Self::Gemini25Pro => "gemini-2.5-pro",
-            Self::Gemini31FlashLite => "gemini-3.1-flash-lite",
+            Self::Gemini35FlashLite => "gemini-3.5-flash-lite",
             Self::Gemini3Flash => "gemini-3-flash-preview",
             Self::Gemini35Flash => "gemini-3.5-flash",
             Self::Gemini36Flash => "gemini-3.6-flash",
             Self::Gemini37Flash => "gemini-3.7-flash",
+            Self::Gemini38Flash => "gemini-3.8-flash",
             Self::Gemini31Pro => "gemini-3.1-pro-preview",
             Self::Custom { name, .. } => name,
         }
@@ -584,14 +692,12 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::Gemini25FlashLite => "Gemini 2.5 Flash-Lite",
-            Self::Gemini25Flash => "Gemini 2.5 Flash",
-            Self::Gemini25Pro => "Gemini 2.5 Pro",
-            Self::Gemini31FlashLite => "Gemini 3.1 Flash-Lite",
+            Self::Gemini35FlashLite => "Gemini 3.5 Flash-Lite",
             Self::Gemini3Flash => "Gemini 3 Flash",
             Self::Gemini35Flash => "Gemini 3.5 Flash",
             Self::Gemini36Flash => "Gemini 3.6 Flash",
             Self::Gemini37Flash => "Gemini 3.7 Flash",
+            Self::Gemini38Flash => "Gemini 3.8 Flash",
             Self::Gemini31Pro => "Gemini 3.1 Pro",
             Self::Custom {
                 name, display_name, ..
@@ -601,14 +707,12 @@ impl Model {
 
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::Gemini25FlashLite
-            | Self::Gemini25Flash
-            | Self::Gemini25Pro
-            | Self::Gemini31FlashLite
+            Self::Gemini35FlashLite
             | Self::Gemini3Flash
             | Self::Gemini35Flash
             | Self::Gemini36Flash
             | Self::Gemini37Flash
+            | Self::Gemini38Flash
             | Self::Gemini31Pro => 1_048_576,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -616,14 +720,12 @@ impl Model {
 
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
-            Model::Gemini25FlashLite
-            | Model::Gemini25Flash
-            | Model::Gemini25Pro
-            | Model::Gemini31FlashLite
+            Model::Gemini35FlashLite
             | Model::Gemini3Flash
             | Model::Gemini35Flash
             | Model::Gemini36Flash
             | Model::Gemini37Flash
+            | Model::Gemini38Flash
             | Model::Gemini31Pro => Some(65_536),
             Model::Custom { .. } => None,
         }
@@ -640,14 +742,12 @@ impl Model {
     pub fn supports_thinking(&self) -> bool {
         matches!(
             self,
-            Self::Gemini25FlashLite
-                | Self::Gemini25Flash
-                | Self::Gemini25Pro
-                | Self::Gemini31FlashLite
+            Self::Gemini35FlashLite
                 | Self::Gemini3Flash
                 | Self::Gemini35Flash
                 | Self::Gemini36Flash
                 | Self::Gemini37Flash
+                | Self::Gemini38Flash
                 | Self::Gemini31Pro
                 | Self::Custom {
                     mode: GoogleModelMode::Thinking { .. },
@@ -658,7 +758,7 @@ impl Model {
 
     pub fn supported_thinking_levels(&self) -> &'static [ThinkingLevel] {
         match self {
-            Self::Gemini31FlashLite
+            Self::Gemini35FlashLite
             | Self::Gemini3Flash
             | Self::Gemini35Flash
             | Self::Gemini36Flash => &[
@@ -667,7 +767,7 @@ impl Model {
                 ThinkingLevel::Medium,
                 ThinkingLevel::High,
             ],
-            Self::Gemini37Flash | Self::Gemini31Pro => &[
+            Self::Gemini37Flash | Self::Gemini38Flash | Self::Gemini31Pro => &[
                 ThinkingLevel::Low,
                 ThinkingLevel::Medium,
                 ThinkingLevel::High,
@@ -678,11 +778,12 @@ impl Model {
 
     pub fn default_thinking_level(&self) -> Option<ThinkingLevel> {
         match self {
-            Self::Gemini31FlashLite => Some(ThinkingLevel::Minimal),
+            Self::Gemini35FlashLite => Some(ThinkingLevel::Minimal),
             Self::Gemini3Flash => Some(ThinkingLevel::High),
             Self::Gemini35Flash => Some(ThinkingLevel::Medium),
             Self::Gemini36Flash => Some(ThinkingLevel::Medium),
             Self::Gemini37Flash => Some(ThinkingLevel::Medium),
+            Self::Gemini38Flash => Some(ThinkingLevel::Medium),
             Self::Gemini31Pro => Some(ThinkingLevel::High),
             _ => None,
         }
@@ -690,18 +791,12 @@ impl Model {
 
     pub fn mode(&self) -> GoogleModelMode {
         match self {
-            Self::Gemini25FlashLite | Self::Gemini25Flash | Self::Gemini25Pro => {
-                GoogleModelMode::Thinking {
-                    // By default these models are set to "auto", so we preserve that behavior
-                    // but indicate they are capable of thinking mode
-                    budget_tokens: None,
-                }
-            }
-            Self::Gemini31FlashLite
+            Self::Gemini35FlashLite
             | Self::Gemini3Flash
             | Self::Gemini35Flash
             | Self::Gemini36Flash
             | Self::Gemini37Flash
+            | Self::Gemini38Flash
             | Self::Gemini31Pro => GoogleModelMode::Thinking {
                 budget_tokens: None,
             },
@@ -735,6 +830,29 @@ mod tests {
     }
 
     #[test]
+    fn test_gemini_3_5_flash_lite_model_metadata() {
+        let model = Model::Gemini35FlashLite;
+        assert_eq!(model.id(), "gemini-3.5-flash-lite");
+        assert_eq!(model.request_id(), "gemini-3.5-flash-lite");
+        assert_eq!(model.display_name(), "Gemini 3.5 Flash-Lite");
+        assert_eq!(
+            model.supported_thinking_levels(),
+            &[
+                ThinkingLevel::Minimal,
+                ThinkingLevel::Low,
+                ThinkingLevel::Medium,
+                ThinkingLevel::High
+            ]
+        );
+        assert_eq!(model.default_thinking_level(), Some(ThinkingLevel::Minimal));
+
+        let serialized = serde_json::to_value(&model).unwrap();
+        assert_eq!(serialized, json!("gemini-3.5-flash-lite"));
+        let deserialized: Model = serde_json::from_value(json!("gemini-3.5-flash-lite")).unwrap();
+        assert_eq!(deserialized, Model::Gemini35FlashLite);
+    }
+
+    #[test]
     fn test_gemini_3_7_flash_model_metadata() {
         let model = Model::Gemini37Flash;
         assert_eq!(model.id(), "gemini-3.7-flash");
@@ -753,6 +871,31 @@ mod tests {
         assert_eq!(serialized, json!("gemini-3.7-flash"));
         let deserialized: Model = serde_json::from_value(json!("gemini-3.7-flash")).unwrap();
         assert_eq!(deserialized, Model::Gemini37Flash);
+    }
+
+    #[test]
+    fn test_gemini_3_8_flash_model_metadata() {
+        let model = Model::Gemini38Flash;
+        assert_eq!(model.id(), "gemini-3.8-flash");
+        assert_eq!(model.request_id(), "gemini-3.8-flash");
+        assert_eq!(model.display_name(), "Gemini 3.8 Flash");
+        assert_eq!(model.max_token_count(), 1_048_576);
+        assert_eq!(model.max_output_tokens(), Some(65_536));
+        assert!(model.supports_thinking());
+        assert_eq!(
+            model.supported_thinking_levels(),
+            &[
+                ThinkingLevel::Low,
+                ThinkingLevel::Medium,
+                ThinkingLevel::High
+            ]
+        );
+        assert_eq!(model.default_thinking_level(), Some(ThinkingLevel::Medium));
+
+        let serialized = serde_json::to_value(&model).unwrap();
+        assert_eq!(serialized, json!("gemini-3.8-flash"));
+        let deserialized: Model = serde_json::from_value(json!("gemini-3.8-flash")).unwrap();
+        assert_eq!(deserialized, Model::Gemini38Flash);
     }
 
     #[test]

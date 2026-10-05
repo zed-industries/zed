@@ -6,6 +6,9 @@ use anyhow::{Context as _, Result, anyhow};
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use encoding_rs::Encoding;
+use file_content::{
+    ByteContent, DecodingReader, decode_byte_header, detect_encoding, encode_text, read_byte_header,
+};
 use fs::{
     Fs, MTime, PathEvent, PathEventKind, RemoveOptions, TrashId, Watcher, copy_recursive,
     read_dir_items,
@@ -19,6 +22,7 @@ use futures::{
     select_biased, stream,
     task::Poll,
 };
+use futures_lite::future::yield_now;
 use fuzzy::CharBag;
 use git::{
     BISECT_LOG, COMMIT_MESSAGE, DOT_GIT, FETCH_HEAD, FSMONITOR_DAEMON, GC_PID, GITIGNORE,
@@ -31,9 +35,7 @@ use gpui::{
     Task,
 };
 pub use ignore::{IgnoreKind, IgnoreStack};
-use language::{
-    ByteContent, DiskState, FILE_ANALYSIS_BYTES, analyze_byte_content, decode_text, encode_text,
-};
+use language::DiskState;
 
 use async_channel::{self, Sender};
 use parking_lot::Mutex;
@@ -59,8 +61,9 @@ use std::{
     ffi::OsStr,
     fmt,
     future::Future,
+    io::Read,
     mem::{self},
-    ops::{Deref, DerefMut, Range},
+    ops::{Bound, Deref, DerefMut, Range},
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
@@ -74,11 +77,17 @@ use text::{LineEnding, Rope};
 use util::{
     ResultExt, maybe,
     paths::{PathMatcher, PathStyle, SanitizedPath, home_dir},
-    rel_path::RelPath,
+    rel_path::{RelPath, RelPathBuf},
 };
 pub use worktree_settings::WorktreeSettings;
 
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
+
+/// How often the background scanner verifies that the worktree root still
+/// exists at its recorded path. Native watchers report the root itself being
+/// renamed or deleted, but not a rename of one of its ancestors, which leaves
+/// the watcher silently attached to a path that no longer exists.
+pub const ROOT_PATH_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 
 /// A set of local or remote files that are being opened as part of a project.
 /// Responsible for tracking related FS (for local)/collab (for remote) events and corresponding updates.
@@ -108,7 +117,8 @@ pub enum CreatedEntry {
 #[derive(Debug)]
 pub struct LoadedFile {
     pub file: Arc<File>,
-    pub text: String,
+    pub text: Rope,
+    pub line_ending: LineEnding,
     pub encoding: &'static Encoding,
     pub has_bom: bool,
     pub is_writable: bool,
@@ -1353,7 +1363,7 @@ impl LocalWorktree {
             let background = cx.background_executor().clone();
             async move {
                 let defer_watch =
-                    force_defer_watch || (scanning_enabled && fs::requires_poll_watcher(&abs_path));
+                    force_defer_watch || (scanning_enabled && fs.requires_poll_watcher(&abs_path));
 
                 let (events, watcher) = if scanning_enabled && !defer_watch {
                     fs.watch(&abs_path, FS_WATCH_LATENCY).await
@@ -1715,7 +1725,8 @@ impl LocalWorktree {
             {
                 anyhow::bail!("File is too large to load");
             }
-            let (text, encoding, has_bom) = decode_file_text(fs.as_ref(), &abs_path).await?;
+            let (text, line_ending, encoding, has_bom) =
+                decode_file_text_to_rope(fs.as_ref(), &abs_path).await?;
             let is_writable = metadata.is_some_and(|metadata| metadata.is_writable);
 
             let worktree = this.upgrade().context("worktree was dropped")?;
@@ -1748,6 +1759,7 @@ impl LocalWorktree {
             Ok(LoadedFile {
                 file,
                 text,
+                line_ending,
                 encoding,
                 has_bom,
                 is_writable,
@@ -2948,6 +2960,28 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
+    /// Maps an absolute path inside a scanned external (symlinked) directory,
+    /// given by its canonical form, to its path within this worktree.
+    pub fn relative_path_for_external_abs_path(&self, abs_path: &Path) -> Option<RelPathBuf> {
+        let mut query = abs_path;
+        loop {
+            let (canonical, relative) = self
+                .external_canonical_to_relative
+                .range::<Path, _>((Bound::Unbounded, Bound::Included(query)))
+                .next_back()?;
+            if let Ok(suffix) = abs_path.strip_prefix(canonical) {
+                let suffix = RelPath::new(suffix, PathStyle::local()).ok()?;
+                return Some(relative.join(&suffix));
+            }
+            // Keys are nested, so the nearest smaller key can be under a sibling
+            // directory. No key lies between it and `query`, so no ancestor of
+            // `query` below their common ancestor is a key. Retry from there.
+            query = query
+                .ancestors()
+                .find(|ancestor| canonical.starts_with(ancestor))?;
+        }
+    }
+
     fn local_repo_for_work_directory_path(&self, path: &RelPath) -> Option<&LocalRepositoryEntry> {
         self.git_repositories
             .iter()
@@ -3103,6 +3137,8 @@ impl LocalSnapshot {
         for repo_exclude in repo_excludes.into_iter().rev() {
             ignore_stack = ignore_stack.append(IgnoreKind::RepoExclude, repo_exclude);
         }
+        ignore_stack.global_ignore_root =
+            Some(repo_root.clone().unwrap_or_else(|| self.abs_path().clone()));
         ignore_stack.repo_root = repo_root;
         let mut ancestor_ignore_stack = ignore_stack.clone();
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
@@ -4551,6 +4587,10 @@ impl BackgroundScanner {
         // Continue processing events until the worktree is dropped.
         self.phase = BackgroundScannerPhase::Events;
 
+        let root_path_check_timer = self.executor.timer(ROOT_PATH_CHECK_INTERVAL).fuse();
+        futures::pin_mut!(root_path_check_timer);
+        let mut root_path_missing = false;
+
         loop {
             select_biased! {
                 // Process any path refresh requests from the worktree. Prioritize
@@ -4604,6 +4644,20 @@ impl BackgroundScanner {
                     if let Some(path) = &global_gitignore_file {
                         self.update_global_gitignore(&path).await;
                     }
+                }
+
+                _ = root_path_check_timer => {
+                    let root_path = self.state.lock().await.snapshot.abs_path.clone();
+                    match self.fs.canonicalize(root_path.as_path()).await {
+                        Ok(_) => root_path_missing = false,
+                        Err(error) => {
+                            if !root_path_missing {
+                                root_path_missing = true;
+                                self.report_root_moved_or_deleted(&root_path, &error).await;
+                            }
+                        }
+                    }
+                    root_path_check_timer.set(self.executor.timer(ROOT_PATH_CHECK_INTERVAL).fuse());
                 }
             }
         }
@@ -4739,56 +4793,67 @@ impl BackgroundScanner {
         events
     }
 
+    /// Called when the worktree root can no longer be canonicalized. Uses the
+    /// open handle on the root to find where it moved to, and reports the new
+    /// location (or, for single-file worktrees, the deletion) to the worktree.
+    async fn report_root_moved_or_deleted(
+        &self,
+        root_path: &Arc<SanitizedPath>,
+        canonicalize_error: &anyhow::Error,
+    ) {
+        let new_path = self
+            .state
+            .lock()
+            .await
+            .snapshot
+            .root_file_handle
+            .clone()
+            .and_then(|handle| match handle.current_path(&self.fs) {
+                Ok(new_path) => Some(new_path),
+                Err(e) => {
+                    log::error!("Failed to refresh worktree root path: {e:#}");
+                    None
+                }
+            })
+            .map(|path| SanitizedPath::new_arc(&path))
+            .filter(|new_path| new_path != root_path);
+
+        if let Some(new_path) = new_path {
+            log::info!(
+                "root renamed from {:?} to {:?}",
+                root_path.as_path(),
+                new_path.as_path(),
+            );
+            self.status_updates_tx
+                .unbounded_send(ScanState::RootUpdated { new_path })
+                .ok();
+        } else {
+            log::error!("root path could not be canonicalized: {canonicalize_error:#}");
+
+            // For single-file worktrees, if we can't canonicalize and the file handle
+            // fallback also failed, the file is gone - close the worktree
+            if self.is_single_file {
+                log::info!(
+                    "single-file worktree root {:?} no longer exists, marking as deleted",
+                    root_path.as_path()
+                );
+                self.status_updates_tx
+                    .unbounded_send(ScanState::RootDeleted)
+                    .ok();
+            }
+        }
+    }
+
     async fn process_events(&self, mut events: Vec<PathEvent>) {
         let root_path = self.state.lock().await.snapshot.abs_path.clone();
-        let root_canonical_path = self.fs.canonicalize(root_path.as_path()).await;
-        let root_canonical_path = match &root_canonical_path {
-            Ok(path) => SanitizedPath::new(path),
-            Err(err) => {
-                let new_path = self
-                    .state
-                    .lock()
-                    .await
-                    .snapshot
-                    .root_file_handle
-                    .clone()
-                    .and_then(|handle| match handle.current_path(&self.fs) {
-                        Ok(new_path) => Some(new_path),
-                        Err(e) => {
-                            log::error!("Failed to refresh worktree root path: {e:#}");
-                            None
-                        }
-                    })
-                    .map(|path| SanitizedPath::new_arc(&path))
-                    .filter(|new_path| *new_path != root_path);
-
-                if let Some(new_path) = new_path {
-                    log::info!(
-                        "root renamed from {:?} to {:?}",
-                        root_path.as_path(),
-                        new_path.as_path(),
-                    );
-                    self.status_updates_tx
-                        .unbounded_send(ScanState::RootUpdated { new_path })
-                        .ok();
-                } else {
-                    log::error!("root path could not be canonicalized: {err:#}");
-
-                    // For single-file worktrees, if we can't canonicalize and the file handle
-                    // fallback also failed, the file is gone - close the worktree
-                    if self.is_single_file {
-                        log::info!(
-                            "single-file worktree root {:?} no longer exists, marking as deleted",
-                            root_path.as_path()
-                        );
-                        self.status_updates_tx
-                            .unbounded_send(ScanState::RootDeleted)
-                            .ok();
-                    }
-                }
+        let root_canonical_path = match self.fs.canonicalize(root_path.as_path()).await {
+            Ok(path) => path,
+            Err(error) => {
+                self.report_root_moved_or_deleted(&root_path, &error).await;
                 return;
             }
         };
+        let root_canonical_path = SanitizedPath::new(&root_canonical_path);
 
         {
             let state = self.state.lock().await;
@@ -5026,24 +5091,10 @@ impl BackgroundScanner {
                     && let Ok(path) = RelPath::new(path, PathStyle::local())
                 {
                     path
-                } else if let Some(path) = snapshot.external_canonical_to_relative.iter().find_map(
-                    |(canonical, relative)| {
-                        abs_path
-                            .as_path()
-                            .strip_prefix(canonical.as_ref())
-                            .ok()
-                            .and_then(|suffix| {
-                                RelPath::new(suffix, PathStyle::local())
-                                    .ok()
-                                    .map(|suffix_rel| {
-                                        std::borrow::Cow::Owned(
-                                            relative.join(&suffix_rel).to_rel_path_buf(),
-                                        )
-                                    })
-                            })
-                    },
-                ) {
-                    path
+                } else if let Some(path) =
+                    snapshot.relative_path_for_external_abs_path(abs_path.as_path())
+                {
+                    std::borrow::Cow::Owned(path)
                 } else {
                     skip_ix(&mut ranges_to_drop, ix);
                     continue;
@@ -5355,6 +5406,32 @@ impl BackgroundScanner {
         let mut root_canonical_path = None;
         let mut new_entries: Vec<Entry> = Vec::new();
         let mut new_jobs: Vec<Option<ScanJob>> = Vec::new();
+
+        // Watch before reading so a child created after enumeration still
+        // produces an event.
+        //
+        // For external entries, watch the canonical (resolved) path so OS-level
+        // FS events on the real filesystem location are observed. The same
+        // canonical path is stored in both `external_canonical_to_relative`
+        // (for translating canonical-path FS events back to worktree-relative
+        // paths) and `watched_dir_abs_paths_by_entry_id` (used by `remove_path`
+        // to know which abs path to unwatch), so both cleanup paths agree on
+        // the path the watcher was actually registered on.
+        let watched_abs_path: Option<Arc<Path>> = if job.is_external {
+            self.fs
+                .canonicalize(job.abs_path.as_ref())
+                .await
+                .ok()
+                .map(|canonical| {
+                    let canonical: Arc<Path> = canonical.into();
+                    self.watcher.add(&canonical).log_err();
+                    canonical
+                })
+        } else {
+            self.watcher.add(job.abs_path.as_ref()).log_err();
+            Some(job.abs_path.clone())
+        };
+
         let mut child_paths = self
             .fs
             .read_dir(&job.abs_path)
@@ -5379,6 +5456,7 @@ impl BackgroundScanner {
             && path.ends_with(DOT_GIT)
         {
             ignore_stack.repo_root = Some(job.abs_path.clone());
+            ignore_stack.global_ignore_root = Some(job.abs_path.clone());
         }
 
         for child_abs_path in child_paths {
@@ -5570,33 +5648,6 @@ impl BackgroundScanner {
         }
 
         state.populate_dir(job.path.clone(), new_entries, new_ignore);
-        // For external entries, watch the canonical (resolved) path so OS-level
-        // FS events on the real filesystem location are observed. The same
-        // canonical path is stored in both `external_canonical_to_relative`
-        // (for translating canonical-path FS events back to worktree-relative
-        // paths) and `watched_dir_abs_paths_by_entry_id` (used by `remove_path`
-        // to know which abs path to unwatch), so both cleanup paths agree on
-        // the path the watcher was actually registered on.
-        //
-        // `canonicalize` is an async filesystem operation that may suspend, so
-        // the lock must not be held across the await point below.
-        drop(state);
-        let watched_abs_path: Option<Arc<Path>> = if job.is_external {
-            self.fs
-                .canonicalize(job.abs_path.as_ref())
-                .await
-                .ok()
-                .map(|canonical| {
-                    let canonical: Arc<Path> = canonical.into();
-                    self.watcher.add(&canonical).log_err();
-                    canonical
-                })
-        } else {
-            self.watcher.add(job.abs_path.as_ref()).log_err();
-            Some(job.abs_path.clone())
-        };
-
-        let mut state = self.state.lock().await;
         if let Some(watched_abs_path) = &watched_abs_path {
             if job.is_external {
                 state
@@ -6011,6 +6062,7 @@ impl BackgroundScanner {
 
         if let Ok(Some(_)) = self.fs.metadata(&job.abs_path.join(DOT_GIT)).await {
             ignore_stack.repo_root = Some(job.abs_path.clone());
+            ignore_stack.global_ignore_root = Some(job.abs_path.clone());
         }
 
         for mut entry in snapshot.child_entries(&path).cloned() {
@@ -7173,260 +7225,243 @@ impl fs::Watcher for NullWatcher {
     }
 }
 
-pub async fn decode_file_text(
+const STREAM_BLOCK_BYTES: usize = 1024 * 1024;
+
+/// Reads and decodes a file straight into a [`Rope`].
+/// The returned rope has already had its line endings normalized, the
+/// [`LineEnding`] detected before normalizing is returned alongside it.
+pub async fn decode_file_text_to_rope(
     fs: &dyn Fs,
     abs_path: &Path,
-) -> Result<(String, &'static Encoding, bool)> {
+) -> Result<(Rope, LineEnding, &'static Encoding, bool)> {
     let mut file = fs
-        .open_sync(&abs_path)
+        .open_sync(abs_path)
         .await
         .with_context(|| format!("opening file {abs_path:?}"))?;
 
-    // First, read the beginning of the file to determine its kind and encoding.
-    // We do not want to load an entire large blob into memory only to discard it.
-    let mut file_first_bytes = Vec::with_capacity(FILE_ANALYSIS_BYTES);
-    let mut buf = [0u8; FILE_ANALYSIS_BYTES];
-    let mut reached_eof = false;
-    loop {
-        if file_first_bytes.len() >= FILE_ANALYSIS_BYTES {
-            break;
-        }
-        let n = file
-            .read(&mut buf)
-            .with_context(|| format!("reading bytes of the file {abs_path:?}"))?;
-        if n == 0 {
-            reached_eof = true;
-            break;
-        }
-        file_first_bytes.extend_from_slice(&buf[..n]);
-    }
-    let (_, byte_content) = decode_byte_header(&file_first_bytes);
+    let (prefix, reached_eof) = read_byte_header(&mut *file)
+        .with_context(|| format!("reading bytes of the file {abs_path:?}"))?;
+    let (bom_encoding, byte_content) = decode_byte_header(&prefix);
     anyhow::ensure!(
         byte_content != ByteContent::Binary,
         "Binary files are not supported"
     );
 
-    // If the file is eligible for opening, read the rest of the file.
-    let mut content = file_first_bytes;
-    if !reached_eof {
-        let mut buf = [0u8; 8 * 1024];
-        loop {
-            let n = file
-                .read(&mut buf)
-                .with_context(|| format!("reading remaining bytes of the file {abs_path:?}"))?;
-            if n == 0 {
-                break;
-            }
-            content.extend_from_slice(&buf[..n]);
-        }
+    if bom_encoding.is_none()
+        && byte_content == ByteContent::Unknown
+        && let Some((rope, line_ending)) =
+            stream_utf8_into_rope(&mut *file, prefix, reached_eof, abs_path, true).await?
+    {
+        return Ok((rope, line_ending, encoding_rs::UTF_8, false));
     }
-    let decoded = decode_text(content)?;
-    Ok((decoded.text, decoded.encoding, decoded.has_bom))
+
+    file.rewind()?;
+    let encoding = match bom_encoding.or(byte_content.encoding()) {
+        Some(encoding) => encoding,
+        None => {
+            let encoding = detect_encoding(&mut *file).await?;
+            file.rewind()?;
+            encoding
+        }
+    };
+    let mut reader = DecodingReader::new(&mut *file, encoding);
+    let (rope, line_ending) =
+        stream_utf8_into_rope(&mut reader, Vec::new(), false, abs_path, false)
+            .await?
+            .with_context(|| format!("decoding the file {abs_path:?}"))?;
+    Ok((rope, line_ending, reader.encoding(), bom_encoding.is_some()))
 }
 
-pub fn decode_byte_header(prefix: &[u8]) -> (Option<&'static Encoding>, ByteContent) {
-    if let Some((encoding, _bom_len)) = Encoding::for_bom(prefix) {
-        return (Some(encoding), ByteContent::Unknown);
+/// Streams a presumed-UTF-8 file into a [`Rope`], normalizing line endings as it
+/// goes.
+///
+/// Returns `None` if the file turns out not to be plain UTF-8, in which case the
+/// caller re-reads it and decodes it the slow way. `prefix` is the portion of
+/// the file already consumed from `file` for encoding detection.
+async fn stream_utf8_into_rope(
+    file: &mut (dyn Read + Send),
+    prefix: Vec<u8>,
+    reached_eof: bool,
+    abs_path: &Path,
+    reject_escape_sequences: bool,
+) -> Result<Option<(Rope, LineEnding)>> {
+    let mut rope = Rope::new();
+    let mut line_ending = None;
+    let mut scratch = String::new();
+    let mut pending = prefix;
+    let mut buf = vec![0u8; STREAM_BLOCK_BYTES];
+    let mut eof = reached_eof;
+
+    loop {
+        // Fill a whole block before decoding, so that each `Rope::push` gets a
+        // slice large enough to build its chunks in parallel.
+        while !eof && pending.len() < STREAM_BLOCK_BYTES {
+            let n = file
+                .read(&mut buf)
+                .with_context(|| format!("reading bytes of the file {abs_path:?}"))?;
+            if n == 0 {
+                eof = true;
+            } else {
+                pending.extend_from_slice(&buf[..n]);
+            }
+        }
+
+        // Decode as much of `pending` as forms complete UTF-8.
+        let valid_len = match std::str::from_utf8(&pending) {
+            Ok(_) => pending.len(),
+            // A multi-byte character straddling the block boundary; the rest of
+            // it arrives with the next block.
+            Err(e) if e.error_len().is_none() && !eof => e.valid_up_to(),
+            // Genuinely not UTF-8, or truncated at EOF: fall back.
+            Err(_) => return Ok(None),
+        };
+
+        // Hold back a trailing carriage return until we know what follows it.
+        let emit_len = if !eof && valid_len > 0 && pending[valid_len - 1] == b'\r' {
+            valid_len - 1
+        } else {
+            valid_len
+        };
+
+        let text = std::str::from_utf8(&pending[..emit_len])
+            .expect("a prefix of validated UTF-8 is itself valid UTF-8");
+
+        // ISO-2022-JP and friends are valid UTF-8 but carry escape sequences, so
+        // they need the full-file encoding detector rather than this fast path.
+        if reject_escape_sequences && text.contains('\x1b') {
+            return Ok(None);
+        }
+
+        // `LineEnding::detect` only inspects the first 1000 bytes, so the first
+        // block gives the same answer the whole file would.
+        if line_ending.is_none() && !text.is_empty() {
+            line_ending = Some(LineEnding::detect(text));
+        }
+
+        push_normalized(&mut rope, text, &mut scratch);
+        pending.drain(..emit_len);
+
+        if eof {
+            break;
+        }
+
+        yield_now().await;
     }
-    (None, analyze_byte_content(prefix))
+
+    // At EOF everything should have been consumed. Anything left over is a
+    // truncated multi-byte sequence, which means this is not valid UTF-8.
+    if !pending.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some((rope, line_ending.unwrap_or_default())))
+}
+
+/// Appends `text` to `rope`, rewriting CRLF and lone CR as LF, matching
+/// [`LineEnding::normalize`]. `scratch` is reused across calls.
+fn push_normalized(rope: &mut Rope, text: &str, scratch: &mut String) {
+    if !text.contains('\r') {
+        rope.push(text);
+        return;
+    }
+
+    scratch.clear();
+    scratch.reserve(text.len());
+    let bytes = text.as_bytes();
+    let mut start = 0;
+    let mut ix = 0;
+    while ix < bytes.len() {
+        if bytes[ix] == b'\r' {
+            scratch.push_str(&text[start..ix]);
+            scratch.push('\n');
+            ix += if bytes.get(ix + 1) == Some(&b'\n') {
+                2
+            } else {
+                1
+            };
+            start = ix;
+        } else {
+            ix += 1;
+        }
+    }
+    scratch.push_str(&text[start..]);
+    rope.push(scratch);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// reproduction of issue #50785
-    fn build_pcm16_wav_bytes() -> Vec<u8> {
-        let header: Vec<u8> = vec![
-            /*  RIFF header  */
-            0x52, 0x49, 0x46, 0x46, // "RIFF"
-            0xc6, 0xcf, 0x00, 0x00, // file size: 8
-            0x57, 0x41, 0x56, 0x45, // "WAVE"
-            /*  fmt chunk  */
-            0x66, 0x6d, 0x74, 0x20, // "fmt "
-            0x10, 0x00, 0x00, 0x00, // chunk size: 16
-            0x01, 0x00, // format: PCM (1)
-            0x01, 0x00, // channels: 1 (mono)
-            0x80, 0x3e, 0x00, 0x00, // sample rate: 16000
-            0x00, 0x7d, 0x00, 0x00, // byte rate: 32000
-            0x02, 0x00, // block align: 2
-            0x10, 0x00, // bits per sample: 16
-            /*  LIST chunk  */
-            0x4c, 0x49, 0x53, 0x54, // "LIST"
-            0x1a, 0x00, 0x00, 0x00, // chunk size: 26
-            0x49, 0x4e, 0x46, 0x4f, // "INFO"
-            0x49, 0x53, 0x46, 0x54, // "ISFT"
-            0x0d, 0x00, 0x00, 0x00, // sub-chunk size: 13
-            0x4c, 0x61, 0x76, 0x66, 0x36, 0x32, 0x2e, 0x33, // "Lavf62.3"
-            0x2e, 0x31, 0x30, 0x30, 0x00, // ".100\0"
-            /* padding byte for word alignment */
-            0x00, // data chunk header
-            0x64, 0x61, 0x74, 0x61, // "data"
-            0x80, 0xcf, 0x00, 0x00, // chunk size
-        ];
-
-        let mut bytes = header;
-
-        // fill remaining space up to `FILE_ANALYSIS_BYTES` with synthetic PCM
-        let audio_bytes_needed = FILE_ANALYSIS_BYTES - bytes.len();
-        for i in 0..(audio_bytes_needed / 2) {
-            let sample = (i & 0xFF) as u8;
-            bytes.push(sample); // low byte: varies
-            bytes.push(0x00); // high byte: zero for small values
-        }
-
-        bytes
+    /// Streams `bytes` the way `decode_file_text_to_rope` would, returning the
+    /// decoded text and detected line ending, or `None` if the fast path bailed.
+    async fn stream(bytes: &[u8]) -> Option<(String, LineEnding)> {
+        let mut reader = std::io::Cursor::new(bytes.to_vec());
+        stream_utf8_into_rope(&mut reader, Vec::new(), false, Path::new("test"), true)
+            .await
+            .unwrap()
+            .map(|(rope, line_ending)| (rope.to_string(), line_ending))
     }
 
     #[test]
-    fn test_pcm16_wav_detected_as_binary() {
-        let wav_bytes = build_pcm16_wav_bytes();
-        assert_eq!(wav_bytes.len(), FILE_ANALYSIS_BYTES);
+    fn test_stream_utf8_yields_between_blocks() {
+        let mut reader = std::io::Cursor::new(vec![b'a'; STREAM_BLOCK_BYTES * 2]);
 
-        let result = analyze_byte_content(&wav_bytes);
+        assert!(
+            stream_utf8_into_rope(&mut reader, Vec::new(), false, Path::new("test"), true)
+                .now_or_never()
+                .is_none()
+        );
+        assert_eq!(reader.position(), STREAM_BLOCK_BYTES as u64);
+    }
+
+    #[gpui::test]
+    async fn test_stream_utf8_normalizes_line_endings() {
+        let crlf = "one\r\ntwo\r\nthree\r\n".repeat(40);
+        let (text, line_ending) = stream(crlf.as_bytes()).await.unwrap();
+        assert_eq!(text, crlf.replace("\r\n", "\n"));
+        assert_eq!(line_ending, LineEnding::Windows);
+
+        let cr = "one\rtwo\rthree\r".repeat(40);
         assert_eq!(
-            result,
-            ByteContent::Binary,
-            "PCM 16-bit WAV should be detected as Binary via RIFF header"
+            stream(cr.as_bytes()).await.unwrap().0,
+            cr.replace('\r', "\n")
         );
     }
 
-    #[test]
-    fn test_le16_binary_not_misdetected_as_utf16le() {
-        let mut bytes = b"FAKE".to_vec();
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            let sample = (bytes.len() & 0xFF) as u8;
-            bytes.push(sample);
-            bytes.push(0x00);
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-
-        let result = analyze_byte_content(&bytes);
-        assert_eq!(
-            result,
-            ByteContent::Binary,
-            "LE 16-bit binary with control characters should be detected as Binary"
-        );
-    }
-
-    #[test]
-    fn test_be16_binary_not_misdetected_as_utf16be() {
-        let mut bytes = b"FAKE".to_vec();
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            bytes.push(0x00);
-            let sample = (bytes.len() & 0xFF) as u8;
-            bytes.push(sample);
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-
-        let result = analyze_byte_content(&bytes);
-        assert_eq!(
-            result,
-            ByteContent::Binary,
-            "BE 16-bit binary with control characters should be detected as Binary"
-        );
-    }
-
-    // Mimics binary formats that interleave short ASCII fragments with small
-    // length/type fields (as seen in some game/asset binary formats, e.g.
-    // Tibia-style OTBM maps): most high bytes are zero, matching UTF-16LE's
-    // null-byte pattern for ASCII, but the low bytes are mostly non-word
-    // "tag" values rather than real letters/digits/spaces.
-    fn build_tag_interleaved_binary_bytes() -> Vec<u8> {
-        let mut bytes = Vec::new();
-        let tags: [u8; 6] = [0xFE, 0xFF, 0x25, 0x2B, 0xA3, 0xC5];
-        let mut i = 0;
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            bytes.push(tags[i % tags.len()]);
-            bytes.push(0x00);
-            i += 1;
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-        bytes
-    }
-
-    #[test]
-    fn test_tag_interleaved_binary_not_misdetected_as_utf16le() {
-        let bytes = build_tag_interleaved_binary_bytes();
-        assert_eq!(bytes.len(), FILE_ANALYSIS_BYTES);
-
-        let result = analyze_byte_content(&bytes);
-        assert_eq!(
-            result,
-            ByteContent::Binary,
-            "binary data with sparse non-word low bytes and null high bytes \
-             should not be misdetected as UTF-16LE text"
-        );
-    }
-
-    #[test]
-    fn test_utf16le_text_detected_as_utf16le() {
-        let text = "Hello, world! This is a UTF-16 test string. ";
-        let mut bytes = Vec::new();
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            bytes.extend(text.encode_utf16().flat_map(|u| u.to_le_bytes()));
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-
-        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Le);
-    }
-
-    #[test]
-    fn test_utf16be_text_detected_as_utf16be() {
-        let text = "Hello, world! This is a UTF-16 test string. ";
-        let mut bytes = Vec::new();
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            bytes.extend(text.encode_utf16().flat_map(|u| u.to_be_bytes()));
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-
-        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Be);
-    }
-
-    #[test]
-    fn test_utf16le_cyrillic_text_detected_as_utf16le() {
-        let text = "Привет, мир! Это тестовая строка в UTF-16. ";
-        let mut bytes = Vec::new();
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            bytes.extend(text.encode_utf16().flat_map(|u| u.to_le_bytes()));
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-
-        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Le);
-    }
-
-    #[test]
-    fn test_utf16be_greek_text_detected_as_utf16be() {
-        let text = "Γεια σου κόσμε! Αυτή είναι μια δοκιμαστική συμβολοσειρά. ";
-        let mut bytes = Vec::new();
-        while bytes.len() < FILE_ANALYSIS_BYTES {
-            bytes.extend(text.encode_utf16().flat_map(|u| u.to_be_bytes()));
-        }
-        bytes.truncate(FILE_ANALYSIS_BYTES);
-
-        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Be);
-    }
-
-    #[test]
-    fn test_known_binary_headers() {
-        let cases: &[(&[u8], &str)] = &[
-            (b"RIFF\x00\x00\x00\x00WAVE", "WAV"),
-            (b"RIFF\x00\x00\x00\x00AVI ", "AVI"),
-            (b"OggS\x00\x02", "OGG"),
-            (b"fLaC\x00\x00", "FLAC"),
-            (b"ID3\x03\x00", "MP3 ID3v2"),
-            (b"\xFF\xFB\x90\x00", "MP3 MPEG1 Layer3"),
-            (b"\xFF\xF3\x90\x00", "MP3 MPEG2 Layer3"),
-        ];
-
-        for (header, label) in cases {
-            let mut bytes = header.to_vec();
-            bytes.resize(FILE_ANALYSIS_BYTES, 0x41); // pad with 'A'
+    #[gpui::test]
+    async fn test_stream_utf8_block_boundaries() {
+        // A carriage return landing on the last byte of a block, with and
+        // without its newline arriving in the next one.
+        for (suffix, expected) in [("\r\ntail\n", "\ntail\n"), ("\rtail", "\ntail")] {
+            let filler = "a".repeat(STREAM_BLOCK_BYTES - 1);
+            let source = format!("{filler}{suffix}");
             assert_eq!(
-                analyze_byte_content(&bytes),
-                ByteContent::Binary,
-                "{label} should be detected as Binary"
+                stream(source.as_bytes()).await.unwrap().0,
+                format!("{filler}{expected}"),
+                "suffix = {suffix:?}"
             );
         }
+
+        // Multi-byte characters straddling the boundary at every split point.
+        for ch in ['\u{20ac}', '\u{1f600}'] {
+            for split in 1..=ch.len_utf8() {
+                let filler = "a".repeat(STREAM_BLOCK_BYTES - split);
+                let source = format!("{filler}{ch}tail");
+                assert_eq!(
+                    stream(source.as_bytes()).await.unwrap().0,
+                    source,
+                    "ch = {ch:?}, split = {split}"
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_stream_utf8_falls_back_on_non_utf8() {
+        // Each of these must bail so the caller re-reads and decodes the slow
+        // way, rather than silently mangling the file.
+        assert_eq!(stream(b"hello \xff\xfeA").await, None, "invalid utf-8");
+        assert_eq!(stream(b"hello \xe2\x82").await, None, "truncated at eof");
+        assert_eq!(stream(b"plain \x1b$B text").await, None, "iso-2022 escape");
     }
 }

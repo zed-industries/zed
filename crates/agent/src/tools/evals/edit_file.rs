@@ -2,6 +2,7 @@ use crate::tools::edit_file_tool::*;
 use crate::{
     AgentTool, ContextServerRegistry, EditFileTool, GrepTool, GrepToolInput, ReadFileTool,
     ReadFileToolInput, Template, Templates, Thread, ToolCallEventStream, ToolInput,
+    default_context_lines, default_max_ancestor_lines,
 };
 use Role::*;
 use anyhow::{Context as _, Result};
@@ -9,17 +10,14 @@ use client::{Client, RefreshLlmTokenListener, UserStore};
 use fs::FakeFs;
 use futures::{FutureExt, StreamExt, future::LocalBoxFuture};
 use gpui::{AppContext as _, AsyncApp, Entity, TestAppContext, UpdateGlobal as _};
-use http_client::StatusCode;
 use language::language_settings::FormatOnSave;
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, Role, SelectedModel,
+    LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolResultContent,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, SelectedModel,
 };
 use project::Project;
 use prompt_store::{ProjectContext, WorktreeContext};
-use rand::prelude::*;
 use reqwest_client::ReqwestClient;
 use serde::Serialize;
 use serde_json::json;
@@ -29,7 +27,6 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
-    time::Duration,
 };
 use util::path;
 
@@ -79,7 +76,7 @@ trait AssertionFn: 'static + Send + Sync {
     fn assert<'a>(
         &'a self,
         sample: &'a EvalSample,
-        judge_model: Arc<dyn LanguageModel>,
+        judge_model: LanguageModel,
         cx: &'a mut TestAppContext,
     ) -> LocalBoxFuture<'a, Result<EvalAssertionOutcome>>;
 }
@@ -89,16 +86,12 @@ where
     F: 'static
         + Send
         + Sync
-        + AsyncFn(
-            &EvalSample,
-            Arc<dyn LanguageModel>,
-            &mut TestAppContext,
-        ) -> Result<EvalAssertionOutcome>,
+        + AsyncFn(&EvalSample, LanguageModel, &mut TestAppContext) -> Result<EvalAssertionOutcome>,
 {
     fn assert<'a>(
         &'a self,
         sample: &'a EvalSample,
-        judge_model: Arc<dyn LanguageModel>,
+        judge_model: LanguageModel,
         cx: &'a mut TestAppContext,
     ) -> LocalBoxFuture<'a, Result<EvalAssertionOutcome>> {
         (self)(sample, judge_model, cx).boxed_local()
@@ -114,11 +107,7 @@ impl EvalAssertion {
         F: 'static
             + Send
             + Sync
-            + AsyncFn(
-                &EvalSample,
-                Arc<dyn LanguageModel>,
-                &mut TestAppContext,
-            ) -> Result<EvalAssertionOutcome>,
+            + AsyncFn(&EvalSample, LanguageModel, &mut TestAppContext) -> Result<EvalAssertionOutcome>,
     {
         EvalAssertion(Arc::new(f))
     }
@@ -163,9 +152,11 @@ impl EvalAssertion {
                     .map(|effort_level| effort_level.value.to_string()),
                 ..Default::default()
             };
+            let provider =
+                cx.update(|cx| LanguageModelRegistry::read_global(cx).provider_for_model(&judge))?;
             let mut response = retry_on_rate_limit(async || {
-                Ok(judge
-                    .stream_completion_text(request.clone(), &cx.to_async())
+                Ok(provider
+                    .stream_completion_text(&judge, request.clone(), &cx.to_async())
                     .await?)
             })
             .await?;
@@ -194,7 +185,7 @@ impl EvalAssertion {
     async fn run(
         &self,
         input: &EvalSample,
-        judge_model: Arc<dyn LanguageModel>,
+        judge_model: LanguageModel,
         cx: &mut TestAppContext,
     ) -> Result<EvalAssertionOutcome> {
         self.0.assert(input, judge_model, cx).await
@@ -228,8 +219,8 @@ struct EvalAssertionOutcome {
 struct EditToolTest {
     fs: Arc<FakeFs>,
     project: Entity<Project>,
-    model: Arc<dyn LanguageModel>,
-    judge_model: Arc<dyn LanguageModel>,
+    model: LanguageModel,
+    judge_model: LanguageModel,
     model_thinking_effort: Option<String>,
 }
 
@@ -239,6 +230,7 @@ impl EditToolTest {
 
         let fs = FakeFs::new(cx.executor());
         cx.update(|cx| {
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
@@ -312,7 +304,7 @@ impl EditToolTest {
     async fn load_model(
         selected_model: &SelectedModel,
         cx: &mut AsyncApp,
-    ) -> Result<Arc<dyn LanguageModel>> {
+    ) -> Result<LanguageModel> {
         cx.update(|cx| {
             let registry = LanguageModelRegistry::read_global(cx);
             let provider = registry
@@ -322,13 +314,14 @@ impl EditToolTest {
         })
         .await?;
         Ok(cx.update(|cx| {
-            let models = LanguageModelRegistry::read_global(cx);
-            models
-                .available_models(cx)
-                .find(|model| {
-                    model.provider_id() == selected_model.provider
-                        && model.id() == selected_model.model
-                })
+            let registry = LanguageModelRegistry::read_global(cx);
+            let provider = registry
+                .provider(&selected_model.provider)
+                .expect("Provider not found");
+            provider
+                .provided_models(cx)
+                .into_iter()
+                .find(|model| model.id() == selected_model.model)
                 .unwrap_or_else(|| panic!("Model {} not found", selected_model.model.0))
         }))
     }
@@ -485,9 +478,13 @@ impl EditToolTest {
         let model = self.model.clone();
         let events = cx
             .update(|cx| {
+                let provider = LanguageModelRegistry::read_global(cx).provider_for_model(&model);
                 let async_cx = cx.to_async();
-                cx.foreground_executor()
-                    .spawn(async move { model.stream_completion(request, &async_cx).await })
+                cx.foreground_executor().spawn(async move {
+                    provider?
+                        .stream_completion(&model, request, &async_cx)
+                        .await
+                })
             })
             .await
             .map_err(|err| anyhow::anyhow!("completion error: {}", err))?;
@@ -639,57 +636,27 @@ fn strip_empty_lines(text: &str) -> String {
 }
 
 async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> Result<R> {
-    const MAX_RETRIES: usize = 20;
-    let mut attempt = 0;
+    const MAX_ATTEMPTS: usize = 20;
+    let mut completed_attempts = 0;
 
     loop {
-        attempt += 1;
         let response = request().await;
+        completed_attempts += 1;
 
-        if attempt >= MAX_RETRIES {
+        if completed_attempts >= MAX_ATTEMPTS {
             return response;
         }
 
-        let retry_delay = match &response {
-            Ok(_) => None,
-            Err(err) => match err.downcast_ref::<LanguageModelCompletionError>() {
-                Some(err) => match &err {
-                    LanguageModelCompletionError::RateLimitExceeded { retry_after, .. }
-                    | LanguageModelCompletionError::ServerOverloaded { retry_after, .. } => {
-                        Some(retry_after.unwrap_or(Duration::from_secs(5)))
-                    }
-                    LanguageModelCompletionError::UpstreamProviderError {
-                        status,
-                        retry_after,
-                        ..
-                    } => {
-                        let should_retry = matches!(
-                            *status,
-                            StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE
-                        ) || status.as_u16() == 529;
+        let retry_attempt = completed_attempts;
+        let retry_delay = response
+            .as_ref()
+            .err()
+            .and_then(|error| super::completion_retry_delay(error, retry_attempt));
 
-                        if should_retry {
-                            Some(retry_after.unwrap_or(Duration::from_secs(5)))
-                        } else {
-                            None
-                        }
-                    }
-                    LanguageModelCompletionError::ApiReadResponseError { .. }
-                    | LanguageModelCompletionError::ApiInternalServerError { .. }
-                    | LanguageModelCompletionError::HttpSend { .. } => {
-                        Some(Duration::from_secs(2_u64.pow((attempt - 1) as u32).min(30)))
-                    }
-                    _ => None,
-                },
-                _ => None,
-            },
-        };
-
-        if let Some(retry_after) = retry_delay {
-            let jitter = retry_after.mul_f64(rand::rng().random_range(0.0..1.0));
-            eprintln!("Attempt #{attempt}: Retry after {retry_after:?} + jitter of {jitter:?}");
+        if let Some(retry_delay) = retry_delay {
+            eprintln!("Retry attempt #{retry_attempt}: Retry after {retry_delay:?}");
             #[allow(clippy::disallowed_methods)]
-            async_io::Timer::after(retry_after + jitter).await;
+            async_io::Timer::after(retry_delay).await;
         } else {
             return response;
         }
@@ -988,6 +955,8 @@ fn eval_disable_cursor_blinking() {
                             include_pattern: None,
                             offset: 0,
                             case_sensitive: false,
+                            max_ancestor_lines: default_max_ancestor_lines(),
+                            context_lines: default_context_lines(),
                         },
                     )],
                 ),
@@ -1071,6 +1040,8 @@ fn eval_from_pixels_constructor() {
                             include_pattern: Some("font-kit/src/canvas.rs".into()),
                             offset: 0,
                             case_sensitive: false,
+                            max_ancestor_lines: default_max_ancestor_lines(),
+                            context_lines: default_context_lines(),
                         },
                     )],
                 ),
@@ -1088,6 +1059,8 @@ fn eval_from_pixels_constructor() {
                             include_pattern: Some("font-kit/src/**/*.rs".into()),
                             offset: 0,
                             case_sensitive: false,
+                            max_ancestor_lines: default_max_ancestor_lines(),
+                            context_lines: default_context_lines(),
                         },
                     )],
                 ),
@@ -1105,6 +1078,8 @@ fn eval_from_pixels_constructor() {
                             include_pattern: Some("font-kit/src/**/*.rs".into()),
                             offset: 0,
                             case_sensitive: false,
+                            max_ancestor_lines: default_max_ancestor_lines(),
+                            context_lines: default_context_lines(),
                         },
                     )],
                 ),

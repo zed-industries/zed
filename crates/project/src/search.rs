@@ -9,7 +9,7 @@ use smol::future::yield_now;
 use std::{
     borrow::Cow,
     collections::BTreeSet,
-    io::{BufRead, BufReader, Read},
+    io::{self, Read},
     ops::Range,
     sync::{Arc, LazyLock},
 };
@@ -46,7 +46,7 @@ pub struct SearchInputs {
     buffers: Option<Vec<Entity<Buffer>>>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MatchPositionHint {
     Line(u32),
     ByteOffset(usize),
@@ -397,49 +397,28 @@ impl SearchQuery {
 
     pub async fn detect(
         &self,
-        mut reader: BufReader<Box<dyn Read + Send + Sync>>,
+        reader: &mut (dyn Read + Send),
     ) -> Result<Option<MatchPositionHint>> {
         let query_str = self.as_str();
         if query_str.is_empty() {
             return Ok(None);
         }
 
-        // Yield from this function every 20KB scanned.
-        const YIELD_THRESHOLD: usize = 20 * 1024;
-
         match self {
+            Self::Text { search, .. } if !query_str.contains('\n') => {
+                detect_single_line(search, reader).await
+            }
             Self::Text { search, .. } => {
-                let mut text = String::new();
-                if query_str.contains('\n') {
-                    reader.read_to_string(&mut text)?;
-                    text::LineEnding::normalize(&mut text);
-                    if search.is_match(&text) {
-                        Ok(Some(MatchPositionHint::default()))
-                    } else {
-                        Ok(None)
-                    }
+                let mut text = read_to_string(reader).await?;
+                text::LineEnding::normalize(&mut text);
+                if search.is_match(&text) {
+                    Ok(Some(MatchPositionHint::default()))
                 } else {
-                    let mut bytes_read = 0;
-                    let mut line_number = u32::default();
-                    while reader.read_line(&mut text)? > 0 {
-                        if search.is_match(&text) {
-                            return Ok(Some(MatchPositionHint::Line(line_number)));
-                        }
-                        bytes_read += text.len();
-                        if bytes_read >= YIELD_THRESHOLD {
-                            bytes_read = 0;
-                            smol::future::yield_now().await;
-                        }
-                        text.clear();
-                        line_number += 1;
-                    }
                     Ok(None)
                 }
             }
             Self::Regex { regex, .. } => {
-                let mut text = String::new();
-
-                reader.read_to_string(&mut text)?;
+                let mut text = read_to_string(reader).await?;
                 text::LineEnding::normalize(&mut text);
                 if let Some(m) = regex.find(&text)? {
                     Ok(Some(MatchPositionHint::ByteOffset(m.start())))
@@ -457,8 +436,8 @@ impl SearchQuery {
             }
         }
     }
-    /// Replaces search hits if replacement is set. `text` is assumed to be a string that matches this `SearchQuery` exactly, without any leftovers on either side.
-    pub fn replacement_for<'a>(&self, text: &'a str) -> Option<Cow<'a, str>> {
+    /// Expands `hit` against its line so lookaround assertions retain context.
+    pub fn replacement_for<'a>(&self, line: &'a str, hit: Range<usize>) -> Option<Cow<'a, str>> {
         match self {
             SearchQuery::Text { replacement, .. }
             | SearchQuery::Regex {
@@ -477,14 +456,27 @@ impl SearchQuery {
                     LazyLock::new(|| Regex::new(r"\\\\|\\n|\\t").unwrap());
                 let replacement = TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX.replace_all(
                     replacement,
-                    |c: &Captures| match c.get(0).unwrap().as_str() {
+                    |c: &Captures<str>| match c.get(0).unwrap().as_str() {
                         r"\\" => "\\",
                         r"\n" => "\n",
                         r"\t" => "\t",
                         x => unreachable!("Unexpected escape sequence: {}", x),
                     },
                 );
-                Some(regex.replace(text, replacement))
+                let captures = regex
+                    .captures_from_pos(line, hit.start)
+                    .ok()
+                    .flatten()
+                    .filter(|captures| captures.get(0).is_some_and(|m| m.range() == hit));
+                let Some(captures) = captures else {
+                    // The pattern is not guaranteed to match the whole line, for instance when
+                    // searching within a selection that starts or ends mid-line, so fall back to
+                    // matching the hit on its own.
+                    return Some(regex.replace(line.get(hit)?, replacement));
+                };
+                let mut replaced = String::new();
+                captures.expand(&replacement, &mut replaced);
+                Some(Cow::Owned(replaced))
             }
 
             SearchQuery::Regex {
@@ -615,6 +607,10 @@ impl SearchQuery {
         matches!(self, Self::Regex { .. })
     }
 
+    pub fn replacement_requires_context(&self) -> bool {
+        matches!(self, Self::Regex { escaped: false, .. })
+    }
+
     pub fn files_to_include(&self) -> &PathMatcher {
         self.as_inner().files_to_include()
     }
@@ -695,4 +691,146 @@ impl SearchQuery {
         }
         matches
     }
+}
+
+async fn detect_single_line(
+    search: &AhoCorasick,
+    reader: &mut (dyn Read + Send),
+) -> Result<Option<MatchPositionHint>> {
+    const BLOCK_BYTES: usize = 64 * 1024;
+    let batch_size = search.max_pattern_len().max(BLOCK_BYTES);
+    let carry_len = search.max_pattern_len().saturating_sub(1).max(3);
+    let mut block = vec![0; BLOCK_BYTES];
+    let mut window = TextSearchWindow::default();
+    loop {
+        let batch_end = window.batch_start
+            + if window.first_match.is_some() {
+                BLOCK_BYTES
+            } else {
+                batch_size
+            };
+        let limit = (batch_end - window.bytes.len()).min(BLOCK_BYTES);
+        let read_result = match reader.read(&mut block[..limit]) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            result => result,
+        };
+        if let std::result::Result::Ok(read) = read_result {
+            window.extend(&block[..read], batch_size + carry_len)?;
+            if read > 0 && window.bytes.len() < batch_end {
+                yield_now().await;
+                continue;
+            }
+        }
+        let line_end = window.find_matching_line_end(search);
+        window.validate_prefix(line_end, read_result.is_err())?;
+        if line_end.is_some() {
+            return Ok(window.first_match);
+        }
+        if read_result? == 0 {
+            if window.validated_len < window.bytes.len() {
+                return Err(invalid_data());
+            }
+            return Ok(window.first_match);
+        }
+        window.retain_suffix(if window.first_match.is_some() {
+            3
+        } else {
+            carry_len
+        });
+        yield_now().await;
+    }
+}
+
+#[derive(Default)]
+struct TextSearchWindow {
+    bytes: Vec<u8>,
+    batch_start: usize,
+    validated_len: usize,
+    lines_before_window: usize,
+    first_match: Option<MatchPositionHint>,
+}
+
+impl TextSearchWindow {
+    fn extend(&mut self, bytes: &[u8], max_capacity: usize) -> Result<()> {
+        if self.bytes.len() + bytes.len() > self.bytes.capacity() {
+            let capacity = self
+                .bytes
+                .capacity()
+                .saturating_mul(2)
+                .max(self.bytes.len() + bytes.len())
+                .min(max_capacity);
+            self.bytes.try_reserve_exact(capacity - self.bytes.len())?;
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn find_matching_line_end(&mut self, search: &AhoCorasick) -> Option<usize> {
+        let start = if self.first_match.is_some() {
+            self.batch_start
+        } else {
+            let found = search.find(&self.bytes)?;
+            let line = self.lines_before_window + count_newlines(&self.bytes[..found.start()]);
+            self.first_match = Some(MatchPositionHint::Line(
+                u32::try_from(line).unwrap_or(u32::MAX),
+            ));
+            found.end()
+        };
+        self.bytes[start..]
+            .iter()
+            .position(|&byte| byte == b'\n')
+            .map(|offset| start + offset + 1)
+    }
+
+    fn validate_prefix(&mut self, line_end: Option<usize>, read_failed: bool) -> Result<()> {
+        let validation_end = line_end.unwrap_or_else(|| {
+            if read_failed {
+                self.bytes
+                    .iter()
+                    .rposition(|&byte| byte == b'\n')
+                    .map_or(self.validated_len, |offset| {
+                        (offset + 1).max(self.validated_len)
+                    })
+            } else {
+                self.bytes.len()
+            }
+        });
+        self.validated_len +=
+            match std::str::from_utf8(&self.bytes[self.validated_len..validation_end]) {
+                Err(error) if error.error_len().is_some() => return Err(invalid_data()),
+                Err(error) => error.valid_up_to(),
+                _ => validation_end - self.validated_len,
+            };
+        Ok(())
+    }
+
+    fn retain_suffix(&mut self, length: usize) {
+        let consumed = self.bytes.len().saturating_sub(length);
+        self.lines_before_window += count_newlines(&self.bytes[..consumed]);
+        self.bytes.drain(..consumed);
+        self.batch_start = self.bytes.len();
+        self.validated_len -= consumed;
+    }
+}
+
+async fn read_to_string(reader: &mut (dyn Read + Send)) -> Result<String> {
+    const BLOCK_BYTES: usize = 64 * 1024;
+    let mut bytes = Vec::new();
+    loop {
+        let bytes_read = (&mut *reader)
+            .take(BLOCK_BYTES as u64)
+            .read_to_end(&mut bytes)?;
+        if bytes_read < BLOCK_BYTES {
+            return String::from_utf8(bytes).map_err(|_| invalid_data());
+        }
+        yield_now().await;
+    }
+}
+
+fn count_newlines(bytes: &[u8]) -> usize {
+    bytes.iter().filter(|&&byte| byte == b'\n').count()
+}
+
+fn invalid_data() -> anyhow::Error {
+    anyhow::Error::from(io::Error::from(io::ErrorKind::InvalidData))
 }

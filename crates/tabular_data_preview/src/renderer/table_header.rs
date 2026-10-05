@@ -1,4 +1,6 @@
 use std::{
+    borrow::Cow,
+    cmp,
     collections::HashMap,
     sync::{
         Arc,
@@ -13,11 +15,11 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use ui::{
     Color, GradientFade, HighlightedLabel, Icon, IconButton, IconName, IconSize, Label, LabelSize,
-    ListItem, ListItemSpacing, PopoverMenu, Tooltip, prelude::*,
+    ListItem, ListItemSpacing, PopoverMenu, Tooltip, prelude::*, utils::replace_control_characters,
 };
 
 use crate::{
-    TabularDataPreviewPane,
+    TableView,
     renderer::table_cell::with_copy_on_right_click,
     settings::FilterSortOrder,
     table_data_engine::{
@@ -26,6 +28,25 @@ use crate::{
     },
     types::AnyColumn,
 };
+
+#[derive(PartialEq, Eq)]
+struct NaturallyOrdered<'a>(&'a str);
+
+impl Ord for NaturallyOrdered<'_> {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        util::paths::natural_sort(self.0, other.0)
+    }
+}
+
+impl PartialOrd for NaturallyOrdered<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+fn natural_content(entry: &FilterEntry) -> Option<NaturallyOrdered<'_>> {
+    entry.content.as_deref().map(NaturallyOrdered)
+}
 
 struct ColumnFilterRow {
     entry: FilterEntry,
@@ -45,7 +66,7 @@ enum ColumnFilterListEntry {
 
 struct ColumnFilterDelegate {
     col: AnyColumn,
-    view: Entity<TabularDataPreviewPane>,
+    view: Entity<TableView>,
     /// Row order frozen at open time (available entries sorted per the
     /// column's `FilterSortOrder`, then entries hidden by other columns'
     /// filters). Kept stable so toggling a value doesn't reshuffle the list
@@ -66,7 +87,7 @@ struct ColumnFilterDelegate {
 impl ColumnFilterDelegate {
     fn new(
         col: AnyColumn,
-        view: Entity<TabularDataPreviewPane>,
+        view: Entity<TableView>,
         sort_order: FilterSortOrder,
         column_filters: Arc<Vec<(FilterEntry, FilterEntryState)>>,
         cx: &mut Context<Picker<Self>>,
@@ -89,14 +110,14 @@ impl ColumnFilterDelegate {
             FilterSortOrder::AlphaThenCount => available.sort_by(|(a, a_app), (b, b_app)| {
                 b_app
                     .cmp(a_app)
-                    .then_with(|| a.content.cmp(&b.content))
+                    .then_with(|| natural_content(a).cmp(&natural_content(b)))
                     .then_with(|| b.occurred_times().cmp(&a.occurred_times()))
             }),
             FilterSortOrder::CountThenAlpha => available.sort_by(|(a, a_app), (b, b_app)| {
                 b_app
                     .cmp(a_app)
                     .then_with(|| b.occurred_times().cmp(&a.occurred_times()))
-                    .then_with(|| a.content.cmp(&b.content))
+                    .then_with(|| natural_content(a).cmp(&natural_content(b)))
             }),
         }
 
@@ -518,12 +539,12 @@ impl PickerDelegate for ColumnFilterDelegate {
     }
 }
 
-impl TabularDataPreviewPane {
+impl TableView {
     /// Create header for data, which is orderable with text on the left and sort button on the right
     pub(crate) fn create_header_element_with_sort_button(
         &self,
         header_text: SharedString,
-        cx: &mut Context<'_, TabularDataPreviewPane>,
+        cx: &mut Context<'_, TableView>,
         col_idx: AnyColumn,
     ) -> AnyElement {
         let has_active_filter = self.engine.has_active_filters(col_idx);
@@ -560,12 +581,19 @@ impl TabularDataPreviewPane {
                     .min_w_0()
                     .overflow_hidden()
                     .whitespace_nowrap();
+                // Column names come from the file being previewed, so they may
+                // hold control characters. Show stand-ins for those, but keep
+                // the real name for copying.
+                let displayed_header = match replace_control_characters(&header_text) {
+                    Cow::Borrowed(_) => header_text.clone(),
+                    Cow::Owned(replaced) => SharedString::from(replaced),
+                };
                 with_copy_on_right_click(
                     header_text_cell,
-                    header_text.clone(),
+                    header_text,
                     "Right click to copy column name",
                 )
-                .child(header_text)
+                .child(displayed_header)
             })
             .child(
                 GradientFade::new(base_bg, base_bg, base_bg)
@@ -592,11 +620,7 @@ impl TabularDataPreviewPane {
             .into_any_element()
     }
 
-    fn create_sort_button(
-        &self,
-        cx: &mut Context<'_, TabularDataPreviewPane>,
-        col_idx: AnyColumn,
-    ) -> Button {
+    fn create_sort_button(&self, cx: &mut Context<'_, TableView>, col_idx: AnyColumn) -> Button {
         Button::new(
             ElementId::NamedInteger("sort-button".into(), col_idx.get() as u64),
             match self.engine.applied_sorting {
@@ -641,14 +665,14 @@ impl TabularDataPreviewPane {
                 }),
             };
             this.engine.applied_sorting = new_sorting;
-            this.apply_sort(cx);
+            this.apply_filter_sort(cx);
             cx.notify();
         }))
     }
 
     fn create_filter_button(
         &self,
-        cx: &mut Context<'_, TabularDataPreviewPane>,
+        cx: &mut Context<'_, TableView>,
         col: AnyColumn,
     ) -> PopoverMenu<Picker<ColumnFilterDelegate>> {
         let has_active_filters = self.engine.has_active_filters(col);
@@ -661,7 +685,7 @@ impl TabularDataPreviewPane {
         .trigger_with_tooltip(
             IconButton::new(
                 ElementId::NamedInteger("filter-button".into(), col.get() as u64),
-                IconName::Filter,
+                IconName::FilterFunnel,
             )
             .icon_size(IconSize::Small)
             .style(if has_active_filters {
