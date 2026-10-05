@@ -338,16 +338,16 @@ pub trait AgentSessionModes {
 
 pub trait AgentSessionConfigOptions {
     /// Get all current config options with their state
-    fn config_options(&self) -> Vec<acp_v1::SessionConfigOption>;
+    fn config_options(&self) -> Vec<acp_v2::SessionConfigOption>;
 
     /// Set a config option value
     /// Returns the full updated list of config options
     fn set_config_option(
         &self,
-        config_id: acp_v1::SessionConfigId,
-        value: acp_v1::SessionConfigOptionValue,
+        config_id: acp_v2::SessionConfigId,
+        value: acp_v2::SessionConfigOptionValue,
         cx: &mut App,
-    ) -> Task<Result<Vec<acp_v1::SessionConfigOption>>>;
+    ) -> Task<Result<Vec<acp_v2::SessionConfigOption>>>;
 
     /// Whenever the config options are updated the receiver will be notified.
     /// Optional for agents that don't update their config options dynamically.

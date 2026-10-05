@@ -139,7 +139,13 @@ libc.workspace = true
 
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { workspace = true, features = ["Win32_Foundation", "Win32_System_Power", "Win32_System_WindowsProgramming"] }
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Power",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_Threading",
+    "Win32_System_WindowsProgramming",
+] }
 
 
 [dev-dependencies]
@@ -271,3 +277,7 @@ path = "examples/a11y.rs"
 [[example]]
 name = "view_example"
 path = "examples/view_example/view_example_main.rs"
+
+[[example]]
+name = "toggle_headless"
+path = "examples/toggle_headless.rs"
