@@ -979,6 +979,7 @@ pub struct SettingsWindow {
     files_focus_handle: FocusHandle,
     search_index: Option<Arc<SearchIndex>>,
     list_state: ListState,
+    bottom_spacer_height: Pixels,
     shown_errors: HashSet<String>,
     pub(crate) hidden_deleted_skill_directory_paths: HashSet<PathBuf>,
     pub(crate) regex_validation_error: Option<String>,
@@ -2021,6 +2022,7 @@ impl SettingsWindow {
             regex_validation_error: None,
             sandbox_host_validation_error: None,
             list_state,
+            bottom_spacer_height: px(0.),
             last_copied_link_path: None,
             provider_configuration_views: HashMap::default(),
             configuring_provider: None,
@@ -3627,7 +3629,7 @@ impl SettingsWindow {
 
                     let mut visible_items = this.visible_page_items();
                     let Some((actual_item_index, item)) = visible_items.nth(index - 1) else {
-                        return div().h(window.viewport_size().height).into_any_element();
+                        return div().h(this.bottom_spacer_height).into_any_element();
                     };
 
                     let next_is_header = visible_items
@@ -3662,7 +3664,38 @@ impl SettingsWindow {
                 }),
             );
 
-            page_content = page_content.child(list_content.size_full())
+            let settings_window = cx.entity().downgrade();
+            let list_state = self.list_state.clone();
+            page_content = page_content.child(list_content.size_full()).child(
+                gpui::canvas(
+                    move |bounds, _, cx| {
+                        let count = list_state.item_count();
+                        if count < 2 {
+                            return;
+                        }
+                        let Some(last_item) = list_state.bounds_for_item(count - 2) else {
+                            return;
+                        };
+                        let spacer_height =
+                            (bounds.size.height - last_item.size.height).max(px(0.));
+                        let settings_window = settings_window.clone();
+                        cx.defer(move |cx| {
+                            settings_window
+                                .update(cx, |this, cx| {
+                                    if this.bottom_spacer_height != spacer_height {
+                                        this.bottom_spacer_height = spacer_height;
+                                        this.list_state.remeasure_items(count - 1..count);
+                                        cx.notify();
+                                    }
+                                })
+                                .log_err();
+                        });
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
         }
         page_content
     }
@@ -5421,6 +5454,7 @@ pub mod test {
                 files_focus_handle: cx.focus_handle(),
                 search_index: None,
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
+                bottom_spacer_height: px(0.),
                 shown_errors: HashSet::default(),
                 hidden_deleted_skill_directory_paths: HashSet::default(),
                 regex_validation_error: None,
@@ -5560,6 +5594,7 @@ pub mod test {
             files_focus_handle: cx.focus_handle(),
             search_index: None,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
+            bottom_spacer_height: px(0.),
             shown_errors: HashSet::default(),
             hidden_deleted_skill_directory_paths: HashSet::default(),
             regex_validation_error: None,
@@ -5762,19 +5797,41 @@ pub mod test {
             }
         }
         let view = cx.update(|_, cx| cx.new(|_| TestPage(settings_window)));
-        cx.draw(
-            point(px(0.), px(0.)),
-            gpui::size(px(400.), px(400.)),
-            |_, _| view.into_any_element(),
-        );
-        assert!(list_state.viewport_bounds().size.height > px(0.));
-        assert!(
-            list_state
-                .bounds_for_item(1)
-                .is_some_and(|bounds| bounds.size.height > px(0.))
-        );
+        for height in [px(400.), px(250.), px(600.)] {
+            for _ in 0..3 {
+                cx.draw(
+                    point(px(0.), px(0.)),
+                    gpui::size(px(400.), height),
+                    |_, _| view.clone().into_any_element(),
+                );
+                cx.run_until_parked();
+            }
+            let viewport = list_state.viewport_bounds();
+            assert_eq!(viewport.size.height, height - px(40.));
+            let count = list_state.item_count();
+            let last_item = list_state.bounds_for_item(count - 2).unwrap();
+            let spacer = list_state.bounds_for_item(count - 1).unwrap();
+            assert_eq!(
+                spacer.size.height,
+                (viewport.size.height - last_item.size.height).max(px(0.))
+            );
+            list_state.scroll_to(gpui::ListOffset {
+                item_ix: count - 1,
+                offset_in_item: px(0.),
+            });
+            cx.draw(
+                point(px(0.), px(0.)),
+                gpui::size(px(400.), height),
+                |_, _| view.clone().into_any_element(),
+            );
+            assert!(
+                list_state
+                    .bounds_for_item(count - 2)
+                    .is_some_and(|bounds| bounds.bottom() > viewport.top())
+            );
+            list_state.scroll_to(gpui::ListOffset::default());
+        }
     }
-
     #[gpui::test]
     fn navbar_selection_near_headers_and_at_page_end(cx: &mut gpui::TestAppContext) {
         let cx = cx.add_empty_window();
