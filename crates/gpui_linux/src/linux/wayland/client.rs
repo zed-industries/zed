@@ -1,15 +1,19 @@
 use std::{
     cell::{RefCell, RefMut},
     hash::Hash,
-    os::fd::{AsRawFd, BorrowedFd},
+    os::{
+        fd::{AsRawFd, BorrowedFd, FromRawFd as _, RawFd},
+        unix::net::UnixStream,
+    },
     path::PathBuf,
     rc::{Rc, Weak},
     time::{Duration, Instant},
 };
 
+use anyhow::Context as _;
 use ashpd::WindowIdentifier;
 use calloop::{
-    EventLoop, LoopHandle,
+    LoopHandle, RegistrationToken,
     ping::Ping,
     timer::{TimeoutAction, Timer},
 };
@@ -81,11 +85,10 @@ use super::{
 };
 
 use crate::linux::{
-    DOUBLE_CLICK_INTERVAL, LinuxClient, LinuxCommon, LinuxKeyboardLayout, PIPE_READ_TIMEOUT,
-    SCROLL_LINES, capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state,
-    is_within_click_distance, keystroke_from_xkb, keystroke_underlying_dead_key,
-    modifiers_from_xkb, new_xkb_context, open_uri_internal, read_fd_with_timeout,
-    reveal_path_internal,
+    DOUBLE_CLICK_INTERVAL, LinuxCommon, LinuxKeyboardLayout, PIPE_READ_TIMEOUT, SCROLL_LINES,
+    capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state, is_within_click_distance,
+    keystroke_from_xkb, keystroke_underlying_dead_key, modifiers_from_xkb, new_xkb_context,
+    open_uri_internal, read_fd_with_timeout, reveal_path_internal,
     wayland::{
         clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
         cursor::Cursor,
@@ -97,12 +100,12 @@ use crate::linux::{
 };
 use gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayEvent, DisplayId,
-    ExternalDragPayload, FileDragPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent,
-    KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
-    PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta,
-    ScrollWheelEvent, SharedString, Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams,
-    point, profiler, px, size,
+    ExternalDragPayload, FileDragPaths, FileDropEvent, ForegroundExecutor, GraphicalEnvironment,
+    KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels,
+    PlatformDisplay, PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout, PlatformWindow,
+    Point, ScrollDelta, ScrollWheelEvent, SharedString, Size, TouchPhase, WindowButtonLayout,
+    WindowKind, WindowParams, point, px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -193,16 +196,44 @@ fn set_ime_cursor_rectangle_after_done(
 /// failed-present frames, so matching the output's actual refresh rate wouldn't be observable.
 const FRAME_RETRY_INTERVAL: Duration = Duration::from_micros(16_667);
 
-fn take_startup_activation_token_from_environment() -> Option<String> {
-    let startup_activation_token = std::env::var(XDG_ACTIVATION_TOKEN_ENV_VAR)
+pub(crate) fn take_startup_activation_token_from_environment() -> Option<String> {
+    let token = std::env::var(XDG_ACTIVATION_TOKEN_ENV_VAR)
         .ok()
         .filter(|token| !token.is_empty());
-    // The token must be removed from the environment so it isn't inherited by child
-    // processes we spawn, per the xdg-activation spec: https://wayland.app/protocols/xdg-activation-v1
-    // SAFETY: This runs during Wayland platform initialization before GPUI starts
-    // concurrent environment access or spawning child processes.
+    // Per the xdg-activation spec, so that programs we launch don't inherit the token.
+    // SAFETY: `LinuxPlatform::new` calls this before it starts any threads.
     unsafe { std::env::remove_var(XDG_ACTIVATION_TOKEN_ENV_VAR) };
-    startup_activation_token
+    token
+}
+
+/// Takes the Wayland connection that `WAYLAND_SOCKET` hands to this process, as libwayland does.
+pub(crate) fn take_wayland_socket_from_environment() -> Option<UnixStream> {
+    const WAYLAND_SOCKET_ENV_VAR: &str = "WAYLAND_SOCKET";
+    let value = std::env::var_os(WAYLAND_SOCKET_ENV_VAR)?;
+    // Removed so that programs we launch don't inherit it, as libwayland does.
+    // SAFETY: `LinuxPlatform::new` calls this before it starts any threads.
+    unsafe { std::env::remove_var(WAYLAND_SOCKET_ENV_VAR) };
+    let Some(fd) = value
+        .to_str()
+        .and_then(|value| value.parse::<RawFd>().ok())
+        .filter(|fd| *fd >= 0)
+    else {
+        log::error!("ignoring WAYLAND_SOCKET={value:?}, which is not a file descriptor");
+        return None;
+    };
+    // SAFETY: the process that started us passes this descriptor for us to own. It is inherited
+    // across exec, so mark it close-on-exec to keep it from programs we launch.
+    unsafe {
+        let flags = libc::fcntl(fd, libc::F_GETFD);
+        if flags == -1 || libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) == -1 {
+            log::error!(
+                "ignoring WAYLAND_SOCKET={fd}: {}",
+                std::io::Error::last_os_error()
+            );
+            return None;
+        }
+        Some(UnixStream::from_raw_fd(fd))
+    }
 }
 
 #[derive(Clone)]
@@ -238,9 +269,9 @@ impl Globals {
         qh: QueueHandle<WaylandClientStatePtr>,
         seat: wl_seat::WlSeat,
         frame_ping: Ping,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let dialog_v = XdgWmDialogV1::interface().version;
-        Globals {
+        Ok(Globals {
             activation: globals.bind(&qh, 1..=1, ()).ok(),
             compositor: globals
                 .bind(
@@ -249,7 +280,7 @@ impl Globals {
                         ..=wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE,
                     (),
                 )
-                .unwrap(),
+                .context("Wayland compositor does not provide a compatible wl_compositor")?,
             cursor_shape_manager: globals.bind(&qh, 1..=1, ()).ok(),
             data_device_manager: globals
                 .bind(
@@ -259,11 +290,15 @@ impl Globals {
                 )
                 .ok(),
             primary_selection_manager: globals.bind(&qh, 1..=1, ()).ok(),
-            shm: globals.bind(&qh, 1..=1, ()).unwrap(),
+            shm: globals
+                .bind(&qh, 1..=1, ())
+                .context("Wayland compositor does not provide wl_shm")?,
             seat,
             // Accept any xdg_wm_base version up to 6, which added the `suspended`
             // toplevel state; older compositors bind at their own version.
-            wm_base: globals.bind(&qh, 1..=6, ()).unwrap(),
+            wm_base: globals
+                .bind(&qh, 1..=6, ())
+                .context("Wayland compositor does not provide xdg_wm_base")?,
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
@@ -276,7 +311,7 @@ impl Globals {
             executor,
             qh,
             frame_ping,
-        }
+        })
     }
 }
 
@@ -364,7 +399,7 @@ pub(crate) struct WaylandClientState {
     button_pressed: Option<MouseButton>,
     mouse_focused_window: Option<WaylandWindowStatePtr>,
     keyboard_focused_window: Option<WaylandWindowStatePtr>,
-    loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
+    loop_handle: LoopHandle<'static, ()>,
     cursor_style: Option<CursorStyle>,
     cursor_hidden_window: Option<WaylandWindowStatePtr>,
     clipboard: Clipboard,
@@ -373,8 +408,11 @@ pub(crate) struct WaylandClientState {
     cursor: Cursor,
     pending_activation: Option<PendingActivation>,
     startup_activation_token: Option<String>,
-    event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
-    pub common: LinuxCommon,
+    /// The environment this connection was made in, without its activation token.
+    graphical_environment: GraphicalEnvironment,
+    /// Long-lived sources this client registered on the loop, removed when it drops.
+    registrations: Vec<RegistrationToken>,
+    pub common: Rc<RefCell<LinuxCommon>>,
     ime_enabled: Option<bool>,
 }
 
@@ -540,20 +578,24 @@ impl WaylandClientStatePtr {
             .expect("The pointer should always be valid when dispatching in wayland")
     }
 
-    /// Reports a display event. The client state must not be borrowed, since
-    /// GPUI may read display state while handling the event.
+    /// Reports a display event. The client state and `LinuxCommon` must not
+    /// be borrowed, since GPUI may read display state while handling it.
     fn report_display_event(&self, event: DisplayEvent) {
-        let client = self.get_client();
-        let callback = client.borrow_mut().common.callbacks.display_change.take();
+        let common = self.get_client().borrow().common.clone();
+        let callback = common.borrow_mut().callbacks.display_change.take();
         if let Some(mut callback) = callback {
             callback(event);
-            client
+            common
                 .borrow_mut()
-                .common
                 .callbacks
                 .display_change
                 .get_or_insert(callback);
         }
+    }
+
+    /// Returns the client, or `None` if it was dropped, for example by a switch to headless mode.
+    pub fn try_get_client(&self) -> Option<Rc<RefCell<WaylandClientState>>> {
+        self.0.upgrade()
     }
 
     pub fn dispatch_scheduled_frames(&self) {
@@ -580,10 +622,13 @@ impl WaylandClientStatePtr {
         let client = self.get_client();
         let state = client.borrow();
         let surface_id = surface_id.clone();
+        let this = self.clone();
         if let Err(err) = state.loop_handle.insert_source(
             Timer::from_duration(FRAME_RETRY_INTERVAL),
-            move |deadline, _, this| {
-                let client = this.get_client();
+            move |deadline, _, _| {
+                let Some(client) = this.0.upgrade() else {
+                    return TimeoutAction::Drop;
+                };
                 let window = get_window(&mut client.borrow_mut(), &surface_id);
                 if let Some(window) = window {
                     window.retry_timer_fired(deadline);
@@ -718,12 +763,21 @@ impl WaylandClientStatePtr {
             changed
         };
 
-        if changed && let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take()
-        {
+        let callback = changed
+            .then(|| {
+                state
+                    .common
+                    .borrow_mut()
+                    .callbacks
+                    .keyboard_layout_change
+                    .take()
+            })
+            .flatten();
+        if let Some(mut callback) = callback {
             drop(state);
             callback();
             state = client.borrow_mut();
-            state.common.callbacks.keyboard_layout_change = Some(callback);
+            state.common.borrow_mut().callbacks.keyboard_layout_change = Some(callback);
         }
     }
 
@@ -803,11 +857,24 @@ impl WaylandClientState {
     }
 }
 
-#[derive(Clone)]
-pub struct WaylandClient(Rc<RefCell<WaylandClientState>>);
+/// A connection to the Wayland compositor.
+///
+/// Not `Clone`: dropping it tears down the connection and its event-loop sources.
+pub struct WaylandConnection(Rc<RefCell<WaylandClientState>>);
 
-impl Drop for WaylandClient {
+impl Drop for WaylandConnection {
     fn drop(&mut self) {
+        let (loop_handle, registrations) = {
+            let mut state = self.0.borrow_mut();
+            (
+                state.loop_handle.clone(),
+                std::mem::take(&mut state.registrations),
+            )
+        };
+        for token in registrations {
+            loop_handle.remove(token);
+        }
+
         let mut state = self.0.borrow_mut();
         state.windows.clear();
 
@@ -828,41 +895,87 @@ impl Drop for WaylandClient {
 
 const WL_DATA_DEVICE_MANAGER_VERSION: u32 = 3;
 
-fn wl_seat_version(version: u32) -> u32 {
+/// Returns the path of the socket that `WAYLAND_DISPLAY` names, as libwayland resolves it.
+fn wayland_socket_path(environment: &GraphicalEnvironment) -> anyhow::Result<PathBuf> {
+    let display = environment
+        .wayland_display
+        .as_ref()
+        .filter(|display| !display.is_empty())
+        .context("WAYLAND_DISPLAY is not set")?;
+    let display = PathBuf::from(display);
+    let socket_path = if display.is_absolute() {
+        display
+    } else {
+        let runtime_directory = environment
+            .xdg_runtime_dir
+            .as_ref()
+            .filter(|directory| !directory.is_empty())
+            .context("XDG_RUNTIME_DIR is not set")?;
+        PathBuf::from(runtime_directory).join(display)
+    };
+    Ok(socket_path)
+}
+
+fn wl_seat_version(version: u32) -> anyhow::Result<u32> {
     // We rely on the wl_pointer.frame event
     const WL_SEAT_MIN_VERSION: u32 = 5;
     const WL_SEAT_MAX_VERSION: u32 = 9;
 
     if version < WL_SEAT_MIN_VERSION {
-        panic!(
+        anyhow::bail!(
             "wl_seat below required version: {} < {}",
-            version, WL_SEAT_MIN_VERSION
+            version,
+            WL_SEAT_MIN_VERSION
         );
     }
 
-    version.clamp(WL_SEAT_MIN_VERSION, WL_SEAT_MAX_VERSION)
+    Ok(version.clamp(WL_SEAT_MIN_VERSION, WL_SEAT_MAX_VERSION))
 }
 
-fn wl_output_version(version: u32) -> u32 {
+fn wl_output_version(version: u32) -> anyhow::Result<u32> {
     const WL_OUTPUT_MIN_VERSION: u32 = 2;
     const WL_OUTPUT_MAX_VERSION: u32 = 4;
 
     if version < WL_OUTPUT_MIN_VERSION {
-        panic!(
+        anyhow::bail!(
             "wl_output below required version: {} < {}",
-            version, WL_OUTPUT_MIN_VERSION
+            version,
+            WL_OUTPUT_MIN_VERSION
         );
     }
 
-    version.clamp(WL_OUTPUT_MIN_VERSION, WL_OUTPUT_MAX_VERSION)
+    Ok(version.clamp(WL_OUTPUT_MIN_VERSION, WL_OUTPUT_MAX_VERSION))
 }
 
-impl WaylandClient {
-    pub(crate) fn new() -> Self {
-        let startup_activation_token = take_startup_activation_token_from_environment();
-        let conn = Connection::connect_to_env().unwrap();
-
-        let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
+impl WaylandConnection {
+    /// Connects to the Wayland compositor `environment` names, or through `inherited_socket` when
+    /// given, and registers its event sources on `handle`.
+    ///
+    /// Dropping the connection removes its sources, leaving the loop and `common` usable without
+    /// Wayland.
+    pub(crate) fn attach(
+        handle: LoopHandle<'static, ()>,
+        common: Rc<RefCell<LinuxCommon>>,
+        environment: &GraphicalEnvironment,
+        inherited_socket: Option<UnixStream>,
+        activation_token: Option<String>,
+    ) -> anyhow::Result<Self> {
+        let stream = match inherited_socket {
+            Some(stream) => stream,
+            None => {
+                let socket_path = wayland_socket_path(environment)?;
+                UnixStream::connect(&socket_path).with_context(|| {
+                    format!(
+                        "failed to connect to Wayland compositor at {}",
+                        socket_path.display()
+                    )
+                })?
+            }
+        };
+        let conn =
+            Connection::from_socket(stream).context("failed to connect to Wayland compositor")?;
+        let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn)
+            .context("failed to initialize Wayland registry")?;
         let qh = event_queue.handle();
 
         let mut seat: Option<wl_seat::WlSeat> = None;
@@ -872,13 +985,13 @@ impl WaylandClient {
         let mut wl_outputs: HashMap<ObjectId, wl_output::WlOutput> = HashMap::default();
         #[allow(clippy::mutable_key_type)]
         let mut output_globals: HashMap<u32, ObjectId> = HashMap::default();
-        globals.contents().with_list(|list| {
+        globals.contents().with_list(|list| -> anyhow::Result<()> {
             for global in list {
                 match &global.interface[..] {
                     "wl_seat" => {
                         seat = Some(globals.registry().bind::<wl_seat::WlSeat, _, _>(
                             global.name,
-                            wl_seat_version(global.version),
+                            wl_seat_version(global.version)?,
                             &qh,
                             (),
                         ));
@@ -886,7 +999,7 @@ impl WaylandClient {
                     "wl_output" => {
                         let output = globals.registry().bind::<wl_output::WlOutput, _, _>(
                             global.name,
-                            wl_output_version(global.version),
+                            wl_output_version(global.version)?,
                             &qh,
                             (),
                         );
@@ -897,64 +1010,25 @@ impl WaylandClient {
                     _ => {}
                 }
             }
-        });
-
-        let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
-
-        let (common, main_receiver, power_receiver) = LinuxCommon::new(event_loop.get_signal());
-
-        let handle = event_loop.handle();
-        handle
-            .insert_source(main_receiver, {
-                let handle = handle.clone();
-                move |event, _, _: &mut WaylandClientStatePtr| {
-                    if let calloop::channel::Event::Msg(runnable) = event {
-                        handle.insert_idle(|_| {
-                            let location = runnable.metadata().location;
-                            let spawned = runnable.metadata().spawned;
-                            profiler::update_running_task(spawned, location);
-                            runnable.run();
-                            profiler::save_task_timing();
-                        });
-                    }
-                }
-            })
-            .unwrap();
-
-        handle
-            .insert_source(
-                power_receiver,
-                |event, _, client: &mut WaylandClientStatePtr| {
-                    if let calloop::channel::Event::Msg(event) = event {
-                        client
-                            .get_client()
-                            .borrow_mut()
-                            .common
-                            .handle_system_power_event(event);
-                    }
-                },
-            )
-            .unwrap();
+            Ok(())
+        })?;
 
         let compositor_gpu = detect_compositor_gpu();
         let gpu_context = Rc::new(RefCell::new(None));
 
         let (frame_ping, frame_ping_source) =
-            calloop::ping::make_ping().expect("Failed to create the frame ping");
-        handle
-            .insert_source(frame_ping_source, |_, _, client| {
-                client.dispatch_scheduled_frames();
-            })
-            .unwrap();
-
-        let seat = seat.unwrap();
+            calloop::ping::make_ping().context("failed to create Wayland frame ping")?;
+        let seat = seat.context("Wayland compositor does not provide wl_seat")?;
+        let foreground_executor = common.borrow().foreground_executor.clone();
+        let background_executor = common.borrow().background_executor.clone();
         let globals = Globals::new(
             globals,
-            common.foreground_executor.clone(),
+            foreground_executor,
             qh.clone(),
             seat.clone(),
             frame_ping,
-        );
+        )
+        .context("failed to bind required Wayland globals")?;
 
         let data_device = globals
             .data_device_manager
@@ -967,49 +1041,6 @@ impl WaylandClient {
             .map(|primary_selection_manager| primary_selection_manager.get_device(&seat, &qh, ()));
 
         let cursor = Cursor::new(&conn, &globals, 24);
-
-        handle
-            .insert_source(XDPEventSource::new(&common.background_executor), {
-                move |event, _, client| match event {
-                    XDPEvent::WindowAppearance(appearance) => {
-                        if let Some(client) = client.0.upgrade() {
-                            let mut client = client.borrow_mut();
-
-                            client.common.appearance = appearance;
-
-                            for window in client.windows.values_mut() {
-                                window.set_appearance(appearance);
-                            }
-                        }
-                    }
-                    XDPEvent::ButtonLayout(layout_str) => {
-                        if let Some(client) = client.0.upgrade() {
-                            let layout = WindowButtonLayout::parse(&layout_str)
-                                .log_err()
-                                .unwrap_or_else(WindowButtonLayout::linux_default);
-                            let mut client = client.borrow_mut();
-                            client.common.button_layout = layout;
-
-                            for window in client.windows.values_mut() {
-                                window.set_button_layout();
-                            }
-                        }
-                    }
-                    XDPEvent::CursorTheme(theme) => {
-                        if let Some(client) = client.0.upgrade() {
-                            let mut client = client.borrow_mut();
-                            client.cursor.set_theme(theme);
-                        }
-                    }
-                    XDPEvent::CursorSize(size) => {
-                        if let Some(client) = client.0.upgrade() {
-                            let mut client = client.borrow_mut();
-                            client.cursor.set_size(size);
-                        }
-                    }
-                }
-            })
-            .unwrap();
 
         let state = Rc::new(RefCell::new(WaylandClientState {
             serial_tracker: SerialTracker::new(),
@@ -1084,25 +1115,108 @@ impl WaylandClient {
             primary_data_offer: None,
             cursor,
             pending_activation: None,
-            startup_activation_token,
-            event_loop: Some(event_loop),
+            startup_activation_token: activation_token,
+            graphical_environment: GraphicalEnvironment {
+                activation_token: None,
+                ..environment.clone()
+            },
+            registrations: Vec::new(),
             ime_enabled: None,
         }));
 
-        WaylandSource::new(conn, event_queue)
-            .insert(handle)
-            .unwrap();
+        // From here on, `Drop` removes whatever was registered if a later step fails.
+        let client = Self(state);
+        let pointer = WaylandClientStatePtr(Rc::downgrade(&client.0));
 
-        Self(state)
+        client.register_source(
+            handle.insert_source(frame_ping_source, {
+                let client = pointer.clone();
+                move |_, _, _| client.dispatch_scheduled_frames()
+            }),
+            "failed to register Wayland frame source",
+        )?;
+
+        client.register_source(
+            handle.insert_source(XDPEventSource::new(&background_executor), {
+                let client = pointer.clone();
+                move |event, _, _| match event {
+                    XDPEvent::WindowAppearance(appearance) => {
+                        if let Some(client) = client.0.upgrade() {
+                            let mut client = client.borrow_mut();
+
+                            client.common.borrow_mut().appearance = appearance;
+
+                            for window in client.windows.values_mut() {
+                                window.set_appearance(appearance);
+                            }
+                        }
+                    }
+                    XDPEvent::ButtonLayout(layout_str) => {
+                        if let Some(client) = client.0.upgrade() {
+                            let layout = WindowButtonLayout::parse(&layout_str)
+                                .log_err()
+                                .unwrap_or_else(WindowButtonLayout::linux_default);
+                            let mut client = client.borrow_mut();
+                            client.common.borrow_mut().button_layout = layout;
+
+                            for window in client.windows.values_mut() {
+                                window.set_button_layout();
+                            }
+                        }
+                    }
+                    XDPEvent::CursorTheme(theme) => {
+                        if let Some(client) = client.0.upgrade() {
+                            let mut client = client.borrow_mut();
+                            client.cursor.set_theme(theme);
+                        }
+                    }
+                    XDPEvent::CursorSize(size) => {
+                        if let Some(client) = client.0.upgrade() {
+                            let mut client = client.borrow_mut();
+                            client.cursor.set_size(size);
+                        }
+                    }
+                }
+            }),
+            "failed to register desktop portal source",
+        )?;
+
+        client.register_source(
+            handle.insert_source(WaylandSource::new(conn, event_queue), {
+                let mut client = pointer;
+                move |_, queue, _| queue.dispatch_pending(&mut client)
+            }),
+            "failed to register Wayland connection source",
+        )?;
+
+        Ok(client)
+    }
+
+    fn register_source<E: std::fmt::Display>(
+        &self,
+        result: Result<RegistrationToken, E>,
+        description: &str,
+    ) -> anyhow::Result<()> {
+        let token = result.map_err(|error| anyhow::anyhow!("{description}: {error}"))?;
+        self.0.borrow_mut().registrations.push(token);
+        Ok(())
+    }
+
+    pub(crate) fn has_windows(&self) -> bool {
+        !self.0.borrow().windows.is_empty()
+    }
+
+    pub(crate) fn graphical_environment(&self) -> GraphicalEnvironment {
+        self.0.borrow().graphical_environment.clone()
     }
 }
 
-impl LinuxClient for WaylandClient {
-    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
+impl WaylandConnection {
+    pub(crate) fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         Box::new(self.0.borrow().keyboard_layout.clone())
     }
 
-    fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
+    pub(crate) fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         self.0
             .borrow()
             .outputs
@@ -1117,27 +1231,11 @@ impl LinuxClient for WaylandClient {
             .collect()
     }
 
-    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        self.0
-            .borrow()
-            .outputs
-            .iter()
-            .find_map(|(object_id, output)| {
-                (object_id.protocol_id() as u64 == u64::from(id)).then(|| {
-                    Rc::new(WaylandDisplay {
-                        id: object_id.clone(),
-                        name: output.name.clone(),
-                        bounds: output.bounds.to_pixels(output.scale as f32),
-                    }) as Rc<dyn PlatformDisplay>
-                })
-            })
-    }
-
-    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+    pub(crate) fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         None
     }
 
-    fn display_refresh_interval(&self, id: DisplayId) -> Option<Duration> {
+    pub(crate) fn display_refresh_interval(&self, id: DisplayId) -> Option<Duration> {
         self.0
             .borrow()
             .outputs
@@ -1147,7 +1245,12 @@ impl LinuxClient for WaylandClient {
     }
 
     #[cfg(feature = "screen-capture")]
-    fn screen_capture_sources(
+    pub(crate) fn is_screen_capture_supported(&self) -> bool {
+        true
+    }
+
+    #[cfg(feature = "screen-capture")]
+    pub(crate) fn screen_capture_sources(
         &self,
     ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Rc<dyn gpui::ScreenCaptureSource>>>>
     {
@@ -1164,7 +1267,7 @@ impl LinuxClient for WaylandClient {
         sources_rx
     }
 
-    fn open_window(
+    pub(crate) fn open_window(
         &self,
         handle: AnyWindowHandle,
         params: WindowParams,
@@ -1205,7 +1308,7 @@ impl LinuxClient for WaylandClient {
                 .map(|(_, output)| output.clone())
         });
 
-        let appearance = state.common.appearance;
+        let appearance = state.common.borrow().appearance;
         let compositor_gpu = state.compositor_gpu.take();
 
         let (window, surface_id) = WaylandWindow::new(
@@ -1229,7 +1332,7 @@ impl LinuxClient for WaylandClient {
         Ok(Box::new(window))
     }
 
-    fn set_cursor_style(&self, style: CursorStyle) {
+    pub(crate) fn set_cursor_style(&self, style: CursorStyle) {
         let mut state = self.0.borrow_mut();
 
         let need_update = state.cursor_style != Some(style)
@@ -1269,15 +1372,15 @@ impl LinuxClient for WaylandClient {
         }
     }
 
-    fn hide_cursor_until_mouse_moves(&self) {
+    pub(crate) fn hide_cursor_until_mouse_moves(&self) {
         self.0.borrow_mut().hide_cursor_until_mouse_moves();
     }
 
-    fn is_cursor_visible(&self) -> bool {
+    pub(crate) fn is_cursor_visible(&self) -> bool {
         self.0.borrow().cursor_hidden_window.is_none()
     }
 
-    fn open_uri(&self, uri: &str) {
+    pub(crate) fn open_uri(&self, uri: &str) {
         let mut state = self.0.borrow_mut();
         if let (Some(activation), Some(window)) = (
             state.globals.activation.clone(),
@@ -1290,12 +1393,12 @@ impl LinuxClient for WaylandClient {
             token.set_surface(&window.surface());
             token.commit();
         } else {
-            let executor = state.common.background_executor.clone();
-            open_uri_internal(executor, uri, None);
+            let executor = state.common.borrow().background_executor.clone();
+            open_uri_internal(executor, uri, None, state.graphical_environment.clone());
         }
     }
 
-    fn reveal_path(&self, path: PathBuf) {
+    pub(crate) fn reveal_path(&self, path: PathBuf) {
         let mut state = self.0.borrow_mut();
         if let (Some(activation), Some(window)) = (
             state.globals.activation.clone(),
@@ -1308,33 +1411,12 @@ impl LinuxClient for WaylandClient {
             token.set_surface(&window.surface());
             token.commit();
         } else {
-            let executor = state.common.background_executor.clone();
-            reveal_path_internal(executor, path, None);
+            let executor = state.common.borrow().background_executor.clone();
+            reveal_path_internal(executor, path, None, state.graphical_environment.clone());
         }
     }
 
-    fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
-        f(&mut self.0.borrow_mut().common)
-    }
-
-    fn run(&self) {
-        let mut event_loop = self
-            .0
-            .borrow_mut()
-            .event_loop
-            .take()
-            .expect("App is already running");
-
-        event_loop
-            .run(
-                None,
-                &mut WaylandClientStatePtr(Rc::downgrade(&self.0)),
-                |_| {},
-            )
-            .log_err();
-    }
-
-    fn write_to_primary(&self, item: gpui::ClipboardItem) {
+    pub(crate) fn write_to_primary(&self, item: gpui::ClipboardItem) {
         let mut state = self.0.borrow_mut();
         let (Some(primary_selection_manager), Some(primary_selection)) = (
             state.globals.primary_selection_manager.clone(),
@@ -1359,7 +1441,7 @@ impl LinuxClient for WaylandClient {
         }
     }
 
-    fn write_to_clipboard(&self, item: gpui::ClipboardItem) {
+    pub(crate) fn write_to_clipboard(&self, item: gpui::ClipboardItem) {
         let mut state = self.0.borrow_mut();
         let (Some(data_device_manager), Some(data_device)) = (
             state.globals.data_device_manager.clone(),
@@ -1385,15 +1467,15 @@ impl LinuxClient for WaylandClient {
         }
     }
 
-    fn read_from_primary(&self) -> Option<gpui::ClipboardItem> {
+    pub(crate) fn read_from_primary(&self) -> Option<gpui::ClipboardItem> {
         self.0.borrow_mut().clipboard.read_primary()
     }
 
-    fn read_from_clipboard(&self) -> Option<gpui::ClipboardItem> {
+    pub(crate) fn read_from_clipboard(&self) -> Option<gpui::ClipboardItem> {
         self.0.borrow_mut().clipboard.read()
     }
 
-    fn active_window(&self) -> Option<AnyWindowHandle> {
+    pub(crate) fn active_window(&self) -> Option<AnyWindowHandle> {
         self.0
             .borrow_mut()
             .keyboard_focused_window
@@ -1401,15 +1483,17 @@ impl LinuxClient for WaylandClient {
             .map(|window| window.handle())
     }
 
-    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+    pub(crate) fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         None
     }
 
-    fn compositor_name(&self) -> &'static str {
+    pub(crate) fn compositor_name(&self) -> &'static str {
         "Wayland"
     }
 
-    fn window_identifier(&self) -> impl Future<Output = Option<WindowIdentifier>> + Send + 'static {
+    pub(crate) fn window_identifier(
+        &self,
+    ) -> impl Future<Output = Option<WindowIdentifier>> + Send + 'static {
         async fn inner(surface: Option<wl_surface::WlSurface>) -> Option<WindowIdentifier> {
             if let Some(surface) = surface {
                 ashpd::WindowIdentifier::from_wayland(&surface).await
@@ -1507,6 +1591,10 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                 version,
             } => match &interface[..] {
                 "wl_seat" => {
+                    let Ok(version) = wl_seat_version(version) else {
+                        log::error!("ignoring wl_seat below the required version");
+                        return;
+                    };
                     if let Some(wl_pointer) = state.wl_pointer.take() {
                         wl_pointer.release();
                     }
@@ -1514,20 +1602,14 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                         wl_keyboard.release();
                     }
                     state.wl_seat.release();
-                    state.wl_seat = registry.bind::<wl_seat::WlSeat, _, _>(
-                        name,
-                        wl_seat_version(version),
-                        qh,
-                        (),
-                    );
+                    state.wl_seat = registry.bind::<wl_seat::WlSeat, _, _>(name, version, qh, ());
                 }
                 "wl_output" => {
-                    let output = registry.bind::<wl_output::WlOutput, _, _>(
-                        name,
-                        wl_output_version(version),
-                        qh,
-                        (),
-                    );
+                    let Ok(version) = wl_output_version(version) else {
+                        log::error!("ignoring wl_output below the required version");
+                        return;
+                    };
+                    let output = registry.bind::<wl_output::WlOutput, _, _>(name, version, qh, ());
 
                     state
                         .in_progress_outputs
@@ -1856,11 +1938,14 @@ impl Dispatch<xdg_activation_token_v1::XdgActivationTokenV1, ()> for WaylandClie
         let mut state = client.borrow_mut();
 
         if let xdg_activation_token_v1::Event::Done { token } = event {
-            let executor = state.common.background_executor.clone();
+            let executor = state.common.borrow().background_executor.clone();
+            let environment = state.graphical_environment.clone();
             match state.pending_activation.take() {
-                Some(PendingActivation::Uri(uri)) => open_uri_internal(executor, &uri, Some(token)),
+                Some(PendingActivation::Uri(uri)) => {
+                    open_uri_internal(executor, &uri, Some(token), environment)
+                }
                 Some(PendingActivation::Path(path)) => {
-                    reveal_path_internal(executor, path, Some(token))
+                    reveal_path_internal(executor, path, Some(token), environment)
                 }
                 Some(PendingActivation::Window(window)) => {
                     let Some(window) = get_window(&mut state, &window) else {
@@ -2134,8 +2219,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                     is_held: true,
                                     prefer_character_input: false,
                                 });
-                                move |event_timestamp, _metadata, this| {
-                                    let client = this.get_client();
+                                let this = this.clone();
+                                move |event_timestamp, _metadata, _| {
+                                    let Some(client) = this.0.upgrade() else {
+                                        return TimeoutAction::Drop;
+                                    };
                                     let state = client.borrow();
                                     let is_repeating = id == state.repeat.current_id
                                         && state.repeat.current_keycode.is_some()
@@ -2810,7 +2898,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     let fd = pipe.read;
                     drop(pipe.write);
 
-                    let read_task = state.common.background_executor.spawn(async {
+                    let read_task = state.common.borrow().background_executor.spawn(async {
                         let buffer = read_fd_with_timeout(fd, PIPE_READ_TIMEOUT)?;
                         let text = String::from_utf8(buffer)?;
                         anyhow::Ok(text)
@@ -2819,7 +2907,9 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     let this = this.clone();
                     state
                         .common
+                        .borrow()
                         .foreground_executor
+                        .clone()
                         .spawn(async move {
                             let file_list = match read_task.await {
                                 Ok(list) => list,
@@ -2847,7 +2937,10 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                                 data_offer.destroy();
                                 return;
                             }
-                            let client = this.get_client();
+                            let Some(client) = this.0.upgrade() else {
+                                data_offer.destroy();
+                                return;
+                            };
                             let mut state = client.borrow_mut();
                             let input = state.drag.complete_uri_read(
                                 uri_read_generation,
@@ -3090,6 +3183,14 @@ mod tests {
     use std::cell::Cell;
 
     use super::*;
+
+    #[test]
+    fn rejects_required_globals_below_supported_versions() {
+        assert!(wl_seat_version(4).is_err());
+        assert!(wl_output_version(1).is_err());
+        assert_eq!(wl_seat_version(5).expect("minimum seat version"), 5);
+        assert_eq!(wl_output_version(2).expect("minimum output version"), 2);
+    }
 
     #[test]
     fn frame_callback_timestamp_preserves_queue_delay() {

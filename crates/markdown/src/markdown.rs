@@ -339,13 +339,20 @@ impl MarkdownStyle {
         };
 
         if is_preview {
-            style.with_preview_overrides(colors)
+            style.with_preview_overrides(
+                colors,
+                theme_settings.markdown_preview_heading_font_weight(),
+            )
         } else {
             style
         }
     }
 
-    fn with_preview_overrides(mut self, colors: &theme::ThemeColors) -> Self {
+    fn with_preview_overrides(
+        mut self,
+        colors: &theme::ThemeColors,
+        heading_font_weight: FontWeight,
+    ) -> Self {
         let body_font_size = rems(1.0);
         self.base_text_style.font_size = body_font_size.into();
         self.container_style.text.font_size = Some(body_font_size.into());
@@ -384,7 +391,7 @@ impl MarkdownStyle {
 
         let heading_text_style = |font_size: Rems| TextStyleRefinement {
             font_size: Some(font_size.into()),
-            font_weight: Some(FontWeight::SEMIBOLD),
+            font_weight: Some(heading_font_weight),
             line_height: Some(relative(1.25)),
             ..Default::default()
         };
@@ -2887,21 +2894,31 @@ impl Element for MarkdownElement {
                                 )
                                 .fill();
 
-                                if let Some(on_toggle) = self.on_checkbox_toggle.clone() {
+                                let checkbox = if let Some(on_toggle) =
+                                    self.on_checkbox_toggle.clone()
+                                {
                                     let task_source_range = task_range.clone();
-                                    checkbox
-                                        .on_click(move |_state, window, cx| {
-                                            on_toggle(
-                                                task_source_range.clone(),
-                                                !checked,
-                                                window,
-                                                cx,
-                                            );
-                                        })
-                                        .into_any_element()
+                                    checkbox.on_click(move |_state, window, cx| {
+                                        on_toggle(task_source_range.clone(), !checked, window, cx);
+                                    })
                                 } else {
-                                    checkbox.visualization_only(true).into_any_element()
-                                }
+                                    checkbox.visualization_only(true)
+                                };
+
+                                let line_height = self
+                                    .style
+                                    .paragraph_line_height
+                                    .to_pixels(builder.text_style().font_size, window.rem_size());
+                                // List items top-align their bullet, which suits text bullets
+                                // but leaves the taller checkbox sitting above the text.
+                                // Centering it in a slot one line tall aligns it with the
+                                // first line, even when the item wraps.
+                                div()
+                                    .h(line_height)
+                                    .flex()
+                                    .items_center()
+                                    .child(checkbox)
+                                    .into_any_element()
                             } else if let Some(bullet_index) = builder.next_bullet_index() {
                                 div().child(format!("{}.", bullet_index)).into_any_element()
                             } else {
@@ -6903,7 +6920,7 @@ mod tests {
             LanguageConfig {
                 name: "JavaScript".into(),
                 matcher: (LanguageMatcher {
-                    path_suffixes: vec!["js".to_string()],
+                    path_suffixes: vec!["js".into()],
                     ..Default::default()
                 })
                 .into(),
@@ -7641,6 +7658,74 @@ mod tests {
             h3_line_height > body_line_height,
             "H3 line height ({h3_line_height:?}) should be greater than body text ({body_line_height:?})"
         );
+    }
+
+    fn preview_heading_weights(cx: &mut TestAppContext, font: MarkdownFont) -> [FontWeight; 6] {
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        cx.update(|window, cx| {
+            let style = MarkdownStyle::themed(font, window, cx);
+            let levels = style
+                .heading_level_styles
+                .expect("preview markdown should define per-level heading styles");
+            [
+                levels.h1, levels.h2, levels.h3, levels.h4, levels.h5, levels.h6,
+            ]
+            .map(|level| {
+                level
+                    .and_then(|level| level.font_weight)
+                    .expect("every preview heading level should set a font weight")
+            })
+        })
+    }
+
+    #[gpui::test]
+    fn test_markdown_preview_heading_font_weight_defaults_to_semibold(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+
+        assert_eq!(
+            preview_heading_weights(cx, MarkdownFont::Preview),
+            [FontWeight::SEMIBOLD; 6]
+        );
+    }
+
+    #[gpui::test]
+    fn test_markdown_preview_heading_font_weight_follows_setting(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .markdown_preview
+                        .get_or_insert_default()
+                        .heading_font_weight = Some(400.0.into());
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            preview_heading_weights(cx, MarkdownFont::Preview),
+            [FontWeight::NORMAL; 6]
+        );
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        cx.update(|window, cx| {
+            let editor_style = MarkdownStyle::themed(MarkdownFont::Editor, window, cx);
+            assert!(
+                editor_style.heading_level_styles.is_none(),
+                "the preview heading weight must not leak into editor markdown"
+            );
+            let agent_style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
+            let agent_h1 = agent_style
+                .heading_level_styles
+                .and_then(|levels| levels.h1)
+                .expect("agent markdown defines an h1 style");
+            assert_eq!(
+                agent_h1.font_weight, None,
+                "the preview heading weight must not leak into agent markdown"
+            );
+        });
     }
 
     #[gpui::test]

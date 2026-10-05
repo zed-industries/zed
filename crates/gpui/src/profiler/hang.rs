@@ -576,11 +576,10 @@ mod tests {
                 reason: FrameSkipReason::NoRenderNeeded,
             })),
         ]);
-        let [snapshot] = snapshots.as_slice() else {
-            panic!("expected one snapshot, got {snapshots:?}");
-        };
-        assert_eq!(snapshot.occupancy(), Duration::ZERO);
-        assert!(HangIncident::detect(snapshot.clone(), HANG_THRESHOLD, FRAME_BUDGET).is_none());
+        assert!(
+            snapshots.is_empty(),
+            "a late signal without work seals nothing, got {snapshots:?}"
+        );
     }
 
     /// A hang that outlives the frame deadline stays in one incident with

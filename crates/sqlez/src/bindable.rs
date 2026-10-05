@@ -4,7 +4,6 @@ use std::{
 };
 
 use anyhow::{Context as _, Result};
-use util::paths::PathExt;
 
 use crate::statement::{SqlType, Statement};
 
@@ -332,7 +331,8 @@ impl Column for Arc<Path> {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let blob = statement.column_blob(start_index)?;
 
-        PathBuf::try_from_bytes(blob).map(|path| (Arc::from(path.as_path()), start_index + 1))
+        path::try_from_bytes::<PathBuf>(blob)
+            .map(|path| (Arc::from(path.as_path()), start_index + 1))
     }
 }
 
@@ -347,7 +347,7 @@ impl Column for PathBuf {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let blob = statement.column_blob(start_index)?;
 
-        PathBuf::try_from_bytes(blob).map(|path| (path, start_index + 1))
+        path::try_from_bytes::<PathBuf>(blob).map(|path| (path, start_index + 1))
     }
 }
 

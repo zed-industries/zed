@@ -4,9 +4,8 @@ use cloud_api_types::{ExtensionApiManifest, ExtensionMetadata, ExtensionProvides
 use extension::{ExtensionManifest, SchemaVersion};
 use extension_host::{ExtensionOperation, ExtensionStatus, ExtensionStore};
 use gpui::{Anchor, ElementId, Entity, Point, SharedString, prelude::*};
-use num_format::{Locale, ToFormattedString};
 use release_channel::ReleaseChannel;
-use ui::{Chip, ContextMenu, PopoverMenu, Tooltip, prelude::*};
+use ui::{Chip, ContextMenu, PopoverMenu, Tooltip, prelude::*, utils::format_number_with_commas};
 
 type ContextMenuBuilder = Box<
     dyn Fn(Arc<str>, SharedString, &mut Window, &mut App) -> Option<Entity<ContextMenu>> + 'static,
@@ -683,7 +682,7 @@ impl RenderOnce for ExtensionCard {
                         .children(download_count.map(|download_count| {
                             Label::new(format!(
                                 "Downloads: {}",
-                                download_count.to_formatted_string(&Locale::en)
+                                format_number_with_commas(u128::from(download_count))
                             ))
                             .size(LabelSize::Small)
                         })),

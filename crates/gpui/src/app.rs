@@ -44,17 +44,18 @@ pub use visual_test_context::*;
 use crate::InspectorElementRegistry;
 use crate::asset_cache::CachedLoad;
 use crate::{
-    Action, ActionBuildError, ActionRegistry, ActivityGuard, Any, AnyView, AnyWindowHandle,
-    AppContext, Arena, ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem,
-    ClipboardReadError, CursorStyle, DispatchPhase, DisplayEvent, DisplayId, EventEmitter,
-    ExternalDragPayload, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
-    Keymap, Keystroke, LayoutId, Menu, MenuItem, MissingGlyph, OwnedMenu, PathPromptOptions,
-    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point,
-    Priority, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, SystemNotification, SystemNotificationResponse, Task,
-    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout,
-    WindowHandle, WindowId, WindowInvalidator,
+    Action, ActionBuildError, ActionRegistry, ActivationPolicy, ActivityGuard, Any, AnyView,
+    AnyWindowHandle, AppContext, Arena, ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds,
+    ClipboardItem, ClipboardReadError, CursorStyle, DispatchPhase, DisplayEvent, DisplayId,
+    EventEmitter, ExternalDragPayload, FocusHandle, FocusMap, ForegroundExecutor, Global,
+    KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, MissingGlyph, OwnedMenu,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
+    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, SystemNotification,
+    SystemNotificationResponse, Task, TextRenderingMode, TextSystem, ThermalState, Window,
+    WindowAppearance, WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator,
+    WindowingRequest,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -226,6 +227,17 @@ impl Application {
     /// By default, [`QuitMode::Default`] is used.
     pub fn with_quit_mode(self, mode: QuitMode) -> Self {
         self.0.borrow_mut().quit_mode = mode;
+        self
+    }
+
+    /// Sets the windowing mode the app starts in. See [`App::request_windowing`].
+    ///
+    /// Defaults to windowed. On Linux, the default environment is the process's own, and the app
+    /// starts headless if that names no allowed display server. On macOS, headless means the app
+    /// starts without a Dock icon or menu bar ([`ActivationPolicy::Accessory`]). Has no effect on
+    /// other platforms.
+    pub fn with_windowing(self, request: WindowingRequest) -> Self {
+        self.0.borrow().platform.set_initial_windowing(request);
         self
     }
 
@@ -834,7 +846,6 @@ pub struct App {
     /// Whether the app was created by [`Application::new_inaccessible`]. No
     /// accesskit APIs will be called when this flag is set.
     pub(crate) accessibility_force_disabled: bool,
-    flushing_effects: bool,
     pending_updates: usize,
     quit_mode: QuitMode,
     quitting: bool,
@@ -878,7 +889,6 @@ impl App {
                 text_rendering_mode: Rc::new(Cell::new(TextRenderingMode::default())),
                 mode: GpuiMode::Production,
                 actions: Rc::new(ActionRegistry::default()),
-                flushing_effects: false,
                 pending_updates: 0,
                 active_drag: None,
                 platform_owned_drag: None,
@@ -1171,6 +1181,41 @@ impl App {
         self.platform.quit();
     }
 
+    /// Switches the platform between headless and windowed modes.
+    ///
+    /// On Linux, headless means no display server: windows opened afterwards lay out and handle
+    /// input but draw nothing. Windowed, the platform connects to the display server the
+    /// environment names. On macOS, the modes set the [`ActivationPolicy`]: headless is
+    /// `Accessory` (no Dock icon or menu bar) and windowed is `Regular`. Switching to windowed
+    /// doesn't activate the app: call [`App::activate`] for that.
+    ///
+    /// The returned task resolves once the switch has been applied. It fails if the platform is
+    /// already in the requested mode (switching to another display server means going headless
+    /// first), if the platform doesn't allow the mode or can't switch at all, if any window is
+    /// open (a window belongs to the display server that opened it), or if the display server
+    /// can't be reached.
+    pub fn request_windowing(&self, request: WindowingRequest) -> Task<anyhow::Result<()>> {
+        if !self.windows.is_empty() {
+            return Task::ready(Err(anyhow::anyhow!(
+                "cannot switch windowing modes while windows are open"
+            )));
+        }
+        self.platform.request_windowing(request)
+    }
+
+    /// The environment of the display server the platform is connected to, or `None` while
+    /// headless. Its activation token is always unset, since the connection has used it.
+    ///
+    /// Programs an app launches inherit this process's environment, which may name another
+    /// graphical session, or none if the app started headless. Pass them this one with
+    /// [`GraphicalEnvironment::apply_to`](crate::GraphicalEnvironment::apply_to).
+    ///
+    /// On macOS, the environment carries nothing, and this is `None` while the activation
+    /// policy is `Accessory`. Always `None` on platforms that can't switch windowing modes.
+    pub fn graphical_environment(&self) -> Option<crate::GraphicalEnvironment> {
+        self.platform.graphical_environment()
+    }
+
     /// Returns the current policy for hiding the cursor in response to
     /// keyboard input.
     pub fn cursor_hide_mode(&self) -> CursorHideMode {
@@ -1227,10 +1272,8 @@ impl App {
 
     #[inline(never)]
     pub(crate) fn finish_update(&mut self) {
-        if !self.flushing_effects && self.pending_updates == 1 {
-            self.flushing_effects = true;
+        if self.pending_updates == 1 {
             self.flush_effects();
-            self.flushing_effects = false;
         }
         self.pending_updates -= 1;
     }
@@ -1835,6 +1878,18 @@ impl App {
     /// By default, [`QuitMode::Default`] is used.
     pub fn set_quit_mode(&mut self, mode: QuitMode) {
         self.quit_mode = mode;
+    }
+
+    /// Sets whether the application participates in the system's foreground UI.
+    ///
+    /// Only has an effect on macOS, where [`Self::request_windowing`] normally sets it. Use this
+    /// for an accessory app that shows windows, such as a menu bar utility. It overrides the
+    /// policy until the next [`Self::request_windowing`], and the app counts as headless while
+    /// `Accessory`. After switching to [`ActivationPolicy::Regular`], activate the app yourself
+    /// with [`Self::activate`]; otherwise its menu bar may not appear until the app is
+    /// reactivated.
+    pub fn set_activation_policy(&mut self, policy: ActivationPolicy) {
+        self.platform.set_activation_policy(policy);
     }
 
     /// Returns the SVG renderer used by the application.
