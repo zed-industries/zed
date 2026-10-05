@@ -1976,7 +1976,6 @@ impl SettingsWindow {
         };
 
         let list_state = gpui::ListState::new(0, gpui::ListAlignment::Top, px(0.0)).measure_all();
-        list_state.set_scroll_handler(|_, _, _| {});
 
         let mut this = Self {
             title_bar,
@@ -2526,8 +2525,8 @@ impl SettingsWindow {
         let mut visible_items_count = self.visible_page_items().count();
 
         if visible_items_count > 0 {
-            // show page title if page is non empty
-            visible_items_count += 1;
+            // Include the page title and a trailing spacer for scrolling final sections to the top.
+            visible_items_count += 2;
         }
 
         self.list_state.reset(visible_items_count);
@@ -3628,7 +3627,7 @@ impl SettingsWindow {
 
                     let mut visible_items = this.visible_page_items();
                     let Some((actual_item_index, item)) = visible_items.nth(index - 1) else {
-                        return gpui::Empty.into_any_element();
+                        return div().h(window.viewport_size().height).into_any_element();
                     };
 
                     let next_is_header = visible_items
@@ -4239,6 +4238,52 @@ impl SettingsWindow {
         ix == self.navbar_entry
     }
 
+    fn update_navbar_entry_from_scroll_position(&mut self, window: &Window) {
+        if !self.sub_page_stack.is_empty() {
+            return;
+        }
+
+        let root_index = self.root_entry_containing(self.navbar_entry);
+        if !self.navbar_entries[root_index].expanded && !self.has_query {
+            self.navbar_entry = root_index;
+            return;
+        }
+
+        // The list's first row is the page title, not a settings item.
+        let top_index = self
+            .list_state
+            .logical_scroll_top()
+            .item_ix
+            .saturating_sub(1);
+        let section_index = self
+            .visible_page_items()
+            .enumerate()
+            .filter_map(|(position, (index, item))| {
+                if !matches!(item, SettingsPageItem::SectionHeader(_)) {
+                    return None;
+                }
+                let near_top = position <= top_index
+                    || self
+                        .list_state
+                        .bounds_for_item(position + 1)
+                        .is_some_and(|bounds| {
+                            bounds.top()
+                                <= self.list_state.viewport_bounds().top() + window.rem_size() * 1.5
+                        });
+                near_top.then_some(index)
+            })
+            .last();
+
+        self.navbar_entry = section_index
+            .and_then(|section_index| {
+                self.navbar_entries.iter().position(|entry| {
+                    entry.page_index == self.current_page_index()
+                        && entry.item_index == Some(section_index)
+                })
+            })
+            .unwrap_or(root_index);
+    }
+
     fn push_sub_page(
         &mut self,
         sub_page_link: SubPageLink,
@@ -4532,6 +4577,7 @@ impl SettingsWindow {
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.update_navbar_entry_from_scroll_position(window);
         let ui_font = theme_settings::setup_ui_font(window, cx);
 
         client_side_decorations(
@@ -5593,6 +5639,210 @@ pub mod test {
                 });
             }
         };
+    }
+
+    #[gpui::test]
+    fn navbar_selection_follows_content_scroll(cx: &mut gpui::TestAppContext) {
+        let window = cx.add_empty_window();
+        window.update(|window, cx| {
+            register_settings(cx);
+            let mut settings_window = parse(
+                r"
+                > General
+                - General
+                v Window & Layout*
+                - Status Bar
+                - Title Bar
+                - Tab Bar
+                ",
+                window,
+                cx,
+            );
+            let setting = || {
+                SettingsPageItem::ActionLink(ActionLink {
+                    title: "Setting".into(),
+                    description: None,
+                    button_text: "Change".into(),
+                    on_click: Arc::new(|_, _, _| {}),
+                    files: USER,
+                })
+            };
+            settings_window.pages[1].items = vec![
+                SettingsPageItem::SectionHeader("Status Bar"),
+                setting(),
+                SettingsPageItem::SectionHeader("Title Bar"),
+                setting(),
+                SettingsPageItem::SectionHeader("Tab Bar"),
+                setting(),
+            ]
+            .into_boxed_slice();
+            settings_window.build_filter_table();
+            settings_window.build_navbar(cx);
+            settings_window.navbar_entries[2].expanded = true;
+            settings_window.reset_list_state();
+
+            for (list_index, expected_entry) in [(0, 3), (2, 3), (3, 4), (4, 4), (6, 5), (1, 3)] {
+                settings_window.list_state.scroll_to(gpui::ListOffset {
+                    item_ix: list_index,
+                    offset_in_item: px(0.),
+                });
+                settings_window.update_navbar_entry_from_scroll_position(window);
+                assert_eq!(settings_window.navbar_entry, expected_entry);
+                assert_eq!(settings_window.current_page_index(), 1);
+            }
+
+            settings_window.filter_table[1][..2].fill(false);
+            settings_window.reset_list_state();
+            settings_window.update_navbar_entry_from_scroll_position(window);
+            assert_eq!(settings_window.navbar_entry, 4);
+
+            settings_window.navbar_entries[2].expanded = false;
+            settings_window.update_navbar_entry_from_scroll_position(window);
+            assert_eq!(settings_window.navbar_entry, 2);
+
+            settings_window.has_query = true;
+            settings_window.update_navbar_entry_from_scroll_position(window);
+            assert_eq!(settings_window.navbar_entry, 4);
+
+            settings_window.sub_page_stack.push(SubPage::new(
+                SubPageLink {
+                    title: "Details".into(),
+                    r#type: SubPageType::Other,
+                    description: None,
+                    search_aliases: &[],
+                    json_path: None,
+                    in_json: false,
+                    files: USER,
+                    render: |_, _, _, _| gpui::Empty.into_any_element(),
+                },
+                "Title Bar".into(),
+            ));
+            settings_window.list_state.scroll_to(gpui::ListOffset {
+                item_ix: 3,
+                offset_in_item: px(0.),
+            });
+            settings_window.update_navbar_entry_from_scroll_position(window);
+            assert_eq!(settings_window.navbar_entry, 4);
+            settings_window.sub_page_stack.clear();
+
+            settings_window.filter_table[1].fill(false);
+            settings_window.reset_list_state();
+            settings_window.update_navbar_entry_from_scroll_position(window);
+            assert_eq!(settings_window.navbar_entry, 2);
+        });
+    }
+
+    #[gpui::test]
+    fn settings_content_keeps_a_visible_viewport(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        let settings_window = cx.update(|window, cx| {
+            register_settings(cx);
+            cx.new(|cx| {
+                let mut this = parse("v Test*\n- First\n- Last", window, cx);
+                this.build_content_handles(window, cx);
+                this.list_state = ListState::new(0, gpui::ListAlignment::Top, px(0.)).measure_all();
+                this.reset_list_state();
+                this
+            })
+        });
+        let list_state = settings_window.read_with(cx, |this, _| this.list_state.clone());
+        struct TestPage(Entity<SettingsWindow>);
+        impl Render for TestPage {
+            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                v_flex()
+                    .size_full()
+                    .child(div().h(px(40.)).flex_shrink_0())
+                    .child(div().flex_1().min_h_0().size_full().child(self.0.update(
+                        cx,
+                        |this, cx| {
+                            this.render_current_page_items(window, cx)
+                                .into_any_element()
+                        },
+                    )))
+            }
+        }
+        let view = cx.update(|_, cx| cx.new(|_| TestPage(settings_window)));
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(400.), px(400.)),
+            |_, _| view.into_any_element(),
+        );
+        assert!(list_state.viewport_bounds().size.height > px(0.));
+        assert!(
+            list_state
+                .bounds_for_item(1)
+                .is_some_and(|bounds| bounds.size.height > px(0.))
+        );
+    }
+
+    #[gpui::test]
+    fn navbar_selection_near_headers_and_at_page_end(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        let mut settings_window = cx.update(|window, cx| {
+            register_settings(cx);
+            parse(
+                "v Window & Layout*\n- Status Bar\n- Title Bar\n- Tab Bar",
+                window,
+                cx,
+            )
+        });
+        settings_window.reset_list_state();
+        let list_state = settings_window.list_state.clone();
+        struct TestList(ListState);
+        impl Render for TestList {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                v_flex().size_full().child(
+                    div().flex_1().min_h_0().size_full().child(
+                        v_flex().size_full().child(
+                            list(self.0.clone(), |index, window, _| {
+                                div()
+                                    .h(if index == 4 {
+                                        window.viewport_size().height
+                                    } else {
+                                        px(100.)
+                                    })
+                                    .into_any_element()
+                            })
+                            .size_full(),
+                        ),
+                    ),
+                )
+            }
+        }
+        let view = cx.update(|_, cx| cx.new(|_| TestList(list_state.clone())));
+
+        for (offset, expected_entry) in [(px(60.), 1), (px(80.), 2)] {
+            list_state.scroll_to(gpui::ListOffset {
+                item_ix: 1,
+                offset_in_item: offset,
+            });
+            cx.draw(
+                point(px(0.), px(0.)),
+                gpui::size(px(400.), px(400.)),
+                |_, _| view.clone().into_any_element(),
+            );
+            cx.update(|window, _| {
+                assert!(list_state.viewport_bounds().size.height > px(0.));
+                assert!(list_state.bounds_for_item(2).is_some());
+                settings_window.update_navbar_entry_from_scroll_position(window);
+                assert_eq!(settings_window.navbar_entry, expected_entry);
+            });
+        }
+
+        list_state.scroll_to(gpui::ListOffset {
+            item_ix: 3,
+            offset_in_item: px(0.),
+        });
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(400.), px(400.)),
+            |_, _| view.clone().into_any_element(),
+        );
+        cx.update(|window, _| {
+            settings_window.update_navbar_entry_from_scroll_position(window);
+            assert_eq!(settings_window.navbar_entry, 3);
+            assert_eq!(list_state.logical_scroll_top().item_ix, 3);
+        });
     }
 
     check_navbar_toggle!(
