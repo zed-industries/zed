@@ -377,13 +377,13 @@ struct SessionConfigResponse {
 
 #[derive(Clone)]
 struct ConfigOptions {
-    config_options: Rc<RefCell<Vec<acp::SessionConfigOption>>>,
+    config_options: Rc<RefCell<Vec<acp_v2::SessionConfigOption>>>,
     tx: Rc<RefCell<watch::Sender<()>>>,
     rx: watch::Receiver<()>,
 }
 
 impl ConfigOptions {
-    fn new(config_options: Rc<RefCell<Vec<acp::SessionConfigOption>>>) -> Self {
+    fn new(config_options: Rc<RefCell<Vec<acp_v2::SessionConfigOption>>>) -> Self {
         let (tx, rx) = watch::channel(());
         Self {
             config_options,
@@ -1226,8 +1226,10 @@ impl AcpConnection {
                     let Some(connection_state) = this.upgrade() else {
                         return Ok(());
                     };
-                    let response = match response {
-                        Ok(response) => response,
+                    let (modes, config_options) = match response
+                        .and_then(|response| config_state(response.modes, response.config_options))
+                    {
+                        Ok(state) => state,
                         Err(error) => {
                             connection_state.remove_session(&session_id, thread.entity_id());
                             connection_state
@@ -1237,8 +1239,6 @@ impl AcpConnection {
                     };
 
                     if let Some(_thread) = thread.upgrade() {
-                        let (modes, config_options) =
-                            config_state(response.modes, response.config_options);
                         {
                             let mut sessions = connection_state.sessions.borrow_mut();
                             let Some(session) = sessions
@@ -1299,7 +1299,7 @@ impl AcpConnection {
     fn apply_default_config_options(
         &self,
         session_id: &acp::SessionId,
-        config_options: &Rc<RefCell<Vec<acp::SessionConfigOption>>>,
+        config_options: &Rc<RefCell<Vec<acp_v2::SessionConfigOption>>>,
         cx: &mut AsyncApp,
     ) {
         let id = self.id.clone();
@@ -1308,58 +1308,58 @@ impl AcpConnection {
             config_opts_ref
                 .iter()
                 .filter_map(|config_option| {
-                    let default_value = self.defaults.config_option(config_option.id.0.as_ref())?;
+                    let default_value = self
+                        .defaults
+                        .config_option(config_option.config_id.0.as_ref())?;
 
                     let value_to_apply = match &config_option.kind {
-                        acp::SessionConfigKind::Select(select) => {
+                        acp_v2::SessionConfigKind::Select(select) => {
                             let value_id = default_value.as_value_id()?;
                             match &select.options {
-                                acp::SessionConfigSelectOptions::Ungrouped(options) => options
+                                acp_v2::SessionConfigSelectOptions::Ungrouped(options) => options
                                     .iter()
                                     .any(|opt| &*opt.value.0 == value_id)
                                     .then(|| {
-                                        acp::SessionConfigOptionValue::value_id(
-                                            value_id.to_string(),
-                                        )
+                                        acp_v2::SessionConfigOptionValue::id(value_id.to_string())
                                     }),
-                                acp::SessionConfigSelectOptions::Grouped(groups) => groups
+                                acp_v2::SessionConfigSelectOptions::Grouped(groups) => groups
                                     .iter()
                                     .any(|group| {
                                         group.options.iter().any(|opt| &*opt.value.0 == value_id)
                                     })
                                     .then(|| {
-                                        acp::SessionConfigOptionValue::value_id(
-                                            value_id.to_string(),
-                                        )
+                                        acp_v2::SessionConfigOptionValue::id(value_id.to_string())
                                     }),
                                 _ => None,
                             }
                         }
-                        acp::SessionConfigKind::Boolean(_) => default_value
+                        acp_v2::SessionConfigKind::Boolean(_) => default_value
                             .as_bool()
-                            .map(acp::SessionConfigOptionValue::boolean),
+                            .map(acp_v2::SessionConfigOptionValue::boolean),
                         _ => None,
                     };
 
                     if let Some(value_to_apply) = value_to_apply {
                         let initial_value = match &config_option.kind {
-                            acp::SessionConfigKind::Select(select) => {
-                                acp::SessionConfigOptionValue::value_id(
-                                    select.current_value.clone(),
-                                )
+                            acp_v2::SessionConfigKind::Select(select) => {
+                                acp_v2::SessionConfigOptionValue::id(select.current_value.clone())
                             }
-                            acp::SessionConfigKind::Boolean(boolean) => {
-                                acp::SessionConfigOptionValue::boolean(boolean.current_value)
+                            acp_v2::SessionConfigKind::Boolean(boolean) => {
+                                acp_v2::SessionConfigOptionValue::boolean(boolean.current_value)
                             }
                             _ => return None,
                         };
 
-                        Some((config_option.id.clone(), value_to_apply, initial_value))
+                        Some((
+                            config_option.config_id.clone(),
+                            value_to_apply,
+                            initial_value,
+                        ))
                     } else {
                         log::warn!(
                             "`{}` is not a valid value for config option `{}` in {}",
                             default_value,
-                            config_option.id.0,
+                            config_option.config_id.0,
                             id
                         );
                         None
@@ -1369,8 +1369,12 @@ impl AcpConnection {
         };
 
         for (config_id, default_value, initial_value) in defaults_to_apply {
+            let Some(wire_value) =
+                acp_thread::config_options::value_to_v1(default_value.clone()).log_err()
+            else {
+                continue;
+            };
             cx.spawn({
-                let default_value_for_request = default_value.clone();
                 let session_id = session_id.clone();
                 let config_id_clone = config_id.clone();
                 let config_opts = config_options.clone();
@@ -1379,8 +1383,8 @@ impl AcpConnection {
                     let result = conn
                         .send_request(acp::SetSessionConfigOptionRequest::new(
                             session_id,
-                            config_id_clone.clone(),
-                            default_value_for_request,
+                            acp::SessionConfigId::new(config_id_clone.0.clone()),
+                            wire_value,
                         ))
                         .block_task()
                         .await
@@ -1388,17 +1392,20 @@ impl AcpConnection {
 
                     if result.is_none() {
                         let mut opts = config_opts.borrow_mut();
-                        if let Some(opt) = opts.iter_mut().find(|o| o.id == config_id_clone) {
+                        if let Some(opt) = opts
+                            .iter_mut()
+                            .find(|option| option.config_id == config_id_clone)
+                        {
                             match (&mut opt.kind, &initial_value) {
                                 (
-                                    acp::SessionConfigKind::Select(select),
-                                    acp::SessionConfigOptionValue::ValueId { value },
+                                    acp_v2::SessionConfigKind::Select(select),
+                                    acp_v2::SessionConfigOptionValue::Id { value },
                                 ) => {
                                     select.current_value = value.clone();
                                 }
                                 (
-                                    acp::SessionConfigKind::Boolean(boolean),
-                                    acp::SessionConfigOptionValue::Boolean { value },
+                                    acp_v2::SessionConfigKind::Boolean(boolean),
+                                    acp_v2::SessionConfigOptionValue::Boolean { value },
                                 ) => {
                                     boolean.current_value = *value;
                                 }
@@ -1411,17 +1418,17 @@ impl AcpConnection {
             .detach();
 
             let mut opts = config_options.borrow_mut();
-            if let Some(opt) = opts.iter_mut().find(|o| o.id == config_id) {
+            if let Some(opt) = opts.iter_mut().find(|option| option.config_id == config_id) {
                 match (&mut opt.kind, &default_value) {
                     (
-                        acp::SessionConfigKind::Select(select),
-                        acp::SessionConfigOptionValue::ValueId { value },
+                        acp_v2::SessionConfigKind::Select(select),
+                        acp_v2::SessionConfigOptionValue::Id { value },
                     ) => {
                         select.current_value = value.clone();
                     }
                     (
-                        acp::SessionConfigKind::Boolean(boolean),
-                        acp::SessionConfigOptionValue::Boolean { value },
+                        acp_v2::SessionConfigKind::Boolean(boolean),
+                        acp_v2::SessionConfigOptionValue::Boolean { value },
                     ) => {
                         boolean.current_value = *value;
                     }
@@ -1610,7 +1617,7 @@ impl AgentConnection for AcpConnection {
             .await
             .map_err(map_acp_error)?;
 
-            let (modes, config_options) = config_state(response.modes, response.config_options);
+            let (modes, config_options) = config_state(response.modes, response.config_options)?;
 
             let default_mode = self.defaults.mode();
             if let Some(default_mode) = default_mode {
@@ -4078,7 +4085,7 @@ mod tests {
                 AgentConfigOptionValue::Boolean(true),
             )]),
         );
-        let config_options = Rc::new(RefCell::new(vec![acp::SessionConfigOption::boolean(
+        let config_options = Rc::new(RefCell::new(vec![acp_v2::SessionConfigOption::boolean(
             "web_search",
             "Web Search",
             false,
@@ -4096,46 +4103,113 @@ mod tests {
         let requests = set_config_requests
             .lock()
             .expect("set config requests mutex poisoned");
-        assert_eq!(requests.len(), 1);
         assert_eq!(
-            requests[0].config_id,
-            acp::SessionConfigId::new("web_search")
-        );
-        assert_eq!(
-            requests[0].value,
-            acp::SessionConfigOptionValue::boolean(true)
+            requests.as_slice(),
+            &[serde_json::json!({
+                "sessionId": "session-config-defaults", "configId": "web_search",
+                "type": "boolean", "value": true
+            })]
         );
 
         let options = config_options.borrow();
         assert!(
-            matches!(&options[0].kind, acp::SessionConfigKind::Boolean(boolean) if boolean.current_value)
+            matches!(&options[0].kind, acp_v2::SessionConfigKind::Boolean(boolean) if boolean.current_value)
+        );
+    }
+
+    #[gpui::test]
+    async fn shared_config_values_use_v1_wire_shapes(cx: &mut gpui::TestAppContext) {
+        use acp_thread::AgentSessionConfigOptions;
+
+        let (connection, requests) = connect_config_defaults_test_agent(cx).await;
+        let config = ConfigOptions::new(Rc::new(RefCell::new(vec![
+            acp_v2::SessionConfigOption::boolean("config", "Config", false),
+        ])));
+        let options = AcpSessionConfigOptions {
+            session_id: acp::SessionId::new("session"),
+            connection: connection.connection.clone(),
+            state: config.config_options,
+            watch_tx: config.tx,
+            watch_rx: config.rx,
+        };
+        let original = options.config_options();
+        let unknown =
+            acp_v2::SessionConfigOptionValue::Other(acp_v2::OtherSessionConfigOptionValue::new(
+                "_custom",
+                serde_json::json!("private-value"),
+                Default::default(),
+            ));
+        assert!(
+            cx.update(|cx| options.set_config_option("config".into(), unknown, cx))
+                .await
+                .is_err()
+        );
+        assert_eq!(options.config_options(), original);
+        assert!(requests.lock().expect("requests").is_empty());
+
+        for value in [
+            acp_v2::SessionConfigOptionValue::id("choice"),
+            acp_v2::SessionConfigOptionValue::boolean(true),
+        ] {
+            let updated = cx
+                .update(|cx| options.set_config_option("config".into(), value, cx))
+                .await
+                .expect("supported v1 value");
+            assert!(updated.is_empty());
+            assert_eq!(options.config_options(), updated);
+        }
+        assert_eq!(
+            requests.lock().expect("requests").as_slice(),
+            &[
+                serde_json::json!({"sessionId": "session", "configId": "config", "value": "choice"}),
+                serde_json::json!({
+                    "sessionId": "session", "configId": "config", "type": "boolean", "value": true
+                })
+            ]
         );
     }
 
     async fn connect_config_defaults_test_agent(
         cx: &mut gpui::TestAppContext,
-    ) -> (
-        AcpConnection,
-        Arc<Mutex<Vec<acp::SetSessionConfigOptionRequest>>>,
-    ) {
+    ) -> (AcpConnection, Arc<Mutex<Vec<serde_json::Value>>>) {
         let set_config_requests = Arc::new(Mutex::new(Vec::new()));
-        let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
+        let (client_transport, client_inspection) = agent_client_protocol::Channel::duplex();
+        let (agent_inspection, agent_transport) = agent_client_protocol::Channel::duplex();
+        cx.background_spawn({
+            let set_config_requests = set_config_requests.clone();
+            async move {
+                agent_client_protocol::Channel::bridge_with_inspection(
+                    client_inspection,
+                    agent_inspection,
+                    move |message| {
+                        if let agent_client_protocol::RawJsonRpcMessage::Request(request) = message
+                            && request.method.as_ref() == "session/set_config_option"
+                        {
+                            set_config_requests
+                                .lock()
+                                .expect("set config requests mutex poisoned")
+                                .push(
+                                    serde_json::to_value(&request.params)
+                                        .expect("raw config request parameters"),
+                                );
+                        }
+                        Ok(())
+                    },
+                    |_| Ok(()),
+                )
+                .await
+                .log_err();
+            }
+        })
+        .detach();
 
         cx.background_spawn(
             Agent
                 .builder()
                 .name("config-defaults-test-agent")
                 .on_receive_request(
-                    {
-                        let set_config_requests = set_config_requests.clone();
-                        async move |req: acp::SetSessionConfigOptionRequest, responder, _cx| {
-                            set_config_requests
-                                .lock()
-                                .expect("set config requests mutex poisoned")
-                                .push(req);
-
-                            responder.respond(acp::SetSessionConfigOptionResponse::new(Vec::new()))
-                        }
+                    async move |_request: acp::SetSessionConfigOptionRequest, responder, _cx| {
+                        responder.respond(acp::SetSessionConfigOptionResponse::new(Vec::new()))
                     },
                     agent_client_protocol::on_receive_request!(),
                 )
@@ -4494,6 +4568,22 @@ exit 7
         Arc<std::sync::Mutex<Option<async_channel::Receiver<()>>>>,
         Task<anyhow::Result<()>>,
     ) {
+        connect_fake_agent_with_handle(close_session_gate, None, cx).await
+    }
+
+    async fn connect_fake_agent_with_handle(
+        close_session_gate: Option<async_channel::Receiver<()>>,
+        agent_sender: Option<futures::channel::oneshot::Sender<ConnectionTo<Client>>>,
+        cx: &mut gpui::TestAppContext,
+    ) -> (
+        Rc<AcpConnection>,
+        Entity<project::Project>,
+        Arc<AtomicUsize>,
+        Arc<AtomicUsize>,
+        Arc<std::sync::Mutex<Vec<acp::SessionUpdate>>>,
+        Arc<std::sync::Mutex<Option<async_channel::Receiver<()>>>>,
+        Task<anyhow::Result<()>>,
+    ) {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
@@ -4617,7 +4707,12 @@ exit 7
                 async move |_notif: acp::CancelNotification, _cx| Ok(()),
                 agent_client_protocol::on_receive_notification!(),
             )
-            .connect_to(agent_transport);
+            .connect_with(agent_transport, async move |agent| {
+                if let Some(sender) = agent_sender {
+                    assert!(sender.send(agent).is_ok(), "receive fake agent handle");
+                }
+                futures::future::pending::<Result<(), agent_client_protocol::Error>>().await
+            });
 
         let agent_io_task = cx.background_spawn(agent_future);
 
@@ -4704,6 +4799,172 @@ exit 7
             load_session_gate,
             keep_agent_alive,
         )
+    }
+
+    #[gpui::test]
+    async fn test_permission_rpc_cancellation_does_not_cancel_successor(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (agent_sender, agent_receiver) = futures::channel::oneshot::channel();
+        let (connection, project, _, _, _, _, _keep_agent_alive) =
+            connect_fake_agent_with_handle(None, Some(agent_sender), cx).await;
+        let agent = agent_receiver.await.expect("fake agent handle");
+        let session_id = acp::SessionId::new("permission-session");
+        let thread = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    session_id.clone(),
+                    project,
+                    PathList::new(&[std::path::Path::new("/a")]),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("load permission session");
+        cx.background_executor.allow_parking();
+
+        let timeout = cx
+            .background_executor
+            .timer(std::time::Duration::from_secs(5));
+        let exchange = async {
+            let tool_id = acp::ToolCallId::new("reused-tool");
+            let permission = |option_id: &str| {
+                acp::RequestPermissionRequest::new(
+                    session_id.clone(),
+                    acp::ToolCallUpdate::new(
+                        tool_id.clone(),
+                        acp::ToolCallUpdateFields::default()
+                            .title("Run a command")
+                            .status(acp::ToolCallStatus::Pending),
+                    ),
+                    vec![acp::PermissionOption::new(
+                        option_id.to_owned(),
+                        "Allow once",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )],
+                )
+            };
+            let old = agent.send_request(permission("allow-old"));
+            cx.run_until_parked();
+            let old_id = thread.read_with(cx, |thread, _| {
+                let request = thread
+                    .permission_request_for_tool(&tool_id)
+                    .expect("first permission request");
+                assert_eq!(request.legacy_tool_call_id(), Some(&tool_id));
+                request.id
+            });
+
+            let successor = agent.send_request(permission("allow-successor"));
+            let executor = cx.executor();
+            let dispatcher = executor
+                .dispatcher()
+                .as_test()
+                .expect("deterministic test dispatcher");
+            let drain_sdk = || {
+                for _ in 0..1000 {
+                    if !dispatcher.tick(true) {
+                        return;
+                    }
+                }
+                panic!("SDK dispatch did not drain within bounded ticks");
+            };
+            drain_sdk();
+            let (acknowledgment, mut dispatched) = futures::channel::oneshot::channel();
+            let barrier: ForegroundWork = Box::new(ForegroundBarrier { acknowledgment });
+            assert!(
+                connection.dispatch_tx.unbounded_send(barrier).is_ok(),
+                "enqueue permission setup barrier"
+            );
+            let mut setup_queued = false;
+            for _ in 0..1000 {
+                if dispatched
+                    .try_recv()
+                    .expect("live permission setup barrier")
+                    .is_some()
+                {
+                    setup_queued = true;
+                    break;
+                }
+                assert!(executor.tick(), "permission dispatch must make progress");
+            }
+            assert!(
+                setup_queued,
+                "permission setup queued within bounded dispatch"
+            );
+            thread.read_with(cx, |thread, _| {
+                assert_eq!(
+                    thread
+                        .permission_request_for_tool(&tool_id)
+                        .expect("old request still active before successor setup")
+                        .id,
+                    old_id
+                );
+            });
+
+            // Foreground FIFO puts successor setup before old cancellation cleanup,
+            // and cleanup before the old waiter consumes its superseded outcome.
+            old.cancel().expect("send old RPC cancellation");
+            drain_sdk();
+
+            let error = old
+                .block_task()
+                .await
+                .expect_err("old RPC must exercise RequestCancelled cleanup");
+            assert_eq!(error.code, ErrorCode::RequestCancelled);
+            let successor_id = thread.read_with(cx, |thread, _| {
+                assert!(thread.permission_request(old_id).is_none());
+                let successor_id = thread
+                    .permission_request_for_tool(&tool_id)
+                    .expect("successor survives old RPC cancellation")
+                    .id;
+                assert_ne!(successor_id, old_id);
+                assert_eq!(thread.pending_permission_requests().count(), 1);
+                let (_, call) = thread.tool_call(&tool_id).expect("tool presentation");
+                assert_eq!(call.authorization_id(), Some(successor_id));
+                assert_eq!(
+                    call.status(),
+                    acp_thread::ToolCallStatus::WaitingForConfirmation
+                );
+                successor_id
+            });
+            thread.update(cx, |thread, cx| {
+                thread.authorize_permission_request(
+                    successor_id,
+                    acp_thread::SelectedPermissionOutcome::new(
+                        acp::PermissionOptionId::new("allow-successor"),
+                        acp::PermissionOptionKind::AllowOnce,
+                    ),
+                    cx,
+                );
+            });
+            let response = successor
+                .block_task()
+                .await
+                .expect("successor RPC receives its exact offered choice");
+            assert_eq!(
+                response.outcome,
+                acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(
+                    "allow-successor"
+                ))
+            );
+            thread.read_with(cx, |thread, _| {
+                assert!(thread.permission_request(successor_id).is_none());
+                assert_eq!(thread.pending_permission_requests().count(), 0);
+                let (_, call) = thread.tool_call(&tool_id).expect("tool presentation");
+                assert_eq!(call.authorization_id(), None);
+                assert_eq!(call.status(), acp_thread::ToolCallStatus::InProgress);
+            });
+            thread
+                .update(cx, |thread, cx| thread.send_raw("channel still usable", cx))
+                .await
+                .expect("next SDK prompt succeeds after old RPC cancellation");
+        };
+        futures::pin_mut!(exchange, timeout);
+        if let futures::future::Either::Right(_) = futures::future::select(exchange, timeout).await
+        {
+            panic!("timed out exercising permission RPC supersession and cancellation");
+        }
     }
 
     #[gpui::test]
@@ -5002,7 +5263,10 @@ exit 7
         let session = sessions.get(&session_id).expect("loaded session");
         assert_eq!(session.thread.entity_id(), thread.entity_id());
         let options = session.config_options.as_ref().expect("loaded config");
-        assert_eq!(*options.config_options.borrow(), updated_options);
+        assert_eq!(
+            *options.config_options.borrow(),
+            acp_thread::config_options::from_v1(updated_options).expect("shared config options")
+        );
     }
 
     #[gpui::test]
@@ -5552,16 +5816,17 @@ fn mcp_servers_for_project(project: &Entity<Project>, cx: &App) -> Vec<acp::McpS
 fn config_state(
     modes: Option<acp::SessionModeState>,
     config_options: Option<Vec<acp::SessionConfigOption>>,
-) -> (
+) -> Result<(
     Option<Rc<RefCell<acp::SessionModeState>>>,
-    Option<Rc<RefCell<Vec<acp::SessionConfigOption>>>>,
-) {
+    Option<Rc<RefCell<Vec<acp_v2::SessionConfigOption>>>>,
+)> {
     if let Some(opts) = config_options {
-        return (None, Some(Rc::new(RefCell::new(opts))));
+        let opts = acp_thread::config_options::from_v1(opts)?;
+        return Ok((None, Some(Rc::new(RefCell::new(opts)))));
     }
 
     let modes = modes.map(|modes| Rc::new(RefCell::new(modes)));
-    (modes, None)
+    Ok((modes, None))
 }
 
 struct AcpSessionModes {
@@ -5609,22 +5874,27 @@ impl acp_thread::AgentSessionModes for AcpSessionModes {
 struct AcpSessionConfigOptions {
     session_id: acp::SessionId,
     connection: ConnectionTo<Agent>,
-    state: Rc<RefCell<Vec<acp::SessionConfigOption>>>,
+    state: Rc<RefCell<Vec<acp_v2::SessionConfigOption>>>,
     watch_tx: Rc<RefCell<watch::Sender<()>>>,
     watch_rx: watch::Receiver<()>,
 }
 
 impl acp_thread::AgentSessionConfigOptions for AcpSessionConfigOptions {
-    fn config_options(&self) -> Vec<acp::SessionConfigOption> {
+    fn config_options(&self) -> Vec<acp_v2::SessionConfigOption> {
         self.state.borrow().clone()
     }
 
     fn set_config_option(
         &self,
-        config_id: acp::SessionConfigId,
-        value: acp::SessionConfigOptionValue,
+        config_id: acp_v2::SessionConfigId,
+        value: acp_v2::SessionConfigOptionValue,
         cx: &mut App,
-    ) -> Task<Result<Vec<acp::SessionConfigOption>>> {
+    ) -> Task<Result<Vec<acp_v2::SessionConfigOption>>> {
+        let value = match acp_thread::config_options::value_to_v1(value) {
+            Ok(value) => value,
+            Err(error) => return Task::ready(Err(error)),
+        };
+        let config_id = acp::SessionConfigId::new(config_id.0);
         let connection = self.connection.clone();
         let session_id = self.session_id.clone();
         let state = self.state.clone();
@@ -5639,9 +5909,10 @@ impl acp_thread::AgentSessionConfigOptions for AcpSessionConfigOptions {
                 .block_task()
                 .await?;
 
-            *state.borrow_mut() = response.config_options.clone();
+            let config_options = acp_thread::config_options::from_v1(response.config_options)?;
+            *state.borrow_mut() = config_options.clone();
             watch_tx.borrow_mut().send(()).ok();
-            Ok(response.config_options)
+            Ok(config_options)
         })
     }
 
@@ -5698,24 +5969,24 @@ fn handle_request_permission(
     };
 
     let cancellation = responder.cancellation();
-    let tool_call_id = args.tool_call.tool_call_id.clone();
     cx.spawn(async move |cx| {
-        let result: Result<_, acp::Error> = async {
-            let task = thread
-                .update(cx, |thread, cx| {
-                    thread.request_tool_call_authorization(
-                        args.tool_call,
-                        acp_thread::PermissionOptions::Flat(args.options),
-                        acp_thread::AuthorizationKind::PermissionGrant,
-                        cx,
-                    )
-                })
-                .flatten_acp()?;
-            cancellation
-                .run_until_cancelled(async { Ok(task.await) })
-                .await
-        }
-        .await;
+        let (request_id, task) = match thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization_with_id(
+                    args.tool_call,
+                    acp_thread::PermissionOptions::Flat(args.options),
+                    acp_thread::AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .flatten_acp()
+        {
+            Ok(request) => request,
+            Err(error) => return respond_err(responder, error),
+        };
+        let result = cancellation
+            .run_until_cancelled(async { Ok(task.await) })
+            .await;
 
         match result {
             Ok(outcome) => {
@@ -5727,7 +5998,7 @@ fn handle_request_permission(
                 if e.code == ErrorCode::RequestCancelled {
                     thread
                         .update(cx, |thread, cx| {
-                            thread.cancel_tool_call_authorization(&tool_call_id, cx)
+                            thread.cancel_permission_request(request_id, cx)
                         })
                         .log_err();
                 }
@@ -5961,7 +6232,12 @@ fn handle_session_notification(
     }) = &notification.update
     {
         if let Some((config_opts_cell, tx_cell)) = &config_opts_data {
-            *config_opts_cell.borrow_mut() = config_options.clone();
+            let Some(config_options) =
+                acp_thread::config_options::from_v1(config_options.clone()).log_err()
+            else {
+                return;
+            };
+            *config_opts_cell.borrow_mut() = config_options;
             tx_cell.borrow_mut().send(()).ok();
         }
     }
