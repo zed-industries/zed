@@ -11,7 +11,6 @@ use crate::{
     TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
-use collections::HashMap;
 #[cfg(any(test, feature = "test-support"))]
 use collections::VecDeque;
 use futures::channel::oneshot;
@@ -34,7 +33,6 @@ pub(crate) struct TestPlatform {
 
     pub(crate) active_window: RefCell<Option<TestWindow>>,
     active_display: Rc<dyn PlatformDisplay>,
-    display_refresh_intervals: RefCell<HashMap<DisplayId, Duration>>,
     display_change_callback: RefCell<Option<Box<dyn FnMut(DisplayEvent)>>>,
     active_cursor: Mutex<CursorStyle>,
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
@@ -143,32 +141,12 @@ impl TestPlatform {
         Self::with_platform(executor, foreground_executor, text_system, None)
     }
 
-    pub(crate) fn simulate_display_added(
-        &self,
-        display_id: DisplayId,
-        refresh_interval: Option<Duration>,
-    ) {
-        self.set_display_refresh_interval(display_id, refresh_interval);
+    pub(crate) fn simulate_display_added(&self, display_id: DisplayId) {
         self.report_display_event(DisplayEvent::Added(display_id));
     }
 
     pub(crate) fn simulate_display_removed(&self, display_id: DisplayId) {
-        self.display_refresh_intervals
-            .borrow_mut()
-            .remove(&display_id);
         self.report_display_event(DisplayEvent::Removed(display_id));
-    }
-
-    fn set_display_refresh_interval(
-        &self,
-        display_id: DisplayId,
-        refresh_interval: Option<Duration>,
-    ) {
-        let mut intervals = self.display_refresh_intervals.borrow_mut();
-        match refresh_interval {
-            Some(refresh_interval) => intervals.insert(display_id, refresh_interval),
-            None => intervals.remove(&display_id),
-        };
     }
 
     fn report_display_event(&self, event: DisplayEvent) {
@@ -197,10 +175,6 @@ impl TestPlatform {
             screen_capture_sources: Default::default(),
             active_cursor: Default::default(),
             active_display: Rc::new(TestDisplay::new()),
-            display_refresh_intervals: RefCell::new(HashMap::from_iter([(
-                DisplayId(1),
-                Duration::from_secs(1) / 60,
-            )])),
             display_change_callback: Default::default(),
             active_window: Default::default(),
             expect_restart: Default::default(),
@@ -513,10 +487,6 @@ impl Platform for TestPlatform {
 
     fn on_display_change(&self, callback: Box<dyn FnMut(DisplayEvent)>) {
         *self.display_change_callback.borrow_mut() = Some(callback);
-    }
-
-    fn display_refresh_interval(&self, id: DisplayId) -> Option<Duration> {
-        self.display_refresh_intervals.borrow().get(&id).copied()
     }
 
     fn is_screen_capture_supported(&self) -> bool {

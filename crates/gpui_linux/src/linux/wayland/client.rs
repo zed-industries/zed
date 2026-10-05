@@ -1235,15 +1235,6 @@ impl WaylandConnection {
         None
     }
 
-    pub(crate) fn display_refresh_interval(&self, id: DisplayId) -> Option<Duration> {
-        self.0
-            .borrow()
-            .outputs
-            .iter()
-            .find(|(object_id, _)| display_id_for_output(object_id) == id)
-            .and_then(|(_, output)| output.refresh_interval)
-    }
-
     #[cfg(feature = "screen-capture")]
     pub(crate) fn is_screen_capture_supported(&self) -> bool {
         true
@@ -1801,9 +1792,14 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
                     return;
                 };
                 let id = output.id();
-                if state.outputs.insert(id.clone(), complete).is_none() {
-                    drop(state);
+                let added = state.outputs.insert(id.clone(), complete.clone()).is_none();
+                let windows = state.windows.values().cloned().collect::<Vec<_>>();
+                drop(state);
+                if added {
                     this.report_display_event(DisplayEvent::Added(display_id_for_output(&id)));
+                }
+                for window in windows {
+                    window.handle_output_changed(&id, &complete);
                 }
             }
             _ => {}

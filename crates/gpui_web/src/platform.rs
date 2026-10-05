@@ -371,12 +371,6 @@ impl Platform for WebPlatform {
     // The browser is the only display, and it never changes.
     fn on_display_change(&self, _callback: Box<dyn FnMut(gpui::DisplayEvent)>) {}
 
-    // Browsers don't expose the refresh rate; it could only be estimated from
-    // `requestAnimationFrame` cadence.
-    fn display_refresh_interval(&self, _id: gpui::DisplayId) -> Option<std::time::Duration> {
-        None
-    }
-
     fn active_window(&self) -> Option<AnyWindowHandle> {
         *self.active_window.borrow()
     }

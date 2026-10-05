@@ -1217,6 +1217,8 @@ pub struct Window {
     pub(crate) removed: bool,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: Option<DisplayId>,
+    refresh_interval: Option<Duration>,
+    display_observers: SubscriberSet<(), AnyObserver>,
     is_resizable: bool,
     is_minimizable: bool,
     sprite_atlas: Arc<dyn PlatformAtlas>,
@@ -1631,6 +1633,7 @@ impl Window {
         }
 
         let display_id = platform_window.display().map(|display| display.id());
+        let refresh_interval = platform_window.refresh_interval();
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
         let modifiers = platform_window.modifiers();
@@ -1961,6 +1964,14 @@ impl Window {
                     .log_err();
             }
         }));
+        platform_window.on_display_changed(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                handle
+                    .update(&mut cx, |_, window, cx| window.display_changed(cx))
+                    .log_err();
+            }
+        }));
         platform_window.on_appearance_changed(Box::new({
             let cx = cx.to_async();
             let foreground_executor = cx.foreground_executor().clone();
@@ -2116,6 +2127,8 @@ impl Window {
             removed: false,
             platform_window,
             display_id,
+            refresh_interval,
+            display_observers: SubscriberSet::new(),
             is_resizable,
             is_minimizable,
             sprite_atlas,
@@ -2779,7 +2792,6 @@ impl Window {
     pub fn bounds_changed(&mut self, cx: &mut App) {
         self.scale_factor = self.platform_window.scale_factor();
         self.viewport_size = self.platform_window.content_size();
-        self.display_id = self.platform_window.display().map(|display| display.id());
         self.mouse_position = self.platform_window.mouse_position();
 
         self.refresh();
@@ -2789,13 +2801,42 @@ impl Window {
             .retain(&(), |callback| callback(self, cx));
     }
 
+    fn display_changed(&mut self, cx: &mut App) {
+        let display_id = self.platform_window.display().map(|display| display.id());
+        let refresh_interval = self.platform_window.refresh_interval();
+        if (display_id, refresh_interval) == (self.display_id, self.refresh_interval) {
+            return;
+        }
+        self.display_id = display_id;
+        self.refresh_interval = refresh_interval;
+        self.display_observers
+            .clone()
+            .retain(&(), |callback| callback(self, cx));
+    }
+
     /// The time between refreshes of the display the window is on, as last
     /// reported by the platform. Variable refresh rate displays report their
-    /// maximum rate. Returns `None` when the platform doesn't report it. This
-    /// doesn't query the operating system.
-    pub fn refresh_interval(&self, cx: &App) -> Option<Duration> {
-        self.display_id
-            .and_then(|display_id| cx.display_refresh_interval(display_id))
+    /// maximum rate. Returns `None` when the platform doesn't report it.
+    pub fn refresh_interval(&self) -> Option<Duration> {
+        self.refresh_interval
+    }
+
+    /// Registers a callback invoked when the window moves to another display
+    /// or its display's refresh interval changes. [`Self::refresh_interval`]
+    /// already returns the new value when the callback runs.
+    pub fn observe_window_display(
+        &self,
+        mut callback: impl FnMut(&mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.display_observers.insert(
+            (),
+            Box::new(move |window, cx| {
+                callback(window, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
     }
 
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
@@ -8011,35 +8052,58 @@ mod tests {
         assert_eq!(test_window.frame_wake_count(), frame_wake_count);
     }
 
-    /// A window reads the refresh interval of the display it is on, and the
-    /// app hears about displays being connected and disconnected.
+    /// The platform tells a window when its display changes, and tells the app
+    /// when displays are connected or disconnected.
     #[gpui::test]
     fn test_display_tracking(cx: &mut TestAppContext) {
         use crate::{DisplayEvent, DisplayId};
 
         let sixty_hertz = Duration::from_secs(1) / 60;
         let one_hundred_twenty_hertz = Duration::from_secs(1) / 120;
+        let one_hundred_forty_four_hertz = Duration::from_secs(1) / 144;
 
         let display_events = Rc::new(RefCell::new(Vec::new()));
         let _display_subscription = cx.update({
             let display_events = display_events.clone();
             move |cx| cx.observe_displays(move |event, _| display_events.borrow_mut().push(event))
         });
+
         let window = cx.add_window(|_, _| EmptyView);
-        let refresh_interval = |cx: &mut TestAppContext| {
-            window
-                .update(cx, |_, window, cx| window.refresh_interval(cx))
-                .unwrap()
-        };
-        assert_eq!(refresh_interval(cx), Some(sixty_hertz));
+        let window_notifications = Rc::new(RefCell::new(Vec::new()));
+        let _window_subscription = window
+            .update(cx, {
+                let window_notifications = window_notifications.clone();
+                move |_, window, _| {
+                    assert_eq!(window.refresh_interval(), Some(sixty_hertz));
+                    window.observe_window_display(move |window, _| {
+                        window_notifications
+                            .borrow_mut()
+                            .push((window.display_id, window.refresh_interval()));
+                    })
+                }
+            })
+            .unwrap();
+        let test_window = cx.test_window(window.into());
 
-        cx.simulate_display_added(DisplayId(2), Some(one_hundred_twenty_hertz));
-        assert_eq!(refresh_interval(cx), Some(sixty_hertz));
+        cx.simulate_display_added(DisplayId(2));
+        assert!(window_notifications.borrow().is_empty());
 
-        cx.simulate_window_move_to_display(window.into(), DisplayId(2));
-        assert_eq!(refresh_interval(cx), Some(one_hundred_twenty_hertz));
+        test_window.simulate_display_change(DisplayId(2), Some(one_hundred_twenty_hertz));
+        assert_eq!(
+            window_notifications.take(),
+            [(Some(DisplayId(2)), Some(one_hundred_twenty_hertz))]
+        );
+
+        test_window.simulate_display_change(DisplayId(2), Some(one_hundred_forty_four_hertz));
+        // Platforms may report a change that isn't one.
+        test_window.simulate_display_change(DisplayId(2), Some(one_hundred_forty_four_hertz));
+        assert_eq!(
+            window_notifications.take(),
+            [(Some(DisplayId(2)), Some(one_hundred_forty_four_hertz))]
+        );
 
         cx.simulate_display_removed(DisplayId(1));
+        assert!(window_notifications.borrow().is_empty());
         assert_eq!(
             display_events.take(),
             [

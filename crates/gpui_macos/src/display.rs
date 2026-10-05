@@ -5,7 +5,7 @@ use cocoa::{
     base::{BOOL, NO, YES, id, nil},
     foundation::{NSArray, NSDictionary},
 };
-use collections::HashMap;
+use collections::HashSet;
 use core_foundation::base::CFRelease;
 use core_foundation::uuid::{CFUUIDGetUUIDBytes, CFUUIDRef};
 use core_graphics::display::{
@@ -153,14 +153,13 @@ impl PlatformDisplay for MacDisplay {
 }
 
 impl MacDisplay {
-    /// Reads the refresh interval of each active display from the system.
-    pub(crate) fn refresh_intervals() -> HashMap<DisplayId, Option<Duration>> {
-        Self::all()
-            .map(|display| (display.id(), display.refresh_interval()))
-            .collect()
+    /// The IDs of the active displays.
+    pub(crate) fn ids() -> HashSet<DisplayId> {
+        Self::all().map(|display| display.id()).collect()
     }
 
-    fn refresh_interval(&self) -> Option<Duration> {
+    /// Reads the display's refresh interval from the system.
+    pub(crate) fn refresh_interval(&self) -> Option<Duration> {
         // `maximumFramesPerSecond` is the ProMotion maximum, where the
         // display mode's rate is 0 on built-in panels.
         let screen_hertz = unsafe {

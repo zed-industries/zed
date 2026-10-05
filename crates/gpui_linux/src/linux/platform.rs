@@ -4,7 +4,6 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
-    time::Duration,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use std::{
@@ -12,6 +11,7 @@ use std::{
     fs::File,
     io::Read as _,
     os::fd::{AsFd, AsRawFd},
+    time::Duration,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -37,11 +37,10 @@ use crate::linux::{
 };
 use gpui::{
     Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
-    DisplayEvent, DisplayId, ForegroundExecutor, GraphicalEnvironment, Keymap, Menu, MenuItem,
-    OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Result, RunnableVariant, Task,
-    ThermalState, WindowAppearance, WindowButtonLayout, WindowParams, WindowingModes,
-    WindowingRequest,
+    DisplayEvent, ForegroundExecutor, GraphicalEnvironment, Keymap, Menu, MenuItem, OwnedMenu,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, Result, RunnableVariant, Task, ThermalState,
+    WindowAppearance, WindowButtonLayout, WindowParams, WindowingModes, WindowingRequest,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use gpui::{Pixels, Point, px};
@@ -715,10 +714,6 @@ impl Platform for LinuxPlatform {
 
     fn on_display_change(&self, callback: Box<dyn FnMut(DisplayEvent)>) {
         self.with_common(|common| common.callbacks.display_change = Some(callback));
-    }
-
-    fn display_refresh_interval(&self, id: DisplayId) -> Option<Duration> {
-        self.connection.borrow().display_refresh_interval(id)
     }
 
     #[cfg(feature = "screen-capture")]

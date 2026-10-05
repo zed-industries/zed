@@ -8,11 +8,10 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
 };
 
 use anyhow::{Context as _, Result, anyhow};
-use collections::HashMap;
+use collections::HashSet;
 use futures::channel::oneshot::Receiver;
 use gpui_util::{ResultExt, get_powershell, new_std_command};
 use itertools::Itertools;
@@ -101,7 +100,7 @@ pub(crate) struct WindowsPlatformState {
     pub(crate) draw_coordinator: Rc<DrawCoordinator>,
     directx_devices: RefCell<Option<DirectXDevices>>,
     /// Updated when a window reports `WM_DISPLAYCHANGE`.
-    display_refresh_intervals: RefCell<HashMap<DisplayId, Option<Duration>>>,
+    display_ids: RefCell<HashSet<DisplayId>>,
 }
 
 #[derive(Default)]
@@ -132,7 +131,7 @@ impl WindowsPlatformState {
             draw_coordinator: Rc::new(DrawCoordinator::new()),
             directx_devices: RefCell::new(directx_devices),
             menus: RefCell::new(Vec::new()),
-            display_refresh_intervals: RefCell::new(WindowsDisplay::refresh_intervals()),
+            display_ids: RefCell::new(WindowsDisplay::ids()),
         }
     }
 }
@@ -745,16 +744,6 @@ impl Platform for WindowsPlatform {
             .set(Some(callback));
     }
 
-    fn display_refresh_interval(&self, id: DisplayId) -> Option<Duration> {
-        self.inner
-            .state
-            .display_refresh_intervals
-            .borrow()
-            .get(&id)
-            .copied()
-            .flatten()
-    }
-
     #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
         true
@@ -1237,9 +1226,9 @@ impl WindowsPlatformInner {
     }
 
     fn handle_displays_changed(&self) -> Option<isize> {
-        let current = WindowsDisplay::refresh_intervals();
-        let events = gpui::display_events(&self.state.display_refresh_intervals.borrow(), &current);
-        *self.state.display_refresh_intervals.borrow_mut() = current;
+        let current = WindowsDisplay::ids();
+        let events = gpui::display_events(&self.state.display_ids.borrow(), &current);
+        *self.state.display_ids.borrow_mut() = current;
         self.with_callback(
             |callbacks| &callbacks.display_change,
             |callback| {

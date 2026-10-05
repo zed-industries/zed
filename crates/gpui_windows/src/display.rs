@@ -1,4 +1,4 @@
-use collections::HashMap;
+use collections::HashSet;
 use gpui_util::ResultExt;
 use itertools::Itertools;
 use smallvec::SmallVec;
@@ -131,17 +131,19 @@ impl WindowsDisplay {
             .collect()
     }
 
-    /// Reads the refresh interval of each connected monitor from the system.
-    pub(crate) fn refresh_intervals() -> HashMap<DisplayId, Option<std::time::Duration>> {
+    /// The IDs of the connected monitors.
+    pub(crate) fn ids() -> HashSet<DisplayId> {
         available_monitors()
             .into_iter()
-            .map(|monitor| {
-                let refresh_interval = get_monitor_info(monitor)
-                    .log_err()
-                    .and_then(|info| refresh_interval_for_device(&info.szDevice));
-                (Self::display_id_for_monitor(monitor), refresh_interval)
-            })
+            .map(Self::display_id_for_monitor)
             .collect()
+    }
+
+    /// Reads the monitor's refresh interval from the system.
+    pub(crate) fn refresh_interval(&self) -> Option<std::time::Duration> {
+        get_monitor_info(self.handle)
+            .log_err()
+            .and_then(|info| refresh_interval_for_device(&info.szDevice))
     }
 
     pub fn physical_bounds(&self) -> Bounds<DevicePixels> {

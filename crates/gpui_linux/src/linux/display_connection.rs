@@ -1,7 +1,7 @@
-use std::{path::PathBuf, rc::Rc, time::Duration};
+use std::{path::PathBuf, rc::Rc};
 
 use gpui::{
-    AnyWindowHandle, ClipboardItem, CursorStyle, DisplayId, GraphicalEnvironment, PlatformDisplay,
+    AnyWindowHandle, ClipboardItem, CursorStyle, GraphicalEnvironment, PlatformDisplay,
     PlatformKeyboardLayout, PlatformWindow, WindowParams, WindowingModes,
 };
 
@@ -124,10 +124,6 @@ impl DisplayConnection {
 
     pub(crate) fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         dispatch!(self, connection => connection.displays(), headless(connection) => connection.displays())
-    }
-
-    pub(crate) fn display_refresh_interval(&self, id: DisplayId) -> Option<Duration> {
-        dispatch!(self, connection => connection.display_refresh_interval(id), headless => None)
     }
 
     pub(crate) fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {

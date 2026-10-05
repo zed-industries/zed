@@ -972,6 +972,15 @@ impl PlatformWindow for WebWindow {
         self.inner.callbacks.borrow_mut().moved = Some(callback);
     }
 
+    // Browsers don't expose the refresh rate; it could only be estimated from
+    // `requestAnimationFrame` cadence.
+    fn refresh_interval(&self) -> Option<std::time::Duration> {
+        None
+    }
+
+    // The browser is the only display, and it never changes.
+    fn on_display_changed(&self, _callback: Box<dyn FnMut()>) {}
+
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
         self.inner.callbacks.borrow_mut().should_close = Some(callback);
     }

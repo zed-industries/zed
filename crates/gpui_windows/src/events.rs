@@ -210,7 +210,7 @@ impl WindowsWindowInner {
             // monitor is invalid, we do nothing.
             if !monitor.is_invalid() && self.state.display.get().handle != monitor {
                 // we will get the same monitor if we only have one
-                self.state.display.set(WindowsDisplay::new(
+                self.set_display(WindowsDisplay::new(
                     WindowsDisplay::display_id_for_monitor(monitor),
                 )?);
             }
@@ -969,8 +969,19 @@ impl WindowsWindowInner {
             return None;
         }
         let new_display = WindowsDisplay::new(WindowsDisplay::display_id_for_monitor(new_monitor))?;
-        self.state.display.set(new_display);
+        self.set_display(new_display);
         Some(0)
+    }
+
+    /// Records the window's monitor, rereads its refresh interval, and
+    /// reports the change.
+    fn set_display(&self, display: WindowsDisplay) {
+        self.state.refresh_interval.set(display.refresh_interval());
+        self.state.display.set(display);
+        if let Some(mut callback) = self.state.callbacks.display_changed.take() {
+            callback();
+            self.state.callbacks.display_changed.set(Some(callback));
+        }
     }
 
     fn handle_hit_test_msg(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {

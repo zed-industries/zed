@@ -472,29 +472,14 @@ impl TestAppContext {
             .simulate_visibility_change(visibility);
     }
 
-    /// Simulates connecting a display with the given refresh interval.
-    pub fn simulate_display_added(
-        &self,
-        display_id: DisplayId,
-        refresh_interval: Option<Duration>,
-    ) {
-        self.test_platform
-            .simulate_display_added(display_id, refresh_interval);
+    /// Simulates connecting a display.
+    pub fn simulate_display_added(&self, display_id: DisplayId) {
+        self.test_platform.simulate_display_added(display_id);
     }
 
     /// Simulates disconnecting a display.
     pub fn simulate_display_removed(&self, display_id: DisplayId) {
         self.test_platform.simulate_display_removed(display_id);
-    }
-
-    /// Simulates the platform moving the window to another display.
-    pub fn simulate_window_move_to_display(
-        &self,
-        window_handle: AnyWindowHandle,
-        display_id: DisplayId,
-    ) {
-        self.test_window(window_handle)
-            .simulate_move_to_display(display_id);
     }
 
     /// Simulates visible viewport changes without resizing the window's layout area.

@@ -4,7 +4,7 @@ use std::{
     ptr::NonNull,
     rc::Rc,
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use calloop::ping::Ping;
@@ -55,6 +55,7 @@ pub(crate) struct Callbacks {
     hover_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
+    display_changed: Option<Box<dyn FnMut()>>,
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
@@ -1426,7 +1427,7 @@ impl WaylandWindowStatePtr {
                     drop(state);
                 }
                 if display_changed {
-                    self.report_moved();
+                    self.report_display_changed();
                 }
                 self.request_redraw();
             }
@@ -1448,7 +1449,7 @@ impl WaylandWindowStatePtr {
                     drop(state);
                 }
                 if display_changed {
-                    self.report_moved();
+                    self.report_display_changed();
                 }
                 self.request_redraw();
             }
@@ -1617,13 +1618,32 @@ impl WaylandWindowStatePtr {
         }
     }
 
-    /// Wayland doesn't reveal window positions, so this only reports a move
-    /// to another output, for GPUI to reread the window's display.
-    fn report_moved(&self) {
-        let callback = self.callbacks.borrow_mut().moved.take();
+    fn report_display_changed(&self) {
+        let callback = self.callbacks.borrow_mut().display_changed.take();
         if let Some(mut callback) = callback {
             callback();
-            self.callbacks.borrow_mut().moved = Some(callback);
+            self.callbacks.borrow_mut().display_changed = Some(callback);
+        }
+    }
+
+    /// Updates the window's copy of an output it is on after the compositor
+    /// changes the output's properties, such as its mode.
+    pub fn handle_output_changed(&self, id: &ObjectId, output: &Output) {
+        let mut state = self.state.borrow_mut();
+        let Some(entered) = state.outputs.get_mut(id) else {
+            return;
+        };
+        *entered = output.clone();
+        let is_display = match &mut state.display {
+            Some((display_id, display)) if display_id == id => {
+                *display = output.clone();
+                true
+            }
+            _ => false,
+        };
+        drop(state);
+        if is_display {
+            self.report_display_changed();
         }
     }
 
@@ -1964,6 +1984,17 @@ impl PlatformWindow for WaylandWindow {
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.0.callbacks.borrow_mut().moved = Some(callback);
+    }
+
+    fn refresh_interval(&self) -> Option<Duration> {
+        self.borrow()
+            .display
+            .as_ref()
+            .and_then(|(_, output)| output.refresh_interval)
+    }
+
+    fn on_display_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.borrow_mut().display_changed = Some(callback);
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {

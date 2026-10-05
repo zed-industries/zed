@@ -1587,14 +1587,6 @@ impl App {
         subscription
     }
 
-    /// The time between a display's refreshes, as last reported by the
-    /// platform. Variable refresh rate displays report their maximum rate.
-    /// Returns `None` for unknown displays and on platforms that don't report
-    /// it. This doesn't query the operating system.
-    pub fn display_refresh_interval(&self, id: DisplayId) -> Option<Duration> {
-        self.platform.display_refresh_interval(id)
-    }
-
     /// Invokes a handler when the system wakes from sleep.
     pub fn on_system_wake<F>(&self, mut callback: F) -> Subscription
     where

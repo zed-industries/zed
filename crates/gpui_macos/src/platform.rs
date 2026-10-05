@@ -20,7 +20,7 @@ use cocoa::{
         NSArray, NSAutoreleasePool, NSBundle, NSInteger, NSProcessInfo, NSString, NSUInteger, NSURL,
     },
 };
-use collections::HashMap;
+use collections::HashSet;
 use core_foundation::{
     base::{CFRelease, CFType, CFTypeRef, OSStatus, TCFType},
     boolean::CFBoolean,
@@ -70,7 +70,6 @@ use std::{
         Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
 };
 
 #[allow(non_upper_case_globals)]
@@ -202,7 +201,7 @@ pub(crate) struct MacPlatformState {
     on_thermal_state_change: Option<Box<dyn FnMut()>>,
     on_display_change: Option<Box<dyn FnMut(DisplayEvent)>>,
     /// Updated when AppKit reports a screen configuration change.
-    display_refresh_intervals: HashMap<DisplayId, Option<Duration>>,
+    display_ids: HashSet<DisplayId>,
     on_system_sleep: Option<Box<dyn FnMut()>>,
     on_system_wake: Option<Box<dyn FnMut()>>,
     system_power_observers_registered: bool,
@@ -280,7 +279,7 @@ impl MacPlatform {
             on_keyboard_layout_change: None,
             on_thermal_state_change: None,
             on_display_change: None,
-            display_refresh_intervals: HashMap::default(),
+            display_ids: HashSet::default(),
             on_system_sleep: None,
             on_system_wake: None,
             system_power_observers_registered: false,
@@ -753,15 +752,6 @@ impl Platform for MacPlatform {
 
     fn on_display_change(&self, callback: Box<dyn FnMut(DisplayEvent)>) {
         self.0.lock().on_display_change = Some(callback);
-    }
-
-    fn display_refresh_interval(&self, id: DisplayId) -> Option<Duration> {
-        self.0
-            .lock()
-            .display_refresh_intervals
-            .get(&id)
-            .copied()
-            .flatten()
     }
 
     #[cfg(feature = "screen-capture")]
@@ -1452,10 +1442,10 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
         // SAFETY: `this` is a live Objective-C object; only the pointer's type changes.
         let observer = &*(this as *mut Object as *const AnyObject);
         let platform = get_mac_platform(this);
-        let display_refresh_intervals = MacDisplay::refresh_intervals();
+        let display_ids = MacDisplay::ids();
         let callback = {
             let mut state = platform.0.lock();
-            state.display_refresh_intervals = display_refresh_intervals;
+            state.display_ids = display_ids;
             if (state.on_system_sleep.is_some() || state.on_system_wake.is_some())
                 && !state.system_power_observers_registered
             {
@@ -1565,10 +1555,10 @@ extern "C" fn on_screen_parameters_change(this: &mut Object, _: Sel, _: id) {
 
     extern "C" fn on_screen_parameters_change(context: *mut c_void) {
         let platform = unsafe { &*(context as *const MacPlatform) };
-        let current = MacDisplay::refresh_intervals();
+        let current = MacDisplay::ids();
         let mut lock = platform.0.lock();
-        let events = gpui::display_events(&lock.display_refresh_intervals, &current);
-        lock.display_refresh_intervals = current;
+        let events = gpui::display_events(&lock.display_ids, &current);
+        lock.display_ids = current;
         if events.is_empty() {
             return;
         }

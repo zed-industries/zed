@@ -48,7 +48,7 @@ use crate::{
 use anyhow::bail;
 use anyhow::{Context as _, Result};
 use async_task::Runnable;
-use collections::{FxHashMap, HashMap};
+use collections::{FxHashMap, HashSet};
 use futures::channel::oneshot;
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 use image::RgbaImage;
@@ -133,17 +133,15 @@ pub enum DisplayEvent {
 
 /// The events that turn one snapshot of the connected displays into the next,
 /// for platforms whose display notifications don't say what changed.
-pub fn display_events<T>(
-    previous: &HashMap<DisplayId, T>,
-    current: &HashMap<DisplayId, T>,
+pub fn display_events(
+    previous: &HashSet<DisplayId>,
+    current: &HashSet<DisplayId>,
 ) -> Vec<DisplayEvent> {
     let removed = previous
-        .keys()
-        .filter(|id| !current.contains_key(id))
+        .difference(current)
         .map(|id| DisplayEvent::Removed(*id));
     let added = current
-        .keys()
-        .filter(|id| !previous.contains_key(id))
+        .difference(previous)
         .map(|id| DisplayEvent::Added(*id));
     removed.chain(added).collect()
 }
@@ -389,14 +387,6 @@ pub trait Platform: 'static {
     /// Registers the callback invoked when a display is added or removed. The
     /// callback runs on the main thread.
     fn on_display_change(&self, callback: Box<dyn FnMut(DisplayEvent)>);
-    /// The time between a display's refreshes, as last reported by the
-    /// platform's display notifications. Variable refresh rate displays report
-    /// their maximum rate. `None` for unknown displays and on platforms that
-    /// don't report it.
-    ///
-    /// Returns cached state without querying the operating system, so it is
-    /// cheap enough to call every frame.
-    fn display_refresh_interval(&self, id: DisplayId) -> Option<Duration>;
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         None
@@ -1261,6 +1251,17 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_moved(&self, callback: Box<dyn FnMut()>);
+    /// The time between refreshes of the display the window is on. Variable
+    /// refresh rate displays report their maximum rate. `None` when the
+    /// platform doesn't report it.
+    ///
+    /// Returns the value the platform cached when the window's display last
+    /// changed, without querying the operating system.
+    fn refresh_interval(&self) -> Option<Duration>;
+    /// Registers the callback invoked when the window moves to another display
+    /// or its display's refresh interval changes. Calls may be spurious. The
+    /// callback runs on the main thread outside of any window update.
+    fn on_display_changed(&self, callback: Box<dyn FnMut()>);
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);
@@ -3636,8 +3637,8 @@ mod tests {
 
     #[test]
     fn test_display_events() {
-        let previous = HashMap::from_iter([(DisplayId(1), ()), (DisplayId(2), ())]);
-        let current = HashMap::from_iter([(DisplayId(1), ()), (DisplayId(3), ())]);
+        let previous = collections::HashSet::from_iter([DisplayId(1), DisplayId(2)]);
+        let current = collections::HashSet::from_iter([DisplayId(1), DisplayId(3)]);
         let events = display_events(&previous, &current)
             .into_iter()
             .collect::<HashSet<_>>();
