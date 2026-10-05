@@ -2058,15 +2058,13 @@ impl ConversationView {
                 );
             }
             AcpThreadEvent::TitleUpdated => {
-                let title = self.title_override(cx).or_else(|| thread.read(cx).title());
-                if let Some(title) = title
-                    && let Some(active_thread) = self.thread_view(&session_id)
-                {
-                    let title_editor = active_thread.read(cx).title_editor.clone();
-                    title_editor.update(cx, |editor, cx| {
-                        if editor.text(cx) != title {
-                            editor.set_text(title, window, cx);
-                        }
+                let title = self
+                    .title_override(cx)
+                    .or_else(|| thread.read(cx).title())
+                    .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into());
+                if let Some(active_thread) = self.thread_view(&session_id) {
+                    active_thread.update(cx, |active_thread, cx| {
+                        active_thread.sync_title_editor(title, window, cx);
                     });
                 }
                 cx.notify();
@@ -14104,15 +14102,113 @@ pub(crate) mod tests {
 
     #[gpui::test]
     async fn test_manually_editing_title_updates_acp_thread_title(cx: &mut TestAppContext) {
+        use agent_client_protocol::schema::MaybeUndefined;
+
         init_test(cx);
 
+        let connection = StubAgentConnection::new();
         let (conversation_view, cx) =
-            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
         add_to_workspace(conversation_view.clone(), cx);
 
         let active = active_thread(&conversation_view, cx);
         let title_editor = cx.read(|cx| active.read(cx).title_editor.clone());
         let thread = cx.read(|cx| active.read(cx).thread.clone());
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        let thread_id = conversation_view.read_with(cx, |view, _cx| view.thread_id);
+        let assert_title =
+            |title: Option<&str>, title_override: Option<&str>, cx: &VisualTestContext| {
+                let display_title = title_override.or(title).unwrap_or(DEFAULT_THREAD_TITLE);
+                title_editor.read_with(cx, |editor, cx| {
+                    assert_eq!(editor.text(cx), display_title);
+                });
+                thread.read_with(cx, |thread, _cx| {
+                    assert_eq!(thread.title().as_deref(), title);
+                });
+                cx.read(|cx| {
+                    let store = ThreadMetadataStore::global(cx);
+                    let metadata = store
+                        .read(cx)
+                        .entry(thread_id)
+                        .expect("RootThreadUpdated should save the thread metadata");
+                    assert_eq!(metadata.title.as_deref(), title);
+                    assert_eq!(metadata.title_override.as_deref(), title_override);
+                    assert_eq!(metadata.display_title().as_ref(), display_title);
+                    let session_info = acp_thread::AgentSessionInfo::from(metadata);
+                    assert_eq!(session_info.title.as_deref(), title_override.or(title));
+                });
+            };
+
+        cx.focus(&title_editor);
+        for title in [Some("Agent Title"), Some("Replacement Title"), None] {
+            thread.update(cx, |thread, cx| {
+                let title = title
+                    .map(|title| MaybeUndefined::Value(title.into()))
+                    .unwrap_or(MaybeUndefined::Null);
+                thread.update_session_info(acp_v2::SessionInfoUpdate::new().title(title), cx);
+            });
+            cx.run_until_parked();
+            assert_title(title, None, cx);
+            assert!(connection.take_set_title_calls().is_empty());
+        }
+
+        cx.dispatch_action(editor::actions::DeleteLine);
+        cx.run_until_parked();
+        cx.write_to_clipboard(ClipboardItem::new_string(DEFAULT_THREAD_TITLE.into()));
+        cx.dispatch_action(Paste);
+        cx.run_until_parked();
+        assert_title(Some(DEFAULT_THREAD_TITLE), Some(DEFAULT_THREAD_TITLE), cx);
+        assert_eq!(
+            connection.take_set_title_calls(),
+            vec![(session_id.clone(), DEFAULT_THREAD_TITLE.into())]
+        );
+        for title in [Some("Agent replacement after chosen default"), None] {
+            thread.update(cx, |thread, cx| {
+                let title = title
+                    .map(|title| MaybeUndefined::Value(title.into()))
+                    .unwrap_or(MaybeUndefined::Null);
+                thread.update_session_info(acp_v2::SessionInfoUpdate::new().title(title), cx);
+            });
+            cx.run_until_parked();
+            assert_title(title, Some(DEFAULT_THREAD_TITLE), cx);
+            assert!(connection.take_set_title_calls().is_empty());
+        }
+
+        cx.update(|_, cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                let mut metadata = store.entry(thread_id).expect("thread metadata").clone();
+                metadata.title_override = None;
+                store.save(metadata, cx);
+            });
+        });
+        thread.update(cx, |thread, cx| {
+            thread.update_session_info(
+                acp_v2::SessionInfoUpdate::new().title("Agent title to keep"),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_title(Some("Agent title to keep"), None, cx);
+        assert!(connection.take_set_title_calls().is_empty());
+        cx.dispatch_action(editor::actions::DeleteLine);
+        cx.run_until_parked();
+        cx.write_to_clipboard(ClipboardItem::new_string("Agent title to keep".into()));
+        cx.dispatch_action(Paste);
+        cx.run_until_parked();
+        assert_title(Some("Agent title to keep"), Some("Agent title to keep"), cx);
+        assert!(connection.take_set_title_calls().is_empty());
+        for title in [Some("Agent replacement after explicit choice"), None] {
+            thread.update(cx, |thread, cx| {
+                let title = title
+                    .map(|title| MaybeUndefined::Value(title.into()))
+                    .unwrap_or(MaybeUndefined::Null);
+                thread.update_session_info(acp_v2::SessionInfoUpdate::new().title(title), cx);
+            });
+            cx.run_until_parked();
+            assert_title(title, Some("Agent title to keep"), cx);
+            assert!(connection.take_set_title_calls().is_empty());
+        }
 
         title_editor.read_with(cx, |editor, cx| {
             assert!(!editor.read_only(cx));
@@ -14132,6 +14228,28 @@ pub(crate) mod tests {
         thread.read_with(cx, |thread, _cx| {
             assert_eq!(thread.title(), Some("My Custom Title".into()));
         });
+        assert_title(Some("My Custom Title"), Some("My Custom Title"), cx);
+        let title_calls = connection.take_set_title_calls();
+        assert_eq!(
+            title_calls.last(),
+            Some(&(session_id.clone(), "My Custom Title".into()))
+        );
+        assert!(title_calls.iter().all(|(id, title)| {
+            id == &session_id && "My Custom Title".starts_with(title.as_ref())
+        }));
+
+        cx.focus(&conversation_view);
+        for title in [Some("Subsequent Agent Title"), None] {
+            thread.update(cx, |thread, cx| {
+                let title = title
+                    .map(|title| MaybeUndefined::Value(title.into()))
+                    .unwrap_or(MaybeUndefined::Null);
+                thread.update_session_info(acp_v2::SessionInfoUpdate::new().title(title), cx);
+            });
+            cx.run_until_parked();
+            assert_title(title, Some("My Custom Title"), cx);
+            assert!(connection.take_set_title_calls().is_empty());
+        }
     }
 
     #[gpui::test]
