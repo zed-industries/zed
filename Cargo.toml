@@ -304,7 +304,7 @@ buffer_diff = { path = "crates/buffer_diff" }
 call = { path = "crates/call" }
 call_hierarchy = { path = "crates/call_hierarchy" }
 channel = { path = "crates/channel" }
-cli = { path = "crates/cli" }
+cli = { path = "crates/cli", default-features = false }
 client = { path = "crates/client" }
 clock = { path = "crates/clock" }
 cloud_api_client = { path = "crates/cloud_api_client" }
@@ -337,7 +337,7 @@ dev_container = { path = "crates/dev_container" }
 diagnostics = { path = "crates/diagnostics" }
 edit_prediction = { path = "crates/edit_prediction" }
 edit_prediction_context = { path = "crates/edit_prediction_context" }
-edit_prediction_metrics = { path = "crates/edit_prediction_metrics" }
+edit_prediction_metrics = { path = "crates/edit_prediction_metrics", features = ["tree-sitter"] }
 edit_prediction_types = { path = "crates/edit_prediction_types" }
 edit_prediction_ui = { path = "crates/edit_prediction_ui" }
 editor = { path = "crates/editor" }
@@ -433,7 +433,7 @@ outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
 path = { path = "crates/path" }
 paths = { path = "crates/paths" }
-perf = { path = "tooling/perf" }
+perf = { path = "tooling/perf", default-features = false }
 picker = { path = "crates/picker" }
 picker_preview = { path = "crates/picker_preview" }
 platform_title_bar = { path = "crates/platform_title_bar" }
@@ -452,7 +452,7 @@ remote_connection = { path = "crates/remote_connection" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
-rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a", default-features = false, features = ["wav", "playback", "wav_output", "recording", "dither"] }
+rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a", default-features = false, features = ["wav", "playback", "wav_output", "recording"] }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 sandbox = { path = "crates/sandbox" }
@@ -505,6 +505,7 @@ watch = { path = "crates/watch" }
 web_search = { path = "crates/web_search" }
 web_search_providers = { path = "crates/web_search_providers" }
 which_key = { path = "crates/which_key" }
+windows_resources = { path = "crates/windows_resources" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 x_ai = { path = "crates/x_ai" }
@@ -535,19 +536,17 @@ arc-swap = "1.9.0"
 ashpd = { version = "0.13", default-features = false, features = [
     "async-io",
     "inhibit",
-    "notification",
     "open_uri",
     "file_chooser",
-    "settings",
-    "trash"
+    "settings"
 ] }
-async-channel = "2.5.0"
+async-channel = { version = "2.5", default-features = false }
 async-compat = "0.2.1"
 async-compression = { version = "0.4", features = ["bzip2", "gzip", "futures-io"] }
 async-dispatcher = "0.1"
 async-fs = "2.1"
 async-io = "2.6.0"
-async-lock = "3.4.2"
+async-lock = { version = "3.4", default-features = false }
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 # `unstable` is required to compile async-tar's Windows symlink support.
 async-process = "2.5.0"
@@ -571,6 +570,8 @@ aws-sdk-bedrockruntime = { version = "1.112.0", default-features = false, featur
     "behavior-version-latest",
     "rt-tokio",
 ] }
+aws-sdk-kinesis = { version = "1.51", default-features = false }
+aws-sdk-s3 = { version = "1.15", default-features = false }
 aws-sigv4 = { version = "1.4.0", features = ["http1"] }
 aws-smithy-runtime-api = { version = "1.9.2", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
@@ -580,17 +581,17 @@ betlang = "0.1.1"
 bitflags = "2.6.0"
 block2 = "0.6"
 brush-parser = "0.3"
+bytemuck = "1"
 bytes = "1.0"
-cargo_metadata = "0.19"
+cargo_metadata = "0.23"
 cargo_toml = "0.21"
 cbindgen = { version = "0.28.0", default-features = false }
 chardetng = "0.1"
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
 ciborium = "0.2"
-circular-buffer = "1.0"
 clap = { version = "4.4", features = ["derive", "wrap_help"] }
-clap_complete = { version = "4.4" }
-clap_complete_nushell = { version = "4.4" }
+clap_complete = "4.4"
+clap_complete_nushell = "4.4"
 cocoa = "=0.26.0"
 console = "0.16"
 console_error_panic_hook = "0.1.7"
@@ -599,8 +600,10 @@ convert_case = "0.11.0"
 core-foundation = "0.10"
 core-foundation-sys = "0.8.6"
 core-graphics = "0.24"
+core-services = "1"
 core-text = "21"
-core-video = { version = "0.5.2", features = ["metal"] }
+core-video = { version = "0.5", default-features = false, features = ["link"] }
+coreaudio-rs = { version = "0.12", default-features = false }
 cpal = "0.17"
 crash-handler = "0.8"
 criterion = { version = "0.8.2", features = ["html_reports"] }
@@ -609,22 +612,11 @@ crossbeam-queue = "0.3.12"
 ctor = "1.0.12"
 dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "1b461b310481d01e02b2603c16d7144b926339f8" }
 dashmap = "6.0"
-derive_more = { version = "2.1.1", features = [
-    "add",
-    "add_assign",
-    "deref",
-    "deref_mut",
-    "display",
-    "from",
-    "from_str",
-    "mul",
-    "mul_assign",
-    "not",
-] }
+derive_more = { version = "2.1", features = ["deref", "deref_mut", "from_str"] }
 dialoguer = { version = "0.12", default-features = false }
 diffy = "0.4.2"
 dirs = "6.0"
-dispatch2 = "0.3.1"
+dispatch2 = { version = "0.3", default-features = false, features = ["std"] }
 documented = "0.10"
 dotenvy = "0.15.0"
 dunce = "1.0"
@@ -635,7 +627,8 @@ env_logger = "0.11"
 etagere = "0.2"
 exec = "0.3.1"
 fancy-regex = "0.19"
-flume = "0.12"
+flume = { version = "0.12", default-features = false, features = ["async"] }
+font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "94b0f28166665e8fd2f53ff6d268a14955c82269", package = "zed-font-kit", version = "0.14.1-zed", default-features = false }
 foreign-types = "0.5"
 fork = "0.4.0"
 futures = "0.3.34"
@@ -647,7 +640,7 @@ handlebars = "4.3"
 hdrhistogram = { version = "7", default-features = false }
 heapless = "0.9.2"
 heck = "0.5"
-heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
+heed = { version = "0.21", default-features = false, features = ["read-txn-no-tls", "serde-bincode", "serde-json"] }
 hex = "0.4.3"
 html5ever = "0.39"
 http = "1.1"
@@ -675,14 +668,15 @@ image = { version = "0.25.1", default-features = false, features = [
     "tiff",
     "webp",
 ] }
-imara-diff = "0.2.0"
+imara-diff = { version = "0.2", default-features = false }
 indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
 inventory = "0.3.19"
+is_executable = "1.0"
 itertools = "0.14.0"
 js-sys = "0.3"
 jsonschema = { version = "0.51", default-features = false }
-jsonwebtoken = "10.0"
+jsonwebtoken = { version = "10.0", default-features = false }
 jupyter-protocol = "1.4.0"
 jupyter-websocket-client = "1.1.0"
 libc = "0.2"
@@ -690,11 +684,13 @@ libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 libwebrtc = "0.3.26"
 linkify = "0.10.0"
 livekit = { version = "0.7.32", features = ["tokio", "rustls-tls-native-roots"] }
-log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
+log = { version = "0.4", default-features = false, features = ["std"] }
 lru = "0.16"
 lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "f1783e63a7f4eb4397bf51d4148b4895a1f7ab16" }
-mach2 = "0.5"
+mach2 = "0.6"
 markup5ever_rcdom = "0.39"
+mdbook = { version = "=0.4.40", default-features = false, features = ["search"] }
+merman = { version = "=0.8.0-alpha.5", default-features = false }
 metal = "0.33"
 mime = "0.3.17"
 minidumper = "0.11"
@@ -703,8 +699,7 @@ nanoid = "0.4"
 nbformat = "1.2.0"
 nix = "0.30"
 notify-rust = "4"
-nucleo = "0.5"
-num-format = "0.4.4"
+nucleo = { package = "nucleo-matcher", version = "0.3" }
 objc = "0.2"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
@@ -735,7 +730,6 @@ objc2-core-video = { version = "=0.3.2", default-features = false, features = ["
 objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "NSArray",
     "NSAttributedString",
-    "NSBundle",
     "NSCoder",
     "NSData",
     "NSDate",
@@ -743,7 +737,6 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "NSEnumerator",
     "NSError",
     "NSGeometry",
-    "NSNotification",
     "NSNull",
     "NSObjCRuntime",
     "NSObject",
@@ -753,7 +746,6 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "NSSet",
     "NSString",
     "NSURL",
-    "NSUndoManager",
     "NSValue",
     "objc2-core-foundation",
     "std",
@@ -768,7 +760,20 @@ objc2-screen-capture-kit = { version = "=0.3.2", default-features = false, featu
     "SCStream",
     "std"
 ] }
-objc2-user-notifications = "0.3"
+objc2-user-notifications = { version = "0.3", default-features = false, features = [
+    "std",
+    "block2",
+    "UNNotification",
+    "UNNotificationAction",
+    "UNNotificationCategory",
+    "UNNotificationContent",
+    "UNNotificationRequest",
+    "UNNotificationResponse",
+    "UNNotificationTrigger",
+    "UNUserNotificationCenter",
+] }
+octocrab = { version = "0.49", default-features = false }
+oo7 = { version = "0.6", default-features = false }
 open = "5.0.0"
 ordered-float = "5"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
@@ -786,7 +791,8 @@ pet-poetry = { git = "https://github.com/zed-industries/python-environment-tools
 pet-reporter = { git = "https://github.com/zed-industries/python-environment-tools.git", rev = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
 pet-virtualenv = { git = "https://github.com/zed-industries/python-environment-tools.git", rev = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
 piper = "0.2"
-postage = { version = "0.5", features = ["futures-traits"] }
+plist = "1.3"
+postage = { version = "0.5", default-features = false }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
 proc-macro2 = "1.0.93"
 profiling = "1"
@@ -795,23 +801,21 @@ pollster = "0.4.0"
 proptest = { git = "https://github.com/proptest-rs/proptest", rev = "3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b", features = ["attr-macro"] }
 proptest-derive = "0.8.0"
 prost = "0.14"
-prost-build = "0.14"
+prost-build = { version = "0.14", default-features = false }
 prost-types = "0.14"
 protox = "0.9"
 proxyvars = "0.2"
 pulldown-cmark = { version = "0.13.0", default-features = false }
 quick-xml = "0.41"
 quote = "1.0.9"
-rand = "0.9"
+rand = { version = "0.9", default-features = false, features = ["std", "std_rng", "os_rng"] }
 raw-window-handle = "0.6"
 rayon = "1.8"
-regex = "1.5"
+regex = { version = "1.5", default-features = false, features = ["std", "perf"] }
 # WARNING: If you change this, you must also publish a new version of zed-reqwest to crates.io
 reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", default-features = false, features = [
-    "charset",
     "http2",
     "macos-system-configuration",
-    "multipart",
     "rustls-tls-native-roots",
     "socks",
     "stream",
@@ -822,21 +826,22 @@ resvg = { version = "0.46.0", default-features = false, features = [
     "memmap-fonts",
     "raster-images",
 ] }
-rsa = "0.9.6"
+rsa = { version = "0.9", default-features = false, features = ["std", "u64_digit"] }
 runtimelib = { version = "1.4.0", default-features = false, features = [
     "async-dispatcher-runtime", "aws-lc-rs"
 ] }
 rust-embed = { version = "8.11", features = ["include-exclude", "compression"] }
 rustc-hash = "2.1.0"
 rustix = { version = "1.1", features = ["fs"] }
-rustls = { version = "0.23.26" }
+rustls = "0.23.26"
 rustls-platform-verifier = "0.7"
 # WARNING: If you change this, you must also publish a new version of zed-scap to crates.io
 scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac", default-features = false, package = "zed-scap", version = "0.0.8-zed" }
-schemars = { version = "1.0", features = ["indexmap2"] }
+schemars = { version = "1.0", default-features = false, features = ["std", "indexmap2"] }
+sea-orm = { version = "=1.1.10", default-features = false }
 seccompiler = "0.5"
 semver = { version = "1.0", features = ["serde"] }
-serde = { version = "1.0.221", features = ["derive", "rc"] }
+serde = { version = "1.0", features = ["rc"] }
 serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
 serde_json_lenient = { version = "0.2", features = [
     "preserve_order",
@@ -844,25 +849,30 @@ serde_json_lenient = { version = "0.2", features = [
 ] }
 serde_path_to_error = "0.1.17"
 serde_urlencoded = "0.7"
-serde_yaml = "0.9.34"
+serde_yaml = { package = "serde_yaml_ng", version = "0.10" }
 serde_yaml_ng = "0.10"
 sha2 = "0.10"
 shellexpand = "3.1"
-shlex = "1.3.0"
-simplelog = "0.12.2"
+shlex = "2.0"
+similar = "2.7"
+simplelog = { version = "0.12", default-features = false }
 slotmap = "1.0.6"
 smallvec = { version = "1.6", features = ["union", "const_new"] }
+spin = { version = "0.10", default-features = false, features = ["mutex", "spin_mutex", "lock_api"] }
 smol = "2.0"
 sqlformat = "0.2"
+sqlx = { version = "0.8", default-features = false }
 stacksafe = "1.0"
 streaming-iterator = "0.1"
 strsim = "0.11"
 strum = { version = "0.28", features = ["derive"] }
 swash = "0.2.6"
-syn = { version = "2.0.101", features = ["full", "extra-traits", "visit-mut"] }
+syn = { version = "2.0", default-features = false, features = ["proc-macro"] }
 sys-locale = "0.3.1"
-sysinfo = "0.39"
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+taffy = { version = "=0.13.0", default-features = false }
 tempfile = "3.20.0"
+tendril = "0.5"
 thiserror = "2.0.12"
 time = { version = "0.3", features = [
     "macros",
@@ -873,17 +883,14 @@ time = { version = "0.3", features = [
     "local-offset",
 ] }
 tiny_http = "0.12"
-tokio = { version = "1" }
+tokio = "1"
 tokio-rustls = { version = "0.26", default-features = false }
-toml = "0.8"
-toml_edit = { version = "0.22", default-features = false, features = [
-    "display",
-    "parse",
-    "serde",
-] }
+toml = { version = "0.9", default-features = false, features = ["std", "serde", "parse"] }
+toml_edit = { version = "0.22", default-features = false, features = ["parse"] }
 tower-http = "0.4.4"
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "43623ec9bf0eaaf7113285c46e8a09018f181b18" }
 tracing = "0.1.40"
+tracing-subscriber = "0.3"
 tree-sitter-bash = "0.25.1"
 tree-sitter-c = "0.24.1"
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }
@@ -917,10 +924,13 @@ unindent = "0.2.0"
 url = "2.2"
 urlencoding = "2.1.2"
 usvg = { version = "0.46.0", default-features = false }
-uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
+uuid = { version = "1.1", features = ["serde"] }
 vte = { version = "0.15.0", features = ["ansi"] }
 walkdir = "2.5"
 wasm-encoder = "0.254"
+# Forked because upstream is unmaintained and its worker bootstrap still calls
+# the wasm-bindgen init function with the positional arguments deprecated in 0.2.93.
+wasm_thread = { git = "https://github.com/zed-industries/wasm_thread", rev = "0cf96c7708dfb97ccf3da50347e25edcf75d6937", version = "0.3", features = ["es_modules"] }
 wasmparser = "0.254"
 wasmtime = { version = "48", default-features = false, features = [
     "anyhow",
@@ -935,80 +945,39 @@ wasmtime = { version = "48", default-features = false, features = [
 wasm-bindgen = "0.2.120"
 wasm-bindgen-futures = "0.4"
 wasmtime-wasi = { version = "48", default-features = false, features = ["p2"] }
-wax = "0.7"
+wax = { version = "0.7", default-features = false }
+web-sys = "0.3"
 web-time = "1.1.0"
 webpki-roots = "1.0.8"
 webrtc-sys = "0.3.23"
-wgpu = "29.0.4"
+wgpu = { version = "29.0", default-features = false }
 which = "8"
 windows-core = "0.62"
 windows-registry = "0.6.0"
-yaml-rust2 = "0.8"
-yawc = "0.4.2"
+xkbcommon = { version = "0.8", default-features = false }
+yaml-rust2 = { version = "0.8", default-features = false }
+yawc = { version = "0.4", default-features = false }
 zeroize = "1.8"
-zstd = "0.11"
+zstd = { version = "0.13", default-features = false, features = ["legacy", "arrays"] }
 
 [workspace.dependencies.windows]
 version = "0.62"
 features = [
-    "Data_Xml_Dom",
-    "Foundation_Numerics",
-    "Globalization_DateTimeFormatting",
-    "Storage_Search",
-    "Storage_Streams",
-    "System_Threading",
-    "UI_Notifications",
-    "UI_ViewManagement",
-    "Wdk_System_SystemServices",
     "Win32_Foundation",
-    "Win32_Globalization",
-    "Win32_Graphics_Direct3D",
-    "Win32_Graphics_Direct3D11",
-    "Win32_Graphics_Direct3D_Fxc",
-    "Win32_Graphics_DirectComposition",
-    "Win32_Graphics_DirectWrite",
-    "Win32_Graphics_DirectManipulation",
-    "Win32_Graphics_Dwm",
-    "Win32_Graphics_Dxgi",
-    "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
-    "Win32_Graphics_Imaging",
-    "Win32_Graphics_Hlsl",
-    "Win32_Networking_WinSock",
     "Win32_Security",
-    "Win32_Security_Credentials",
-    "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
-    "Win32_Storage_Packaging_Appx",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
-    "Win32_System_Console",
-    "Win32_System_Diagnostics_Debug",
-    "Win32_System_DataExchange",
     "Win32_System_IO",
-    "Win32_System_JobObjects",
     "Win32_System_LibraryLoader",
-    "Win32_System_Memory",
     "Win32_System_Ole",
-    "Win32_System_Performance",
-    "Win32_System_Pipes",
-    "Win32_System_Power",
-    "Win32_System_RestartManager",
-    "Win32_System_SystemInformation",
-    "Win32_System_SystemServices",
     "Win32_System_Threading",
     "Win32_System_Variant",
-    "Win32_System_WinRT",
-    "Win32_UI_Controls",
-    "Win32_UI_HiDpi",
-    "Win32_UI_Input_Ime",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_UI_Input_Pointer",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
-    "Win32_Media",
 ]
 
 [patch.crates-io]
