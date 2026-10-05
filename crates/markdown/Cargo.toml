@@ -29,7 +29,7 @@ linkify.workspace = true
 log.workspace = true
 markup5ever_rcdom.workspace = true
 mermaid_render = { path = "../mermaid_render" }
-pulldown-cmark.workspace = true
+pulldown-cmark = { workspace = true, features = ["html"] }
 settings.workspace = true
 smallvec.workspace = true
 stacksafe.workspace = true
