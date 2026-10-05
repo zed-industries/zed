@@ -893,10 +893,13 @@ impl ThreadView {
             let metadata = ThreadMetadataStore::try_global(cx)
                 .and_then(|store| store.read(cx).entry(root_thread_id).cloned());
             let initial_title = if parent_session_id.is_none() {
-                metadata.as_ref().and_then(|m| m.title())
+                metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.title_override.clone())
             } else {
-                thread.read(cx).title()
+                None
             }
+            .or_else(|| thread.read(cx).title())
             .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into());
             let editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);

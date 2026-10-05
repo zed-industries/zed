@@ -5676,8 +5676,11 @@ pub(crate) mod tests {
         });
     }
 
-    #[derive(Clone)]
-    struct RestoredAvailableCommandsConnection;
+    #[derive(Clone, Default)]
+    struct RestoredAvailableCommandsConnection {
+        session_info_update: Option<acp_v1::SessionInfoUpdate>,
+        load_response: Arc<Mutex<Option<futures::channel::oneshot::Receiver<()>>>>,
+    }
 
     impl AgentConnection for RestoredAvailableCommandsConnection {
         fn agent_id(&self) -> AgentId {
@@ -5713,9 +5716,11 @@ pub(crate) mod tests {
             session_id: acp_v1::SessionId,
             project: Entity<Project>,
             _work_dirs: PathList,
-            _title: Option<SharedString>,
+            title: Option<SharedString>,
             cx: &mut App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            let session_info_update = self.session_info_update.clone();
+            let load_response = self.load_response.lock().take();
             let thread = build_test_thread(
                 self,
                 project,
@@ -5737,7 +5742,28 @@ pub(crate) mod tests {
                 })
                 .expect("available commands update should succeed");
 
-            Task::ready(Ok(thread))
+            thread.update(cx, |thread, cx| {
+                if let Some(title) = title {
+                    thread.update_session_info(
+                        acp_v2::SessionInfoUpdate::new().title(title.to_string()),
+                        cx,
+                    );
+                }
+                if let Some(update) = session_info_update {
+                    thread
+                        .handle_session_update(acp_v1::SessionUpdate::SessionInfoUpdate(update), cx)
+                        .expect("session info update should succeed");
+                }
+            });
+
+            if let Some(load_response) = load_response {
+                cx.spawn(async move |_| {
+                    load_response.await?;
+                    Ok(thread)
+                })
+            } else {
+                Task::ready(Ok(thread))
+            }
         }
 
         fn auth_methods(&self) -> &[acp_v1::AuthMethod] {
@@ -5784,7 +5810,9 @@ pub(crate) mod tests {
         let conversation_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConversationView::new(
-                    Rc::new(StubAgentServer::new(RestoredAvailableCommandsConnection)),
+                    Rc::new(StubAgentServer::new(
+                        RestoredAvailableCommandsConnection::default(),
+                    )),
                     connection_store,
                     Agent::Custom { id: "Test".into() },
                     Some(acp_v1::SessionId::new("restored-session")),
@@ -5906,6 +5934,124 @@ pub(crate) mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[gpui::test]
+    async fn test_restored_title_uses_updates_received_before_load_completes(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::thread_metadata_store::ThreadMetadata;
+        use chrono::Utc;
+        use project::WorktreePaths;
+
+        init_test(cx);
+        for (index, (title, title_override)) in [
+            (None, None),
+            (Some("Current agent title"), None),
+            (None, Some("User title")),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fs = FakeFs::new(cx.executor());
+            let project = Project::test(fs, [], cx).await;
+            let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
+            let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+            let thread_id = ThreadId::new();
+            let session_id = acp_v1::SessionId::new(format!("early-title-{index}"));
+            cx.update(|_, cx| {
+                ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                    store.save(
+                        ThreadMetadata {
+                            thread_id,
+                            session_id: Some(session_id.clone()),
+                            agent_id: AgentId::new("Test"),
+                            title: Some("Old cached title".into()),
+                            title_override: title_override.map(SharedString::from),
+                            updated_at: Utc::now(),
+                            created_at: Some(Utc::now()),
+                            interacted_at: None,
+                            worktree_paths: WorktreePaths::from_folder_paths(&PathList::default()),
+                            remote_connection: None,
+                            archived: false,
+                        },
+                        cx,
+                    );
+                });
+            });
+
+            let (finish_load, load_response) = futures::channel::oneshot::channel();
+            let load_response = Arc::new(Mutex::new(Some(load_response)));
+            let connection = RestoredAvailableCommandsConnection {
+                session_info_update: Some(
+                    acp_v1::SessionInfoUpdate::new().title(title.map(str::to_owned)),
+                ),
+                load_response: load_response.clone(),
+            };
+            let thread_store = cx.update(|_, cx| cx.new(|cx| ThreadStore::new(cx)));
+            let connection_store =
+                cx.update(|_, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+            let conversation_view = cx.update(|window, cx| {
+                cx.new(|cx| {
+                    ConversationView::new(
+                        Rc::new(StubAgentServer::new(connection)),
+                        connection_store,
+                        Agent::Custom { id: "Test".into() },
+                        Some(session_id),
+                        Some(thread_id),
+                        None,
+                        Some("Old cached title".into()),
+                        None,
+                        workspace.downgrade(),
+                        project,
+                        Some(thread_store),
+                        AgentThreadSource::AgentPanel,
+                        window,
+                        cx,
+                    )
+                })
+            });
+            add_to_workspace(conversation_view.clone(), cx);
+            cx.run_until_parked();
+            assert!(
+                load_response.lock().is_none(),
+                "load operation should have started"
+            );
+            conversation_view.read_with(cx, |view, _| {
+                assert!(view.is_loading());
+                assert!(view.root_thread_view().is_none());
+            });
+            cx.read(|cx| {
+                assert_eq!(
+                    ThreadMetadataStore::global(cx)
+                        .read(cx)
+                        .entry(thread_id)
+                        .expect("cached metadata")
+                        .title
+                        .as_deref(),
+                    Some("Old cached title")
+                );
+            });
+
+            finish_load.send(()).expect("load should still be pending");
+            cx.run_until_parked();
+            let active = active_thread(&conversation_view, cx);
+            active.read_with(cx, |view, cx| {
+                assert_eq!(view.thread.read(cx).title().as_deref(), title);
+                assert_eq!(
+                    view.title_editor.read(cx).text(cx),
+                    title_override.or(title).unwrap_or(DEFAULT_THREAD_TITLE)
+                );
+            });
+            cx.read(|cx| {
+                let store = ThreadMetadataStore::global(cx);
+                let metadata = store.read(cx).entry(thread_id).expect("live metadata");
+                assert_eq!(metadata.title.as_deref(), title);
+                assert_eq!(metadata.title_override.as_deref(), title_override);
+            });
+        }
     }
 
     #[gpui::test]
@@ -6864,7 +7010,9 @@ pub(crate) mod tests {
 
         panel.update_in(cx, |panel, window, cx| {
             panel.open_external_thread_with_server(
-                Rc::new(StubAgentServer::new(RestoredAvailableCommandsConnection)),
+                Rc::new(StubAgentServer::new(
+                    RestoredAvailableCommandsConnection::default(),
+                )),
                 window,
                 cx,
             );
@@ -6887,7 +7035,9 @@ pub(crate) mod tests {
         let conversation_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConversationView::new(
-                    Rc::new(StubAgentServer::new(RestoredAvailableCommandsConnection)),
+                    Rc::new(StubAgentServer::new(
+                        RestoredAvailableCommandsConnection::default(),
+                    )),
                     connection_store,
                     Agent::Custom { id: "Test".into() },
                     None,
