@@ -2,14 +2,20 @@ use acp_thread::{Elicitation, ElicitationEntryId, ElicitationStatus};
 use agent_client_protocol::schema::v1 as acp;
 use collections::{HashMap, HashSet};
 use component::{Component, ComponentScope, example_group_with_title, single_example};
-use editor::Editor;
+use editor::{Editor, EditorMode, SelectionEffects};
 use futures::channel::oneshot;
-use gpui::{AnyElement, App, Div, Empty, Entity, Focusable, Role, SharedString, Window, div};
+use gpui::{
+    AnyElement, App, Div, ElementId, Empty, Entity, FocusHandle, Focusable, MouseButton, Role,
+    SharedString, TextStyleRefinement, Window, div,
+};
+use language::{Buffer, Capability, language_settings::SoftWrap};
+use multi_buffer::{MultiBuffer, MultiBufferOffset};
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use ui::{
-    Button, Checkbox, ChoiceCard, Color, Icon, IconName, IconSize, Label, LabelSize, ToggleState,
-    prelude::*,
+    Button, Checkbox, ChoiceCard, Color, ContextMenu, Icon, IconName, IconSize, Label, LabelSize,
+    ToggleState, prelude::*,
 };
 
 #[derive(Clone)]
@@ -21,8 +27,13 @@ struct ElicitationOption {
 
 enum ElicitationFieldState {
     Text(Entity<Editor>),
-    Boolean(bool),
-    SingleSelect { value: Option<String> },
+    Boolean {
+        value: bool,
+        focus_handle: FocusHandle,
+    },
+    SingleSelect {
+        value: Option<String>,
+    },
     MultiSelect(HashSet<String>),
 }
 
@@ -41,6 +52,7 @@ pub(crate) struct ElicitationFormSubmission {
 
 pub(crate) struct ElicitationFormState {
     fields: HashMap<String, ElicitationFieldState>,
+    option_views: HashMap<String, Vec<ElicitationOptionView>>,
     field_errors: HashMap<String, SharedString>,
     is_submitting: bool,
 }
@@ -49,6 +61,7 @@ impl ElicitationFormState {
     pub(crate) fn new(schema: &acp::ElicitationSchema, window: &mut Window, cx: &mut App) -> Self {
         let required = schema.required.as_deref().unwrap_or_default();
         let mut fields = HashMap::default();
+        let mut option_views = HashMap::default();
 
         for (name, property) in &schema.properties {
             let is_required = required.iter().any(|required| required == name);
@@ -70,6 +83,13 @@ impl ElicitationFormState {
                                 .then(|| options.first().map(|option| option.value.clone()))
                                 .flatten()
                         });
+                        option_views.insert(
+                            name.clone(),
+                            options
+                                .into_iter()
+                                .map(|option| ElicitationOptionView::new(option, window, cx))
+                                .collect(),
+                        );
                         ElicitationFieldState::SingleSelect { value }
                     }
                 }
@@ -93,10 +113,18 @@ impl ElicitationFormState {
                     });
                     ElicitationFieldState::Text(editor)
                 }
-                acp::ElicitationPropertySchema::Boolean(schema) => {
-                    ElicitationFieldState::Boolean(schema.default.unwrap_or(false))
-                }
+                acp::ElicitationPropertySchema::Boolean(schema) => ElicitationFieldState::Boolean {
+                    value: schema.default.unwrap_or(false),
+                    focus_handle: cx.focus_handle(),
+                },
                 acp::ElicitationPropertySchema::Array(schema) => {
+                    option_views.insert(
+                        name.clone(),
+                        multi_select_options(schema)
+                            .into_iter()
+                            .map(|option| ElicitationOptionView::new(option, window, cx))
+                            .collect(),
+                    );
                     ElicitationFieldState::MultiSelect(
                         schema
                             .default
@@ -113,6 +141,7 @@ impl ElicitationFormState {
 
         Self {
             fields,
+            option_views,
             field_errors: HashMap::default(),
             is_submitting: false,
         }
@@ -128,7 +157,7 @@ impl ElicitationFormState {
                         ElicitationFieldState::Text(editor) => {
                             ElicitationFieldValue::Text(editor.read(cx).text(cx))
                         }
-                        ElicitationFieldState::Boolean(value) => {
+                        ElicitationFieldState::Boolean { value, .. } => {
                             ElicitationFieldValue::Boolean(*value)
                         }
                         ElicitationFieldState::SingleSelect { value } => {
@@ -189,7 +218,9 @@ impl ElicitationFormState {
     }
 
     pub(crate) fn set_boolean(&mut self, field_name: &str, value: bool) {
-        if let Some(ElicitationFieldState::Boolean(field)) = self.fields.get_mut(field_name) {
+        if let Some(ElicitationFieldState::Boolean { value: field, .. }) =
+            self.fields.get_mut(field_name)
+        {
             *field = value;
             self.field_errors.remove(field_name);
         }
@@ -363,7 +394,10 @@ impl ElicitationFormSubmission {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{KeyUpEvent, Keystroke, PlatformInput, TestAppContext, VisualTestContext};
+    use gpui::{
+        ClipboardItem, KeyUpEvent, Keystroke, Modifiers, PlatformInput, TestAppContext,
+        VisualTestContext, point, size,
+    };
     use std::cell::RefCell;
 
     struct TestElicitationView {
@@ -633,6 +667,224 @@ mod tests {
     }
 
     #[gpui::test]
+    fn form_option_text_selection_preserves_answer_controls(cx: &mut TestAppContext) {
+        init_keyboard_test(cx);
+        let label = "https://example.com/path **literal** `code` café 中🙂 with enough text to wrap across several lines in a narrow panel";
+        let description = "First line\r\n\r\n  Second line with &amp; and <literal> text";
+        for multiple in [false, true] {
+            let options = vec![
+                acp::EnumOption::new("before", "Before"),
+                acp::EnumOption::new("value", label).description(description),
+                acp::EnumOption::new("after", "After"),
+            ];
+            let property = if multiple {
+                acp::ElicitationPropertySchema::from(acp::MultiSelectPropertySchema::titled(
+                    options,
+                ))
+            } else {
+                acp::ElicitationPropertySchema::from(
+                    acp::StringPropertySchema::new().one_of(options),
+                )
+            };
+            let (view, cx) = cx.add_window_view(|window, cx| {
+                TestElicitationView::new(
+                    acp::ElicitationSchema::new().property("choice", property, false),
+                    window,
+                    cx,
+                )
+            });
+            cx.simulate_resize(size(px(320.), px(800.)));
+            cx.run_until_parked();
+            let (events, focus, next_focus) = view.read_with(cx, |view, _| {
+                (
+                    view.events.clone(),
+                    view.form_state.option_views["choice"][1]
+                        .focus_handle
+                        .clone(),
+                    view.form_state.option_views["choice"][2]
+                        .focus_handle
+                        .clone(),
+                )
+            });
+            for (selector, expected) in [
+                ("elicitation-option-label-value", label),
+                (
+                    "elicitation-option-description-value",
+                    "First line\n\n  Second line with &amp; and <literal> text",
+                ),
+            ] {
+                let bounds = cx
+                    .debug_bounds(selector)
+                    .expect("option text should be rendered");
+                let start = bounds.origin + point(px(1.), px(1.));
+                let end = bounds.bottom_right() - point(px(1.), px(1.));
+                for (start, end) in [(start, end), (end, start)] {
+                    cx.update(|_, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string("unchanged".to_string()))
+                    });
+                    cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+                    cx.simulate_mouse_move(end, MouseButton::Left, Modifiers::default());
+                    cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+                    view.update(cx, |_, cx| cx.notify());
+                    cx.simulate_keystrokes("ctrl-c");
+                    assert_eq!(
+                        cx.read_from_clipboard()
+                            .and_then(|item| item.text())
+                            .as_deref(),
+                        Some(expected)
+                    );
+                    assert_eq!(*events.borrow(), Vec::<String>::new());
+                    press_keys(cx, "shift-tab");
+                    cx.update(|window, _| assert!(focus.is_focused(window)));
+                    press_keys(cx, "tab");
+                    cx.update(|window, _| assert!(next_focus.is_focused(window)));
+                }
+                for turn in [end, point(px(1.), px(1.))] {
+                    cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+                    cx.simulate_mouse_move(turn, MouseButton::Left, Modifiers::default());
+                    cx.simulate_mouse_move(start, MouseButton::Left, Modifiers::default());
+                    cx.simulate_mouse_up(start, MouseButton::Left, Modifiers::default());
+                    assert_eq!(*events.borrow(), Vec::<String>::new());
+                }
+            }
+            let bounds = cx
+                .debug_bounds("elicitation-option-label-value")
+                .expect("option text should be rendered");
+            cx.simulate_click(bounds.origin + point(px(1.), px(1.)), Modifiers::default());
+            cx.update(|window, _| assert!(focus.is_focused(window)));
+            press_keys(cx, "space");
+            let expected = if multiple {
+                "choice: value = true"
+            } else {
+                "choice: value"
+            };
+            assert_eq!(*events.borrow(), [expected, expected]);
+            let editor = view.read_with(cx, |view, _| {
+                view.form_state.option_views["choice"][1]
+                    .label
+                    .editor
+                    .clone()
+            });
+            editor.update_in(cx, |editor, window, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges([MultiBufferOffset(0)..MultiBufferOffset(5)]);
+                });
+                let selection = editor.selections.newest_anchor().clone();
+                let target = editor.snapshot(window, cx).max_point();
+                editor.move_selection_on_drop(&selection, target, false, window, cx);
+                assert_eq!(editor.text(cx), label);
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn form_request_text_has_selection_copy_menu(cx: &mut TestAppContext) {
+        init_keyboard_test(cx);
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let mut schema = acp::ElicitationSchema::new().property(
+                "boolean",
+                acp::BooleanPropertySchema::new()
+                    .title("Remember café 中🙂")
+                    .description("Keep **literal** text."),
+                false,
+            );
+            schema.title = Some("Connection".to_string());
+            schema.description = Some("Review the request.".to_string());
+            TestElicitationView::new(schema, window, cx)
+        });
+        cx.simulate_resize(size(px(320.), px(800.)));
+        cx.run_until_parked();
+        let events = view.read_with(cx, |view, _| view.events.clone());
+        let question = cx.debug_bounds("elicitation-question").expect("question");
+        cx.update(|_, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string("unchanged".to_string()))
+        });
+        cx.simulate_mouse_down(question.center(), MouseButton::Right, Modifiers::default());
+        cx.simulate_mouse_up(question.center(), MouseButton::Right, Modifiers::default());
+        let copy = cx.debug_bounds("MENU_ITEM-Copy").expect("Copy menu entry");
+        cx.simulate_click(copy.center(), Modifiers::default());
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some("unchanged")
+        );
+        press_keys(cx, "escape");
+
+        for (selector, expected) in [
+            ("elicitation-question", "Choose an answer."),
+            ("elicitation-title", "Connection"),
+            ("elicitation-description", "Review the request."),
+            ("elicitation-field-title-boolean", "Remember café 中🙂"),
+            (
+                "elicitation-field-description-boolean",
+                "Keep **literal** text.",
+            ),
+        ] {
+            select_text(cx, selector);
+            view.update(cx, |_, cx| cx.notify());
+            copy_selection_from_menu(cx, selector, "KEY_BINDING-c", expected);
+        }
+        assert_eq!(*events.borrow(), Vec::<String>::new());
+
+        view.update(cx, |view, cx| {
+            view.elicitation.request.message = "Updated question?".to_string();
+            view.form_state
+                .set_field_error("boolean", "Check this value.");
+            cx.notify();
+        });
+        cx.update(|_, cx| {
+            cx.bind_keys([gpui::KeyBinding::new(
+                "ctrl-shift-x",
+                editor::actions::Copy,
+                Some("Editor"),
+            )]);
+        });
+        cx.run_until_parked();
+        select_text(cx, "elicitation-question");
+        copy_selection_from_menu(
+            cx,
+            "elicitation-question",
+            "KEY_BINDING-x",
+            "Updated question?",
+        );
+        select_text(cx, "elicitation-field-error-boolean");
+        cx.simulate_keystrokes("ctrl-shift-x");
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some("Check this value.")
+        );
+        view.update(cx, |view, cx| {
+            view.form_state.set_field_error("boolean", "Changed error.");
+            cx.notify();
+        });
+        cx.run_until_parked();
+        select_text(cx, "elicitation-field-error-boolean");
+        cx.simulate_keystrokes("ctrl-shift-x");
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some("Changed error.")
+        );
+
+        let title = cx
+            .debug_bounds("elicitation-field-title-boolean")
+            .expect("boolean title");
+        cx.simulate_click(title.origin + point(px(1.), px(1.)), Modifiers::default());
+        press_keys(cx, "space");
+        assert_eq!(*events.borrow(), ["boolean: true", "boolean: true"]);
+        select_text(cx, "elicitation-field-description-boolean");
+        press_keys(cx, "shift-tab space tab enter");
+        assert_eq!(
+            *events.borrow(),
+            ["boolean: true", "boolean: true", "boolean: true", "submit"]
+        );
+    }
+
+    #[gpui::test]
     fn tab_navigation_between_form_and_url_cards(cx: &mut TestAppContext) {
         struct Cards {
             form: Entity<TestElicitationView>,
@@ -864,51 +1116,53 @@ mod tests {
         );
     }
 
-    #[test]
-    fn display_url_segments_never_elide_url_characters() {
+    #[gpui::test]
+    fn url_request_text_is_selectable_without_elision(cx: &mut TestAppContext) {
+        init_keyboard_test(cx);
         let url = format!(
-            "https://auth.example.com/oauth/authorize?state={}",
-            "a".repeat(MAX_URL_DISPLAY_SEGMENT_CHARS * 2)
+            "https://xn--pple-43d.com/authorize?state={}&scope=repository",
+            "a".repeat(128)
         );
-
-        let display_url_segments = display_url_segments(&url)
-            .into_iter()
-            .map(|segment| segment.to_string())
-            .collect::<Vec<_>>();
-        assert!(display_url_segments.len() > 1);
-        assert!(
-            !display_url_segments
-                .iter()
-                .any(|segment| segment.contains('…'))
-        );
-        assert!(
-            display_url_segments
-                .iter()
-                .all(|segment| segment.chars().count() <= MAX_URL_DISPLAY_SEGMENT_CHARS)
-        );
-        assert_eq!(display_url_segments.concat(), url);
-    }
-
-    #[test]
-    fn display_url_segments_use_larger_url_boundaries() {
-        let url = "https://auth.example.com/oauth/authorize?client_id=zed-desktop&scope=repository";
-
-        let display_url_segments = display_url_segments(url)
-            .into_iter()
-            .map(|segment| segment.to_string())
-            .collect::<Vec<_>>();
-        assert_eq!(display_url_segments.concat(), url);
-        assert_eq!(display_url_segments[0], "https://auth.example.com/");
-        assert!(
-            display_url_segments
-                .iter()
-                .any(|segment| segment.ends_with('?'))
-        );
-        assert!(
-            display_url_segments
-                .iter()
-                .any(|segment| segment.ends_with('&'))
-        );
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let mut view = TestElicitationView::new(acp::ElicitationSchema::new(), window, cx);
+            view.elicitation.request = acp::CreateElicitationRequest::new(
+                acp::ElicitationUrlMode::new(
+                    preview_request_scope(1),
+                    acp::ElicitationId::new("url-test"),
+                    url.clone(),
+                ),
+                "Authorize access.",
+            );
+            view
+        });
+        cx.simulate_resize(size(px(320.), px(800.)));
+        cx.run_until_parked();
+        let url_bounds = cx.debug_bounds("elicitation-url").expect("URL");
+        let question_bounds = cx.debug_bounds("elicitation-question").expect("question");
+        assert!(url_bounds.size.height > question_bounds.size.height);
+        assert!(url_bounds.right() <= px(320.));
+        for (selector, expected) in [
+            ("elicitation-question", "Authorize access."),
+            ("elicitation-url-host", "xn--pple-43d.com"),
+            (
+                "elicitation-url-warning",
+                "This internationalized address displays as аpple.com. Verify it carefully.",
+            ),
+            ("elicitation-url", url.as_str()),
+        ] {
+            select_text(cx, selector);
+            copy_selection_from_menu(cx, selector, "KEY_BINDING-c", expected);
+        }
+        let position = url_bounds.origin + point(px(30.), px(8.));
+        cx.simulate_click(position, Modifiers::default());
+        let modifiers = Modifiers::secondary_key();
+        cx.simulate_modifiers_change(modifiers);
+        cx.simulate_mouse_move(position, None, modifiers);
+        cx.run_until_parked();
+        cx.simulate_click(position, modifiers);
+        assert_eq!(cx.opened_url(), None);
+        let events = view.read_with(cx, |view, _| view.events.clone());
+        assert_eq!(*events.borrow(), Vec::<String>::new());
     }
 
     #[test]
@@ -1165,6 +1419,43 @@ mod tests {
 
             Editor::single_line(window, cx)
         });
+    }
+
+    fn select_text(cx: &mut VisualTestContext, selector: &'static str) {
+        let bounds = cx.debug_bounds(selector).expect("selectable text");
+        let start = bounds.origin + point(px(1.), px(1.));
+        let end = bounds.bottom_right() - point(px(1.), px(1.));
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_move(end, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+    }
+
+    fn copy_selection_from_menu(
+        cx: &mut VisualTestContext,
+        selector: &'static str,
+        binding_selector: &'static str,
+        expected: &str,
+    ) {
+        cx.update(|_, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string("unchanged".to_string()))
+        });
+        let bounds = cx.debug_bounds(selector).expect("selected text");
+        cx.simulate_mouse_down(bounds.center(), MouseButton::Right, Modifiers::default());
+        cx.simulate_mouse_up(bounds.center(), MouseButton::Right, Modifiers::default());
+        let copy = cx.debug_bounds("MENU_ITEM-Copy").expect("Copy menu entry");
+        assert!(
+            cx.debug_bounds(binding_selector).is_some(),
+            "Copy keybinding"
+        );
+        assert!(cx.debug_bounds("MENU_ITEM-Cut").is_none());
+        assert!(cx.debug_bounds("MENU_ITEM-Paste").is_none());
+        cx.simulate_click(copy.center(), Modifiers::default());
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some(expected)
+        );
     }
 }
 
@@ -1654,6 +1945,222 @@ fn property_description(property: &acp::ElicitationPropertySchema) -> Option<Sha
     .map(SharedString::from)
 }
 
+type TextClickHandler = Rc<dyn Fn(&mut Window, &mut App)>;
+
+struct ElicitationOptionView {
+    option: ElicitationOption,
+    label: ElicitationText,
+    description: Option<ElicitationText>,
+    focus_handle: FocusHandle,
+}
+
+impl ElicitationOptionView {
+    fn new(option: ElicitationOption, window: &mut Window, cx: &mut App) -> Self {
+        Self {
+            label: ElicitationText::new(option.label.clone(), Color::Default, window, cx),
+            description: option.description.as_ref().map(|description| {
+                ElicitationText::new(description.clone(), Color::Muted, window, cx)
+            }),
+            focus_handle: cx.focus_handle(),
+            option,
+        }
+    }
+
+    fn render(&self, on_click: TextClickHandler) -> Div {
+        let focus_handle = self.focus_handle.clone();
+        let on_click: TextClickHandler = Rc::new(move |window, cx| {
+            window.focus(&focus_handle, cx);
+            on_click(window, cx);
+        });
+        let label_value = self.option.value.clone();
+        let description_value = self.option.value.clone();
+        v_flex()
+            .gap_0p5()
+            .child(
+                div()
+                    .debug_selector(move || format!("elicitation-option-label-{label_value}"))
+                    .child(self.label.clone().on_click(on_click.clone())),
+            )
+            .when_some(self.description.clone(), |content, description| {
+                content.child(
+                    div()
+                        .debug_selector(move || {
+                            format!("elicitation-option-description-{description_value}")
+                        })
+                        .child(description.on_click(on_click)),
+                )
+            })
+    }
+}
+
+#[derive(Clone, IntoElement)]
+struct ElicitationText {
+    editor: Entity<Editor>,
+    color: Color,
+    pending_click: Rc<Cell<bool>>,
+    on_click: Option<TextClickHandler>,
+}
+
+impl ElicitationText {
+    fn new(text: SharedString, color: Color, window: &mut Window, cx: &mut App) -> Self {
+        Self {
+            editor: cx.new(|cx| {
+                let buffer = cx.new(|cx| {
+                    let mut buffer = Buffer::local(text, cx);
+                    buffer.set_capability(Capability::ReadOnly, cx);
+                    buffer
+                });
+                let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+                let mut editor = Editor::new(
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    buffer,
+                    None,
+                    window,
+                    cx,
+                );
+                editor.set_read_only(true);
+                editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+                editor.set_offset_content(false, cx);
+                editor.set_show_cursor_when_unfocused(false, cx);
+                editor.disable_scrollbars_and_minimap(window, cx);
+                editor.set_custom_context_menu(|editor, _, window, cx| {
+                    let has_selection =
+                        editor.has_non_empty_selection(&editor.display_snapshot(cx));
+                    let focus_handle = editor.focus_handle(cx);
+                    Some(ContextMenu::build(window, cx, |menu, _, _| {
+                        menu.context(focus_handle).action_disabled_when(
+                            !has_selection,
+                            "Copy",
+                            Box::new(editor::actions::Copy),
+                        )
+                    }))
+                });
+                editor
+            }),
+            color,
+            pending_click: Rc::default(),
+            on_click: None,
+        }
+    }
+
+    fn on_click(mut self, on_click: TextClickHandler) -> Self {
+        self.on_click = Some(on_click);
+        self
+    }
+}
+
+impl RenderOnce for ElicitationText {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        self.editor.update(cx, |editor, cx| {
+            editor.set_text_style_refinement(TextStyleRefinement {
+                font_size: Some(ui::TextSize::Small.rems(cx).into()),
+                line_height: Some(window.text_style().line_height),
+                color: Some(self.color.color(cx)),
+                ..TextStyleRefinement::default()
+            });
+        });
+        div()
+            .id(("elicitation-text", self.editor.entity_id()))
+            .track_focus(&self.editor.focus_handle(cx))
+            .capture_any_mouse_down({
+                let editor = self.editor.clone();
+                let pending_click = self.pending_click.clone();
+                move |event, window, cx| {
+                    pending_click.set(
+                        event.button == MouseButton::Left
+                            && event.click_count == 1
+                            && !event.modifiers.modified(),
+                    );
+                    if event.button == MouseButton::Left
+                        && (event.modifiers.secondary() || event.modifiers.alt)
+                    {
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if event.button == MouseButton::Left && !event.modifiers.modified() {
+                        editor.update(cx, |editor, cx| {
+                            editor.clear_selection_drag_state();
+                            editor.change_selections(
+                                SelectionEffects::no_scroll(),
+                                window,
+                                cx,
+                                |selections| {
+                                    selections.select_ranges([
+                                        MultiBufferOffset(0)..MultiBufferOffset(0)
+                                    ]);
+                                },
+                            );
+                        });
+                    }
+                }
+            })
+            .on_mouse_down_out({
+                let pending_click = self.pending_click.clone();
+                move |_, _, _| pending_click.set(false)
+            })
+            .on_hover({
+                let pending_click = self.pending_click.clone();
+                move |hovered, _, _| {
+                    if !hovered {
+                        pending_click.set(false);
+                    }
+                }
+            })
+            .on_mouse_move({
+                let editor = self.editor.clone();
+                let pending_click = self.pending_click.clone();
+                move |_, _, cx| {
+                    if editor.read(cx).has_pending_nonempty_selection() {
+                        pending_click.set(false);
+                    }
+                }
+            })
+            .on_mouse_up(MouseButton::Left, move |_, window, cx| {
+                if self.pending_click.replace(false)
+                    && let Some(on_click) = &self.on_click
+                {
+                    on_click(window, cx);
+                }
+            })
+            .child(self.editor)
+    }
+}
+
+#[derive(IntoElement)]
+struct ElicitationLabel {
+    id: ElementId,
+    role: SharedString,
+    text: SharedString,
+    color: Color,
+    on_click: Option<TextClickHandler>,
+}
+
+impl ElicitationLabel {
+    fn on_click(mut self, on_click: TextClickHandler) -> Self {
+        self.on_click = Some(on_click);
+        self
+    }
+}
+
+impl RenderOnce for ElicitationLabel {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let state = window.use_keyed_state((self.id, self.text.clone()), cx, |window, cx| {
+            ElicitationText::new(self.text, self.color, window, cx)
+        });
+        let mut text = state.read(cx).clone();
+        text.color = self.color;
+        text.on_click = self.on_click;
+        div()
+            .w_full()
+            .min_w_0()
+            .debug_selector(move || format!("elicitation-{}", self.role))
+            .child(text)
+    }
+}
+
 type RespondHandler = Rc<dyn Fn(ElicitationEntryId, &mut Window, &mut App)>;
 type OpenUrlHandler = Rc<dyn Fn(ElicitationEntryId, String, &mut Window, &mut App)>;
 type BooleanHandler = Rc<dyn Fn(ElicitationEntryId, String, bool, &mut App)>;
@@ -1719,9 +2226,6 @@ pub(crate) fn should_render_elicitation(elicitation: &Elicitation) -> bool {
     )
 }
 
-const MIN_URL_DISPLAY_SEGMENT_CHARS: usize = 16;
-const MAX_URL_DISPLAY_SEGMENT_CHARS: usize = 64;
-
 #[derive(Debug, PartialEq, Eq)]
 struct UrlHostPresentation {
     host: String,
@@ -1737,37 +2241,6 @@ fn url_host_presentation(url: &str) -> Option<UrlHostPresentation> {
         host,
         suspicious_decoded_host: (!suspicious_characters.is_empty()).then_some(decoded_host),
     })
-}
-
-fn display_url_segments(url: &str) -> Vec<SharedString> {
-    let mut segments = Vec::new();
-    let mut segment = String::new();
-    let mut segment_chars = 0;
-    let mut characters = url.chars().peekable();
-
-    while let Some(character) = characters.next() {
-        segment.push(character);
-        segment_chars += 1;
-
-        let should_split_at_boundary = segment_chars >= MIN_URL_DISPLAY_SEGMENT_CHARS
-            && is_url_display_segment_boundary(character);
-        let should_split_at_length = segment_chars >= MAX_URL_DISPLAY_SEGMENT_CHARS;
-
-        if characters.peek().is_some() && (should_split_at_boundary || should_split_at_length) {
-            segments.push(std::mem::take(&mut segment).into());
-            segment_chars = 0;
-        }
-    }
-
-    if !segment.is_empty() {
-        segments.push(segment.into());
-    }
-
-    segments
-}
-
-fn is_url_display_segment_boundary(character: char) -> bool {
-    matches!(character, '/' | '?' | '&' | '#')
 }
 
 pub(crate) struct ElicitationCard<'a> {
@@ -1819,10 +2292,11 @@ impl<'a> ElicitationCard<'a> {
             ElicitationStatus::Completed => ("Completed", IconName::Check, Color::Success),
         };
 
-        let body = v_flex()
-            .gap_2()
-            .p_3()
-            .child(Label::new(self.elicitation.request.message.clone()).size(LabelSize::Small));
+        let body = v_flex().gap_2().p_3().child(self.text(
+            "question",
+            self.elicitation.request.message.clone(),
+            Color::Default,
+        ));
         let body = match &self.elicitation.request.mode {
             acp::ElicitationMode::Form(mode) if is_pending => {
                 body.child(self.render_form(mode, cx))
@@ -1879,6 +2353,28 @@ impl<'a> ElicitationCard<'a> {
             })
     }
 
+    fn text(
+        &self,
+        role: impl Into<SharedString>,
+        text: impl Into<SharedString>,
+        color: Color,
+    ) -> ElicitationLabel {
+        let role = role.into();
+        ElicitationLabel {
+            id: ElementId::from((
+                ElementId::from((
+                    ElementId::from("elicitation"),
+                    SharedString::from(self.elicitation.id.0.clone()),
+                )),
+                role.clone(),
+            )),
+            role,
+            text: text.into(),
+            color,
+            on_click: None,
+        }
+    }
+
     fn render_form(&self, mode: &acp::ElicitationFormMode, cx: &App) -> AnyElement {
         let Some(state) = self.form_state else {
             return Empty.into_any_element();
@@ -1887,17 +2383,11 @@ impl<'a> ElicitationCard<'a> {
         v_flex()
             .gap_2()
             .when_some(mode.requested_schema.title.clone(), |this, title| {
-                this.child(Label::new(title).size(LabelSize::Small))
+                this.child(self.text("title", title, Color::Default))
             })
             .when_some(
                 mode.requested_schema.description.clone(),
-                |this, description| {
-                    this.child(
-                        Label::new(description)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                },
+                |this, description| this.child(self.text("description", description, Color::Muted)),
             )
             .children(mode.requested_schema.properties.iter().filter_map(
                 |(field_name, property)| {
@@ -1938,7 +2428,11 @@ impl<'a> ElicitationCard<'a> {
             Color::Default
         };
 
-        if let ElicitationFieldState::Boolean(value) = field {
+        if let ElicitationFieldState::Boolean {
+            value,
+            focus_handle,
+        } = field
+        {
             let checkbox_state = if *value {
                 ToggleState::Selected
             } else {
@@ -1950,62 +2444,78 @@ impl<'a> ElicitationCard<'a> {
             let field_name = field_name.to_string();
             let row_id = format!("elicitation-bool-row-{}-{field_name}", self.entry_ix);
             let checkbox_id = format!("elicitation-bool-{}-{field_name}", self.entry_ix);
+            let on_click: TextClickHandler = Rc::new({
+                let field_name = field_name.clone();
+                let focus_handle = focus_handle.clone();
+                move |window, cx| {
+                    window.focus(&focus_handle, cx);
+                    on_boolean_change(elicitation_id.clone(), field_name.clone(), next_value, cx);
+                }
+            });
 
             return v_flex()
                 .gap_1()
                 .child(
                     h_flex()
                         .id(row_id)
-                        .tab_index(0)
+                        .track_focus(&focus_handle.clone().tab_stop(true).tab_index(0))
                         .w_full()
                         .items_start()
                         .gap_1()
                         .cursor_pointer()
                         .focus_visible(|this| this.bg(cx.theme().colors().element_hover))
-                        .on_click(move |_, _window, cx| {
-                            on_boolean_change(
-                                elicitation_id.clone(),
-                                field_name.clone(),
-                                next_value,
-                                cx,
-                            );
+                        .on_click({
+                            let on_click = on_click.clone();
+                            move |_, window, cx| on_click(window, cx)
                         })
                         .child(div().child(Checkbox::new(checkbox_id, checkbox_state)))
                         .child(
                             v_flex()
+                                .min_w_0()
+                                .flex_1()
                                 .gap_0p5()
-                                .child(Label::new(label).size(LabelSize::Small).color(label_color))
-                                .when_some(description, |this, description| {
-                                    this.child(
-                                        Label::new(description)
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
+                                .child(
+                                    self.text(
+                                        format!("field-title-{field_name}"),
+                                        label,
+                                        label_color,
+                                    )
+                                    .on_click(on_click.clone()),
+                                )
+                                .when_some(description, |content, description| {
+                                    content.child(
+                                        self.text(
+                                            format!("field-description-{field_name}"),
+                                            description,
+                                            Color::Muted,
+                                        )
+                                        .on_click(on_click),
                                     )
                                 }),
                         ),
                 )
-                .when_some(error.cloned(), |this, error| {
-                    this.child(Label::new(error).size(LabelSize::Small).color(Color::Error))
+                .when_some(error.cloned(), |content, error| {
+                    content.child(self.text(
+                        format!("field-error-{field_name}"),
+                        error,
+                        Color::Error,
+                    ))
                 })
                 .into_any_element();
         }
 
         let group_label = label.clone();
-        let label = if error.is_some() {
-            Label::new(label).size(LabelSize::Small).color(Color::Error)
-        } else {
-            Label::new(label).size(LabelSize::Small)
-        };
+        let label = self.text(format!("field-title-{field_name}"), label, label_color);
 
         v_flex()
             .gap_1()
             .child(label)
             .when_some(description, |this, description| {
-                this.child(
-                    Label::new(description)
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
+                this.child(self.text(
+                    format!("field-description-{field_name}"),
+                    description,
+                    Color::Muted,
+                ))
             })
             .child(match field {
                 ElicitationFieldState::Text(editor) => {
@@ -2031,14 +2541,9 @@ impl<'a> ElicitationCard<'a> {
                         .child(editor.clone().into_any_element())
                         .into_any_element()
                 }
-                ElicitationFieldState::Boolean(_) => Empty.into_any_element(),
+                ElicitationFieldState::Boolean { .. } => Empty.into_any_element(),
                 ElicitationFieldState::SingleSelect { value } => {
-                    let options = match property {
-                        acp::ElicitationPropertySchema::String(schema) => {
-                            single_select_options(schema)
-                        }
-                        _ => Vec::new(),
-                    };
+                    let options = self.option_views(field_name);
                     self.render_single_select(
                         field_name,
                         group_label,
@@ -2048,18 +2553,14 @@ impl<'a> ElicitationCard<'a> {
                     )
                 }
                 ElicitationFieldState::MultiSelect(selected) => {
-                    let options = match property {
-                        acp::ElicitationPropertySchema::Array(schema) => {
-                            multi_select_options(schema)
-                        }
-                        _ => Vec::new(),
-                    };
+                    let options = self.option_views(field_name);
                     v_flex()
                         .id(format!("elicitation-multi-{}-{field_name}", self.entry_ix))
                         .role(Role::Group)
                         .aria_label(group_label)
                         .gap_1()
-                        .children(options.into_iter().map(|option| {
+                        .children(options.iter().map(|option_view| {
+                            let option = &option_view.option;
                             let is_selected = selected.contains(&option.value);
                             let on_multi_select_change =
                                 self.handlers.on_multi_select_change.clone();
@@ -2069,27 +2570,30 @@ impl<'a> ElicitationCard<'a> {
                                 "elicitation-multi-option-{}-{field_name}-{}",
                                 self.entry_ix, option.value
                             );
-                            let value = option.value;
-                            ChoiceCard::checkbox(card_id, option.label, is_selected)
-                                .when_some(option.description, |this, description| {
-                                    this.description(description)
+                            let value = option.value.clone();
+                            let on_click: TextClickHandler = Rc::new(move |_, cx| {
+                                on_multi_select_change(
+                                    elicitation_id.clone(),
+                                    field_name.clone(),
+                                    value.clone(),
+                                    !is_selected,
+                                    cx,
+                                );
+                            });
+                            ChoiceCard::checkbox(card_id, option.label.clone(), is_selected)
+                                .content(option_view.render(on_click.clone()))
+                                .focus_handle(option_view.focus_handle.clone())
+                                .when_some(option.description.clone(), |card, description| {
+                                    card.description(description)
                                 })
                                 .invalid(error.is_some())
-                                .on_click(move |_, _window, cx| {
-                                    on_multi_select_change(
-                                        elicitation_id.clone(),
-                                        field_name.clone(),
-                                        value.clone(),
-                                        !is_selected,
-                                        cx,
-                                    );
-                                })
+                                .on_click(move |_, window, cx| on_click(window, cx))
                         }))
                         .into_any_element()
                 }
             })
-            .when_some(error.cloned(), |this, error| {
-                this.child(Label::new(error).size(LabelSize::Small).color(Color::Error))
+            .when_some(error.cloned(), |content, error| {
+                content.child(self.text(format!("field-error-{field_name}"), error, Color::Error))
             })
             .into_any_element()
     }
@@ -2099,7 +2603,7 @@ impl<'a> ElicitationCard<'a> {
         field_name: &str,
         group_label: SharedString,
         selected_value: Option<&String>,
-        options: Vec<ElicitationOption>,
+        options: &[ElicitationOptionView],
         has_error: bool,
     ) -> AnyElement {
         let entry_ix = self.entry_ix;
@@ -2112,33 +2616,44 @@ impl<'a> ElicitationCard<'a> {
             .role(Role::RadioGroup)
             .aria_label(group_label)
             .gap_1()
-            .children(options.into_iter().map(|option| {
+            .children(options.iter().map(|option_view| {
+                let option = &option_view.option;
                 let card_id = format!(
                     "elicitation-select-option-{entry_ix}-{field_name}-{}",
                     option.value
                 );
                 let is_selected =
                     selected_value.is_some_and(|selected_value| selected_value == &option.value);
-                let option_value = option.value;
+                let option_value = option.value.clone();
                 let elicitation_id = elicitation_id.clone();
                 let field_name = field_name.clone();
                 let on_single_select_change = on_single_select_change.clone();
 
-                ChoiceCard::radio(card_id, option.label, is_selected)
-                    .when_some(option.description, |this, description| {
-                        this.description(description)
+                let on_click: TextClickHandler = Rc::new(move |_, cx| {
+                    on_single_select_change(
+                        elicitation_id.clone(),
+                        field_name.clone(),
+                        option_value.clone(),
+                        cx,
+                    );
+                });
+                ChoiceCard::radio(card_id, option.label.clone(), is_selected)
+                    .content(option_view.render(on_click.clone()))
+                    .focus_handle(option_view.focus_handle.clone())
+                    .when_some(option.description.clone(), |card, description| {
+                        card.description(description)
                     })
                     .invalid(has_error)
-                    .on_click(move |_, _window, cx| {
-                        on_single_select_change(
-                            elicitation_id.clone(),
-                            field_name.clone(),
-                            option_value.clone(),
-                            cx,
-                        );
-                    })
+                    .on_click(move |_, window, cx| on_click(window, cx))
             }))
             .into_any_element()
+    }
+
+    fn option_views(&self, field_name: &str) -> &[ElicitationOptionView] {
+        self.form_state
+            .and_then(|state| state.option_views.get(field_name))
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     fn render_url_elicitation(&self, mode: &acp::ElicitationUrlMode) -> AnyElement {
@@ -2156,7 +2671,7 @@ impl<'a> ElicitationCard<'a> {
                                         .size(LabelSize::Small)
                                         .color(Color::Muted),
                                 )
-                                .child(Label::new(presentation.host).size(LabelSize::Small)),
+                                .child(div().min_w_0().flex_1().child(self.text("url-host", presentation.host, Color::Default))),
                         )
                         .when_some(
                             presentation.suspicious_decoded_host,
@@ -2171,22 +2686,20 @@ impl<'a> ElicitationCard<'a> {
                                                 .color(Color::Warning),
                                         )
                                         .child(
-                                            Label::new(format!(
+                                            div().min_w_0().flex_1().child(self.text("url-warning", format!(
                                                 "This internationalized address displays as {decoded_host}. Verify it carefully."
-                                            ))
-                                            .size(LabelSize::Small)
-                                            .color(Color::Warning),
+                                            ), Color::Warning)),
                                         ),
                                 )
                             },
                         ),
                 )
             })
-            .child(Self::render_url_summary(&mode.url))
+            .child(self.render_url_summary(&mode.url))
             .into_any_element()
     }
 
-    fn render_url_summary(url: &str) -> AnyElement {
+    fn render_url_summary(&self, url: &str) -> AnyElement {
         h_flex()
             .gap_1()
             .w_full()
@@ -2199,13 +2712,12 @@ impl<'a> ElicitationCard<'a> {
                         .color(Color::Muted),
                 ),
             )
-            .child(h_flex().min_w_0().flex_1().flex_wrap().children(
-                display_url_segments(url).into_iter().map(|segment| {
-                    Label::new(segment)
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                }),
-            ))
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .child(self.text("url", url.to_string(), Color::Muted)),
+            )
             .into_any_element()
     }
 
