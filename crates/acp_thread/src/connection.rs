@@ -1,5 +1,5 @@
 use crate::{AcpThread, ElicitationStore};
-use agent_client_protocol::schema::v1 as acp_v1;
+use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet, IndexMap};
@@ -192,9 +192,25 @@ pub trait AgentConnection {
         None
     }
 
+    fn receipt_submissions(
+        &self,
+        _session_id: &acp_v1::SessionId,
+        _cx: &App,
+    ) -> Option<Rc<dyn ReceiptSessionSubmissions>> {
+        None
+    }
+
+    /// Preflight without starting transport work so rejection cannot interrupt an
+    /// existing turn. Adapters must also validate when called directly.
+    fn validate_prompt_content(&self, _content: &[acp_v2::ContentBlock]) -> Result<()> {
+        Ok(())
+    }
+
+    /// This completion-based path retains a legacy response; receipt transports
+    /// acknowledge acceptance separately through `receipt_submissions`.
     fn prompt(
         &self,
-        params: acp_v1::PromptRequest,
+        params: acp_v2::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp_v1::PromptResponse>>;
 
@@ -287,9 +303,19 @@ pub trait AgentSessionClientUserMessageIds {
     fn prompt(
         &self,
         client_user_message_id: ClientUserMessageId,
-        params: acp_v1::PromptRequest,
+        params: acp_v2::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp_v1::PromptResponse>>;
+}
+
+/// A session-bound prompt transport whose response acknowledges acceptance, not completion.
+/// Implementations must report foreground state separately through `AcpThread::update_session_state`.
+pub trait ReceiptSessionSubmissions {
+    fn prompt(
+        &self,
+        content: Vec<acp_v2::ContentBlock>,
+        cx: &mut App,
+    ) -> Task<Result<acp_v2::PromptResponse>>;
 }
 
 pub trait AgentSessionRetry {
@@ -320,16 +346,16 @@ pub trait AgentSessionModes {
 
 pub trait AgentSessionConfigOptions {
     /// Get all current config options with their state
-    fn config_options(&self) -> Vec<acp_v1::SessionConfigOption>;
+    fn config_options(&self) -> Vec<acp_v2::SessionConfigOption>;
 
     /// Set a config option value
     /// Returns the full updated list of config options
     fn set_config_option(
         &self,
-        config_id: acp_v1::SessionConfigId,
-        value: acp_v1::SessionConfigOptionValue,
+        config_id: acp_v2::SessionConfigId,
+        value: acp_v2::SessionConfigOptionValue,
         cx: &mut App,
-    ) -> Task<Result<Vec<acp_v1::SessionConfigOption>>>;
+    ) -> Task<Result<Vec<acp_v2::SessionConfigOption>>>;
 
     /// Whenever the config options are updated the receiver will be notified.
     /// Optional for agents that don't update their config options dynamically.
@@ -606,6 +632,26 @@ impl PermissionOptions {
         }
     }
 
+    pub fn option_for_id(
+        &self,
+        id: &acp_v1::PermissionOptionId,
+    ) -> Option<&acp_v1::PermissionOption> {
+        match self {
+            Self::Flat(options) => options.iter().find(|option| &option.option_id == id),
+            Self::Dropdown(choices) | Self::DropdownWithPatterns { choices, .. } => {
+                choices.iter().find_map(|choice| {
+                    if &choice.allow.option_id == id {
+                        Some(&choice.allow)
+                    } else if &choice.deny.option_id == id {
+                        Some(&choice.deny)
+                    } else {
+                        None
+                    }
+                })
+            }
+        }
+    }
+
     pub fn first_option_of_kind(
         &self,
         kind: acp_v1::PermissionOptionKind,
@@ -697,12 +743,12 @@ impl PermissionOptions {
     }
 }
 
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 mod test_support {
     //! Test-only stubs and helpers for acp_thread.
     //!
-    //! This module is gated by the `test-support` feature and is not included
-    //! in production builds. It provides:
+    //! This module is available to unit tests and the `test-support` feature,
+    //! but not production builds. It provides:
     //! - `StubAgentConnection` for mocking agent connections in tests
     //! - `create_test_png_base64` for generating test images
 
@@ -768,9 +814,15 @@ mod test_support {
         permission_requests: HashMap<acp_v1::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<acp_v1::SessionUpdate>>>,
         next_prompt_response: Arc<Mutex<Option<oneshot::Receiver<Result<acp_v1::PromptResponse>>>>>,
+        next_receipt_response:
+            Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
+        receipt_prompt: Arc<Mutex<Option<Vec<acp_v2::ContentBlock>>>>,
         next_truncate: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
+        supports_receipt_submissions: bool,
+        supports_retry: bool,
         supports_load_session: bool,
         supports_session_additional_directories: bool,
+        supports_set_title: bool,
         agent_id: AgentId,
         telemetry_id: SharedString,
     }
@@ -791,11 +843,16 @@ mod test_support {
             Self {
                 next_prompt_updates: Default::default(),
                 next_prompt_response: Default::default(),
+                next_receipt_response: Default::default(),
+                receipt_prompt: Default::default(),
                 next_truncate: Default::default(),
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
+                supports_receipt_submissions: false,
+                supports_retry: false,
                 supports_load_session: false,
                 supports_session_additional_directories: false,
+                supports_set_title: true,
                 agent_id: AgentId::new("stub"),
                 telemetry_id: "stub".into(),
             }
@@ -811,6 +868,23 @@ mod test_support {
             let (sender, receiver) = oneshot::channel();
             assert!(self.next_prompt_response.lock().replace(receiver).is_none());
             sender
+        }
+
+        pub fn defer_next_receipt_response(
+            &self,
+        ) -> oneshot::Sender<Result<acp_v2::PromptResponse>> {
+            let (sender, receiver) = oneshot::channel();
+            assert!(
+                self.next_receipt_response
+                    .lock()
+                    .replace(receiver)
+                    .is_none()
+            );
+            sender
+        }
+
+        pub fn take_receipt_prompt(&self) -> Option<Vec<acp_v2::ContentBlock>> {
+            self.receipt_prompt.lock().take()
         }
 
         pub fn defer_next_truncate(&self) -> oneshot::Sender<()> {
@@ -832,11 +906,26 @@ mod test_support {
             self
         }
 
+        pub fn with_receipt_submissions(mut self, enabled: bool) -> Self {
+            self.supports_receipt_submissions = enabled;
+            self
+        }
+
+        pub fn with_retry(mut self) -> Self {
+            self.supports_retry = true;
+            self
+        }
+
         pub fn with_supports_session_additional_directories(
             mut self,
             supports_session_additional_directories: bool,
         ) -> Self {
             self.supports_session_additional_directories = supports_session_additional_directories;
+            self
+        }
+
+        pub fn with_supports_set_title(mut self, supports_set_title: bool) -> Self {
+            self.supports_set_title = supports_set_title;
             self
         }
 
@@ -985,11 +1074,19 @@ mod test_support {
             unimplemented!()
         }
 
+        fn validate_prompt_content(&self, content: &[acp_v2::ContentBlock]) -> Result<()> {
+            crate::content::validate_prompt_content_for_v1(content)
+        }
+
         fn prompt(
             &self,
-            params: acp_v1::PromptRequest,
+            params: acp_v2::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp_v1::PromptResponse>> {
+            let params = match crate::content::prompt_to_v1(params) {
+                Ok(params) => params,
+                Err(error) => return Task::ready(Err(error)),
+            };
             let mut sessions = self.sessions.lock();
             let Session {
                 thread,
@@ -1054,6 +1151,30 @@ mod test_support {
             }))
         }
 
+        fn receipt_submissions(
+            &self,
+            session_id: &acp_v1::SessionId,
+            _cx: &App,
+        ) -> Option<Rc<dyn ReceiptSessionSubmissions>> {
+            self.supports_receipt_submissions.then(|| {
+                Rc::new(StubReceiptSessionSubmissions {
+                    session_id: session_id.clone(),
+                    sessions: self.sessions.clone(),
+                    next_receipt_response: self.next_receipt_response.clone(),
+                    receipt_prompt: self.receipt_prompt.clone(),
+                }) as Rc<dyn ReceiptSessionSubmissions>
+            })
+        }
+
+        fn retry(
+            &self,
+            _session_id: &acp_v1::SessionId,
+            _cx: &App,
+        ) -> Option<Rc<dyn AgentSessionRetry>> {
+            self.supports_retry
+                .then(|| Rc::new(StubAgentSessionRetry) as Rc<dyn AgentSessionRetry>)
+        }
+
         fn cancel(&self, session_id: &acp_v1::SessionId, _cx: &mut App) {
             if let Some(end_turn_tx) = self
                 .sessions
@@ -1072,7 +1193,8 @@ mod test_support {
             _session_id: &acp_v1::SessionId,
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionSetTitle>> {
-            Some(Rc::new(StubAgentSessionSetTitle))
+            self.supports_set_title
+                .then(|| Rc::new(StubAgentSessionSetTitle) as _)
         }
 
         fn truncate(
@@ -1107,10 +1229,43 @@ mod test_support {
         fn prompt(
             &self,
             _client_user_message_id: ClientUserMessageId,
-            params: acp_v1::PromptRequest,
+            params: acp_v2::PromptRequest,
             cx: &mut App,
         ) -> Task<Result<acp_v1::PromptResponse>> {
             self.connection.prompt(params, cx)
+        }
+    }
+
+    struct StubReceiptSessionSubmissions {
+        session_id: acp_v1::SessionId,
+        sessions: Arc<Mutex<HashMap<acp_v1::SessionId, Session>>>,
+        next_receipt_response:
+            Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
+        receipt_prompt: Arc<Mutex<Option<Vec<acp_v2::ContentBlock>>>>,
+    }
+
+    impl ReceiptSessionSubmissions for StubReceiptSessionSubmissions {
+        fn prompt(
+            &self,
+            content: Vec<acp_v2::ContentBlock>,
+            cx: &mut App,
+        ) -> Task<Result<acp_v2::PromptResponse>> {
+            if !self.sessions.lock().contains_key(&self.session_id) {
+                return Task::ready(Err(anyhow::Error::msg("Unknown receipt session")));
+            }
+            *self.receipt_prompt.lock() = Some(content);
+            match self.next_receipt_response.lock().take() {
+                Some(receiver) => cx.spawn(async move |_| Ok(receiver.await??)),
+                None => Task::ready(Err(anyhow::Error::msg("No deferred receipt response"))),
+            }
+        }
+    }
+
+    struct StubAgentSessionRetry;
+
+    impl AgentSessionRetry for StubAgentSessionRetry {
+        fn run(&self, _cx: &mut App) -> Task<Result<acp_v1::PromptResponse>> {
+            Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
     }
 
@@ -1176,5 +1331,5 @@ mod test_support {
     }
 }
 
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 pub use test_support::*;

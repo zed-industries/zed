@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "1.23.0"
+version = "1.24.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -36,6 +36,7 @@ visual-tests = [
     "dep:tempfile",
     "dep:action_log",
     "dep:agent_servers",
+    "dep:env_logger",
     "workspace/test-support",
     "project/test-support",
     "editor/test-support",
@@ -106,7 +107,7 @@ dev_container.workspace = true
 diagnostics.workspace = true
 editor.workspace = true
 encoding_selector.workspace = true
-env_logger.workspace = true
+env_logger = { workspace = true, optional = true }
 extension.workspace = true
 extension_host.workspace = true
 extensions_ui.workspace = true
@@ -130,7 +131,6 @@ gpui_platform = { workspace = true, features = [
 gpui_tokio.workspace = true
 hang_telemetry.workspace = true
 image = { workspace = true, optional = true }
-spin = "0.10.0"
 itertools.workspace = true
 rayon.workspace = true
 semver.workspace = true
@@ -184,7 +184,7 @@ recent_projects.workspace = true
 release_channel.workspace = true
 remote.workspace = true
 repl.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["multipart"] }
 reqwest_client.workspace = true
 rope.workspace = true
 sandbox.workspace = true
@@ -238,15 +238,15 @@ ztracing.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 etw_tracing.workspace = true
-windows.workspace = true
+windows = { workspace = true, features = ["Win32_System_Console", "Win32_System_Pipes"] }
 gpui = { workspace = true, features = ["profiler", "windows-manifest"] }
 
-[build-dependencies]
-windows_resources = { path = "../windows_resources" }
+[target.'cfg(target_os = "windows")'.build-dependencies]
+windows_resources.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 gpui = { workspace = true, features = ["profiler", "wayland", "x11"] }
-ashpd.workspace = true
+ashpd = { workspace = true, features = ["notification"] }
 image.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.build-dependencies]
@@ -260,6 +260,7 @@ pkg-config = "0.3.22"
 activity_indicator = { workspace = true, features = ["test-support"] }
 call = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["profiler", "test-support"] }
 image_viewer = { workspace = true, features = ["test-support"] }
@@ -283,6 +284,7 @@ repl = { workspace = true, features = ["test-support"] }
 icon = ["resources/app-icon-dev@2x.png", "resources/app-icon-dev.png"]
 identifier = "dev.zed.Zed-Dev"
 name = "Zed Dev"
+category = "Developer Tool"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
@@ -291,6 +293,7 @@ osx_url_schemes = ["zed"]
 icon = ["resources/app-icon-nightly@2x.png", "resources/app-icon-nightly.png"]
 identifier = "dev.zed.Zed-Nightly"
 name = "Zed Nightly"
+category = "Developer Tool"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
@@ -299,6 +302,7 @@ osx_url_schemes = ["zed"]
 icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
 identifier = "dev.zed.Zed-Preview"
 name = "Zed Preview"
+category = "Developer Tool"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
@@ -307,6 +311,7 @@ osx_url_schemes = ["zed"]
 icon = ["resources/app-icon@2x.png", "resources/app-icon.png"]
 identifier = "dev.zed.Zed"
 name = "Zed"
+category = "Developer Tool"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]

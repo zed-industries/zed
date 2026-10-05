@@ -34,6 +34,7 @@ use acp_thread::{
     AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, TokenUsageRatio,
 };
 use agent_client_protocol::schema::v1 as acp_v1;
+use agent_client_protocol::schema::v2 as acp_v2;
 use agent_skills::{
     AGENTS_DIR_NAME, MAX_SKILL_DESCRIPTIONS_SIZE, MAX_SKILL_FILE_SIZE, ProjectSkillGroup,
     SKILL_FILE_NAME, Skill, SkillIndex, SkillLoadError, SkillLoadWarning, SkillScopeId,
@@ -240,7 +241,7 @@ struct Session {
 }
 
 impl Session {
-    fn draft_prompt(&self, cx: &App) -> Option<Vec<acp_v1::ContentBlock>> {
+    fn draft_prompt(&self, cx: &App) -> Option<Vec<acp_v2::ContentBlock>> {
         match self.acp_thread.upgrade() {
             Some(acp_thread) => acp_thread.read(cx).draft_prompt().map(Vec::from),
             None => self.thread.read(cx).draft_prompt().map(Vec::from),
@@ -1774,7 +1775,7 @@ impl NativeAgent {
         &mut self,
         session_id: &acp_v1::SessionId,
         acp_thread_id: EntityId,
-        draft_prompt: Option<Vec<acp_v1::ContentBlock>>,
+        draft_prompt: Option<Vec<acp_v2::ContentBlock>>,
         cx: &mut Context<Self>,
     ) {
         let Some(session) = self.sessions.get(session_id) else {
@@ -1810,7 +1811,7 @@ impl NativeAgent {
     fn enqueue_save(
         &mut self,
         id: &acp_v1::SessionId,
-        draft_prompt: Option<Vec<acp_v1::ContentBlock>>,
+        draft_prompt: Option<Vec<acp_v2::ContentBlock>>,
         cx: &mut Context<Self>,
     ) {
         let Some(session) = self.sessions.get(id) else {
@@ -1873,7 +1874,7 @@ impl NativeAgent {
     fn thread_save_payload(
         &self,
         session: &Session,
-        draft_prompt: Option<Vec<acp_v1::ContentBlock>>,
+        draft_prompt: Option<Vec<acp_v2::ContentBlock>>,
         cx: &mut App,
     ) -> Option<(acp_v1::SessionId, PathList, Task<DbThread>)> {
         if session.thread.read(cx).is_empty() {
@@ -2831,9 +2832,13 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         Some(prompt)
     }
 
+    fn validate_prompt_content(&self, content: &[acp_v2::ContentBlock]) -> Result<()> {
+        acp_thread::content::validate_prompt_content_for_v1(content)
+    }
+
     fn prompt(
         &self,
-        params: acp_v1::PromptRequest,
+        params: acp_v2::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp_v1::PromptResponse>> {
         acp_thread::AgentSessionClientUserMessageIds::prompt(
@@ -2918,9 +2923,13 @@ impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
     fn prompt(
         &self,
         client_user_message_id: acp_thread::ClientUserMessageId,
-        params: acp_v1::PromptRequest,
+        params: acp_v2::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp_v1::PromptResponse>> {
+        let params = match acp_thread::content::prompt_to_v1(params) {
+            Ok(params) => params,
+            Err(error) => return Task::ready(Err(error)),
+        };
         let session_id = params.session_id.clone();
         log::info!("Received prompt request for session: {}", session_id);
         log::debug!("Prompt blocks count: {}", params.prompt.len());
@@ -3594,11 +3603,11 @@ impl SubagentHandle for NativeSubagentHandle {
             };
             let discard_partial_output = matches!(
                 &response,
-                Ok(Some(response)) if response.stop_reason == acp_v1::StopReason::Cancelled
+                Ok(Some(acp_thread::SubmissionResponse::LegacyCompleted(response))) if response.stop_reason == acp_v1::StopReason::Cancelled
                     || response.stop_reason == acp_v1::StopReason::Refusal
             );
             let result = match response {
-                Ok(Some(response)) => match response.stop_reason {
+                Ok(Some(acp_thread::SubmissionResponse::LegacyCompleted(response))) => match response.stop_reason {
                     acp_v1::StopReason::Cancelled => Err(anyhow!("User canceled")),
                     acp_v1::StopReason::MaxTokens => Err(anyhow!("The agent reached the maximum number of tokens.")),
                     acp_v1::StopReason::MaxTurnRequests => Err(anyhow!("The agent reached the maximum number of allowed requests between user turns. Try prompting again.")),
@@ -3624,6 +3633,9 @@ impl SubagentHandle for NativeSubagentHandle {
                             .context("No response from subagent")
                     }),
                 },
+                Ok(Some(acp_thread::SubmissionResponse::Accepted(_))) => {
+                    Err(anyhow!("Native subagent returned acceptance instead of turn completion"))
+                }
                 Ok(None) => Err(anyhow!("No response from the agent. You can try messaging again.")),
                 Err(error) => Err(error),
             };
@@ -4067,7 +4079,7 @@ mod internal_tests {
         let task = cx.update(|cx| {
             tool.run(
                 ToolInput::resolved(SandboxedTerminalToolInput {
-                    command: "true".to_string(),
+                    command: "read -r line </dev/tty".to_string(),
                     cd: temp_dir.path().to_string_lossy().into_owned(),
                     ..Default::default()
                 }),
@@ -4104,11 +4116,10 @@ mod internal_tests {
             "the full terminal tool path should create a real PTY"
         );
 
+        historical_terminal.update(cx, |terminal, _cx| terminal.input(b"\n".to_vec()));
+
         let result = task.await.expect("native terminal tool call succeeds");
-        assert!(
-            result.contains("Command executed successfully."),
-            "unexpected terminal tool result: {result}"
-        );
+        assert_eq!(result, "Command executed successfully.");
         assert!(
             historical_terminal.read_with(cx, |terminal, _cx| {
                 terminal.is_pty() && terminal.pid_getter().is_some()
@@ -4269,7 +4280,7 @@ mod internal_tests {
             acp_thread::AgentSessionClientUserMessageIds::prompt(
                 connection.as_ref(),
                 compact_message_id,
-                acp_v1::PromptRequest::new(session_id.clone(), vec!["/compact".into()]),
+                acp_v2::PromptRequest::new(session_id.0.clone(), vec!["/compact".into()]),
                 cx,
             )
         });
@@ -4476,7 +4487,7 @@ mod internal_tests {
             acp_thread::AgentSessionClientUserMessageIds::prompt(
                 connection.as_ref(),
                 ClientUserMessageId::new(),
-                acp_v1::PromptRequest::new(session_id.clone(), vec!["old user".into()]),
+                acp_v2::PromptRequest::new(session_id.0.clone(), vec!["old user".into()]),
                 cx,
             )
         });
@@ -4505,7 +4516,7 @@ mod internal_tests {
             acp_thread::AgentSessionClientUserMessageIds::prompt(
                 connection.as_ref(),
                 ClientUserMessageId::new(),
-                acp_v1::PromptRequest::new(session_id, vec!["new user".into()]),
+                acp_v2::PromptRequest::new(session_id.0, vec!["new user".into()]),
                 cx,
             )
         });
@@ -4748,7 +4759,7 @@ mod internal_tests {
                 acp_thread::AgentSessionClientUserMessageIds::prompt(
                     connection.as_ref(),
                     ClientUserMessageId::new(),
-                    acp_v1::PromptRequest::new(session_id.clone(), vec!["use a tool".into()]),
+                    acp_v2::PromptRequest::new(session_id.0.clone(), vec!["use a tool".into()]),
                     cx,
                 )
             });
@@ -4879,7 +4890,7 @@ mod internal_tests {
             });
             acp_thread.update(cx, |acp_thread, cx| {
                 acp_thread.set_draft_prompt(
-                    Some(vec![acp_v1::ContentBlock::from("draft in progress")]),
+                    Some(vec![acp_v2::ContentBlock::from("draft in progress")]),
                     cx,
                 );
             });
@@ -4916,7 +4927,7 @@ mod internal_tests {
         );
         assert_eq!(
             restored.draft_prompt,
-            Some(vec![acp_v1::ContentBlock::from("draft in progress")]),
+            Some(vec![acp_v2::ContentBlock::from("draft in progress")]),
             "the current draft prompt should be captured by the quit flush"
         );
         assert!(
@@ -7263,7 +7274,7 @@ mod internal_tests {
             thread.send(
                 vec![
                     "What does ".into(),
-                    acp_v1::ContentBlock::ResourceLink(acp_v1::ResourceLink::new(
+                    acp_v2::ContentBlock::ResourceLink(acp_v2::ResourceLink::new(
                         "b.md",
                         MentionUri::File {
                             abs_path: path!("/a/b.md").into(),
@@ -7327,9 +7338,9 @@ mod internal_tests {
         // AFTER run_until_parked, so the only save that captures these
         // changes is the one performed by close_session itself.
         let draft_blocks = vec![
-            acp_v1::ContentBlock::Text(acp_v1::TextContent::new("Check out ")),
-            acp_v1::ContentBlock::ResourceLink(acp_v1::ResourceLink::new("b.md", uri.to_string())),
-            acp_v1::ContentBlock::Text(acp_v1::TextContent::new(" please")),
+            acp_v2::ContentBlock::Text(acp_v2::TextContent::new("Check out ")),
+            acp_v2::ContentBlock::ResourceLink(acp_v2::ResourceLink::new("b.md", uri.to_string())),
+            acp_v2::ContentBlock::Text(acp_v2::TextContent::new(" please")),
         ];
         acp_thread.update(cx, |thread, cx| {
             thread.set_draft_prompt(Some(draft_blocks.clone()), cx);
@@ -7454,7 +7465,7 @@ mod internal_tests {
         // This means no observe-triggered save has run for this change.
         // The only way this data gets persisted is if close_session
         // itself performs the save.
-        let draft_blocks = vec![acp_v1::ContentBlock::Text(acp_v1::TextContent::new(
+        let draft_blocks = vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
             "unsaved draft",
         ))];
         acp_thread.update(cx, |thread, cx| {
@@ -7616,7 +7627,7 @@ mod internal_tests {
         let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
 
         let [first_draft, second_draft, third_draft] = ["draft one", "draft two", "draft three"]
-            .map(|text| vec![acp_v1::ContentBlock::Text(acp_v1::TextContent::new(text))]);
+            .map(|text| vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(text))]);
 
         let (first_gate_tx, first_gate_rx) = oneshot::channel();
         database.set_write_gate(first_gate_rx);
@@ -8005,7 +8016,7 @@ mod internal_tests {
         agent: &Entity<NativeAgent>,
         acp_thread: &Entity<AcpThread>,
         thread: &Entity<Thread>,
-        draft: Vec<acp_v1::ContentBlock>,
+        draft: Vec<acp_v2::ContentBlock>,
         cx: &mut TestAppContext,
     ) {
         acp_thread.update(cx, |acp_thread, cx| {

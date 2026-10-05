@@ -1446,7 +1446,7 @@ mod tests {
                     .element_states
                     .keys()
                     .filter_map(|(global_id, _)| {
-                        let ElementId::NamedInteger(name, element_id) = global_id.0.last()? else {
+                        let ElementId::NamedInteger(name, element_id) = global_id.last()? else {
                             return None;
                         };
                         (name.as_ref() == "randomized-element").then_some(*element_id)

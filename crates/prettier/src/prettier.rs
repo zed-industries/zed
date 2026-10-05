@@ -606,11 +606,13 @@ fn prettier_parser_name(
         parser
     } else if let (Some(buffer_language), Some(buffer_path)) = (buffer_language, buffer_path)
         && buffer_path.extension().is_some_and(|extension| {
+            let extension = extension.to_string_lossy();
             !buffer_language
                 .config()
                 .matcher
                 .path_suffixes
-                .contains(&extension.to_string_lossy().into_owned())
+                .iter()
+                .any(|suffix| suffix.as_str() == extension)
         })
     {
         buffer_language.prettier_parser_name()
