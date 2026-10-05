@@ -1,6 +1,8 @@
 use super::*;
 use acp_thread::{AcpThread, PermissionOptions, StubAgentConnection};
 use agent::ThreadStore;
+use agent_client_protocol::schema::v2 as acp_v2;
+use agent_settings::AgentSettings;
 use agent_ui::{
     ThreadId,
     terminal_thread_metadata_store::{
@@ -14,10 +16,10 @@ use agent_ui::{
 };
 use chrono::DateTime;
 use fs::{FakeFs, Fs};
-use gpui::{TestAppContext, UpdateGlobal};
+use gpui::{App, Bounds, Hsla, Point, Rgba, TestAppContext, UpdateGlobal, VisualTestContext};
 use pretty_assertions::assert_eq;
 use project::AgentId;
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -37,6 +39,16 @@ fn use_unique_metadata_databases(cx: &mut TestAppContext) {
             "SIDEBAR_TERMINAL_THREAD_METADATA_{test_database_id}"
         )));
     });
+}
+
+fn set_max_idle_retained_threads(max_idle_retained_threads: usize, cx: &mut App) {
+    AgentSettings::override_global(
+        AgentSettings {
+            max_idle_retained_threads,
+            ..AgentSettings::get_global(cx).clone()
+        },
+        cx,
+    );
 }
 
 fn init_test(cx: &mut TestAppContext) {
@@ -302,7 +314,7 @@ fn set_threads_sidebar_default_width(width: f32, cx: &mut App) {
     SettingsStore::update_global(cx, |store, cx| {
         store
             .set_user_settings(
-                &format!(r#"{{"agent": {{"threads_sidebar_default_width": {width}}}}}"#),
+                &format!(r#"{{"agent": {{"threads_sidebar": {{"default_width": {width}}}}}}}"#),
                 cx,
             )
             .unwrap();
@@ -696,6 +708,85 @@ fn visible_entries_as_strings(
 }
 
 #[gpui::test]
+async fn test_sidebar_action_hover_contrasts_with_row(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    cx.update(|cx| AgentRegistryStore::init_test_global(cx, Vec::new()));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    save_n_test_threads(1, &project, cx).await;
+
+    for (query, surface_alpha) in [("my-project", 1.0), ("", 1.0), ("", 0.0), ("", 0.2)] {
+        set_sidebar_test_surface_alpha(surface_alpha, cx);
+        type_in_search(&sidebar, query, cx);
+        let row_bounds = sidebar.read_with(cx, |sidebar, _| {
+            sidebar
+                .list_state
+                .bounds_for_item(0)
+                .expect("rendered project header")
+        });
+        if query.is_empty() {
+            cx.simulate_mouse_move(row_bounds.center(), None, Modifiers::default());
+            let hover =
+                cx.update(|_, cx| u32::from(Rgba::from(cx.theme().colors().ghost_element_hover)));
+            assert_eq!(
+                sidebar_painted_background_at(row_bounds.center(), cx),
+                hover
+            );
+        }
+        for selector in ["ICON-Plus", "ICON-Ellipsis"] {
+            assert_sidebar_action_hover(selector, row_bounds, cx);
+        }
+        if query.is_empty() {
+            let thread_bounds = sidebar.read_with(cx, |sidebar, _| {
+                sidebar
+                    .list_state
+                    .bounds_for_item(1)
+                    .expect("rendered thread")
+            });
+            for selector in ["ICON-Pencil", "ICON-Archive"] {
+                assert_sidebar_action_hover(selector, thread_bounds, cx);
+            }
+        }
+    }
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.show_archive(window, cx);
+        let SidebarView::Archive(archive) = &sidebar.view else {
+            panic!("Thread History should be open");
+        };
+        window.focus(&archive.focus_handle(cx), cx);
+    });
+    cx.run_until_parked();
+
+    for (archived, selector) in [(false, "ICON-Archive"), (true, "ICON-Trash")] {
+        if archived {
+            cx.update(|_, cx| {
+                ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                    let thread_id = store.entries().next().expect("seeded thread").thread_id;
+                    store.archive(thread_id, None, cx);
+                });
+            });
+            cx.run_until_parked();
+        }
+        cx.dispatch_action(SelectFirst);
+        let row_bounds = cx.update(|window, cx| {
+            window
+                .painted_quads()
+                .into_iter()
+                .find(|quad| quad.border_color == cx.theme().colors().panel_focused_border)
+                .expect("selected Thread History row")
+                .bounds
+                .map(|value| px(value.as_f32() / window.scale_factor()))
+        });
+        for surface_alpha in [1.0, 0.0, 0.2] {
+            set_sidebar_test_surface_alpha(surface_alpha, cx);
+            assert_sidebar_action_hover(selector, row_bounds, cx);
+        }
+    }
+}
+
+#[gpui::test]
 async fn test_thread_metadata_update_preserves_sticky_header_measurements(cx: &mut TestAppContext) {
     let (fs, project_a) = init_multi_project_test(&["/project-a", "/project-b"], cx).await;
     let (multi_workspace, cx) =
@@ -915,7 +1006,7 @@ async fn test_width_reset_returns_configured_default(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_width_follows_settings_until_manually_resized(cx: &mut TestAppContext) {
+async fn test_width_setting_overrides_manual_resize(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
@@ -929,15 +1020,24 @@ async fn test_width_follows_settings_until_manually_resized(cx: &mut TestAppCont
     sidebar.update_in(cx, |sidebar, _window, cx| {
         sidebar.set_width(Some(px(420.0)), cx);
     });
-    cx.update(|_window, cx| set_threads_sidebar_default_width(500.0, cx));
-    cx.run_until_parked();
-    assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(420.0));
-
-    sidebar.update_in(cx, |sidebar, _window, cx| {
-        sidebar.set_width(None, cx);
+    cx.update(|_window, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{"agent":{"threads_sidebar":{"default_width":360,"position":"right"}}}"#,
+                    cx,
+                )
+                .expect("settings are valid");
+        });
     });
     cx.run_until_parked();
+    assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(420.0));
+    assert!(sidebar.read_with(cx, |sidebar, _| sidebar.width_set_by_user));
+
+    cx.update(|_window, cx| set_threads_sidebar_default_width(500.0, cx));
+    cx.run_until_parked();
     assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(500.0));
+    assert!(!sidebar.read_with(cx, |sidebar, _| sidebar.width_set_by_user));
 
     for (configured, expected) in [
         (5.0, THREADS_LIST_MIN_WIDTH),
@@ -996,10 +1096,8 @@ async fn test_restored_width_preserves_legacy_resizes(cx: &mut TestAppContext) {
 
         cx.update(|_window, cx| set_threads_sidebar_default_width(500.0, cx));
         cx.run_until_parked();
-        assert_eq!(
-            sidebar.read_with(cx, |sidebar, _| sidebar.width),
-            px(if width_set_by_user { expected } else { 500.0 })
-        );
+        assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(500.0));
+        assert!(!sidebar.read_with(cx, |sidebar, _| sidebar.width_set_by_user));
     }
 }
 
@@ -2063,7 +2161,7 @@ async fn init_test_project_with_agent_panel(
     use_unique_metadata_databases(cx);
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
-        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
+        set_max_idle_retained_threads(1, cx);
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -2275,7 +2373,7 @@ async fn test_agent_panel_terminal_metadata_remains_visible_after_panel_is_remov
 async fn test_terminal_metadata_is_deduped_across_project_groups(cx: &mut TestAppContext) {
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
-        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
+        set_max_idle_retained_threads(1, cx);
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -2356,7 +2454,7 @@ async fn test_terminal_metadata_is_deduped_across_project_groups(cx: &mut TestAp
 async fn test_agent_panel_terminal_shows_project_and_linked_worktree(cx: &mut TestAppContext) {
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
-        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
+        set_max_idle_retained_threads(1, cx);
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -2855,7 +2953,7 @@ async fn test_terminal_close_event_keeps_linked_worktree_workspace_with_live_edi
     assert!(
         matches!(
             live_blocks.as_deref(),
-            Some([acp::ContentBlock::Text(text)]) if text.text == "keep this draft"
+            Some([acp_v2::ContentBlock::Text(text)]) if text.text == "keep this draft"
         ),
         "edited draft should still be readable from the panel after opening the terminal"
     );
@@ -3013,7 +3111,7 @@ async fn test_archive_selected_draft_archives_linked_worktree_after_last_draft(
     cx.update(|_, cx| {
         agent_ui::draft_prompt_store::write(
             first_draft_id,
-            &[acp::ContentBlock::Text(acp::TextContent::new(
+            &[acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
                 "first draft",
             ))],
             cx,
@@ -3024,7 +3122,7 @@ async fn test_archive_selected_draft_archives_linked_worktree_after_last_draft(
     cx.update(|_, cx| {
         agent_ui::draft_prompt_store::write(
             second_draft_id,
-            &[acp::ContentBlock::Text(acp::TextContent::new(
+            &[acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
                 "second draft",
             ))],
             cx,
@@ -3217,7 +3315,7 @@ async fn test_archive_selected_draft_archives_closed_linked_worktree(cx: &mut Te
     cx.update(|_, cx| {
         agent_ui::draft_prompt_store::write(
             draft_id,
-            &[acp::ContentBlock::Text(acp::TextContent::new(
+            &[acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
                 "closed draft",
             ))],
             cx,
@@ -5126,7 +5224,7 @@ async fn test_confirm_on_historical_thread_in_new_project_group_opens_real_threa
 
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
-        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
+        set_max_idle_retained_threads(1, cx);
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -8036,7 +8134,7 @@ async fn test_clicking_absorbed_worktree_thread_activates_worktree_workspace(
 async fn test_sidebar_keeps_multi_root_thread_with_stale_main_paths(cx: &mut TestAppContext) {
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
-        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
+        set_max_idle_retained_threads(1, cx);
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -10716,7 +10814,7 @@ async fn test_unarchive_into_inactive_existing_workspace_does_not_leave_active_d
 ) {
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
-        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
+        set_max_idle_retained_threads(1, cx);
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -10847,7 +10945,7 @@ async fn test_unarchive_after_removing_parent_project_group_restores_real_thread
 ) {
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
-        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
+        set_max_idle_retained_threads(1, cx);
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -11942,7 +12040,7 @@ async fn init_multi_project_test(
 ) -> (Arc<FakeFs>, Entity<project::Project>) {
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
-        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
+        set_max_idle_retained_threads(1, cx);
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -12744,7 +12842,7 @@ async fn test_worktree_add_only_regroups_threads_for_changed_workspace(cx: &mut 
     // linked worktree workspace should remain under the original group.
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
-        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
+        set_max_idle_retained_threads(1, cx);
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -13870,7 +13968,7 @@ mod property_test {
         agent_ui::test_support::init_test(cx);
         cx.update(|cx| {
             cx.set_global(db::AppDatabase::test_new());
-            cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
+            set_max_idle_retained_threads(1, cx);
             cx.set_global(agent_ui::thread_metadata_store::TestMetadataDbName(
                 format!("PROPTEST_THREAD_METADATA_{test_db_id}"),
             ));
@@ -14774,7 +14872,7 @@ async fn test_discard_mixed_workspace_draft_closes_only_archived_worktree_items(
     cx.update(|_, cx| {
         agent_ui::draft_prompt_store::write(
             draft_id,
-            &[acp::ContentBlock::Text(acp::TextContent::new(
+            &[acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
                 "mixed workspace draft",
             ))],
             cx,
@@ -15724,4 +15822,60 @@ async fn test_find_or_create_workspace_returns_the_created_remote_workspace(
         local_workspace,
         "the local workspace should have re-activated during the open"
     );
+}
+
+fn set_sidebar_test_surface_alpha(alpha: f32, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        let mut theme = cx.theme().as_ref().clone();
+        theme.styles.colors.background = Hsla::from(gpui::rgb(0xdcdcdd));
+        theme.styles.colors.surface_background = Hsla::from(gpui::rgb(0xebebec)).alpha(alpha);
+        theme.styles.colors.element_background = Hsla::from(gpui::rgb(0xebebec));
+        theme.styles.colors.ghost_element_hover = Hsla::from(gpui::rgb(0xdfdfe0));
+        theme::GlobalTheme::update_theme(cx, Arc::new(theme));
+        window.refresh();
+    });
+    cx.run_until_parked();
+}
+
+fn assert_sidebar_action_hover(
+    selector: &'static str,
+    row_bounds: Bounds<Pixels>,
+    cx: &mut VisualTestContext,
+) {
+    cx.simulate_mouse_move(row_bounds.center(), None, Modifiers::default());
+    let button_bounds = cx.debug_bounds(selector).expect("visible row action");
+    assert_eq!(
+        row_bounds.intersect(&button_bounds),
+        button_bounds,
+        "{selector}: action must belong to the row"
+    );
+    cx.simulate_mouse_move(button_bounds.center(), None, Modifiers::default());
+    let background = sidebar_painted_background_at(button_bounds.center(), cx);
+    assert_ne!(
+        background,
+        sidebar_painted_background_at(row_bounds.center(), cx),
+        "{selector}: hovered action must contrast with the row"
+    );
+}
+
+fn sidebar_painted_background_at(position: Point<Pixels>, cx: &mut VisualTestContext) -> u32 {
+    cx.update(|window, _| {
+        let position = position.scale(window.scale_factor());
+        let color = window
+            .painted_quads()
+            .into_iter()
+            .filter(|quad| {
+                !quad.background.is_transparent()
+                    && quad
+                        .bounds
+                        .intersect(&quad.content_mask.bounds)
+                        .contains(&position)
+            })
+            .max_by_key(|quad| quad.order)
+            .expect("painted background at pointer")
+            .background
+            .as_solid()
+            .expect("solid background at pointer");
+        u32::from(Rgba::from(color))
+    })
 }

@@ -20,7 +20,7 @@ pub use settings::{
     EditPredictionDataCollectionChoice, EditPredictionPromptFormatContent, EditPredictionProvider,
     EditPredictionsMode, FormatOnSave, Formatter, FormatterList, InlayHintKind,
     LanguageSettingsContent, LineEndingSetting, LspInsertMode, REST_OF_LANGUAGE_SERVERS,
-    RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
+    RewrapBehavior, ShowWhitespaceSetting, SoftWrap, SoftWrapIndent, WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
 use shellexpand;
@@ -65,6 +65,8 @@ pub struct LanguageSettings {
     pub hard_tabs: bool,
     /// How to soft-wrap long lines of text.
     pub soft_wrap: settings::SoftWrap,
+    /// How to indent soft-wrapped continuation lines.
+    pub soft_wrap_indent: settings::SoftWrapIndent,
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
     /// is enabled.
     pub preferred_line_length: u32,
@@ -118,8 +120,18 @@ pub struct LanguageSettings {
     /// Controls whether edit predictions are shown immediately (true)
     /// or manually by triggering `editor::ShowEditPrediction` (false).
     pub show_edit_predictions: bool,
-    /// Controls whether edit predictions are shown in the given language
-    /// scopes.
+    /// Disable edit predictions in these language scopes, such as "comment" and
+    /// "string".
+    ///
+    /// Use `"..."` to add scopes without repeating the inherited list. In project
+    /// settings, it extends the user or parent configuration value. In
+    /// language-specific settings, it extends the scopes inherited by that
+    /// language. Omit `"..."` to replace the inherited list.
+    ///
+    /// Inherited scopes are inserted at `"..."`, and duplicates keep their first
+    /// occurrence.
+    ///
+    /// Set `[]` to clear the inherited list. Omit this setting to inherit it unchanged.
     pub edit_predictions_disabled_in: Vec<String>,
     /// Whether to show tabs and spaces in the editor.
     pub show_whitespaces: settings::ShowWhitespaceSetting,
@@ -513,7 +525,7 @@ pub struct EditPredictionSettings {
     /// Configures how edit predictions are displayed in the buffer.
     pub mode: settings::EditPredictionsMode,
     /// Settings specific to GitHub Copilot.
-    pub copilot: CopilotSettings,
+    pub copilot: CopilotEditPredictionSettings,
     /// Settings specific to Codestral.
     pub codestral: CodestralSettings,
     /// Settings specific to Ollama.
@@ -586,13 +598,11 @@ pub struct DisabledGlob {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct CopilotSettings {
+pub struct CopilotEditPredictionSettings {
     /// HTTP/HTTPS proxy to use for Copilot.
     pub proxy: Option<String>,
     /// Disable certificate verification for proxy (not recommended).
     pub proxy_no_verify: Option<bool>,
-    /// Enterprise URI for Copilot.
-    pub enterprise_uri: Option<String>,
     /// Whether the Copilot Next Edit Suggestions feature is enabled.
     pub enable_next_edit_suggestions: Option<bool>,
     /// Automatic prediction debounce delay.
@@ -830,6 +840,7 @@ impl settings::Settings for AllLanguageSettings {
                 tab_size: settings.tab_size.unwrap(),
                 hard_tabs: settings.hard_tabs.unwrap(),
                 soft_wrap: settings.soft_wrap.unwrap(),
+                soft_wrap_indent: settings.soft_wrap_indent.unwrap(),
                 preferred_line_length: settings.preferred_line_length.unwrap(),
                 show_wrap_guides: settings.show_wrap_guides.unwrap(),
                 wrap_guides: settings.wrap_guides.unwrap(),
@@ -861,7 +872,7 @@ impl settings::Settings for AllLanguageSettings {
                 document_symbols: settings.document_symbols.unwrap(),
                 allow_rewrap: settings.allow_rewrap.unwrap(),
                 show_edit_predictions: settings.show_edit_predictions.unwrap(),
-                edit_predictions_disabled_in: settings.edit_predictions_disabled_in.unwrap(),
+                edit_predictions_disabled_in: settings.edit_predictions_disabled_in.unwrap().0,
                 show_whitespaces: settings.show_whitespaces.unwrap(),
                 whitespace_map: WhitespaceMap {
                     space: SharedString::new(whitespace_map.space.unwrap().to_string()),
@@ -942,10 +953,9 @@ impl settings::Settings for AllLanguageSettings {
             .collect();
 
         let copilot = edit_predictions.copilot.unwrap();
-        let copilot_settings = CopilotSettings {
+        let copilot_settings = CopilotEditPredictionSettings {
             proxy: copilot.proxy,
             proxy_no_verify: copilot.proxy_no_verify,
-            enterprise_uri: copilot.enterprise_uri,
             enable_next_edit_suggestions: copilot.enable_next_edit_suggestions,
             prediction_debounce: copilot.prediction_debounce.unwrap(),
         };
@@ -1114,6 +1124,139 @@ mod tests {
                 assert!(!matcher.is_match("config.custom"));
             }
         });
+    }
+
+    #[gpui::test]
+    fn test_edit_predictions_disabled_in_language_overrides(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &settings::default_settings());
+        store.register_setting::<AllLanguageSettings>();
+        assert!(
+            store
+                .get::<AllLanguageSettings>(None)
+                .defaults
+                .edit_predictions_disabled_in
+                .is_empty()
+        );
+
+        for (language_settings, expected) in [
+            (serde_json::json!({}), vec!["comment"]),
+            (
+                serde_json::json!({"edit_predictions_disabled_in": ["string", "..."]}),
+                vec!["string", "comment"],
+            ),
+            (
+                serde_json::json!({"edit_predictions_disabled_in": ["string"]}),
+                vec!["string"],
+            ),
+            (
+                serde_json::json!({"edit_predictions_disabled_in": []}),
+                vec![],
+            ),
+        ] {
+            store
+                .set_user_settings(
+                    &serde_json::json!({
+                        "edit_predictions_disabled_in": ["comment"],
+                        "languages": {"Rust": language_settings},
+                    })
+                    .to_string(),
+                    cx,
+                )
+                .expect("user settings should load");
+            let settings = store.get::<AllLanguageSettings>(None);
+            assert_eq!(settings.defaults.edit_predictions_disabled_in, ["comment"]);
+            assert_eq!(
+                settings
+                    .languages
+                    .get(&LanguageName::from("Rust"))
+                    .expect("Rust settings should load")
+                    .edit_predictions_disabled_in,
+                expected,
+                "language settings: {language_settings}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_edit_predictions_disabled_in_project_overrides(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &settings::default_settings());
+        store.register_setting::<AllLanguageSettings>();
+        let worktree_id = WorktreeId::from_usize(1);
+        let root = LocalSettingsPath::InWorktree(rel_path("root").into());
+        let child = LocalSettingsPath::InWorktree(rel_path("root/child").into());
+
+        store
+            .set_user_settings(r#"{"edit_predictions_disabled_in":["comment"]}"#, cx)
+            .expect("user settings should load");
+        store
+            .set_local_settings(
+                worktree_id,
+                root,
+                LocalSettingsKind::Settings,
+                Some(r#"{"edit_predictions_disabled_in":["string","..."]}"#),
+                cx,
+            )
+            .expect("project settings should load");
+
+        for (overrides, expected) in [
+            (serde_json::json!({}), vec!["string", "comment"]),
+            (
+                serde_json::json!({"edit_predictions_disabled_in": ["documentation", "..."]}),
+                vec!["documentation", "string", "comment"],
+            ),
+            (
+                serde_json::json!({"edit_predictions_disabled_in": ["documentation"]}),
+                vec!["documentation"],
+            ),
+            (
+                serde_json::json!({"edit_predictions_disabled_in": []}),
+                vec![],
+            ),
+        ] {
+            for language_specific in [false, true] {
+                let content = if language_specific {
+                    serde_json::json!({"languages": {"Rust": overrides}})
+                } else {
+                    overrides.clone()
+                };
+                store
+                    .set_local_settings(
+                        worktree_id,
+                        child.clone(),
+                        LocalSettingsKind::Settings,
+                        Some(&content.to_string()),
+                        cx,
+                    )
+                    .expect("child settings should load");
+                let settings = store.get::<AllLanguageSettings>(Some(SettingsLocation {
+                    worktree_id,
+                    path: rel_path("root/child/file.rs"),
+                }));
+                let resolved = if language_specific {
+                    assert_eq!(
+                        settings.defaults.edit_predictions_disabled_in,
+                        ["string", "comment"]
+                    );
+                    settings
+                        .languages
+                        .get(&LanguageName::from("Rust"))
+                        .expect("Rust settings should load")
+                } else {
+                    &settings.defaults
+                };
+                assert_eq!(
+                    resolved.edit_predictions_disabled_in, expected,
+                    "project settings: {content}"
+                );
+            }
+        }
+        assert_eq!(
+            store
+                .get::<AllLanguageSettings>(None)
+                .defaults
+                .edit_predictions_disabled_in,
+            ["comment"]
+        );
     }
 
     #[gpui::test]

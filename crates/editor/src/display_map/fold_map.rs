@@ -518,14 +518,11 @@ impl FoldMap {
                     ((edit.new.start + edit.old_len()).0.0 as isize + delta) as usize,
                 ));
 
-                let anchor = inlay_snapshot
-                    .buffer
-                    .anchor_before(inlay_snapshot.to_buffer_offset(edit.new.start));
                 let mut folds_cursor = self
                     .snapshot
                     .folds
                     .cursor::<FoldRange>(&inlay_snapshot.buffer);
-                folds_cursor.seek(&FoldRange(anchor..Anchor::Max), Bias::Left);
+                folds_cursor.seek(&inlay_snapshot.to_buffer_offset(edit.new.start), Bias::Left);
 
                 let mut folds = iter::from_fn({
                     let inlay_snapshot = &inlay_snapshot;
@@ -634,6 +631,8 @@ impl FoldMap {
 
             let mut fold_edits = Vec::with_capacity(inlay_edits.len());
             {
+                let old_len = self.snapshot.inlay_snapshot.len();
+                let new_len = inlay_snapshot.len();
                 let mut old_transforms = self
                     .snapshot
                     .transforms
@@ -641,34 +640,92 @@ impl FoldMap {
                 let mut new_transforms =
                     new_transforms.cursor::<Dimensions<InlayOffset, FoldOffset>>(());
 
-                for mut edit in inlay_edits {
-                    old_transforms.seek(&edit.old.start, Bias::Left);
-                    if old_transforms.item().is_some_and(|t| t.is_fold()) {
-                        edit.old.start = old_transforms.start().0;
+                let mut widened_edits = Vec::<InlayEdit>::with_capacity(inlay_edits.len());
+                let mut inlay_edits_iter = inlay_edits.into_iter().peekable();
+                while let Some(mut edit) = inlay_edits_iter.next() {
+                    let previous_edit = widened_edits.last();
+                    let mut merge_with_previous =
+                        previous_edit.is_some_and(|previous| previous.old.end >= edit.old.start);
+                    if !merge_with_previous {
+                        let mut limit = match previous_edit {
+                            Some(previous) => (edit.old.start - previous.old.end)
+                                .min(edit.new.start - previous.new.end),
+                            None => edit.old.start.0.0.min(edit.new.start.0.0),
+                        };
+                        loop {
+                            old_transforms.seek(&edit.old.start, Bias::Left);
+                            new_transforms.seek(&edit.new.start, Bias::Left);
+                            let old_pull = if old_transforms.item().is_some_and(|t| t.is_fold()) {
+                                edit.old.start - old_transforms.start().0
+                            } else {
+                                0
+                            };
+                            let new_pull = if new_transforms.item().is_some_and(|t| t.is_fold()) {
+                                edit.new.start - new_transforms.start().0
+                            } else {
+                                0
+                            };
+                            let pull = old_pull.max(new_pull).min(limit);
+                            if pull == 0 {
+                                break;
+                            }
+                            edit.old.start -= pull;
+                            edit.new.start -= pull;
+                            limit -= pull;
+                        }
+                        merge_with_previous = previous_edit.is_some() && limit == 0;
                     }
+
+                    let mut limit = match inlay_edits_iter.peek() {
+                        Some(next) => {
+                            (next.old.start - edit.old.end).min(next.new.start - edit.new.end)
+                        }
+                        None => (old_len - edit.old.end).min(new_len - edit.new.end),
+                    };
+                    loop {
+                        old_transforms.seek_forward(&edit.old.end, Bias::Right);
+                        new_transforms.seek_forward(&edit.new.end, Bias::Right);
+                        let old_extension = if old_transforms.item().is_some_and(|t| t.is_fold()) {
+                            old_transforms.end().0 - edit.old.end
+                        } else {
+                            0
+                        };
+                        let new_extension = if new_transforms.item().is_some_and(|t| t.is_fold()) {
+                            new_transforms.end().0 - edit.new.end
+                        } else {
+                            0
+                        };
+                        let extension = old_extension.max(new_extension).min(limit);
+                        if extension == 0 {
+                            break;
+                        }
+                        edit.old.end += extension;
+                        edit.new.end += extension;
+                        limit -= extension;
+                    }
+
+                    if merge_with_previous {
+                        if let Some(previous) = widened_edits.last_mut() {
+                            previous.old.end = edit.old.end;
+                            previous.new.end = edit.new.end;
+                        }
+                    } else {
+                        widened_edits.push(edit);
+                    }
+                }
+
+                for edit in widened_edits {
+                    old_transforms.seek(&edit.old.start, Bias::Left);
                     let old_start =
                         old_transforms.start().1.0 + (edit.old.start - old_transforms.start().0);
-
                     old_transforms.seek_forward(&edit.old.end, Bias::Right);
-                    if old_transforms.item().is_some_and(|t| t.is_fold()) {
-                        old_transforms.next();
-                        edit.old.end = old_transforms.start().0;
-                    }
                     let old_end =
                         old_transforms.start().1.0 + (edit.old.end - old_transforms.start().0);
 
                     new_transforms.seek(&edit.new.start, Bias::Left);
-                    if new_transforms.item().is_some_and(|t| t.is_fold()) {
-                        edit.new.start = new_transforms.start().0;
-                    }
                     let new_start =
                         new_transforms.start().1.0 + (edit.new.start - new_transforms.start().0);
-
                     new_transforms.seek_forward(&edit.new.end, Bias::Right);
-                    if new_transforms.item().is_some_and(|t| t.is_fold()) {
-                        new_transforms.next();
-                        edit.new.end = new_transforms.start().0;
-                    }
                     let new_end =
                         new_transforms.start().1.0 + (edit.new.end - new_transforms.start().0);
 
@@ -1357,6 +1414,12 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for FoldRange {
 impl sum_tree::SeekTarget<'_, FoldSummary, FoldRange> for FoldRange {
     fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
         AnchorRangeExt::cmp(&self.0, &other.0, buffer)
+    }
+}
+
+impl sum_tree::SeekTarget<'_, FoldSummary, FoldRange> for MultiBufferOffset {
+    fn cmp(&self, cursor_location: &FoldRange, buffer: &MultiBufferSnapshot) -> Ordering {
+        Ord::cmp(self, &cursor_location.start.to_offset(buffer))
     }
 }
 
