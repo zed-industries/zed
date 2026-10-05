@@ -27,6 +27,7 @@ use editor::Editor;
 use feature_flags::{
     AgentThreadWorktreeLabel, AgentThreadWorktreeLabelFlag, FeatureFlag, FeatureFlagAppExt as _,
 };
+use fs::Fs;
 use gpui::{
     Action as _, AnyElement, App, ClickEvent, Context, Decorations, DismissEvent, Entity, EntityId,
     FocusHandle, Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task,
@@ -5424,16 +5425,61 @@ impl Sidebar {
             )
         {
             let session_id = session_id.clone();
-            self.open_workspace_for_archive(
-                folder_paths,
-                project_group_key,
-                window,
-                cx,
-                move |this, _workspace, window, cx| {
-                    this.update_entries(cx);
-                    this.archive_thread(&session_id, window, cx);
-                },
-            );
+            let folder_paths_cloned = folder_paths.clone();
+            let thread_folder_paths_for_fallback = thread_folder_paths.clone();
+            let thread_remote_connection_for_fallback = metadata.remote_connection.clone();
+            let current_pos = self.contents.entries.iter().position(|entry| match entry {
+                ListEntry::Thread(thread) => thread_id.map_or_else(
+                    || thread.metadata.session_id.as_ref() == Some(&session_id),
+                    |tid| thread.metadata.thread_id == tid,
+                ),
+                _ => false,
+            });
+            let neighbor_for_fallback =
+                current_pos.and_then(|position| self.neighboring_activatable_entry(position));
+            let fs = <dyn Fs>::global(cx);
+
+            cx.spawn_in(window, async move |this, cx| {
+                // Check whether the linked worktree paths still exist on disk.
+                // If every path is missing, opening a workspace would fall back
+                // to the main project and then archive_thread would loop forever
+                // trying to find the deleted linked worktree.
+                let mut all_missing = !folder_paths_cloned.paths().is_empty();
+                for path in folder_paths_cloned.paths() {
+                    if !matches!(fs.metadata(path).await, Ok(None)) {
+                        all_missing = false;
+                        break;
+                    }
+                }
+
+                this.update_in(cx, |this, window, cx| {
+                    if all_missing {
+                        this.archive_and_activate(
+                            &session_id,
+                            thread_id,
+                            neighbor_for_fallback.as_ref(),
+                            thread_folder_paths_for_fallback.as_ref(),
+                            thread_remote_connection_for_fallback.as_ref(),
+                            None,
+                            window,
+                            cx,
+                        );
+                    } else {
+                        this.open_workspace_for_archive(
+                            folder_paths_cloned,
+                            project_group_key,
+                            window,
+                            cx,
+                            move |this, _workspace, window, cx| {
+                                this.update_entries(cx);
+                                this.archive_thread(&session_id, window, cx);
+                            },
+                        );
+                    }
+                })?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
             return;
         }
 

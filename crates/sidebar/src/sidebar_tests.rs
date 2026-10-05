@@ -4171,6 +4171,155 @@ async fn test_archive_selected_thread_archives_closed_linked_worktree(cx: &mut T
 }
 
 #[gpui::test]
+async fn test_archive_thread_from_deleted_linked_worktree_does_not_loop(cx: &mut TestAppContext) {
+    // Regression test: archiving a thread whose linked worktree folder has been
+    // removed from disk previously caused an infinite async task loop.
+    // `should_load_closed_workspace_for_archive` returned true (path differs
+    // from project_group_key), `find_or_create_local_workspace` detected the
+    // paths were missing and fell back to the main workspace, and the callback
+    // called `archive_thread` again — which saw the same Closed state and
+    // spawned yet another task, looping forever.
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {
+                "worktrees": {
+                    "feature-a": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-a",
+                    },
+                },
+            },
+            "src": {},
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/worktrees/project/feature-a/project",
+        serde_json::json!({
+            ".git": "gitdir: /project/.git/worktrees/feature-a",
+            "src": {},
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/worktrees/project/feature-a/project"),
+            ref_name: Some("refs/heads/feature-a".into()),
+            sha: "aaa".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+    agent_ui::test_support::record_zed_created_worktree(
+        fs.as_ref(),
+        Path::new("/worktrees/project/feature-a/project"),
+        None,
+        cx,
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    main_project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let worktree_session_id = acp::SessionId::new(Arc::from("worktree-thread"));
+    let worktree_folder_paths =
+        PathList::new(&[PathBuf::from("/worktrees/project/feature-a/project")]);
+    save_thread_metadata_with_main_paths(
+        "worktree-thread",
+        "Worktree Thread",
+        worktree_folder_paths.clone(),
+        PathList::new(&[PathBuf::from("/project")]),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        cx,
+    );
+    sidebar.update(cx, |sidebar, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    // Delete the linked worktree from disk, simulating manual removal or
+    // deletion by another process. The git snapshot still lists the worktree
+    // (git doesn't auto-prune), so the thread entry remains Closed.
+    fs.remove_dir(
+        Path::new("/worktrees/project/feature-a/project"),
+        fs::RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: true,
+        },
+    )
+    .await
+    .unwrap();
+
+    let thread_index = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .position(|entry| {
+                matches!(entry, ListEntry::Thread(thread)
+                    if thread.metadata.session_id.as_ref() == Some(&worktree_session_id))
+            })
+            .expect("worktree thread should be visible in sidebar")
+    });
+    sidebar.read_with(cx, |sidebar, _cx| {
+        match &sidebar.contents.entries[thread_index] {
+            ListEntry::Thread(thread) => match &thread.workspace {
+                ThreadEntryWorkspace::Closed { folder_paths, .. } => {
+                    assert_eq!(folder_paths, &worktree_folder_paths);
+                }
+                ThreadEntryWorkspace::Open(_) => {
+                    panic!("linked worktree thread should be closed since the folder was deleted")
+                }
+            },
+            _ => panic!("expected thread row"),
+        }
+    });
+
+    focus_sidebar(&sidebar, cx);
+    sidebar.update_in(cx, |sidebar, _window, _cx| {
+        sidebar.selection = Some(thread_index);
+    });
+    cx.dispatch_action(ArchiveSelectedThread);
+    // A single run_until_parked is enough: the fix does a quick fs.metadata
+    // check and then calls archive_and_activate directly without opening any
+    // workspace. Without the fix this call would never return because the
+    // async task loop never terminates.
+    cx.run_until_parked();
+
+    let thread_archived = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(&worktree_session_id)
+            .map(|thread| thread.archived)
+    });
+    assert_eq!(
+        thread_archived,
+        Some(true),
+        "thread should be archived even though its linked worktree folder was deleted"
+    );
+
+    assert_eq!(
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace
+            .workspaces()
+            .count()),
+        1,
+        "no extra workspace should have been opened for the deleted linked worktree"
+    );
+}
+
+#[gpui::test]
 async fn test_archive_selected_thread_deletes_empty_draft_when_linked_worktree_has_no_archive_root(
     cx: &mut TestAppContext,
 ) {
