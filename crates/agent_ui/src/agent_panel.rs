@@ -12,7 +12,7 @@ use std::{
 
 use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, line_range_suffix};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::{v1 as acp, v2 as acp_v2};
 use agent_servers::AgentServer;
 use agent_settings::UserAgentsMd;
 use collections::HashSet;
@@ -539,14 +539,14 @@ pub fn init(cx: &mut App) {
                     let diff_uri = mention_uri.to_uri().to_string();
 
                     let content_blocks = vec![
-                        acp::ContentBlock::Text(acp::TextContent::new(
+                        acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
                             "Please review this branch diff carefully. Point out any issues, \
                              potential bugs, or improvement opportunities you find.\n\n"
                                 .to_string(),
                         )),
-                        acp::ContentBlock::Resource(acp::EmbeddedResource::new(
-                            acp::EmbeddedResourceResource::TextResourceContents(
-                                acp::TextResourceContents::new(
+                        acp_v2::ContentBlock::Resource(acp_v2::EmbeddedResource::new(
+                            acp_v2::EmbeddedResourceResource::TextResourceContents(
+                                acp_v2::TextResourceContents::new(
                                     action.diff_text.to_string(),
                                     diff_uri,
                                 ),
@@ -779,19 +779,19 @@ fn mention_path_for_terminal(
     }
 }
 
-fn conflict_resource_block(conflict: &ConflictContent) -> acp::ContentBlock {
+fn conflict_resource_block(conflict: &ConflictContent) -> acp_v2::ContentBlock {
     let mention_uri = MentionUri::MergeConflict {
         file_path: conflict.file_path.clone(),
     };
-    acp::ContentBlock::Resource(acp::EmbeddedResource::new(
-        acp::EmbeddedResourceResource::TextResourceContents(acp::TextResourceContents::new(
+    acp_v2::ContentBlock::Resource(acp_v2::EmbeddedResource::new(
+        acp_v2::EmbeddedResourceResource::TextResourceContents(acp_v2::TextResourceContents::new(
             conflict.conflict_text.clone(),
             mention_uri.to_uri().to_string(),
         )),
     ))
 }
 
-fn build_conflict_resolution_prompt(conflicts: &[ConflictContent]) -> Vec<acp::ContentBlock> {
+fn build_conflict_resolution_prompt(conflicts: &[ConflictContent]) -> Vec<acp_v2::ContentBlock> {
     if conflicts.is_empty() {
         return Vec::new();
     }
@@ -801,18 +801,17 @@ fn build_conflict_resolution_prompt(conflicts: &[ConflictContent]) -> Vec<acp::C
     if conflicts.len() == 1 {
         let conflict = &conflicts[0];
 
-        blocks.push(acp::ContentBlock::Text(acp::TextContent::new(
+        blocks.push(acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
             "Please resolve the following merge conflict in ",
         )));
         let mention = MentionUri::File {
             abs_path: PathBuf::from(conflict.file_path.clone()),
         };
-        blocks.push(acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
-            mention.name(),
-            mention.to_uri(),
-        )));
+        blocks.push(acp_v2::ContentBlock::ResourceLink(
+            acp_v2::ResourceLink::new(mention.name(), mention.to_uri()),
+        ));
 
-        blocks.push(acp::ContentBlock::Text(acp::TextContent::new(
+        blocks.push(acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
             indoc::formatdoc!(
                 "\nThe conflict is between branch `{ours}` (ours) and `{theirs}` (theirs).
 
@@ -830,7 +829,7 @@ fn build_conflict_resolution_prompt(conflicts: &[ConflictContent]) -> Vec<acp::C
         let unique_files: HashSet<&str> = conflicts.iter().map(|c| c.file_path.as_str()).collect();
         let ours = &conflicts[0].ours_branch_name;
         let theirs = &conflicts[0].theirs_branch_name;
-        blocks.push(acp::ContentBlock::Text(acp::TextContent::new(
+        blocks.push(acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
             indoc::formatdoc!(
                 "Please resolve all {n} merge conflicts below.
 
@@ -855,7 +854,7 @@ fn build_conflict_resolution_prompt(conflicts: &[ConflictContent]) -> Vec<acp::C
 
 fn build_conflicted_files_resolution_prompt(
     conflicted_file_paths: &[String],
-) -> Vec<acp::ContentBlock> {
+) -> Vec<acp_v2::ContentBlock> {
     if conflicted_file_paths.is_empty() {
         return Vec::new();
     }
@@ -872,16 +871,17 @@ fn build_conflicted_files_resolution_prompt(
          ",
     );
 
-    let mut content = vec![acp::ContentBlock::Text(acp::TextContent::new(instruction))];
+    let mut content = vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
+        instruction,
+    ))];
     for path in conflicted_file_paths {
         let mention = MentionUri::File {
             abs_path: PathBuf::from(path),
         };
-        content.push(acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
-            mention.name(),
-            mention.to_uri(),
-        )));
-        content.push(acp::ContentBlock::Text(acp::TextContent::new("\n")));
+        content.push(acp_v2::ContentBlock::ResourceLink(
+            acp_v2::ResourceLink::new(mention.name(), mention.to_uri()),
+        ));
+        content.push(acp_v2::ContentBlock::Text(acp_v2::TextContent::new("\n")));
     }
     content
 }
@@ -3443,7 +3443,7 @@ impl AgentPanel {
         &self,
         id: ThreadId,
         cx: &App,
-    ) -> Option<Vec<acp::ContentBlock>> {
+    ) -> Option<Vec<acp_v2::ContentBlock>> {
         let cv = self
             .retained_threads
             .get(&id)
@@ -3462,6 +3462,22 @@ impl AgentPanel {
             })?;
         let thread_view = cv.read(cx).root_thread_view()?;
         let thread_view = thread_view.read(cx);
+        if thread_view
+            .message_editor
+            .read(cx)
+            .editor()
+            .read(cx)
+            .read_only(cx)
+        {
+            return Some(
+                thread_view
+                    .thread
+                    .read(cx)
+                    .draft_prompt()
+                    .map(|blocks| blocks.to_vec())
+                    .unwrap_or_default(),
+            );
+        }
         Some(
             thread_view
                 .message_editor
@@ -4856,7 +4872,7 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
             };
 
             let initial_content = AgentInitialContent::ContentBlock {
-                blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(
+                blocks: vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
                     request.prompt.clone(),
                 ))],
                 auto_submit: true,
@@ -7203,10 +7219,11 @@ mod tests {
 
         fn prompt(
             &self,
-            params: acp::PromptRequest,
+            params: acp_v2::PromptRequest,
             _cx: &mut App,
         ) -> Task<Result<acp::PromptResponse>> {
-            if !self.sessions.lock().contains(&params.session_id) {
+            let session_id = acp::SessionId::new(params.session_id.0);
+            if !self.sessions.lock().contains(&session_id) {
                 return Task::ready(Err(anyhow!("Session not found")));
             }
 
@@ -8298,19 +8315,19 @@ mod tests {
     }
 
     /// Extracts the text from a Text content block, panicking if it's not Text.
-    fn expect_text_block(block: &acp::ContentBlock) -> &str {
+    fn expect_text_block(block: &acp_v2::ContentBlock) -> &str {
         match block {
-            acp::ContentBlock::Text(t) => t.text.as_str(),
+            acp_v2::ContentBlock::Text(t) => t.text.as_str(),
             other => panic!("expected Text block, got {:?}", other),
         }
     }
 
     /// Extracts the (text_content, uri) from a Resource content block, panicking
     /// if it's not a TextResourceContents resource.
-    fn expect_resource_block(block: &acp::ContentBlock) -> (&str, &str) {
+    fn expect_resource_block(block: &acp_v2::ContentBlock) -> (&str, &str) {
         match block {
-            acp::ContentBlock::Resource(r) => match &r.resource {
-                acp::EmbeddedResourceResource::TextResourceContents(t) => {
+            acp_v2::ContentBlock::Resource(r) => match &r.resource {
+                acp_v2::EmbeddedResourceResource::TextResourceContents(t) => {
                     (t.text.as_str(), t.uri.as_str())
                 }
                 other => panic!("expected TextResourceContents, got {:?}", other),
@@ -8370,7 +8387,7 @@ mod tests {
 
         thread.update(cx, |thread, cx| {
             thread.set_draft_prompt(
-                Some(vec![acp::ContentBlock::Text(acp::TextContent::new(
+                Some(vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
                     "stale prompt",
                 ))]),
                 cx,
@@ -8389,7 +8406,7 @@ mod tests {
 
         thread.update(cx, |thread, cx| {
             thread.set_draft_prompt(
-                Some(vec![acp::ContentBlock::Text(acp::TextContent::new(
+                Some(vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
                     "stale prompt after clear",
                 ))]),
                 cx,
@@ -8522,7 +8539,7 @@ mod tests {
         );
 
         match &blocks[1] {
-            acp::ContentBlock::ResourceLink(link) => {
+            acp_v2::ContentBlock::ResourceLink(link) => {
                 assert!(
                     link.uri.contains("file://"),
                     "resource link URI should use file scheme"
@@ -8688,7 +8705,7 @@ mod tests {
             let newline_index = link_index + 1;
 
             match &blocks[link_index] {
-                acp::ContentBlock::ResourceLink(link) => {
+                acp_v2::ContentBlock::ResourceLink(link) => {
                     assert!(
                         link.uri.contains("file://"),
                         "resource link URI should use file scheme"
@@ -9531,8 +9548,8 @@ mod tests {
         let selections = contents
             .iter()
             .filter_map(|block| match block {
-                acp::ContentBlock::Resource(resource) => match &resource.resource {
-                    acp::EmbeddedResourceResource::TextResourceContents(content) => {
+                acp_v2::ContentBlock::Resource(resource) => match &resource.resource {
+                    acp_v2::EmbeddedResourceResource::TextResourceContents(content) => {
                         Some(content.text.as_str())
                     }
                     _ => None,
@@ -14062,11 +14079,12 @@ mod tests {
 
         fn prompt(
             &self,
-            params: acp::PromptRequest,
+            params: acp_v2::PromptRequest,
             _cx: &mut App,
         ) -> Task<Result<acp::PromptResponse>> {
-            if !self.sessions.lock().contains(&params.session_id) {
-                self.missing_prompt_sessions.lock().push(params.session_id);
+            let session_id = acp::SessionId::new(params.session_id.0);
+            if !self.sessions.lock().contains(&session_id) {
+                self.missing_prompt_sessions.lock().push(session_id);
                 return Task::ready(Err(anyhow!("Session not found")));
             }
 
