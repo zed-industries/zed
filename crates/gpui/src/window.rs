@@ -2804,14 +2804,21 @@ impl Window {
     }
 
     pub(crate) fn handle_display_event(&mut self, event: DisplayEvent, cx: &mut App) {
-        // The platform moves windows off a removed display, possibly without
-        // reporting a move.
-        let moved = self.refresh_display_id();
-        let refresh_interval_changed = self
-            .display_id
-            .is_some_and(|display_id| event == DisplayEvent::Changed(display_id));
-        if moved || refresh_interval_changed {
-            self.notify_display_observers(cx);
+        match event {
+            DisplayEvent::RefreshIntervalChanged { display_id, .. }
+                if Some(display_id) == self.display_id =>
+            {
+                self.notify_display_observers(cx);
+            }
+            DisplayEvent::Removed(display_id) if Some(display_id) == self.display_id => {
+                // The platform moves windows off a removed display, possibly
+                // without reporting a move.
+                self.refresh_display_id();
+                self.notify_display_observers(cx);
+            }
+            DisplayEvent::Added(_)
+            | DisplayEvent::Removed(_)
+            | DisplayEvent::RefreshIntervalChanged { .. } => {}
         }
     }
 
@@ -2821,22 +2828,18 @@ impl Window {
             .retain(&(), |callback| callback(self, cx));
     }
 
-    /// The ID of the display the window is on, if the platform reports one.
-    pub fn display_id(&self) -> Option<DisplayId> {
-        self.display_id
-    }
-
     /// The time between refreshes of the display the window is on, as last
     /// reported by the platform. Variable refresh rate displays report their
     /// maximum rate. Returns `None` when the platform doesn't report it. This
     /// doesn't query the operating system.
     pub fn refresh_interval(&self, cx: &App) -> Option<Duration> {
-        cx.display_refresh_interval(self.display_id?)
+        self.display_id
+            .and_then(|display_id| cx.display_refresh_interval(display_id))
     }
 
     /// Registers a callback invoked when the window moves to another display
     /// or the refresh interval of its display changes. The window's
-    /// [`Self::display_id`] and [`Self::refresh_interval`] are already updated
+    /// display and [`Self::refresh_interval`] are already updated
     /// when the callback runs.
     pub fn observe_window_display(
         &self,
@@ -8079,7 +8082,7 @@ mod tests {
         let display_events = Rc::new(RefCell::new(Vec::new()));
         let _display_subscription = cx.update({
             let display_events = display_events.clone();
-            move |cx| cx.on_display_change(move |event, _| display_events.borrow_mut().push(event))
+            move |cx| cx.observe_displays(move |event, _| display_events.borrow_mut().push(event))
         });
 
         let window = cx.add_window(|_, _| EmptyView);
@@ -8088,21 +8091,18 @@ mod tests {
             .update(cx, {
                 let window_notifications = window_notifications.clone();
                 move |_, window, cx| {
-                    assert_eq!(window.display_id(), Some(DisplayId(1)));
+                    assert_eq!(window.display_id, Some(DisplayId(1)));
                     assert_eq!(window.refresh_interval(cx), Some(sixty_hertz));
                     window.observe_window_display(move |window, cx| {
                         window_notifications
                             .borrow_mut()
-                            .push((window.display_id(), window.refresh_interval(cx)));
+                            .push((window.display_id, window.refresh_interval(cx)));
                     })
                 }
             })
             .unwrap();
 
-        cx.simulate_display_change(
-            DisplayEvent::Added(DisplayId(2)),
-            Some(one_hundred_twenty_hertz),
-        );
+        cx.simulate_display_added(DisplayId(2), Some(one_hundred_twenty_hertz));
         assert!(window_notifications.borrow().is_empty());
 
         cx.simulate_window_move_to_display(window.into(), DisplayId(2));
@@ -8111,8 +8111,8 @@ mod tests {
             [(Some(DisplayId(2)), Some(one_hundred_twenty_hertz))]
         );
 
-        cx.simulate_display_change(
-            DisplayEvent::Changed(DisplayId(2)),
+        cx.simulate_display_refresh_interval_change(
+            DisplayId(2),
             Some(one_hundred_forty_four_hertz),
         );
         assert_eq!(
@@ -8121,20 +8121,31 @@ mod tests {
         );
 
         // Changes to other displays don't concern the window.
-        cx.simulate_display_change(DisplayEvent::Changed(DisplayId(1)), Some(sixty_hertz));
-        cx.simulate_display_change(DisplayEvent::Removed(DisplayId(1)), None);
+        cx.simulate_display_refresh_interval_change(DisplayId(1), Some(sixty_hertz));
+        cx.simulate_display_removed(DisplayId(1));
         assert!(window_notifications.borrow().is_empty());
+
+        // Removing the window's display notifies it before the platform
+        // reports moving it elsewhere.
+        cx.simulate_display_removed(DisplayId(2));
+        assert_eq!(window_notifications.take(), [(Some(DisplayId(2)), None)]);
 
         assert_eq!(
             display_events.take(),
             [
                 DisplayEvent::Added(DisplayId(2)),
-                DisplayEvent::Changed(DisplayId(2)),
-                DisplayEvent::Changed(DisplayId(1)),
+                DisplayEvent::RefreshIntervalChanged {
+                    display_id: DisplayId(2),
+                    refresh_interval: Some(one_hundred_forty_four_hertz),
+                },
+                DisplayEvent::RefreshIntervalChanged {
+                    display_id: DisplayId(1),
+                    refresh_interval: Some(sixty_hertz),
+                },
                 DisplayEvent::Removed(DisplayId(1)),
+                DisplayEvent::Removed(DisplayId(2)),
             ]
         );
-        cx.update(|cx| assert_eq!(cx.display_refresh_interval(DisplayId(1)), None));
     }
 
     #[gpui::test]

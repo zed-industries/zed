@@ -1,13 +1,12 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
-    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DisplayEvent, DisplayId,
-    DrawPhase, Drawable, Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global,
-    InputEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Platform, PlatformTextSystem, Point, Render, Result,
-    SharedString, Size, SystemNotification, SystemNotificationResponse, Task, TestDispatcher,
-    TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window,
-    WindowBounds, WindowHandle, WindowOptions, WindowVisibility, app::GpuiMode,
-    window::ElementArenaScope,
+    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DisplayId, DrawPhase,
+    Drawable, Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Platform, PlatformTextSystem, Point, Render, Result, SharedString, Size,
+    SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform,
+    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
+    WindowHandle, WindowOptions, WindowVisibility, app::GpuiMode, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -473,12 +472,29 @@ impl TestAppContext {
             .simulate_visibility_change(visibility);
     }
 
-    /// Simulates a display being connected, disconnected, or changing refresh
-    /// interval. `refresh_interval` becomes the display's reported interval
-    /// unless it was removed.
-    pub fn simulate_display_change(&self, event: DisplayEvent, refresh_interval: Option<Duration>) {
+    /// Simulates connecting a display with the given refresh interval.
+    pub fn simulate_display_added(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<Duration>,
+    ) {
         self.test_platform
-            .simulate_display_change(event, refresh_interval);
+            .simulate_display_added(display_id, refresh_interval);
+    }
+
+    /// Simulates disconnecting a display.
+    pub fn simulate_display_removed(&self, display_id: DisplayId) {
+        self.test_platform.simulate_display_removed(display_id);
+    }
+
+    /// Simulates a display's refresh interval changing.
+    pub fn simulate_display_refresh_interval_change(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<Duration>,
+    ) {
+        self.test_platform
+            .simulate_display_refresh_interval_change(display_id, refresh_interval);
     }
 
     /// Simulates the platform moving the window to another display.

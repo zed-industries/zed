@@ -1579,7 +1579,7 @@ impl App {
     /// Invokes a handler when a display is connected or disconnected, or its
     /// refresh interval changes. To follow the display a window is on, use
     /// [`Window::observe_window_display`].
-    pub fn on_display_change<F>(&self, mut callback: F) -> Subscription
+    pub fn observe_displays<F>(&self, mut callback: F) -> Subscription
     where
         F: 'static + FnMut(DisplayEvent, &mut App),
     {

@@ -1,7 +1,7 @@
+use collections::HashMap;
 use gpui_util::ResultExt;
 use itertools::Itertools;
 use smallvec::SmallVec;
-use std::collections::HashMap;
 use std::rc::Rc;
 use uuid::Uuid;
 use windows::{

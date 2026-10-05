@@ -1,6 +1,5 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
     ffi::{OsStr, OsString},
     os::windows::ffi::{OsStrExt as _, OsStringExt as _},
     path::{Path, PathBuf},
@@ -13,6 +12,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow};
+use collections::HashMap;
 use futures::channel::oneshot::Receiver;
 use gpui_util::{ResultExt, get_powershell, new_std_command};
 use itertools::Itertools;

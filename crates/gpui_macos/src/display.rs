@@ -5,6 +5,7 @@ use cocoa::{
     base::{BOOL, NO, YES, id, nil},
     foundation::{NSArray, NSDictionary},
 };
+use collections::HashMap;
 use core_foundation::base::CFRelease;
 use core_foundation::uuid::{CFUUIDGetUUIDBytes, CFUUIDRef};
 use core_graphics::display::{
@@ -12,7 +13,7 @@ use core_graphics::display::{
 };
 use gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, point, px, refresh_interval_from_hz, size};
 use objc::{msg_send, sel, sel_impl};
-use std::{collections::HashMap, time::Duration};
+use std::time::Duration;
 use uuid::Uuid;
 
 #[derive(Debug)]

@@ -143,27 +143,47 @@ impl TestPlatform {
         Self::with_platform(executor, foreground_executor, text_system, None)
     }
 
-    /// Reports a display event after recording the display's new refresh
-    /// interval, or forgetting the display if it was removed.
-    pub(crate) fn simulate_display_change(
+    pub(crate) fn simulate_display_added(
         &self,
-        event: DisplayEvent,
+        display_id: DisplayId,
         refresh_interval: Option<Duration>,
     ) {
-        {
-            let mut intervals = self.display_refresh_intervals.borrow_mut();
-            match (event, refresh_interval) {
-                (DisplayEvent::Added(id) | DisplayEvent::Changed(id), Some(interval)) => {
-                    intervals.insert(id, interval);
-                }
-                (
-                    DisplayEvent::Added(id) | DisplayEvent::Changed(id) | DisplayEvent::Removed(id),
-                    _,
-                ) => {
-                    intervals.remove(&id);
-                }
-            }
-        }
+        self.set_display_refresh_interval(display_id, refresh_interval);
+        self.report_display_event(DisplayEvent::Added(display_id));
+    }
+
+    pub(crate) fn simulate_display_removed(&self, display_id: DisplayId) {
+        self.display_refresh_intervals
+            .borrow_mut()
+            .remove(&display_id);
+        self.report_display_event(DisplayEvent::Removed(display_id));
+    }
+
+    pub(crate) fn simulate_display_refresh_interval_change(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<Duration>,
+    ) {
+        self.set_display_refresh_interval(display_id, refresh_interval);
+        self.report_display_event(DisplayEvent::RefreshIntervalChanged {
+            display_id,
+            refresh_interval,
+        });
+    }
+
+    fn set_display_refresh_interval(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<Duration>,
+    ) {
+        let mut intervals = self.display_refresh_intervals.borrow_mut();
+        match refresh_interval {
+            Some(refresh_interval) => intervals.insert(display_id, refresh_interval),
+            None => intervals.remove(&display_id),
+        };
+    }
+
+    fn report_display_event(&self, event: DisplayEvent) {
         let callback = self.display_change_callback.borrow_mut().take();
         if let Some(mut callback) = callback {
             callback(event);

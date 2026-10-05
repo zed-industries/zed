@@ -1804,7 +1804,10 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
                 let event = match state.outputs.insert(id.clone(), complete.clone()) {
                     None => DisplayEvent::Added(display_id_for_output(&id)),
                     Some(previous) if previous.refresh_interval != complete.refresh_interval => {
-                        DisplayEvent::Changed(display_id_for_output(&id))
+                        DisplayEvent::RefreshIntervalChanged {
+                            display_id: display_id_for_output(&id),
+                            refresh_interval: complete.refresh_interval,
+                        }
                     }
                     Some(_) => return,
                 };

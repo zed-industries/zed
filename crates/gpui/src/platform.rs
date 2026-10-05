@@ -48,7 +48,7 @@ use crate::{
 use anyhow::bail;
 use anyhow::{Context as _, Result};
 use async_task::Runnable;
-use collections::FxHashMap;
+use collections::{FxHashMap, HashMap};
 use futures::channel::oneshot;
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 use image::RgbaImage;
@@ -120,24 +120,31 @@ impl WindowVisibility {
 }
 
 /// A change to the connected displays, reported through
-/// [`App::on_display_change`](crate::App::on_display_change).
+/// [`App::observe_displays`](crate::App::observe_displays).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum DisplayEvent {
     /// A display was connected.
     Added(DisplayId),
     /// A display was disconnected. Windows on it are moved to another
     /// display by the platform.
     Removed(DisplayId),
-    /// A display's refresh interval changed.
-    Changed(DisplayId),
+    /// A display's refresh interval changed, including to or from unknown.
+    RefreshIntervalChanged {
+        /// The display whose refresh interval changed.
+        display_id: DisplayId,
+        /// The new interval, as [`Platform::display_refresh_interval`] now
+        /// reports it.
+        refresh_interval: Option<Duration>,
+    },
 }
 
 /// The events that turn one snapshot of each connected display's refresh
 /// interval into the next, for platforms whose display notifications don't say
 /// what changed.
 pub fn display_events(
-    previous: &std::collections::HashMap<DisplayId, Option<Duration>>,
-    current: &std::collections::HashMap<DisplayId, Option<Duration>>,
+    previous: &HashMap<DisplayId, Option<Duration>>,
+    current: &HashMap<DisplayId, Option<Duration>>,
 ) -> Vec<DisplayEvent> {
     let removed = previous
         .keys()
@@ -148,7 +155,12 @@ pub fn display_events(
             .iter()
             .filter_map(|(id, refresh_interval)| match previous.get(id) {
                 None => Some(DisplayEvent::Added(*id)),
-                Some(previous) if previous != refresh_interval => Some(DisplayEvent::Changed(*id)),
+                Some(previous) if previous != refresh_interval => {
+                    Some(DisplayEvent::RefreshIntervalChanged {
+                        display_id: *id,
+                        refresh_interval: *refresh_interval,
+                    })
+                }
                 Some(_) => None,
             });
     removed.chain(added_or_changed).collect()
@@ -3644,14 +3656,15 @@ mod tests {
     #[test]
     fn test_display_events() {
         let sixty_hertz = Some(Duration::from_secs(1) / 60);
-        let previous = std::collections::HashMap::from_iter([
+        let one_hundred_twenty_hertz = Some(Duration::from_secs(1) / 120);
+        let previous = HashMap::from_iter([
             (DisplayId(1), sixty_hertz),
             (DisplayId(2), sixty_hertz),
             (DisplayId(3), None),
         ]);
-        let current = std::collections::HashMap::from_iter([
+        let current = HashMap::from_iter([
             (DisplayId(1), sixty_hertz),
-            (DisplayId(3), Some(Duration::from_secs(1) / 120)),
+            (DisplayId(3), one_hundred_twenty_hertz),
             (DisplayId(4), None),
         ]);
         let events = display_events(&previous, &current)
@@ -3661,7 +3674,10 @@ mod tests {
             events,
             HashSet::from_iter([
                 DisplayEvent::Removed(DisplayId(2)),
-                DisplayEvent::Changed(DisplayId(3)),
+                DisplayEvent::RefreshIntervalChanged {
+                    display_id: DisplayId(3),
+                    refresh_interval: one_hundred_twenty_hertz,
+                },
                 DisplayEvent::Added(DisplayId(4)),
             ])
         );

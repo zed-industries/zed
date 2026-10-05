@@ -20,6 +20,7 @@ use cocoa::{
         NSArray, NSAutoreleasePool, NSBundle, NSInteger, NSProcessInfo, NSString, NSUInteger, NSURL,
     },
 };
+use collections::HashMap;
 use core_foundation::{
     base::{CFRelease, CFType, CFTypeRef, OSStatus, TCFType},
     boolean::CFBoolean,
@@ -59,7 +60,6 @@ use ptr::null_mut;
 use semver::Version;
 use std::{
     cell::Cell,
-    collections::HashMap,
     ffi::{CStr, OsStr, c_void},
     os::{raw::c_char, unix::ffi::OsStrExt},
     path::{Path, PathBuf},
