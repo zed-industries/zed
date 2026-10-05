@@ -23,8 +23,6 @@ Clone the [Zed repository](https://github.com/zed-industries/zed).
 
 ## Building from source
 
-To build and test Zed with [Cargo](https://doc.rust-lang.org/cargo/), use these commands:
-
 For a debug build of the editor:
 
 ```sh
