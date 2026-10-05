@@ -1,3 +1,4 @@
+pub mod commands;
 pub mod config_options;
 mod connection;
 pub mod content;
@@ -118,11 +119,11 @@ impl CommandCategory {
     }
 }
 
-pub fn meta_with_command_category(category: CommandCategory) -> acp_v1::Meta {
-    acp_v1::Meta::from_iter([(COMMAND_CATEGORY_META_KEY.into(), category.as_str().into())])
+pub fn meta_with_command_category(category: CommandCategory) -> acp_v2::Meta {
+    acp_v2::Meta::from_iter([(COMMAND_CATEGORY_META_KEY.into(), category.as_str().into())])
 }
 
-pub fn command_category_from_meta(meta: &Option<acp_v1::Meta>) -> Option<CommandCategory> {
+pub fn command_category_from_meta(meta: &Option<acp_v2::Meta>) -> Option<CommandCategory> {
     meta.as_ref()
         .and_then(|m| m.get(COMMAND_CATEGORY_META_KEY))
         .and_then(|v| v.as_str())
@@ -3386,7 +3387,7 @@ pub struct AcpThread {
     token_usage: Option<TokenUsage>,
     cost: Option<SessionCost>,
     prompt_capabilities: acp_v1::PromptCapabilities,
-    available_commands: Vec<acp_v1::AvailableCommand>,
+    available_commands: Vec<acp_v2::AvailableCommand>,
     _observe_prompt_capabilities: Task<anyhow::Result<()>>,
     _idle_sleep_subscriptions: Vec<Subscription>,
     terminals: HashMap<acp_v1::TerminalId, Entity<Terminal>>,
@@ -3526,7 +3527,7 @@ pub enum AcpThreadEvent {
     LoadError(LoadError),
     PromptCapabilitiesUpdated,
     Refusal,
-    AvailableCommandsUpdated(Vec<acp_v1::AvailableCommand>),
+    AvailableCommandsUpdated(Vec<acp_v2::AvailableCommand>),
     ModeUpdated(acp_v1::SessionModeId),
     ConfigOptionsUpdated(Vec<acp_v2::SessionConfigOption>),
     WorkingDirectoriesUpdated,
@@ -3739,8 +3740,17 @@ impl AcpThread {
         self.prompt_capabilities.clone()
     }
 
-    pub fn available_commands(&self) -> &[acp_v1::AvailableCommand] {
+    pub fn available_commands(&self) -> &[acp_v2::AvailableCommand] {
         &self.available_commands
+    }
+
+    pub fn update_available_commands(
+        &mut self,
+        commands: Vec<acp_v2::AvailableCommand>,
+        cx: &mut Context<Self>,
+    ) {
+        self.available_commands = commands.clone();
+        cx.emit(AcpThreadEvent::AvailableCommandsUpdated(commands));
     }
 
     pub fn is_draft_thread(&self) -> bool {
@@ -4289,8 +4299,10 @@ impl AcpThread {
                 available_commands,
                 ..
             }) => {
-                self.available_commands = available_commands.clone();
-                cx.emit(AcpThreadEvent::AvailableCommandsUpdated(available_commands));
+                self.update_available_commands(
+                    commands::from_v1(available_commands).map_err(acp_v1::Error::from)?,
+                    cx,
+                );
             }
             acp_v1::SessionUpdate::CurrentModeUpdate(acp_v1::CurrentModeUpdate {
                 current_mode_id,

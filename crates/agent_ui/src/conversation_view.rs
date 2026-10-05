@@ -5836,6 +5836,78 @@ pub(crate) mod tests {
             .await;
 
         assert!(contents_result.is_ok());
+
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _cx| view.thread.clone());
+        let command_payload = json!({
+            "name": "deploy",
+            "description": "Updated command",
+            "input": {
+                "type": "_choice",
+                "hint": "<not a text hint>",
+                "options": ["staging", "production"],
+                "_meta": { "extension": { "enabled": true } }
+            },
+            "_meta": { "custom": "preserved" }
+        });
+        let command: acp_v2::AvailableCommand =
+            serde_json::from_value(command_payload.clone()).expect("valid future command input");
+        thread.update(cx, |thread, cx| {
+            thread.update_available_commands(vec![command], cx);
+        });
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, _cx| {
+            let capabilities = view.session_capabilities.read();
+            assert_eq!(
+                serde_json::to_value(capabilities.available_commands())
+                    .expect("serialize command definitions"),
+                json!([command_payload])
+            );
+            let completions = capabilities.completion_commands();
+            assert_eq!(completions.len(), 1);
+            let completion = completions.first().expect("replacement command completion");
+            assert_eq!(completion.name.as_ref(), "deploy");
+            assert_eq!(completion.description.as_ref(), "Updated command");
+            assert!(!completion.requires_argument);
+        });
+
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("/deploy", window, cx)
+        });
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_eq!(editor.display_text(cx), "/deploy")
+        });
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("/deploy free text", window, cx);
+        });
+        let (content, _) = message_editor
+            .update(cx, |editor, cx| editor.contents(false, cx))
+            .await
+            .expect("unknown command input still permits text dispatch");
+        assert_eq!(
+            content,
+            vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
+                "/deploy free text"
+            ))]
+        );
+
+        thread.update(cx, |thread, cx| {
+            thread.update_available_commands(Vec::new(), cx);
+        });
+        cx.run_until_parked();
+        thread_view.read_with(cx, |view, _cx| {
+            let capabilities = view.session_capabilities.read();
+            assert!(capabilities.available_commands().is_empty());
+            assert!(capabilities.completion_commands().is_empty());
+            assert!(!capabilities.has_slash_completions());
+        });
+        assert!(
+            message_editor
+                .update(cx, |editor, cx| editor.contents(false, cx))
+                .await
+                .is_err()
+        );
     }
 
     #[gpui::test]
