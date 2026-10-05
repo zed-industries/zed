@@ -116,6 +116,11 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
             ..Default::default()
         },
         LanguageInfo {
+            name: "env",
+            adapters: vec![],
+            ..Default::default()
+        },
+        LanguageInfo {
             name: "go",
             adapters: vec![go_lsp_adapter.clone()],
             context: Some(go_context_provider.clone()),
@@ -394,4 +399,39 @@ pub fn language(name: &str, grammar: tree_sitter::Language) -> Arc<Language> {
 fn load_config(name: &str) -> LanguageConfig {
     let grammars_loaded = cfg!(any(feature = "load-grammars", test));
     grammars::load_config_for_feature(name, grammars_loaded)
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::App;
+    use language::{File, LanguageRegistry, TestFile};
+    use settings::SettingsStore;
+    use std::sync::Arc;
+    use util::rel_path::rel_path;
+
+    #[gpui::test]
+    fn test_env_files_are_not_shell_scripts(cx: &mut App) {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+
+        let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        registry.add(crate::language("env", tree_sitter_bash::LANGUAGE.into()));
+        registry.add(crate::language("bash", tree_sitter_bash::LANGUAGE.into()));
+
+        let language_of = |path: &str, cx: &App| {
+            let file: Arc<dyn File> = Arc::new(TestFile {
+                path: Arc::from(rel_path(path)),
+                root_name: "zed".into(),
+                local_root: None,
+            });
+
+            registry
+                .language_for_file(&file, None, cx)
+                .and_then(|id| registry.language_name_for_id(id))
+        };
+
+        assert_eq!(language_of(".env", cx), Some("Env".into()));
+        assert_eq!(language_of(".envrc", cx), Some("Shell Script".into()));
+        assert_eq!(language_of("deploy.sh", cx), Some("Shell Script".into()));
+    }
 }

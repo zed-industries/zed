@@ -131,6 +131,7 @@
 - [Elixir](./languages/elixir.md)
 - [Elm](./languages/elm.md)
 - [Emmet](./languages/emmet.md)
+- [Env](./languages/env.md)
 - [Erlang](./languages/erlang.md)
 - [Fish](./languages/fish.md)
 - [GDScript](./languages/gdscript.md)
