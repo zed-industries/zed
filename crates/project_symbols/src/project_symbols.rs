@@ -141,7 +141,14 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                     };
 
                     let editor = workspace.open_project_item::<Editor>(
-                        pane, buffer, true, true, true, true, window, cx,
+                        secondary.then_some(pane),
+                        buffer,
+                        true,
+                        true,
+                        true,
+                        true,
+                        window,
+                        cx,
                     );
 
                     editor.update(cx, |editor, cx| {

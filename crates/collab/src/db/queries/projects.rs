@@ -276,7 +276,7 @@ impl Database {
 
             if !update.updated_entries.is_empty() {
                 worktree_entry::Entity::insert_many(update.updated_entries.iter().map(|entry| {
-                    let mtime = entry.mtime.clone().unwrap_or_default();
+                    let mtime = entry.mtime.unwrap_or_default();
                     worktree_entry::ActiveModel {
                         project_id: ActiveValue::set(project_id),
                         worktree_id: ActiveValue::set(worktree_id),
@@ -622,7 +622,8 @@ impl Database {
     ) -> Result<TransactionGuard<Vec<ConnectionId>>> {
         let project_id = ProjectId::from_proto(update.project_id);
         let kind = match update.kind {
-            Some(kind) => proto::LocalSettingsKind::from_i32(kind)
+            Some(kind) => proto::LocalSettingsKind::try_from(kind)
+                .ok()
                 .with_context(|| format!("unknown worktree settings kind: {kind}"))?,
             None => proto::LocalSettingsKind::Settings,
         };
