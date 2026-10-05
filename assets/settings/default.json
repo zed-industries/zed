@@ -118,6 +118,8 @@
     "font_family": null,
     // The font family for code blocks in the markdown preview. Falls back to the editor font family if unset.
     "code_font_family": null,
+    // The font weight for headings in the markdown preview, in CSS units from 100 to 900.
+    "heading_font_weight": 600,
     // Whether to automatically open Markdown files in the preview.
     "open_markdown_files_in_preview": false,
     // Whether to limit the width of the rendered markdown content. When
@@ -540,8 +542,18 @@
   // Controls whether edit predictions are shown immediately (true)
   // or manually by triggering `editor::ShowEditPrediction` (false).
   "show_edit_predictions": true,
-  // Controls whether edit predictions are shown in a given language scope.
-  // Example: ["string", "comment"]
+  // Disable edit predictions in these language scopes, such as "comment" and
+  // "string".
+  //
+  // Use `"..."` to add scopes without repeating the inherited list. In project
+  // settings, it extends the user or parent configuration value. In
+  // language-specific settings, it extends the scopes inherited by that
+  // language. Omit `"..."` to replace the inherited list.
+  //
+  // Inherited scopes are inserted at `"..."`, and duplicates keep their first
+  // occurrence.
+  //
+  // Set `[]` to clear the inherited list. Omit this setting to inherit it unchanged.
   "edit_predictions_disabled_in": [],
   // Whether to show tabs and spaces in the editor.
   // This setting can take four values:
@@ -586,7 +598,7 @@
     // Whether to show code action buttons in the editor toolbar.
     "code_actions": false,
   },
-  // Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
+  // Whether to allow windows to tab together based on the user's tabbing preference (macOS only).
   "use_system_window_tabs": false,
   // Which fullscreen mode the `zed::ToggleFullScreen` action enters (macOS only).
   //
@@ -616,6 +628,8 @@
     "show_sign_in": true,
     // Whether to show the menus in the titlebar.
     "show_menus": false,
+    // Whether to open the menus in the titlebar on hover.
+    "open_menus_on_hover": false,
     // The layout of window control buttons in the title bar (Linux only).
     "button_layout": "platform_default",
   },
@@ -1100,9 +1114,9 @@
     //
     // Default: false
     "collapse_untracked_diff": false,
-    /// Whether to show entries with tree or flat view in the panel
-    ///
-    /// Default: false
+    // Whether to show entries with tree or flat view in the panel
+    //
+    // Default: false
     "tree_view": false,
     // Whether the git panel should open on startup.
     //
@@ -1133,6 +1147,11 @@
     // Choices: project_diff, file_diff, view_file
     // Default: project_diff
     "entry_primary_click_action": "project_diff",
+    // Whether the commit message editor is shown in the git panel by default.
+    //
+    // Choices: expanded, collapsed
+    // Default: expanded
+    "commit_editor": "expanded",
   },
   "agent": {
     // Whether the inline assistant should use streaming tools, when available
@@ -1146,13 +1165,27 @@
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
     "dock": "left",
-    // Whether the agent panel should use flexible (proportional) sizing.
+    // Whether the agent panel should use flexible (proportional) sizing when docked
+    // to the left or right. When enabled, `default_width` does not control the panel
+    // width, and resetting the panel restores the default proportion.
     //
     // Default: true
     "flexible": true,
-    // Where to position the threads sidebar. Can be 'left' or 'right'.
-    "sidebar_side": "left",
-    // Default width when the agent panel is docked to the left or right.
+    // Maximum number of idle threads with loadable sessions to retain in the
+    // agent panel. Set to 0 to unload every eligible idle thread when it is
+    // no longer active.
+    "max_idle_retained_threads": 5,
+    // Settings for the sidebar holding the agent panel and the list of agent threads.
+    "threads_sidebar": {
+      // Where to position the Threads Sidebar. Can be 'left' or 'right'.
+      "position": "left",
+      // Default width of the Threads Sidebar.
+      "default_width": 300,
+      // Automatically open the Threads Sidebar when opening a folder in an existing window.
+      "auto_open": true,
+    },
+    // Default fixed width when the agent panel is docked to the left or right and
+    // `flexible` is false.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
@@ -1261,30 +1294,30 @@
         "name": "Write",
         "enable_all_context_servers": true,
         "tools": {
+          "apply_code_action": true,
+          "ask_user": false,
           "copy_path": true,
           "create_directory": true,
           "create_thread": true,
           "delete_path": true,
           "diagnostics": true,
-          "apply_code_action": true,
-          "ask_user": false,
           "edit_file": true,
-          "write_file": true,
           "fetch": true,
           "find_path": true,
           "find_references": true,
           "get_code_actions": true,
           "go_to_definition": true,
+          "grep": true,
           "list_agents_and_models": true,
           "list_directory": true,
           "move_path": true,
-          "rename_symbol": true,
           "read_file": true,
-          "grep": true,
+          "rename_symbol": true,
+          "search_web": true,
           "skill": true,
           "spawn_agent": true,
           "terminal": true,
-          "search_web": true,
+          "write_file": true,
         },
       },
       "ask": {
@@ -1292,21 +1325,21 @@
         // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
         // "enable_all_context_servers": true,
         "tools": {
+          "ask_user": false,
           "create_thread": true,
           "diagnostics": true,
-          "ask_user": false,
           "fetch": true,
-          "list_agents_and_models": true,
-          "list_directory": true,
           "find_path": true,
           "find_references": true,
           "get_code_actions": true,
           "go_to_definition": true,
-          "read_file": true,
           "grep": true,
+          "list_agents_and_models": true,
+          "list_directory": true,
+          "read_file": true,
+          "search_web": true,
           "skill": true,
           "spawn_agent": true,
-          "search_web": true,
         },
       },
       "minimal": {
@@ -1506,6 +1539,11 @@
     // Default: medium
     "modal_max_width": "medium",
   },
+  // Settings related to the command palette.
+  "command_palette": {
+    // Whether to use command history ranking for sorting in the command palette.
+    "use_command_history": true,
+  },
   // Settings related to the file finder.
   "file_finder": {
     // Whether to show file icons in the file finder.
@@ -1549,6 +1587,11 @@
     "include_ignored": "smart",
     // Whether to include text channels in file finder results.
     "include_channels": false,
+    // Whether to pre-fill the file finder's query with the text selected in the
+    // focused item (e.g. an editor or a terminal) when it is opened.
+    //
+    // Default: true
+    "prefill_query_from_selection": true,
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -1623,6 +1666,12 @@
   // 3. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
   //      "soft_wrap": "bounded",
   "soft_wrap": "none",
+  // How to indent soft-wrapped continuation lines.
+  //   "none"      - start at column 0
+  //   "same"      - match original line's indentation (default)
+  //   "extra_one" - same + 1 indent level
+  //   "extra_two" - same + 2 indent levels
+  "soft_wrap_indent": "same",
   // The column at which to soft-wrap lines, for buffers where soft-wrap
   // is enabled.
   "preferred_line_length": 80,
@@ -1772,9 +1821,9 @@
     // 2. Hide the gutter
     //      "git_gutter": "hide"
     "git_gutter": "tracked_files",
-    /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
-    ///
-    /// Default: 0
+    // Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
+    //
+    // Default: 0
     "gutter_debounce": 0,
     // Control whether the git blame information is shown for the currently
     // focused line, and where it is rendered.
@@ -1858,11 +1907,20 @@
   "edit_predictions": {
     // Which edit prediction provider to use.
     "provider": "zed",
-    // A list of globs representing files that edit predictions should be disabled for.
-    // There's a sensible default list of globs already included.
-    // Any addition to this list will be merged with the default list.
-    // Globs are matched relative to the worktree root,
-    // except when starting with a slash (/) or equivalent in Windows.
+    // Disable edit predictions for files matching these glob patterns.
+    //
+    // Use `"..."` to add patterns without repeating Zed's defaults. In project
+    // settings, it extends the user or parent configuration value. Omit
+    // `"..."` to replace the inherited list.
+    //
+    // Inherited patterns are inserted at `"..."`, and duplicates keep their first
+    // occurrence.
+    //
+    // Set `[]` to clear the inherited list. Omit this setting to inherit it unchanged.
+    //
+    // Relative patterns are matched against paths relative to the worktree root.
+    // Absolute patterns are matched against absolute paths.
+    // A leading `~` is expanded to your home folder.
     "disabled_globs": [
       "**/.env*",
       "**/*.pem",
@@ -1884,7 +1942,6 @@
     "mode": "eager",
     // Copilot-specific settings
     // "copilot": {
-    //   "enterprise_uri": "",
     //   "proxy": "",
     //   "proxy_no_verify": false,
     //   "enable_next_edit_suggestions": true,
@@ -1893,7 +1950,6 @@
     //   "prediction_debounce": 75
     // },
     "copilot": {
-      "enterprise_uri": null,
       "proxy": null,
       "proxy_no_verify": null,
       "enable_next_edit_suggestions": true,
@@ -1958,9 +2014,9 @@
     "line_endings_button": false,
     // Control when to show the active encoding in the status bar.
     "active_encoding_button": "non_utf8",
-    // Whether to show an indicator with a countdown while timed multi-stroke
-    // input is pending. Hovering the indicator pauses the timeout. Its binding
-    // preview popover is disabled when "which_key.enabled" is true.
+    // Whether to show an indicator while multi-stroke input is pending.
+    // If the input has a timeout, a countdown is shown and hovering pauses it.
+    // Its binding preview popover is disabled when "which_key.enabled" is true.
     "pending_keystrokes_indicator": true,
   },
   // Settings specific to the terminal
@@ -2173,14 +2229,23 @@
     //
     // [
     //   "\\s+(-->|:::|at) (?<link>(?<path>.+?))(:$|$)",
-    //   "\\s+(Compiling|Checking|Documenting) [^(]+\\((?<link>(?<path>.+))\\)"
+    //   "\\s+(Compiling|Checking|Documenting) [^(]+\\((?<link>(?<path>.+))\\)",
+    //   "..."
     // ],
     //
-    // could be used. Processing stops at the first regex with a match, even if no link is
+    // could be used. The `"..."` entry inserts inherited regexes at that position. In project
+    // settings, it extends the user or parent configuration value. Omit `"..."` to replace the
+    // inherited list, or set `[]` to clear it. Duplicates keep their first occurrence, comparing
+    // regex text after joining multiline entries with newlines. The marker is recognized only
+    // as a top-level string. Write `["..."]` as an entry to keep the three-character regex instead.
+    // A `"..."` line inside a multiline entry is always regex text. Invalid regexes are logged
+    // and ignored.
+    //
+    // Processing stops at the first regex with a match, even if no link is
     // produced which is the case when the cursor is not over the hyperlinked text. For best
     // performance it is recommended to order regexes from most common to least common. For
-    // readability and documentation, each regex may be an array of strings which are collected
-    // into one multi-line regex string for use in terminal path hyperlink detection.
+    // readability and documentation, each regex may be an array of strings which are joined
+    // with newlines into one regex string for use in terminal path hyperlink detection.
     "path_hyperlink_regexes": [
       // Python-style diagnostics
       "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
@@ -2551,6 +2616,9 @@
         "allowed": true,
       },
     },
+    "Typst": {
+      "allow_rewrap": "anywhere",
+    },
     "SystemVerilog": {
       "language_servers": ["slang", "!verible", "!veridian", "!svls", "..."],
       "use_on_type_format": false,
@@ -2579,6 +2647,10 @@
       "format_on_save": "on",
       "language_servers": ["zls", "..."],
     },
+  },
+  // Settings shared by Copilot Chat and edit predictions.
+  "copilot": {
+    "enterprise_uri": null,
   },
   // Different settings for specific language models.
   "language_models": {

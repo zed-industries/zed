@@ -5,7 +5,8 @@ use editor::{
 use fuzzy::StringMatch;
 use gpui::{
     AsyncWindowContext, DivInspectorState, Entity, InspectorElementId, IntoElement,
-    StyleRefinement, Task, Window, inspector_reflection::FunctionReflection, styled_reflection,
+    StyleRefinement, Subscription, Task, WeakEntity, Window,
+    inspector_reflection::FunctionReflection, styled_reflection,
 };
 use language::language_settings::SoftWrap;
 use language::{
@@ -47,6 +48,7 @@ pub(crate) struct DivInspector {
     rust_completion: Option<String>,
     /// Range that will be replaced by the completion if selected.
     rust_completion_replace_range: Option<Range<Anchor>>,
+    _initialization_task: Task<()>,
 }
 
 enum State {
@@ -60,6 +62,7 @@ enum State {
         rust_style_editor: Entity<Editor>,
         json_style_buffer: Entity<Buffer>,
         json_style_editor: Entity<Editor>,
+        _subscriptions: [Subscription; 2],
     },
     LoadError {
         message: SharedString,
@@ -73,7 +76,7 @@ impl DivInspector {
         cx: &mut Context<Self>,
     ) -> DivInspector {
         // Open the buffers once, so they can then be used for each editor.
-        cx.spawn_in(window, {
+        let initialization_task = cx.spawn_in(window, {
             let languages = project.read(cx).languages().clone();
             let project = project.clone();
             async move |this, cx| {
@@ -104,10 +107,11 @@ impl DivInspector {
                             // `update_inspected_element`. This avoids continuing to show
                             // "Loading..." until the user moves the mouse to a different element.
                             if let Some(id) = this.inspector_id.take() {
-                                let inspector_state =
-                                    window.with_inspector_state(Some(&id), cx, |state, _window| {
+                                let inspector_state = window
+                                    .with_inspector_state(Some(&id), cx, |state, _window| {
                                         state.clone()
-                                    });
+                                    })
+                                    .flatten();
                                 if let Some(inspector_state) = inspector_state {
                                     this.update_inspected_element(&id, inspector_state, window, cx);
                                     cx.notify();
@@ -129,8 +133,7 @@ impl DivInspector {
                     }
                 }
             }
-        })
-        .detach();
+        });
 
         DivInspector {
             state: State::Loading,
@@ -143,6 +146,7 @@ impl DivInspector {
             rust_completion: None,
             rust_completion_replace_range: None,
             json_style_error: None,
+            _initialization_task: initialization_task,
         }
     }
 
@@ -180,7 +184,7 @@ impl DivInspector {
         let rust_style_editor = self.create_editor(rust_style_buffer.clone(), window, cx);
 
         rust_style_editor.update(cx, {
-            let div_inspector = cx.entity();
+            let div_inspector = cx.weak_entity();
             |rust_style_editor, _cx| {
                 rust_style_editor.set_completion_provider(Some(Rc::new(
                     RustStyleCompletionProvider { div_inspector },
@@ -200,7 +204,7 @@ impl DivInspector {
             }
         };
 
-        cx.subscribe_in(&json_style_editor, window, {
+        let json_subscription = cx.subscribe_in(&json_style_editor, window, {
             let id = id.clone();
             let rust_style_buffer = rust_style_buffer.clone();
             move |this, editor, event: &EditorEvent, window, cx| {
@@ -247,10 +251,9 @@ impl DivInspector {
                     }
                 }
             }
-        })
-        .detach();
+        });
 
-        cx.subscribe(&rust_style_editor, {
+        let rust_subscription = cx.subscribe(&rust_style_editor, {
             let json_style_buffer = json_style_buffer.clone();
             let rust_style_buffer = rust_style_buffer.clone();
             move |this, _editor, event: &EditorEvent, cx| {
@@ -258,8 +261,7 @@ impl DivInspector {
                     this.update_json_style_from_rust(&json_style_buffer, &rust_style_buffer, cx);
                 }
             }
-        })
-        .detach();
+        });
 
         self.unconvertible_style = style.subtract(&rust_style);
         self.json_style_overrides = StyleRefinement::default();
@@ -268,6 +270,7 @@ impl DivInspector {
             rust_style_editor,
             json_style_buffer,
             json_style_editor,
+            _subscriptions: [json_subscription, rust_subscription],
         };
     }
 
@@ -638,7 +641,7 @@ fn is_not_identifier_char(c: char) -> bool {
 }
 
 struct RustStyleCompletionProvider {
-    div_inspector: Entity<DivInspector>,
+    div_inspector: WeakEntity<DivInspector>,
 }
 
 impl CompletionProvider for RustStyleCompletionProvider {
@@ -655,9 +658,15 @@ impl CompletionProvider for RustStyleCompletionProvider {
             return Task::ready(Ok(Vec::new()));
         };
 
-        self.div_inspector.update(cx, |div_inspector, _cx| {
-            div_inspector.rust_completion_replace_range = Some(replace_range.clone());
-        });
+        if self
+            .div_inspector
+            .update(cx, |div_inspector, _cx| {
+                div_inspector.rust_completion_replace_range = Some(replace_range.clone());
+            })
+            .is_err()
+        {
+            return Task::ready(Ok(Vec::new()));
+        }
 
         Task::ready(Ok(vec![CompletionResponse {
             completions: STYLE_METHODS
@@ -699,9 +708,11 @@ impl CompletionProvider for RustStyleCompletionProvider {
         let div_inspector = self.div_inspector.clone();
         let rust_completion = mat.as_ref().map(|mat| mat.string.clone());
         cx.defer(move |cx| {
-            div_inspector.update(cx, |div_inspector, cx| {
-                div_inspector.handle_rust_completion_selection_change(rust_completion, cx);
-            });
+            div_inspector
+                .update(cx, |div_inspector, cx| {
+                    div_inspector.handle_rust_completion_selection_change(rust_completion, cx);
+                })
+                .ok();
         });
     }
 
@@ -732,5 +743,300 @@ fn completion_replace_range(snapshot: &BufferSnapshot, anchor: &Anchor) -> Optio
         Some(replace_start..replace_end)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+    use futures::{FutureExt as _, channel::oneshot};
+    use gpui::{
+        AnyWeakEntity, Focusable as _, Modifiers, TestAppContext, VisualTestContext, point,
+    };
+    use language::{LanguageConfig, LanguageName, LanguageQueries, LoadedLanguage};
+    use settings::SettingsStore;
+    use snippet_provider::SnippetProvider;
+    use std::{
+        cell::RefCell,
+        collections::BTreeSet,
+        path::PathBuf,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+    };
+
+    #[gpui::test]
+    async fn test_drop_during_initialization(cx: &mut TestAppContext) {
+        let (fs, watcher_baseline) = test_fs(cx);
+        let project = Project::test(fs.clone(), [], cx).await;
+        let weak_project = project.downgrade();
+        let weak_lsp_store = project.read_with(cx, |project, _| project.lsp_store().downgrade());
+        let (finish_loading, loading_gate) = oneshot::channel::<()>();
+        let loading_gate = loading_gate.shared();
+        let loading_started = Arc::new(AtomicBool::new(false));
+        project.read_with(cx, |project, _| {
+            project.languages().register_language(
+                LanguageName::from("Rust"),
+                None,
+                Arc::default(),
+                false,
+                None,
+                Arc::new({
+                    let loading_started = loading_started.clone();
+                    move || {
+                        let loading_gate = loading_gate.clone();
+                        let loading_started = loading_started.clone();
+                        Box::pin(async move {
+                            loading_started.store(true, Ordering::SeqCst);
+                            loading_gate.await?;
+                            Ok(LoadedLanguage {
+                                config: LanguageConfig {
+                                    name: LanguageName::from("Rust"),
+                                    ..LanguageConfig::default()
+                                },
+                                queries: LanguageQueries::default(),
+                                context_provider: None,
+                                toolchain_provider: None,
+                                manifest_name: None,
+                            })
+                        })
+                    }
+                }),
+            );
+        });
+
+        let cx = cx.add_empty_window();
+        let div_inspector =
+            cx.new_window_entity(|window, cx| DivInspector::new(project, window, cx));
+        let weak_inspector = div_inspector.downgrade();
+        cx.run_until_parked();
+
+        assert!(loading_started.load(Ordering::SeqCst));
+        assert_inspector_watchers(&fs, &watcher_baseline);
+        let weak_json_buffer = div_inspector.read_with(cx, |div_inspector, cx| {
+            assert!(matches!(div_inspector.state, State::Loading));
+            div_inspector
+                .project
+                .read(cx)
+                .buffer_store()
+                .read(cx)
+                .buffers()
+                .next()
+                .expect("initialization must load the JSON buffer before Rust")
+                .downgrade()
+        });
+
+        cx.update(|_, _| drop(div_inspector));
+        flush_teardown(cx);
+
+        assert!(weak_inspector.upgrade().is_none());
+        assert!(weak_project.upgrade().is_none());
+        assert!(weak_lsp_store.upgrade().is_none());
+        assert!(weak_json_buffer.upgrade().is_none());
+        assert_eq!(watched_paths(&fs), watcher_baseline);
+
+        finish_loading
+            .send(())
+            .expect("language loader must still be waiting");
+        cx.run_until_parked();
+        assert!(weak_inspector.upgrade().is_none());
+        assert!(weak_project.upgrade().is_none());
+        assert!(weak_lsp_store.upgrade().is_none());
+        assert_eq!(watched_paths(&fs), watcher_baseline);
+    }
+
+    #[gpui::test]
+    async fn test_close_focused_inspector_and_reopen_same_element(cx: &mut TestAppContext) {
+        let (fs, watcher_baseline) = test_fs(cx);
+        let pending_project = Rc::new(RefCell::new(None::<Entity<Project>>));
+        let inspectors = Rc::new(RefCell::new(Vec::new()));
+        cx.update({
+            let pending_project = pending_project.clone();
+            let inspectors = inspectors.clone();
+            move |cx| {
+                cx.set_inspector_renderer(Box::new(|inspector, window, cx| {
+                    v_flex()
+                        .size_full()
+                        .children(inspector.render_inspector_states(window, cx))
+                        .into_any_element()
+                }));
+                cx.register_inspector_element(move |window, cx| {
+                    let project = pending_project.borrow_mut().take().expect("fresh project");
+                    let inspector = cx.new(|cx| DivInspector::new(project, window, cx));
+                    inspectors.borrow_mut().push(inspector.downgrade());
+                    move |id, state: &DivInspectorState, window: &mut Window, cx: &mut App| {
+                        inspector.update(cx, |inspector, cx| {
+                            inspector.update_inspected_element(&id, state.clone(), window, cx);
+                            inspector.render(window, cx).into_any_element()
+                        })
+                    }
+                });
+            }
+        });
+        let first_window = cx.add_window(|_, _| InspectorTarget);
+        let second_window = cx.add_window(|_, _| InspectorTarget);
+        let mut second = VisualTestContext::from_window(second_window.into(), cx);
+        let mut selected_id = None;
+        let mut resources = Vec::new();
+        let mut surviving_resources = Vec::new();
+        let mut surviving_editor = None;
+        let mut active_baseline = watcher_baseline.clone();
+        let windows = [second_window, first_window, first_window];
+        for (generation, window) in windows.into_iter().enumerate() {
+            let cx = &mut VisualTestContext::from_window(window.into(), cx);
+            let project = Project::test(fs.clone(), [], cx).await;
+            project.read_with(cx, |project, _| {
+                project.languages().register_test_language(LanguageConfig {
+                    name: LanguageName::from("Rust"),
+                    ..LanguageConfig::default()
+                });
+            });
+            *pending_project.borrow_mut() = Some(project);
+            cx.update(|window, cx| {
+                window.toggle_inspector(cx);
+                window.draw(cx).clear(cx);
+            });
+            let position = point(px(5.), px(5.));
+            cx.simulate_mouse_move(position, None, Modifiers::default());
+            cx.simulate_click(position, Modifiers::default());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.run_until_parked();
+            assert_eq!(inspectors.borrow().len(), generation + 1);
+            let weak_inspector = inspectors
+                .borrow()
+                .last()
+                .expect("rendered inspector")
+                .clone();
+            let (weak_entities, rust_editor, focus_handle) = weak_inspector
+                .read_with(cx, |inspector, cx| {
+                    let id = inspector.inspector_id.clone().expect("picked element");
+                    if generation > 0
+                        && let Some(previous_id) = selected_id.replace(id.clone())
+                    {
+                        assert_eq!(id, previous_id);
+                    }
+                    let State::Ready {
+                        rust_style_buffer,
+                        rust_style_editor,
+                        json_style_buffer,
+                        json_style_editor,
+                        ..
+                    } = &inspector.state
+                    else {
+                        panic!("picked element must have initialized editors");
+                    };
+                    let editor = if generation == 2 {
+                        json_style_editor
+                    } else {
+                        rust_style_editor
+                    };
+                    (
+                        [
+                            AnyWeakEntity::from(weak_inspector.clone()),
+                            AnyWeakEntity::from(inspector.project.downgrade()),
+                            AnyWeakEntity::from(inspector.project.read(cx).lsp_store().downgrade()),
+                            AnyWeakEntity::from(rust_style_editor.downgrade()),
+                            AnyWeakEntity::from(json_style_editor.downgrade()),
+                            AnyWeakEntity::from(rust_style_buffer.downgrade()),
+                            AnyWeakEntity::from(json_style_buffer.downgrade()),
+                        ],
+                        rust_style_editor.downgrade(),
+                        editor.focus_handle(cx),
+                    )
+                })
+                .expect("live inspector");
+            cx.update(|window, cx| {
+                window.focus(&focus_handle, cx);
+                window.draw(cx).clear(cx);
+                assert!(focus_handle.is_focused(window));
+            });
+            assert_inspector_watchers(&fs, &active_baseline);
+            resources.extend(weak_entities);
+            if generation == 0 {
+                surviving_editor = Some(rust_editor);
+                surviving_resources = resources.clone();
+                active_baseline = watched_paths(&fs);
+                continue;
+            }
+            cx.update(|window, cx| {
+                if generation == 1 {
+                    window.toggle_inspector(cx);
+                    window.draw(cx).clear(cx);
+                } else {
+                    window.remove_window();
+                }
+            });
+            flush_teardown(&mut second);
+            second.update(|window, cx| window.draw(cx).clear(cx));
+            let editor = surviving_editor.as_ref().expect("second window editor");
+            let text = |cx: &TestAppContext| {
+                editor
+                    .read_with(cx, |editor, cx| editor.text(cx))
+                    .expect("live editor")
+            };
+            let before = text(&second);
+            second.simulate_input(" ");
+            assert_eq!(text(&second).len(), before.len() + 1);
+            resources.retain(AnyWeakEntity::is_upgradable);
+            assert_eq!(resources, surviving_resources);
+            assert_eq!(watched_paths(&fs), active_baseline);
+        }
+        second.update(|window, cx| {
+            window.toggle_inspector(cx);
+            window.draw(cx).clear(cx);
+        });
+        flush_teardown(&mut second);
+        assert!(resources.iter().all(|entity| !entity.is_upgradable()));
+        assert_eq!(watched_paths(&fs), watcher_baseline);
+    }
+
+    fn test_fs(cx: &mut TestAppContext) -> (Arc<FakeFs>, Vec<PathBuf>) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            drop(SnippetProvider::new(fs.clone(), BTreeSet::new(), cx));
+        });
+        cx.run_until_parked();
+        let watcher_baseline = watched_paths(&fs);
+        assert!(!watcher_baseline.is_empty());
+        (fs, watcher_baseline)
+    }
+
+    fn watched_paths(fs: &FakeFs) -> Vec<PathBuf> {
+        let mut paths = fs.watched_paths();
+        paths.sort();
+        paths
+    }
+
+    fn assert_inspector_watchers(fs: &FakeFs, baseline: &[PathBuf]) {
+        let mut expected = baseline.to_vec();
+        expected.extend([
+            paths::tasks_file().clone(),
+            paths::debug_scenarios_file().clone(),
+            PathBuf::from(ZED_INSPECTOR_STYLE_JSON),
+        ]);
+        expected.sort();
+        assert_eq!(watched_paths(fs), expected);
+    }
+
+    fn flush_teardown(cx: &mut VisualTestContext) {
+        cx.run_until_parked();
+        cx.update(|_, _| {});
+        cx.run_until_parked();
+    }
+
+    struct InspectorTarget;
+
+    impl Render for InspectorTarget {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().id("inspected-element").size(px(100.))
+        }
     }
 }
