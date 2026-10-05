@@ -124,7 +124,7 @@ impl ChannelMembership {
                 proto::channel_member::Kind::Member => 0,
                 proto::channel_member::Kind::Invitee => 1,
             },
-            username_order: &self.user.github_login,
+            username_order: &self.user.username,
         }
     }
 }
@@ -863,7 +863,7 @@ impl ChannelStore {
                 );
             }
             for membership in message.payload.channel_memberships {
-                if let Some(role) = ChannelRole::from_i32(membership.role) {
+                if let Some(role) = ChannelRole::try_from(membership.role).ok() {
                     this.channel_states
                         .entry(ChannelId(membership.channel_id))
                         .or_default()

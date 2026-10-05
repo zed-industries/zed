@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -11,7 +12,8 @@ use language::LanguageName;
 use lsp::LanguageServerName;
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use util::rel_path::{PathExt, RelPathBuf};
+use util::paths::PathStyle;
+use util::rel_path::{RelPath, RelPathBuf};
 
 use crate::ExtensionCapability;
 
@@ -48,6 +50,8 @@ impl fmt::Display for SchemaVersion {
 
 impl SchemaVersion {
     pub const ZERO: Self = Self(0);
+    /// The latest schema version supported by Zed.
+    pub const CURRENT: Self = Self(1);
 
     pub fn is_v0(&self) -> bool {
         self == &Self::ZERO
@@ -181,9 +185,27 @@ impl ExtensionManifest {
     }
 
     pub fn allow_remote_load(&self) -> bool {
-        !self.language_servers.is_empty()
+        self.remote_load().is_some()
+    }
+
+    pub fn remote_load(&self) -> Option<RemoteLoad<'_>> {
+        (!self.language_servers.is_empty()
             || !self.debug_adapters.is_empty()
-            || !self.debug_locators.is_empty()
+            || !self.debug_locators.is_empty())
+        .then_some(RemoteLoad { manifest: self })
+    }
+}
+
+pub struct RemoteLoad<'a> {
+    manifest: &'a ExtensionManifest,
+}
+
+impl RemoteLoad<'_> {
+    pub fn language_dependencies(&self) -> impl Iterator<Item = LanguageName> + '_ {
+        self.manifest
+            .language_servers
+            .values()
+            .flat_map(|language_server_config| language_server_config.languages())
     }
 }
 
@@ -193,9 +215,12 @@ pub fn build_debug_adapter_schema_path(
 ) -> anyhow::Result<RelPathBuf> {
     match &meta.schema_path {
         Some(path) => Ok(path.clone()),
-        None => Path::new("debug_adapter_schemas")
-            .join(Path::new(adapter_name.as_ref()).with_extension("json"))
-            .to_rel_path_buf(),
+        None => RelPath::new(
+            &Path::new("debug_adapter_schemas")
+                .join(Path::new(adapter_name.as_ref()).with_extension("json")),
+            PathStyle::local(),
+        )
+        .map(Cow::into_owned),
     }
 }
 
@@ -203,91 +228,6 @@ pub fn build_debug_adapter_schema_path(
 pub struct LibManifestEntry {
     pub kind: Option<ExtensionLibraryKind>,
     pub version: Option<Version>,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-pub struct AgentServerManifestEntry {
-    /// Display name for the agent (shown in menus).
-    pub name: String,
-    /// Environment variables to set when launching the agent server.
-    #[serde(default)]
-    pub env: HashMap<String, String>,
-    /// Optional icon path (relative to extension root, e.g., "ai.svg").
-    /// Should be a small SVG icon for display in menus.
-    #[serde(default)]
-    pub icon: Option<String>,
-    /// Per-target configuration for archive-based installation.
-    /// The key format is "{os}-{arch}" where:
-    /// - os: "darwin" (macOS), "linux", "windows"
-    /// - arch: "aarch64" (arm64), "x86_64"
-    ///
-    /// Example:
-    /// ```toml
-    /// [agent_servers.myagent.targets.darwin-aarch64]
-    /// archive = "https://example.com/myagent-darwin-arm64.zip"
-    /// cmd = "./myagent"
-    /// args = ["--serve"]
-    /// sha256 = "abc123..."  # optional
-    /// ```
-    ///
-    /// For Node.js-based agents, you can use "node" as the cmd to automatically
-    /// use Zed's managed Node.js runtime instead of relying on the user's PATH:
-    /// ```toml
-    /// [agent_servers.nodeagent.targets.darwin-aarch64]
-    /// archive = "https://example.com/nodeagent.zip"
-    /// cmd = "node"
-    /// args = ["index.js", "--port", "3000"]
-    /// ```
-    ///
-    /// Note: All commands are executed with the archive extraction directory as the
-    /// working directory, so relative paths in args (like "index.js") will resolve
-    /// relative to the extracted archive contents.
-    pub targets: HashMap<String, TargetConfig>,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-pub struct TargetConfig {
-    /// URL to download the archive from (e.g., "https://github.com/owner/repo/releases/download/v1.0.0/myagent-darwin-arm64.zip")
-    pub archive: String,
-    /// Command to run (e.g., "./myagent" or "./myagent.exe")
-    pub cmd: String,
-    /// Command-line arguments to pass to the agent server.
-    #[serde(default)]
-    pub args: Vec<String>,
-    /// Optional SHA-256 hash of the archive for verification.
-    /// If not provided and the URL is a GitHub release, we'll attempt to fetch it from GitHub.
-    #[serde(default)]
-    pub sha256: Option<String>,
-    /// Environment variables to set when launching the agent server.
-    /// These target-specific env vars will override any env vars set at the agent level.
-    #[serde(default)]
-    pub env: HashMap<String, String>,
-}
-
-impl TargetConfig {
-    pub fn from_proto(proto: proto::ExternalExtensionAgentTarget) -> Self {
-        Self {
-            archive: proto.archive,
-            cmd: proto.cmd,
-            args: proto.args,
-            sha256: proto.sha256,
-            env: proto.env.into_iter().collect(),
-        }
-    }
-
-    pub fn to_proto(&self) -> proto::ExternalExtensionAgentTarget {
-        proto::ExternalExtensionAgentTarget {
-            archive: self.archive.clone(),
-            cmd: self.cmd.clone(),
-            args: self.args.clone(),
-            sha256: self.sha256.clone(),
-            env: self
-                .env
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-        }
-    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -316,6 +256,10 @@ pub struct LanguageServerManifestEntry {
     pub language_ids: HashMap<LanguageName, String>,
     #[serde(default)]
     pub code_action_kinds: Option<Vec<lsp::CodeActionKind>>,
+    /// Languages (from `languages`) for which this language server is not started
+    /// unless the user explicitly lists it in their `language_servers` setting.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    opt_in_languages: BTreeSet<LanguageName>,
 }
 
 impl LanguageServerManifestEntry {
@@ -334,6 +278,17 @@ impl LanguageServerManifestEntry {
         };
         self.languages.iter().cloned().chain(language)
     }
+
+    /// Returns the languages for which the language server is disabled by default.
+    pub fn opt_in_languages(&self) -> &BTreeSet<LanguageName> {
+        &self.opt_in_languages
+    }
+
+    /// Returns whether the language server should only be started for the given
+    /// language when the user explicitly enables it.
+    pub fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        self.opt_in_languages.contains(language)
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -345,7 +300,7 @@ pub struct SlashCommandManifestEntry {
     pub requires_argument: bool,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+#[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct DebugAdapterManifestEntry {
     pub schema_path: Option<RelPathBuf>,
 }
@@ -409,14 +364,14 @@ fn manifest_from_old_manifest(
         lib: Default::default(),
         themes: {
             let mut themes = manifest_json.themes.into_values().collect::<Vec<_>>();
-            themes.sort();
+            themes.sort_unstable();
             themes.dedup();
             themes
         },
         icon_themes: Vec::new(),
         languages: {
             let mut languages = manifest_json.languages.into_values().collect::<Vec<_>>();
-            languages.sort();
+            languages.sort_unstable();
             languages.dedup();
             languages
         },
@@ -484,7 +439,7 @@ mod tests {
     #[test]
     fn test_build_adapter_schema_path_without_schema_path() {
         let adapter_name = Arc::from("my_adapter");
-        let entry = DebugAdapterManifestEntry { schema_path: None };
+        let entry = DebugAdapterManifestEntry::default();
 
         let path = build_debug_adapter_schema_path(&adapter_name, &entry).unwrap();
         assert_eq!(path, rel_path_buf("debug_adapter_schemas/my_adapter.json"));
@@ -567,6 +522,41 @@ mod tests {
     }
 
     #[test]
+    fn test_deserialize_opt_in_languages() {
+        let manifest: ExtensionManifest = toml::from_str(indoc::indoc! {r#"
+            id = "test-manifest"
+            name = "Test Manifest"
+            version = "0.0.1"
+            schema_version = 1
+
+            [language_servers.default-server]
+            languages = ["Julia"]
+
+            [language_servers.opt-in-server]
+            languages = ["Julia", "Markdown"]
+            opt_in_languages = ["Julia"]
+        "#})
+        .expect("manifest should parse");
+
+        let julia = LanguageName::new("Julia");
+        let markdown = LanguageName::new("Markdown");
+
+        let default_server =
+            &manifest.language_servers[&LanguageServerName::new_static("default-server")];
+        assert!(default_server.opt_in_languages().is_empty());
+        assert!(!default_server.is_opt_in_for(&julia));
+
+        let opt_in_server =
+            &manifest.language_servers[&LanguageServerName::new_static("opt-in-server")];
+        assert_eq!(
+            opt_in_server.languages().into_iter().collect::<Vec<_>>(),
+            vec![julia.clone(), markdown.clone()]
+        );
+        assert!(opt_in_server.is_opt_in_for(&julia));
+        assert!(!opt_in_server.is_opt_in_for(&markdown));
+    }
+
+    #[test]
     #[cfg(target_os = "windows")]
     fn test_deserialize_manifest_with_windows_separators() {
         use indoc::indoc;
@@ -580,5 +570,89 @@ mod tests {
         "#};
         let manifest: ExtensionManifest = toml::from_str(&content).expect("manifest should parse");
         assert_eq!(manifest.languages, vec![rel_path_buf("foo/bar")]);
+    }
+}
+
+/// Requirements for the manifest format of the next schema version.
+///
+/// These are skipped while [`SchemaVersion::CURRENT`] is below
+/// `NEXT_SCHEMA_VERSION` and fail once it is bumped, until the manifest
+/// format has been migrated.
+#[cfg(test)]
+mod next_schema_version_tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const NEXT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(2);
+
+    fn is_next_schema_version_supported() -> bool {
+        SchemaVersion::CURRENT >= NEXT_SCHEMA_VERSION
+    }
+
+    fn parse_manifest(language_server: &str) -> Result<ExtensionManifest, toml::de::Error> {
+        toml::from_str(&format!(
+            indoc::indoc! {r#"
+                id = "test-manifest"
+                name = "Test Manifest"
+                version = "0.0.1"
+                schema_version = {}
+
+                [language_servers.my-server]
+                {}
+            "#},
+            NEXT_SCHEMA_VERSION, language_server
+        ))
+    }
+
+    #[test]
+    fn test_language_server_languages_must_not_be_a_list() {
+        if !is_next_schema_version_supported() {
+            return;
+        }
+
+        assert!(
+            parse_manifest(indoc::indoc! {r#"
+                languages = ["Julia", "Markdown"]
+                language_ids = { Julia = "julia" }
+                opt_in_languages = ["Julia"]
+            "#})
+            .is_err(),
+            "`languages`, `language_ids` and `opt_in_languages` must be folded \
+            into a single `languages` map on schema version {NEXT_SCHEMA_VERSION}",
+        );
+    }
+
+    #[test]
+    fn test_language_server_languages_are_a_map() {
+        if !is_next_schema_version_supported() {
+            return;
+        }
+
+        let manifest = parse_manifest(indoc::indoc! {r#"
+            [language_servers.my-server.languages]
+            Julia = { language_id = "julia", enabled_by_default = false }
+            Markdown = {}
+        "#})
+        .unwrap_or_else(|error| {
+            panic!(
+                "language server languages must be a map keyed by language name \
+                on schema version {NEXT_SCHEMA_VERSION}: {error}"
+            )
+        });
+
+        let julia = LanguageName::new("Julia");
+        let markdown = LanguageName::new("Markdown");
+        let entry = &manifest.language_servers[&LanguageServerName::new_static("my-server")];
+        assert_eq!(
+            entry.languages().into_iter().collect::<Vec<_>>(),
+            vec![julia.clone(), markdown.clone()]
+        );
+        assert_eq!(
+            entry.language_ids.get(&julia).map(String::as_str),
+            Some("julia")
+        );
+        assert!(entry.is_opt_in_for(&julia));
+        assert!(!entry.is_opt_in_for(&markdown));
     }
 }

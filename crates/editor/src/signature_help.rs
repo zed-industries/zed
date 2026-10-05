@@ -382,6 +382,7 @@ impl SignatureHelpPopover {
             return div().into_any_element();
         };
 
+        let editor = cx.weak_entity();
         let main_content = div()
             .occlude()
             .p_2()
@@ -413,7 +414,20 @@ impl SignatureHelpPopover {
                                             markdown::WrapButtonVisibility::Hidden,
                                         border: false,
                                     })
-                                    .on_url_click(open_markdown_url),
+                                    .on_url_click({
+                                        let editor = editor.clone();
+                                        move |link, window, cx| {
+                                            open_markdown_url(
+                                                editor
+                                                    .read_with(cx, |editor, _| editor.workspace())
+                                                    .ok()
+                                                    .flatten(),
+                                                link,
+                                                window,
+                                                cx,
+                                            )
+                                        }
+                                    }),
                                 )
                         },
                     )
@@ -427,7 +441,17 @@ impl SignatureHelpPopover {
                                             markdown::WrapButtonVisibility::Hidden,
                                         border: false,
                                     })
-                                    .on_url_click(open_markdown_url),
+                                    .on_url_click(move |link, window, cx| {
+                                        open_markdown_url(
+                                            editor
+                                                .read_with(cx, |editor, _| editor.workspace())
+                                                .ok()
+                                                .flatten(),
+                                            link,
+                                            window,
+                                            cx,
+                                        )
+                                    }),
                             )
                     }),
             )

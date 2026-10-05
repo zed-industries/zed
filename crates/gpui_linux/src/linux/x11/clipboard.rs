@@ -124,6 +124,8 @@ struct XContext {
 }
 
 struct Inner {
+    /// The X display every clipboard connection uses.
+    display: String,
     /// The context for the thread which serves clipboard read
     /// requests coming to us.
     server: XContext,
@@ -140,10 +142,10 @@ struct Inner {
 }
 
 impl XContext {
-    fn new() -> Result<Self> {
+    fn new(display: &str) -> Result<Self> {
         // create a new connection to an X11 server
-        let (conn, screen_num): (RustConnection, _) =
-            RustConnection::connect(None).map_err(|_| {
+        let (conn, screen_num): (RustConnection, _) = RustConnection::connect(Some(display))
+            .map_err(|_| {
                 Error::unknown("X11 server connection timed out because it was unreachable")
             })?;
         let screen = conn
@@ -208,14 +210,15 @@ enum ReadSelNotifyResult {
 }
 
 impl Inner {
-    fn new() -> Result<Self> {
-        let server = XContext::new()?;
+    fn new(display: &str) -> Result<Self> {
+        let server = XContext::new(display)?;
         let atoms = Atoms::new(&server.conn)
             .map_err(into_unknown)?
             .reply()
             .map_err(into_unknown)?;
 
         Ok(Self {
+            display: display.to_owned(),
             server,
             atoms,
             clipboard: Selection::default(),
@@ -297,7 +300,7 @@ impl Inner {
             }
             return Err(Error::ContentNotAvailable);
         }
-        let reader = XContext::new()?;
+        let reader = XContext::new(&self.display)?;
 
         let highest_precedence_format =
             match self.read_single(&reader, selection, self.atoms.TARGETS) {
@@ -844,7 +847,7 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
 
     log::trace!("Started serve requests thread.");
 
-    let _guard = util::defer(|| {
+    let _guard = gpui_util::defer(|| {
         context.serve_stopped.store(true, Ordering::Relaxed);
     });
 
@@ -950,7 +953,8 @@ pub(crate) struct Clipboard {
 }
 
 impl Clipboard {
-    pub(crate) fn new() -> Result<Self> {
+    /// Returns the process's clipboard, connecting it to `display` if it doesn't exist yet.
+    pub(crate) fn new(display: &str) -> Result<Self> {
         let mut global_cb = CLIPBOARD.lock();
         if let Some(global_cb) = &*global_cb {
             return Ok(Self {
@@ -958,7 +962,7 @@ impl Clipboard {
             });
         }
         // At this point we know that the clipboard does not exist.
-        let ctx = Arc::new(Inner::new()?);
+        let ctx = Arc::new(Inner::new(display)?);
         let join_handle = std::thread::Builder::new()
             .name("Clipboard".to_owned())
             .spawn({
@@ -1085,49 +1089,78 @@ impl Drop for Clipboard {
         if Arc::strong_count(&self.inner) == MIN_OWNERS {
             // If the are the only owners of the clipboard are ourselves and
             // the global object, then we should destroy the global object,
-            // and send the data to the clipboard manager
-
-            if let Err(e) = self.inner.ask_clipboard_manager_to_request_our_data() {
-                log::error!(
-                    "Could not hand the clipboard data over to the clipboard manager: {}",
-                    e
-                );
-            }
-            let global_cb = global_cb.take();
-            if let Err(e) = self
-                .inner
-                .server
-                .conn
-                .destroy_window(self.inner.server.win_id)
-            {
-                log::error!("Failed to destroy the clipboard window. Error: {}", e);
+            // and send the data to the clipboard manager.
+            //
+            // The handover waits for the clipboard manager, so it runs on its own thread rather
+            // than blocking this one, which can be the UI thread switching display modes. A
+            // clipboard created meanwhile is independent of this one.
+            let Some(global_cb) = global_cb.take() else {
                 return;
-            }
-            if let Err(e) = self.inner.server.conn.flush() {
-                log::error!("Failed to flush the clipboard window. Error: {}", e);
-                return;
-            }
-            if let Some(global_cb) = global_cb
-                && let Err(e) = global_cb.server_handle.join()
+            };
+            let inner = Arc::clone(&self.inner);
+            match std::thread::Builder::new()
+                .name("Clipboard handover".to_owned())
+                .spawn(move || shut_down(inner, global_cb))
             {
-                // Let's try extracting the error message
-                let message;
-                if let Some(msg) = e.downcast_ref::<&'static str>() {
-                    message = Some((*msg).to_string());
-                } else if let Some(msg) = e.downcast_ref::<String>() {
-                    message = Some(msg.clone());
-                } else {
-                    message = None;
-                }
-                if let Some(message) = message {
+                Ok(handover) => HANDOVERS.lock().push(handover),
+                Err(error) => {
                     log::error!(
-                        "The clipboard server thread panicked. Panic message: '{}'",
-                        message,
-                    );
-                } else {
-                    log::error!("The clipboard server thread panicked.");
+                        "Failed to hand the clipboard over to the clipboard manager: {error}"
+                    )
                 }
             }
+        }
+    }
+}
+
+/// Threads handing a dropped clipboard's data to the clipboard manager.
+static HANDOVERS: Mutex<Vec<JoinHandle<()>>> = parking_lot::const_mutex(Vec::new());
+
+/// Waits for dropped clipboards to finish handing their data to the clipboard manager.
+///
+/// Called before the process exits, which would otherwise lose data still being handed over.
+pub(crate) fn wait_for_clipboard_handovers() {
+    let handovers = std::mem::take(&mut *HANDOVERS.lock());
+    for handover in handovers {
+        if handover.join().is_err() {
+            log::error!("The clipboard handover thread panicked.");
+        }
+    }
+}
+
+/// Hands the clipboard's data to the clipboard manager, then stops serving it.
+fn shut_down(inner: Arc<Inner>, global_cb: GlobalClipboard) {
+    if let Err(e) = inner.ask_clipboard_manager_to_request_our_data() {
+        log::error!(
+            "Could not hand the clipboard data over to the clipboard manager: {}",
+            e
+        );
+    }
+    if let Err(e) = inner.server.conn.destroy_window(inner.server.win_id) {
+        log::error!("Failed to destroy the clipboard window. Error: {}", e);
+        return;
+    }
+    if let Err(e) = inner.server.conn.flush() {
+        log::error!("Failed to flush the clipboard window. Error: {}", e);
+        return;
+    }
+    if let Err(e) = global_cb.server_handle.join() {
+        // Let's try extracting the error message
+        let message;
+        if let Some(msg) = e.downcast_ref::<&'static str>() {
+            message = Some((*msg).to_string());
+        } else if let Some(msg) = e.downcast_ref::<String>() {
+            message = Some(msg.clone());
+        } else {
+            message = None;
+        }
+        if let Some(message) = message {
+            log::error!(
+                "The clipboard server thread panicked. Panic message: '{}'",
+                message,
+            );
+        } else {
+            log::error!("The clipboard server thread panicked.");
         }
     }
 }

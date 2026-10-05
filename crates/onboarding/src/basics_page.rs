@@ -89,7 +89,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
                 .tab_index(tab_index)
                 .selected_index(theme_mode as usize)
                 .style(ui::ToggleButtonGroupStyle::Outlined)
-                .width(rems_from_px(3. * 64.)),
+                .width(rems_from_px(3.0_f32 * 64.0_f32)),
             ),
         )
         .child(
@@ -331,19 +331,24 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
 
 fn render_base_keymap_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
     let base_keymap = match BaseKeymap::get_global(cx) {
-        BaseKeymap::VSCode => Some(0),
-        BaseKeymap::JetBrains => Some(1),
-        BaseKeymap::SublimeText => Some(2),
-        BaseKeymap::Atom => Some(3),
-        BaseKeymap::Emacs => Some(4),
-        BaseKeymap::Cursor => Some(5),
-        BaseKeymap::TextMate | BaseKeymap::None => None,
+        BaseKeymap::Zed => Some(0),
+        BaseKeymap::VSCode => Some(1),
+        BaseKeymap::JetBrains => Some(2),
+        BaseKeymap::SublimeText => Some(3),
+        BaseKeymap::Atom => Some(4),
+        BaseKeymap::Emacs => Some(5),
+        BaseKeymap::Cursor => Some(6),
+        BaseKeymap::TextMate => Some(7),
+        BaseKeymap::None => None,
     };
 
     return v_flex().gap_2().child(Label::new("Base Keymap")).child(
         ToggleButtonGroup::two_rows(
             "base_keymap_selection",
             [
+                ToggleButtonWithIcon::new("Zed", IconName::AiZed, |_, _, cx| {
+                    write_keymap_base(BaseKeymap::Zed, cx);
+                }),
                 ToggleButtonWithIcon::new("VS Code", IconName::EditorVsCode, |_, _, cx| {
                     write_keymap_base(BaseKeymap::VSCode, cx);
                 }),
@@ -363,6 +368,9 @@ fn render_base_keymap_section(tab_index: &mut isize, cx: &mut App) -> impl IntoE
                 }),
                 ToggleButtonWithIcon::new("Cursor", IconName::EditorCursor, |_, _, cx| {
                     write_keymap_base(BaseKeymap::Cursor, cx);
+                }),
+                ToggleButtonWithIcon::new("TextMate", IconName::Keyboard, |_, _, cx| {
+                    write_keymap_base(BaseKeymap::TextMate, cx);
                 }),
             ],
         )
@@ -565,20 +573,28 @@ fn render_registry_agent_button(
         .name(agent.name().clone())
         .state(state_element)
         .disabled(installed)
-        .on_click(move |_, _, cx| {
+        .on_click(move |_, window, cx| {
             telemetry::event!("Welcome Agent Install Clicked", agent = agent_id.as_str());
-            let agent_id = agent_id.clone();
-            update_settings_file(fs.clone(), cx, move |settings, _| {
-                let agent_servers = settings.agent_servers.get_or_insert_default();
-                agent_servers.entry(agent_id).or_insert_with(|| {
-                    CustomAgentServerSettings::Registry {
-                        env: Default::default(),
-                        default_mode: None,
-                        default_config_options: HashMap::default(),
-                        favorite_config_option_values: HashMap::default(),
-                    }
-                });
+            update_settings_file(fs.clone(), cx, {
+                let agent_id = agent_id.clone();
+                move |settings, _| {
+                    let agent_servers = settings.agent_servers.get_or_insert_default();
+                    agent_servers.entry(agent_id).or_insert_with(|| {
+                        CustomAgentServerSettings::Registry {
+                            env: Default::default(),
+                            default_mode: None,
+                            default_config_options: HashMap::default(),
+                            favorite_config_option_values: HashMap::default(),
+                        }
+                    });
+                }
             });
+            window.dispatch_action(
+                Box::new(zed_actions::agent::SelectAgent {
+                    agent: agent_id.clone(),
+                }),
+                cx,
+            );
         })
 }
 

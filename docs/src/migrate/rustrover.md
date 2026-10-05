@@ -43,6 +43,8 @@ If you're coming from RustRover, the fastest way to feel at home is to use the J
 
 This maps familiar shortcuts like `Shift Shift` for Search Everywhere, `Cmd+O` for Go to Class, and `Cmd+Shift+A` for Find Action.
 
+In editors, the JetBrains keymap also makes `Alt+Left` / `Alt+Right` and `Shift+Alt+Left` / `Shift+Alt+Right` move and select by subword, so identifiers like `camelCase` and `snake_case` behave like RustRover's CamelHumps navigation.
+
 ## Set Up Editor Preferences
 
 You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run {#action zed::OpenSettingsFile} from the Command Palette to edit your settings file directly.
@@ -96,26 +98,28 @@ If you chose the JetBrains keymap during onboarding, most of your shortcuts shou
 
 ### Common Shared Keybindings
 
-| Action                        | Shortcut                |
-| ----------------------------- | ----------------------- |
-| Search Everywhere             | `Shift Shift`           |
-| Find Action / Command Palette | `Cmd + Shift + A`       |
-| Go to File                    | `Cmd + Shift + O`       |
-| Go to Symbol                  | `Cmd + O`               |
-| Recent Files                  | `Cmd + E`               |
-| Go to Definition              | `Cmd + B`               |
-| Find Usages                   | `Alt + F7`              |
-| Rename Symbol                 | `Shift + F6`            |
-| Reformat Code                 | `Cmd + Alt + L`         |
-| Toggle Project Panel          | `Cmd + 1`               |
-| Toggle Terminal               | `Alt + F12`             |
-| Duplicate Line                | `Cmd + D`               |
-| Delete Line                   | `Cmd + Backspace`       |
-| Move Line Up/Down             | `Shift + Alt + Up/Down` |
-| Expand/Shrink Selection       | `Alt + Up/Down`         |
-| Comment Line                  | `Cmd + /`               |
-| Go Back / Forward             | `Cmd + [` / `Cmd + ]`   |
-| Toggle Breakpoint             | `Ctrl + F8`             |
+| Action                        | Shortcut                   |
+| ----------------------------- | -------------------------- |
+| Search Everywhere             | `Shift Shift`              |
+| Find Action / Command Palette | `Cmd + Shift + A`          |
+| Go to File                    | `Cmd + Shift + O`          |
+| Go to Symbol                  | `Cmd + O`                  |
+| Recent Files                  | `Cmd + E`                  |
+| Go to Definition              | `Cmd + B`                  |
+| Find Usages                   | `Alt + F7`                 |
+| Rename Symbol                 | `Shift + F6`               |
+| Reformat Code                 | `Cmd + Alt + L`            |
+| Toggle Project Panel          | `Cmd + 1`                  |
+| Toggle Terminal               | `Alt + F12`                |
+| Duplicate Line                | `Cmd + D`                  |
+| Delete Line                   | `Cmd + Backspace`          |
+| Move Line Up/Down             | `Shift + Alt + Up/Down`    |
+| Expand/Shrink Selection       | `Alt + Up/Down`            |
+| Move by subword               | `Alt + Left/Right`         |
+| Select by subword             | `Shift + Alt + Left/Right` |
+| Comment Line                  | `Cmd + /`                  |
+| Go Back / Forward             | `Cmd + [` / `Cmd + ]`      |
+| Toggle Breakpoint             | `Ctrl + F8`                |
 
 ### Different Keybindings (RustRover → Zed)
 
@@ -369,9 +373,9 @@ Once signed in, just start typing. Zed will offer suggestions inline for you to 
 
 To use other AI models in Zed, you have several options:
 
-- Use Zed's hosted models, with higher rate limits. Requires [authentication](https://zed.dev/docs/authentication) and subscription to [Zed Pro](https://zed.dev/docs/ai/subscription.html).
-- Bring your own [API keys](https://zed.dev/docs/ai/llm-providers.html), no authentication needed
-- Use [external agents like Claude Agent](https://zed.dev/docs/ai/external-agents.html)
+- Use Zed's hosted models, with higher rate limits. Requires [authentication](https://zed.dev/docs/authentication) and access through [Zed Pro](https://zed.dev/docs/account/zed-hosted-models.html).
+- Bring your own [API keys](https://zed.dev/docs/ai/use-api-access.html), no authentication needed
+- Use [External Agents like Claude Agent](https://zed.dev/docs/ai/external-agents.html)
 
 ## Advanced Config and Productivity Tweaks
 

@@ -1,11 +1,14 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
+#[path = "example_support/fonts.rs"]
+mod example_support;
+
 use std::{fs, path::PathBuf};
 
 use anyhow::Result;
 use gpui::{
     App, AssetSource, Bounds, BoxShadow, ClickEvent, Context, SharedString, Task, Window,
-    WindowBounds, WindowOptions, div, hsla, img, point, prelude::*, px, rgb, size, svg,
+    WindowBounds, WindowOptions, div, hsla, img, prelude::*, px, rgb, size, svg,
 };
 use gpui_platform::application;
 
@@ -114,13 +117,11 @@ impl Render for HelloWorld {
                             .bg(gpui::blue())
                             .border_3()
                             .border_color(gpui::black())
-                            .shadow(vec![BoxShadow {
-                                color: hsla(0.0, 0.0, 0.0, 0.5),
-                                blur_radius: px(1.0),
-                                spread_radius: px(5.0),
-                                offset: point(px(10.0), px(10.0)),
-                                inset: false,
-                            }])
+                            .shadow(vec![
+                                BoxShadow::new(px(10.0), px(10.0), hsla(0.0, 0.0, 0.0, 0.5))
+                                    .blur_radius(px(1.0))
+                                    .spread_radius(px(5.0)),
+                            ])
                             .child(img("image/app-icon.png").size_8())
                             .child("Opacity Panel (Click to test)")
                             .child(
@@ -165,6 +166,9 @@ fn run_example() {
             base: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples"),
         })
         .run(|cx: &mut App| {
+            if !example_support::load_fonts(cx) {
+                return;
+            }
             let bounds = Bounds::centered(None, size(px(500.0), px(500.0)), cx);
             cx.open_window(
                 WindowOptions {

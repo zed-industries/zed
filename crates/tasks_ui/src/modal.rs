@@ -6,7 +6,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter,
     Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription, Task, WeakEntity,
-    Window, rems,
+    Window,
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
@@ -148,7 +148,7 @@ impl TasksModal {
                 window,
                 cx,
             )
-            .modal(is_modal)
+            .when(!is_modal, |picker| picker.embedded())
         });
         let mut _subscriptions = [
             cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
@@ -211,7 +211,6 @@ impl Render for TasksModal {
     ) -> impl gpui::prelude::IntoElement {
         v_flex()
             .key_context("TasksModal")
-            .w(rems(34.))
             .child(self.picker.clone())
     }
 }
@@ -236,6 +235,10 @@ const MAX_TAGS_LINE_LEN: usize = 30;
 
 impl PickerDelegate for TasksModalDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "tasks modal"
+    }
 
     fn match_count(&self) -> usize {
         self.matches.len()
@@ -1049,10 +1052,11 @@ mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Test".into(),
-                    matcher: LanguageMatcher {
+                    matcher: (LanguageMatcher {
                         path_suffixes: vec!["test".to_string()],
                         ..LanguageMatcher::default()
-                    },
+                    })
+                    .into(),
                     ..LanguageConfig::default()
                 },
                 None,
@@ -1131,10 +1135,11 @@ mod tests {
                 Language::new(
                     LanguageConfig {
                         name: "TypeScript".into(),
-                        matcher: LanguageMatcher {
+                        matcher: (LanguageMatcher {
                             path_suffixes: vec!["ts".to_string()],
                             ..LanguageMatcher::default()
-                        },
+                        })
+                        .into(),
                         ..LanguageConfig::default()
                     },
                     None,
@@ -1163,10 +1168,11 @@ mod tests {
                 Language::new(
                     LanguageConfig {
                         name: "Rust".into(),
-                        matcher: LanguageMatcher {
+                        matcher: (LanguageMatcher {
                             path_suffixes: vec!["rs".to_string()],
                             ..LanguageMatcher::default()
-                        },
+                        })
+                        .into(),
                         ..LanguageConfig::default()
                     },
                     None,

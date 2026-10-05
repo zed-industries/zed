@@ -13,8 +13,11 @@ test-support = []
 
 [lib]
 path = "src/http_client_tls.rs"
-doctest = true
+doctest = false
+test = false
 
 [dependencies]
+log.workspace = true
 rustls.workspace = true
 rustls-platform-verifier.workspace = true
+webpki-roots.workspace = true

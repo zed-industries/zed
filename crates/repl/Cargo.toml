@@ -78,6 +78,3 @@ tree-sitter-typescript.workspace = true
 tree-sitter-python.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
-
-[package.metadata.cargo-machete]
-ignored = ["remote"]

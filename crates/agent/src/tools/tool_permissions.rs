@@ -2,7 +2,7 @@ use crate::{
     Thread, ToolCallEventStream, ToolPermissionContext, ToolPermissionDecision,
     decide_permission_for_path,
 };
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_skills::is_agents_skills_path;
 use anyhow::{Result, anyhow};
 use fs::Fs;
@@ -509,9 +509,11 @@ pub fn authorize_with_sensitive_settings(
         Some(SensitiveSettingsKind::Global) => {
             event_stream.authorize_always_prompt(format!("{title} (settings)"), context, cx)
         }
-        Some(SensitiveSettingsKind::AgentSkills) => {
-            event_stream.authorize_always_prompt(format!("{title} (agent skills)"), context, cx)
-        }
+        Some(SensitiveSettingsKind::AgentSkills) => event_stream.authorize_always_prompt(
+            format!("{title} (agent skills)"),
+            context.for_agent_skills(),
+            cx,
+        ),
         None => event_stream.authorize(title, context, cx),
     }
 }
@@ -761,7 +763,8 @@ pub fn authorize_file_edit(
                     let context = ToolPermissionContext::new(
                         &tool_name,
                         vec![path_owned.to_string_lossy().to_string()],
-                    );
+                    )
+                    .for_agent_skills();
                     event_stream.authorize_always_prompt(
                         format!("{title} (agent skills)"),
                         context,

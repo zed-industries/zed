@@ -23,7 +23,7 @@ use project::{
     search_history::{SearchHistory, SearchHistoryCursor},
 };
 use settings::Settings;
-use std::{ops::Range, rc::Rc, usize};
+use std::{ops::Range, rc::Rc};
 use theme::Theme;
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, Divider, PopoverMenu, SplitButton, Tooltip, prelude::*};
@@ -652,6 +652,7 @@ impl ConsoleQueryBarCompletionProvider {
                         match_start: None,
                         snippet_deduplication_key: None,
                         icon_path: None,
+                        icon_color: None,
                         documentation: Some(CompletionDocumentation::MultiLineMarkdown(
                             variable_value.into(),
                         )),
@@ -762,6 +763,7 @@ impl ConsoleQueryBarCompletionProvider {
                         new_text,
                         label: CodeLabel::plain(completion.label, None),
                         icon_path: None,
+                        icon_color: None,
                         documentation: completion.detail.map(|detail| {
                             CompletionDocumentation::MultiLineMarkdown(detail.into())
                         }),

@@ -1,21 +1,22 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
 
-use async_channel::bounded;
 use futures::{FutureExt, future::Shared};
 use itertools::Itertools as _;
 use language::LanguageName;
-use remote::RemoteClient;
+use remote::{Interactive, RemoteClient};
+use rpc::proto;
 use settings::{Settings, SettingsLocation};
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal};
 use terminal::{
-    TaskState, TaskStatus, Terminal, TerminalBuilder, insert_zed_terminal_env,
+    Terminal, TerminalBuilder, TerminalMode, insert_zed_terminal_env,
     terminal_settings::TerminalSettings,
 };
 use util::{
@@ -92,14 +93,9 @@ impl Project {
         let settings = TerminalSettings::get(settings_location, cx).clone();
         let detect_venv = settings.detect_venv.as_option().is_some();
 
-        let (completion_tx, completion_rx) = bounded(1);
+        let terminal_mode = TerminalMode::task(spawn_task.clone());
 
         let local_path = if is_via_remote { None } else { path.clone() };
-        let task_state = Some(TaskState {
-            spawned_task: spawn_task.clone(),
-            status: TaskStatus::Running,
-            completion_rx,
-        });
         let remote_client = self.remote_client.clone();
         let shell = match &remote_client {
             Some(remote_client) => remote_client
@@ -244,17 +240,16 @@ impl Project {
                     };
                     anyhow::Ok(TerminalBuilder::new(
                         local_path.map(|path| path.to_path_buf()),
-                        task_state,
+                        terminal_mode,
                         shell,
                         env,
                         settings.cursor_shape,
                         settings.alternate_scroll,
                         settings.max_scroll_history_lines,
                         settings.path_hyperlink_regexes,
-                        settings.path_hyperlink_timeout_ms,
+                        Duration::from_millis(settings.path_hyperlink_timeout_ms),
                         is_via_remote,
                         cx.entity_id().as_u64(),
-                        Some(completion_tx),
                         cx,
                         activation_script,
                         path_style,
@@ -359,6 +354,16 @@ impl Project {
         } else {
             self.remote_client.clone()
         };
+        let remote_shell_request = remote_client.as_ref().map(|remote_client| {
+            remote_client
+                .read(cx)
+                .proto_client()
+                .request(proto::GetTerminalShell {
+                    project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                    worktree_id: settings_location
+                        .map(|settings_location| settings_location.worktree_id.to_proto()),
+                })
+        });
         let shell = match &remote_client {
             Some(remote_client) => remote_client
                 .read(cx)
@@ -379,7 +384,24 @@ impl Project {
 
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
-            let shell_kind = ShellKind::new(&shell, path_style.is_windows());
+            let remote_shell = if let Some(remote_shell_request) = remote_shell_request {
+                let response = remote_shell_request
+                    .await
+                    .context("failed to get terminal shell settings from remote server")?;
+                let shell = response
+                    .shell
+                    .context("remote server returned no terminal shell")?;
+                let shell = task::shell_from_proto(shell)
+                    .context("remote server returned an invalid terminal shell")?;
+                log::debug!(
+                    "create_terminal_shell_internal: using remote terminal shell setting: {shell:?}"
+                );
+                Some(shell)
+            } else {
+                None
+            };
+            let shell_program = remote_shell.as_ref().map(Shell::program).unwrap_or(shell);
+            let shell_kind = ShellKind::new(&shell_program, path_style.is_windows());
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
 
@@ -407,24 +429,31 @@ impl Project {
                     let (shell, env) = {
                         match remote_client {
                             Some(remote_client) => {
-                                create_remote_shell(None, env, path, remote_client, cx)?
+                                let empty_args = Vec::new();
+                                let spawn_command = match remote_shell.as_ref() {
+                                    Some(Shell::System) | None => None,
+                                    Some(Shell::Program(program)) => Some((program, &empty_args)),
+                                    Some(Shell::WithArguments { program, args, .. }) => {
+                                        Some((program, args))
+                                    }
+                                };
+                                create_remote_shell(spawn_command, env, path, remote_client, cx)?
                             }
                             None => (settings.shell, env),
                         }
                     };
                     anyhow::Ok(TerminalBuilder::new(
                         local_path.map(|path| path.to_path_buf()),
-                        None,
+                        TerminalMode::interactive(),
                         shell,
                         env,
                         settings.cursor_shape,
                         settings.alternate_scroll,
                         settings.max_scroll_history_lines,
                         settings.path_hyperlink_regexes,
-                        settings.path_hyperlink_timeout_ms,
+                        Duration::from_millis(settings.path_hyperlink_timeout_ms),
                         is_via_remote,
                         cx.entity_id().as_u64(),
-                        None,
                         cx,
                         activation_script,
                         path_style,
@@ -558,6 +587,7 @@ impl Project {
                             &env,
                             None,
                             None,
+                            Interactive::Yes,
                         )?;
                         let mut command = new_std_command(command_template.program);
                         command.args(command_template.args);
@@ -631,6 +661,7 @@ fn create_remote_shell(
         &env,
         working_directory.map(|path| path.display().to_string()),
         None,
+        Interactive::Yes,
     )?;
 
     log::debug!("Connecting to a remote server: {:?}", command.program);

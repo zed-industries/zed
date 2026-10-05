@@ -1,11 +1,16 @@
 ---
-title: Yara
-description: "Configure Yara language support in Zed, including language servers, formatting, and debugging."
+title: YARA
+description: "Configure YARA language support in Zed, including language servers, formatting, and debugging."
 ---
 
-# Yara
+# YARA
 
-`Yara` language support in Zed is provided by the [Yara language extension](https://github.com/egibs/yara.zed). Please report issues to [https://github.com/egibs/yara.zed/issues](https://github.com/egibs/yara.zed/issues).
+[YARA](https://virustotal.github.io/yara/) support is available through the [YARA extension](https://github.com/egibs/yara.zed).
 
 - Tree-sitter: [egibs/tree-sitter-yara](https://github.com/egibs/tree-sitter-yara)
 - Language Server: [avast/yls](https://github.com/avast/yls)
+
+## Setup
+
+1. Follow instructions to [Install YLS](https://github.com/avast/yls/wiki/How-to-setup) from the YARA Language Server website.
+2. Ensure `yls` is in your PATH.

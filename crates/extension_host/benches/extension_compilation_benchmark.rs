@@ -4,7 +4,7 @@ use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_ma
 use extension::{
     ExtensionCapability, ExtensionHostProxy, ExtensionLibraryKind, ExtensionManifest,
     LanguageServerManifestEntry, LibManifestEntry, SchemaVersion,
-    extension_builder::{CompileExtensionOptions, ExtensionBuilder},
+    extension_builder::{CompilationConcurrency, CompileExtensionOptions, ExtensionBuilder},
 };
 use extension_host::wasm_host::WasmHost;
 use fs::{Fs, RealFs};
@@ -24,11 +24,7 @@ fn extension_benchmarks(c: &mut Criterion) {
     let mut group = c.benchmark_group("load");
 
     let mut manifest = manifest();
-    let wasm_bytes = wasm_bytes(
-        &cx,
-        &mut manifest,
-        Arc::new(RealFs::new(None, cx.executor())),
-    );
+    let wasm_bytes = wasm_bytes(&cx, &mut manifest, RealFs::new(None, cx.executor()));
     let manifest = Arc::new(manifest);
     let extensions_dir = TempTree::new(json!({
         "installed": {},
@@ -76,7 +72,10 @@ fn wasm_bytes(cx: &TestAppContext, manifest: &mut ExtensionManifest, fs: Arc<dyn
         .block_on(extension_builder.compile_extension(
             &path,
             manifest,
-            CompileExtensionOptions { release: true },
+            CompileExtensionOptions {
+                release: true,
+                max_concurrency: CompilationConcurrency::Unbounded,
+            },
             fs,
         ))
         .unwrap();
@@ -102,7 +101,7 @@ fn wasm_host(cx: &TestAppContext, extensions_dir: &TempTree) -> Arc<WasmHost> {
     });
     let extensions_dir = extensions_dir.path().canonicalize().unwrap();
     let work_dir = extensions_dir.join("work");
-    let fs = Arc::new(RealFs::new(None, cx.executor()));
+    let fs = RealFs::new(None, cx.executor());
 
     cx.update(|cx| {
         WasmHost::new(

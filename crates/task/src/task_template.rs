@@ -452,7 +452,10 @@ fn substitute_all_template_variables_in_vec(
             variable_names,
             substituted_variables,
         )?;
-        expanded.push(new_value);
+
+        if !new_value.is_empty() || variable.is_empty() {
+            expanded.push(new_value);
+        }
     }
 
     Some(expanded)
@@ -621,6 +624,46 @@ mod tests {
             Some(task_cwd),
             "TaskTemplate's cwd should be taken on resolve if TaskContext's cwd is not None"
         );
+    }
+
+    #[test]
+    fn test_worktree_root_with_spaces_stays_atomic_in_args_and_cwd() {
+        let worktree_root = r"C:\worktrees\Godot Projects\sample-game";
+        let task = TaskTemplate {
+            label: "Run Godot Game".to_string(),
+            command: "godot".to_string(),
+            args: vec![
+                "--path".to_string(),
+                VariableName::WorktreeRoot.template_value(),
+                "scenes/main_menu.tscn".to_string(),
+            ],
+            cwd: Some(VariableName::WorktreeRoot.template_value()),
+            ..TaskTemplate::default()
+        };
+
+        let resolved = task
+            .resolve_task(
+                TEST_ID_BASE,
+                &TaskContext {
+                    cwd: None,
+                    task_variables: TaskVariables::from_iter([(
+                        VariableName::WorktreeRoot,
+                        worktree_root.to_string(),
+                    )]),
+                    project_env: HashMap::default(),
+                },
+            )
+            .expect("task should resolve with worktree root variable");
+
+        assert_eq!(
+            resolved.resolved.args,
+            vec![
+                "--path".to_string(),
+                worktree_root.to_string(),
+                "scenes/main_menu.tscn".to_string()
+            ]
+        );
+        assert_eq!(resolved.resolved.cwd, Some(PathBuf::from(worktree_root)));
     }
 
     #[test]
@@ -1149,6 +1192,48 @@ mod tests {
                 VariableName::GitRepositoryName,
                 VariableName::GitRepositoryPath,
             ],
+        );
+    }
+
+    #[test]
+    fn test_args_produced_by_empty_variables_are_omitted() {
+        let features_flag = VariableName::Custom(Cow::Borrowed("features_flag"));
+        let features = VariableName::Custom(Cow::Borrowed("features"));
+        let bin_name = VariableName::Custom(Cow::Borrowed("bin_name"));
+
+        let task = TaskTemplate {
+            label: "cargo run".to_string(),
+            command: "cargo".to_string(),
+            args: vec![
+                "run".to_string(),
+                "--bin".to_string(),
+                bin_name.template_value(),
+                features_flag.template_value(),
+                features.template_value(),
+                String::new(),
+                format!("--config={}", features.template_value()),
+            ],
+            ..TaskTemplate::default()
+        };
+
+        let context = TaskContext {
+            task_variables: TaskVariables::from_iter([
+                (features_flag, String::new()),
+                (features, String::new()),
+                (bin_name, "test_bin".to_string()),
+            ]),
+            ..TaskContext::default()
+        };
+
+        let resolved = task
+            .resolve_task(TEST_ID_BASE, &context)
+            .unwrap_or_else(|| panic!("failed to resolve task {task:?}"))
+            .resolved;
+        assert_eq!(
+            resolved.args,
+            vec!["run", "--bin", "test_bin", "", "--config="],
+            "args that consist entirely of variables resolved to empty strings should be omitted, \
+            while literal empty args and partially substituted args should be preserved"
         );
     }
 }

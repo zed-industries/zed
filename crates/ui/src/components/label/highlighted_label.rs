@@ -3,6 +3,7 @@ use std::ops::Range;
 use gpui::{FontWeight, HighlightStyle, StyleRefinement, StyledText};
 use gpui_util::debug_panic;
 
+use crate::utils::replace_control_characters_remapping_offsets;
 use crate::{LabelCommon, LabelLike, LabelSize, LineHeightStyle, prelude::*};
 
 #[derive(IntoElement, RegisterComponent)]
@@ -75,6 +76,12 @@ impl HighlightedLabel {
     /// Truncates the label from the start, keeping the end visible.
     pub fn truncate_start(mut self) -> Self {
         self.base = self.base.truncate_start();
+        self
+    }
+
+    /// Truncates overflowing text with an ellipsis (`…`) in the middle if needed.
+    pub fn truncate_middle(mut self) -> Self {
+        self.base = self.base.truncate_middle();
         self
     }
 }
@@ -160,6 +167,16 @@ impl LabelCommon for HighlightedLabel {
     }
 
     fn single_line(mut self) -> Self {
+        // The highlight indices are byte offsets into the label, and every
+        // stand-in is wider in bytes than the character it replaces, so they
+        // have to move with the text. Left alone they would index into the
+        // middle of a character, which panics when the highlight ranges are
+        // built — in release builds too.
+        if let Some(replaced) =
+            replace_control_characters_remapping_offsets(&self.label, &mut self.highlight_indices)
+        {
+            self.label = SharedString::from(replaced);
+        }
         self.base = self.base.single_line();
         self
     }
@@ -318,5 +335,57 @@ impl Component for HighlightedLabel {
                 ),
             ])
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_single_line_replaces_control_characters() {
+        let label = HighlightedLabel::new("a\nb\rc\td", Vec::new()).single_line();
+        assert_eq!(label.text(), "a⏎b␍c␉d");
+    }
+
+    #[test]
+    fn test_single_line_moves_highlights_with_the_text() {
+        // Highlighting "a" and "b" in "a\tb": "b" sits at byte 2 before the
+        // replacement and at byte 4 after it, the stand-in being three bytes.
+        let label = HighlightedLabel::new("a\tb", vec![0, 2]).single_line();
+        assert_eq!(label.text(), "a␉b");
+        assert_eq!(label.highlight_indices(), &[0, 4]);
+    }
+
+    #[test]
+    fn test_single_line_keeps_highlights_on_character_boundaries() {
+        // Highlighting every character of a name full of control characters is
+        // what would panic while building the highlight ranges if the offsets
+        // were left pointing into the old text.
+        let text = "a\tb\nc\rd";
+        let indices: Vec<usize> = text.char_indices().map(|(ix, _)| ix).collect();
+        let label = HighlightedLabel::new(text, indices).single_line();
+        for index in label.highlight_indices() {
+            assert!(
+                label.text().is_char_boundary(*index),
+                "index {index} is not a boundary of {:?}",
+                label.text(),
+            );
+        }
+    }
+
+    #[test]
+    fn test_single_line_leaves_printable_text_alone() {
+        let label = HighlightedLabel::new("main.rs", vec![0, 5]).single_line();
+        assert_eq!(label.text(), "main.rs");
+        assert_eq!(label.highlight_indices(), &[0, 5]);
+    }
+
+    #[test]
+    fn test_replacement_only_happens_on_single_line() {
+        // Multi-line labels are a legitimate use, so nothing is substituted
+        // unless the caller asked for a single line.
+        let label = HighlightedLabel::new("a\nb", vec![0]);
+        assert_eq!(label.text(), "a\nb");
     }
 }

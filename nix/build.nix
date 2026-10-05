@@ -79,6 +79,10 @@ let
     in
     builtins.elem firstComp topLevelIncludes;
 
+  corgiPatches = builtins.path {
+    path = ../tooling/corgi/patches;
+    name = "corgi-patches";
+  };
   craneLib = crane.overrideToolchain rustToolchain;
   gpu-lib = if withGLES then libglvnd else vulkan-loader;
   commonArgs =
@@ -305,11 +309,32 @@ let
             drv;
       };
     };
-  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+  cargoArtifacts = craneLib.buildDepsOnly (
+    builtins.removeAttrs commonArgs [ "src" ]
+    // {
+      dummySrc = craneLib.mkDummySrc {
+        inherit (commonArgs) src cargoLock;
+        # `scratch` is a local dependency of `cxx-build`, so its API is needed
+        # while Crane builds third-party dependencies.
+        extraDummyScript = ''
+          rm -rf $out/tooling/corgi/patches
+          mkdir -p $out/tooling/corgi
+          cp --recursive ${corgiPatches} $out/tooling/corgi/patches
+        '';
+      };
+    }
+  );
 in
 craneLib.buildPackage (
   lib.recursiveUpdate commonArgs {
     inherit cargoArtifacts;
+
+    # Expose the crane builder and shared arguments so other derivations (e.g.
+    # the docs preprocessor in the devshell) can build sibling workspace crates
+    # without duplicating all of the build inputs and environment setup.
+    passthru = {
+      inherit craneLib commonArgs cargoArtifacts;
+    };
 
     dontUseCmakeConfigure = true;
 

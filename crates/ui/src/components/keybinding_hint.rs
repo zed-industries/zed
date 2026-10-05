@@ -1,6 +1,6 @@
 use crate::KeyBinding;
 use crate::prelude::*;
-use gpui::{AnyElement, App, BoxShadow, FontStyle, Hsla, IntoElement, Window, point};
+use gpui::{AnyElement, App, BoxShadow, FontStyle, Hsla, IntoElement, Window};
 use theme::Appearance;
 
 /// Represents a hint for a keybinding, optionally with a prefix and suffix.
@@ -242,13 +242,7 @@ impl RenderOnce for KeybindingHint {
                     .border_1()
                     .border_color(border_color)
                     .bg(bg_color)
-                    .shadow(vec![BoxShadow {
-                        color: shadow_color,
-                        offset: point(px(0.), px(1.)),
-                        blur_radius: px(0.),
-                        spread_radius: px(0.),
-                        inset: false,
-                    }])
+                    .shadow(vec![BoxShadow::new(px(0.), px(1.), shadow_color)])
                     .child(self.keybinding.size(rems_from_px(kb_size))),
             )
             .children(self.suffix)

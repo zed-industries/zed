@@ -11,7 +11,7 @@ It's for teams that want modern AI tooling without security trade-offs, and for 
 
 ## What's included
 
-Members with a paid Business seat get access to all [hosted AI models](../ai/models.md) and [Edit Predictions](../ai/edit-prediction.md).
+Every member gets access to all [hosted AI models](../account/zed-hosted-models.md) and [Edit Predictions](../ai/edit-prediction.md).
 
 For the organization:
 
@@ -33,10 +33,10 @@ For the organization:
   without counting toward paid Business seats or receiving Business
   subscription AI access.
 - **Consolidated billing:** Your team's licenses and AI usage appear on
-  [one invoice](../ai/billing.md#organization), with no separate bills per member.
+  [one invoice](../account/billing.md#organization), with no separate bills per member.
 
 ## Getting started
 
 To set up Zed Business for your team, see [Organizations](./organizations.md).
 
-For pricing, see [Plans & Pricing](../ai/plans-and-usage.md).
+For pricing, see [Plans & Pricing](../account/plans-and-pricing.md).

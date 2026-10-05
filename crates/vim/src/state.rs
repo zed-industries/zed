@@ -449,23 +449,24 @@ impl MarksState {
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) {
-        let new_points: HashMap<String, Vec<Point>> =
-            if let Some(anchors) = self.buffer_marks.get(&buffer.read(cx).remote_id()) {
-                anchors
-                    .iter()
-                    .map(|(name, anchors)| {
-                        (
-                            name.clone(),
-                            buffer
-                                .read(cx)
-                                .summaries_for_anchors::<Point, _>(anchors.iter().copied())
-                                .collect(),
-                        )
-                    })
-                    .collect()
-            } else {
-                HashMap::default()
-            };
+        let new_points: HashMap<String, Vec<Point>> = if let Some(anchors) =
+            self.buffer_marks.get(&buffer.read(cx).remote_id())
+        {
+            anchors
+                .iter()
+                .map(|(name, anchors)| {
+                    let snapshot = buffer.read(cx);
+                    (
+                        name.clone(),
+                        snapshot
+                            .summaries_for_anchors_unordered::<Point, _>(anchors.iter().copied())
+                            .collect(),
+                    )
+                })
+                .collect()
+        } else {
+            HashMap::default()
+        };
         let old_points = self.serialized_marks.get(&path);
         if old_points == Some(&new_points) {
             return;
@@ -1264,6 +1265,10 @@ pub struct RegistersViewDelegate {
 impl PickerDelegate for RegistersViewDelegate {
     type ListItem = Div;
 
+    fn name() -> &'static str {
+        "registers view"
+    }
+
     fn match_count(&self) -> usize {
         self.matches.len()
     }
@@ -1429,9 +1434,7 @@ impl RegistersView {
             matches,
         };
 
-        Picker::nonsearchable_uniform_list(delegate, window, cx)
-            .width(rems(36.))
-            .modal(true)
+        Picker::nonsearchable_uniform_list(delegate, window, cx).initial_width(rems(36.))
     }
 }
 
@@ -1477,6 +1480,10 @@ pub struct MarksViewDelegate {
 
 impl PickerDelegate for MarksViewDelegate {
     type ListItem = Div;
+
+    fn name() -> &'static str {
+        "marks view"
+    }
 
     fn match_count(&self) -> usize {
         self.matches.len()
@@ -1792,9 +1799,7 @@ impl MarksView {
             matches,
             workspace,
         };
-        Picker::nonsearchable_uniform_list(delegate, window, cx)
-            .width(rems(36.))
-            .modal(true)
+        Picker::nonsearchable_uniform_list(delegate, window, cx).initial_width(rems(36.))
     }
 }
 

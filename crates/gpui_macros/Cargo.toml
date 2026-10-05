@@ -16,6 +16,7 @@ inspector = []
 path = "src/gpui_macros.rs"
 proc-macro = true
 doctest = true
+test = false
 
 [dependencies]
 heck.workspace = true

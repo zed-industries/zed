@@ -89,6 +89,7 @@ pub struct LabelLike {
     single_line: bool,
     truncate: bool,
     truncate_start: bool,
+    truncate_middle: bool,
 }
 
 impl Default for LabelLike {
@@ -115,6 +116,7 @@ impl LabelLike {
             single_line: false,
             truncate: false,
             truncate_start: false,
+            truncate_middle: false,
         }
     }
 }
@@ -132,6 +134,22 @@ impl LabelLike {
     /// Truncates overflowing text with an ellipsis (`…`) at the start if needed.
     pub fn truncate_start(mut self) -> Self {
         self.truncate_start = true;
+        self
+    }
+
+    /// Truncates overflowing text with an ellipsis (`…`) in the middle if needed.
+    /// Preserves the start and end of the text. Useful for filenames.
+    pub fn truncate_middle(mut self) -> Self {
+        self.truncate_middle = true;
+        self
+    }
+
+    /// Wraps the text and truncates it with an ellipsis (`…`) at the end of
+    /// the last visible line if it exceeds the given number of lines.
+    pub fn line_clamp(mut self, lines: usize) -> Self {
+        // `line_clamp` alone hard-cuts the text; the ellipsis on the last
+        // visible line is only rendered when a text overflow style is set.
+        self.base = self.base.line_clamp(lines).text_ellipsis();
         self
     }
 }
@@ -252,6 +270,12 @@ impl RenderOnce for LabelLike {
                     .overflow_x_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis_start()
+            })
+            .when(self.truncate_middle, |this| {
+                this.min_w_0()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis_middle()
             })
             .text_color(color)
             .font_weight(
