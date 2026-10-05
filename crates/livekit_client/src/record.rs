@@ -30,7 +30,7 @@ impl CaptureInput {
         log::info!("Using microphone: {}", name);
 
         let samples = Arc::new(Mutex::new(Vec::new()));
-        let stream = start_capture(device, config.clone(), samples.clone())?;
+        let stream = start_capture(device, config, samples.clone())?;
 
         Ok(Self {
             name,
