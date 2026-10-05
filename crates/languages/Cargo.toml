@@ -8,6 +8,9 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[lib]
+doctest = false
+
 [features]
 test-support = [
     "load-grammars"

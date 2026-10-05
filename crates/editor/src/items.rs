@@ -59,7 +59,7 @@ use workspace::{
     item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
     searchable::{
         Direction, FilteredSearchRange, SearchEvent, SearchToken, SearchableItem,
-        SearchableItemHandle,
+        SearchableItemHandle, SelectSearchOptions,
     },
 };
 use workspace::{
@@ -807,6 +807,7 @@ impl Item for Editor {
 
         h_flex()
             .gap_1()
+            .when(!params.selected, |tab| tab.track_focus(&self.focus_handle))
             .when(params.truncate_title_middle, |this| {
                 this.w_full().min_w_0().overflow_hidden()
             })
@@ -2121,12 +2122,18 @@ impl SearchableItem for Editor {
         self.expect_bounds_change = self.last_bounds;
     }
 
-    fn set_search_is_case_sensitive(
+    fn set_select_search_options(
         &mut self,
-        case_sensitive: Option<bool>,
+        select_search_options: Option<SelectSearchOptions>,
         _cx: &mut Context<Self>,
     ) {
-        self.select_next_is_case_sensitive = case_sensitive;
+        if self.select_next_options == select_search_options {
+            return;
+        }
+
+        self.select_next_options = select_search_options;
+        self.select_next_state = None;
+        self.select_prev_state = None;
     }
 }
 

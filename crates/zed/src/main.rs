@@ -299,6 +299,9 @@ fn main() {
     }
     ztracing::init();
 
+    #[cfg(unix)]
+    util::increase_open_file_limit().log_err();
+
     let version = option_env!("ZED_BUILD_ID");
     let app_commit_sha =
         option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha::new(commit_sha.to_string()));
@@ -673,9 +676,7 @@ fn main() {
         );
         command_palette::init(cx);
         let copilot_chat_configuration = copilot_chat::CopilotChatConfiguration {
-            enterprise_uri: language::language_settings::all_language_settings(None, cx)
-                .edit_predictions
-                .copilot
+            enterprise_uri: settings::CopilotSettings::get_global(cx)
                 .enterprise_uri
                 .clone(),
         };
