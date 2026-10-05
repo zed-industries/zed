@@ -38,6 +38,8 @@ buffer_diff.workspace = true
 db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 fs.workspace = true
+futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+lsp.workspace = true
 serde_json.workspace = true
 workspace = { workspace = true, features = ["test-support"] }

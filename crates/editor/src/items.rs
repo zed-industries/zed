@@ -54,7 +54,7 @@ use util::{
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, OpenOptions, OpenVisible, ToolbarItemLocation, ViewId,
-    Workspace, WorkspaceId,
+    Workspace, WorkspaceDb, WorkspaceId,
     invalid_item_view::InvalidItemView,
     item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
     searchable::{
@@ -1297,25 +1297,10 @@ impl SerializableItem for Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
-        let serialized_editor = match EditorDb::global(cx)
-            .get_serialized_editor(item_id, workspace_id)
+        let serialized_editor = match serialized_editor_for_restore(item_id, workspace_id, cx)
             .context("Failed to query editor state")
         {
-            Ok(Some(serialized_editor)) => {
-                if ProjectSettings::get_global(cx)
-                    .session
-                    .restore_unsaved_buffers
-                {
-                    serialized_editor
-                } else {
-                    SerializedEditor {
-                        abs_path: serialized_editor.abs_path,
-                        contents: None,
-                        language: None,
-                        mtime: None,
-                    }
-                }
-            }
+            Ok(Some(serialized_editor)) => serialized_editor,
             Ok(None) => {
                 return Task::ready(Err(anyhow!(
                     "Unable to deserialize editor: No entry in database for item_id: {item_id} and workspace_id {workspace_id:?}"
@@ -1556,6 +1541,72 @@ impl SerializableItem for Editor {
                     | EditorEvent::FileHandleChanged
             )
     }
+}
+
+/// The persisted editor state session restore will apply for `item_id` in
+/// `workspace_id`, or `None` when nothing was persisted for it.
+///
+/// Unsaved contents are dropped when `restore_unsaved_buffers` is disabled, so the
+/// result matches what [`Editor::deserialize`] restores; [`restores_unsaved_contents`]
+/// uses it to decide whether an editor-derived item is restorable.
+fn serialized_editor_for_restore(
+    item_id: ItemId,
+    workspace_id: WorkspaceId,
+    cx: &App,
+) -> Result<Option<SerializedEditor>> {
+    let Some(serialized_editor) =
+        EditorDb::global(cx).get_serialized_editor(item_id, workspace_id)?
+    else {
+        return Ok(None);
+    };
+
+    if ProjectSettings::get_global(cx)
+        .session
+        .restore_unsaved_buffers
+    {
+        Ok(Some(serialized_editor))
+    } else {
+        Ok(Some(SerializedEditor {
+            abs_path: serialized_editor.abs_path,
+            contents: None,
+            language: None,
+            mtime: None,
+        }))
+    }
+}
+
+/// Whether session restore will restore the editor persisted for `item_id` in
+/// `workspace_id` for `abs_path` from its saved unsaved contents, even though the
+/// file no longer exists.
+///
+/// This mirrors the condition [`Editor::deserialize`] applies to a file-backed
+/// editor, and additionally requires that the editor is still part of the pane
+/// layout being restored and that its persisted path is `abs_path`. An item whose
+/// restoration derives from that editor — such as a markdown preview of its buffer
+/// — must remain restorable exactly when the editor does, so it consults this
+/// instead of re-deriving the rules. A row left behind by a closed or renamed
+/// editor tab therefore does not make its preview restorable.
+pub fn restores_unsaved_contents(
+    item_id: ItemId,
+    workspace_id: WorkspaceId,
+    abs_path: &Path,
+    cx: &App,
+) -> bool {
+    if !WorkspaceDb::global(cx)
+        .contains_serialized_item(workspace_id, item_id)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+
+    // A read error fails closed: the derived item is refused rather than restored
+    // against unverifiable state.
+    serialized_editor_for_restore(item_id, workspace_id, cx)
+        .ok()
+        .flatten()
+        .is_some_and(|editor| {
+            editor.contents.is_some() && editor.abs_path.as_deref() == Some(abs_path)
+        })
 }
 
 #[derive(Debug, Default)]

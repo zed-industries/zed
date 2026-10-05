@@ -2457,6 +2457,18 @@ impl WorkspaceDb {
         Ok(())
     }
 
+    // Whether the pane layout persisted for `workspace_id` still contains the item
+    // with `item_id`. Session restore deserializes exactly these items, so an id
+    // left behind by a closed tab is not part of the restore.
+    query! {
+        pub fn contains_serialized_item(workspace_id: WorkspaceId, item_id: ItemId) -> Result<bool> {
+            SELECT EXISTS(
+                SELECT 1 FROM items
+                WHERE workspace_id = ? AND item_id = ?
+            )
+        }
+    }
+
     query! {
         pub async fn update_timestamp(workspace_id: WorkspaceId) -> Result<()> {
             UPDATE workspaces
