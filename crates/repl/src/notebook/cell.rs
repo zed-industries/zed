@@ -117,9 +117,6 @@ pub(crate) enum MovementDirection {
     End,
 }
 
-const KERNEL_ERROR_NAME: &str = "Kernel Error";
-const KERNEL_ERROR_VALUE: &str = "cell could not be executed";
-
 /// A rendered output paired with the notebook representation it was built from.
 ///
 /// [`Output`] renders only the richest mime type in a bundle and drops the rest,
@@ -133,8 +130,8 @@ pub(super) struct CellOutput {
 }
 
 impl CellOutput {
-    fn from_nbformat(output: &nbformat::v4::Output, window: &mut Window, cx: &mut App) -> Self {
-        let view = match output {
+    fn from_nbformat(output: nbformat::v4::Output, window: &mut Window, cx: &mut App) -> Self {
+        let view = match &output {
             nbformat::v4::Output::Stream { text, .. } => Output::Stream {
                 content: cx.new(|cx| TerminalOutput::from(&text.0, window, cx)),
             },
@@ -154,7 +151,7 @@ impl CellOutput {
 
         Self {
             view,
-            serialized: output.clone(),
+            serialized: output,
         }
     }
 }
@@ -177,7 +174,7 @@ fn convert_outputs(
 ) -> Vec<CellOutput> {
     outputs
         .iter()
-        .map(|output| CellOutput::from_nbformat(output, window, cx))
+        .map(|output| CellOutput::from_nbformat(output.clone(), window, cx))
         .collect()
 }
 
@@ -867,18 +864,15 @@ impl CodeCell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.outputs.push(CellOutput {
-            view: Output::ErrorOutput(ErrorView {
-                ename: KERNEL_ERROR_NAME.to_string(),
-                evalue: KERNEL_ERROR_VALUE.to_string(),
-                traceback: cx.new(|cx| TerminalOutput::from(error_message, window, cx)),
-            }),
-            serialized: nbformat::v4::Output::Error(nbformat::v4::ErrorOutput {
-                ename: KERNEL_ERROR_NAME.to_string(),
-                evalue: KERNEL_ERROR_VALUE.to_string(),
+        self.outputs.push(CellOutput::from_nbformat(
+            nbformat::v4::Output::Error(nbformat::v4::ErrorOutput {
+                ename: "Kernel Error".to_string(),
+                evalue: "cell could not be executed".to_string(),
                 traceback: error_message.lines().map(|line| line.to_string()).collect(),
             }),
-        });
+            window,
+            cx,
+        ));
         self.execution_start_time = None;
         self.is_executing = false;
         cx.notify();
@@ -909,37 +903,38 @@ impl CodeCell {
     ) {
         match &message.content {
             JupyterMessageContent::StreamContent(stream) => {
-                self.outputs.push(CellOutput {
-                    view: Output::Stream {
-                        content: cx.new(|cx| TerminalOutput::from(&stream.text, window, cx)),
-                    },
-                    serialized: nbformat::v4::Output::Stream {
+                self.outputs.push(CellOutput::from_nbformat(
+                    nbformat::v4::Output::Stream {
                         name: match stream.name {
                             Stdio::Stdout => "stdout".to_string(),
                             Stdio::Stderr => "stderr".to_string(),
                         },
                         text: nbformat::v4::MultilineString(stream.text.clone()),
                     },
-                });
+                    window,
+                    cx,
+                ));
             }
             JupyterMessageContent::DisplayData(display_data) => {
-                self.outputs.push(CellOutput {
-                    view: Output::new(&display_data.data, None, window, cx),
-                    serialized: nbformat::v4::Output::DisplayData(nbformat::v4::DisplayData {
+                self.outputs.push(CellOutput::from_nbformat(
+                    nbformat::v4::Output::DisplayData(nbformat::v4::DisplayData {
                         data: display_data.data.clone(),
                         metadata: display_data.metadata.clone(),
                     }),
-                });
+                    window,
+                    cx,
+                ));
             }
             JupyterMessageContent::ExecuteResult(execute_result) => {
-                self.outputs.push(CellOutput {
-                    view: Output::new(&execute_result.data, None, window, cx),
-                    serialized: nbformat::v4::Output::ExecuteResult(nbformat::v4::ExecuteResult {
+                self.outputs.push(CellOutput::from_nbformat(
+                    nbformat::v4::Output::ExecuteResult(nbformat::v4::ExecuteResult {
                         execution_count: execute_result.execution_count,
                         data: execute_result.data.clone(),
                         metadata: execute_result.metadata.clone(),
                     }),
-                });
+                    window,
+                    cx,
+                ));
             }
             JupyterMessageContent::ExecuteInput(input) => {
                 self.execution_count = serde_json::to_value(&input.execution_count)
@@ -951,20 +946,15 @@ impl CodeCell {
                 self.finish_execution();
             }
             JupyterMessageContent::ErrorOutput(error) => {
-                self.outputs.push(CellOutput {
-                    view: Output::ErrorOutput(ErrorView {
-                        ename: error.ename.clone(),
-                        evalue: error.evalue.clone(),
-                        traceback: cx.new(|cx| {
-                            TerminalOutput::from(&error.traceback.join("\n"), window, cx)
-                        }),
-                    }),
-                    serialized: nbformat::v4::Output::Error(nbformat::v4::ErrorOutput {
+                self.outputs.push(CellOutput::from_nbformat(
+                    nbformat::v4::Output::Error(nbformat::v4::ErrorOutput {
                         ename: error.ename.clone(),
                         evalue: error.evalue.clone(),
                         traceback: error.traceback.clone(),
                     }),
-                });
+                    window,
+                    cx,
+                ));
             }
             _ => {}
         }
