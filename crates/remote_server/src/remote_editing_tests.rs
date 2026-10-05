@@ -4560,7 +4560,7 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
 // through the transport's launcher. Consumers that already execute on that host
 // (ACP agents) need the command as the host runs it, without the launcher.
 #[gpui::test]
-async fn test_remote_context_server_keeps_native_command(
+async fn test_remote_context_server_spawns_wrapped_but_reports_native_command(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
 ) {
@@ -4579,8 +4579,11 @@ async fn test_remote_context_server_keeps_native_command(
     // Starting a stdio server would spawn a real process, which the deterministic
     // test scheduler rejects. The configuration it is handed is what matters here.
     let executor = cx.executor();
+    let spawned_configuration = Arc::new(std::sync::Mutex::new(None));
     store.update(cx, |store, _| {
-        store.set_context_server_factory(Box::new(move |id, _configuration| {
+        let spawned_configuration = spawned_configuration.clone();
+        store.set_context_server_factory(Box::new(move |id, configuration| {
+            *spawned_configuration.lock().unwrap() = Some(configuration);
             let transport = create_fake_transport(id.0.to_string(), executor.clone());
             Arc::new(ContextServer::new(id, Arc::new(transport)))
         }));
@@ -4610,26 +4613,32 @@ async fn test_remote_context_server_keeps_native_command(
 
     let server_id = ContextServerId("my-server".into());
 
-    let configuration = store
-        .read_with(cx, |store, _| store.configuration_for_server(&server_id))
+    let spawned_configuration = spawned_configuration
+        .lock()
+        .unwrap()
+        .take()
         .expect("the remote host should have resolved a command for the server");
-    match configuration.as_ref() {
+    match spawned_configuration.as_ref() {
         ContextServerConfiguration::Custom { command, remote } => {
             assert!(remote);
             // `MockConnection::build_command` stands in for `ssh ...` / `wsl.exe ...`.
             assert_eq!(command.path, PathBuf::from("mock"));
             assert_eq!(command.args, vec!["my-server-bin", "--flag"]);
         }
-        configuration => panic!("unexpected configuration: {configuration:?}"),
+        configuration => panic!("unexpected spawned configuration: {configuration:?}"),
     }
 
-    let native_command = store
-        .read_with(cx, |store, _| {
-            store.remote_native_command_for_server(&server_id).cloned()
-        })
-        .expect("the unwrapped command should be kept for remote consumers");
-    assert_eq!(native_command.path, PathBuf::from("my-server-bin"));
-    assert_eq!(native_command.args, vec!["--flag"]);
+    let stored_configuration = store
+        .read_with(cx, |store, _| store.configuration_for_server(&server_id))
+        .expect("the server should be tracked by the store");
+    match stored_configuration.as_ref() {
+        ContextServerConfiguration::Custom { command, remote } => {
+            assert!(remote);
+            assert_eq!(command.path, PathBuf::from("my-server-bin"));
+            assert_eq!(command.args, vec!["--flag"]);
+        }
+        configuration => panic!("unexpected stored configuration: {configuration:?}"),
+    }
 }
 
 #[gpui::test]

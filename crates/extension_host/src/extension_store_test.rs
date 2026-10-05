@@ -2989,6 +2989,7 @@ async fn test_headless_dev_reload_replaces_registrations(cx: &mut TestAppContext
         )],
         debug_adapters: Vec::new(),
         debug_locators: Vec::new(),
+        context_servers: Vec::new(),
         wasm_extension: Some(Arc::new(FakeExtension)),
         content_fingerprint: None,
     };

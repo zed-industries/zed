@@ -348,16 +348,20 @@ impl ContextServerSettings {
 
     pub fn remote(&self) -> bool {
         match self {
-            ContextServerSettings::Stdio { remote, .. } => *remote,
-            ContextServerSettings::Extension { remote, .. } => *remote,
+            ContextServerSettings::Stdio { remote, .. }
+            | ContextServerSettings::Extension { remote, .. } => *remote,
             ContextServerSettings::Http { .. } => false,
         }
     }
 
     pub fn set_remote(&mut self, remote: bool) {
         match self {
-            ContextServerSettings::Stdio { remote: r, .. } => *r = remote,
-            ContextServerSettings::Extension { remote: r, .. } => *r = remote,
+            ContextServerSettings::Stdio {
+                remote: current, ..
+            }
+            | ContextServerSettings::Extension {
+                remote: current, ..
+            } => *current = remote,
             ContextServerSettings::Http { .. } => {}
         }
     }

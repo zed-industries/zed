@@ -303,9 +303,6 @@ pub struct ContextServerStore {
     /// `maintain_servers` restart a server when its working directory changes,
     /// since the working directory is not part of `ContextServerConfiguration`.
     server_working_directories: HashMap<ContextServerId, Option<Arc<Path>>>,
-    /// For servers running on a remote host, the command as the remote host runs
-    /// it, without the transport wrapper that `ContextServerConfiguration` holds.
-    remote_native_commands: HashMap<ContextServerId, ContextServerCommand>,
     needs_server_update: bool,
     ai_disabled: bool,
     _subscriptions: Vec<Subscription>,
@@ -524,7 +521,6 @@ impl ContextServerStore {
             update_servers_task: None,
             context_server_factory,
             server_working_directories: HashMap::default(),
-            remote_native_commands: HashMap::default(),
         };
         if maintain_server_loop && !DisableAiSettings::get_global(cx).disable_ai {
             this.available_context_servers_changed(cx);
@@ -548,22 +544,13 @@ impl ContextServerStore {
         self.servers.get(id).map(ContextServerStatus::from_state)
     }
 
+    /// For a server running on a remote host, the command is the one that host
+    /// runs, not the launcher-wrapped command Zed spawns it with.
     pub fn configuration_for_server(
         &self,
         id: &ContextServerId,
     ) -> Option<Arc<ContextServerConfiguration>> {
         self.servers.get(id).map(|state| state.configuration())
-    }
-
-    /// For a server running on a remote host, returns the command as the remote
-    /// host runs it. [`Self::configuration_for_server`] instead reports the
-    /// command Zed spawns locally, which wraps this one in the transport's
-    /// launcher and is therefore only meaningful on the local machine.
-    pub fn remote_native_command_for_server(
-        &self,
-        id: &ContextServerId,
-    ) -> Option<&ContextServerCommand> {
-        self.remote_native_commands.get(id)
     }
 
     /// Returns the configured settings for a server, if it is present in the user
@@ -881,7 +868,6 @@ impl ContextServerStore {
             .remove(id)
             .context("Context server not found")?;
         self.server_working_directories.remove(id);
-        self.remote_native_commands.remove(id);
 
         if let ContextServerConfiguration::Http { url, .. } = state.configuration().as_ref() {
             let server_url = url.clone();
@@ -957,6 +943,11 @@ impl ContextServerStore {
         let root_path: Option<Arc<Path>> =
             this.update(cx, |this, cx| this.resolve_root_path(cx))?;
 
+        // For a remote server, `configuration` becomes the command Zed spawns,
+        // wrapped in the transport's launcher (`ssh ...`, `wsl.exe ...`), while
+        // the store records the command as the remote host runs it. Consumers
+        // that already execute on the remote host (ACP agents) need the latter.
+        let mut stored_configuration = None;
         let configuration = if let Some((project_id, upstream_client)) = remote_state {
             let root_dir = root_path.as_ref().map(|p| p.display().to_string());
 
@@ -974,19 +965,9 @@ impl ContextServerStore {
 
             let env: HashMap<String, String> = response.env.into_iter().collect();
 
-            // The command as it runs on the remote host, before being wrapped in
-            // the transport's launcher (`ssh ...`, `wsl.exe ...`). Consumers that
-            // already execute on the remote host need this one, not the wrapper.
-            let native_command = ContextServerCommand {
-                path: response.path.clone().into(),
-                args: response.args.clone(),
-                env: Some(env.clone()),
-                timeout: None,
-            };
-
             let remote_command = upstream_client.update(cx, |client, _| {
                 client.build_command(
-                    Some(response.path),
+                    Some(response.path.clone()),
                     &response.args,
                     &env,
                     root_dir,
@@ -1002,22 +983,28 @@ impl ContextServerStore {
                 timeout: None,
             };
 
-            this.update(cx, |this, _| {
-                this.remote_native_commands
-                    .insert(id.clone(), native_command);
-            })?;
+            stored_configuration = Some(Arc::new(ContextServerConfiguration::Custom {
+                command: ContextServerCommand {
+                    path: response.path.into(),
+                    args: response.args,
+                    env: Some(env),
+                    timeout: None,
+                },
+                remote,
+            }));
 
             Arc::new(ContextServerConfiguration::Custom { command, remote })
         } else {
             configuration
         };
+        let stored_configuration = stored_configuration.unwrap_or_else(|| configuration.clone());
 
         if let Some(server) = this.update(cx, |this, _| {
             this.context_server_factory
                 .as_ref()
                 .map(|factory| factory(id.clone(), configuration.clone()))
         })? {
-            return Ok((server, configuration));
+            return Ok((server, stored_configuration));
         }
 
         let cached_token_provider: Option<Arc<dyn oauth::OAuthTokenProvider>> =
@@ -1099,7 +1086,7 @@ impl ContextServerStore {
             }
         })??;
 
-        Ok((server, configuration))
+        Ok((server, stored_configuration))
     }
 
     async fn handle_get_context_server_command(
