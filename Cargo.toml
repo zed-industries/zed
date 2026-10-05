@@ -690,7 +690,7 @@ lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "f1783e
 mach2 = "0.6"
 markup5ever_rcdom = "0.39"
 mdbook = { version = "=0.4.40", default-features = false, features = ["search"] }
-merman = { version = "=0.8.0-alpha.5", default-features = false }
+merman = { version = "=0.8.0-alpha.7", default-features = false }
 metal = "0.33"
 mime = "0.3.17"
 minidumper = "0.11"
