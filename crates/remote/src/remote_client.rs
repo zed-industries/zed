@@ -1410,10 +1410,12 @@ impl RemoteConnectionOptions {
                 .unwrap_or_else(|| opts.host.to_string()),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
             RemoteConnectionOptions::Docker(opts) => {
-                let name = if opts.use_podman {
-                    format!("[podman] {}", opts.name)
-                } else {
-                    opts.name.clone()
+                let name = match opts.engine {
+                    settings::ContainerEngine::Docker => opts.name.clone(),
+                    settings::ContainerEngine::Podman => format!("[podman] {}", opts.name),
+                    settings::ContainerEngine::AppleContainer => {
+                        format!("[container] {}", opts.name)
+                    }
                 };
                 match opts.host.connection_options() {
                     Some(host) => format!("{name} on {}", host.display_name()),
@@ -1433,13 +1435,20 @@ impl RemoteConnectionOptions {
         match self {
             RemoteConnectionOptions::Ssh(_) => "ssh",
             RemoteConnectionOptions::Wsl(_) => "wsl",
-            RemoteConnectionOptions::Docker(opts) => match (opts.use_podman, &opts.host) {
-                (false, DockerHost::Ssh(_)) => "docker-ssh",
-                (true, DockerHost::Ssh(_)) => "podman-ssh",
-                (false, DockerHost::Wsl(_)) => "docker-wsl",
-                (true, DockerHost::Wsl(_)) => "podman-wsl",
-                (false, _) => "docker",
-                (true, _) => "podman",
+            RemoteConnectionOptions::Docker(opts) => match (opts.engine, &opts.host) {
+                (settings::ContainerEngine::Docker, DockerHost::Ssh(_)) => "docker-ssh",
+                (settings::ContainerEngine::Podman, DockerHost::Ssh(_)) => "podman-ssh",
+                (settings::ContainerEngine::AppleContainer, DockerHost::Ssh(_)) => {
+                    "apple-container-ssh"
+                }
+                (settings::ContainerEngine::Docker, DockerHost::Wsl(_)) => "docker-wsl",
+                (settings::ContainerEngine::Podman, DockerHost::Wsl(_)) => "podman-wsl",
+                (settings::ContainerEngine::AppleContainer, DockerHost::Wsl(_)) => {
+                    "apple-container-wsl"
+                }
+                (settings::ContainerEngine::Docker, _) => "docker",
+                (settings::ContainerEngine::Podman, _) => "podman",
+                (settings::ContainerEngine::AppleContainer, _) => "apple-container",
             },
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(_) => "mock",
@@ -1465,7 +1474,7 @@ mod tests {
 
     #[test]
     fn a_containers_host_shows_up_in_its_name_and_telemetry() {
-        let container = |use_podman: bool, host: DockerHost| {
+        let container = |engine: settings::ContainerEngine, host: DockerHost| {
             RemoteConnectionOptions::Docker(DockerConnectionOptions {
                 name: "zed-dev".to_string(),
                 container_id: "container-123".to_string(),
@@ -1473,7 +1482,7 @@ mod tests {
                 local_folder: None,
                 config_file: None,
                 upload_binary_over_docker_exec: false,
-                use_podman,
+                engine,
                 remote_env: Default::default(),
                 host,
             })
@@ -1487,32 +1496,32 @@ mod tests {
         };
 
         assert_eq!(
-            container(false, DockerHost::Local).display_name(),
+            container(settings::ContainerEngine::Docker, DockerHost::Local).display_name(),
             "zed-dev"
         );
         assert_eq!(
-            container(false, ssh_host(None)).display_name(),
+            container(settings::ContainerEngine::Docker, ssh_host(None)).display_name(),
             "zed-dev on example.com"
         );
         assert_eq!(
-            container(true, ssh_host(Some("work"))).display_name(),
+            container(settings::ContainerEngine::Podman, ssh_host(Some("work"))).display_name(),
             "[podman] zed-dev on work"
         );
 
         assert_eq!(
-            container(false, DockerHost::Local).connection_type(),
+            container(settings::ContainerEngine::Docker, DockerHost::Local).connection_type(),
             "docker"
         );
         assert_eq!(
-            container(true, DockerHost::Local).connection_type(),
+            container(settings::ContainerEngine::Podman, DockerHost::Local).connection_type(),
             "podman"
         );
         assert_eq!(
-            container(false, ssh_host(None)).connection_type(),
+            container(settings::ContainerEngine::Docker, ssh_host(None)).connection_type(),
             "docker-ssh"
         );
         assert_eq!(
-            container(true, ssh_host(None)).connection_type(),
+            container(settings::ContainerEngine::Podman, ssh_host(None)).connection_type(),
             "podman-ssh"
         );
     }
@@ -1639,7 +1648,7 @@ mod tests {
         );
         assert_eq!(
             RemoteConnectionOptions::Docker(DockerConnectionOptions {
-                use_podman: false,
+                engine: settings::ContainerEngine::Docker,
                 ..Default::default()
             })
             .connection_type(),
@@ -1647,7 +1656,7 @@ mod tests {
         );
         assert_eq!(
             RemoteConnectionOptions::Docker(DockerConnectionOptions {
-                use_podman: true,
+                engine: settings::ContainerEngine::Podman,
                 ..Default::default()
             })
             .connection_type(),

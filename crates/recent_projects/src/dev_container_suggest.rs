@@ -135,32 +135,6 @@ pub fn suggest_on_worktree_updated(
 
     let has_configs = !find_configs_in_snapshot(worktree).is_empty();
 
-    if cli_auto_open {
-        workspace.set_open_in_dev_container(false);
-        let task = cx.spawn_in(window, async move |workspace, cx| {
-            let scans_complete =
-                workspace.update(cx, |workspace, cx| workspace.worktree_scans_complete(cx))?;
-            scans_complete.await;
-
-            workspace.update_in(cx, |workspace, window, cx| {
-                let has_configs = workspace
-                    .project()
-                    .read(cx)
-                    .worktrees(cx)
-                    .any(|wt| !find_configs_in_snapshot(wt.read(cx)).is_empty());
-                if has_configs {
-                    cx.on_next_frame(window, move |_workspace, window, cx| {
-                        window.dispatch_action(Box::new(zed_actions::OpenDevContainer), cx);
-                    });
-                } else {
-                    log::warn!("--dev-container: no devcontainer configuration found in project");
-                }
-            })
-        });
-        workspace.set_dev_container_task(task);
-        return;
-    }
-
     if !has_configs {
         return;
     }

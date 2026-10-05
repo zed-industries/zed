@@ -228,7 +228,7 @@ pub(crate) fn stop_dev_container(
         let origin = match dev_container::dev_container_origin(
             &options.container_id,
             host.clone(),
-            options.use_podman,
+            options.engine,
         )
         .await
         {
@@ -243,7 +243,7 @@ pub(crate) fn stop_dev_container(
         shutdown_remote_connection(&workspace_handle, cx).await;
 
         if let Err(e) =
-            dev_container::stop_dev_container(&options.container_id, host, options.use_podman).await
+            dev_container::stop_dev_container(&options.container_id, host, options.engine).await
         {
             log::error!("Failed to stop dev container: {e}");
             prompt_error(cx, "Failed to stop Dev Container", &e).await;
@@ -378,7 +378,7 @@ pub async fn delete_dev_container_with_options(
         match dev_container::dev_container_origin(
             &options.container_id,
             host.clone(),
-            options.use_podman,
+            options.engine,
         )
         .await
         {
@@ -398,7 +398,7 @@ pub async fn delete_dev_container_with_options(
     }
 
     if let Err(e) =
-        dev_container::remove_dev_container(&options.container_id, host, options.use_podman).await
+        dev_container::remove_dev_container(&options.container_id, host, options.engine).await
     {
         log::error!("Failed to remove dev container: {e}");
         prompt_error(cx, "Failed to delete Dev Container", &e).await;
@@ -646,7 +646,7 @@ fn reconnect_connected_dev_container(
         let origin = match dev_container::dev_container_origin(
             &options.container_id,
             host.clone(),
-            options.use_podman,
+            options.engine,
         )
         .await
         {
@@ -695,7 +695,7 @@ fn reconnect_connected_dev_container(
             if let Err(e) = dev_container::stop_dev_container(
                 &options.container_id,
                 host.clone(),
-                options.use_podman,
+                options.engine,
             )
             .await
             {
@@ -874,7 +874,7 @@ pub(crate) async fn start_dev_container(
     cx: &mut AsyncApp,
 ) -> anyhow::Result<()> {
     let host = lifecycle_host(options, Some(window.into()), Some(&workspace), cx).await?;
-    dev_container::start_dev_container(&options.container_id, host, options.use_podman)
+    dev_container::start_dev_container(&options.container_id, host, options.engine)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))
 }
@@ -892,7 +892,7 @@ pub(crate) async fn restart_dev_container(
     cx: &mut AsyncApp,
 ) -> anyhow::Result<()> {
     let host = lifecycle_host(options, Some(window.into()), Some(&workspace), cx).await?;
-    dev_container::restart_dev_container(&options.container_id, host, options.use_podman)
+    dev_container::restart_dev_container(&options.container_id, host, options.engine)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))
 }

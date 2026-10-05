@@ -65,6 +65,7 @@ impl DockerHost {
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(from = "DockerConnectionOptionsWire")]
 pub struct DockerConnectionOptions {
     pub name: String,
     pub container_id: String,
@@ -81,10 +82,97 @@ pub struct DockerConnectionOptions {
     #[serde(default)]
     pub config_file: Option<String>,
     pub upload_binary_over_docker_exec: bool,
-    pub use_podman: bool,
+    /// The engine that built this container. Fixed at build time and never
+    /// re-resolved: reconnecting has to reach the same daemon the container
+    /// lives on, not whichever engine currently sorts first.
+    pub engine: settings::ContainerEngine,
     pub remote_env: BTreeMap<String, String>,
     #[serde(default)]
     pub host: DockerHost,
+}
+
+/// Deserialization shape for [`DockerConnectionOptions`], kept separate so
+/// that connection records persisted by older Zed versions (with a
+/// `use_podman: bool` field instead of `engine`) still load. Zed persists
+/// these as part of terminal/thread metadata, so old records can outlive the
+/// version that wrote them.
+#[derive(serde::Deserialize)]
+struct DockerConnectionOptionsWire {
+    name: String,
+    container_id: String,
+    remote_user: String,
+    #[serde(default)]
+    local_folder: Option<String>,
+    #[serde(default)]
+    config_file: Option<String>,
+    upload_binary_over_docker_exec: bool,
+    #[serde(default)]
+    engine: Option<settings::ContainerEngine>,
+    #[serde(default)]
+    use_podman: bool,
+    remote_env: BTreeMap<String, String>,
+    #[serde(default)]
+    host: DockerHost,
+}
+
+impl From<DockerConnectionOptionsWire> for DockerConnectionOptions {
+    fn from(wire: DockerConnectionOptionsWire) -> Self {
+        let engine = wire.engine.unwrap_or(if wire.use_podman {
+            settings::ContainerEngine::Podman
+        } else {
+            settings::ContainerEngine::Docker
+        });
+        Self {
+            name: wire.name,
+            container_id: wire.container_id,
+            remote_user: wire.remote_user,
+            local_folder: wire.local_folder,
+            config_file: wire.config_file,
+            upload_binary_over_docker_exec: wire.upload_binary_over_docker_exec,
+            engine,
+            remote_env: wire.remote_env,
+            host: wire.host,
+        }
+    }
+}
+
+/// The slice of `container inspect`'s JSON this transport needs: just enough
+/// to recover the container's address on its own host. See
+/// `dev_container::apple_container` for the fuller translation used by the
+/// dev container backend itself; this is a separate, minimal copy because
+/// that crate isn't a dependency here.
+#[derive(serde::Deserialize)]
+struct AppleContainerInspectStatus {
+    #[serde(default)]
+    status: Option<AppleContainerNetworks>,
+}
+
+#[derive(serde::Deserialize)]
+struct AppleContainerNetworks {
+    #[serde(default)]
+    networks: Vec<AppleContainerNetworkAddress>,
+}
+
+#[derive(serde::Deserialize)]
+struct AppleContainerNetworkAddress {
+    #[serde(default, rename = "ipv4Address")]
+    ipv4_address: Option<String>,
+}
+
+/// Reads the container's bare IPv4 address out of `container inspect`'s JSON
+/// (an array of one entry), stripping the `/prefix` CIDR suffix Apple
+/// includes on `status.networks[].ipv4Address`.
+fn apple_container_ipv4_from_inspect(raw: &str) -> Option<String> {
+    let entries: Vec<AppleContainerInspectStatus> = serde_json::from_str(raw).log_err()?;
+    let ipv4 = entries
+        .into_iter()
+        .next()?
+        .status?
+        .networks
+        .into_iter()
+        .next()?
+        .ipv4_address?;
+    Some(ipv4.split('/').next()?.to_string())
 }
 
 pub(crate) struct DockerExecConnection {
@@ -171,11 +259,7 @@ impl DockerExecConnection {
     }
 
     fn docker_cli(&self) -> &str {
-        if self.connection_options.use_podman {
-            "podman"
-        } else {
-            "docker"
-        }
+        self.connection_options.engine.cli_name()
     }
 
     /// The single place docker invocations are turned into a runnable command.
@@ -234,6 +318,10 @@ impl DockerExecConnection {
     /// container sharing the host's network namespace has no address of its
     /// own and is reached on loopback instead.
     async fn discover_container_address(&self) -> Option<String> {
+        if self.connection_options.engine == settings::ContainerEngine::AppleContainer {
+            return self.discover_apple_container_address().await;
+        }
+
         let output = self
             .run_docker_command(
                 "inspect",
@@ -252,6 +340,18 @@ impl DockerExecConnection {
             return Some("localhost".to_string());
         }
         fields.next().map(str::to_string)
+    }
+
+    /// `container inspect` has no `-f`/Go-template support, so the address is
+    /// read out of its JSON directly. Apple Container has no `--network host`
+    /// equivalent, so there is no loopback case to special-case here.
+    async fn discover_apple_container_address(&self) -> Option<String> {
+        let output = self
+            .run_docker_command("inspect", &[&self.connection_options.container_id])
+            .await
+            .map_err(|error| log::warn!("Could not inspect the container's network: {error}"))
+            .ok()?;
+        apple_container_ipv4_from_inspect(&output)
     }
 
     async fn discover_shell(&self) -> String {
@@ -691,15 +791,14 @@ impl DockerExecConnection {
         let container_id = &self.connection_options.container_id;
         let remote_user = &self.connection_options.remote_user;
 
-        let copy_command = self.docker_command(
-            vec![
-                "cp".to_string(),
-                "-a".to_string(),
-                src_path.to_string(),
-                format!("{container_id}:{dst_path}"),
-            ],
-            Interactive::No,
-        )?;
+        // `container cp` takes exactly two positional arguments — no `-a`.
+        let mut cp_args = vec!["cp".to_string()];
+        if self.connection_options.engine != settings::ContainerEngine::AppleContainer {
+            cp_args.push("-a".to_string());
+        }
+        cp_args.push(src_path.to_string());
+        cp_args.push(format!("{container_id}:{dst_path}"));
+        let copy_command = self.docker_command(cp_args, Interactive::No)?;
         let chown_command = self.docker_command(
             vec![
                 "exec".to_string(),
@@ -1468,7 +1567,7 @@ mod tests {
             local_folder: None,
             config_file: None,
             upload_binary_over_docker_exec: false,
-            use_podman: false,
+            engine: settings::ContainerEngine::Docker,
             remote_env: Default::default(),
             host: DockerHost::Local,
         }
@@ -1486,7 +1585,7 @@ mod tests {
         assert!(command.env.is_empty());
 
         let podman = local_connection(DockerConnectionOptions {
-            use_podman: true,
+            engine: settings::ContainerEngine::Podman,
             ..docker_options()
         });
         assert_eq!(
@@ -1932,6 +2031,41 @@ mod tests {
         );
     }
 
+    /// `container cp` takes exactly two positional arguments — no `-a`.
+    #[test]
+    fn apple_container_upload_omits_the_dash_a_flag() {
+        let connection = local_connection(DockerConnectionOptions {
+            engine: settings::ContainerEngine::AppleContainer,
+            ..docker_options()
+        });
+        let (copy_command, _) = connection
+            .upload_commands("/tmp/src", "/home/anth/dst")
+            .expect("building upload commands should succeed");
+
+        assert_eq!(
+            copy_command.args,
+            vec!["cp", "/tmp/src", "container-123:/home/anth/dst"]
+        );
+    }
+
+    #[test]
+    fn apple_container_ipv4_is_read_from_inspect_json_and_stripped_of_its_prefix() {
+        let raw = r#"[{
+            "status": {
+                "networks": [
+                    { "ipv4Address": "192.168.64.5/24" }
+                ]
+            }
+        }]"#;
+        assert_eq!(
+            apple_container_ipv4_from_inspect(raw),
+            Some("192.168.64.5".to_string())
+        );
+
+        assert_eq!(apple_container_ipv4_from_inspect("[]"), None);
+        assert_eq!(apple_container_ipv4_from_inspect("not json"), None);
+    }
+
     #[test]
     fn options_without_host_deserialize_as_local() {
         let legacy = r#"{
@@ -1946,6 +2080,23 @@ mod tests {
         let options: DockerConnectionOptions =
             serde_json::from_str(legacy).expect("legacy payload should deserialize");
         assert_eq!(options.host, DockerHost::Local);
+        assert_eq!(options.engine, settings::ContainerEngine::Docker);
+    }
+
+    #[test]
+    fn legacy_use_podman_true_deserializes_as_the_podman_engine() {
+        let legacy = r#"{
+            "name": "zed-dev",
+            "container_id": "container-123",
+            "remote_user": "anth",
+            "upload_binary_over_docker_exec": false,
+            "use_podman": true,
+            "remote_env": {}
+        }"#;
+
+        let options: DockerConnectionOptions =
+            serde_json::from_str(legacy).expect("legacy payload should deserialize");
+        assert_eq!(options.engine, settings::ContainerEngine::Podman);
     }
 
     #[test]
@@ -1957,7 +2108,7 @@ mod tests {
             local_folder: None,
             config_file: None,
             upload_binary_over_docker_exec: false,
-            use_podman: false,
+            engine: settings::ContainerEngine::Docker,
             remote_env: Default::default(),
             host: DockerHost::Ssh(SshConnectionOptions {
                 host: "example.com".into(),
@@ -2075,7 +2226,7 @@ mod tests {
     #[test]
     fn uses_podman_cli() {
         let mut connection = connection(&[("GH_TOKEN", "ghp_supersecret")]);
-        connection.connection_options.use_podman = true;
+        connection.connection_options.engine = settings::ContainerEngine::Podman;
 
         assert_eq!(
             redacted_docker_exec(&connection, &[], &[]),
@@ -2095,8 +2246,10 @@ mod tests {
                 name: "container".to_string(),
                 container_id: "container_id".to_string(),
                 remote_user: "user".to_string(),
+                local_folder: None,
+                config_file: None,
                 upload_binary_over_docker_exec: false,
-                use_podman: false,
+                engine: settings::ContainerEngine::Docker,
                 remote_env: remote_env
                     .iter()
                     .map(|(key, value)| (key.to_string(), value.to_string()))

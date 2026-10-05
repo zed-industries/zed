@@ -9,7 +9,9 @@ use futures::TryFutureExt;
 use gpui::{AsyncApp, AsyncWindowContext, Entity};
 use project::Worktree;
 use serde::Deserialize;
-use settings::{DevContainerConnection, infer_json_indent_size, replace_value_in_json_text};
+use settings::{
+    ContainerEngine, DevContainerConnection, infer_json_indent_size, replace_value_in_json_text,
+};
 use util::rel_path::RelPath;
 use walkdir::WalkDir;
 use workspace::Workspace;
@@ -17,6 +19,7 @@ use worktree::Snapshot;
 
 use crate::{
     DevContainerContext, DevContainerFeature, DevContainerHost, DevContainerTemplate,
+    apple_container::AppleContainer,
     devcontainer_json::DevContainer,
     devcontainer_manifest::{read_devcontainer_configuration, spawn_dev_container},
     devcontainer_templates_repository,
@@ -295,14 +298,18 @@ pub fn find_configs_in_snapshot(snapshot: &Snapshot) -> Vec<DevContainerConfig> 
 /// work out, because connecting to a container built on one machine from a
 /// connection that names another silently reaches the wrong daemon.
 pub async fn start_dev_container_with_config(
-    context: DevContainerContext,
+    mut context: DevContainerContext,
     config: Option<DevContainerConfig>,
     environment: HashMap<String, String>,
     force_rebuild: bool,
     cx: &mut AsyncApp,
 ) -> Result<(DevContainerConnection, remote::DockerHost, String), DevContainerError> {
     let docker_host = context.host.docker_host()?;
-    check_for_docker(&context).await?;
+    let engine = resolve_engine(&context.host, &context.container_engines).await?;
+    // Every downstream lookup of the engine (compose parsing, the build
+    // itself) has to agree on the one just resolved here, not re-run its own
+    // priority search and risk landing on a different engine mid-build.
+    context.container_engines = vec![engine];
 
     let Some(actual_config) = config.clone() else {
         return Err(DevContainerError::NotInValidProject);
@@ -353,7 +360,7 @@ pub async fn start_dev_container_with_config(
                 container_id,
                 local_folder,
                 config_file,
-                use_podman: context.use_podman,
+                engine,
                 remote_user,
                 extension_ids,
                 remote_env: remote_env.into_iter().collect(),
@@ -369,45 +376,61 @@ pub async fn start_dev_container_with_config(
     }
 }
 
-/// The engine has to be on the machine that will build the container, which is
-/// not this one when the project is open on a remote host.
-async fn check_for_docker(context: &DevContainerContext) -> Result<(), DevContainerError> {
-    let program = if context.use_podman {
-        "podman"
-    } else {
-        "docker"
-    };
-    let mut command = context.host.command(
-        program,
-        &["--version".to_string()],
-        &HashMap::default(),
-        None,
-    )?;
+/// Probes `priority`, in order, for the first engine present on `host`, which
+/// has to be the machine that will build the container rather than this one
+/// when the project is open remotely.
+pub(crate) async fn resolve_engine(
+    host: &DevContainerHost,
+    priority: &[ContainerEngine],
+) -> Result<ContainerEngine, DevContainerError> {
+    for engine in priority {
+        let program = engine.cli_name();
+        // Apple Container's CLI is present whether or not its daemon is
+        // running; probing `--version` would pass even with a dead daemon,
+        // so probe the daemon itself and let a dead one fall through to the
+        // next engine instead of failing the whole start.
+        let probe_args = match engine {
+            ContainerEngine::AppleContainer => {
+                vec!["system".to_string(), "status".to_string()]
+            }
+            _ => vec!["--version".to_string()],
+        };
+        let mut command = host.command(program, &probe_args, &HashMap::default(), None)?;
 
-    match command.output().await {
-        Ok(output) if output.status.success() => Ok(()),
-        Ok(output) => {
-            log::error!(
+        match command.output().await {
+            Ok(output) if output.status.success() => return Ok(*engine),
+            Ok(output) => log::info!(
                 "`{program} --version` on the dev container host exited with {}",
                 output.status
-            );
-            Err(DevContainerError::DockerNotAvailable)
-        }
-        Err(e) => {
-            log::error!("Unable to run {program} on the dev container host: {:?}", e);
-            Err(DevContainerError::DockerNotAvailable)
+            ),
+            Err(e) => log::info!("Unable to run {program} on the dev container host: {:?}", e),
         }
     }
+
+    log::error!(
+        "No configured container engine is available on the dev container host (tried {})",
+        priority
+            .iter()
+            .map(|engine| engine.cli_name())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    Err(DevContainerError::DockerNotAvailable)
 }
 
 /// The engine CLI wrapper for a container whose daemon runs on `host`.
 ///
 /// Every lifecycle command has to reach the daemon that owns the container;
 /// running it against this machine's daemon would either miss the container
-/// entirely or hit an unrelated one with the same id.
-async fn engine(host: DevContainerHost, use_podman: bool) -> Docker {
-    let cli = if use_podman { "podman" } else { "docker" };
-    Docker::new(host, cli, None).await
+/// entirely or hit an unrelated one with the same id. Unlike `resolve_engine`,
+/// this never probes: the engine that built the container is already known
+/// (persisted on its connection), and re-deriving it from the priority list
+/// could land on a different one.
+async fn engine(host: DevContainerHost, engine: ContainerEngine) -> Arc<dyn DockerClient> {
+    match engine {
+        ContainerEngine::AppleContainer => Arc::new(AppleContainer::new(host)),
+        _ => Arc::new(Docker::new(host, engine.cli_name(), None).await),
+    }
 }
 
 /// The local (host) project directory and devcontainer config a running
@@ -425,9 +448,9 @@ pub struct DevContainerOrigin {
 pub async fn dev_container_origin(
     container_id: &str,
     host: DevContainerHost,
-    use_podman: bool,
+    container_engine: ContainerEngine,
 ) -> Result<DevContainerOrigin, DevContainerError> {
-    let docker = engine(host, use_podman).await;
+    let docker = engine(host, container_engine).await;
 
     let inspect = docker.inspect(&container_id.to_string()).await?;
     let labels = &inspect.config.labels;
@@ -457,9 +480,9 @@ pub async fn dev_container_origin(
 pub async fn stop_dev_container(
     container_id: &str,
     host: DevContainerHost,
-    use_podman: bool,
+    container_engine: ContainerEngine,
 ) -> Result<(), DevContainerError> {
-    let docker = engine(host, use_podman).await;
+    let docker = engine(host, container_engine).await;
 
     docker.stop_container(container_id).await
 }
@@ -472,9 +495,9 @@ pub async fn stop_dev_container(
 pub async fn start_dev_container(
     container_id: &str,
     host: DevContainerHost,
-    use_podman: bool,
+    container_engine: ContainerEngine,
 ) -> Result<(), DevContainerError> {
-    let docker = engine(host, use_podman).await;
+    let docker = engine(host, container_engine).await;
 
     docker.start_container(container_id).await
 }
@@ -488,9 +511,9 @@ pub async fn start_dev_container(
 pub async fn restart_dev_container(
     container_id: &str,
     host: DevContainerHost,
-    use_podman: bool,
+    container_engine: ContainerEngine,
 ) -> Result<(), DevContainerError> {
-    let docker = engine(host, use_podman).await;
+    let docker = engine(host, container_engine).await;
 
     docker.stop_container(container_id).await?;
     docker.start_container(container_id).await
@@ -504,9 +527,9 @@ pub async fn restart_dev_container(
 pub async fn remove_dev_container(
     container_id: &str,
     host: DevContainerHost,
-    use_podman: bool,
+    container_engine: ContainerEngine,
 ) -> Result<(), DevContainerError> {
-    let docker = engine(host, use_podman).await;
+    let docker = engine(host, container_engine).await;
 
     docker.remove_container(container_id).await
 }

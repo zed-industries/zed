@@ -99,7 +99,7 @@ impl From<Connection> for RemoteConnectionOptions {
                     local_folder: Some(conn.local_folder),
                     config_file: Some(conn.config_file),
                     upload_binary_over_docker_exec: false,
-                    use_podman: conn.use_podman,
+                    engine: conn.engine,
                     remote_env: conn.remote_env,
                     host,
                 })
@@ -752,7 +752,7 @@ mod tests {
             container_id: "abc123".to_string(),
             local_folder: String::new(),
             config_file: String::new(),
-            use_podman: false,
+            engine: settings::ContainerEngine::Docker,
             extension_ids: Vec::new(),
             remote_env: Default::default(),
         };

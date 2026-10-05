@@ -288,7 +288,7 @@ impl Docker {
     }
 }
 
-fn no_env() -> HashMap<String, String> {
+pub(crate) fn no_env() -> HashMap<String, String> {
     HashMap::new()
 }
 
@@ -367,11 +367,11 @@ fn compose_build_env(is_podman: bool, has_buildx: bool) -> HashMap<String, Strin
     env
 }
 
-fn start_container_args(id: &str) -> Vec<String> {
+pub(crate) fn start_container_args(id: &str) -> Vec<String> {
     vec!["start".to_string(), id.to_string()]
 }
 
-fn exec_args(
+pub(crate) fn exec_args(
     container_id: &str,
     remote_folder: &str,
     user: &str,
@@ -590,6 +590,18 @@ impl DockerClient for Docker {
         self.docker_cli == "podman"
     }
 
+    fn supports_sig_proxy(&self) -> bool {
+        true
+    }
+
+    fn supports_mount_consistency(&self) -> bool {
+        true
+    }
+
+    fn sets_buildkit_env(&self) -> bool {
+        self.docker_cli == "docker"
+    }
+
     fn docker_cli(&self) -> String {
         self.docker_cli.clone()
     }
@@ -674,6 +686,20 @@ pub(crate) trait DockerClient {
     /// transport when that machine is not this one.
     fn deploy(&self, command: Command) -> Result<Command, DevContainerError>;
     fn is_podman(&self) -> bool;
+    /// Whether this engine's `run` subcommand accepts `--sig-proxy`. True for
+    /// Docker and Podman; Apple's `container` CLI has no such flag and
+    /// rejects the invocation outright if it's passed.
+    fn supports_sig_proxy(&self) -> bool;
+    /// Whether this engine's `--mount` parser accepts the macOS-only Docker
+    /// Desktop `consistency=cached` performance hint. True for Docker and
+    /// Podman; Apple's `container` CLI rejects it as an unknown directive.
+    fn supports_mount_consistency(&self) -> bool;
+    /// Whether this engine understands the `DOCKER_BUILDKIT` environment
+    /// variable at all — true only for plain Docker. Podman and Apple
+    /// Container both always use their own classic builder and have no such
+    /// variable to set or clear, so callers that force it off for one classic
+    /// builder must not do so for the others.
+    fn sets_buildkit_env(&self) -> bool;
     /// The engine's program name, for diagnostics. Prefer [`Self::new_command`]
     /// when building an invocation.
     fn docker_cli(&self) -> String;

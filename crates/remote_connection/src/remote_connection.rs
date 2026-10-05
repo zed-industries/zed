@@ -882,7 +882,7 @@ mod tests {
                 local_folder: None,
                 config_file: None,
                 upload_binary_over_docker_exec: false,
-                use_podman: false,
+                engine: settings::ContainerEngine::Docker,
                 remote_env: Default::default(),
                 host,
             })

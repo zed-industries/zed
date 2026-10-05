@@ -10,6 +10,7 @@ use picker::Picker;
 use picker::PickerDelegate;
 use project::ProjectEnvironment;
 use remote::{RemoteClient, RemoteConnection};
+use settings::ContainerEngine;
 use settings::RegisterSetting;
 use settings::Settings;
 use std::collections::HashMap;
@@ -44,6 +45,7 @@ use workspace::{ModalView, Workspace, with_active_or_new_workspace};
 
 use http_client::HttpClient;
 
+mod apple_container;
 mod command_json;
 mod devcontainer_api;
 mod devcontainer_json;
@@ -395,7 +397,9 @@ pub struct DevContainerContext {
     /// The connection to the host's Zed server, when the project is remote.
     /// Used for host operations that are proto requests rather than commands.
     pub remote_client: Option<Entity<RemoteClient>>,
-    pub use_podman: bool,
+    /// Container engines to try building with, in priority order. Resolved
+    /// against the host by [`crate::devcontainer_api::resolve_engine`].
+    pub container_engines: Vec<ContainerEngine>,
     pub use_buildkit: Option<bool>,
     pub fs: Arc<dyn Fs>,
     pub http_client: Arc<dyn HttpClient>,
@@ -420,7 +424,7 @@ impl DevContainerContext {
         cx: &App,
     ) -> Self {
         let settings = DevContainerSettings::get_global(cx);
-        let use_podman = settings.use_podman;
+        let container_engines = settings.container_engines.clone();
         let use_buildkit = settings.use_buildkit;
         let http_client = cx.http_client().clone();
         let fs = workspace.app_state().fs.clone();
@@ -439,7 +443,7 @@ impl DevContainerContext {
             project_directory,
             host,
             remote_client,
-            use_podman,
+            container_engines,
             use_buildkit,
             fs,
             http_client,
@@ -571,18 +575,27 @@ mod environment_source_tests {
 
 #[derive(RegisterSetting)]
 struct DevContainerSettings {
-    use_podman: bool,
+    container_engines: Vec<ContainerEngine>,
     use_buildkit: Option<bool>,
 }
 
-pub fn use_podman(cx: &App) -> bool {
-    DevContainerSettings::get_global(cx).use_podman
+pub fn container_engines(cx: &App) -> Vec<ContainerEngine> {
+    DevContainerSettings::get_global(cx).container_engines.clone()
 }
 
 impl Settings for DevContainerSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
+        let container_engines = match &content.remote.container_engines {
+            Some(engines) => engines.clone(),
+            // `use_podman` is deprecated in favor of `container_engines`; it
+            // still governs the default when the new setting is unset, so a
+            // settings.json written before `container_engines` existed keeps
+            // behaving the same way.
+            None if content.remote.use_podman.unwrap_or(false) => vec![ContainerEngine::Podman],
+            None => vec![ContainerEngine::Docker, ContainerEngine::Podman],
+        };
         Self {
-            use_podman: content.remote.use_podman.unwrap_or(false),
+            container_engines,
             use_buildkit: content.remote.dev_container_use_buildkit,
         }
     }

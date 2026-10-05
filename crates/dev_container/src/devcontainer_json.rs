@@ -74,8 +74,13 @@ pub(crate) struct MountDefinition {
     pub(crate) mount_type: Option<String>,
 }
 
-impl Display for MountDefinition {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl MountDefinition {
+    /// Renders as a `--mount` argument value. `include_consistency` controls
+    /// whether the macOS-only `consistency=cached` Docker Desktop
+    /// performance hint is appended; Apple's `container` CLI's mount parser
+    /// rejects it as an unknown directive, so engines other than Docker and
+    /// Podman must pass `false`.
+    pub(crate) fn to_mount_arg(&self, include_consistency: bool) -> String {
         let mount_type = self.mount_type.clone().unwrap_or_else(|| {
             if let Some(source) = &self.source {
                 if source.starts_with('/')
@@ -88,11 +93,21 @@ impl Display for MountDefinition {
             }
             "volume".to_string()
         });
-        write!(f, "type={}", mount_type)?;
+        let mut arg = format!("type={}", mount_type);
         if let Some(source) = &self.source {
-            write!(f, ",source={}", source)?;
+            arg.push_str(&format!(",source={}", source));
         }
-        write!(f, ",target={},consistency=cached", self.target)
+        arg.push_str(&format!(",target={}", self.target));
+        if include_consistency {
+            arg.push_str(",consistency=cached");
+        }
+        arg
+    }
+}
+
+impl Display for MountDefinition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_mount_arg(true))
     }
 }
 

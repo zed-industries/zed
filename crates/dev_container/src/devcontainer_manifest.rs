@@ -19,8 +19,9 @@ use util::{
 
 use crate::{
     DevContainerConfig, DevContainerContext, DevContainerHost,
+    apple_container::AppleContainer,
     command_json::{CommandRunner, DefaultCommandRunner},
-    devcontainer_api::{DevContainerError, DevContainerUp},
+    devcontainer_api::{DevContainerError, DevContainerUp, resolve_engine},
     devcontainer_json::{
         ContainerBuild, DevContainer, DevContainerBuildType, FeatureOptions, ForwardPort,
         MountDefinition, deserialize_devcontainer_json, deserialize_devcontainer_json_from_value,
@@ -682,7 +683,7 @@ impl DevContainerManifest {
             DevContainerBuildType::DockerCompose => true,
             _ => false,
         };
-        let use_buildkit = self.docker_client.supports_compose_buildkit() || !is_compose;
+        let use_buildkit = self.docker_client.supports_compose_buildkit();
 
         let dockerfile_base_content = if let Some(location) = &self.dockerfile_location().await {
             self.read_project_file(location).await.ok().flatten()
@@ -1772,8 +1773,16 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             }
         };
 
+        if !self.docker_client.supports_compose_buildkit() {
+            self.build_feature_content_image(cx).await?;
+        }
         self.stage_build_context(cx).await?;
-        let mut command = self.docker_client.deploy(self.create_docker_build()?)?;
+        let build_command = if self.docker_client.supports_compose_buildkit() {
+            self.create_docker_build()?
+        } else {
+            self.create_classic_docker_build()?
+        };
+        let mut command = self.docker_client.deploy(build_command)?;
 
         let output = self
             .command_runner
@@ -1786,7 +1795,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            log::error!("docker buildx build failed: {stderr}");
+            log::error!("docker build failed: {stderr}");
             return Err(DevContainerError::CommandFailed(
                 command.get_program().display().to_string(),
             ));
@@ -1885,7 +1894,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         // Without a usable BuildKit, force the classic builder: the build's
         // `FROM $BASE_IMAGE` references the locally-built features image, which
         // only resolves from the daemon's image store under the classic builder.
-        if !self.docker_client.supports_compose_buildkit() && !self.docker_client.is_podman() {
+        if !self.docker_client.supports_compose_buildkit() && self.docker_client.sets_buildkit_env()
+        {
             command.env("DOCKER_BUILDKIT", "0");
         }
         command.args(["build"]);
@@ -2006,7 +2016,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         // This path runs only when BuildKit is unavailable, so force the classic
         // builder: the feature content image is consumed by a later multi-stage
         // `FROM`, which requires it to live in the daemon's image store.
-        if !self.docker_client.is_podman() {
+        if self.docker_client.sets_buildkit_env() {
             command.env("DOCKER_BUILDKIT", "0");
         }
         command.args([
@@ -2149,6 +2159,112 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         } else {
             // Use an empty folder as the build context to avoid pulling in unneeded files.
             // The actual feature content is supplied via the BuildKit build context above.
+            command.arg(
+                self.host_build_path(&features_build_info.empty_context_dir)
+                    .display()
+                    .to_string(),
+            );
+        }
+
+        Ok(command)
+    }
+
+    /// The classic-builder counterpart to [`Self::create_docker_build`], for
+    /// engines without BuildKit (Docker without buildx, Podman, Apple
+    /// Container). The feature content is staged as an image beforehand (see
+    /// `build_feature_content_image`) and consumed through the Dockerfile's
+    /// own `FROM dev_container_feature_content_temp` stage rather than a
+    /// BuildKit named build context, so there is no `--build-context`,
+    /// `--load`, or `buildx` here.
+    fn create_classic_docker_build(&self) -> Result<Command, DevContainerError> {
+        let dev_container = match &self.config {
+            ConfigStatus::Deserialized(_) => {
+                log::error!(
+                    "Dev container has not yet been parsed for variable expansion. Cannot yet proceed with docker build"
+                );
+                return Err(DevContainerError::DevContainerParseFailed);
+            }
+            ConfigStatus::VariableParsed(dev_container) => dev_container,
+        };
+
+        let Some(features_build_info) = &self.features_build_info else {
+            log::error!(
+                "Cannot create docker build command; features build info has not been constructed"
+            );
+            return Err(DevContainerError::DevContainerParseFailed);
+        };
+        let mut command = self.docker_client.new_command();
+        if self.docker_client.sets_buildkit_env() {
+            command.env("DOCKER_BUILDKIT", "0");
+        }
+
+        command.arg("build");
+
+        // Build args matching the CLI reference implementation's `getFeaturesBuildOptions`
+        if let Some(build_image) = &features_build_info.build_image {
+            command.args([
+                "--build-arg",
+                &format!("_DEV_CONTAINERS_BASE_IMAGE={}", build_image),
+            ]);
+        } else {
+            command.args([
+                "--build-arg",
+                "_DEV_CONTAINERS_BASE_IMAGE=dev_container_auto_added_stage_label",
+            ]);
+        }
+
+        command.args([
+            "--build-arg",
+            &format!(
+                "_DEV_CONTAINERS_IMAGE_USER={}",
+                self.root_image
+                    .as_ref()
+                    .and_then(|docker_image| docker_image.config.image_user.as_ref())
+                    .unwrap_or(&"root".to_string())
+            ),
+        ]);
+
+        if let Some(args) = dev_container.build.as_ref().and_then(|b| b.args.as_ref()) {
+            for (key, value) in args {
+                command.args(["--build-arg", &format!("{}={}", key, value)]);
+            }
+        }
+
+        if let Some(options) = dev_container
+            .build
+            .as_ref()
+            .and_then(|b| b.options.as_ref())
+        {
+            for option in options {
+                command.arg(option);
+            }
+        }
+
+        if let Some(cache_from_images) = dev_container
+            .build
+            .as_ref()
+            .and_then(|b| b.cache_from.as_ref())
+        {
+            for cache_from_image in cache_from_images {
+                command.args(["--cache-from", cache_from_image]);
+            }
+        }
+
+        command.args(["--target", "dev_containers_target_stage"]);
+
+        command.args([
+            "-f",
+            &self
+                .host_build_path(&features_build_info.dockerfile_path)
+                .display()
+                .to_string(),
+        ]);
+
+        command.args(["-t", &features_build_info.image_tag]);
+
+        if let DevContainerBuildType::Dockerfile(build) = dev_container.build_type() {
+            command.arg(self.calculate_context_dir(build).display().to_string());
+        } else {
             command.arg(
                 self.host_build_path(&features_build_info.empty_context_dir)
                     .display()
@@ -2377,14 +2493,17 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             run_if_missing("--userns", "--userns=keep-id", &mut command);
         }
 
-        run_if_missing("--sig-proxy", "--sig-proxy=false", &mut command);
+        if self.docker_client.supports_sig_proxy() {
+            run_if_missing("--sig-proxy", "--sig-proxy=false", &mut command);
+        }
+        let include_mount_consistency = self.docker_client.supports_mount_consistency();
         command.arg("-d");
         command.arg("--mount");
-        command.arg(remote_workspace_mount.to_string());
+        command.arg(remote_workspace_mount.to_mount_arg(include_mount_consistency));
 
         for mount in &build_resources.additional_mounts {
             command.arg("--mount");
-            command.arg(mount.to_string());
+            command.arg(mount.to_mount_arg(include_mount_consistency));
         }
 
         for (key, val) in self.identifying_labels() {
@@ -2981,14 +3100,21 @@ async fn read_file_from_host(
 ///
 /// The host determines not just which engine binary to invoke but where it is
 /// invoked, so every client the manifest uses is obtained here rather than
-/// constructed at the point of use.
-async fn container_client_for(context: &DevContainerContext) -> Arc<dyn DockerClient> {
-    let engine = if context.use_podman {
-        "podman"
-    } else {
-        "docker"
-    };
-    Arc::new(Docker::new(context.host.clone(), engine, context.use_buildkit).await)
+/// constructed at the point of use. Resolves `context.container_engines`
+/// against the host rather than trusting the first entry, so a client is
+/// never built for an engine that turned out not to be there.
+async fn container_client_for(
+    context: &DevContainerContext,
+) -> Result<Arc<dyn DockerClient>, DevContainerError> {
+    let engine = resolve_engine(&context.host, &context.container_engines).await?;
+    Ok(match engine {
+        settings::ContainerEngine::AppleContainer => {
+            Arc::new(AppleContainer::new(context.host.clone()))
+        }
+        _ => Arc::new(
+            Docker::new(context.host.clone(), engine.cli_name(), context.use_buildkit).await,
+        ),
+    })
 }
 
 pub(crate) async fn read_devcontainer_configuration(
@@ -2996,7 +3122,7 @@ pub(crate) async fn read_devcontainer_configuration(
     context: &DevContainerContext,
     environment: HashMap<String, String>,
 ) -> Result<DevContainer, DevContainerError> {
-    let docker_client = container_client_for(context).await;
+    let docker_client = container_client_for(context).await?;
     let project_path = context.project_directory.as_ref();
     let config_path = config_path_for(&context.host, project_path, &config);
     let command_runner: Arc<dyn CommandRunner> = Arc::new(DefaultCommandRunner::new());
@@ -3023,7 +3149,7 @@ pub(crate) async fn spawn_dev_container(
     force_rebuild: bool,
     cx: &mut AsyncApp,
 ) -> Result<DevContainerUp, DevContainerError> {
-    let docker_client = container_client_for(context).await;
+    let docker_client = container_client_for(context).await?;
     let config_path = config_path_for(&context.host, local_project_path, &config);
     let command_runner: Arc<dyn CommandRunner> = Arc::new(DefaultCommandRunner::new());
     let devcontainer_contents =
@@ -3944,7 +4070,7 @@ mod test {
             ))),
             host: DevContainerHost::Remote(Arc::new(crate::FakeRemoteConnection::default())),
             remote_client: None,
-            use_podman: false,
+            container_engines: Vec::new(),
             use_buildkit: None,
             fs: fs.clone(),
             http_client: fake_http_client(),
@@ -4615,7 +4741,7 @@ mod test {
             project_directory: SanitizedPath::cast_arc(project_path),
             host,
             remote_client: None,
-            use_podman: false,
+            container_engines: Vec::new(),
             use_buildkit: None,
             fs: fs.clone(),
             http_client: http_client.clone(),
@@ -5918,6 +6044,116 @@ chmod +x "$SCRIPT_DIR/install.sh"
                     ),
                 ])
         }))
+    }
+
+    /// A non-compose Dockerfile build with no BuildKit (Apple Container,
+    /// Podman, or Docker without buildx) must take the classic builder path:
+    /// stage the feature content as its own image first, then build the
+    /// extended Dockerfile with a plain `build` (no `buildx`, `--load`, or
+    /// `--build-context`).
+    #[gpui::test]
+    async fn test_spawns_devcontainer_with_dockerfile_and_no_buildkit_uses_classic_build(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+        let given_devcontainer_contents = r#"
+        {
+          "build": {
+            "dockerfile": "Dockerfile",
+          },
+          "updateRemoteUserUID": false,
+        }
+        "#;
+
+        let mut fake_docker = FakeDocker::new();
+        fake_docker.set_has_buildx(false);
+        let (test_dependencies, mut devcontainer_manifest) = init_devcontainer_manifest(
+            cx,
+            FakeFs::new(cx.executor()),
+            fake_http_client(),
+            Arc::new(fake_docker),
+            Arc::new(TestCommandRunner::new()),
+            HashMap::new(),
+            given_devcontainer_contents,
+            DevContainerHost::Local,
+        )
+        .await
+        .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/Dockerfile"),
+                "FROM ubuntu:24.04\n".to_string(),
+            )
+            .await
+            .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+        devcontainer_manifest
+            .build_and_run(&mut cx.to_async())
+            .await
+            .unwrap();
+
+        let files = test_dependencies.fs.files();
+        let feature_dockerfile = files
+            .iter()
+            .find(|f| {
+                f.file_name()
+                    .is_some_and(|s| s.display().to_string() == "Dockerfile.extended")
+            })
+            .expect("to be found");
+        let feature_dockerfile = test_dependencies.fs.load(feature_dockerfile).await.unwrap();
+        assert!(
+            feature_dockerfile.contains("FROM dev_container_feature_content_temp as dev_containers_feature_content_source"),
+            "the classic builder consumes the feature content image through its own FROM stage, not a BuildKit named context: {feature_dockerfile}"
+        );
+
+        let docker_commands = test_dependencies
+            .command_runner
+            .commands_by_program("docker");
+
+        let feature_content_build = docker_commands
+            .iter()
+            .find(|c| {
+                c.args.get(0).is_some_and(|a| a == "build")
+                    && c.args.contains(&"dev_container_feature_content_temp".to_string())
+            })
+            .expect("the feature content image must be built before the final image");
+        assert!(
+            !feature_content_build.args.contains(&"buildx".to_string()),
+            "the feature content build must use the classic builder: {:?}",
+            feature_content_build.args
+        );
+
+        let final_build = docker_commands
+            .iter()
+            .find(|c| {
+                c.args.get(0).is_some_and(|a| a == "build")
+                    && !c.args.contains(&"dev_container_feature_content_temp".to_string())
+            })
+            .expect("the final image build must have run");
+        let args = &final_build.args;
+        assert!(
+            !args.contains(&"buildx".to_string()),
+            "must not use buildx: {args:?}"
+        );
+        assert!(
+            !args.contains(&"--load".to_string()),
+            "must not use --load: {args:?}"
+        );
+        assert!(
+            !args.contains(&"--build-context".to_string()),
+            "must not use a BuildKit named build context: {args:?}"
+        );
+        assert!(args.contains(&"--target".to_string()));
+        assert!(args.contains(&"dev_containers_target_stage".to_string()));
+        assert!(
+            args.iter()
+                .any(|a| a == "_DEV_CONTAINERS_IMAGE_USER=root"),
+            "the base image's user must still be threaded through: {args:?}"
+        );
     }
 
     // updateRemoteUserUID is treated as false in Windows, so this test will fail
@@ -8413,6 +8649,9 @@ RUN echo $RUBY_VERSION2
         fn set_podman(&mut self, podman: bool) {
             self.podman = podman;
         }
+        fn set_has_buildx(&mut self, has_buildx: bool) {
+            self.has_buildx = has_buildx;
+        }
         #[cfg(not(target_os = "windows"))]
         fn set_duplicate_container_ids(&self, ids: Vec<String>) {
             *self
@@ -8596,6 +8835,21 @@ RUN echo $RUBY_VERSION2
                         },
                         env: Vec::new(),
                         image_user: Some("root".to_string()),
+                    },
+                    mounts: None,
+                    state: None,
+                });
+            }
+            if id.ends_with("-features") {
+                // The hashed tag `generate_features_image_tag` produces for
+                // the built image, for tests that build a plain (non-image)
+                // Dockerfile and never name an explicit base/features tag.
+                return Ok(DockerInspect {
+                    id: format!("sha256:{id}"),
+                    config: DockerInspectConfig {
+                        labels: DockerConfigLabels::default(),
+                        image_user: Some("root".to_string()),
+                        env: Vec::new(),
                     },
                     mounts: None,
                     state: None,
@@ -8835,6 +9089,15 @@ RUN echo $RUBY_VERSION2
         }
         fn is_podman(&self) -> bool {
             self.podman
+        }
+        fn supports_sig_proxy(&self) -> bool {
+            true
+        }
+        fn supports_mount_consistency(&self) -> bool {
+            true
+        }
+        fn sets_buildkit_env(&self) -> bool {
+            !self.podman
         }
         fn docker_cli(&self) -> String {
             if self.podman {

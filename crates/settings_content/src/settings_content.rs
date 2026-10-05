@@ -1352,6 +1352,53 @@ pub enum ImageFileSizeUnit {
     Decimal,
 }
 
+/// A container engine dev containers can be built and run with.
+#[derive(
+    Default,
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerEngine {
+    #[default]
+    Docker,
+    Podman,
+    /// Apple's `container` CLI (macOS only). Never in the default priority
+    /// list: installing it must not silently change how existing projects
+    /// build.
+    AppleContainer,
+}
+
+impl ContainerEngine {
+    pub fn cli_name(self) -> &'static str {
+        match self {
+            ContainerEngine::Docker => "docker",
+            ContainerEngine::Podman => "podman",
+            ContainerEngine::AppleContainer => "container",
+        }
+    }
+
+    /// Whether this engine can run `docker compose`. Zed skips engines that
+    /// can't when the project's devcontainer.json names a compose file.
+    pub fn supports_compose(self) -> bool {
+        match self {
+            ContainerEngine::Docker => true,
+            ContainerEngine::Podman => true,
+            ContainerEngine::AppleContainer => false,
+        }
+    }
+}
+
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct RemoteSettingsContent {
@@ -1359,7 +1406,16 @@ pub struct RemoteSettingsContent {
     pub wsl_connections: Option<Vec<WslConnection>>,
     pub dev_container_connections: Option<Vec<DevContainerConnection>>,
     pub read_ssh_config: Option<bool>,
+    /// Deprecated: use `container_engines` instead. When `container_engines`
+    /// is unset and this is `true`, Zed behaves as if `container_engines` was
+    /// set to `["podman"]`.
     pub use_podman: Option<bool>,
+    /// Container engines to use for dev containers, in priority order. Zed
+    /// probes each one on the machine that will build the container and uses
+    /// the first one that is present and supports what the project needs.
+    ///
+    /// Default: `["docker", "podman"]`
+    pub container_engines: Option<Vec<ContainerEngine>>,
     /// Whether to build dev container images with BuildKit.
     ///
     /// When unset, Zed auto-detects BuildKit by probing for the `buildx` CLI
@@ -1388,7 +1444,7 @@ pub struct DevContainerConnection {
     pub local_folder: String,
     #[serde(default)]
     pub config_file: String,
-    pub use_podman: bool,
+    pub engine: ContainerEngine,
     pub extension_ids: Vec<String>,
     pub remote_env: BTreeMap<String, String>,
 }

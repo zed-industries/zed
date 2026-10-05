@@ -11,10 +11,14 @@ If your repository includes a `.devcontainer/devcontainer.json` file, Zed can op
 
 ## Requirements
 
-- Docker or Podman must be installed and available in your `PATH`. If you use `podman`, you must set the `use_podman` setting in your Zed settings.json to true.
+- Docker or Podman must be installed and available in your `PATH`.
 - Your project must contain a `.devcontainer/devcontainer.json` directory/file.
 
-By default Zed builds dev container images with BuildKit when the `docker buildx` plugin is available. If your Docker-compatible engine lacks an integrated BuildKit (for example, Apple Container accessed through a Docker-API bridge), set `"dev_container_use_buildkit": false` in your settings.json to use the classic Docker builder instead.
+By default Zed tries `docker`, then falls back to `podman`. To change the order, or to use only one engine, set `"container_engines"` in your settings.json, for example `"container_engines": ["podman"]`. Zed probes each engine on the machine that will build the container and uses the first one that is present. (The older `use_podman: true` setting still works if `container_engines` is unset, but is deprecated.)
+
+On macOS, add `"container"` to `container_engines` to build with Apple's [`container`](https://github.com/apple/container) CLI instead of Docker or Podman, for example `"container_engines": ["container", "docker"]`. `container` is never tried by default — installing it must not silently change how existing projects build. Two limitations: it only exists on macOS, so it's skipped automatically for a project opened over SSH or WSL; and it has no `docker compose` equivalent, so a devcontainer.json with a `dockerComposeFile` never selects it, falling through to the next engine in the list instead.
+
+By default Zed builds dev container images with BuildKit when the `docker buildx` plugin is available. If your Docker-compatible engine lacks an integrated BuildKit, set `"dev_container_use_buildkit": false` in your settings.json to use the classic Docker builder instead. Apple's `container` always uses the classic builder; this setting has no effect on it.
 
 ## Using Dev Containers in Zed
 

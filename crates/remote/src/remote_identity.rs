@@ -150,6 +150,7 @@ mod tests {
 
     use super::*;
     use crate::{DockerConnectionOptions, DockerHost, SshConnectionOptions, WslConnectionOptions};
+    use settings::ContainerEngine;
 
     #[test]
     fn ssh_identity_ignores_non_persisted_runtime_fields() {
@@ -220,7 +221,7 @@ mod tests {
             local_folder: Some("/home/anth/project".to_string()),
             config_file: Some("/home/anth/project/.devcontainer/devcontainer.json".to_string()),
             upload_binary_over_docker_exec: true,
-            use_podman: true,
+            engine: ContainerEngine::Podman,
             remote_env: BTreeMap::from([("FOO".to_string(), "BAR".to_string())]),
             host: Default::default(),
         });
@@ -231,7 +232,7 @@ mod tests {
             local_folder: Some("/home/anth/project".to_string()),
             config_file: Some("/home/anth/project/.devcontainer/devcontainer.json".to_string()),
             upload_binary_over_docker_exec: false,
-            use_podman: false,
+            engine: ContainerEngine::Docker,
             remote_env: BTreeMap::new(),
             host: Default::default(),
         });

@@ -68,7 +68,7 @@ fn dev_container_project_group_key_is_stable_across_rebuilds() {
                     local_folder: Some("/host/project".to_string()),
                     config_file: Some(config_file.to_string()),
                     upload_binary_over_docker_exec: false,
-                    use_podman: false,
+                    engine: settings::ContainerEngine::Docker,
                     remote_env: Default::default(),
                 },
             )),

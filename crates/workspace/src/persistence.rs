@@ -1071,6 +1071,9 @@ impl Domain for WorkspaceDb {
             ALTER TABLE remote_connections ADD COLUMN local_folder TEXT;
             ALTER TABLE remote_connections ADD COLUMN config_file TEXT;
         ),
+        sql!(
+            ALTER TABLE remote_connections ADD COLUMN container_engine TEXT;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -1758,7 +1761,7 @@ impl WorkspaceDb {
         let mut distro = None;
         let mut name = None;
         let mut container_id = None;
-        let mut use_podman = None;
+        let mut container_engine = None;
         let mut remote_env = None;
         let mut docker_host = None;
 
@@ -1807,7 +1810,7 @@ impl WorkspaceDb {
 
         if let RemoteConnectionOptions::Docker(options) = options {
             name = Some(options.name);
-            use_podman = Some(options.use_podman);
+            container_engine = Some(options.engine.cli_name().to_string());
             remote_env = serde_json::to_string(&options.remote_env).ok();
             docker_host = serialize_docker_host(&options.host);
         }
@@ -1821,7 +1824,7 @@ impl WorkspaceDb {
             distro,
             name,
             container_id,
-            use_podman,
+            container_engine,
             remote_env,
             docker_host,
         )
@@ -1830,8 +1833,8 @@ impl WorkspaceDb {
     /// Finds or creates the `remote_connections` row for a dev container,
     /// matching on the stable host labels rather than the ephemeral
     /// `container_id`. When a row already exists, its runtime fields
-    /// (`container_id`, `name`, `use_podman`, `remote_env`) are refreshed so a
-    /// later reconnect uses the most recent values.
+    /// (`container_id`, `name`, `container_engine`, `remote_env`) are refreshed
+    /// so a later reconnect uses the most recent values.
     fn get_or_create_dev_container_connection_query(
         this: &Connection,
         docker: &DockerConnectionOptions,
@@ -1842,7 +1845,7 @@ impl WorkspaceDb {
         let user = docker.remote_user.clone();
         let name = docker.name.clone();
         let container_id = docker.container_id.clone();
-        let use_podman = docker.use_podman;
+        let container_engine = docker.engine.cli_name().to_string();
         let remote_env = serde_json::to_string(&docker.remote_env).ok();
         // The same project folder built on two different daemon hosts is two
         // different containers, so the host is part of the key.
@@ -1867,9 +1870,9 @@ impl WorkspaceDb {
         ))? {
             this.exec_bound(sql!(
                 UPDATE remote_connections
-                SET container_id = ?, name = ?, use_podman = ?, remote_env = ?
+                SET container_id = ?, name = ?, container_engine = ?, remote_env = ?
                 WHERE id = ?
-            ))?((container_id, name, use_podman, remote_env, id))?;
+            ))?((container_id, name, container_engine, remote_env, id))?;
             Ok(RemoteConnectionId(id))
         } else {
             let id = this.select_row_bound(sql!(
@@ -1878,7 +1881,7 @@ impl WorkspaceDb {
                     user,
                     name,
                     container_id,
-                    use_podman,
+                    container_engine,
                     remote_env,
                     local_folder,
                     config_file,
@@ -1890,7 +1893,7 @@ impl WorkspaceDb {
                 user,
                 name,
                 container_id,
-                use_podman,
+                container_engine,
                 remote_env,
                 local_folder,
                 config_file,
@@ -1910,7 +1913,7 @@ impl WorkspaceDb {
         distro: Option<String>,
         name: Option<String>,
         container_id: Option<String>,
-        use_podman: Option<bool>,
+        container_engine: Option<String>,
         remote_env: Option<String>,
         docker_host: Option<String>,
     ) -> Result<RemoteConnectionId> {
@@ -1948,7 +1951,7 @@ impl WorkspaceDb {
                     distro,
                     name,
                     container_id,
-                    use_podman,
+                    container_engine,
                     remote_env,
                     docker_host
                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
@@ -1961,7 +1964,7 @@ impl WorkspaceDb {
                 distro,
                 name,
                 container_id,
-                use_podman,
+                container_engine,
                 remote_env,
                 docker_host,
             ))?
@@ -2086,7 +2089,7 @@ impl WorkspaceDb {
         Ok(self.select(sql!(
             SELECT
                 id, kind, host, port, user, distro, container_id, name, use_podman,
-                remote_env, local_folder, config_file, docker_host
+                remote_env, local_folder, config_file, docker_host, container_engine
             FROM
                 remote_connections
         ))?()?
@@ -2102,7 +2105,7 @@ impl WorkspaceDb {
                 container_id,
                 name,
                 use_podman,
-                (remote_env, local_folder, config_file, docker_host),
+                (remote_env, local_folder, config_file, docker_host, container_engine),
             )| {
                 Some((
                     RemoteConnectionId(id),
@@ -2119,6 +2122,7 @@ impl WorkspaceDb {
                         local_folder,
                         config_file,
                         docker_host,
+                        container_engine,
                     )?,
                 ))
             },
@@ -2139,10 +2143,10 @@ impl WorkspaceDb {
             container_id,
             name,
             use_podman,
-            (remote_env, local_folder, config_file, docker_host),
+            (remote_env, local_folder, config_file, docker_host, container_engine),
         ) = self.select_row_bound(sql!(
             SELECT kind, host, port, user, distro, container_id, name, use_podman,
-                remote_env, local_folder, config_file, docker_host
+                remote_env, local_folder, config_file, docker_host, container_engine
             FROM remote_connections
             WHERE id = ?
         ))?(id.0)?
@@ -2160,8 +2164,25 @@ impl WorkspaceDb {
             local_folder,
             config_file,
             docker_host,
+            container_engine,
         )
         .context("invalid remote_connection row")
+    }
+
+    /// Builds a `RemoteConnectionOptions::Docker`'s engine from a row's
+    /// `container_engine` column, falling back to the deprecated `use_podman`
+    /// bool for rows written before `container_engine` existed.
+    fn container_engine_from_row(
+        container_engine: Option<String>,
+        use_podman: Option<bool>,
+    ) -> settings::ContainerEngine {
+        match container_engine.as_deref() {
+            Some("podman") => settings::ContainerEngine::Podman,
+            Some("docker") => settings::ContainerEngine::Docker,
+            Some("container") => settings::ContainerEngine::AppleContainer,
+            _ if use_podman.unwrap_or(false) => settings::ContainerEngine::Podman,
+            _ => settings::ContainerEngine::Docker,
+        }
     }
 
     fn remote_connection_from_row(
@@ -2177,6 +2198,7 @@ impl WorkspaceDb {
         local_folder: Option<String>,
         config_file: Option<String>,
         docker_host: Option<String>,
+        container_engine: Option<String>,
     ) -> Option<RemoteConnectionOptions> {
         match RemoteConnectionKind::deserialize(&kind)? {
             RemoteConnectionKind::Wsl => Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
@@ -2199,7 +2221,7 @@ impl WorkspaceDb {
                     local_folder,
                     config_file,
                     upload_binary_over_docker_exec: false,
-                    use_podman: use_podman?,
+                    engine: Self::container_engine_from_row(container_engine, use_podman),
                     remote_env,
                     host: deserialize_docker_host(docker_host),
                 }))
@@ -4509,7 +4531,7 @@ mod tests {
                 local_folder: Some(local_folder.clone()),
                 config_file: Some(config_file.clone()),
                 upload_binary_over_docker_exec: false,
-                use_podman: false,
+                engine: settings::ContainerEngine::Docker,
                 remote_env: BTreeMap::default(),
             })
         };
@@ -4551,7 +4573,7 @@ mod tests {
                 "/home/user/project/.devcontainer/backend/devcontainer.json".to_string(),
             ),
             upload_binary_over_docker_exec: false,
-            use_podman: false,
+            engine: settings::ContainerEngine::Docker,
             remote_env: BTreeMap::default(),
         });
         let different = db
@@ -4669,7 +4691,7 @@ mod tests {
                 local_folder: None,
                 config_file: None,
                 upload_binary_over_docker_exec: false,
-                use_podman: false,
+                engine: settings::ContainerEngine::Docker,
                 remote_env: Default::default(),
                 host,
             })
@@ -4731,6 +4753,80 @@ mod tests {
             container(wsl_host),
             "a WSL host has no runtime-only fields, so it round trips whole"
         );
+    }
+
+    /// A row written by a Zed version that predates `container_engine` has
+    /// that column NULL and only the deprecated `use_podman` bool set. Reads
+    /// have to fall back to it rather than defaulting to Docker, or every
+    /// podman dev container on disk from before this column existed would
+    /// silently switch engines on next open.
+    #[gpui::test]
+    async fn test_legacy_use_podman_row_falls_back_correctly() {
+        let db = WorkspaceDb::open_test_db("test_legacy_use_podman_row_falls_back_correctly").await;
+
+        let id = db
+            .write(move |conn| -> anyhow::Result<i64> {
+                conn.exec_bound(sql!(
+                    INSERT INTO remote_connections
+                        (kind, user, name, container_id, use_podman, remote_env)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ))?((
+                    "docker".to_string(),
+                    "root".to_string(),
+                    "legacy-podman".to_string(),
+                    "container-legacy".to_string(),
+                    true,
+                    "{}".to_string(),
+                ))?;
+                Ok(conn
+                    .select_row::<i64>("SELECT last_insert_rowid()")?()?
+                    .unwrap())
+            })
+            .await
+            .unwrap();
+
+        let RemoteConnectionOptions::Docker(options) =
+            db.remote_connection(RemoteConnectionId(id as u64)).unwrap()
+        else {
+            panic!("row was inserted with kind = docker");
+        };
+        assert_eq!(options.engine, settings::ContainerEngine::Podman);
+    }
+
+    /// `container_engine_from_row` must recognize `"container"` explicitly —
+    /// falling through to the `use_podman` bool default would silently
+    /// downgrade every persisted Apple Container connection to Docker.
+    #[gpui::test]
+    async fn test_apple_container_engine_row_round_trips() {
+        let db = WorkspaceDb::open_test_db("test_apple_container_engine_row_round_trips").await;
+
+        let id = db
+            .write(move |conn| -> anyhow::Result<i64> {
+                conn.exec_bound(sql!(
+                    INSERT INTO remote_connections
+                        (kind, user, name, container_id, container_engine, remote_env)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ))?((
+                    "docker".to_string(),
+                    "root".to_string(),
+                    "apple-container-dev".to_string(),
+                    "container-apple".to_string(),
+                    "container".to_string(),
+                    "{}".to_string(),
+                ))?;
+                Ok(conn
+                    .select_row::<i64>("SELECT last_insert_rowid()")?()?
+                    .unwrap())
+            })
+            .await
+            .unwrap();
+
+        let RemoteConnectionOptions::Docker(options) =
+            db.remote_connection(RemoteConnectionId(id as u64)).unwrap()
+        else {
+            panic!("row was inserted with kind = docker");
+        };
+        assert_eq!(options.engine, settings::ContainerEngine::AppleContainer);
     }
 
     #[gpui::test]
