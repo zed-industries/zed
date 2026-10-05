@@ -63,12 +63,15 @@ pub struct GrepToolInput {
     /// Whether the regex is case-sensitive. Defaults to false (case-insensitive).
     #[serde(default)]
     pub case_sensitive: bool,
-    /// The maximum number of lines of tree-sitter ancestor node to render each matched result in the search results.
-    /// Fallback to simple context render mode if lines[ancestor_node_head..ancestor_node_head + min(lines of this ancestor node, `max_ancestor_lines`)] does not contain the matched line or tree-sitter fails.
+    /// The syntax-ancestor prefix includes its first line and up to this many following lines.
+    /// Defaults to 10.
+    /// 0 permits only the first line.
+    /// If this prefix does not contain all matched lines, or no syntax ancestor is available, use context_lines instead.
     #[serde(default = "default_max_ancestor_lines")]
     pub max_ancestor_lines: u32,
-    /// The number of context lines for simple context render mode.
-    /// Example of one simple context render result: `context_lines of lines before matched line ++ matched line ++ context_lines of lines after matched line`.
+    /// The number of lines to include before and after the matched lines in fallback context.
+    /// Defaults to 2.
+    /// Used only when no syntax ancestor is available or its capped prefix does not contain all matched lines.
     #[serde(default = "default_context_lines")]
     pub context_lines: u32,
 }
@@ -1041,6 +1044,67 @@ mod tests {
             "#
         .unindent();
         assert_eq!(result, expected);
+    }
+
+    #[gpui::test]
+    async fn test_grep_context_options(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let text = "fn sample() {\n    needle();\n}";
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "main.rs": text }))
+            .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        project.update(cx, |project, _cx| {
+            project.languages().add(language::rust_lang())
+        });
+
+        for (regex, max_ancestor_lines, context_lines, line_label, snippet, remaining_lines) in [
+            ("sample", 0, 1, "L1", "fn sample() {", Some(2)),
+            (
+                "sample",
+                1,
+                0,
+                "L1-2",
+                "fn sample() {\n    needle();",
+                Some(1),
+            ),
+            (
+                r"sample\(\) \{\n    needle",
+                0,
+                0,
+                "L1-2",
+                "fn sample() {\n    needle();",
+                None,
+            ),
+            ("needle", 0, 0, "L2", "    needle();", None),
+            ("needle", 0, 1, "L1-3", text, None),
+            ("needle", u32::MAX, 0, "L1-3", text, None),
+            ("needle", 0, u32::MAX, "L1-3", text, None),
+        ] {
+            let input = serde_json::from_value::<GrepToolInput>(json!({
+                "regex": regex,
+                "max_ancestor_lines": max_ancestor_lines,
+                "context_lines": context_lines,
+            }))
+            .expect("valid grep input");
+            let result = run_grep_tool(input, project.clone(), cx).await;
+            let mut expected = format!(
+                "Found 1 matches:\n\n## Matches in root/main.rs\n\n### fn sample › {line_label}\n```\n{snippet}\n```\n"
+            );
+            if let Some(remaining_lines) = remaining_lines {
+                writeln!(
+                    expected,
+                    "\n{remaining_lines} lines remaining in ancestor node. Read the file to see all."
+                )
+                .expect("write to string");
+            }
+            assert_eq!(
+                result, expected,
+                "regex: {regex}, max_ancestor_lines: {max_ancestor_lines}, context_lines: {context_lines}"
+            );
+        }
     }
 
     async fn run_grep_tool(
