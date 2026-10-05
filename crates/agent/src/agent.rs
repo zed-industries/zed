@@ -1455,15 +1455,8 @@ impl NativeAgent {
                 }
 
                 if let Some(model) = summarization_model.clone() {
-                    // Update thread summary model when default model is changed
-                    // to prevent a request to a previously chosen model
-                    // when the summary model is unset by the user
                     if thread.summarization_model().is_none()
-                        || matches!(
-                            event,
-                            language_model::Event::ThreadSummaryModelChanged
-                                | language_model::Event::DefaultModelChanged
-                        )
+                        || matches!(event, language_model::Event::ThreadSummaryModelChanged)
                     {
                         thread.set_summarization_model(Some(model), cx);
                     }

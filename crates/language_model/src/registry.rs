@@ -365,7 +365,13 @@ impl LanguageModelRegistry {
         match (self.default_model(), model.as_ref()) {
             (Some(old), Some(new)) if old.is_same_as(new) => {}
             (None, None) => {}
-            _ => cx.emit(Event::DefaultModelChanged),
+            _ => {
+                cx.emit(Event::DefaultModelChanged);
+                // Emit the feature specific event in case the feature specific model is unset
+                if self.thread_summary_model.is_none() {
+                    cx.emit(Event::ThreadSummaryModelChanged);
+                }
+            }
         }
         self.default_model = model;
     }
@@ -528,6 +534,7 @@ impl LanguageModelRegistry {
 mod tests {
     use super::*;
     use crate::fake_provider::FakeLanguageModelProvider;
+    use std::{cell::RefCell, rc::Rc};
 
     #[test]
     fn selected_model_allows_slashes_in_model_id() {
@@ -735,6 +742,80 @@ mod tests {
             registry.set_should_use_fallback(false);
             assert!(registry.inline_assistant_model().is_none());
         });
+    }
+
+    #[gpui::test]
+    fn thread_summary_model_updated_when_unset(cx: &mut App) {
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+        let provider = FakeLanguageModelProvider::default();
+        let [first_default, second_default] = ["first", "second"].map(|id| provider.model(id));
+
+        let events = Rc::new(RefCell::new(Vec::<&'static str>::new()));
+        let _subscription = cx.subscribe(&registry, {
+            let events = events.clone();
+            move |_: Entity<LanguageModelRegistry>, event: &Event, _: &mut App| match event {
+                Event::DefaultModelChanged => events.borrow_mut().push("default"),
+                Event::ThreadSummaryModelChanged => events.borrow_mut().push("summary"),
+                _ => {}
+            }
+        });
+
+        registry.update(cx, |registry, cx| {
+            registry.set_default_model(Some(first_default.clone()), cx);
+        });
+        assert_eq!(&*events.borrow(), &["default", "summary"]);
+        assert!(
+            registry
+                .read(cx)
+                .thread_summary_model(cx)
+                .is_some_and(|model| model.is_same_as(&first_default))
+        );
+
+        registry.update(cx, |registry, cx| {
+            registry.set_default_model(Some(second_default.clone()), cx);
+        });
+        assert_eq!(
+            &*events.borrow(),
+            &["default", "summary", "default", "summary"]
+        );
+        assert!(
+            registry
+                .read(cx)
+                .thread_summary_model(cx)
+                .is_some_and(|model| model.is_same_as(&second_default))
+        );
+    }
+
+    #[gpui::test]
+    fn thread_summary_model_untouched_when_set(cx: &mut App) {
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+        let provider = FakeLanguageModelProvider::default();
+        let [summary_model, default_model] = ["summary", "default"].map(|id| provider.model(id));
+
+        registry.update(cx, |registry, cx| {
+            registry.set_thread_summary_model(Some(summary_model.clone()), cx);
+        });
+
+        let events = Rc::new(RefCell::new(Vec::<&'static str>::new()));
+        let _subscription = cx.subscribe(&registry, {
+            let events = events.clone();
+            move |_: Entity<LanguageModelRegistry>, event: &Event, _: &mut App| match event {
+                Event::DefaultModelChanged => events.borrow_mut().push("default"),
+                Event::ThreadSummaryModelChanged => events.borrow_mut().push("summary"),
+                _ => {}
+            }
+        });
+
+        registry.update(cx, |registry, cx| {
+            registry.set_default_model(Some(default_model), cx);
+        });
+        assert_eq!(&*events.borrow(), &["default"]);
+        assert!(
+            registry
+                .read(cx)
+                .thread_summary_model(cx)
+                .is_some_and(|model| model.is_same_as(&summary_model))
+        );
     }
 
     #[gpui::test]
