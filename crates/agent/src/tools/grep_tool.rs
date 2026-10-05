@@ -64,7 +64,7 @@ pub struct GrepToolInput {
     #[serde(default)]
     pub case_sensitive: bool,
     /// The maximum number of lines of tree-sitter ancestor node to render each matched result in the search results.
-    /// Fallback to simple context render mode if lines of one ancestor node are greater than the maximum allowed or tree-sitter fails.
+    /// Fallback to simple context render mode if lines[ancestor_node_head..ancestor_node_head + min(lines of this ancestor node, `max_ancestor_lines`)] does not contain the matched line or tree-sitter fails.
     #[serde(default = "default_max_ancestor_lines")]
     pub max_ancestor_lines: u32,
     /// The number of context lines for simple context render mode.
@@ -267,7 +267,7 @@ impl AgentTool for GrepTool {
 
                         if let Some(ancestor_node) = snapshot.syntax_ancestor(full_lines.clone()) {
                             let full_ancestor_range = ancestor_node.byte_range().to_point(&snapshot);
-                            let end_row = full_ancestor_range.end.row.min(full_ancestor_range.start.row + input.max_ancestor_lines);
+                            let end_row = full_ancestor_range.end.row.min(full_ancestor_range.start.row.saturating_add(input.max_ancestor_lines));
                             let end_col = snapshot.line_len(end_row);
                             let capped_ancestor_range = Point::new(full_ancestor_range.start.row, 0)..Point::new(end_row, end_col);
 
@@ -282,7 +282,7 @@ impl AgentTool for GrepTool {
                             matched.start.row.saturating_sub(input.context_lines);
                         matched.end.row = cmp::min(
                             snapshot.max_point().row,
-                            matched.end.row + input.context_lines,
+                            matched.end.row.saturating_add(input.context_lines),
                         );
                         matched.end.column = snapshot.line_len(matched.end.row);
 
