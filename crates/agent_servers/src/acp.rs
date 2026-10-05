@@ -126,6 +126,8 @@ type SubagentThreads = Rc<RefCell<HashMap<acp::SessionId, Subagent>>>;
 /// A child session the agent created to do delegated work.
 struct Subagent {
     parent_session_id: acp::SessionId,
+    /// What to call the child in the parent's transcript.
+    name: String,
     /// The child's thread, held until the UI asks for it.
     ///
     /// A subagent session is created by the agent, not by us, so no
@@ -5846,6 +5848,7 @@ exit 7
         let store = cx.new(|_| ElicitationStore::default());
         let context = ClientContext {
             sessions: Rc::new(RefCell::new(HashMap::default())),
+            subagents: Rc::new(RefCell::new(HashMap::default())),
             session_list: Rc::new(RefCell::new(None)),
             request_elicitations: store.clone(),
         };
@@ -5920,6 +5923,7 @@ exit 7
     async fn disconnect_cleanup_runs_once_for_both_completion_paths(cx: &mut gpui::TestAppContext) {
         let context = ClientContext {
             sessions: Rc::new(RefCell::new(HashMap::default())),
+            subagents: Rc::new(RefCell::new(HashMap::default())),
             session_list: Rc::new(RefCell::new(None)),
             request_elicitations: cx.new(|_| ElicitationStore::default()),
         };
@@ -5942,6 +5946,133 @@ exit 7
             .await
             .expect("connection completion cleanup");
         assert!(receiver.next().now_or_never().is_none());
+    }
+
+    /// A `session/update` the typed schema cannot build, sent the way an agent
+    /// that implements the draft subagent updates sends it.
+    fn raw_session_update(session_id: &str, update: serde_json::Value) -> UntypedMessage {
+        UntypedMessage::new(
+            "session/update",
+            serde_json::json!({ "sessionId": session_id, "update": update }),
+        )
+        .expect("a raw session update should serialize")
+    }
+
+    #[gpui::test]
+    async fn subagents_become_sessions_of_their_own(cx: &mut gpui::TestAppContext) {
+        let (agent_sender, agent_receiver) = futures::channel::oneshot::channel();
+        let (connection, project, load_count, _, _, _, _keep_agent_alive) =
+            connect_fake_agent_with_handle(None, Some(agent_sender), cx).await;
+        let agent = agent_receiver.await.expect("fake agent handle");
+        let work_dirs = PathList::new(&[std::path::Path::new("/a")]);
+
+        let parent_session_id = acp::SessionId::new("parent-session");
+        let parent = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    parent_session_id.clone(),
+                    project.clone(),
+                    work_dirs.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("load parent session");
+        assert_eq!(load_count.load(Ordering::SeqCst), 1);
+
+        // The agent announces a child session it created for delegated work.
+        agent
+            .send_notification(raw_session_update(
+                "parent-session",
+                serde_json::json!({
+                    "sessionUpdate": "subagent_spawned",
+                    "subagentSessionId": "child-session",
+                    "name": "Explore",
+                    "task": "Find the callers of `foo`",
+                    "prompt": "Find every caller of `foo`.",
+                    "capabilities": { "cancel": true },
+                }),
+            ))
+            .expect("the spawn should reach the client");
+        cx.run_until_parked();
+
+        // The child's own work arrives on the child's session, attributed to
+        // the call that spawned it.
+        agent
+            .send_notification(raw_session_update(
+                "child-session",
+                serde_json::json!({
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": { "type": "text", "text": "looking" },
+                    "_meta": { "claudeCode": { "parentToolUseId": "toolu_1" } },
+                }),
+            ))
+            .expect("the child's work should reach the client");
+        cx.run_until_parked();
+
+        let child_session_id = acp::SessionId::new("child-session");
+        let child = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    child_session_id.clone(),
+                    project,
+                    work_dirs,
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("the child thread should already exist");
+        assert_eq!(
+            load_count.load(Ordering::SeqCst),
+            1,
+            "the agent owns the child session, so loading it must not reach the agent"
+        );
+
+        child.read_with(cx, |child, cx| {
+            assert_eq!(child.parent_session_id(), Some(&parent_session_id));
+            assert_eq!(child.title().as_deref(), Some("Explore"));
+            let transcript = child
+                .entries()
+                .iter()
+                .map(|entry| entry.to_markdown(cx))
+                .collect::<String>();
+            assert!(
+                transcript.contains("Find every caller of `foo`."),
+                "the child's prompt should open its transcript, got: {transcript}"
+            );
+            assert!(
+                transcript.contains("looking"),
+                "the child's work should land in the child's transcript, got: {transcript}"
+            );
+        });
+
+        parent.read_with(cx, |parent, cx| {
+            let (_, tool_call) = parent
+                .tool_call(&acp::ToolCallId::new("toolu_1"))
+                .expect("the parent should host the delegation as a tool call");
+            assert!(
+                tool_call.to_markdown(cx).contains("Explore"),
+                "the hosting call should be named after the subagent"
+            );
+            assert!(tool_call.is_subagent());
+            let info = tool_call
+                .subagent_session_info
+                .as_ref()
+                .expect("the hosting call should name the child session");
+            assert_eq!(info.session_id, child_session_id);
+
+            let transcript = parent
+                .entries()
+                .iter()
+                .map(|entry| entry.to_markdown(cx))
+                .collect::<String>();
+            assert!(
+                !transcript.contains("looking"),
+                "the child's work must stay out of the parent transcript, got: {transcript}"
+            );
+        });
     }
 
     #[gpui::test]
@@ -7465,6 +7596,7 @@ fn open_subagent_session(
             session_id.clone(),
             Subagent {
                 parent_session_id,
+                name: spawned.name,
                 thread: Some(thread),
                 linked_to_parent_tool_call: false,
             },
@@ -7474,19 +7606,24 @@ fn open_subagent_session(
     });
 }
 
-/// Tells the parent's tool call which child session is doing its work.
+/// Opens the parent's tool call that hosts a child session's work.
 ///
-/// The spawn notification does not name that tool call, but the agent
-/// attributes the child's own updates to it, so the first attributed update
-/// gives us the pair. Stamping the link onto the tool call is what makes the
-/// parent render the child inside the call that started it instead of leaving
-/// it an unexplained second thread.
+/// An agent that reports subagents as sessions of their own does not report
+/// the spawning call as an ordinary tool call — the child session is where the
+/// work shows up — so the parent transcript has nothing standing for the
+/// delegation until we put it there. The spawn does not name that call either,
+/// but the agent attributes the child's own updates to it, so the first
+/// attributed update gives us the pair.
+///
+/// The call we open carries the link that makes the parent render the child
+/// inside it. Whatever the agent later reports for the same call — its result,
+/// its status — merges into this one.
 fn handle_subagent_attribution(
     attribution: subagent_updates::SubagentAttribution,
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
-    let parent_session_id = {
+    let (parent_session_id, title) = {
         let mut subagents = ctx.subagents.borrow_mut();
         let Some(subagent) = subagents.get_mut(&attribution.session_id) else {
             // Not a child session: an agent that reports subagent work inline
@@ -7497,7 +7634,7 @@ fn handle_subagent_attribution(
             return;
         }
         subagent.linked_to_parent_tool_call = true;
-        subagent.parent_session_id.clone()
+        (subagent.parent_session_id.clone(), subagent.name.clone())
     };
 
     let Some(parent) = ctx
@@ -7519,16 +7656,15 @@ fn handle_subagent_attribution(
             let Some(info) = serde_json::to_value(info).log_err() else {
                 return;
             };
-            let update = acp::ToolCallUpdate::new(
-                attribution.parent_tool_call_id,
-                acp::ToolCallUpdateFields::new(),
-            )
-            .meta(acp::Meta::from_iter([(
-                acp_thread::SUBAGENT_SESSION_INFO_META_KEY.into(),
-                info,
-            )]));
+            let tool_call = acp::ToolCall::new(attribution.parent_tool_call_id, title)
+                .kind(acp::ToolKind::Think)
+                .status(acp::ToolCallStatus::InProgress)
+                .meta(acp::Meta::from_iter([(
+                    acp_thread::SUBAGENT_SESSION_INFO_META_KEY.into(),
+                    info,
+                )]));
             parent
-                .handle_session_update(acp::SessionUpdate::ToolCallUpdate(update), cx)
+                .handle_session_update(acp::SessionUpdate::ToolCall(tool_call), cx)
                 .log_err();
         });
     });
