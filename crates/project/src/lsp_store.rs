@@ -8954,18 +8954,23 @@ impl LspStore {
                 for_servers.as_ref(),
                 cx,
             );
-            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-            cx.background_spawn(async move {
-                Ok(inlay_hints_task
-                    .await
-                    .into_iter()
-                    .map(|(server_id, new_hints)| {
-                        (
-                            server_id,
-                            inlay_hints::hints_in_range(new_hints, &range, &buffer_snapshot),
-                        )
-                    })
-                    .collect())
+            let buffer = buffer.clone();
+            cx.spawn(async move |_, cx| {
+                let inlay_hints = inlay_hints_task.await;
+                // Response conversion can anchor hints to edits made while the request was pending.
+                let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+                cx.background_spawn(async move {
+                    Ok(inlay_hints
+                        .into_iter()
+                        .map(|(server_id, new_hints)| {
+                            (
+                                server_id,
+                                inlay_hints::hints_in_range(new_hints, &range, &buffer_snapshot),
+                            )
+                        })
+                        .collect())
+                })
+                .await
             })
         }
     }
@@ -16892,6 +16897,87 @@ fn extend_formatting_transaction(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    async fn test_fetch_inlay_hints_after_buffer_edit(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            util::path!("/the-root"),
+            serde_json::json!({ "main.rs": "fn main() {}" }),
+        )
+        .await;
+        let project = crate::Project::test(fs, [util::path!("/the-root").as_ref()], cx).await;
+        let languages = project.read_with(cx, |project, _| project.languages().clone());
+        languages.add(language::rust_lang());
+        let mut fake_servers = languages.register_fake_lsp(
+            "Rust",
+            language::FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        let (buffer, _lsp_handle) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(util::path!("/the-root/main.rs"), cx)
+            })
+            .await
+            .expect("open buffer");
+        let fake_server = fake_servers.next().await.expect("start language server");
+        let server_id = fake_server.server.server_id();
+        cx.run_until_parked();
+
+        let (request_sender, request_receiver) = async_channel::bounded(1);
+        let (response_sender, response_receiver) = async_channel::bounded(1);
+        fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |_, _| {
+            let request_sender = request_sender.clone();
+            let response_receiver = response_receiver.clone();
+            async move {
+                request_sender.send(()).await?;
+                response_receiver.recv().await?;
+                Ok(Some(vec![lsp::InlayHint {
+                    position: lsp::Position::new(0, 1),
+                    label: lsp::InlayHintLabel::String("hint".to_string()),
+                    kind: Some(lsp::InlayHintKind::TYPE),
+                    text_edits: None,
+                    tooltip: None,
+                    padding_left: None,
+                    padding_right: None,
+                    data: None,
+                }]))
+            }
+        });
+        let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+        let hints_task = lsp_store.update(cx, |lsp_store, cx| {
+            let snapshot = buffer.read(cx).snapshot();
+            lsp_store.fetch_inlay_hints(
+                None,
+                &buffer,
+                snapshot.anchor_before(0)..snapshot.anchor_after(snapshot.len()),
+                cx,
+            )
+        });
+        request_receiver.recv().await.expect("receive request");
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "// edited\n")], None, cx);
+        });
+        response_sender.send(()).await.expect("release response");
+
+        let hints_by_server = hints_task.await.expect("fetch hints");
+        let hints = hints_by_server.get(&server_id).expect("server hints");
+        assert_eq!(hints.len(), 1);
+        buffer.read_with(cx, |buffer, _| {
+            let hint = hints.first().expect("hint in inserted text");
+            assert_eq!(hint.position.to_offset(buffer), 1);
+        });
+    }
 
     #[test]
     fn should_log_lsp_request_failure_suppresses_known_noise() {
