@@ -985,12 +985,11 @@ impl Vim {
                         action.preserve_clipboard = true;
                         vim.paste(&action, window, cx);
                     }
-                    Mode::HelixSelect => {
-                        vim.update_editor(cx, |_, editor, cx| editor.paste(&Paste, window, cx));
-                        vim.switch_mode(Mode::HelixNormal, true, window, cx);
-                    }
                     _ => {
                         vim.update_editor(cx, |_, editor, cx| editor.paste(&Paste, window, cx));
+                        if vim.mode == Mode::HelixSelect {
+                            vim.switch_mode(Mode::HelixNormal, true, window, cx);
+                        }
                     }
                 },
             );
