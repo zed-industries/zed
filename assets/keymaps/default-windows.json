@@ -383,6 +383,15 @@
     },
   },
   {
+    "context": "Elicitation || (Elicitation > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "menu::Confirm",
+      "tab": "menu::SelectNext",
+      "shift-tab": "menu::SelectPrevious",
+    },
+  },
+  {
     "context": "ThreadHistory",
     "use_key_equivalents": true,
     "bindings": {
@@ -606,7 +615,7 @@
     },
   },
   {
-    "context": "Editor && (extension == csv || extension == tsv || extension == ssv || extension == psv)",
+    "context": "Editor && (extension == csv || extension == tsv || extension == ssv || extension == psv || extension == jsonl || extension == ndjson)",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-k v": "tabular_data::OpenPreviewToTheSide",
@@ -625,6 +634,7 @@
     "context": "Workspace",
     "use_key_equivalents": true,
     "bindings": {
+      "alt-/": "which_key::ShowPendingBindings",
       // Move focus between the major regions of the window (editor, open
       // panels, status bar). Accessibility navigation; mirrors VS Code's
       // "Focus Next/Previous Part". `ctrl-f6` mirrors `f6` so region navigation
@@ -716,8 +726,9 @@
       // or by tag:
       // "foo-bar": ["task::Spawn", { "task_tag": "MyTag" }],
       "f5": "debugger::Rerun",
-      "ctrl-f4": "workspace::CloseActiveDock",
-      "ctrl-w": "workspace::CloseActiveDock",
+      "ctrl-f4": ["pane::CloseActiveItem", { "close_pinned": false }],
+      "ctrl-w": ["pane::CloseActiveItem", { "close_pinned": false }],
+      "ctrl-alt-w": "workspace::CloseActiveDock",
     },
   },
   {
@@ -1678,6 +1689,16 @@
       "ctrl-enter": "skill_creator::SaveSkill",
       "tab": "skill_creator::FocusNextField",
       "shift-tab": "skill_creator::FocusPreviousField",
+    },
+  },
+  {
+    "context": "TableView",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": ["tabular_data::MoveFocusedCell", { "direction": "up" }],
+      "down": ["tabular_data::MoveFocusedCell", { "direction": "down" }],
+      "left": ["tabular_data::MoveFocusedCell", { "direction": "left" }],
+      "right": ["tabular_data::MoveFocusedCell", { "direction": "right" }],
     },
   },
 ]

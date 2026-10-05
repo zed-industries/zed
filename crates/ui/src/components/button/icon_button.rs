@@ -85,6 +85,16 @@ impl IconButton {
         self
     }
 
+    pub fn active_background(mut self, background: Hsla) -> Self {
+        self.base.active_background = Some(background);
+        self
+    }
+
+    pub fn hover_background(mut self, background: Hsla) -> Self {
+        self.base.hover_background = Some(background);
+        self
+    }
+
     pub fn icon_color(mut self, icon_color: Color) -> Self {
         self.icon_color = icon_color;
         self

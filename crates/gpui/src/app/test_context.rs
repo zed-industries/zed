@@ -187,6 +187,11 @@ impl TestAppContext {
         }
     }
 
+    /// Disables accessibility for subsequently created test windows.
+    pub fn disable_accessibility(&mut self) {
+        self.update(|cx| cx.accessibility_force_disabled = true);
+    }
+
     /// Skip all drawing operations for the duration of this test.
     pub fn skip_drawing(&mut self) {
         self.app.borrow_mut().mode = GpuiMode::Test { skip_drawing: true };
@@ -978,7 +983,10 @@ impl VisualTestContext {
         self.simulate_window_scale_factor_change(self.window, scale_factor)
     }
 
-    /// debug_bounds returns the bounds of the element with the given selector.
+    /// Returns the bounds of the element with the given debug selector.
+    ///
+    /// Returns `None` in builds without `debug_assertions`, which don't record
+    /// selectors; see [`crate::InteractiveElement::debug_selector`].
     pub fn debug_bounds(&mut self, selector: &'static str) -> Option<Bounds<Pixels>> {
         self.update(|window, _| window.rendered_frame.debug_bounds.get(selector).copied())
     }
