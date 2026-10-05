@@ -200,9 +200,17 @@ pub trait AgentConnection {
         None
     }
 
+    /// Preflight without starting transport work so rejection cannot interrupt an
+    /// existing turn. Adapters must also validate when called directly.
+    fn validate_prompt_content(&self, _content: &[acp_v2::ContentBlock]) -> Result<()> {
+        Ok(())
+    }
+
+    /// This completion-based path retains a legacy response; receipt transports
+    /// acknowledge acceptance separately through `receipt_submissions`.
     fn prompt(
         &self,
-        params: acp_v1::PromptRequest,
+        params: acp_v2::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp_v1::PromptResponse>>;
 
@@ -295,7 +303,7 @@ pub trait AgentSessionClientUserMessageIds {
     fn prompt(
         &self,
         client_user_message_id: ClientUserMessageId,
-        params: acp_v1::PromptRequest,
+        params: acp_v2::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp_v1::PromptResponse>>;
 }
@@ -305,7 +313,7 @@ pub trait AgentSessionClientUserMessageIds {
 pub trait ReceiptSessionSubmissions {
     fn prompt(
         &self,
-        content: Vec<acp_v1::ContentBlock>,
+        content: Vec<acp_v2::ContentBlock>,
         cx: &mut App,
     ) -> Task<Result<acp_v2::PromptResponse>>;
 }
@@ -808,8 +816,10 @@ mod test_support {
         next_prompt_response: Arc<Mutex<Option<oneshot::Receiver<Result<acp_v1::PromptResponse>>>>>,
         next_receipt_response:
             Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
+        receipt_prompt: Arc<Mutex<Option<Vec<acp_v2::ContentBlock>>>>,
         next_truncate: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
         supports_receipt_submissions: bool,
+        supports_retry: bool,
         supports_load_session: bool,
         supports_session_additional_directories: bool,
         supports_set_title: bool,
@@ -834,10 +844,12 @@ mod test_support {
                 next_prompt_updates: Default::default(),
                 next_prompt_response: Default::default(),
                 next_receipt_response: Default::default(),
+                receipt_prompt: Default::default(),
                 next_truncate: Default::default(),
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
                 supports_receipt_submissions: false,
+                supports_retry: false,
                 supports_load_session: false,
                 supports_session_additional_directories: false,
                 supports_set_title: true,
@@ -871,6 +883,10 @@ mod test_support {
             sender
         }
 
+        pub fn take_receipt_prompt(&self) -> Option<Vec<acp_v2::ContentBlock>> {
+            self.receipt_prompt.lock().take()
+        }
+
         pub fn defer_next_truncate(&self) -> oneshot::Sender<()> {
             let (sender, receiver) = oneshot::channel();
             assert!(self.next_truncate.lock().replace(receiver).is_none());
@@ -892,6 +908,11 @@ mod test_support {
 
         pub fn with_receipt_submissions(mut self, enabled: bool) -> Self {
             self.supports_receipt_submissions = enabled;
+            self
+        }
+
+        pub fn with_retry(mut self) -> Self {
+            self.supports_retry = true;
             self
         }
 
@@ -1053,11 +1074,19 @@ mod test_support {
             unimplemented!()
         }
 
+        fn validate_prompt_content(&self, content: &[acp_v2::ContentBlock]) -> Result<()> {
+            crate::content::validate_prompt_content_for_v1(content)
+        }
+
         fn prompt(
             &self,
-            params: acp_v1::PromptRequest,
+            params: acp_v2::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp_v1::PromptResponse>> {
+            let params = match crate::content::prompt_to_v1(params) {
+                Ok(params) => params,
+                Err(error) => return Task::ready(Err(error)),
+            };
             let mut sessions = self.sessions.lock();
             let Session {
                 thread,
@@ -1132,8 +1161,18 @@ mod test_support {
                     session_id: session_id.clone(),
                     sessions: self.sessions.clone(),
                     next_receipt_response: self.next_receipt_response.clone(),
+                    receipt_prompt: self.receipt_prompt.clone(),
                 }) as Rc<dyn ReceiptSessionSubmissions>
             })
+        }
+
+        fn retry(
+            &self,
+            _session_id: &acp_v1::SessionId,
+            _cx: &App,
+        ) -> Option<Rc<dyn AgentSessionRetry>> {
+            self.supports_retry
+                .then(|| Rc::new(StubAgentSessionRetry) as Rc<dyn AgentSessionRetry>)
         }
 
         fn cancel(&self, session_id: &acp_v1::SessionId, _cx: &mut App) {
@@ -1190,7 +1229,7 @@ mod test_support {
         fn prompt(
             &self,
             _client_user_message_id: ClientUserMessageId,
-            params: acp_v1::PromptRequest,
+            params: acp_v2::PromptRequest,
             cx: &mut App,
         ) -> Task<Result<acp_v1::PromptResponse>> {
             self.connection.prompt(params, cx)
@@ -1202,21 +1241,31 @@ mod test_support {
         sessions: Arc<Mutex<HashMap<acp_v1::SessionId, Session>>>,
         next_receipt_response:
             Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
+        receipt_prompt: Arc<Mutex<Option<Vec<acp_v2::ContentBlock>>>>,
     }
 
     impl ReceiptSessionSubmissions for StubReceiptSessionSubmissions {
         fn prompt(
             &self,
-            _content: Vec<acp_v1::ContentBlock>,
+            content: Vec<acp_v2::ContentBlock>,
             cx: &mut App,
         ) -> Task<Result<acp_v2::PromptResponse>> {
             if !self.sessions.lock().contains_key(&self.session_id) {
                 return Task::ready(Err(anyhow::Error::msg("Unknown receipt session")));
             }
+            *self.receipt_prompt.lock() = Some(content);
             match self.next_receipt_response.lock().take() {
                 Some(receiver) => cx.spawn(async move |_| Ok(receiver.await??)),
                 None => Task::ready(Err(anyhow::Error::msg("No deferred receipt response"))),
             }
+        }
+    }
+
+    struct StubAgentSessionRetry;
+
+    impl AgentSessionRetry for StubAgentSessionRetry {
+        fn run(&self, _cx: &mut App) -> Task<Result<acp_v1::PromptResponse>> {
+            Task::ready(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
         }
     }
 
