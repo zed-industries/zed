@@ -36,6 +36,7 @@ pub struct WorkspaceSettings {
     pub on_new_window: settings::OnNewWindow,
     pub on_last_window_closed: settings::OnLastWindowClosed,
     pub text_rendering_mode: settings::TextRenderingMode,
+    pub use_display_p3: bool,
     pub resize_all_panels_in_dock: Vec<DockPosition>,
     pub close_on_file_delete: bool,
     pub close_panel_on_toggle: bool,
@@ -135,6 +136,7 @@ impl Settings for WorkspaceSettings {
             on_new_window: workspace.on_new_window.unwrap(),
             on_last_window_closed: workspace.on_last_window_closed.unwrap(),
             text_rendering_mode: workspace.text_rendering_mode.unwrap(),
+            use_display_p3: workspace.use_display_p3.unwrap(),
             resize_all_panels_in_dock: workspace
                 .resize_all_panels_in_dock
                 .clone()
