@@ -2675,7 +2675,7 @@ impl LocalLspStore {
 
         let lsp_edits = if formatting_supported {
             let _timer = zlog::time!(logger => "format-full");
-            language_server
+            let response = language_server
                 .request::<lsp::request::Formatting>(
                     lsp::DocumentFormattingParams {
                         text_document,
@@ -2685,7 +2685,42 @@ impl LocalLspStore {
                     request_timeout,
                 )
                 .await
-                .into_response()?
+                .into_response()?;
+
+            let Some(edits) = response else {
+                return Ok(vec![]);
+            };
+
+            let buffer_end =
+                buffer.read_with(cx, |buffer, _| point_to_lsp(buffer.max_point_utf16()));
+            let should_apply_diff_based_edits = edits.len() == 1
+                && edits.first().is_some_and(|edit| {
+                    edit.range == lsp::Range::new(lsp::Position::new(0, 0), buffer_end)
+                });
+
+            if should_apply_diff_based_edits {
+                let Some(text_edit) = edits.into_iter().next() else {
+                    return Ok(vec![]);
+                };
+                let diff = buffer
+                    .update(cx, |buffer, cx| buffer.diff(text_edit.new_text, cx))
+                    .await;
+                Some(buffer.read_with(cx, |buffer, _| {
+                    let rope = buffer.as_rope();
+                    diff.edits
+                        .into_iter()
+                        .map(|(range, text)| TextEdit {
+                            range: lsp::Range::new(
+                                point_to_lsp(rope.offset_to_point_utf16(range.start)),
+                                point_to_lsp(rope.offset_to_point_utf16(range.end)),
+                            ),
+                            new_text: text.to_string(),
+                        })
+                        .collect()
+                }))
+            } else {
+                Some(edits).filter(|edits| !edits.is_empty())
+            }
         } else if range_formatting_supported {
             let _timer = zlog::time!(logger => "format-range");
             let buffer_start = lsp::Position::new(0, 0);
@@ -8898,15 +8933,11 @@ impl LspStore {
                             None
                         }
                     })
-                    .map(|(server_id, mut new_hints)| {
-                        new_hints.retain(|hint| {
-                            hint.position.is_valid(&buffer_snapshot)
-                                && range.start.is_valid(&buffer_snapshot)
-                                && range.end.is_valid(&buffer_snapshot)
-                                && hint.position.cmp(&range.start, &buffer_snapshot).is_ge()
-                                && hint.position.cmp(&range.end, &buffer_snapshot).is_lt()
-                        });
-                        (server_id, new_hints)
+                    .map(|(server_id, new_hints)| {
+                        (
+                            server_id,
+                            inlay_hints::hints_in_range(new_hints, &range, &buffer_snapshot),
+                        )
                     })
                     .collect::<HashMap<_, _>>();
                 anyhow::ensure!(
@@ -8928,15 +8959,11 @@ impl LspStore {
                 Ok(inlay_hints_task
                     .await
                     .into_iter()
-                    .map(|(server_id, mut new_hints)| {
-                        new_hints.retain(|hint| {
-                            hint.position.is_valid(&buffer_snapshot)
-                                && range.start.is_valid(&buffer_snapshot)
-                                && range.end.is_valid(&buffer_snapshot)
-                                && hint.position.cmp(&range.start, &buffer_snapshot).is_ge()
-                                && hint.position.cmp(&range.end, &buffer_snapshot).is_lt()
-                        });
-                        (server_id, new_hints)
+                    .map(|(server_id, new_hints)| {
+                        (
+                            server_id,
+                            inlay_hints::hints_in_range(new_hints, &range, &buffer_snapshot),
+                        )
                     })
                     .collect())
             })
@@ -15135,12 +15162,41 @@ async fn find_worktree_for_lsp_path(
             let Ok(canonical_path) = fs.canonicalize(abs_path).await else {
                 return Ok(None);
             };
-            lsp_store.read_with(cx, |lsp_store, cx| {
-                lsp_store
-                    .worktree_store
-                    .read(cx)
-                    .find_worktree(&canonical_path, cx)
-            })
+            let (worktree, mut scans) = lsp_store.read_with(cx, |lsp_store, cx| {
+                let worktree_store = lsp_store.worktree_store.read(cx);
+                if let Some(worktree) = worktree_store.find_worktree(&canonical_path, cx) {
+                    return (Some(worktree), FuturesUnordered::new());
+                }
+                let scans = worktree_store
+                    .worktrees()
+                    .filter_map(|worktree| {
+                        let scan_complete = worktree.read(cx).as_local()?.scan_complete();
+                        Some(async move {
+                            scan_complete.await;
+                            worktree
+                        })
+                    })
+                    .collect::<FuturesUnordered<_>>();
+                (None, scans)
+            })?;
+            if worktree.is_some() {
+                return Ok(worktree);
+            }
+            // Language servers may report files in symlinked external
+            // directories by their canonical path. These directories are
+            // known only after they are scanned. `scan_complete` resolves
+            // immediately for worktrees that are not scanning.
+            while let Some(worktree) = scans.next().await {
+                let relative_path = worktree.read_with(cx, |worktree, _| {
+                    worktree
+                        .as_local()?
+                        .relative_path_for_external_abs_path(&canonical_path)
+                });
+                if let Some(relative_path) = relative_path {
+                    return Ok(Some((worktree, Arc::from(relative_path))));
+                }
+            }
+            Ok(None)
         }
     }
 }

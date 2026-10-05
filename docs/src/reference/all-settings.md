@@ -2492,7 +2492,7 @@ When set to `expanded`, symbolic links are only scanned after you explicitly exp
       "**/Zed/**/*.json",
       "**/.vscode/**/*.json"
     ],
-    "Shell Script": [".env.*"]
+    "Env": [".env.*"]
   }
 }
 ```
@@ -3409,6 +3409,7 @@ The following settings can be overridden for each specific language:
 - [`show_whitespaces`](#show-whitespaces)
 - [`whitespace_map`](#whitespace-map)
 - [`soft_wrap`](#soft-wrap)
+- [`soft_wrap_indent`](#soft-wrap-indent)
 - [`tab_size`](#tab-size)
 - [`use_autoclose`](#use-autoclose)
 - [`always_treat_brackets_as_autoclosed`](#always-treat-brackets-as-autoclosed)
@@ -4514,6 +4515,19 @@ Positive integer values
 3. `editor_width` to wrap lines that overflow the editor width
 4. `bounded` to wrap lines at the minimum of `editor_width` and `preferred_line_length`
 
+## Soft Wrap Indent
+
+- Description: How to indent soft-wrapped continuation lines.
+- Setting: `soft_wrap_indent`
+- Default: `same`
+
+**Options**
+
+1. `none` to start continuation lines at column 0
+2. `same` to match the original line's indentation
+3. `extra_one` to add 1 extra indent level beyond the original line
+4. `extra_two` to add 2 extra indent levels beyond the original line
+
 ## Show Wrap Guides
 
 - Description: Whether to show wrap guides (vertical rulers) in the editor. Setting this to true will show a guide at the 'preferred_line_length' value if 'soft_wrap' is set to 'preferred_line_length', and will show any additional guides as specified by the 'wrap_guides' setting.
@@ -5459,6 +5473,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "show_user_menu": true,
     "show_sign_in": true,
     "show_menus": false,
+    "open_menus_on_hover": false,
     "button_layout": "platform_default"
   }
 }
@@ -5475,6 +5490,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `show_user_menu`: Whether to show the user menu button in the titlebar (the one that displays your avatar by default and contains options like Settings, Keymap, Themes, etc.)
 - `show_sign_in`: Whether to show the sign in button in the titlebar
 - `show_menus`: Whether to show the menus in the titlebar
+- `open_menus_on_hover`: Whether to open title-bar menus on hover. Once a menu is open, hovering always switches between menus.
 - `button_layout`: The layout of window control buttons in the title bar (Linux only). Can be set to `"platform_default"` to follow the system setting, `"standard"` to use Zed's built-in layout, or a custom format like `"close:minimize,maximize"`
 
 ## Window Title Format
@@ -6108,6 +6124,7 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `tree_view`: Whether to show entries in tree or flat view in the panel
 - `scrollbar`: When to show the scrollbar in the git panel
 - `starts_open`: Whether the git panel should open on startup
+- `commit_editor`: Whether the commit message editor is shown in the git panel by default. Can be `expanded` or `collapsed`
 - `show_count_badge`: Whether to show a badge on the git panel icon with the count of uncommitted changes
 - `diff_stats`: Whether to show the addition/deletion change count next to each file in the git panel
 - `commit_title_max_length`: Maximum length of the commit message title before a warning is shown. Set to `0` to disable
