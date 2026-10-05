@@ -1758,7 +1758,9 @@ fn test_bracket_ranges_keep_chunk_spanning_pairs_amid_errors(cx: &mut App) {
 }
 
 #[gpui::test]
-fn test_bracket_ranges_keep_pairs_straddling_a_chunk_boundary_amid_errors(cx: &mut App) {
+async fn test_bracket_ranges_keep_pairs_straddling_a_chunk_boundary_amid_errors(
+    cx: &mut TestAppContext,
+) {
     let mut text = String::from("void outer(void) {\n");
     for index in 0..56 {
         text.push_str(&format!("  int before_{index:02} = 0;\n"));
@@ -1782,7 +1784,10 @@ fn test_bracket_ranges_keep_pairs_straddling_a_chunk_boundary_amid_errors(cx: &m
     text.push_str("  }\n}\n");
 
     let buffer = cx.new(|cx| Buffer::local(text.clone(), cx).with_language(c_lang(), cx));
-    let snapshot = buffer.read(cx).snapshot();
+    buffer
+        .read_with(cx, |buffer, _| buffer.parsing_idle())
+        .await;
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
     assert_has_syntax_errors(&snapshot);
 
     let open_row = snapshot.offset_to_point(if_open_offset).row;
@@ -3431,6 +3436,80 @@ fn test_language_scope_at_with_rust(cx: &mut App) {
         assert_eq!(
             string_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
             &[true, false]
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_language_scope_at_end_of_buffer(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    let make_language = || {
+        Language::new(
+            LanguageConfig {
+                name: "C".into(),
+                brackets: BracketPairConfig {
+                    pairs: vec![
+                        BracketPair {
+                            start: "{".into(),
+                            end: "}".into(),
+                            close: true,
+                            surround: true,
+                            newline: false,
+                        },
+                        BracketPair {
+                            start: "'".into(),
+                            end: "'".into(),
+                            close: true,
+                            surround: true,
+                            newline: false,
+                        },
+                    ],
+                    disabled_scopes_by_bracket_ix: vec![
+                        Vec::new(),
+                        vec!["string".into(), "comment".into()],
+                    ],
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_c::LANGUAGE.into()),
+        )
+        .with_override_query(
+            r#"
+                (comment) @comment.inclusive
+                [(string_literal) (char_literal)] @string
+            "#,
+        )
+        .unwrap()
+    };
+
+    // Comment runs to EOF: the quote pair must be disabled at EOF.
+    cx.new(|cx| {
+        let text = "// it ''";
+        let buffer = Buffer::local(text, cx).with_language(Arc::new(make_language()), cx);
+        let snapshot = buffer.snapshot();
+
+        let eof_config = snapshot.language_scope_at(text.len()).unwrap();
+        assert_eq!(
+            eof_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, false]
+        );
+
+        buffer
+    });
+
+    // Trailing newline: EOF is past the comment, so both pairs stay enabled.
+    cx.new(|cx| {
+        let text = "// it ''\n";
+        let buffer = Buffer::local(text, cx).with_language(Arc::new(make_language()), cx);
+        let snapshot = buffer.snapshot();
+
+        let eof_config = snapshot.language_scope_at(text.len()).unwrap();
+        assert_eq!(
+            eof_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, true]
         );
 
         buffer

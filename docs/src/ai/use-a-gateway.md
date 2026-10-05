@@ -7,12 +7,12 @@ description: Configure OpenRouter, Vercel AI Gateway, Amazon Bedrock, and other 
 
 Use a gateway when you route model requests through a platform such as OpenRouter, Vercel AI Gateway, Amazon Bedrock, or another OpenAI-compatible service.
 
-| Gateway                   | Zed AI features | External Agents | Terminal Threads | Notes                                        |
-| ------------------------- | --------------- | --------------- | ---------------- | -------------------------------------------- |
-| OpenRouter                | Yes             | Separate config | Separate config  | Uses OpenRouter API access                   |
-| Vercel AI Gateway         | Yes             | Separate config | Separate config  | Uses Vercel AI Gateway API access            |
-| Amazon Bedrock            | Yes             | Separate config | Separate config  | Uses AWS credentials or Bedrock bearer token |
-| OpenAI-compatible gateway | Yes             | Separate config | Separate config  | Configure base URL, model, and key           |
+| Gateway                   | Zed AI features | [External Agents](./external-agents.md) | Terminal Threads | Notes                                        |
+| ------------------------- | --------------- | --------------------------------------- | ---------------- | -------------------------------------------- |
+| OpenRouter                | Yes             | Separate config                         | Separate config  | Uses OpenRouter API access                   |
+| Vercel AI Gateway         | Yes             | Separate config                         | Separate config  | Uses Vercel AI Gateway API access            |
+| Amazon Bedrock            | Yes             | Separate config                         | Separate config  | Uses AWS credentials or Bedrock bearer token |
+| OpenAI-compatible gateway | Yes             | Separate config                         | Separate config  | Configure base URL, model, and key           |
 
 ## OpenRouter {#openrouter}
 
@@ -160,7 +160,7 @@ For a named profile, configure Bedrock in settings:
 }
 ```
 
-For static credentials, open Agent Settings with {#action agent::OpenSettings}, go to the Amazon Bedrock section, and enter the access key ID, secret access key, and region.
+For static credentials, open [Agent Settings](./agent-settings.md) with {#action agent::OpenSettings}, go to the Amazon Bedrock section, and enter the access key ID, secret access key, and region.
 
 For a Bedrock API key, choose API key authentication:
 
@@ -212,6 +212,45 @@ Some AWS environments require a guardrail on every Bedrock API call. Add `guardr
   }
 }
 ```
+
+### Custom Bedrock Models {#bedrock-custom-models}
+
+Add models that are not yet built into Zed with `available_models`. Use the Bedrock model ID as `name`, including a region prefix when you want a specific inference profile:
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "available_models": [
+        {
+          "name": "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abcdef123456",
+          "display_name": "Grok 4.3 (ARN)",
+          "max_tokens": 500000,
+          "max_output_tokens": 131072,
+          "supports_tools": true,
+          "supports_images": true,
+          "thinking": true
+        },
+        {
+          "name": "us.moonshotai.kimi-k3",
+          "display_name": "Kimi K3",
+          "max_tokens": 1000000,
+          "max_output_tokens": 64000,
+          "supports_tools": true,
+          "supports_images": true,
+          "thinking": {
+            "adaptive": true,
+            "has_xhigh": true,
+            "budget_tokens": 5000
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+`name` is sent to Bedrock as the model ID. Use the full ID, including a geo prefix or ARN when the model requires one (for example `us.anthropic.claude-sonnet-4-7` or `us.xai.grok-4.6`). Set `supports_tools` and `supports_images` for models that support those features. Set `thinking` to `true` to enable thinking, or to an object with `"adaptive": true`, optional `"has_xhigh": true`, and optional `budget_tokens`. Leave `default_temperature` unset for models that reject the temperature field, such as xAI and MoonshotAI models.
 
 ### Bedrock Mantle Models {#bedrock-mantle-models}
 

@@ -1,24 +1,47 @@
 use crate::{
-    Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinitionSplit,
-    GoToTypeDefinition, GoToTypeDefinitionSplit, GotoDefinitionKind, HighlightKey, Navigated,
-    PointForPosition, SelectPhase, editor_settings::GoToDefinitionFallback, scroll::ScrollAmount,
+    Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GotoDefinitionKind,
+    HighlightKey, Navigated, PointForPosition, SelectPhase,
+    editor_settings::GoToDefinitionFallback, scroll::ScrollAmount,
 };
 use gpui::{
-    App, AsyncWindowContext, Context, Entity, Focusable, HighlightStyle, Modifiers, Pixels, Task,
-    UnderlineStyle, Window, px,
+    Action, App, AsyncWindowContext, Context, Entity, Focusable, HighlightStyle, Modifiers, Pixels,
+    Task, UnderlineStyle, WeakEntity, Window, px,
 };
 use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
-use project::{InlayId, LocationLink, Project, ResolvedPath};
+use project::{InlayId, Location, LocationLink, Project, ProjectPath, ResolvedPath};
 use regex::Regex;
-use settings::Settings;
-use std::{ops::Range, str::FromStr as _, sync::LazyLock};
+use settings::{OpenResultsIn, Settings};
+use std::{
+    ops::Range,
+    str::FromStr as _,
+    sync::{Arc, LazyLock},
+};
 use text::OffsetRangeExt;
 use theme::ActiveTheme as _;
 use util::{
     ResultExt, TryFutureExt as _, markdown::source_position_from_fragment, paths::PathWithPosition,
 };
+use workspace::pane::NavigationEntry;
+
+#[derive(Clone, Action)]
+#[action(no_json, no_register)]
+pub struct OpenDefinitionLocations(pub Arc<DefinitionLocations>);
+
+pub struct DefinitionLocations {
+    pub editor: WeakEntity<Editor>,
+    pub position: Anchor,
+    pub kind: GotoDefinitionKind,
+    pub locations: Vec<Location>,
+    pub origin: Option<NavigationEntry>,
+}
+
+impl PartialEq for OpenDefinitionLocations {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
 
 #[derive(Debug)]
 pub struct HoveredLinkState {
@@ -206,24 +229,141 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let focus_handle = self.focus_handle(cx);
-        let reveal_task = self.cmd_click_reveal_task(point, modifiers, window, cx);
-        cx.spawn_in(window, async move |_, cx| {
-            let definition_revealed = reveal_task.await.log_err().unwrap_or(Navigated::No);
-            if definition_revealed == Navigated::Yes {
-                return;
-            }
-            cx.update(|window, cx| {
-                match EditorSettings::get_global(cx).go_to_definition_fallback {
-                    GoToDefinitionFallback::None => {}
-                    GoToDefinitionFallback::FindAllReferences => {
-                        focus_handle.dispatch_action(&FindAllReferences::default(), window, cx);
-                    }
+        let kind = if modifiers.shift {
+            GotoDefinitionKind::Type
+        } else {
+            GotoDefinitionKind::Symbol
+        };
+        let split = Self::is_alt_pressed(&modifiers, cx);
+        let snapshot = self.snapshot(window, cx);
+        let position = snapshot
+            .buffer_snapshot()
+            .anchor_before(point.next_valid.to_point(&snapshot.display_snapshot));
+        let origin = self.navigation_entry(position, cx);
+        let cached = self.hovered_link_state.take();
+        self.hide_hovered_link(cx);
+        let refresh = cached.as_ref().is_none_or(|state| {
+            state.links.is_empty()
+                || (matches!(state.last_trigger_point, TriggerPoint::Text(_))
+                    && (state.preferred_kind != kind
+                        || state.task.as_ref().is_some_and(|task| !task.is_ready())))
+        });
+        let mut links = cached.map(|state| state.links).unwrap_or_default();
+        if refresh || !self.lsp_data_enabled() {
+            links.retain(|link| {
+                matches!(link, HoverLink::Url(_) | HoverLink::File(_))
+                    || (self.lsp_data_enabled() && matches!(link, HoverLink::LspLocation(..)))
+            });
+        }
+        if refresh && point.as_valid().is_some() {
+            self.select(
+                SelectPhase::Begin {
+                    position: point.next_valid,
+                    add: false,
+                    click_count: 1,
+                },
+                window,
+                cx,
+            );
+        }
+        self.select(SelectPhase::End, window, cx);
+        let Some((buffer, anchor)) = self.buffer.read(cx).text_anchor_for_position(position, cx)
+        else {
+            return;
+        };
+        links.retain(|link| match link {
+            HoverLink::Text(link) => exclude_link_to_position(&buffer, &anchor, link, cx),
+            // A file link resolving to the buffer we are already in is not a navigation:
+            // opening it returns `Navigated::Yes`, which suppresses the go-to-definition
+            // fallback, so the click appears to do nothing. Same rule as
+            // `exclude_link_to_position` above, one level coarser — file rather than position.
+            HoverLink::File(target) => match &target.resolved_path {
+                ResolvedPath::ProjectPath { project_path, .. } => {
+                    let current_project_path = buffer
+                        .read(cx)
+                        .file()
+                        .map(|file| ProjectPath::from_file(file.as_ref(), cx));
+                    Some(project_path) != current_project_path.as_ref()
                 }
+                ResolvedPath::AbsPath { .. } => true,
+            },
+            _ => true,
+        });
+        let definitions = (refresh && self.lsp_data_enabled() && point.as_valid().is_some())
+            .then(|| {
+                self.semantics_provider
+                    .as_ref()?
+                    .definitions(&buffer, anchor, kind, cx)
             })
-            .ok();
-        })
-        .detach();
+            .flatten();
+        if let Some(definitions) = definitions {
+            let workspace = self.workspace().map(|workspace| workspace.downgrade());
+            cx.spawn_in(window, async move |editor, cx| {
+                let definitions = definitions.await.log_err().flatten().unwrap_or_default();
+                editor
+                    .update_in(cx, |editor, window, cx| {
+                        if editor.workspace().map(|workspace| workspace.downgrade()) != workspace
+                            || !editor.buffer.read(cx).snapshot(cx).can_resolve(&position)
+                        {
+                            return;
+                        }
+                        if editor.lsp_data_enabled() {
+                            links.extend(
+                                definitions
+                                    .into_iter()
+                                    .filter(|link| {
+                                        exclude_link_to_position(&buffer, &anchor, link, cx)
+                                    })
+                                    .map(HoverLink::Text),
+                            );
+                        } else {
+                            links.retain(|link| {
+                                matches!(link, HoverLink::Url(_) | HoverLink::File(_))
+                            });
+                        }
+                        editor
+                            .reveal_clicked_links(kind, links, position, origin, split, window, cx);
+                    })
+                    .ok();
+            })
+            .detach();
+        } else {
+            self.reveal_clicked_links(kind, links, position, origin, split, window, cx);
+        }
+    }
+
+    pub(crate) fn open_definition_locations(
+        &mut self,
+        action: &OpenDefinitionLocations,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let action = &action.0;
+        if action.editor != cx.weak_entity() {
+            cx.propagate();
+            return;
+        }
+        if !self.lsp_data_enabled()
+            || !self
+                .buffer
+                .read(cx)
+                .snapshot(cx)
+                .can_resolve(&action.position)
+        {
+            return;
+        }
+        let links = action
+            .locations
+            .iter()
+            .cloned()
+            .map(|target| {
+                HoverLink::Text(LocationLink {
+                    origin: None,
+                    target,
+                })
+            })
+            .collect::<Vec<_>>();
+        self.open_clicked_links(action.kind, links, action.origin.clone(), false, window, cx);
     }
 
     pub fn scroll_hover(
@@ -250,90 +390,86 @@ impl Editor {
         }
     }
 
-    fn cmd_click_reveal_task(
+    fn reveal_clicked_links(
         &mut self,
-        point: PointForPosition,
-        modifiers: Modifiers,
+        kind: GotoDefinitionKind,
+        links: Vec<HoverLink>,
+        position: Anchor,
+        origin: Option<NavigationEntry>,
+        split: bool,
         window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) -> Task<anyhow::Result<Navigated>> {
-        if let Some(hovered_link_state) = self.hovered_link_state.take() {
-            self.hide_hovered_link(cx);
-            if !hovered_link_state.links.is_empty() {
-                if !self.focus_handle.is_focused(window) {
-                    window.focus(&self.focus_handle, cx);
-                }
-
-                // exclude links pointing back to the current anchor
-                let current_position = point
-                    .next_valid
-                    .to_point(&self.snapshot(window, cx).display_snapshot);
-                let Some((buffer, anchor)) = self
-                    .buffer()
-                    .read(cx)
-                    .text_anchor_for_position(current_position, cx)
-                else {
-                    return Task::ready(Ok(Navigated::No));
-                };
-                let Some(multi_buffer_anchor) = self
-                    .buffer()
-                    .read(cx)
-                    .snapshot(cx)
-                    .anchor_in_excerpt(anchor)
-                else {
-                    return Task::ready(Ok(Navigated::No));
-                };
-                let links = hovered_link_state
-                    .links
+        cx: &mut Context<Self>,
+    ) {
+        if !split
+            && self.lsp_data_enabled()
+            && self.workspace().is_some()
+            && EditorSettings::get_global(cx).lsp_results_location == OpenResultsIn::Picker
+            && links.iter().all(|link| matches!(link, HoverLink::Text(_)))
+        {
+            let action = OpenDefinitionLocations(Arc::new(DefinitionLocations {
+                editor: cx.weak_entity(),
+                position,
+                kind,
+                locations: links
                     .into_iter()
-                    .filter(|link| {
-                        if let HoverLink::Text(location) = link {
-                            exclude_link_to_position(&buffer, &anchor, location, cx)
-                        } else {
-                            true
-                        }
+                    .filter_map(|link| match link {
+                        HoverLink::Text(link) => Some(link.target),
+                        _ => None,
                     })
-                    .collect();
-                let nav_entry = self.navigation_entry(multi_buffer_anchor, cx);
-                let split = Self::is_alt_pressed(&modifiers, cx);
-                let navigate_task =
-                    self.navigate_to_hover_links(None, links, nav_entry, split, window, cx);
-                self.select(SelectPhase::End, window, cx);
-                return navigate_task;
-            }
-        }
-
-        // We don't have the correct kind of link cached, set the selection on
-        // click and immediately trigger GoToDefinition.
-        self.select(
-            SelectPhase::Begin {
-                position: point.next_valid,
-                add: false,
-                click_count: 1,
-            },
-            window,
-            cx,
-        );
-
-        let navigate_task = if point.as_valid().is_some() {
-            let split = Self::is_alt_pressed(&modifiers, cx);
-            match (modifiers.shift, split) {
-                (true, true) => {
-                    self.go_to_type_definition_split(&GoToTypeDefinitionSplit, window, cx)
+                    .collect(),
+                origin,
+            }));
+            let focus_handle = self.focus_handle(cx);
+            window.defer(cx, move |window, cx| {
+                if window.is_action_available_in(&action, &focus_handle) {
+                    focus_handle.dispatch_action(&action, window, cx);
+                } else {
+                    action
+                        .0
+                        .editor
+                        .update(cx, |editor, cx| {
+                            editor.open_definition_locations(&action, window, cx);
+                        })
+                        .ok();
                 }
-                (true, false) => {
-                    self.go_to_type_definition(&GoToTypeDefinition::default(), window, cx)
-                }
-                (false, true) => self.go_to_definition_split(&GoToDefinitionSplit, window, cx),
-                (false, false) => {
-                    self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, window, cx)
-                }
-            }
+            });
         } else {
-            Task::ready(Ok(Navigated::No))
-        };
-        self.select(SelectPhase::End, window, cx);
-        navigate_task
+            self.open_clicked_links(kind, links, origin, split, window, cx);
+        }
+    }
+
+    fn open_clicked_links(
+        &mut self,
+        kind: GotoDefinitionKind,
+        links: Vec<HoverLink>,
+        origin: Option<NavigationEntry>,
+        split: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let navigation = self.navigate_to_hover_links(Some(kind), links, origin, split, window, cx);
+        cx.spawn_in(window, async move |editor, cx| {
+            if navigation.await.log_err().unwrap_or(Navigated::No) == Navigated::Yes {
+                return;
+            }
+            let focus_handle = editor
+                .read_with(cx, |editor, cx| {
+                    editor.lsp_data_enabled().then(|| editor.focus_handle(cx))
+                })
+                .ok()
+                .flatten();
+            if let Some(focus_handle) = focus_handle {
+                cx.update(|window, cx| {
+                    if EditorSettings::get_global(cx).go_to_definition_fallback
+                        == GoToDefinitionFallback::FindAllReferences
+                    {
+                        focus_handle.dispatch_action(&FindAllReferences::default(), window, cx);
+                    }
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 }
 
@@ -1072,11 +1208,12 @@ mod tests {
     };
     use futures::StreamExt;
     use gpui::{
-        Modifiers, MouseButton, MouseDownEvent, MousePressureEvent, MouseUpEvent, PressureStage,
+        Modifiers, MouseButton, MouseDownEvent, MousePressureEvent, MouseUpEvent, PlatformInput,
+        PressureStage,
     };
     use indoc::indoc;
     use language::Point;
-    use lsp::request::{GotoDefinition, GotoTypeDefinition};
+    use lsp::request::{GotoDefinition, GotoTypeDefinition, References};
     use multi_buffer::{MultiBufferOffset, PathKey};
     use settings::InlayHintSettingsContent;
     use std::str::FromStr;
@@ -1268,6 +1405,140 @@ mod tests {
                 cx,
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_cmd_click_on_file_link_to_current_file_falls_back_to_references(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        // Regression test for #64063. `find_file` appends the language's suffixes when
+        // resolving a bare token, so a symbol whose name matches its own file (`file`
+        // in `file.rs`) produces a `HoverLink::File` pointing at the buffer we are
+        // already in. That link used to count as a successful navigation, so the click
+        // silently re-opened the current file and never fell back to references.
+        // The symbol name here is load-bearing: rename it and the collision — and the
+        // bug — disappear.
+
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                references_provider: Some(lsp::OneOf::Left(true)),
+                definition_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"struct fileˇ;"});
+
+        let target_range = cx.lsp_range(indoc! {"struct «file»;"});
+
+        let _definitions =
+            cx.set_request_handler::<GotoDefinition, _, _>(move |url, _, _| async move {
+                Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
+                    uri: url,
+                    range: target_range,
+                })))
+            });
+
+        let references_count = Arc::new(AtomicUsize::new(0));
+
+        let _references = cx.set_request_handler::<References, _, _>({
+            let request_count = references_count.clone();
+
+            move |_, _, _| {
+                request_count.fetch_add(1, Ordering::SeqCst);
+
+                // Return no locations: the assertion is that the request was *sent*, and an
+                // empty result keeps `find_all_references` from building a multibuffer whose
+                // task would outlive the test.
+                async move { Ok(Some(vec![])) }
+            }
+        });
+
+        cx.run_until_parked();
+        let screen_coord = cx.pixel_position(indoc! {"struct fiˇle;"});
+        cx.run_until_parked();
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        cx.run_until_parked();
+        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.run_until_parked();
+        assert_eq!(
+            references_count.load(Ordering::SeqCst),
+            1,
+            "cmd-click on a symbol named after its file should fall back to find-all-references"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cmd_click_on_file_link_to_another_file_still_navigates(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        // The other half of the self-link rule: a `HoverLink::File` is dropped only when
+        // it resolves to the buffer we are already in. A link to a different file must
+        // still navigate, so the references fallback must not fire. Guards against
+        // "fixing" #64063 by discarding every file link, which resolves the bug but
+        // breaks cmd-click on ordinary file paths in comments.
+        init_test(cx, |_| {});
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                definition_provider: Some(lsp::OneOf::Left(true)),
+                references_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        fs.as_fake()
+            .insert_file(path!("/root/dir/file2.rs"), "".as_bytes().to_vec())
+            .await;
+
+        cx.set_state(indoc! {
+            "// see file2ˇ.rs"
+        });
+
+        let _definitions = cx
+            .set_request_handler::<GotoDefinition, _, _>(move |_url, _, _| async move { Ok(None) });
+
+        let references_count = Arc::new(AtomicUsize::new(0));
+
+        let _references = cx.set_request_handler::<References, _, _>({
+            let request_count = references_count.clone();
+
+            move |_, _, _| {
+                request_count.fetch_add(1, Ordering::SeqCst);
+                async move { Ok(Some(vec![])) }
+            }
+        });
+
+        cx.run_until_parked();
+
+        let screen_coord = cx.pixel_position(indoc! {"// see fileˇ2.rs"});
+        cx.run_until_parked();
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        cx.run_until_parked();
+        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.run_until_parked();
+        cx.update_workspace(|workspace, _, cx| {
+            let path = workspace
+                .active_item(cx)
+                .and_then(|item| item.project_path(cx))
+                .expect("cmd-click should have opened a file");
+            assert_eq!(
+                path.path.as_unix_str(),
+                "dir/file2.rs",
+                "cmd-click on a file path should open that file"
+            );
+        });
+
+        assert_eq!(
+            references_count.load(Ordering::SeqCst),
+            0,
+            "a file link to a different file should navigate, not fall back to references"
+        );
     }
 
     #[gpui::test]
@@ -1713,6 +1984,7 @@ mod tests {
 
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
+                definition_provider: Some(lsp::OneOf::Left(true)),
                 inlay_hint_provider: Some(lsp::OneOf::Left(true)),
                 execute_command_provider: Some(lsp::ExecuteCommandOptions {
                     commands: vec!["upgrade".to_string()],
@@ -1910,13 +2182,57 @@ mod tests {
         cx.background_executor.run_until_parked();
         cx.simulate_click(hover_point, Modifiers::secondary_key());
         cx.background_executor.run_until_parked();
-        cx.assert_editor_state(indoc! {"
+        let destination = indoc! {"
                 struct «TestStructˇ»;
 
                 fn main() {
                     let variable = TestStruct;
                 }
-            "});
+            "};
+        cx.assert_editor_state(destination);
+
+        let source = cx.buffer_text().replace("= TestStruct", "= TeˇstStruct");
+        let click_point = cx.pixel_position(&source);
+        let hover_point = cx.pixel_position_for(midpoint);
+        let mut definitions =
+            cx.set_request_handler::<GotoDefinition, _, _>(move |uri, params, _| async move {
+                let params = params.text_document_position_params;
+                assert_eq!(params.text_document.uri, uri);
+                assert_eq!(params.position, lsp::Position::new(3, 21));
+                Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                    lsp::Location::new(uri, target_range),
+                )))
+            });
+        let editor = cx.editor.clone();
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            window.simulate_mouse_move(hover_point, cx);
+            let state = editor.read(cx).hovered_link_state.as_ref().expect("hover");
+            assert!(matches!(
+                state.last_trigger_point,
+                TriggerPoint::InlayHint(..)
+            ));
+            assert!(state.links.is_empty());
+            assert!(!state.task.as_ref().expect("hover task").is_ready());
+            let down = MouseDownEvent {
+                position: click_point,
+                modifiers: Modifiers::secondary_key(),
+                button: MouseButton::Left,
+                click_count: 1,
+                first_mouse: false,
+            };
+            let up = MouseUpEvent {
+                position: down.position,
+                modifiers: down.modifiers,
+                button: down.button,
+                click_count: down.click_count,
+            };
+            window.dispatch_event(PlatformInput::MouseDown(down), cx);
+            window.dispatch_event(PlatformInput::MouseUp(up), cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(definitions.try_recv().ok(), Some(()));
+        cx.assert_editor_state(destination);
     }
 
     #[gpui::test]
@@ -1950,6 +2266,159 @@ mod tests {
         assert_eq!(
             cx.opened_url(),
             Some("https://zed.dev/channel/had-(oops)".into())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_reveal_clicked_links_picker_fallback(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            let mut settings = EditorSettings::get_global(cx).clone();
+            settings.lsp_results_location = OpenResultsIn::Picker;
+            settings.excerpt_context_lines = 0;
+            EditorSettings::override_global(settings, cx);
+        });
+        for disabled in [false, true] {
+            let mut cx =
+                EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+            let source = cx.editor.clone();
+            let (buffer, selections) = cx.update_editor(|editor, window, cx| {
+                editor.set_text("origin\n\nfirst\n\n\n\n\n\nsecond\n", window, cx);
+                (
+                    editor.buffer.read(cx).as_singleton().expect("buffer"),
+                    editor.selections.disjoint_anchors_arc(),
+                )
+            });
+            cx.run_until_parked();
+            cx.update_editor(|editor, window, cx| {
+                let links = [(2, 5), (8, 6)].map(|(row, end)| {
+                    HoverLink::Text(LocationLink {
+                        origin: None,
+                        target: Location {
+                            buffer: buffer.clone(),
+                            range: buffer.read(cx).anchor_before(Point::new(row, 0))
+                                ..buffer.read(cx).anchor_after(Point::new(row, end)),
+                        },
+                    })
+                });
+                let position = editor.selections.newest_anchor().head();
+                let origin = editor.navigation_entry(position, cx);
+                editor.reveal_clicked_links(
+                    GotoDefinitionKind::Symbol,
+                    links.to_vec(),
+                    position,
+                    origin,
+                    false,
+                    window,
+                    cx,
+                );
+                if disabled {
+                    editor.disable_lsp_data();
+                }
+            });
+            cx.run_until_parked();
+            cx.editor(|editor, _, _| {
+                assert_eq!(editor.selections.disjoint_anchors_arc(), selections);
+            });
+            cx.update_workspace(|workspace, window, cx| {
+                assert!(!workspace.has_active_modal(window, cx));
+                assert_eq!(workspace.items(cx).count(), if disabled { 1 } else { 2 });
+                let active = workspace.active_item_as::<Editor>(cx).expect("editor");
+                if disabled {
+                    assert_eq!(active, source);
+                    return;
+                }
+                assert_ne!(active, source);
+                let multibuffer = active.read(cx).buffer().read(cx);
+                assert!(!multibuffer.is_singleton());
+                assert_eq!(
+                    multibuffer.all_buffers_iter().collect::<Vec<_>>(),
+                    std::slice::from_ref(&buffer)
+                );
+                assert_eq!(
+                    multibuffer
+                        .snapshot(cx)
+                        .excerpts()
+                        .map(|excerpt| excerpt.primary.to_offset(buffer.read(cx)))
+                        .collect::<Vec<_>>(),
+                    [8..13, 19..25],
+                );
+            });
+            cx.update(|window, _| window.remove_window());
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_cmd_click_cached_links_survive_lsp_disable(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let capabilities = lsp::ServerCapabilities {
+            definition_provider: Some(lsp::OneOf::Left(true)),
+            type_definition_provider: Some(lsp::TypeDefinitionProviderCapability::Simple(true)),
+            ..lsp::ServerCapabilities::default()
+        };
+        let delay = std::time::Duration::from_secs(1);
+        let mut opened = Vec::new();
+        for marked in ["hˇttps://zed.dev/", "fˇile2.rs"] {
+            let mut cx = EditorLspTestContext::new_rust(capabilities.clone(), cx).await;
+            let fs =
+                cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+            fs.as_fake()
+                .insert_file(path!("/root/dir/file2.rs"), b"target".to_vec())
+                .await;
+            cx.run_until_parked();
+            let source = format!("{marked}\nfirst\nsecond\n");
+            cx.set_state(&source);
+            let mut symbols =
+                cx.set_request_handler::<GotoDefinition, _, _>(|_, _, _| async { Ok(None) });
+            let mut types =
+                cx.set_request_handler::<GotoTypeDefinition, _, _>(move |uri, _, app| async move {
+                    app.background_executor().timer(delay).await;
+                    let locations = [1, 2].map(|line| {
+                        let start = lsp::Position::new(line, 0);
+                        let end = lsp::Position::new(line, 1);
+                        lsp::Location::new(uri.clone(), lsp::Range::new(start, end))
+                    });
+                    Ok(Some(lsp::GotoDefinitionResponse::Array(locations.to_vec())))
+                });
+            let position = cx.pixel_position(&source);
+            cx.simulate_mouse_move(position, None, Modifiers::secondary_key());
+            assert_eq!(symbols.next().await, Some(()));
+            cx.run_until_parked();
+            cx.editor(|editor, _, _| {
+                let state = editor.hovered_link_state.as_ref().expect("cached link");
+                assert_eq!(state.preferred_kind, GotoDefinitionKind::Symbol);
+                assert!(state.task.as_ref().expect("hover task").is_ready());
+                assert_eq!(state.links.len(), 1, "{marked}");
+            });
+            let mut modifiers = Modifiers::secondary_key();
+            modifiers.shift = true;
+            cx.simulate_click(position, modifiers);
+            assert!(types.try_recv().is_err());
+            cx.update_editor(|editor, _, _| editor.disable_lsp_data());
+            cx.executor().advance_clock(delay);
+            assert_eq!(types.next().await, Some(()));
+            cx.run_until_parked();
+            cx.assert_editor_state(&source);
+            let url = cx.opened_url();
+            opened.push(cx.update_workspace(|workspace, window, cx| {
+                assert!(!workspace.has_active_modal(window, cx));
+                if marked.starts_with("h") {
+                    return url;
+                }
+                let editor = workspace.active_item_as::<Editor>(cx).expect("editor");
+                let buffer = editor.read(cx).buffer().read(cx);
+                let buffer = buffer.as_singleton().expect("buffer");
+                let file = buffer.read(cx).file().expect("file");
+                let path = file.as_local().expect("local").abs_path(cx);
+                Some(path.to_string_lossy().into_owned())
+            }));
+            cx.update(|window, _| window.remove_window());
+            cx.run_until_parked();
+        }
+        assert_eq!(
+            opened,
+            ["https://zed.dev/", path!("/root/dir/file2.rs")].map(|target| Some(target.to_owned()))
         );
     }
 
