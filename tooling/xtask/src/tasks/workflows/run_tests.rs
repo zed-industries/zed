@@ -26,10 +26,11 @@ pub(crate) fn run_tests() -> Workflow {
     // - script/update_top_ranking_issues/
     // - .github/ISSUE_TEMPLATE/
     // - .github/workflows/  (except .github/workflows/ci.yml)
+    // - .wezel/
     // - extensions/  (these have their own test workflow)
     let should_run_tests = PathCondition::inverted(
         "run_tests",
-        r"^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests))|extensions/)",
+        r"^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests))|[.]wezel/|extensions/)",
     );
     let should_check_docs = PathCondition::new("run_docs", r"^(docs/|crates/.*\.rs)");
     let should_check_scripts = PathCondition::new(
@@ -81,9 +82,6 @@ pub(crate) fn run_tests() -> Workflow {
         should_run_tests
             .and_not_in_merge_queue()
             .then(check_workspace_binaries()),
-        should_run_tests
-            .and_not_in_merge_queue()
-            .then(build_visual_tests_binary()),
         should_run_tests.and_not_in_merge_queue().then(check_wasm()),
         should_run_tests.and_always().then(check_dependencies()), // could be more specific here?
         should_check_docs
@@ -99,11 +97,12 @@ pub(crate) fn run_tests() -> Workflow {
         (Platform::Mac, Arch::AARCH64),
         (Platform::Windows, Arch::X86_64),
     ] {
-        jobs.push(
-            should_run_tests
-                .and_always()
-                .then(check_remote_server(platform, arch)),
-        );
+        let condition = if platform == Platform::Linux {
+            should_run_tests.and_always()
+        } else {
+            should_run_tests.and_not_in_merge_queue()
+        };
+        jobs.push(condition.then(check_remote_server(platform, arch)));
     }
     let ext_tests = extension_tests();
     let tests_pass = tests_pass(&jobs, &[&ext_tests.name]);
@@ -543,7 +542,7 @@ fn check_remote_server(platform: Platform, arch: Arch) -> NamedJob {
     let runner = match (platform, arch) {
         (Platform::Linux, Arch::X86_64) => runners::LINUX_LARGE,
         (Platform::Linux, Arch::AARCH64) => runners::LINUX_ARM_BUNDLER,
-        (Platform::Mac, _) => runners::MAC_DEFAULT,
+        (Platform::Mac, _) => runners::MAC_SMALL,
         (Platform::Windows, _) => runners::WINDOWS_DEFAULT,
     };
     let command = format!(
@@ -610,7 +609,9 @@ fn check_workspace_binaries() -> NamedJob {
             .map(steps::install_linux_dependencies)
             .add_step(steps::setup_sccache(Platform::Linux))
             .add_step(steps::script("cargo build -p collab"))
-            .add_step(steps::script("cargo build --workspace --bins --examples"))
+            .add_step(steps::script(
+                "cargo build --workspace --bins --examples --features project_benchmarks/test-support",
+            ))
             .add_step(steps::show_sccache_stats(Platform::Linux))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     ))
@@ -624,7 +625,7 @@ pub(crate) fn clippy(platform: Platform, arch: Option<Arch>, harden: bool) -> Na
     let runner = match platform {
         Platform::Windows => runners::WINDOWS_DEFAULT,
         Platform::Linux => runners::LINUX_DEFAULT,
-        Platform::Mac => runners::MAC_DEFAULT,
+        Platform::Mac => runners::MAC_SMALL,
     };
     let mut job = release_job(&[])
         .runs_on(runner)
@@ -675,6 +676,9 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool, harden: bo
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
+            .when(platform == Platform::Mac, |job| {
+                job.add_env(("RUST_LIB_BACKTRACE", 0))
+            })
             .when(platform == Platform::Linux, |job| {
                 job.add_service(
                     "postgres",
@@ -725,22 +729,6 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool, harden: bo
             .add_step(steps::show_sccache_stats(platform))
             .add_step(steps::cleanup_cargo_config(platform)),
     }
-}
-
-fn build_visual_tests_binary() -> NamedJob {
-    pub fn cargo_build_visual_tests() -> Step<Run> {
-        named::bash("cargo build -p zed --bin zed_visual_test_runner --features visual-tests")
-    }
-
-    named::job(
-        Job::default()
-            .runs_on(runners::MAC_DEFAULT)
-            .add_step(steps::checkout_repo())
-            .add_step(steps::setup_cargo_config(Platform::Mac))
-            .add_step(steps::cache_rust_dependencies_namespace())
-            .add_step(cargo_build_visual_tests())
-            .add_step(steps::cleanup_cargo_config(Platform::Mac)),
-    )
 }
 
 pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
