@@ -1147,6 +1147,11 @@
     // Choices: project_diff, file_diff, view_file
     // Default: project_diff
     "entry_primary_click_action": "project_diff",
+    // Whether the commit message editor is shown in the git panel by default.
+    //
+    // Choices: expanded, collapsed
+    // Default: expanded
+    "commit_editor": "expanded",
   },
   "agent": {
     // Whether the inline assistant should use streaming tools, when available
@@ -1582,6 +1587,11 @@
     "include_ignored": "smart",
     // Whether to include text channels in file finder results.
     "include_channels": false,
+    // Whether to pre-fill the file finder's query with the text selected in the
+    // focused item (e.g. an editor or a terminal) when it is opened.
+    //
+    // Default: true
+    "prefill_query_from_selection": true,
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -2304,7 +2314,7 @@
       "tsconfig*.json",
     ],
     "Markdown": [".rules", ".cursorrules", ".windsurfrules", ".clinerules"],
-    "Shell Script": [".env.*"],
+    "Env": [".env.*"],
   },
   // Settings for which version of Node.js and NPM to use when installing
   // language servers and Copilot.

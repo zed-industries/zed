@@ -108,6 +108,19 @@ impl DisplayToDataMapping {
         self.mapping.get(&display_row).copied()
     }
 
+    /// Get the display row for a given data row
+    pub fn get_display_row(&self, data_row: DataRow) -> Option<DisplayRow> {
+        self.mapping
+            .iter()
+            .find_map(|(&display_row, &mapped_data_row)| {
+                if mapped_data_row == data_row {
+                    Some(display_row)
+                } else {
+                    None
+                }
+            })
+    }
+
     /// Get the number of filtered rows
     pub fn visible_row_count(&self) -> usize {
         self.mapping.len()

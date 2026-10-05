@@ -278,6 +278,10 @@ impl StackFrameList {
             }
         };
 
+        // Clear the error on a successful fetch so a transient failure (e.g.
+        // Delve's "unknown goroutine" at boot) doesn't leave a sticky banner.
+        self.error = None;
+
         let worktree_prefixes: Vec<_> = self
             .workspace
             .read_with(cx, |workspace, cx| {

@@ -69,6 +69,7 @@ util.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 tempfile = { workspace = true}
 settings = { workspace = true, features = ["test-support"] }
