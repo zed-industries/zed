@@ -2,7 +2,7 @@ use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
     resolve_global_skill_path, resolve_project_path,
 };
-use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use crate::{AgentTool, ProjectScope, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::{Context as _, Result, anyhow};
 use fs::Fs;
@@ -52,11 +52,12 @@ pub struct ListDirectoryToolInput {
 
 pub struct ListDirectoryTool {
     project: Entity<Project>,
+    scope: ProjectScope,
 }
 
 impl ListDirectoryTool {
-    pub fn new(project: Entity<Project>) -> Self {
-        Self { project }
+    pub fn new(project: Entity<Project>, scope: ProjectScope) -> Self {
+        Self { project, scope }
     }
 
     /// List the contents of a directory under the global skills tree directly
@@ -208,6 +209,7 @@ impl AgentTool for ListDirectoryTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
         let project = self.project.clone();
+        let scope = self.scope.clone();
         cx.spawn(async move |cx| {
             let input = input
                 .recv()
@@ -220,6 +222,7 @@ impl AgentTool for ListDirectoryTool {
                 let output = project.read_with(cx, |project, cx| {
                     project
                         .worktrees(cx)
+                        .filter(|worktree| scope.intersects_worktree(worktree, cx))
                         .filter_map(|worktree| {
                             let worktree = worktree.read(cx);
                             let root_entry = worktree.root_entry()?;
@@ -256,6 +259,11 @@ impl AgentTool for ListDirectoryTool {
             let (project_path, symlink_canonical_target) =
                 project.read_with(cx, |project, cx| -> anyhow::Result<_> {
                     let resolved = resolve_project_path(project, &input.path, &canonical_roots, cx)?;
+                    anyhow::ensure!(
+                        scope.resolve_project_path(project, &input.path, cx).is_some(),
+                        "Path {} isn't in this project or is outside the session's workspace scope",
+                        input.path
+                    );
                     Ok(match resolved {
                         ResolvedProjectPath::Safe(path) => (path, None),
                         ResolvedProjectPath::SymlinkEscape {
@@ -390,7 +398,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let tool = Arc::new(ListDirectoryTool::new(project));
+        let tool = Arc::new(ListDirectoryTool::new(project, ProjectScope::unscoped()));
 
         // Test listing root directory
         let input = ListDirectoryToolInput {
@@ -479,7 +487,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let tool = Arc::new(ListDirectoryTool::new(project));
+        let tool = Arc::new(ListDirectoryTool::new(project, ProjectScope::unscoped()));
 
         let input = ListDirectoryToolInput {
             path: "project/empty_dir".into(),
@@ -511,7 +519,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let tool = Arc::new(ListDirectoryTool::new(project));
+        let tool = Arc::new(ListDirectoryTool::new(project, ProjectScope::unscoped()));
 
         // Test non-existent path
         let input = ListDirectoryToolInput {
@@ -596,7 +604,7 @@ mod tests {
         });
 
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let tool = Arc::new(ListDirectoryTool::new(project));
+        let tool = Arc::new(ListDirectoryTool::new(project, ProjectScope::unscoped()));
 
         // Listing root directory should exclude private and excluded files
         let input = ListDirectoryToolInput {
@@ -760,7 +768,7 @@ mod tests {
         // Wait for worktrees to be fully scanned
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(ListDirectoryTool::new(project));
+        let tool = Arc::new(ListDirectoryTool::new(project, ProjectScope::unscoped()));
 
         // Test listing worktree1/src - should exclude secret.rs and config.toml based on local settings
         let input = ListDirectoryToolInput {
@@ -898,7 +906,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(ListDirectoryTool::new(project));
+        let tool = Arc::new(ListDirectoryTool::new(project, ProjectScope::unscoped()));
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
@@ -962,7 +970,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(ListDirectoryTool::new(project));
+        let tool = Arc::new(ListDirectoryTool::new(project, ProjectScope::unscoped()));
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
@@ -1028,7 +1036,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(ListDirectoryTool::new(project));
+        let tool = Arc::new(ListDirectoryTool::new(project, ProjectScope::unscoped()));
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let result = cx
@@ -1079,7 +1087,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let tool = Arc::new(ListDirectoryTool::new(project));
+        let tool = Arc::new(ListDirectoryTool::new(project, ProjectScope::unscoped()));
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let result = cx
@@ -1134,7 +1142,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(ListDirectoryTool::new(project));
+        let tool = Arc::new(ListDirectoryTool::new(project, ProjectScope::unscoped()));
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let result = cx
@@ -1185,7 +1193,7 @@ mod tests {
             .await;
 
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let tool = Arc::new(ListDirectoryTool::new(project));
+        let tool = Arc::new(ListDirectoryTool::new(project, ProjectScope::unscoped()));
 
         let input = ListDirectoryToolInput {
             path: skill_dir.to_string_lossy().into_owned(),
@@ -1232,7 +1240,7 @@ mod tests {
             .await;
 
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let tool = Arc::new(ListDirectoryTool::new(project));
+        let tool = Arc::new(ListDirectoryTool::new(project, ProjectScope::unscoped()));
 
         let input = ListDirectoryToolInput {
             path: path!("/etc").to_string(),

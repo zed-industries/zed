@@ -38,6 +38,12 @@ use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 /// - Do not silently choose a different model when an explicit model is unavailable unless the user allowed fallback.
 /// - A resumed session keeps its existing model, so `model` cannot be combined with `session_id`.
 ///
+/// ### Workspace scoping
+/// - Pass `workspace` to scope the subagent's whole session (its system-prompt context, its tools, and its terminals) to a subset of the project's directories — a project root, or any directory inside one.
+/// - Each entry must name a directory inside the current project, by absolute path, by root name, or by a path relative to a root (e.g. `crates/foo`).
+/// - Omit `workspace` to let the subagent inherit the parent's scope (the whole project for a top-level thread).
+/// - A subagent can narrow the scope but never widen it, and because a resumed session keeps its original scope, `workspace` cannot be combined with `session_id`.
+///
 /// ### Output
 /// - You will receive only the agent's final message as output.
 /// - Successful calls return a session_id that you can use for follow-up messages.
@@ -57,6 +63,12 @@ pub struct SpawnAgentToolInput {
     /// Omit to preserve default behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Directories inside the project this subagent's session is scoped to,
+    /// given as absolute paths, worktree root names, or paths relative to a
+    /// root (e.g. `crates/foo`). Omit to inherit the parent's scope. Cannot be
+    /// combined with `session_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<Vec<String>>,
 }
 
 fn deserialize_session_id<'de, D>(deserializer: D) -> Result<Option<acp::SessionId>, D::Error>
@@ -179,17 +191,25 @@ impl AgentTool for SpawnAgentTool {
                 message,
                 session_id,
                 model,
+                workspace,
             } = input;
             let (subagent, mut session_info) = cx.update(|cx| {
-                let subagent = match (session_id, model) {
-                    (Some(_), Some(_)) => Err(anyhow::anyhow!(
+                let subagent = match (session_id, model, workspace) {
+                    (Some(_), Some(_), _) => Err(anyhow::anyhow!(
                         "model cannot be changed when resuming a subagent session"
                     )),
-                    (Some(session_id), None) => self.environment.resume_subagent(session_id, cx),
-                    (None, model) => {
-                        self.environment
-                            .create_subagent(label, model.map(AgentModelId::from), cx)
+                    (Some(_), None, Some(_)) => Err(anyhow::anyhow!(
+                        "workspace cannot be changed when resuming a subagent session"
+                    )),
+                    (Some(session_id), None, None) => {
+                        self.environment.resume_subagent(session_id, cx)
                     }
+                    (None, model, workspace) => self.environment.create_subagent(
+                        label,
+                        model.map(AgentModelId::from),
+                        workspace,
+                        cx,
+                    ),
                 };
                 let subagent = subagent.map_err(|err| SpawnAgentToolOutput::Error {
                     session_id: None,

@@ -19,7 +19,7 @@ use crate::sandboxing::{
     NetworkRequest, sandbox_git_dirs, sandbox_worktree_writable_paths,
     sandboxing_enabled_for_project,
 };
-use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
+use crate::{AgentTool, ProjectScope, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 
@@ -264,13 +264,19 @@ impl From<SandboxedTerminalToolInput> for TerminalToolRequest {
 
 pub struct TerminalTool {
     project: Entity<Project>,
+    scope: ProjectScope,
     environment: Rc<dyn ThreadEnvironment>,
 }
 
 impl TerminalTool {
-    pub fn new(project: Entity<Project>, environment: Rc<dyn ThreadEnvironment>) -> Self {
+    pub fn new(
+        project: Entity<Project>,
+        scope: ProjectScope,
+        environment: Rc<dyn ThreadEnvironment>,
+    ) -> Self {
         Self {
             project,
+            scope,
             environment,
         }
     }
@@ -278,13 +284,19 @@ impl TerminalTool {
 
 pub struct SandboxedTerminalTool {
     project: Entity<Project>,
+    scope: ProjectScope,
     environment: Rc<dyn ThreadEnvironment>,
 }
 
 impl SandboxedTerminalTool {
-    pub fn new(project: Entity<Project>, environment: Rc<dyn ThreadEnvironment>) -> Self {
+    pub fn new(
+        project: Entity<Project>,
+        scope: ProjectScope,
+        environment: Rc<dyn ThreadEnvironment>,
+    ) -> Self {
         Self {
             project,
+            scope,
             environment,
         }
     }
@@ -322,6 +334,7 @@ impl AgentTool for TerminalTool {
             let input = input.recv().await.map_err(|e| e.to_string())?;
             run_terminal_tool(
                 self.project.clone(),
+                self.scope.clone(),
                 self.environment.clone(),
                 input.into(),
                 event_stream,
@@ -364,6 +377,7 @@ impl AgentTool for SandboxedTerminalTool {
             let input = input.recv().await.map_err(|e| e.to_string())?;
             run_terminal_tool(
                 self.project.clone(),
+                self.scope.clone(),
                 self.environment.clone(),
                 input.into(),
                 event_stream,
@@ -415,6 +429,7 @@ fn wsl_zed_release(_cx: &App) -> Option<(String, String)> {
 
 async fn run_terminal_tool(
     project: Entity<Project>,
+    scope: ProjectScope,
     environment: Rc<dyn ThreadEnvironment>,
     input: TerminalToolRequest,
     event_stream: ToolCallEventStream,
@@ -426,7 +441,7 @@ async fn run_terminal_tool(
     let (working_dir, authorize, sandboxing, is_local_project, wsl_zed_release) =
         cx.update(|cx| {
             let working_dir =
-                working_dir(&input.cd, &project, cx).map_err(|err| err.to_string())?;
+                working_dir(&input.cd, &project, &scope, cx).map_err(|err| err.to_string())?;
             let context =
                 crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
             let authorize =
@@ -1338,10 +1353,28 @@ fn process_content(
     content
 }
 
-fn working_dir(cd: &str, project: &Entity<Project>, cx: &mut App) -> Result<Option<PathBuf>> {
+fn working_dir(
+    cd: &str,
+    project: &Entity<Project>,
+    scope: &ProjectScope,
+    cx: &mut App,
+) -> Result<Option<PathBuf>> {
     let project = project.read(cx);
 
     if cd == "." || cd.is_empty() {
+        // When the session is scoped, the scope entry itself is the working
+        // directory; otherwise fall back to the sole project root.
+        if let Some(roots) = scope.roots() {
+            let mut roots = roots.ordered_paths();
+            if let Some(root) = roots.next() {
+                anyhow::ensure!(
+                    roots.next().is_none(),
+                    "'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly.",
+                );
+                return Ok(Some(root.clone()));
+            }
+        }
+
         let mut worktrees = project.worktrees(cx);
 
         match worktrees.next() {
@@ -1358,6 +1391,7 @@ fn working_dir(cd: &str, project: &Entity<Project>, cx: &mut App) -> Result<Opti
         let path_style = project.path_style(cx);
         let worktree_roots = project
             .worktrees(cx)
+            .filter(|worktree| scope.intersects_worktree(worktree, cx))
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
                 // Skip single-file worktrees: a file can't be a working directory.
@@ -1367,10 +1401,16 @@ fn working_dir(cd: &str, project: &Entity<Project>, cx: &mut App) -> Result<Opti
             .collect::<Vec<_>>();
 
         if let Some(dir) = resolve_cd_in_worktrees(cd, path_style, &worktree_roots) {
+            anyhow::ensure!(
+                scope.contains(&dir),
+                "`cd` directory {cd:?} is outside the session's workspace scope."
+            );
             return Ok(Some(dir));
         }
 
-        anyhow::bail!("`cd` directory {cd:?} was not in any root directory in the project.");
+        anyhow::bail!(
+            "`cd` directory {cd:?} was not in any root directory in the project or the session's workspace scope."
+        );
     }
 }
 
@@ -2142,7 +2182,11 @@ mod tests {
         });
 
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let tool = std::sync::Arc::new(TerminalTool::new(
+            project,
+            ProjectScope::unscoped(),
+            environment.clone(),
+        ));
         let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
         let task = cx.update(|cx| {
@@ -2210,7 +2254,11 @@ mod tests {
         });
 
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let tool = std::sync::Arc::new(TerminalTool::new(
+            project,
+            ProjectScope::unscoped(),
+            environment.clone(),
+        ));
         let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
         let task = cx.update(|cx| {
@@ -2272,7 +2320,11 @@ mod tests {
         });
 
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let tool = std::sync::Arc::new(TerminalTool::new(
+            project,
+            ProjectScope::unscoped(),
+            environment.clone(),
+        ));
         let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
         let task = cx.update(|cx| {
@@ -2342,7 +2394,11 @@ mod tests {
         });
 
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let tool = std::sync::Arc::new(TerminalTool::new(
+            project,
+            ProjectScope::unscoped(),
+            environment.clone(),
+        ));
         let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
         let task = cx.update(|cx| {
@@ -2409,7 +2465,11 @@ mod tests {
         });
 
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let tool = std::sync::Arc::new(TerminalTool::new(
+            project,
+            ProjectScope::unscoped(),
+            environment.clone(),
+        ));
         let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
         let task = cx.update(|cx| {
@@ -2468,7 +2528,11 @@ mod tests {
         });
 
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let tool = std::sync::Arc::new(TerminalTool::new(
+            project,
+            ProjectScope::unscoped(),
+            environment.clone(),
+        ));
         let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
         let task = cx.update(|cx| {
@@ -2528,7 +2592,11 @@ mod tests {
         });
 
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let tool = std::sync::Arc::new(TerminalTool::new(
+            project,
+            ProjectScope::unscoped(),
+            environment.clone(),
+        ));
         let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
         let _task = cx.update(|cx| {
@@ -2656,7 +2724,11 @@ mod tests {
         });
 
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let tool = std::sync::Arc::new(TerminalTool::new(
+            project,
+            ProjectScope::unscoped(),
+            environment.clone(),
+        ));
         let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
         let task = cx.update(|cx| {
@@ -2824,7 +2896,11 @@ mod tests {
         });
 
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let tool = std::sync::Arc::new(TerminalTool::new(
+            project,
+            ProjectScope::unscoped(),
+            environment.clone(),
+        ));
         let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
         let task = cx.update(|cx| {
@@ -2897,7 +2973,11 @@ mod tests {
         });
 
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let tool = std::sync::Arc::new(TerminalTool::new(
+            project,
+            ProjectScope::unscoped(),
+            environment.clone(),
+        ));
         let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
         let task = cx.update(|cx| {
@@ -2964,7 +3044,11 @@ mod tests {
         });
 
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let tool = std::sync::Arc::new(TerminalTool::new(
+            project,
+            ProjectScope::unscoped(),
+            environment.clone(),
+        ));
         let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
         let task = cx.update(|cx| {
@@ -3042,7 +3126,11 @@ mod tests {
         });
 
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let tool = std::sync::Arc::new(TerminalTool::new(
+            project,
+            ProjectScope::unscoped(),
+            environment.clone(),
+        ));
         let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
         let task = cx.update(|cx| {
@@ -3279,7 +3367,11 @@ mod tests {
             )
         }));
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = std::sync::Arc::new(SandboxedTerminalTool::new(project, environment.clone()));
+        let tool = std::sync::Arc::new(SandboxedTerminalTool::new(
+            project,
+            ProjectScope::unscoped(),
+            environment.clone(),
+        ));
         let (event_stream, mut receiver) = crate::ToolCallEventStream::test();
         let input: SandboxedTerminalToolInput = serde_json::from_value(serde_json::json!({
             "command": "echo hi",
@@ -3371,7 +3463,11 @@ mod tests {
             )
         }));
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = std::sync::Arc::new(SandboxedTerminalTool::new(project, environment.clone()));
+        let tool = std::sync::Arc::new(SandboxedTerminalTool::new(
+            project,
+            ProjectScope::unscoped(),
+            environment.clone(),
+        ));
         let (event_stream, mut receiver) = crate::ToolCallEventStream::test();
         let input: SandboxedTerminalToolInput = serde_json::from_value(serde_json::json!({
             "command": "echo hi",
@@ -3494,6 +3590,7 @@ mod tests {
         #[allow(clippy::arc_with_non_send_sync)]
         let tool = std::sync::Arc::new(SandboxedTerminalTool::new(
             project.clone(),
+            ProjectScope::unscoped(),
             environment.clone(),
         ));
         let (event_stream, mut receiver) =
@@ -3534,6 +3631,7 @@ mod tests {
         #[allow(clippy::arc_with_non_send_sync)]
         let tool2 = std::sync::Arc::new(SandboxedTerminalTool::new(
             project.clone(),
+            ProjectScope::unscoped(),
             environment2.clone(),
         ));
         let (event_stream2, mut receiver2) =
@@ -3603,7 +3701,11 @@ mod tests {
             )
         }));
         #[allow(clippy::arc_with_non_send_sync)]
-        let tool = std::sync::Arc::new(SandboxedTerminalTool::new(project, environment.clone()));
+        let tool = std::sync::Arc::new(SandboxedTerminalTool::new(
+            project,
+            ProjectScope::unscoped(),
+            environment.clone(),
+        ));
         let grants = std::rc::Rc::new(std::cell::RefCell::new(grants));
         let (event_stream, receiver) = crate::ToolCallEventStream::test_with_grants(grants);
         (tool, event_stream, receiver, environment)

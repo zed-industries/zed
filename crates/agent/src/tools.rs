@@ -33,12 +33,165 @@ use crate::AgentTool;
 use feature_flags::{
     CreateThreadToolFeatureFlag, FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag,
 };
-use gpui::App;
+use gpui::{App, Entity};
 use language_model::LanguageModelRequestTool;
+use project::{Project, ProjectPath, Worktree};
+use prompt_store::{ProjectContext, ScopedRootContext};
 use serde::{
     Deserialize, Deserializer,
     de::{DeserializeOwned, Error as _},
 };
+use std::path::Path;
+use util::path_list::PathList;
+
+/// The project roots an agent session is allowed to touch.
+///
+/// `None` is the unscoped case: every operation passes through untouched, so
+/// callers apply a scope unconditionally (`None` => skip, `Some` => filter).
+#[derive(Clone, Debug, Default)]
+pub struct ProjectScope(Option<PathList>);
+
+impl ProjectScope {
+    pub fn unscoped() -> Self {
+        Self(None)
+    }
+
+    pub fn from_roots(roots: PathList) -> Self {
+        Self(Some(roots))
+    }
+
+    pub fn roots(&self) -> Option<&PathList> {
+        self.0.as_ref()
+    }
+
+    pub fn is_unscoped(&self) -> bool {
+        self.0.is_none()
+    }
+
+    /// Whether an absolute path is inside the scope.
+    ///
+    /// A scope entry may be a whole project root or any directory within one,
+    /// so containment is a component-wise prefix test against the entries.
+    /// Always `true` when unscoped.
+    pub fn contains(&self, abs_path: &Path) -> bool {
+        match self.0.as_ref() {
+            None => true,
+            Some(roots) => roots.paths().iter().any(|root| abs_path.starts_with(root)),
+        }
+    }
+
+    /// Whether a worktree is *relevant* to the scope, i.e. at least one scope
+    /// entry lies inside it. This decides whether a worktree takes part in
+    /// enumeration at all; individual results are still filtered with
+    /// [`Self::contains`], since a scope entry may itself be a subdirectory.
+    pub fn intersects_worktree(&self, worktree: &Entity<Worktree>, cx: &App) -> bool {
+        match self.0.as_ref() {
+            None => true,
+            Some(roots) => {
+                let abs_path = worktree.read(cx).abs_path();
+                roots
+                    .paths()
+                    .iter()
+                    .any(|root| root.starts_with(&*abs_path))
+            }
+        }
+    }
+
+    /// Resolve an agent-supplied path against the project, returning `None`
+    /// when the resolved path lands outside the scope. Equivalent to
+    /// `Project::find_project_path` when unscoped.
+    pub fn resolve_project_path(
+        &self,
+        project: &Project,
+        path: impl AsRef<Path>,
+        cx: &App,
+    ) -> Option<ProjectPath> {
+        if self.is_unscoped() {
+            return project.find_project_path(path, cx);
+        }
+        let project_path = project.find_project_path(path, cx)?;
+        let abs_path = project.absolute_path(&project_path, cx)?;
+        self.contains(&abs_path).then_some(project_path)
+    }
+
+    /// Derive a scoped [`ProjectContext`] for the system prompt from the
+    /// project-wide one: keep worktrees containing at least one scoped root
+    /// (with their `rules_file`), and drop any skill whose file lives under an
+    /// entirely out-of-scope root. Global (`~/.agents/skills`) and built-in
+    /// (`<built-in>`) skills never match an excluded root, so they survive.
+    /// `has_rules` and `has_skills` are recomputed for the filtered context.
+    /// Returns `None` when unscoped.
+    pub fn scoped_project_context(
+        &self,
+        base: &ProjectContext,
+        scoped_roots: &[ScopedRootContext],
+    ) -> Option<ProjectContext> {
+        self.0.as_ref()?;
+        let intersects_scope = |worktree: &prompt_store::WorktreeContext| {
+            scoped_roots
+                .iter()
+                .any(|root| root.abs_path.starts_with(&worktree.abs_path))
+        };
+        let worktrees = base
+            .worktrees
+            .iter()
+            .filter(|worktree| intersects_scope(worktree))
+            .cloned()
+            .collect::<Vec<_>>();
+        let skills = base
+            .skills()
+            .iter()
+            .filter(|skill| {
+                !base
+                    .worktrees
+                    .iter()
+                    .filter(|worktree| !intersects_scope(worktree))
+                    .any(|worktree| Path::new(&skill.location).starts_with(&worktree.abs_path))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        Some(ProjectContext::new(worktrees).with_skills(skills))
+    }
+
+    /// The scope's roots as template contexts. Empty when unscoped.
+    ///
+    /// A root that no longer resolves inside the project (possible for a
+    /// scope restored from the database after the project changed) is logged
+    /// and skipped rather than failing the prompt build.
+    pub fn scoped_root_contexts(&self, project: &Project, cx: &App) -> Vec<ScopedRootContext> {
+        let Some(roots) = self.0.as_ref() else {
+            return Vec::new();
+        };
+        let mut contexts = Vec::with_capacity(roots.paths().len());
+        for root in roots.paths() {
+            let Some(project_path) = project.find_project_path(root, cx) else {
+                log::warn!("workspace scope root `{}` is outside the project", root.display());
+                continue;
+            };
+            let Some(worktree) = project.worktree_for_id(project_path.worktree_id, cx) else {
+                log::warn!("workspace scope root `{}` has no worktree", root.display());
+                continue;
+            };
+            let worktree_root_name = worktree.read(cx).root_name_str().to_string();
+            let path_in_worktree = project_path.path.as_unix_str();
+            let display_path = if path_in_worktree.is_empty() {
+                worktree_root_name.clone()
+            } else {
+                format!("{worktree_root_name}/{path_in_worktree}")
+            };
+            let root_name = root
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| worktree_root_name.clone());
+            contexts.push(ScopedRootContext {
+                root_name,
+                abs_path: root.as_path().into(),
+                project_path: display_path,
+            });
+        }
+        contexts
+    }
+}
 
 /// Deserialize a value that may have been provided as a JSON-encoded string
 /// instead of the structured value. Some models occasionally stringify nested
@@ -245,6 +398,7 @@ pub fn tool_feature_flag_enabled(tool_name: &str, cx: &App) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn built_in_tool_schemas_are_normalized() {
@@ -288,5 +442,111 @@ mod tests {
             );
         }
         assert!(tool_allowed_in_restricted_mode("some_mcp_tool"));
+    }
+
+    #[test]
+    fn project_scope_passes_through_when_unscoped() {
+        let scope = ProjectScope::unscoped();
+        assert!(scope.is_unscoped());
+        assert!(scope.roots().is_none());
+        assert!(scope.contains(Path::new("/root/a/file.txt")));
+        assert!(scope.contains(Path::new("/elsewhere/file.txt")));
+    }
+
+    #[test]
+    fn project_scope_filters_to_its_roots() {
+        let scope = ProjectScope::from_roots(PathList::new(&[
+            PathBuf::from("/root/a"),
+            PathBuf::from("/root/b"),
+        ]));
+        assert!(!scope.is_unscoped());
+        assert!(scope.contains(Path::new("/root/a")));
+        assert!(scope.contains(Path::new("/root/a/src/main.rs")));
+        assert!(scope.contains(Path::new("/root/b/nested/file.txt")));
+        assert!(!scope.contains(Path::new("/root/c/file.txt")));
+        // `starts_with` is component-wise, so a sibling whose name merely shares
+        // a prefix with an in-scope root must not match.
+        assert!(!scope.contains(Path::new("/root/ab/file.txt")));
+    }
+
+    #[test]
+    fn project_scope_accepts_subpath_entries() {
+        let scope = ProjectScope::from_roots(PathList::new(&[PathBuf::from("/root/a/crates")]));
+        assert!(scope.contains(Path::new("/root/a/crates")));
+        assert!(scope.contains(Path::new("/root/a/crates/foo/Cargo.toml")));
+        assert!(!scope.contains(Path::new("/root/a")));
+        assert!(!scope.contains(Path::new("/root/a/other")));
+        // A sibling that merely shares a name prefix must not match.
+        assert!(!scope.contains(Path::new("/root/a/crates-extra/x")));
+    }
+
+    #[test]
+    fn scoped_project_context_filters_worktrees_and_skills() {
+        use agent_skills::SkillSummary;
+        use prompt_store::{RulesFileContext, WorktreeContext};
+        use util::rel_path::RelPath;
+
+        fn worktree(root_name: &str, abs_path: &str, with_rules: bool) -> WorktreeContext {
+            WorktreeContext {
+                root_name: root_name.to_string(),
+                abs_path: Path::new(abs_path).into(),
+                rules_file: with_rules.then(|| RulesFileContext {
+                    path_in_worktree: RelPath::from_unix_str("AGENTS.md").unwrap().into(),
+                    text: "rules".to_string(),
+                    project_entry_id: 0,
+                }),
+            }
+        }
+
+        fn skill(name: &str, location: &str) -> SkillSummary {
+            SkillSummary {
+                name: name.to_string(),
+                description: String::new(),
+                location: location.to_string(),
+            }
+        }
+
+        let base = ProjectContext::new(vec![
+            worktree("alpha", "/root/alpha", true),
+            worktree("beta", "/root/beta", false),
+        ])
+        .with_skills(vec![
+            skill("alpha-skill", "/root/alpha/.agents/skills/alpha-skill/SKILL.md"),
+            skill("beta-skill", "/root/beta/.agents/skills/beta-skill/SKILL.md"),
+            skill("global-skill", "/home/user/.agents/skills/global-skill/SKILL.md"),
+        ]);
+        let scope = ProjectScope::from_roots(PathList::new(&[PathBuf::from(
+            "/root/alpha/crates",
+        )]));
+        let scoped_roots = vec![ScopedRootContext {
+            root_name: "crates".to_string(),
+            abs_path: Path::new("/root/alpha/crates").into(),
+            project_path: "alpha/crates".to_string(),
+        }];
+
+        assert!(
+            ProjectScope::unscoped()
+                .scoped_project_context(&base, &[])
+                .is_none(),
+            "an unscoped session keeps the project-wide context"
+        );
+
+        let scoped = scope
+            .scoped_project_context(&base, &scoped_roots)
+            .expect("a scoped session derives a scoped context");
+        // Only the worktree containing a scoped root survives, with its rules
+        // file; `has_rules` is recomputed for the filtered worktrees.
+        assert_eq!(scoped.worktrees, vec![worktree("alpha", "/root/alpha", true)]);
+        assert!(scoped.has_rules);
+        // The skill under the entirely out-of-scope root is dropped; the
+        // in-scope root's and the global skill survive.
+        assert_eq!(
+            scoped.skills(),
+            &[
+                skill("alpha-skill", "/root/alpha/.agents/skills/alpha-skill/SKILL.md"),
+                skill("global-skill", "/home/user/.agents/skills/global-skill/SKILL.md"),
+            ]
+        );
+        assert!(scoped.has_skills());
     }
 }

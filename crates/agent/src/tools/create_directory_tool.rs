@@ -14,7 +14,7 @@ use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
 use crate::{
-    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
+    AgentTool, ProjectScope, ToolCallEventStream, ToolInput, ToolPermissionDecision,
     authorize_with_sensitive_settings, decide_permission_for_path,
 };
 use std::path::{Path, PathBuf};
@@ -72,11 +72,12 @@ pub struct CreateDirectoryToolInput {
 
 pub struct CreateDirectoryTool {
     project: Entity<Project>,
+    scope: ProjectScope,
 }
 
 impl CreateDirectoryTool {
-    pub fn new(project: Entity<Project>) -> Self {
-        Self { project }
+    pub fn new(project: Entity<Project>, scope: ProjectScope) -> Self {
+        Self { project, scope }
     }
 }
 
@@ -109,6 +110,7 @@ impl AgentTool for CreateDirectoryTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
         let project = self.project.clone();
+        let scope = self.scope.clone();
         cx.spawn(async move |cx| {
             let input = input.recv().await.map_err(|e| e.to_string())?;
 
@@ -122,6 +124,21 @@ impl AgentTool for CreateDirectoryTool {
             let in_project = project.read_with(cx, |project, cx| {
                 project.find_project_path(&input.path, cx).is_some()
             });
+            let in_scope = project.read_with(cx, |project, cx| {
+                scope
+                    .resolve_project_path(project, &input.path, cx)
+                    .is_some()
+            });
+
+            // A path inside the project but outside the session's workspace
+            // scope must be rejected outright: it must not fall through to the
+            // out-of-project sandbox-grant branch below.
+            if in_project && !in_scope {
+                return Err(format!(
+                    "Path {} is outside the session's workspace scope",
+                    input.path
+                ));
+            }
 
             // A path outside the project (and not the global skills dir) can only
             // be created as a narrow sandbox write grant: create the directory and
@@ -130,7 +147,14 @@ impl AgentTool for CreateDirectoryTool {
             // — fully replaces the normal permission and symlink-escape prompts
             // here.
             if global_skill_directory.is_none() && !in_project {
-                return create_out_of_project_directory(&project, &input, &event_stream, cx).await;
+                return create_out_of_project_directory(
+                    &project,
+                    &scope,
+                    &input,
+                    &event_stream,
+                    cx,
+                )
+                .await;
             }
 
             let decision = cx.update(|cx| {
@@ -212,9 +236,12 @@ impl AgentTool for CreateDirectoryTool {
             }
 
             let create_entry = project.update(cx, |project, cx| {
-                match project.find_project_path(&input.path, cx) {
+                match scope.resolve_project_path(project, &input.path, cx) {
                     Some(project_path) => Ok(project.create_entry(project_path, true, cx)),
-                    None => Err("Path to create was outside the project".to_string()),
+                    None => Err(
+                        "Path to create was outside the project or the session's workspace scope"
+                            .to_string(),
+                    ),
                 }
             })?;
 
@@ -242,6 +269,7 @@ impl AgentTool for CreateDirectoryTool {
 /// the directories we created are removed.
 async fn create_out_of_project_directory(
     project: &Entity<Project>,
+    scope: &ProjectScope,
     input: &CreateDirectoryToolInput,
     event_stream: &ToolCallEventStream,
     cx: &mut AsyncApp,
@@ -255,7 +283,9 @@ async fn create_out_of_project_directory(
     });
     let platform_supported = cfg!(any(target_os = "linux", target_os = "macos"));
     if !sandboxing || !platform_supported {
-        return Err("Path to create was outside the project".to_string());
+        return Err(
+            "Path to create was outside the project or the session's workspace scope".to_string(),
+        );
     }
 
     let Some(reason) = input
@@ -273,7 +303,7 @@ async fn create_out_of_project_directory(
     };
     let reason = reason.to_string();
 
-    let absolute = resolve_absolute_path(project, &input.path, cx)
+    let absolute = resolve_absolute_path(project, scope, &input.path, cx)
         .ok_or_else(|| format!("Couldn't resolve `{}` to an absolute path.", input.path))?;
 
     let prepared = cx
@@ -314,6 +344,7 @@ async fn create_out_of_project_directory(
 /// Relative paths are joined onto the first worktree root.
 fn resolve_absolute_path(
     project: &Entity<Project>,
+    scope: &ProjectScope,
     raw: &str,
     cx: &mut AsyncApp,
 ) -> Option<PathBuf> {
@@ -324,7 +355,7 @@ fn resolve_absolute_path(
         let base = project.read_with(cx, |project, cx| {
             project
                 .worktrees(cx)
-                .next()
+                .find(|worktree| scope.intersects_worktree(worktree, cx))
                 .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
         })?;
         base.join(path)
@@ -366,7 +397,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(CreateDirectoryTool::new(project));
+        let tool = Arc::new(CreateDirectoryTool::new(project, ProjectScope::unscoped()));
         let input_path = PathBuf::from("~")
             .join(".agents")
             .join("skills")
@@ -424,7 +455,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(CreateDirectoryTool::new(project));
+        let tool = Arc::new(CreateDirectoryTool::new(project, ProjectScope::unscoped()));
         let outside_path = agent_skills::global_skills_dir()
             .parent()
             .expect("global skills directory should have a parent")
@@ -486,7 +517,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(CreateDirectoryTool::new(project));
+        let tool = Arc::new(CreateDirectoryTool::new(project, ProjectScope::unscoped()));
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
@@ -549,7 +580,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(CreateDirectoryTool::new(project));
+        let tool = Arc::new(CreateDirectoryTool::new(project, ProjectScope::unscoped()));
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
@@ -609,7 +640,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(CreateDirectoryTool::new(project));
+        let tool = Arc::new(CreateDirectoryTool::new(project, ProjectScope::unscoped()));
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
@@ -691,7 +722,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(CreateDirectoryTool::new(project));
+        let tool = Arc::new(CreateDirectoryTool::new(project, ProjectScope::unscoped()));
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let result = cx
@@ -736,7 +767,7 @@ mod tests {
         let target = scratch.path().join("new_grant_dir");
         assert!(!target.exists());
 
-        let tool = Arc::new(CreateDirectoryTool::new(project));
+        let tool = Arc::new(CreateDirectoryTool::new(project, ProjectScope::unscoped()));
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let path_input = target.to_string_lossy().into_owned();
         let task = cx.update(|cx| {
@@ -793,7 +824,7 @@ mod tests {
         let scratch = tempfile::tempdir().unwrap();
         let target = scratch.path().join("denied_dir");
 
-        let tool = Arc::new(CreateDirectoryTool::new(project));
+        let tool = Arc::new(CreateDirectoryTool::new(project, ProjectScope::unscoped()));
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let path_input = target.to_string_lossy().into_owned();
         let task = cx.update(|cx| {

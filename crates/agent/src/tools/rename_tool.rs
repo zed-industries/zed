@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::symbol_locator::SymbolLocator;
-use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use crate::{AgentTool, ProjectScope, ToolCallEventStream, ToolInput};
 
 /// Renames a symbol across the project using the language server.
 ///
@@ -27,11 +27,12 @@ pub struct RenameToolInput {
 
 pub struct RenameTool {
     project: Entity<Project>,
+    scope: ProjectScope,
 }
 
 impl RenameTool {
-    pub fn new(project: Entity<Project>) -> Self {
-        Self { project }
+    pub fn new(project: Entity<Project>, scope: ProjectScope) -> Self {
+        Self { project, scope }
     }
 }
 
@@ -68,11 +69,23 @@ impl AgentTool for RenameTool {
         cx: &mut App,
     ) -> Task<Result<String, String>> {
         let project = self.project.clone();
+        let scope = self.scope.clone();
         cx.spawn(async move |cx| {
             let input = input
                 .recv()
                 .await
                 .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+
+            project.read_with(cx, |project, cx| {
+                scope
+                    .resolve_project_path(project, &input.symbol.file_path, cx)
+                    .ok_or_else(|| {
+                        format!(
+                            "Path '{}' isn't in this project or is outside the session's workspace scope.",
+                            input.symbol.file_path
+                        )
+                    })
+            })?;
 
             let resolved = input.symbol.resolve(&project, cx).await?;
 
