@@ -188,7 +188,7 @@ impl EditorLspTestContext {
             LanguageConfig {
                 name: "Typescript".into(),
                 matcher: (LanguageMatcher {
-                    path_suffixes: vec!["ts".to_string()],
+                    path_suffixes: vec!["ts".into()],
                     ..Default::default()
                 }).into(),
                 brackets: language::BracketPairConfig {
@@ -293,7 +293,7 @@ impl EditorLspTestContext {
             LanguageConfig {
                 name: "TSX".into(),
                 matcher: (LanguageMatcher {
-                    path_suffixes: vec!["tsx".to_string()],
+                    path_suffixes: vec!["tsx".into()],
                     ..Default::default()
                 }).into(),
                 brackets: language::BracketPairConfig {

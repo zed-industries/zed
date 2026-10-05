@@ -6910,7 +6910,7 @@ mod tests {
             LanguageConfig {
                 name: "JavaScript".into(),
                 matcher: (LanguageMatcher {
-                    path_suffixes: vec!["js".to_string()],
+                    path_suffixes: vec!["js".into()],
                     ..Default::default()
                 })
                 .into(),

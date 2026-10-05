@@ -21119,7 +21119,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         LanguageConfig {
             name: "Rust".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
+                path_suffixes: vec!["rs".into()],
                 ..Default::default()
             })
             .into(),
@@ -21571,7 +21571,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["ts".to_string()],
+                path_suffixes: vec!["ts".into()],
                 ..Default::default()
             })
             .into(),
@@ -25539,7 +25539,7 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["ts".to_string()],
+                path_suffixes: vec!["ts".into()],
                 ..LanguageMatcher::default()
             })
             .into(),
@@ -28507,7 +28507,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut TestAppContext) {
         LanguageConfig {
             name: "Rust".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
+                path_suffixes: vec!["rs".into()],
                 ..Default::default()
             })
             .into(),
@@ -28778,7 +28778,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
         LanguageConfig {
             name: language_name.clone(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
+                path_suffixes: vec!["rs".into()],
                 ..Default::default()
             })
             .into(),
@@ -30084,7 +30084,7 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["ts".to_string()],
+                path_suffixes: vec!["ts".into()],
                 ..Default::default()
             })
             .into(),
@@ -30175,7 +30175,7 @@ async fn test_document_format_with_prettier_explicit_language(cx: &mut TestAppCo
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["ts".to_string()],
+                path_suffixes: vec!["ts".into()],
                 ..LanguageMatcher::default()
             })
             .into(),
@@ -30278,7 +30278,7 @@ async fn test_range_format_with_prettier(cx: &mut TestAppContext) {
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["ts".to_string()],
+                path_suffixes: vec!["ts".into()],
                 ..Default::default()
             })
             .into(),
@@ -30355,7 +30355,7 @@ async fn test_range_format_with_prettier_explicit_language(cx: &mut TestAppConte
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["ts".to_string()],
+                path_suffixes: vec!["ts".into()],
                 ..LanguageMatcher::default()
             })
             .into(),
@@ -39162,7 +39162,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["ts".to_string()],
+                path_suffixes: vec!["ts".into()],
                 ..Default::default()
             })
             .into(),
@@ -39997,7 +39997,7 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
         LanguageConfig {
             name: "HTML".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["html".to_string()],
+                path_suffixes: vec!["html".into()],
                 ..LanguageMatcher::default()
             })
             .into(),
@@ -40121,7 +40121,7 @@ async fn test_linked_edits_on_typing_punctuation(cx: &mut TestAppContext) {
         LanguageConfig {
             name: "TSX".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["tsx".to_string()],
+                path_suffixes: vec!["tsx".into()],
                 ..LanguageMatcher::default()
             })
             .into(),
@@ -40193,7 +40193,7 @@ async fn test_linked_edits_on_typing_dash_in_custom_element_name(cx: &mut TestAp
         LanguageConfig {
             name: "TSX".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["tsx".to_string()],
+                path_suffixes: vec!["tsx".into()],
                 ..LanguageMatcher::default()
             })
             .into(),
@@ -40256,7 +40256,7 @@ async fn test_linked_edits_on_typing_dot_without_language_override(cx: &mut Test
         LanguageConfig {
             name: "HTML".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["html".to_string()],
+                path_suffixes: vec!["html".into()],
                 ..LanguageMatcher::default()
             })
             .into(),
@@ -48303,7 +48303,7 @@ async fn test_tsx_nested_jsx_member_expression_highlights(cx: &mut TestAppContex
             LanguageConfig {
                 name: "TSX".into(),
                 matcher: (LanguageMatcher {
-                    path_suffixes: vec!["tsx".to_string()],
+                    path_suffixes: vec!["tsx".into()],
                     ..LanguageMatcher::default()
                 })
                 .into(),

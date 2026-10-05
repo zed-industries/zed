@@ -3538,7 +3538,7 @@ mod tests {
             language::LanguageConfig {
                 name: "Plain Text".into(),
                 matcher: (language::LanguageMatcher {
-                    path_suffixes: vec!["txt".to_string()],
+                    path_suffixes: vec!["txt".into()],
                     ..Default::default()
                 })
                 .into(),
