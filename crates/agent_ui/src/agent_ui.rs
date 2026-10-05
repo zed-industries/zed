@@ -1023,6 +1023,7 @@ mod tests {
             tool_permissions: Default::default(),
             sandbox_permissions: Default::default(),
             show_turn_stats: false,
+            show_usage_status: false,
             show_merge_conflict_indicator: true,
             max_idle_retained_threads: 5,
             threads_sidebar: agent_settings::ThreadsSidebarSettings {

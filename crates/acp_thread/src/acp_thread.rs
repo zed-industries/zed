@@ -4,6 +4,7 @@ mod connection;
 pub mod content;
 mod diff;
 mod mention;
+pub mod rate_limits;
 mod submission;
 mod terminal;
 pub use ::terminal::HeadlessTerminal;
@@ -3385,6 +3386,7 @@ pub struct AcpThread {
     submissions: SessionSubmissions,
     activity: SessionActivity,
     token_usage: Option<TokenUsage>,
+    rate_limits: rate_limits::RateLimits,
     cost: Option<SessionCost>,
     prompt_capabilities: acp_v1::PromptCapabilities,
     available_commands: Vec<acp_v2::AvailableCommand>,
@@ -3713,6 +3715,7 @@ impl AcpThread {
             connection,
             session_id,
             token_usage: None,
+            rate_limits: rate_limits::RateLimits::default(),
             cost: None,
             prompt_capabilities,
             available_commands: Vec::new(),
@@ -3943,6 +3946,10 @@ impl AcpThread {
 
     pub fn token_usage(&self) -> Option<&TokenUsage> {
         self.token_usage.as_ref()
+    }
+
+    pub fn rate_limits(&self) -> &rate_limits::RateLimits {
+        &self.rate_limits
     }
 
     pub fn submission(&self, id: SubmissionId) -> Option<&SubmissionRecord> {
@@ -4324,6 +4331,7 @@ impl AcpThread {
                         currency: cost.currency.into(),
                     });
                 }
+                self.rate_limits.apply_meta(update.meta.as_ref());
                 cx.emit(AcpThreadEvent::TokenUsageUpdated);
             }
             _ => {}
@@ -18491,6 +18499,52 @@ mod tests {
             let cost = thread.cost().expect("cost should be set");
             assert!((cost.amount - 0.42).abs() < f64::EPSILON);
             assert_eq!(cost.currency.as_ref(), "USD");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_usage_update_populates_rate_limits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let meta: acp_v1::Meta = serde_json::from_value(serde_json::json!({
+            rate_limits::CLAUDE_RATE_LIMIT_META_KEY: {
+                "status": "allowed",
+                "resetsAt": 1_700_000_000,
+                "rateLimitType": "five_hour",
+                "utilization": 0.27,
+            }
+        }))
+        .unwrap();
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp_v1::SessionUpdate::UsageUpdate(
+                        acp_v1::UsageUpdate::new(5000, 10000).meta(meta),
+                    ),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        thread.read_with(cx, |thread, _| {
+            let five_hour = thread
+                .rate_limits()
+                .five_hour
+                .as_ref()
+                .expect("five hour window should be set");
+            assert_eq!(five_hour.utilization, Some(0.27));
+            assert!(thread.rate_limits().seven_day.is_none());
         });
     }
 

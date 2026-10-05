@@ -387,6 +387,12 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     pub show_turn_stats: Option<bool>,
+    /// Whether to show the agent's plan usage limits (5-hour session window and weekly cap)
+    /// next to the context usage indicator, when the agent reports them.
+    /// Currently reported by Claude Agent when signed in with a Claude subscription.
+    ///
+    /// Default: false
+    pub show_usage_status: Option<bool>,
     /// Whether to show the merge conflict indicator in the status bar
     /// that offers to resolve conflicts using the agent.
     ///
