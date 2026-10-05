@@ -6568,9 +6568,10 @@ async fn test_remote_single_file_worktree_abs_path(cx: &mut TestAppContext) {
                 visible: true,
                 abs_path: "/home/user/.ssh/config".to_string(),
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             },
             AnyProtoClient::new(NoopProtoClient::new()),
-            PathStyle::Posix,
+            PathStyle::Unix,
             cx,
         )
     });
