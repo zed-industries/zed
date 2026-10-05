@@ -253,7 +253,7 @@ impl AvailableLanguages {
             .into_iter()
             .chain(paths.iter().map(|path| path.to_str()))
             .filter_map(|suffix| suffix.map(|suffix| (suffix, globset::Candidate::new(suffix))))
-            .collect::<SmallVec<[_; 4]>>();
+            .collect::<SmallVec<[_; 6]>>();
         let content = LazyCell::new(|| {
             content.map(|content| {
                 let end = content.clip_point(Point::new(0, 256), Bias::Left);

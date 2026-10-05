@@ -23,6 +23,7 @@ use gpui::{App, BackgroundExecutor, EntityId, Subscription};
 use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
+use smallvec::SmallVec;
 
 use std::{
     ffi::OsStr,
@@ -624,9 +625,30 @@ impl LanguageRegistry {
         cx: &App,
     ) -> Option<LanguageId> {
         let user_file_types = all_language_settings(Some(file), cx);
+        let filename = file
+            .path()
+            .file_name()
+            .unwrap_or_else(|| file.file_name(cx));
+        let paths = [Some(file.full_path(cx)), file.file_system_abs_path(cx)];
+        let path_style = file.path_style(cx);
+        let normalized_paths = paths.each_ref().map(|path| {
+            if path_style.is_windows()
+                && let Some(path) = path.as_deref().and_then(Path::to_str)
+                && path.contains('\\')
+            {
+                Some(PathBuf::from(path.replace('\\', "/")))
+            } else {
+                None
+            }
+        });
+        let paths = paths
+            .iter()
+            .filter_map(Option::as_deref)
+            .chain(normalized_paths.iter().filter_map(Option::as_deref))
+            .collect::<SmallVec<[_; 4]>>();
         self.language_for_file_internal(
-            Some(file.file_name(cx)),
-            &[&file.full_path(cx), &file.file_system_abs_path(cx)],
+            Some(filename),
+            &paths,
             content,
             Some(&user_file_types.file_types),
         )

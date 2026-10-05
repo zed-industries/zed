@@ -6592,7 +6592,7 @@ async fn test_remote_single_file_worktree_abs_path(cx: &mut TestAppContext) {
         );
         assert_eq!(
             language::File::file_system_abs_path(&file, cx),
-            PathBuf::from("/home/user/.ssh/config")
+            Some(PathBuf::from("/home/user/.ssh/config"))
         );
     });
 }
@@ -6611,7 +6611,12 @@ fn test_remote_worktree_language_matching(cx: &mut TestAppContext) {
                 .extend([
                     (
                         "Plain Text".into(),
-                        vec!["repo/templates/*.html".into()].into(),
+                        vec![
+                            "repo/templates/*.html".into(),
+                            #[cfg(unix)]
+                            r"repo\\raw\\*.html".into(),
+                        ]
+                        .into(),
                     ),
                     ("SSH Config".into(), vec!["**/.ssh/config".into()].into()),
                 ]);
@@ -6623,6 +6628,7 @@ fn test_remote_worktree_language_matching(cx: &mut TestAppContext) {
         ("SSH Config", vec![]),
         ("HTML", vec!["html".into()]),
         ("Git Commit", vec!["COMMIT_EDITMSG".into()]),
+        ("INI", vec!["config".into()]),
     ] {
         registry.register_test_language(language::LanguageConfig {
             name: name.into(),
@@ -6651,6 +6657,35 @@ fn test_remote_worktree_language_matching(cx: &mut TestAppContext) {
             "",
             PathStyle::Windows,
         ),
+        (
+            "config",
+            r"C:\Users\user\.ssh\config",
+            "",
+            PathStyle::Windows,
+        ),
+        (
+            "config",
+            r"\\server\share\.ssh\config",
+            "",
+            PathStyle::Windows,
+        ),
+        (
+            "config",
+            "C:/Users/user/.ssh/config",
+            "",
+            PathStyle::Windows,
+        ),
+        (".ssh", r"C:\Users\用户\.ssh", "config", PathStyle::Windows),
+        (
+            "repo",
+            r"C:\repo",
+            "templates/index.html",
+            PathStyle::Windows,
+        ),
+        #[cfg(unix)]
+        ("config", r"/home/user\.ssh/config", "", PathStyle::Unix),
+        #[cfg(unix)]
+        ("repo", r"C:\repo", "raw/index.html", PathStyle::Windows),
     ] {
         cx.update(|cx| {
             let worktree = Worktree::remote(
@@ -6690,6 +6725,15 @@ fn test_remote_worktree_language_matching(cx: &mut TestAppContext) {
             Some("SSH Config".into()),
             Some("Git Commit".into()),
             Some("Git Commit".into()),
+            Some("SSH Config".into()),
+            Some("SSH Config".into()),
+            Some("SSH Config".into()),
+            Some("SSH Config".into()),
+            Some("Plain Text".into()),
+            #[cfg(unix)]
+            Some("INI".into()),
+            #[cfg(unix)]
+            Some("Plain Text".into()),
         ]
     );
 }

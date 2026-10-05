@@ -378,10 +378,8 @@ pub trait File: Send + Sync + Any {
 
     /// Returns the absolute path to this file in its backing file system.
     /// For remote files, this is an absolute path on the remote host.
-    fn file_system_abs_path(&self, cx: &App) -> PathBuf {
-        self.as_local()
-            .map(|file| file.abs_path(cx))
-            .unwrap_or_else(|| self.full_path(cx))
+    fn file_system_abs_path(&self, cx: &App) -> Option<PathBuf> {
+        self.as_local().map(|file| file.abs_path(cx))
     }
 
     /// Returns the path style of this file.
@@ -6115,18 +6113,14 @@ impl File for TestFile {
         PathBuf::from(self.root_name.clone()).join(self.path.as_std_path())
     }
 
-    fn file_system_abs_path(&self, cx: &App) -> PathBuf {
-        if self.local_root.is_none() {
-            return self.full_path(cx);
-        }
-
-        let abs_path = PathBuf::from(self.local_root.as_ref().unwrap()).join(&self.root_name);
+    fn file_system_abs_path(&self, _: &App) -> Option<PathBuf> {
+        let abs_path = self.local_root.as_ref()?.join(&self.root_name);
         // Mirror worktree::Worktree::absolutize: an empty relative path refers to the root itself.
-        if self.path.as_std_path().as_os_str().is_empty() {
+        Some(if self.path.as_std_path().as_os_str().is_empty() {
             abs_path
         } else {
             abs_path.join(self.path.as_std_path())
-        }
+        })
     }
 
     fn as_local(&self) -> Option<&dyn LocalFile> {

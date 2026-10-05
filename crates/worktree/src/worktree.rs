@@ -3847,8 +3847,8 @@ impl language::File for File {
         self.worktree.read(cx).full_path(&self.path)
     }
 
-    fn file_system_abs_path(&self, cx: &App) -> PathBuf {
-        self.worktree.read(cx).absolutize(&self.path)
+    fn file_system_abs_path(&self, cx: &App) -> Option<PathBuf> {
+        Some(self.worktree.read(cx).absolutize(&self.path))
     }
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
