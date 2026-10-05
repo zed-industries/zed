@@ -1794,12 +1794,12 @@ impl PlatformWindow for MacWindow {
         executor
             .spawn(async move {
                 if !closed.load(Ordering::Acquire) {
-                    unsafe {
-                        if window.isVisible() == NO {
-                            let _: () = msg_send![view, setNeedsDisplay: YES];
-                        }
-                        let _: () = msg_send![window, makeKeyAndOrderFront: nil];
+                    let window = unsafe { &*window.cast::<Objc2NSWindow>() };
+                    if !window.isVisible() {
+                        let view = unsafe { &*view.cast::<Objc2NSView>() };
+                        view.setNeedsDisplay(true);
                     }
+                    window.makeKeyAndOrderFront(None);
                 }
             })
             .detach();
