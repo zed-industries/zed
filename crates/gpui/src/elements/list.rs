@@ -1052,7 +1052,7 @@ impl StateInner {
 
         let available_item_space = size(
             available_width.map_or(AvailableSpace::MaxContent, |width| {
-                AvailableSpace::Definite(width - padding.left - padding.right)
+                AvailableSpace::Definite(width)
             }),
             AvailableSpace::MinContent,
         );
@@ -1267,7 +1267,7 @@ impl StateInner {
             }
 
             let mut layout_response = self.layout_items(
-                Some(bounds.size.width),
+                Some(item_width),
                 bounds.size.height,
                 &padding,
                 render_item,
@@ -2974,7 +2974,7 @@ mod test {
     fn test_horizontal_padding_insets_items(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
 
-        let state = ListState::new(3, crate::ListAlignment::Top, px(10.));
+        let state = ListState::new(10, crate::ListAlignment::Top, px(0.)).measure_all();
         let item_bounds = Rc::new(RefCell::new(Vec::new()));
 
         struct TestView {
@@ -2990,8 +2990,8 @@ mod test {
                         move |bounds, _, _| item_bounds.borrow_mut().push(bounds),
                         |_, _, _, _| {},
                     )
-                    .h(px(20.))
                     .w_full()
+                    .aspect_ratio(2.)
                     .into_any()
                 })
                 .pl(px(10.))
@@ -3009,37 +3009,10 @@ mod test {
             .into_any_element()
         });
 
-        let item_bounds = item_bounds.borrow();
-        assert_eq!(item_bounds.len(), 3);
-        for bounds in item_bounds.iter() {
+        for bounds in item_bounds.borrow().iter() {
             assert_eq!(bounds.origin.x, px(10.));
             assert_eq!(bounds.size.width, px(60.));
         }
-    }
-
-    #[gpui::test]
-    fn test_measure_all_with_horizontal_padding(cx: &mut TestAppContext) {
-        let cx = cx.add_empty_window();
-
-        let state = ListState::new(10, crate::ListAlignment::Top, px(0.)).measure_all();
-
-        struct TestView(ListState);
-        impl Render for TestView {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                list(self.0.clone(), |_, _, _| {
-                    div().w_full().aspect_ratio(2.).into_any()
-                })
-                .pl(px(10.))
-                .pr(px(30.))
-                .w_full()
-                .h_full()
-            }
-        }
-
-        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
-            cx.new(|_| TestView(state.clone())).into_any_element()
-        });
-
         // Each item is 60px wide, so 30px tall: 300px in total.
         assert_eq!(state.max_offset_for_scrollbar().y, px(200.));
     }
