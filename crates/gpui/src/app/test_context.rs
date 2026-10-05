@@ -1,12 +1,13 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
-    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
-    Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Platform, PlatformTextSystem, Point, Render, Result, SharedString, Size,
-    SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform,
-    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions, WindowVisibility, app::GpuiMode, window::ElementArenaScope,
+    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DisplayEvent, DisplayId,
+    DrawPhase, Drawable, Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global,
+    InputEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Platform, PlatformTextSystem, Point, Render, Result,
+    SharedString, Size, SystemNotification, SystemNotificationResponse, Task, TestDispatcher,
+    TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window,
+    WindowBounds, WindowHandle, WindowOptions, WindowVisibility, app::GpuiMode,
+    window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -470,6 +471,24 @@ impl TestAppContext {
     ) {
         self.test_window(window_handle)
             .simulate_visibility_change(visibility);
+    }
+
+    /// Simulates a display being connected, disconnected, or changing refresh
+    /// interval. `refresh_interval` becomes the display's reported interval
+    /// unless it was removed.
+    pub fn simulate_display_change(&self, event: DisplayEvent, refresh_interval: Option<Duration>) {
+        self.test_platform
+            .simulate_display_change(event, refresh_interval);
+    }
+
+    /// Simulates the platform moving the window to another display.
+    pub fn simulate_window_move_to_display(
+        &self,
+        window_handle: AnyWindowHandle,
+        display_id: DisplayId,
+    ) {
+        self.test_window(window_handle)
+            .simulate_move_to_display(display_id);
     }
 
     /// Simulates visible viewport changes without resizing the window's layout area.

@@ -1583,6 +1583,13 @@ impl LinuxClient for X11Client {
             .collect()
     }
 
+    // A GPUI display on X11 is an X screen, which spans every monitor and so
+    // has no single refresh rate. Per-monitor displays would come from RandR
+    // CRTCs.
+    fn display_refresh_interval(&self, _id: DisplayId) -> Option<Duration> {
+        None
+    }
+
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         let state = self.0.borrow();
         X11Display::new(

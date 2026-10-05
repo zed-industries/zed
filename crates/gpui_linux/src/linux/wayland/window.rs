@@ -657,7 +657,12 @@ impl WaylandWindowState {
 
     pub fn primary_output_scale(&mut self) -> i32 {
         let mut scale = 1;
-        let mut current_output = self.display.take();
+        // Keep the display the surface last left only while it is on no
+        // other output.
+        let mut current_output = self
+            .display
+            .take()
+            .filter(|(id, _)| self.outputs.is_empty() || self.outputs.contains_key(id));
         for (id, output) in self.outputs.iter() {
             if let Some((_, output_data)) = &current_output {
                 if output.scale > output_data.scale {
@@ -1402,7 +1407,10 @@ impl WaylandWindowStatePtr {
 
                 state.outputs.insert(id, output.clone());
 
+                let previous_display = state.display.as_ref().map(|(id, _)| id.clone());
                 let scale = state.primary_output_scale();
+                let display_changed =
+                    state.display.as_ref().map(|(id, _)| id) != previous_display.as_ref();
                 state.update_subpixel_layout();
 
                 // We use `PreferredBufferScale` instead to set the scale if it's available
@@ -1413,12 +1421,18 @@ impl WaylandWindowStatePtr {
                 } else {
                     drop(state);
                 }
+                if display_changed {
+                    self.report_moved();
+                }
                 self.request_redraw();
             }
             wl_surface::Event::Leave { output } => {
                 state.outputs.remove(&output.id());
 
+                let previous_display = state.display.as_ref().map(|(id, _)| id.clone());
                 let scale = state.primary_output_scale();
+                let display_changed =
+                    state.display.as_ref().map(|(id, _)| id) != previous_display.as_ref();
                 state.update_subpixel_layout();
 
                 // We use `PreferredBufferScale` instead to set the scale if it's available
@@ -1428,6 +1442,9 @@ impl WaylandWindowStatePtr {
                     self.rescale(scale as f32);
                 } else {
                     drop(state);
+                }
+                if display_changed {
+                    self.report_moved();
                 }
                 self.request_redraw();
             }
@@ -1587,6 +1604,16 @@ impl WaylandWindowStatePtr {
         if let Some(mut fun) = callback {
             fun(focus);
             self.callbacks.borrow_mut().hover_status_change = Some(fun);
+        }
+    }
+
+    /// Wayland doesn't reveal window positions, so this only reports a move
+    /// to another output, for GPUI to reread the window's display.
+    fn report_moved(&self) {
+        let callback = self.callbacks.borrow_mut().moved.take();
+        if let Some(mut callback) = callback {
+            callback();
+            self.callbacks.borrow_mut().moved = Some(callback);
         }
     }
 
@@ -1761,7 +1788,6 @@ impl PlatformWindow for WaylandWindow {
                 id: id.clone(),
                 name: display.name.clone(),
                 bounds: display.bounds.to_pixels(state.scale),
-                refresh_interval: display.refresh_interval,
             }) as Rc<dyn PlatformDisplay>
         })
     }

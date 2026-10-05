@@ -96,12 +96,13 @@ use crate::linux::{
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
 };
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, ExternalDragPayload,
-    FileDragPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformFrameSignal, PlatformInput,
-    PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta, ScrollWheelEvent, SharedString,
-    Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, profiler, px, size,
+    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayEvent, DisplayId,
+    ExternalDragPayload, FileDragPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent,
+    KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
+    PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta,
+    ScrollWheelEvent, SharedString, Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams,
+    point, profiler, px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -537,6 +538,22 @@ impl WaylandClientStatePtr {
         self.0
             .upgrade()
             .expect("The pointer should always be valid when dispatching in wayland")
+    }
+
+    /// Reports a display event. The client state must not be borrowed, since
+    /// GPUI may read display state while handling the event.
+    fn report_display_event(&self, event: DisplayEvent) {
+        let client = self.get_client();
+        let callback = client.borrow_mut().common.callbacks.display_change.take();
+        if let Some(mut callback) = callback {
+            callback(event);
+            client
+                .borrow_mut()
+                .common
+                .callbacks
+                .display_change
+                .get_or_insert(callback);
+        }
     }
 
     pub fn dispatch_scheduled_frames(&self) {
@@ -1095,7 +1112,6 @@ impl LinuxClient for WaylandClient {
                     id: id.clone(),
                     name: output.name.clone(),
                     bounds: output.bounds.to_pixels(output.scale as f32),
-                    refresh_interval: output.refresh_interval,
                 }) as Rc<dyn PlatformDisplay>
             })
             .collect()
@@ -1112,7 +1128,6 @@ impl LinuxClient for WaylandClient {
                         id: object_id.clone(),
                         name: output.name.clone(),
                         bounds: output.bounds.to_pixels(output.scale as f32),
-                        refresh_interval: output.refresh_interval,
                     }) as Rc<dyn PlatformDisplay>
                 })
             })
@@ -1120,6 +1135,15 @@ impl LinuxClient for WaylandClient {
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         None
+    }
+
+    fn display_refresh_interval(&self, id: DisplayId) -> Option<Duration> {
+        self.0
+            .borrow()
+            .outputs
+            .iter()
+            .find(|(object_id, _)| display_id_for_output(object_id) == id)
+            .and_then(|(_, output)| output.refresh_interval)
     }
 
     #[cfg(feature = "screen-capture")]
@@ -1517,12 +1541,16 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                 let Some(id) = state.output_globals.remove(&name) else {
                     return;
                 };
-                state.outputs.remove(&id);
+                let was_complete = state.outputs.remove(&id).is_some();
                 state.in_progress_outputs.remove(&id);
                 if let Some(output) = state.wl_outputs.remove(&id)
                     && output.version() >= wl_output::REQ_RELEASE_SINCE
                 {
                     output.release();
+                }
+                if was_complete {
+                    drop(state);
+                    this.report_display_event(DisplayEvent::Removed(display_id_for_output(&id)));
                 }
             }
             _ => {}
@@ -1608,6 +1636,10 @@ fn frame_callback_instant(
         .unwrap_or(received_at)
 }
 
+fn display_id_for_output(output: &ObjectId) -> DisplayId {
+    DisplayId::new(output.protocol_id() as u64)
+}
+
 pub(crate) fn get_window(
     state: &mut RefMut<WaylandClientState>,
     surface_id: &ObjectId,
@@ -1683,9 +1715,19 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
                 }
             }
             wl_output::Event::Done => {
-                if let Some(complete) = in_progress_output.complete() {
-                    state.outputs.insert(output.id(), complete);
-                }
+                let Some(complete) = in_progress_output.complete() else {
+                    return;
+                };
+                let id = output.id();
+                let event = match state.outputs.insert(id.clone(), complete.clone()) {
+                    None => DisplayEvent::Added(display_id_for_output(&id)),
+                    Some(previous) if previous.refresh_interval != complete.refresh_interval => {
+                        DisplayEvent::Changed(display_id_for_output(&id))
+                    }
+                    Some(_) => return,
+                };
+                drop(state);
+                this.report_display_event(event);
             }
             _ => {}
         }

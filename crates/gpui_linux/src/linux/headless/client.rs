@@ -71,6 +71,10 @@ impl LinuxClient for HeadlessClient {
         Some(self.0.borrow().display.clone())
     }
 
+    fn display_refresh_interval(&self, _id: DisplayId) -> Option<std::time::Duration> {
+        None
+    }
+
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
         let display = self.0.borrow().display.clone();
         (display.id() == id).then_some(display)

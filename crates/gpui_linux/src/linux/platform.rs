@@ -33,10 +33,10 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 use crate::linux::{LinuxDispatcher, PriorityQueueCalloopReceiver};
 use gpui::{
     Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
-    DisplayId, ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
-    WindowButtonLayout, WindowParams,
+    DisplayEvent, DisplayId, ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, Result, RunnableVariant, Task, ThermalState,
+    WindowAppearance, WindowButtonLayout, WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use gpui::{Pixels, Point, px};
@@ -64,6 +64,7 @@ pub(crate) trait LinuxClient {
     #[allow(unused)]
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
+    fn display_refresh_interval(&self, id: DisplayId) -> Option<Duration>;
 
     #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
@@ -122,6 +123,7 @@ pub(crate) struct PlatformHandlers {
     pub(crate) keyboard_layout_change: Option<Box<dyn FnMut()>>,
     pub(crate) system_sleep: Option<Box<dyn FnMut()>>,
     pub(crate) system_wake: Option<Box<dyn FnMut()>>,
+    pub(crate) display_change: Option<Box<dyn FnMut(DisplayEvent)>>,
 }
 
 /// A logind `PrepareForSleep` signal, forwarded from the D-Bus listener to
@@ -414,6 +416,15 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         self.inner.displays()
+    }
+
+    fn on_display_change(&self, callback: Box<dyn FnMut(DisplayEvent)>) {
+        self.inner
+            .with_common(|common| common.callbacks.display_change = Some(callback));
+    }
+
+    fn display_refresh_interval(&self, id: DisplayId) -> Option<Duration> {
+        self.inner.display_refresh_interval(id)
     }
 
     #[cfg(feature = "screen-capture")]

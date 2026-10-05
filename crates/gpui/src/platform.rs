@@ -119,47 +119,45 @@ impl WindowVisibility {
     }
 }
 
-/// The presentation-relevant state of a display, read through
-/// [`PlatformDisplay::state`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DisplayState {
-    /// Time between the display's refreshes. Variable refresh rate displays
-    /// report their maximum rate. `None` when the platform doesn't report it.
-    pub refresh_interval: Option<Duration>,
-    /// Whether the display is powered and presenting.
-    pub power: DisplayPower,
+/// A change to the connected displays, reported through
+/// [`App::on_display_change`](crate::App::on_display_change).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DisplayEvent {
+    /// A display was connected.
+    Added(DisplayId),
+    /// A display was disconnected. Windows on it are moved to another
+    /// display by the platform.
+    Removed(DisplayId),
+    /// A display's refresh interval changed.
+    Changed(DisplayId),
 }
 
-impl DisplayState {
-    /// The state of a display the platform can tell nothing about.
-    pub const UNKNOWN: Self = Self {
-        refresh_interval: None,
-        power: DisplayPower::Unknown,
-    };
-
-    /// Converts a refresh rate in hertz to [`Self::refresh_interval`],
-    /// rejecting the zero, negative, and non-finite rates platforms use to
-    /// mean "unknown".
-    pub fn refresh_interval_from_hz(hertz: f64) -> Option<Duration> {
-        (hertz.is_finite() && hertz > 0.0).then(|| Duration::from_secs_f64(1.0 / hertz))
-    }
+/// The events that turn one snapshot of each connected display's refresh
+/// interval into the next, for platforms whose display notifications don't say
+/// what changed.
+pub fn display_events(
+    previous: &std::collections::HashMap<DisplayId, Option<Duration>>,
+    current: &std::collections::HashMap<DisplayId, Option<Duration>>,
+) -> Vec<DisplayEvent> {
+    let removed = previous
+        .keys()
+        .filter(|id| !current.contains_key(id))
+        .map(|id| DisplayEvent::Removed(*id));
+    let added_or_changed =
+        current
+            .iter()
+            .filter_map(|(id, refresh_interval)| match previous.get(id) {
+                None => Some(DisplayEvent::Added(*id)),
+                Some(previous) if previous != refresh_interval => Some(DisplayEvent::Changed(*id)),
+                Some(_) => None,
+            });
+    removed.chain(added_or_changed).collect()
 }
 
-/// Whether a display is presenting, as reported in [`DisplayState::power`].
-///
-/// This describes the display, not any window on it: a window on a display
-/// that is [`DisplayPower::On`] may still be [`WindowVisibility::Hidden`], and
-/// platforms that also report display sleep as window visibility (macOS
-/// occlusion) report both.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DisplayPower {
-    /// The display is presenting. Dimmed displays are still presenting.
-    On,
-    /// The display is asleep, in a power-saving mode, or otherwise powered
-    /// off while the system is awake. Nothing drawn for it will be shown.
-    Off,
-    /// The platform doesn't report display power.
-    Unknown,
+/// Converts a refresh rate in hertz to the time between refreshes, rejecting
+/// the zero, negative, and non-finite rates platforms use to mean "unknown".
+pub fn refresh_interval_from_hz(hertz: f64) -> Option<Duration> {
+    (hertz.is_finite() && hertz > 0.0).then(|| Duration::from_secs_f64(1.0 / hertz))
 }
 
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
@@ -241,6 +239,18 @@ pub trait Platform: 'static {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
+    /// Registers the callback invoked when a display is added or removed, or
+    /// its [`Self::display_refresh_interval`] changes. The callback runs on
+    /// the main thread.
+    fn on_display_change(&self, callback: Box<dyn FnMut(DisplayEvent)>);
+    /// The time between a display's refreshes, as last reported by the
+    /// platform's display notifications. Variable refresh rate displays report
+    /// their maximum rate. `None` for unknown displays and on platforms that
+    /// don't report it.
+    ///
+    /// Returns cached state without querying the operating system, so it is
+    /// cheap enough to call every frame.
+    fn display_refresh_interval(&self, id: DisplayId) -> Option<Duration>;
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         None
@@ -458,10 +468,6 @@ pub trait PlatformDisplay: Debug {
 
     /// Get the bounds for this display
     fn bounds(&self) -> Bounds<Pixels>;
-
-    /// The display's current refresh interval and power state, read from the
-    /// platform when called.
-    fn state(&self) -> DisplayState;
 
     /// Get the visible bounds for this display, excluding taskbar/dock areas.
     /// This is the usable area where windows can be placed without being obscured.
@@ -3480,17 +3486,44 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
+    fn test_display_events() {
+        let sixty_hertz = Some(Duration::from_secs(1) / 60);
+        let previous = std::collections::HashMap::from_iter([
+            (DisplayId(1), sixty_hertz),
+            (DisplayId(2), sixty_hertz),
+            (DisplayId(3), None),
+        ]);
+        let current = std::collections::HashMap::from_iter([
+            (DisplayId(1), sixty_hertz),
+            (DisplayId(3), Some(Duration::from_secs(1) / 120)),
+            (DisplayId(4), None),
+        ]);
+        let events = display_events(&previous, &current)
+            .into_iter()
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            events,
+            HashSet::from_iter([
+                DisplayEvent::Removed(DisplayId(2)),
+                DisplayEvent::Changed(DisplayId(3)),
+                DisplayEvent::Added(DisplayId(4)),
+            ])
+        );
+        assert_eq!(display_events(&current, &current), []);
+    }
+
+    #[test]
     fn test_refresh_interval_from_hz() {
         assert_eq!(
-            DisplayState::refresh_interval_from_hz(50.0),
+            refresh_interval_from_hz(50.0),
             Some(Duration::from_millis(20))
         );
         assert_eq!(
-            DisplayState::refresh_interval_from_hz(120.0),
+            refresh_interval_from_hz(120.0),
             Some(Duration::from_secs(1) / 120)
         );
         for unknown in [0.0, -60.0, f64::NAN, f64::INFINITY] {
-            assert_eq!(DisplayState::refresh_interval_from_hz(unknown), None);
+            assert_eq!(refresh_interval_from_hz(unknown), None);
         }
     }
 

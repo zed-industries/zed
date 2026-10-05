@@ -4,13 +4,14 @@ use crate::NoopTextSystem;
 use crate::PathPromptOptions;
 use crate::{
     ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    DummyKeyboardMapper, ForegroundExecutor, Keymap, OwnedMenu, Platform, PlatformDisplay,
-    PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SharedString,
-    SourceMetadata, SystemNotification, SystemNotificationResponse, Task, TestDisplay, TestWindow,
-    ThermalState, WindowAppearance, WindowParams, size,
+    DisplayEvent, DisplayId, DummyKeyboardMapper, ForegroundExecutor, Keymap, OwnedMenu, Platform,
+    PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
+    SharedString, SourceMetadata, SystemNotification, SystemNotificationResponse, Task,
+    TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
+use collections::HashMap;
 #[cfg(any(test, feature = "test-support"))]
 use collections::VecDeque;
 use futures::channel::oneshot;
@@ -33,6 +34,8 @@ pub(crate) struct TestPlatform {
 
     pub(crate) active_window: RefCell<Option<TestWindow>>,
     active_display: Rc<dyn PlatformDisplay>,
+    display_refresh_intervals: RefCell<HashMap<DisplayId, Duration>>,
+    display_change_callback: RefCell<Option<Box<dyn FnMut(DisplayEvent)>>>,
     active_cursor: Mutex<CursorStyle>,
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -140,6 +143,36 @@ impl TestPlatform {
         Self::with_platform(executor, foreground_executor, text_system, None)
     }
 
+    /// Reports a display event after recording the display's new refresh
+    /// interval, or forgetting the display if it was removed.
+    pub(crate) fn simulate_display_change(
+        &self,
+        event: DisplayEvent,
+        refresh_interval: Option<Duration>,
+    ) {
+        {
+            let mut intervals = self.display_refresh_intervals.borrow_mut();
+            match (event, refresh_interval) {
+                (DisplayEvent::Added(id) | DisplayEvent::Changed(id), Some(interval)) => {
+                    intervals.insert(id, interval);
+                }
+                (
+                    DisplayEvent::Added(id) | DisplayEvent::Changed(id) | DisplayEvent::Removed(id),
+                    _,
+                ) => {
+                    intervals.remove(&id);
+                }
+            }
+        }
+        let callback = self.display_change_callback.borrow_mut().take();
+        if let Some(mut callback) = callback {
+            callback(event);
+            self.display_change_callback
+                .borrow_mut()
+                .get_or_insert(callback);
+        }
+    }
+
     pub fn with_platform(
         executor: BackgroundExecutor,
         foreground_executor: ForegroundExecutor,
@@ -156,6 +189,11 @@ impl TestPlatform {
             screen_capture_sources: Default::default(),
             active_cursor: Default::default(),
             active_display: Rc::new(TestDisplay::new()),
+            display_refresh_intervals: RefCell::new(HashMap::from_iter([(
+                DisplayId(1),
+                Duration::from_secs(1) / 60,
+            )])),
+            display_change_callback: Default::default(),
             active_window: Default::default(),
             expect_restart: Default::default(),
             current_clipboard_item: Mutex::new(None),
@@ -463,6 +501,14 @@ impl Platform for TestPlatform {
 
     fn primary_display(&self) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
         Some(self.active_display.clone())
+    }
+
+    fn on_display_change(&self, callback: Box<dyn FnMut(DisplayEvent)>) {
+        *self.display_change_callback.borrow_mut() = Some(callback);
+    }
+
+    fn display_refresh_interval(&self, id: DisplayId) -> Option<Duration> {
+        self.display_refresh_intervals.borrow().get(&id).copied()
     }
 
     fn is_screen_capture_supported(&self) -> bool {

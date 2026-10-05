@@ -10,10 +10,9 @@ use core_foundation::uuid::{CFUUIDGetUUIDBytes, CFUUIDRef};
 use core_graphics::display::{
     CGDirectDisplayID, CGDisplay, CGDisplayBounds, CGGetActiveDisplayList,
 };
-use gpui::{
-    Bounds, DisplayId, DisplayPower, DisplayState, Pixels, PlatformDisplay, point, px, size,
-};
+use gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, point, px, refresh_interval_from_hz, size};
 use objc::{msg_send, sel, sel_impl};
+use std::{collections::HashMap, time::Duration};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -109,40 +108,6 @@ impl PlatformDisplay for MacDisplay {
         ]))
     }
 
-    fn state(&self) -> DisplayState {
-        let display = CGDisplay::new(self.0);
-        // `maximumFramesPerSecond` is the ProMotion maximum, where the
-        // display mode's rate is 0 on built-in panels.
-        let screen_hertz = unsafe {
-            let screen = self.get_nsscreen();
-            let supports_maximum: BOOL = if screen == nil {
-                NO
-            } else {
-                msg_send![screen, respondsToSelector: sel!(maximumFramesPerSecond)]
-            };
-            if supports_maximum == YES {
-                let frames_per_second: isize = msg_send![screen, maximumFramesPerSecond];
-                frames_per_second as f64
-            } else {
-                0.0
-            }
-        };
-        let refresh_interval = DisplayState::refresh_interval_from_hz(screen_hertz).or_else(|| {
-            display
-                .display_mode()
-                .and_then(|mode| DisplayState::refresh_interval_from_hz(mode.refresh_rate()))
-        });
-        let power = if display.is_asleep() {
-            DisplayPower::Off
-        } else {
-            DisplayPower::On
-        };
-        DisplayState {
-            refresh_interval,
-            power,
-        }
-    }
-
     fn bounds(&self) -> Bounds<Pixels> {
         unsafe {
             // CGDisplayBounds is in "global display" coordinates, where 0 is
@@ -187,6 +152,37 @@ impl PlatformDisplay for MacDisplay {
 }
 
 impl MacDisplay {
+    /// Reads the refresh interval of each active display from the system.
+    pub(crate) fn refresh_intervals() -> HashMap<DisplayId, Option<Duration>> {
+        Self::all()
+            .map(|display| (display.id(), display.refresh_interval()))
+            .collect()
+    }
+
+    fn refresh_interval(&self) -> Option<Duration> {
+        // `maximumFramesPerSecond` is the ProMotion maximum, where the
+        // display mode's rate is 0 on built-in panels.
+        let screen_hertz = unsafe {
+            let screen = self.get_nsscreen();
+            let supports_maximum: BOOL = if screen == nil {
+                NO
+            } else {
+                msg_send![screen, respondsToSelector: sel!(maximumFramesPerSecond)]
+            };
+            if supports_maximum == YES {
+                let frames_per_second: isize = msg_send![screen, maximumFramesPerSecond];
+                frames_per_second as f64
+            } else {
+                0.0
+            }
+        };
+        refresh_interval_from_hz(screen_hertz).or_else(|| {
+            CGDisplay::new(self.0)
+                .display_mode()
+                .and_then(|mode| refresh_interval_from_hz(mode.refresh_rate()))
+        })
+    }
+
     /// Find the NSScreen corresponding to this display
     unsafe fn get_nsscreen(&self) -> id {
         let screens = unsafe { NSScreen::screens(nil) };

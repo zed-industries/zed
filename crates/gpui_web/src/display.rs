@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::{Bounds, DisplayId, DisplayState, Pixels, PlatformDisplay, Point, Size, px};
+use gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, Point, Size, px};
 
 #[derive(Debug)]
 pub struct WebDisplay {
@@ -77,12 +77,6 @@ impl PlatformDisplay for WebDisplay {
             origin: Point::default(),
             size,
         }
-    }
-
-    // Browsers expose neither the refresh rate nor display power; the rate
-    // could only be estimated from `requestAnimationFrame` cadence.
-    fn state(&self) -> DisplayState {
-        DisplayState::UNKNOWN
     }
 
     fn visible_bounds(&self) -> Bounds<Pixels> {

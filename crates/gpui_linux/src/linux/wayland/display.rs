@@ -8,7 +8,7 @@ use anyhow::Context as _;
 use uuid::Uuid;
 use wayland_backend::client::ObjectId;
 
-use gpui::{Bounds, DisplayId, DisplayPower, DisplayState, Pixels, PlatformDisplay};
+use gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, refresh_interval_from_hz};
 
 #[derive(Debug, Clone)]
 pub(crate) struct WaylandDisplay {
@@ -16,7 +16,6 @@ pub(crate) struct WaylandDisplay {
     pub id: ObjectId,
     pub name: Option<String>,
     pub bounds: Bounds<Pixels>,
-    pub refresh_interval: Option<Duration>,
 }
 
 impl Hash for WaylandDisplay {
@@ -41,22 +40,12 @@ impl PlatformDisplay for WaylandDisplay {
     fn bounds(&self) -> Bounds<Pixels> {
         self.bounds
     }
-
-    // Display power is only available through wlr-output-power-management,
-    // whose controls are exclusive per output in wlroots: holding one would
-    // stop the user's idle daemon from turning the output off.
-    fn state(&self) -> DisplayState {
-        DisplayState {
-            refresh_interval: self.refresh_interval,
-            power: DisplayPower::Unknown,
-        }
-    }
 }
 
 /// Converts a `wl_output.mode` refresh rate, in millihertz, to an interval.
 /// Compositors send 0 when the rate doesn't apply, e.g. for virtual outputs.
 pub(crate) fn refresh_interval_from_millihertz(millihertz: i32) -> Option<Duration> {
-    DisplayState::refresh_interval_from_hz(f64::from(millihertz) / 1000.0)
+    refresh_interval_from_hz(f64::from(millihertz) / 1000.0)
 }
 
 #[cfg(test)]

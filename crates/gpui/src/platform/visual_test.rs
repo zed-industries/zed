@@ -7,8 +7,8 @@
 
 use crate::ScreenCaptureSource;
 use crate::{
-    ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
-    ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
+    ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayEvent,
+    DisplayId, ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformWindow, Task, TestDispatcher, WindowAppearance, WindowParams,
 };
@@ -20,6 +20,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
+    time::Duration,
 };
 
 /// A platform that combines real Mac rendering with controllable TestDispatcher.
@@ -99,6 +100,14 @@ impl Platform for VisualTestPlatform {
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         self.platform.primary_display()
+    }
+
+    fn on_display_change(&self, callback: Box<dyn FnMut(DisplayEvent)>) {
+        self.platform.on_display_change(callback)
+    }
+
+    fn display_refresh_interval(&self, id: DisplayId) -> Option<Duration> {
+        self.platform.display_refresh_interval(id)
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {

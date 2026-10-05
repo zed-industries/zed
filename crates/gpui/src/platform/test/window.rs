@@ -1,9 +1,10 @@
 use crate::{
-    AnyWindowHandle, Bounds, DevicePixels, DispatchEventResult, GpuSpecs, HeadlessAtlas, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptButton, RequestFrameOptions, Scene, Size, TestPlatform,
-    TextInputConfiguration, TextInputStateChange, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowInsets, WindowParams, WindowVisibility,
+    AnyWindowHandle, Bounds, DevicePixels, DispatchEventResult, DisplayId, GpuSpecs, HeadlessAtlas,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformHeadlessRenderer, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PromptButton, RequestFrameOptions, Scene, Size,
+    TestDisplay, TestPlatform, TextInputConfiguration, TextInputStateChange, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowInsets, WindowParams,
+    WindowVisibility,
 };
 use gpui_util::ResultExt as _;
 #[cfg(any(test, feature = "test-support"))]
@@ -164,6 +165,20 @@ impl TestWindow {
         if let Some(mut callback) = callback {
             callback(visibility);
             self.0.lock().visibility_callback = Some(callback);
+        }
+    }
+
+    /// Moves the window to the display with the given ID, as the platform
+    /// would when the user drags it there.
+    pub fn simulate_move_to_display(&self, display_id: DisplayId) {
+        let callback = {
+            let mut state = self.0.lock();
+            state.display = Rc::new(TestDisplay::with_id(display_id));
+            state.moved_callback.take()
+        };
+        if let Some(mut callback) = callback {
+            callback();
+            self.0.lock().moved_callback = Some(callback);
         }
     }
 

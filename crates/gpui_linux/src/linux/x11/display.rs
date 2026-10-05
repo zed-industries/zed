@@ -2,7 +2,7 @@ use anyhow::Context as _;
 use uuid::Uuid;
 use x11rb::{connection::Connection as _, xcb_ffi::XCBConnection};
 
-use gpui::{Bounds, DisplayId, DisplayState, Pixels, PlatformDisplay, Size, px};
+use gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, Size, px};
 
 #[derive(Debug)]
 pub(crate) struct X11Display {
@@ -47,11 +47,5 @@ impl PlatformDisplay for X11Display {
 
     fn bounds(&self) -> Bounds<Pixels> {
         self.bounds
-    }
-
-    // An X11 display is an X screen, which spans every monitor, so it has no
-    // single refresh rate. DPMS power has no change notification.
-    fn state(&self) -> DisplayState {
-        DisplayState::UNKNOWN
     }
 }

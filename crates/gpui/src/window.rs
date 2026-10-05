@@ -8,21 +8,22 @@ use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
     Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
-    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
-    Hsla, InputHandler, InputPreference, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
-    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
-    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
-    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayEvent, DisplayId, Edges, Effect,
+    Entity, EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId,
+    GpuSpecs, Hsla, InputHandler, InputPreference, IsZero, KeyBinding, KeyContext, KeyDownEvent,
+    KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers,
+    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
+    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
+    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point, prelude::*, px, rems,
+    size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -1207,6 +1208,7 @@ pub struct Window {
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) button_layout_observers: SubscriberSet<(), AnyObserver>,
+    display_observers: SubscriberSet<(), AnyObserver>,
     active: Rc<Cell<bool>>,
     visibility: WindowVisibility,
     pub(crate) visibility_observers:
@@ -2100,6 +2102,7 @@ impl Window {
             active,
             visibility,
             visibility_observers: SubscriberSet::new(),
+            display_observers: SubscriberSet::new(),
             hovered,
             needs_present,
             input_rate_tracker,
@@ -2721,7 +2724,7 @@ impl Window {
     pub fn bounds_changed(&mut self, cx: &mut App) {
         self.scale_factor = self.platform_window.scale_factor();
         self.viewport_size = self.platform_window.content_size();
-        self.display_id = self.platform_window.display().map(|display| display.id());
+        let display_changed = self.refresh_display_id();
         self.mouse_position = self.platform_window.mouse_position();
 
         self.refresh();
@@ -2729,6 +2732,67 @@ impl Window {
         self.bounds_observers
             .clone()
             .retain(&(), |callback| callback(self, cx));
+        if display_changed {
+            self.notify_display_observers(cx);
+        }
+    }
+
+    /// Rereads the window's display, returning whether it changed.
+    fn refresh_display_id(&mut self) -> bool {
+        let display_id = self.platform_window.display().map(|display| display.id());
+        let changed = display_id != self.display_id;
+        self.display_id = display_id;
+        changed
+    }
+
+    pub(crate) fn handle_display_event(&mut self, event: DisplayEvent, cx: &mut App) {
+        // The platform moves windows off a removed display, possibly without
+        // reporting a move.
+        let moved = self.refresh_display_id();
+        let refresh_interval_changed = self
+            .display_id
+            .is_some_and(|display_id| event == DisplayEvent::Changed(display_id));
+        if moved || refresh_interval_changed {
+            self.notify_display_observers(cx);
+        }
+    }
+
+    fn notify_display_observers(&mut self, cx: &mut App) {
+        self.display_observers
+            .clone()
+            .retain(&(), |callback| callback(self, cx));
+    }
+
+    /// The ID of the display the window is on, if the platform reports one.
+    pub fn display_id(&self) -> Option<DisplayId> {
+        self.display_id
+    }
+
+    /// The time between refreshes of the display the window is on, as last
+    /// reported by the platform. Variable refresh rate displays report their
+    /// maximum rate. Returns `None` when the platform doesn't report it. This
+    /// doesn't query the operating system.
+    pub fn refresh_interval(&self, cx: &App) -> Option<Duration> {
+        cx.display_refresh_interval(self.display_id?)
+    }
+
+    /// Registers a callback invoked when the window moves to another display
+    /// or the refresh interval of its display changes. The window's
+    /// [`Self::display_id`] and [`Self::refresh_interval`] are already updated
+    /// when the callback runs.
+    pub fn observe_window_display(
+        &self,
+        mut callback: impl FnMut(&mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.display_observers.insert(
+            (),
+            Box::new(move |window, cx| {
+                callback(window, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
     }
 
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
@@ -7934,6 +7998,77 @@ mod tests {
             .update(cx, |_, window, _| assert!(window.is_visible()))
             .unwrap();
         assert_eq!(test_window.frame_wake_count(), frame_wake_count);
+    }
+
+    /// A window follows its display's refresh interval as it moves between
+    /// displays and as the platform reports display changes.
+    #[gpui::test]
+    fn test_window_display_tracking(cx: &mut TestAppContext) {
+        use crate::{DisplayEvent, DisplayId};
+
+        let sixty_hertz = Duration::from_secs(1) / 60;
+        let one_hundred_twenty_hertz = Duration::from_secs(1) / 120;
+        let one_hundred_forty_four_hertz = Duration::from_secs(1) / 144;
+
+        let display_events = Rc::new(RefCell::new(Vec::new()));
+        let _display_subscription = cx.update({
+            let display_events = display_events.clone();
+            move |cx| cx.on_display_change(move |event, _| display_events.borrow_mut().push(event))
+        });
+
+        let window = cx.add_window(|_, _| EmptyView);
+        let window_notifications = Rc::new(RefCell::new(Vec::new()));
+        let _window_subscription = window
+            .update(cx, {
+                let window_notifications = window_notifications.clone();
+                move |_, window, cx| {
+                    assert_eq!(window.display_id(), Some(DisplayId(1)));
+                    assert_eq!(window.refresh_interval(cx), Some(sixty_hertz));
+                    window.observe_window_display(move |window, cx| {
+                        window_notifications
+                            .borrow_mut()
+                            .push((window.display_id(), window.refresh_interval(cx)));
+                    })
+                }
+            })
+            .unwrap();
+
+        cx.simulate_display_change(
+            DisplayEvent::Added(DisplayId(2)),
+            Some(one_hundred_twenty_hertz),
+        );
+        assert!(window_notifications.borrow().is_empty());
+
+        cx.simulate_window_move_to_display(window.into(), DisplayId(2));
+        assert_eq!(
+            window_notifications.take(),
+            [(Some(DisplayId(2)), Some(one_hundred_twenty_hertz))]
+        );
+
+        cx.simulate_display_change(
+            DisplayEvent::Changed(DisplayId(2)),
+            Some(one_hundred_forty_four_hertz),
+        );
+        assert_eq!(
+            window_notifications.take(),
+            [(Some(DisplayId(2)), Some(one_hundred_forty_four_hertz))]
+        );
+
+        // Changes to other displays don't concern the window.
+        cx.simulate_display_change(DisplayEvent::Changed(DisplayId(1)), Some(sixty_hertz));
+        cx.simulate_display_change(DisplayEvent::Removed(DisplayId(1)), None);
+        assert!(window_notifications.borrow().is_empty());
+
+        assert_eq!(
+            display_events.take(),
+            [
+                DisplayEvent::Added(DisplayId(2)),
+                DisplayEvent::Changed(DisplayId(2)),
+                DisplayEvent::Changed(DisplayId(1)),
+                DisplayEvent::Removed(DisplayId(1)),
+            ]
+        );
+        cx.update(|cx| assert_eq!(cx.display_refresh_interval(DisplayId(1)), None));
     }
 
     #[gpui::test]

@@ -1,6 +1,7 @@
 use gpui_util::ResultExt;
 use itertools::Itertools;
 use smallvec::SmallVec;
+use std::collections::HashMap;
 use std::rc::Rc;
 use uuid::Uuid;
 use windows::{
@@ -17,8 +18,7 @@ use windows::{
 
 use crate::logical_point;
 use gpui::{
-    Bounds, DevicePixels, DisplayId, DisplayPower, DisplayState, Pixels, PlatformDisplay, point,
-    size,
+    Bounds, DevicePixels, DisplayId, Pixels, PlatformDisplay, point, refresh_interval_from_hz, size,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -30,7 +30,6 @@ pub(crate) struct WindowsDisplay {
     visible_bounds: Bounds<Pixels>,
     physical_bounds: Bounds<DevicePixels>,
     uuid: Uuid,
-    device_name: [u16; 32],
 }
 
 // The `HMONITOR` is thread-safe.
@@ -75,7 +74,6 @@ impl WindowsDisplay {
                 size: physical_size,
             },
             uuid,
-            device_name: info.szDevice,
         })
     }
 
@@ -133,6 +131,19 @@ impl WindowsDisplay {
             .collect()
     }
 
+    /// Reads the refresh interval of each connected monitor from the system.
+    pub(crate) fn refresh_intervals() -> HashMap<DisplayId, Option<std::time::Duration>> {
+        available_monitors()
+            .into_iter()
+            .map(|monitor| {
+                let refresh_interval = get_monitor_info(monitor)
+                    .log_err()
+                    .and_then(|info| refresh_interval_for_device(&info.szDevice));
+                (Self::display_id_for_monitor(monitor), refresh_interval)
+            })
+            .collect()
+    }
+
     pub fn physical_bounds(&self) -> Bounds<DevicePixels> {
         self.physical_bounds
     }
@@ -153,15 +164,6 @@ impl PlatformDisplay for WindowsDisplay {
 
     fn visible_bounds(&self) -> Bounds<Pixels> {
         self.visible_bounds
-    }
-
-    fn state(&self) -> DisplayState {
-        DisplayState {
-            refresh_interval: refresh_interval_for_device(&self.device_name),
-            // Windows reports console display power only through
-            // `GUID_CONSOLE_DISPLAY_STATE` notifications, not by query.
-            power: DisplayPower::Unknown,
-        }
     }
 }
 
@@ -188,7 +190,7 @@ fn refresh_interval_for_device(device_name: &[u16; 32]) -> Option<std::time::Dur
     if mode.dmDisplayFrequency <= 1 {
         return None;
     }
-    DisplayState::refresh_interval_from_hz(f64::from(mode.dmDisplayFrequency))
+    refresh_interval_from_hz(f64::from(mode.dmDisplayFrequency))
 }
 
 fn available_monitors() -> SmallVec<[HMONITOR; 4]> {

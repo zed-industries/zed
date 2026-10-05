@@ -13,11 +13,11 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use gpui::{
-    Bounds, Capslock, DispatchEventResult, DisplayId, DisplayState, GpuSpecs, HeadlessAtlas,
-    Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, Scene, Size,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams,
-    WindowVisibility, px,
+    Bounds, Capslock, DispatchEventResult, DisplayId, GpuSpecs, HeadlessAtlas, Modifiers, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PromptButton, PromptLevel, RequestFrameOptions, Scene, Size, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams, WindowVisibility,
+    px,
 };
 
 #[derive(Debug)]
@@ -45,10 +45,6 @@ impl PlatformDisplay for HeadlessDisplay {
 
     fn bounds(&self) -> Bounds<Pixels> {
         self.bounds
-    }
-
-    fn state(&self) -> DisplayState {
-        DisplayState::UNKNOWN
     }
 }
 

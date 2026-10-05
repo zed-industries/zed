@@ -46,11 +46,11 @@ use crate::asset_cache::CachedLoad;
 use crate::{
     Action, ActionBuildError, ActionRegistry, ActivityGuard, Any, AnyView, AnyWindowHandle,
     AppContext, Arena, ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem,
-    ClipboardReadError, CursorStyle, DispatchPhase, DisplayId, EventEmitter, ExternalDragPayload,
-    FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext, Keymap, Keystroke,
-    LayoutId, Menu, MenuItem, MissingGlyph, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
-    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
+    ClipboardReadError, CursorStyle, DispatchPhase, DisplayEvent, DisplayId, EventEmitter,
+    ExternalDragPayload, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
+    Keymap, Keystroke, LayoutId, Menu, MenuItem, MissingGlyph, OwnedMenu, PathPromptOptions,
+    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point,
+    Priority, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
     Subscription, SvgRenderer, SystemNotification, SystemNotificationResponse, Task,
     TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout,
@@ -318,6 +318,7 @@ impl Application {
 }
 
 type Handler = Box<dyn FnMut(&mut App) -> bool + 'static>;
+type DisplayHandler = Box<dyn FnMut(DisplayEvent, &mut App) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut App) -> bool + 'static>;
 type MissingGlyphCallback = Box<dyn FnMut(&[MissingGlyph], &mut App) + 'static>;
 pub(crate) type KeystrokeObserver =
@@ -777,6 +778,7 @@ pub struct App {
     pub(crate) keyboard_layout_observers: SubscriberSet<(), Handler>,
     missing_glyph_callback: Rc<MissingGlyphCallbackSlot>,
     pub(crate) thermal_state_observers: SubscriberSet<(), Handler>,
+    pub(crate) display_observers: SubscriberSet<(), DisplayHandler>,
     pub(crate) system_sleep_observers: SubscriberSet<(), Handler>,
     pub(crate) system_wake_observers: SubscriberSet<(), Handler>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
@@ -915,6 +917,7 @@ impl App {
                 keyboard_layout_observers: SubscriberSet::new(),
                 missing_glyph_callback: Rc::default(),
                 thermal_state_observers: SubscriberSet::new(),
+                display_observers: SubscriberSet::new(),
                 system_sleep_observers: SubscriberSet::new(),
                 system_wake_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
@@ -974,6 +977,24 @@ impl App {
                     cx.thermal_state_observers
                         .clone()
                         .retain(&(), move |callback| (callback)(cx));
+                }
+            }
+        }));
+
+        platform.on_display_change(Box::new({
+            let app = Rc::downgrade(&app);
+            move |event| {
+                if let Some(app) = app.upgrade() {
+                    let mut app = app.borrow_mut();
+                    let cx: &mut App = &mut app;
+                    cx.display_observers
+                        .clone()
+                        .retain(&(), |callback| (callback)(event, cx));
+                    for handle in cx.windows() {
+                        handle
+                            .update(cx, |_, window, cx| window.handle_display_event(event, cx))
+                            .log_err();
+                    }
                 }
             }
         }));
@@ -1510,6 +1531,32 @@ impl App {
         );
         activate();
         subscription
+    }
+
+    /// Invokes a handler when a display is connected or disconnected, or its
+    /// refresh interval changes. To follow the display a window is on, use
+    /// [`Window::observe_window_display`].
+    pub fn on_display_change<F>(&self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(DisplayEvent, &mut App),
+    {
+        let (subscription, activate) = self.display_observers.insert(
+            (),
+            Box::new(move |event, cx| {
+                callback(event, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// The time between a display's refreshes, as last reported by the
+    /// platform. Variable refresh rate displays report their maximum rate.
+    /// Returns `None` for unknown displays and on platforms that don't report
+    /// it. This doesn't query the operating system.
+    pub fn display_refresh_interval(&self, id: DisplayId) -> Option<Duration> {
+        self.platform.display_refresh_interval(id)
     }
 
     /// Invokes a handler when the system wakes from sleep.
