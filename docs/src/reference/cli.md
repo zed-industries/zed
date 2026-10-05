@@ -254,14 +254,7 @@ zed --nightly myfile.txt
 
 ## WSL Integration (Windows)
 
-The Windows installation includes a `bin/zed` shell script that detects the current WSL distribution and user. Run it from a WSL terminal to open a Linux directory in the Windows editor:
-
-```sh
-cd ~/projects/myproject
-zed .
-```
-
-See [Opening a folder from a WSL terminal](../remote-development.md#opening-a-folder-from-a-wsl-terminal) for setup and PATH troubleshooting. Running `zed` inside Zed's integrated remote terminals is a separate [known limitation](../remote-development.md#known-limitations).
+The Windows installation includes a `bin/zed` shell script that detects the current WSL distribution and user. Use it to [open a folder from an external WSL terminal](../remote-development.md#opening-a-folder-from-a-wsl-terminal) in the Windows editor.
 
 ## Exit Codes
 
