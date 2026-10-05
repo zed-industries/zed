@@ -2596,7 +2596,13 @@ impl ThreadView {
         if let Some(native_thread) = self.as_native_thread(cx) {
             // By default queued messages wait for the turn to fully complete.
             // Only a "steering" front message ends the turn at the next boundary.
-            let end_at_boundary = self.message_queue.front_wants_steer();
+            let end_at_boundary = self.message_queue.front_wants_steer()
+                && self.message_queue.first().is_some_and(|entry| {
+                    self.thread
+                        .read(cx)
+                        .validate_prompt_content(&entry.content)
+                        .is_ok()
+                });
             native_thread.update(cx, |thread, _| {
                 thread.set_end_turn_at_next_boundary(end_at_boundary);
             });

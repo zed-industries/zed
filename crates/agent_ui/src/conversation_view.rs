@@ -4643,9 +4643,18 @@ pub(crate) mod tests {
     async fn test_queued_message_steer_defaults_off_and_toggles(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (conversation_view, cx) =
-            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        let fs = FakeFs::new(cx.executor());
+        let server = cx.update(|cx| {
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+            let thread_store = cx.new(|cx| ThreadStore::new(cx));
+            NativeAgentServer::new(fs, thread_store)
+        });
+        let (conversation_view, cx) = setup_conversation_view(server, cx).await;
         add_to_workspace(conversation_view.clone(), cx);
+        let native_thread = conversation_view
+            .read_with(cx, |view, cx| view.as_native_thread(cx))
+            .expect("native steering target");
 
         let id = active_thread(&conversation_view, cx).update_in(cx, |thread, window, cx| {
             thread.add_to_queue(
@@ -4669,8 +4678,10 @@ pub(crate) mod tests {
             );
         });
 
-        active_thread(&conversation_view, cx).update(cx, |thread, _cx| {
+        assert!(!native_thread.read_with(cx, |thread, _| thread.end_turn_at_next_boundary()));
+        active_thread(&conversation_view, cx).update(cx, |thread, cx| {
             thread.message_queue.toggle_steer(id);
+            thread.sync_queue_flag_to_native_thread(cx);
         });
         active_thread(&conversation_view, cx).read_with(cx, |thread, _cx| {
             assert!(
@@ -4678,6 +4689,19 @@ pub(crate) mod tests {
                 "steering should be on after toggling"
             );
         });
+        assert!(native_thread.read_with(cx, |thread, _| thread.end_turn_at_next_boundary()));
+        active_thread(&conversation_view, cx).update(cx, |view, cx| {
+            view.message_queue
+                .entry_by_id_mut(id)
+                .expect("front source")
+                .content = vec![acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
+                "_future",
+                Default::default(),
+            ))];
+            view.sync_queue_flag_to_native_thread(cx);
+            assert!(view.message_queue.front_wants_steer());
+        });
+        assert!(!native_thread.read_with(cx, |thread, _| thread.end_turn_at_next_boundary()));
     }
 
     #[gpui::test]

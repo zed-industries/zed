@@ -41,7 +41,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ::ui::IconName;
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
 use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
 use editor::{Editor, SelectionEffects, scroll::Autoscroll};
@@ -430,7 +430,7 @@ where
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
 pub struct NewNativeAgentThreadFromSummary {
-    from_session_id: acp::SessionId,
+    from_session_id: acp_v1::SessionId,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -513,11 +513,11 @@ impl Agent {
 /// Content to initialize new external agent with.
 pub enum AgentInitialContent {
     ThreadSummary {
-        session_id: acp::SessionId,
+        session_id: acp_v1::SessionId,
         title: Option<SharedString>,
     },
     ContentBlock {
-        blocks: Vec<agent_client_protocol::schema::v2::ContentBlock>,
+        blocks: Vec<acp_v2::ContentBlock>,
         auto_submit: bool,
     },
     FromExternalSource(ExternalSourcePrompt),
