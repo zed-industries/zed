@@ -1724,8 +1724,8 @@ mod test {
 
     use crate::{
         self as gpui, AppContext, Bounds, Context, Element, FollowMode, InteractiveElement,
-        IntoElement, ListState, Pixels, Render, Styled, TestAppContext, Window, canvas, div, list,
-        point, px, size,
+        IntoElement, ListSizingBehavior, ListState, ParentElement, Pixels, Render, Styled,
+        TestAppContext, Window, canvas, div, list, point, px, size,
     };
 
     #[gpui::test]
@@ -3015,5 +3015,134 @@ mod test {
             assert_eq!(bounds.origin.x, px(10.));
             assert_eq!(bounds.size.width, px(60.));
         }
+    }
+
+    #[gpui::test]
+    fn test_measure_all_with_horizontal_padding(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(10, crate::ListAlignment::Top, px(0.)).measure_all();
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |_, _, _| {
+                    div().w_full().aspect_ratio(2.).into_any()
+                })
+                .pl(px(10.))
+                .pr(px(30.))
+                .w_full()
+                .h_full()
+            }
+        }
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+            cx.new(|_| TestView(state.clone())).into_any_element()
+        });
+
+        // Each item is 60px wide, so 30px tall: 300px in total.
+        assert_eq!(state.max_offset_for_scrollbar().y, px(200.));
+    }
+
+    #[gpui::test]
+    fn test_inferred_width_includes_horizontal_padding(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(2, crate::ListAlignment::Top, px(10.));
+        let full_width_item_bounds = Rc::new(RefCell::new(None));
+
+        struct TestView {
+            state: ListState,
+            full_width_item_bounds: Rc<RefCell<Option<Bounds<Pixels>>>>,
+        }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let full_width_item_bounds = self.full_width_item_bounds.clone();
+                div().flex().size_full().child(
+                    list(self.state.clone(), move |ix, _, _| {
+                        if ix == 0 {
+                            div().w(px(50.)).h(px(20.)).into_any()
+                        } else {
+                            let full_width_item_bounds = full_width_item_bounds.clone();
+                            canvas(
+                                move |bounds, _, _| {
+                                    *full_width_item_bounds.borrow_mut() = Some(bounds)
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .h(px(20.))
+                            .w_full()
+                            .into_any()
+                        }
+                    })
+                    .with_sizing_behavior(ListSizingBehavior::Infer)
+                    .pl(px(10.))
+                    .pr(px(30.))
+                    .h_full(),
+                )
+            }
+        }
+
+        cx.draw(point(px(0.), px(0.)), size(px(200.), px(100.)), |_, cx| {
+            cx.new(|_| TestView {
+                state: state.clone(),
+                full_width_item_bounds: full_width_item_bounds.clone(),
+            })
+            .into_any_element()
+        });
+
+        let bounds = full_width_item_bounds
+            .borrow()
+            .expect("item 1 was not painted");
+        assert_eq!(bounds.origin.x, px(10.));
+        assert_eq!(bounds.size.width, px(50.));
+    }
+
+    #[gpui::test]
+    fn test_autoscroll_above_item_top_with_horizontal_padding(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(5, crate::ListAlignment::Top, px(0.));
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 2,
+            offset_in_item: px(0.),
+        });
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |ix, _, _| {
+                    if ix == 2 {
+                        canvas(
+                            |bounds, window, _| {
+                                window.request_autoscroll(Bounds::from_corners(
+                                    point(bounds.left(), bounds.top() - px(30.)),
+                                    point(bounds.right(), bounds.top() + px(5.)),
+                                ));
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .w_full()
+                        .aspect_ratio(2.)
+                        .into_any()
+                    } else {
+                        div().w_full().aspect_ratio(2.).into_any()
+                    }
+                })
+                .pl(px(10.))
+                .pr(px(30.))
+                .w_full()
+                .h_full()
+            }
+        }
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(60.)), |_, cx| {
+            cx.new(|_| TestView(state.clone())).into_any_element()
+        });
+
+        // Items are 60px wide, so 30px tall: 30px above item 2 is the top of item 1.
+        let scroll_top = state.logical_scroll_top();
+        assert_eq!(scroll_top.item_ix, 1);
+        assert_eq!(scroll_top.offset_in_item, px(0.));
     }
 }
