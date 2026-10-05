@@ -1284,7 +1284,7 @@ impl ConnectionPool {
         let connection = cx
             .update(|cx| {
                 cx.update_default_global(|pool: &mut Self, cx| {
-                    pool.connect(host_options, delegate, cx)
+                    pool.connect(host_options, None, delegate, cx)
                 })
             })
             .await
@@ -1417,9 +1417,9 @@ impl RemoteConnectionOptions {
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
             RemoteConnectionOptions::Docker(opts) => {
                 let name = match opts.engine {
-                    settings::ContainerEngine::Docker => opts.name.clone(),
-                    settings::ContainerEngine::Podman => format!("[podman] {}", opts.name),
-                    settings::ContainerEngine::AppleContainer => {
+                    settings_content::ContainerEngine::Docker => opts.name.clone(),
+                    settings_content::ContainerEngine::Podman => format!("[podman] {}", opts.name),
+                    settings_content::ContainerEngine::AppleContainer => {
                         format!("[container] {}", opts.name)
                     }
                 };
@@ -1442,19 +1442,19 @@ impl RemoteConnectionOptions {
             RemoteConnectionOptions::Ssh(_) => "ssh",
             RemoteConnectionOptions::Wsl(_) => "wsl",
             RemoteConnectionOptions::Docker(opts) => match (opts.engine, &opts.host) {
-                (settings::ContainerEngine::Docker, DockerHost::Ssh(_)) => "docker-ssh",
-                (settings::ContainerEngine::Podman, DockerHost::Ssh(_)) => "podman-ssh",
-                (settings::ContainerEngine::AppleContainer, DockerHost::Ssh(_)) => {
+                (settings_content::ContainerEngine::Docker, DockerHost::Ssh(_)) => "docker-ssh",
+                (settings_content::ContainerEngine::Podman, DockerHost::Ssh(_)) => "podman-ssh",
+                (settings_content::ContainerEngine::AppleContainer, DockerHost::Ssh(_)) => {
                     "apple-container-ssh"
                 }
-                (settings::ContainerEngine::Docker, DockerHost::Wsl(_)) => "docker-wsl",
-                (settings::ContainerEngine::Podman, DockerHost::Wsl(_)) => "podman-wsl",
-                (settings::ContainerEngine::AppleContainer, DockerHost::Wsl(_)) => {
+                (settings_content::ContainerEngine::Docker, DockerHost::Wsl(_)) => "docker-wsl",
+                (settings_content::ContainerEngine::Podman, DockerHost::Wsl(_)) => "podman-wsl",
+                (settings_content::ContainerEngine::AppleContainer, DockerHost::Wsl(_)) => {
                     "apple-container-wsl"
                 }
-                (settings::ContainerEngine::Docker, _) => "docker",
-                (settings::ContainerEngine::Podman, _) => "podman",
-                (settings::ContainerEngine::AppleContainer, _) => "apple-container",
+                (settings_content::ContainerEngine::Docker, _) => "docker",
+                (settings_content::ContainerEngine::Podman, _) => "podman",
+                (settings_content::ContainerEngine::AppleContainer, _) => "apple-container",
             },
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(_) => "mock",
@@ -1480,7 +1480,7 @@ mod tests {
 
     #[test]
     fn a_containers_host_shows_up_in_its_name_and_telemetry() {
-        let container = |engine: settings::ContainerEngine, host: DockerHost| {
+        let container = |engine: settings_content::ContainerEngine, host: DockerHost| {
             RemoteConnectionOptions::Docker(DockerConnectionOptions {
                 name: "zed-dev".to_string(),
                 container_id: "container-123".to_string(),
@@ -1502,32 +1502,38 @@ mod tests {
         };
 
         assert_eq!(
-            container(settings::ContainerEngine::Docker, DockerHost::Local).display_name(),
+            container(settings_content::ContainerEngine::Docker, DockerHost::Local).display_name(),
             "zed-dev"
         );
         assert_eq!(
-            container(settings::ContainerEngine::Docker, ssh_host(None)).display_name(),
+            container(settings_content::ContainerEngine::Docker, ssh_host(None)).display_name(),
             "zed-dev on example.com"
         );
         assert_eq!(
-            container(settings::ContainerEngine::Podman, ssh_host(Some("work"))).display_name(),
+            container(
+                settings_content::ContainerEngine::Podman,
+                ssh_host(Some("work"))
+            )
+            .display_name(),
             "[podman] zed-dev on work"
         );
 
         assert_eq!(
-            container(settings::ContainerEngine::Docker, DockerHost::Local).connection_type(),
+            container(settings_content::ContainerEngine::Docker, DockerHost::Local)
+                .connection_type(),
             "docker"
         );
         assert_eq!(
-            container(settings::ContainerEngine::Podman, DockerHost::Local).connection_type(),
+            container(settings_content::ContainerEngine::Podman, DockerHost::Local)
+                .connection_type(),
             "podman"
         );
         assert_eq!(
-            container(settings::ContainerEngine::Docker, ssh_host(None)).connection_type(),
+            container(settings_content::ContainerEngine::Docker, ssh_host(None)).connection_type(),
             "docker-ssh"
         );
         assert_eq!(
-            container(settings::ContainerEngine::Podman, ssh_host(None)).connection_type(),
+            container(settings_content::ContainerEngine::Podman, ssh_host(None)).connection_type(),
             "podman-ssh"
         );
     }
@@ -1654,7 +1660,7 @@ mod tests {
         );
         assert_eq!(
             RemoteConnectionOptions::Docker(DockerConnectionOptions {
-                engine: settings::ContainerEngine::Docker,
+                engine: settings_content::ContainerEngine::Docker,
                 ..Default::default()
             })
             .connection_type(),
@@ -1662,7 +1668,7 @@ mod tests {
         );
         assert_eq!(
             RemoteConnectionOptions::Docker(DockerConnectionOptions {
-                engine: settings::ContainerEngine::Podman,
+                engine: settings_content::ContainerEngine::Podman,
                 ..Default::default()
             })
             .connection_type(),

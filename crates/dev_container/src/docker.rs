@@ -371,6 +371,15 @@ pub(crate) fn start_container_args(id: &str) -> Vec<String> {
     vec!["start".to_string(), id.to_string()]
 }
 
+pub(crate) fn stop_container_args(id: &str) -> Vec<String> {
+    vec!["stop".to_string(), id.to_string()]
+}
+
+/// `-f` also stops the container first if it's still running.
+pub(crate) fn remove_container_args(id: &str) -> Vec<String> {
+    vec!["rm".to_string(), "-f".to_string(), id.to_string()]
+}
+
 pub(crate) fn exec_args(
     container_id: &str,
     remote_folder: &str,
@@ -501,43 +510,24 @@ impl DockerClient for Docker {
     }
 
     async fn stop_container(&self, id: &str) -> Result<(), DevContainerError> {
-        let mut command = Command::new(&self.docker_cli);
-
-        command.args(&["stop", id]);
-
-        let output = command.output().await.map_err(|e| {
-            log::error!("Error running docker stop: {e}");
-            DevContainerError::CommandFailed(command.get_program().display().to_string())
-        })?;
+        let output = self.run(stop_container_args(id), no_env()).await?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             log::error!("Non-success status from docker stop: {stderr}");
-            return Err(DevContainerError::CommandFailed(
-                command.get_program().display().to_string(),
-            ));
+            return Err(DevContainerError::CommandFailed(self.docker_cli.clone()));
         }
 
         Ok(())
     }
 
     async fn remove_container(&self, id: &str) -> Result<(), DevContainerError> {
-        let mut command = Command::new(&self.docker_cli);
-
-        // `-f` also stops the container first if it's still running.
-        command.args(&["rm", "-f", id]);
-
-        let output = command.output().await.map_err(|e| {
-            log::error!("Error running docker rm: {e}");
-            DevContainerError::CommandFailed(command.get_program().display().to_string())
-        })?;
+        let output = self.run(remove_container_args(id), no_env()).await?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             log::error!("Non-success status from docker rm: {stderr}");
-            return Err(DevContainerError::CommandFailed(
-                command.get_program().display().to_string(),
-            ));
+            return Err(DevContainerError::CommandFailed(self.docker_cli.clone()));
         }
 
         Ok(())
@@ -957,7 +947,8 @@ mod test {
             Docker, DockerClient, DockerComposeConfig, DockerComposeService,
             DockerComposeServicePort, DockerComposeVolume, DockerInspect, DockerPs,
             compose_build_args, compose_build_env, compose_config_args, exec_args, inspect_args,
-            parse_find_process_output, query_containers_args, start_container_args,
+            no_env, parse_find_process_output, query_containers_args, remove_container_args,
+            start_container_args, stop_container_args,
         },
     };
     use util::command::Command;
@@ -1227,6 +1218,33 @@ mod test {
                 "'.'".to_string(),
             ]
         );
+    }
+
+    /// Stopping and removing reach the engine that owns the container, which
+    /// for a remote dev container is the host's, not this machine's. Running
+    /// them locally fails with "docker not found" on a machine with no engine,
+    /// or hits an unrelated container of the same id on one that has it.
+    #[test]
+    fn should_stop_and_remove_containers_on_the_engines_own_host() {
+        let remote = Docker {
+            host: DevContainerHost::Remote(Arc::new(FakeRemoteConnection::default())),
+            docker_cli: "docker".to_string(),
+            has_buildx: false,
+        };
+
+        for args in [
+            stop_container_args("abc123"),
+            remove_container_args("abc123"),
+        ] {
+            let command = remote
+                .host
+                .command("docker", &args, &no_env(), None)
+                .expect("building a remote invocation should succeed");
+            assert_eq!(command.get_program().display().to_string(), "ssh");
+        }
+
+        assert_eq!(stop_container_args("abc123"), ["stop", "abc123"]);
+        assert_eq!(remove_container_args("abc123"), ["rm", "-f", "abc123"]);
     }
 
     #[cfg(not(target_os = "windows"))]

@@ -3112,7 +3112,12 @@ async fn container_client_for(
             Arc::new(AppleContainer::new(context.host.clone()))
         }
         _ => Arc::new(
-            Docker::new(context.host.clone(), engine.cli_name(), context.use_buildkit).await,
+            Docker::new(
+                context.host.clone(),
+                engine.cli_name(),
+                context.use_buildkit,
+            )
+            .await,
         ),
     })
 }
@@ -6106,7 +6111,9 @@ chmod +x "$SCRIPT_DIR/install.sh"
             .expect("to be found");
         let feature_dockerfile = test_dependencies.fs.load(feature_dockerfile).await.unwrap();
         assert!(
-            feature_dockerfile.contains("FROM dev_container_feature_content_temp as dev_containers_feature_content_source"),
+            feature_dockerfile.contains(
+                "FROM dev_container_feature_content_temp as dev_containers_feature_content_source"
+            ),
             "the classic builder consumes the feature content image through its own FROM stage, not a BuildKit named context: {feature_dockerfile}"
         );
 
@@ -6118,7 +6125,8 @@ chmod +x "$SCRIPT_DIR/install.sh"
             .iter()
             .find(|c| {
                 c.args.get(0).is_some_and(|a| a == "build")
-                    && c.args.contains(&"dev_container_feature_content_temp".to_string())
+                    && c.args
+                        .contains(&"dev_container_feature_content_temp".to_string())
             })
             .expect("the feature content image must be built before the final image");
         assert!(
@@ -6131,7 +6139,9 @@ chmod +x "$SCRIPT_DIR/install.sh"
             .iter()
             .find(|c| {
                 c.args.get(0).is_some_and(|a| a == "build")
-                    && !c.args.contains(&"dev_container_feature_content_temp".to_string())
+                    && !c
+                        .args
+                        .contains(&"dev_container_feature_content_temp".to_string())
             })
             .expect("the final image build must have run");
         let args = &final_build.args;
@@ -6150,8 +6160,7 @@ chmod +x "$SCRIPT_DIR/install.sh"
         assert!(args.contains(&"--target".to_string()));
         assert!(args.contains(&"dev_containers_target_stage".to_string()));
         assert!(
-            args.iter()
-                .any(|a| a == "_DEV_CONTAINERS_IMAGE_USER=root"),
+            args.iter().any(|a| a == "_DEV_CONTAINERS_IMAGE_USER=root"),
             "the base image's user must still be threaded through: {args:?}"
         );
     }

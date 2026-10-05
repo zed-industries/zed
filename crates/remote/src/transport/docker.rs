@@ -85,7 +85,7 @@ pub struct DockerConnectionOptions {
     /// The engine that built this container. Fixed at build time and never
     /// re-resolved: reconnecting has to reach the same daemon the container
     /// lives on, not whichever engine currently sorts first.
-    pub engine: settings::ContainerEngine,
+    pub engine: settings_content::ContainerEngine,
     pub remote_env: BTreeMap<String, String>,
     #[serde(default)]
     pub host: DockerHost,
@@ -107,7 +107,7 @@ struct DockerConnectionOptionsWire {
     config_file: Option<String>,
     upload_binary_over_docker_exec: bool,
     #[serde(default)]
-    engine: Option<settings::ContainerEngine>,
+    engine: Option<settings_content::ContainerEngine>,
     #[serde(default)]
     use_podman: bool,
     remote_env: BTreeMap<String, String>,
@@ -118,9 +118,9 @@ struct DockerConnectionOptionsWire {
 impl From<DockerConnectionOptionsWire> for DockerConnectionOptions {
     fn from(wire: DockerConnectionOptionsWire) -> Self {
         let engine = wire.engine.unwrap_or(if wire.use_podman {
-            settings::ContainerEngine::Podman
+            settings_content::ContainerEngine::Podman
         } else {
-            settings::ContainerEngine::Docker
+            settings_content::ContainerEngine::Docker
         });
         Self {
             name: wire.name,
@@ -318,7 +318,7 @@ impl DockerExecConnection {
     /// container sharing the host's network namespace has no address of its
     /// own and is reached on loopback instead.
     async fn discover_container_address(&self) -> Option<String> {
-        if self.connection_options.engine == settings::ContainerEngine::AppleContainer {
+        if self.connection_options.engine == settings_content::ContainerEngine::AppleContainer {
             return self.discover_apple_container_address().await;
         }
 
@@ -793,7 +793,7 @@ impl DockerExecConnection {
 
         // `container cp` takes exactly two positional arguments — no `-a`.
         let mut cp_args = vec!["cp".to_string()];
-        if self.connection_options.engine != settings::ContainerEngine::AppleContainer {
+        if self.connection_options.engine != settings_content::ContainerEngine::AppleContainer {
             cp_args.push("-a".to_string());
         }
         cp_args.push(src_path.to_string());
@@ -1567,7 +1567,7 @@ mod tests {
             local_folder: None,
             config_file: None,
             upload_binary_over_docker_exec: false,
-            engine: settings::ContainerEngine::Docker,
+            engine: settings_content::ContainerEngine::Docker,
             remote_env: Default::default(),
             host: DockerHost::Local,
         }
@@ -1585,7 +1585,7 @@ mod tests {
         assert!(command.env.is_empty());
 
         let podman = local_connection(DockerConnectionOptions {
-            engine: settings::ContainerEngine::Podman,
+            engine: settings_content::ContainerEngine::Podman,
             ..docker_options()
         });
         assert_eq!(
@@ -2035,7 +2035,7 @@ mod tests {
     #[test]
     fn apple_container_upload_omits_the_dash_a_flag() {
         let connection = local_connection(DockerConnectionOptions {
-            engine: settings::ContainerEngine::AppleContainer,
+            engine: settings_content::ContainerEngine::AppleContainer,
             ..docker_options()
         });
         let (copy_command, _) = connection
@@ -2080,7 +2080,7 @@ mod tests {
         let options: DockerConnectionOptions =
             serde_json::from_str(legacy).expect("legacy payload should deserialize");
         assert_eq!(options.host, DockerHost::Local);
-        assert_eq!(options.engine, settings::ContainerEngine::Docker);
+        assert_eq!(options.engine, settings_content::ContainerEngine::Docker);
     }
 
     #[test]
@@ -2096,7 +2096,7 @@ mod tests {
 
         let options: DockerConnectionOptions =
             serde_json::from_str(legacy).expect("legacy payload should deserialize");
-        assert_eq!(options.engine, settings::ContainerEngine::Podman);
+        assert_eq!(options.engine, settings_content::ContainerEngine::Podman);
     }
 
     #[test]
@@ -2108,7 +2108,7 @@ mod tests {
             local_folder: None,
             config_file: None,
             upload_binary_over_docker_exec: false,
-            engine: settings::ContainerEngine::Docker,
+            engine: settings_content::ContainerEngine::Docker,
             remote_env: Default::default(),
             host: DockerHost::Ssh(SshConnectionOptions {
                 host: "example.com".into(),
@@ -2123,7 +2123,6 @@ mod tests {
             serde_json::from_str(&encoded).expect("options should deserialize");
         assert_eq!(decoded, options);
     }
-
 
     #[test]
     fn redacts_forwarded_env() {
@@ -2226,7 +2225,7 @@ mod tests {
     #[test]
     fn uses_podman_cli() {
         let mut connection = connection(&[("GH_TOKEN", "ghp_supersecret")]);
-        connection.connection_options.engine = settings::ContainerEngine::Podman;
+        connection.connection_options.engine = settings_content::ContainerEngine::Podman;
 
         assert_eq!(
             redacted_docker_exec(&connection, &[], &[]),
@@ -2249,7 +2248,7 @@ mod tests {
                 local_folder: None,
                 config_file: None,
                 upload_binary_over_docker_exec: false,
-                engine: settings::ContainerEngine::Docker,
+                engine: settings_content::ContainerEngine::Docker,
                 remote_env: remote_env
                     .iter()
                     .map(|(key, value)| (key.to_string(), value.to_string()))

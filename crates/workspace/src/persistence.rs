@@ -4778,9 +4778,7 @@ mod tests {
                     true,
                     "{}".to_string(),
                 ))?;
-                Ok(conn
-                    .select_row::<i64>("SELECT last_insert_rowid()")?()?
-                    .unwrap())
+                Ok(conn.select_row::<i64>("SELECT last_insert_rowid()")?()?.unwrap())
             })
             .await
             .unwrap();
@@ -4814,9 +4812,7 @@ mod tests {
                     "container".to_string(),
                     "{}".to_string(),
                 ))?;
-                Ok(conn
-                    .select_row::<i64>("SELECT last_insert_rowid()")?()?
-                    .unwrap())
+                Ok(conn.select_row::<i64>("SELECT last_insert_rowid()")?()?.unwrap())
             })
             .await
             .unwrap();

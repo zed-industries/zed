@@ -10,7 +10,8 @@ use crate::{
     devcontainer_api::DevContainerError,
     docker::{
         DockerClient, DockerComposeConfig, DockerConfigLabels, DockerInspect, DockerInspectConfig,
-        DockerInspectMount, DockerPs, DockerState, exec_args, no_env, start_container_args,
+        DockerInspectMount, DockerPs, DockerState, exec_args, no_env, remove_container_args,
+        start_container_args, stop_container_args,
     },
 };
 
@@ -45,11 +46,7 @@ impl AppleContainer {
     async fn pull_image(&self, image: &str) -> Result<(), DevContainerError> {
         let output = self
             .run(
-                vec![
-                    "image".to_string(),
-                    "pull".to_string(),
-                    image.to_string(),
-                ],
+                vec!["image".to_string(), "pull".to_string(), image.to_string()],
                 no_env(),
             )
             .await
@@ -70,8 +67,7 @@ impl AppleContainer {
     async fn try_inspect_once(&self, id: &str) -> Option<DockerInspect> {
         if let Ok(output) = self.run(inspect_args(id), no_env()).await
             && output.status.success()
-            && let Ok(Some(entries)) =
-                deserialize_json_output::<Vec<AppleContainerEntry>>(output)
+            && let Ok(Some(entries)) = deserialize_json_output::<Vec<AppleContainerEntry>>(output)
             && let Some(entry) = entries.into_iter().next()
         {
             return entry_to_docker_inspect(entry, id).ok();
@@ -81,8 +77,7 @@ impl AppleContainer {
         if !output.status.success() {
             return None;
         }
-        let entries: Vec<AppleImageEntry> =
-            deserialize_json_output(output).ok().flatten()?;
+        let entries: Vec<AppleImageEntry> = deserialize_json_output(output).ok().flatten()?;
         let entry = entries.into_iter().next()?;
         image_entry_to_docker_inspect(entry, id).ok()
     }
@@ -176,9 +171,7 @@ impl DockerClient for AppleContainer {
     }
 
     async fn stop_container(&self, id: &str) -> Result<(), DevContainerError> {
-        let output = self
-            .run(vec!["stop".to_string(), id.to_string()], no_env())
-            .await?;
+        let output = self.run(stop_container_args(id), no_env()).await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             log::error!("Non-success status from container stop: {stderr}");
@@ -188,13 +181,7 @@ impl DockerClient for AppleContainer {
     }
 
     async fn remove_container(&self, id: &str) -> Result<(), DevContainerError> {
-        // `-f` also stops the container first if it's still running.
-        let output = self
-            .run(
-                vec!["rm".to_string(), "-f".to_string(), id.to_string()],
-                no_env(),
-            )
-            .await?;
+        let output = self.run(remove_container_args(id), no_env()).await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             log::error!("Non-success status from container rm: {stderr}");
@@ -611,10 +598,7 @@ mod tests {
         ))
         .unwrap();
 
-        let wanted = [(
-            "devcontainer.local_folder",
-            "/Users/x/proj",
-        )];
+        let wanted = [("devcontainer.local_folder", "/Users/x/proj")];
         let mut matches = Vec::new();
         for entry in entries {
             let serde_json_lenient::Value::Object(labels) = &entry.configuration.labels else {

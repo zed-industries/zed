@@ -580,7 +580,9 @@ struct DevContainerSettings {
 }
 
 pub fn container_engines(cx: &App) -> Vec<ContainerEngine> {
-    DevContainerSettings::get_global(cx).container_engines.clone()
+    DevContainerSettings::get_global(cx)
+        .container_engines
+        .clone()
 }
 
 impl Settings for DevContainerSettings {

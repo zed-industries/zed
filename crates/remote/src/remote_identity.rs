@@ -150,7 +150,7 @@ mod tests {
 
     use super::*;
     use crate::{DockerConnectionOptions, DockerHost, SshConnectionOptions, WslConnectionOptions};
-    use settings::ContainerEngine;
+    use settings_content::ContainerEngine;
 
     #[test]
     fn ssh_identity_ignores_non_persisted_runtime_fields() {
