@@ -4,6 +4,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
 use gpui::{AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
+use gpui_util::ResultExt as _;
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt as _,
     http::{HeaderName, HeaderValue},
@@ -24,7 +25,6 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::form_urlencoded;
-use util::ResultExt as _;
 
 use open_ai::completion::{OpenAiResponseEventMapper, into_open_ai_response};
 
@@ -43,8 +43,14 @@ const TOKEN_REFRESH_BUFFER_MS: u64 = Duration::from_mins(5).as_millis() as u64;
 ///
 /// The backend compares this value with each model's `minimal_client_version`.
 const MODEL_CATALOG_CLIENT_VERSION: &str = "0.999.0";
-// Codex applies the same bound because model discovery is a startup-critical request.
-const MODEL_CATALOG_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long credential loading and sign-in wait for model discovery before
+/// continuing with the models known so far.
+///
+/// Model discovery is startup-critical, so this matches the 5s bound Codex uses.
+const MODEL_CATALOG_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+/// The authenticated catalog can take tens of seconds to respond, so the request
+/// keeps running in the background well past [`MODEL_CATALOG_WAIT_TIMEOUT`].
+const MODEL_CATALOG_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct CodexCredentials {
@@ -144,10 +150,8 @@ impl State {
                             .is_authenticated()
                             .then(|| state.refresh_model_catalog(cx))
                     })?;
-                    if let Some(refresh_models_task) = refresh_models_task
-                        && let Err(error) = refresh_models_task.await
-                    {
-                        log::warn!("Failed to refresh ChatGPT models: {error:#}");
+                    if let Some(refresh_models_task) = refresh_models_task {
+                        wait_for_model_catalog(refresh_models_task, cx).await;
                     }
                     this.update(cx, |state, cx| {
                         state.load_task = None;
@@ -324,9 +328,7 @@ impl State {
                                 state.last_auth_error = None;
                                 state.refresh_model_catalog(cx)
                             })?;
-                            if let Err(error) = refresh_models_task.await {
-                                log::warn!("Failed to refresh ChatGPT models: {error:#}");
-                            }
+                            wait_for_model_catalog(refresh_models_task, cx).await;
                             this.update(cx, |state, cx| {
                                 state.sign_in_state = SignInState::Idle;
                                 cx.notify();
@@ -1162,6 +1164,31 @@ async fn exchange_code(
     serde_json::from_str::<TokenResponse>(&body).context("Failed to parse token response")
 }
 
+/// Waits up to [`MODEL_CATALOG_WAIT_TIMEOUT`] for a model catalog refresh.
+///
+/// A slower refresh is left running and replaces the available models once it
+/// completes, so a slow catalog never holds up authentication or sign-in.
+async fn wait_for_model_catalog(refresh: Task<Result<(), Arc<anyhow::Error>>>, cx: &mut AsyncApp) {
+    let mut refresh = refresh.fuse();
+    let mut wait_timeout = cx
+        .background_executor()
+        .timer(MODEL_CATALOG_WAIT_TIMEOUT)
+        .fuse();
+    futures::select! {
+        result = refresh => log_model_catalog_error(result),
+        () = wait_timeout => {
+            cx.spawn(async move |_| log_model_catalog_error(refresh.await))
+                .detach();
+        }
+    }
+}
+
+fn log_model_catalog_error(result: Result<(), Arc<anyhow::Error>>) {
+    if let Err(error) = result {
+        log::warn!("Failed to refresh ChatGPT models: {error:#}");
+    }
+}
+
 async fn refresh_token(
     client: &Arc<dyn HttpClient>,
     refresh_token: &str,
@@ -1894,9 +1921,95 @@ mod tests {
             .await
             .expect_err("model discovery should time out");
         assert!(
-            error.to_string().contains("timed out after 5s"),
+            error.to_string().contains("timed out after 60s"),
             "unexpected model discovery error: {error:#}"
         );
+    }
+
+    #[gpui::test]
+    async fn test_slow_model_catalog_does_not_block_initial_load(cx: &mut TestAppContext) {
+        let creds_json = serde_json::to_vec(&make_fresh_credentials()).unwrap();
+        let creds_provider = Arc::new(FakeCredentialsProvider::new());
+        creds_provider
+            .storage
+            .lock()
+            .replace(("Bearer".to_string(), creds_json));
+
+        let (release_catalog, catalog_released) = futures::channel::oneshot::channel::<()>();
+        let catalog_released = Arc::new(Mutex::new(Some(catalog_released)));
+        let http: Arc<dyn HttpClient> = FakeHttpClient::create(move |_| {
+            let catalog_released = catalog_released.lock().take();
+            async move {
+                if let Some(catalog_released) = catalog_released {
+                    catalog_released
+                        .await
+                        .expect("catalog request should be released");
+                }
+                Ok(http_client::Response::builder().status(200).body(
+                    http_client::AsyncBody::from(
+                        serde_json::json!({
+                            "models": [{
+                                "slug": "gpt-slow-account-model",
+                                "display_name": "Slow Account Model",
+                                "default_reasoning_level": "medium",
+                                "supported_reasoning_levels": [],
+                                "visibility": "list",
+                                "priority": 0,
+                                "additional_speed_tiers": [],
+                                "service_tiers": [],
+                                "context_window": 128_000,
+                                "max_context_window": null,
+                                "input_modalities": ["text"]
+                            }]
+                        })
+                        .to_string(),
+                    ),
+                )?)
+            }
+        });
+
+        let state = cx.new(|cx| State::new(http, creds_provider, cx));
+        let load_task = cx
+            .read(|cx| state.read(cx).load_task())
+            .expect("constructor should start the credentials load");
+        let fallback_model_ids = ChatGptModel::all()
+            .iter()
+            .map(|model| model.id().to_owned())
+            .collect::<Vec<_>>();
+        let available_model_ids = |cx: &TestAppContext| {
+            cx.read(|cx| {
+                state
+                    .read(cx)
+                    .available_models()
+                    .iter()
+                    .map(|model| model.id().to_owned())
+                    .collect::<Vec<_>>()
+            })
+        };
+
+        cx.run_until_parked();
+        cx.executor().advance_clock(MODEL_CATALOG_WAIT_TIMEOUT);
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let state = state.read(cx);
+            assert!(
+                state.load_task().is_none(),
+                "load should finish without waiting for the model catalog"
+            );
+            assert!(state.is_authenticated());
+            assert!(state.model_catalog_error().is_none());
+        });
+        load_task.await.expect("load should succeed");
+        assert_eq!(available_model_ids(cx), fallback_model_ids);
+
+        cx.executor().advance_clock(Duration::from_secs(25));
+        release_catalog
+            .send(())
+            .expect("catalog request should still be pending");
+        cx.run_until_parked();
+
+        assert_eq!(available_model_ids(cx), ["gpt-slow-account-model"]);
+        cx.read(|cx| assert!(state.read(cx).model_catalog_error().is_none()));
     }
 
     #[gpui::test]
