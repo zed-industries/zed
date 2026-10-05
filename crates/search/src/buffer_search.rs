@@ -4521,7 +4521,7 @@ mod tests {
             // `load_default_keymap` does, so precedence matches a real session
             // with `base_keymap: JetBrains`.
             let mut default_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
-                "keymaps/default-macos.json",
+                settings::DEFAULT_KEYMAP_PATH,
                 cx,
             )
             .unwrap();
@@ -4530,11 +4530,12 @@ mod tests {
             }
             cx.bind_keys(default_bindings);
 
-            let mut jetbrains_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
-                "keymaps/macos/jetbrains.json",
-                cx,
-            )
-            .unwrap();
+            let jetbrains_keymap_path = settings::BaseKeymap::JetBrains
+                .asset_path()
+                .expect("JetBrains base keymap should have an asset path");
+            let mut jetbrains_bindings =
+                settings::KeymapFile::load_asset_allow_partial_failure(jetbrains_keymap_path, cx)
+                    .unwrap();
             for binding in &mut jetbrains_bindings {
                 binding.set_meta(settings::KeybindSource::Base.meta());
             }
