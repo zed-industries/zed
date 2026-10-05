@@ -700,7 +700,7 @@ pub struct Session {
     child_session_ids: HashSet<SessionId>,
     parent_session: Option<Entity<Session>>,
     output_token: OutputToken,
-    output: Box<circular_buffer::CircularBuffer<MAX_TRACKED_OUTPUT_EVENTS, dap::OutputEvent>>,
+    output: VecDeque<dap::OutputEvent>,
     watchers: HashMap<SharedString, Watcher>,
     is_session_terminated: bool,
     requests: TypeIdHashMap<HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
@@ -874,7 +874,7 @@ impl Session {
                 capabilities: Capabilities::default(),
                 watchers: HashMap::default(),
                 output_token: OutputToken(0),
-                output: circular_buffer::CircularBuffer::boxed(),
+                output: VecDeque::with_capacity(MAX_TRACKED_OUTPUT_EVENTS),
                 requests: Default::default(),
                 background_tasks: Vec::default(),
                 restart_task: None,
@@ -1357,7 +1357,7 @@ impl Session {
                 cx.spawn(async move |this, cx| {
                     task.await;
                     this.update(cx, |this, cx| {
-                        this.continue_thread(active_thread_id, cx);
+                        this.continue_program(active_thread_id, cx);
                     })
                 })
                 .detach();
@@ -1526,7 +1526,8 @@ impl Session {
             }
             Events::Stopped(event) => self.handle_stopped_event(event, cx),
             Events::Continued(event) => {
-                if event.all_threads_continued.unwrap_or_default() {
+                // DAP defines an omitted `allThreadsContinued` as `true`.
+                if event.all_threads_continued.unwrap_or(true) {
                     self.active_snapshot.thread_states.continue_all_threads();
                     self.breakpoint_store.update(cx, |store, cx| {
                         store.remove_active_position(Some(self.session_id()), cx)
@@ -1785,6 +1786,9 @@ impl Session {
     }
 
     fn push_output(&mut self, event: OutputEvent) {
+        if self.output.len() == MAX_TRACKED_OUTPUT_EVENTS {
+            self.output.pop_front();
+        }
         self.output.push_back(event);
         self.output_token.0 += 1;
     }
@@ -2141,6 +2145,38 @@ impl Session {
         }
     }
 
+    fn on_continue_response(
+        thread_id: ThreadId,
+    ) -> impl FnOnce(
+        &mut Self,
+        Result<dap::ContinueResponse>,
+        &mut Context<Self>,
+    ) -> Option<dap::ContinueResponse>
+    + 'static {
+        move |this, response, cx| match response.log_err() {
+            Some(response) => {
+                if response.all_threads_continued.unwrap_or(true) {
+                    this.active_snapshot.thread_states.continue_all_threads();
+                } else {
+                    this.active_snapshot
+                        .thread_states
+                        .continue_thread(thread_id);
+                }
+                this.breakpoint_store.update(cx, |store, cx| {
+                    store.remove_active_position(Some(this.session_id()), cx)
+                });
+                this.invalidate_generic();
+                cx.notify();
+                Some(response)
+            }
+            None => {
+                this.active_snapshot.thread_states.stop_thread(thread_id);
+                cx.notify();
+                None
+            }
+        }
+    }
+
     fn clear_active_debug_line_response(
         &mut self,
         response: Result<()>,
@@ -2279,11 +2315,30 @@ impl Session {
         })
     }
 
+    pub fn continue_program(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        self.continue_execution(thread_id, None, cx);
+    }
+
     pub fn continue_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        if !self
+            .capabilities
+            .supports_single_thread_execution_requests
+            .unwrap_or_default()
+        {
+            return;
+        }
+
+        self.continue_execution(thread_id, Some(true), cx);
+    }
+
+    fn continue_execution(
+        &mut self,
+        thread_id: ThreadId,
+        single_thread: Option<bool>,
+        cx: &mut Context<Self>,
+    ) {
         self.select_historic_snapshot(None, cx);
 
-        let supports_single_thread_execution_requests =
-            self.capabilities.supports_single_thread_execution_requests;
         self.active_snapshot
             .thread_states
             .continue_thread(thread_id);
@@ -2291,10 +2346,10 @@ impl Session {
             ContinueCommand {
                 args: ContinueArguments {
                     thread_id: thread_id.0,
-                    single_thread: supports_single_thread_execution_requests,
+                    single_thread,
                 },
             },
-            Self::on_step_response::<ContinueCommand>(thread_id),
+            Self::on_continue_response(thread_id),
             cx,
         )
         .detach();
@@ -2808,6 +2863,38 @@ impl Session {
                 cx.notify();
             })
             .ok();
+        })
+    }
+
+    /// Evaluates an expression to obtain its full value for copying.
+    pub fn evaluate_variable_value(
+        &mut self,
+        expression: String,
+        frame_id: Option<u64>,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<String>> {
+        let context = if self
+            .capabilities
+            .supports_clipboard_context
+            .unwrap_or_default()
+        {
+            EvaluateArgumentsContext::Clipboard
+        } else {
+            EvaluateArgumentsContext::Variables
+        };
+        let request = self.request(
+            EvaluateCommand {
+                expression,
+                frame_id,
+                context: Some(context),
+                source: None,
+            },
+            |_, response, _| response.ok(),
+            cx,
+        );
+        cx.background_spawn(async move {
+            let response = request.await?;
+            Some(response.result)
         })
     }
 

@@ -1,11 +1,12 @@
 use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
 use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::{Context as _, Result};
 use collections::HashSet;
 use fs::Fs;
 use gpui::{App, AppContext as _, Entity, Task};
-use language_model::{ApiKey, EnvVar};
+use language_model::{ApiKey, EnvVar, GOOGLE_AI_API_URL};
 use project::{
     Project,
     agent_server_store::{AgentId, AllAgentServersSettings},
@@ -54,9 +55,9 @@ impl AgentServer for CustomAgentServer {
 
     fn favorite_config_option_value_ids(
         &self,
-        config_id: &acp::SessionConfigId,
+        config_id: &acp_v2::SessionConfigId,
         cx: &mut App,
-    ) -> HashSet<acp::SessionConfigValueId> {
+    ) -> HashSet<acp_v2::SessionConfigValueId> {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
                 .get::<AllAgentServersSettings>(None)
@@ -71,7 +72,7 @@ impl AgentServer for CustomAgentServer {
                 values
                     .iter()
                     .cloned()
-                    .map(acp::SessionConfigValueId::new)
+                    .map(acp_v2::SessionConfigValueId::new)
                     .collect()
             })
             .unwrap_or_default()
@@ -79,8 +80,8 @@ impl AgentServer for CustomAgentServer {
 
     fn toggle_favorite_config_option_value(
         &self,
-        config_id: acp::SessionConfigId,
-        value_id: acp::SessionConfigValueId,
+        config_id: acp_v2::SessionConfigId,
+        value_id: acp_v2::SessionConfigValueId,
         should_be_favorite: bool,
         fs: Arc<dyn Fs>,
         cx: &App,
@@ -291,7 +292,7 @@ fn api_key_for_gemini_cli(cx: &mut App) -> Task<Result<String>> {
         return Task::ready(Ok(key));
     }
     let credentials_provider = zed_credentials_provider::global(cx);
-    let api_url = google_ai::API_URL.to_string();
+    let api_url = GOOGLE_AI_API_URL.to_string();
     cx.spawn(async move |cx| {
         Ok(
             ApiKey::load_from_system_keychain(&api_url, credentials_provider.as_ref(), cx)
@@ -361,6 +362,7 @@ mod tests {
                         version: SharedString::from("1.0.0"),
                         repository: None,
                         website: None,
+                        license_url: None,
                         icon_path: None,
                     },
                     package: id,

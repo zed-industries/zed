@@ -6,7 +6,7 @@ use futures::future::join_all;
 use gpui::{App, Context, HighlightStyle, Task};
 use itertools::Itertools as _;
 use language::language_settings::LanguageSettings;
-use language::{Buffer, OutlineItem};
+use language::{Buffer, LanguageAwareStyling, OutlineItem, highlight_ranges_from_text};
 use multi_buffer::{
     Anchor, AnchorRangeExt as _, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot,
     ToOffset as _,
@@ -219,12 +219,20 @@ impl Editor {
                         let display_snapshot =
                             editor.display_map.update(cx, |map, cx| map.snapshot(cx));
                         let mut highlighted_results = results;
-                        for items in highlighted_results.values_mut() {
+                        for (buffer_id, items) in highlighted_results.iter_mut() {
+                            let language = editor
+                                .buffer
+                                .read(cx)
+                                .buffer(*buffer_id)
+                                .and_then(|buffer| buffer.read(cx).language().cloned());
                             for item in items {
                                 if let Some(highlights) =
                                     highlights_from_buffer(&display_snapshot, &item, &syntax)
                                 {
                                     item.highlight_ranges = highlights;
+                                } else if let Some(language) = &language {
+                                    item.highlight_ranges =
+                                        highlight_ranges_from_text(&item.text, language, &syntax);
                                 }
                             }
                         }
@@ -266,16 +274,53 @@ fn highlights_from_buffer(
             item.source_range_for_text.start,
             item.source_range_for_text.end,
         ]);
-    let Some(anchor_range) = maybe!({
+    let anchor_range = maybe!({
         Some(
             (*multi_buffer_source_range_anchors.get(0)?)?
                 ..(*multi_buffer_source_range_anchors.get(1)?)?,
         )
-    }) else {
-        return None;
-    };
+    });
+    let buffer_snapshot =
+        multi_buffer_snapshot.buffer_for_id(item.source_range_for_text.start.buffer_id)?;
+    let can_reuse_buffer_highlight_offsets = buffer_snapshot
+        .text_for_range(item.source_range_for_text.clone())
+        .flat_map(str::bytes)
+        .eq(outline_text.bytes());
+    if can_reuse_buffer_highlight_offsets {
+        let visible_range = anchor_range
+            .as_ref()
+            .and_then(|_| {
+                multi_buffer_snapshot
+                    .buffer_anchor_range_to_anchor_range(item.source_range_for_text.clone())
+            })
+            .map(|range| range.to_offset(multi_buffer_snapshot))
+            .filter(|range| range.end.0.checked_sub(range.start.0) == Some(outline_text.len()));
+        let highlights = if let Some(range) = visible_range {
+            display_snapshot.combined_highlights(range, syntax_theme)
+        } else {
+            let mut offset = 0;
+            buffer_snapshot
+                .chunks(
+                    item.source_range_for_text.clone(),
+                    LanguageAwareStyling {
+                        tree_sitter: true,
+                        diagnostics: false,
+                    },
+                )
+                .filter_map(|chunk| {
+                    let start = offset;
+                    offset += chunk.text.len();
+                    chunk
+                        .syntax_highlight_id
+                        .and_then(|id| syntax_theme.get(id))
+                        .map(|style| (start..offset, *style))
+                })
+                .collect::<Vec<_>>()
+        };
+        return (!highlights.is_empty()).then_some(highlights);
+    }
 
-    let selection_point_range = anchor_range.to_point(multi_buffer_snapshot);
+    let selection_point_range = anchor_range?.to_point(multi_buffer_snapshot);
     let mut search_start = selection_point_range.start;
     search_start.column = 0;
     let search_start_offset = search_start.to_offset(&multi_buffer_snapshot);
@@ -333,16 +378,28 @@ mod tests {
     };
 
     use futures::StreamExt as _;
-    use gpui::{App, TestAppContext};
-    use multi_buffer::ToPoint;
+    use gpui::{
+        App, AppContext as _, FontWeight, HighlightStyle, Hsla, SharedString, TestAppContext, font,
+        px,
+    };
+    use language::{Buffer, Capability, OutlineItem, highlight_ranges_from_text};
+    use languages::rust_lang;
+    use lsp::LanguageServerId;
+    use multi_buffer::{ExcerptRange, MultiBuffer, PathKey, ToPoint};
+    use project::{lsp_store::TokenType, project_settings::DiagnosticSeverity};
     use settings::{DocumentSymbols, SettingsStore};
     use text::Point;
+    use theme::SyntaxTheme;
     use util::path;
     use workspace::item::{Item, ItemEvent};
     use zed_actions::editor::MoveDown;
 
+    use super::highlights_from_buffer;
     use crate::{
         Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT,
+        display_map::{
+            DisplayMap, FoldPlaceholder, HighlightStyleInterner, SemanticTokenHighlight,
+        },
         editor_tests::{init_test, update_test_language_settings},
         test::editor_lsp_test_context::EditorLspTestContext,
     };
@@ -396,6 +453,216 @@ mod tests {
             } else {
                 Some(children)
             },
+        }
+    }
+
+    #[gpui::test]
+    async fn test_document_symbol_highlights_across_excerpts(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let syntax = SyntaxTheme::new_test([("function", Hsla::blue())]);
+        let language = rust_lang();
+        language.set_theme(&syntax);
+        let semantic_style = HighlightStyle {
+            font_weight: Some(FontWeight::BOLD),
+            ..HighlightStyle::default()
+        };
+        let function_style = HighlightStyle::color(Hsla::blue());
+
+        for (prefix, label, name_range) in [
+            (
+                "\t",
+                "pub(super) async fn handle_resolve_inlay_hint",
+                20..45,
+            ),
+            ("\t", "pub(super) async fn résolve", 20..28),
+            (
+                "\tconst LABEL: &str = \"pub(super) async fn résolve\"; ",
+                "pub(super) async fn résolve",
+                20..28,
+            ),
+        ] {
+            let buffer = cx.new(|cx| {
+                Buffer::local(
+                    format!("{prefix}{label}() {{\n    let probe = ();\n}}\n"),
+                    cx,
+                )
+                .with_language(language.clone(), cx)
+            });
+            cx.condition(&buffer, |buffer, _| !buffer.is_parsing())
+                .await;
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+            let item = OutlineItem {
+                depth: 0,
+                range: snapshot.anchor_after(0)..snapshot.anchor_before(snapshot.len()),
+                selection_range: snapshot.anchor_after(prefix.len() + name_range.start)
+                    ..snapshot.anchor_before(prefix.len() + name_range.end),
+                source_range_for_text: snapshot.anchor_after(prefix.len())
+                    ..snapshot.anchor_before(prefix.len() + label.len()),
+                text: SharedString::from(label),
+                highlight_ranges: Vec::new(),
+                name_ranges: vec![name_range.clone()],
+                body_range: None,
+                annotation_range: None,
+            };
+            let label_start = Point::new(0, prefix.len() as u32);
+            let label_end = Point::new(0, (prefix.len() + label.len()) as u32);
+            let name_start = Point::new(0, (prefix.len() + name_range.start) as u32);
+            for (ranges, expected_style) in [
+                (vec![Point::new(1, 0)..Point::new(1, 19)], function_style),
+                (
+                    vec![label_start..label_end],
+                    function_style.highlight(semantic_style),
+                ),
+                (
+                    vec![Point::new(0, name_start.column + 1)..label_end],
+                    function_style,
+                ),
+                (
+                    vec![
+                        label_start..Point::new(0, name_start.column - 1),
+                        name_start..label_end,
+                    ],
+                    function_style,
+                ),
+            ] {
+                let multibuffer = cx.new(|cx| {
+                    let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+                    multibuffer.set_excerpt_ranges_for_path(
+                        PathKey::sorted(0),
+                        buffer.clone(),
+                        &snapshot,
+                        ranges
+                            .iter()
+                            .cloned()
+                            .map(ExcerptRange::new)
+                            .collect::<Vec<_>>(),
+                        cx,
+                    );
+                    multibuffer
+                });
+                let display_map = cx.new(|cx| {
+                    DisplayMap::new(
+                        multibuffer,
+                        font("Helvetica"),
+                        px(14.0),
+                        None,
+                        1,
+                        1,
+                        FoldPlaceholder::test(),
+                        DiagnosticSeverity::Warning,
+                        cx,
+                    )
+                });
+                display_map.update(cx, |display_map, cx| {
+                    let display_snapshot = display_map.snapshot(cx);
+                    if let Some(range) = display_snapshot
+                        .buffer()
+                        .buffer_anchor_range_to_anchor_range(item.selection_range.clone())
+                    {
+                        let mut interner = HighlightStyleInterner::default();
+                        let token = SemanticTokenHighlight {
+                            range,
+                            style: interner.intern(semantic_style),
+                            token_type: TokenType(0),
+                            token_modifiers: 0,
+                            server_id: LanguageServerId(0),
+                            precedence: 0,
+                        };
+                        Arc::make_mut(&mut display_map.semantic_token_highlights).insert(
+                            snapshot.remote_id(),
+                            (Arc::from([token]), Arc::new(interner)),
+                        );
+                    }
+                    assert_eq!(
+                        highlights_from_buffer(&display_map.snapshot(cx), &item, &syntax),
+                        Some(vec![(name_range.clone(), expected_style)]),
+                        "prefix {prefix:?}, label {label:?}, excerpts {ranges:?}",
+                    );
+                });
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_nonverbatim_document_symbols_outside_excerpts(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let syntax = SyntaxTheme::new_test([("keyword", Hsla::blue()), ("type", Hsla::green())]);
+        let language = rust_lang();
+        language.set_theme(&syntax);
+        let keyword = HighlightStyle::color(Hsla::blue());
+        let type_style = HighlightStyle::color(Hsla::green());
+        for (source, label, selection, expected) in [
+            (
+                "impl<T> Trait<T>\n    for Type<T> {\n    fn probe() {}\n}\n",
+                "impl Trait<T> for Type<T>",
+                Point::new(1, 8)..Point::new(1, 15),
+                vec![
+                    (0..4, keyword),
+                    (5..10, type_style),
+                    (11..12, type_style),
+                    (14..17, keyword),
+                    (18..22, type_style),
+                    (23..24, type_style),
+                ],
+            ),
+            (
+                "impl\n    Simplify {\n    fn probe() {}\n}\n",
+                "impl Simplify",
+                Point::new(1, 4)..Point::new(1, 12),
+                vec![(0..4, keyword), (5..13, type_style)],
+            ),
+        ] {
+            let buffer = cx.new(|cx| Buffer::local(source, cx).with_language(language.clone(), cx));
+            cx.condition(&buffer, |buffer, _| !buffer.is_parsing())
+                .await;
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+            let selection =
+                snapshot.anchor_after(selection.start)..snapshot.anchor_before(selection.end);
+            let item = OutlineItem {
+                depth: 0,
+                range: snapshot.anchor_after(0)..snapshot.anchor_before(snapshot.len()),
+                selection_range: selection.clone(),
+                source_range_for_text: selection,
+                text: SharedString::from(label),
+                highlight_ranges: Vec::new(),
+                name_ranges: vec![0..label.len()],
+                body_range: None,
+                annotation_range: None,
+            };
+            let multibuffer = cx.new(|cx| {
+                let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+                multibuffer.set_excerpt_ranges_for_path(
+                    PathKey::sorted(0),
+                    buffer.clone(),
+                    &snapshot,
+                    vec![ExcerptRange::new(
+                        Point::new(2, 0)..Point::new(2, snapshot.line_len(2)),
+                    )],
+                    cx,
+                );
+                multibuffer
+            });
+            let display_map = cx.new(|cx| {
+                DisplayMap::new(
+                    multibuffer,
+                    font("Helvetica"),
+                    px(14.0),
+                    None,
+                    1,
+                    1,
+                    FoldPlaceholder::test(),
+                    DiagnosticSeverity::Warning,
+                    cx,
+                )
+            });
+            let highlights = display_map
+                .update(cx, |display_map, cx| {
+                    highlights_from_buffer(&display_map.snapshot(cx), &item, &syntax)
+                })
+                .unwrap_or_else(|| highlight_ranges_from_text(label, &language, &syntax));
+            assert_eq!(highlights, expected, "label {label:?}");
         }
     }
 
@@ -810,6 +1077,82 @@ mod tests {
                     symbol.text
                 );
             }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_lsp_document_symbols_fall_back_to_reparsed_text_highlights(
+        cx: &mut TestAppContext,
+    ) {
+        use ui::ActiveTheme as _;
+
+        init_test(cx, |_| {});
+
+        update_test_language_settings(cx, &|settings| {
+            settings.defaults.document_symbols = Some(DocumentSymbols::On);
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                document_symbol_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .project
+                .as_ref()
+                .expect("editor should have a project")
+                .read(cx)
+                .languages()
+                .set_theme(cx.theme().clone());
+        });
+        let mut symbol_request = cx
+            .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::DocumentSymbolResponse::Nested(vec![
+                        nested_symbol(
+                            "impl ZzzMissing",
+                            lsp::SymbolKind::OBJECT,
+                            lsp_range(0, 0, 0, 12),
+                            lsp_range(0, 3, 0, 7),
+                            Vec::new(),
+                        ),
+                    ])))
+                },
+            );
+
+        cx.set_state("fn teˇst() {}\n");
+        assert!(symbol_request.next().await.is_some());
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            let (_, symbols) = editor
+                .outline_symbols_at_cursor
+                .as_ref()
+                .expect("Should have outline symbols");
+            assert_eq!(symbols.len(), 1);
+            let symbol = &symbols[0];
+            assert_eq!(symbol.text, "impl ZzzMissing");
+
+            let language = editor
+                .buffer
+                .read(cx)
+                .as_singleton()
+                .expect("singleton buffer")
+                .read(cx)
+                .language()
+                .cloned()
+                .expect("buffer language");
+            let expected = highlight_ranges_from_text(&symbol.text, &language, cx.theme().syntax());
+            assert_eq!(
+                expected.first().map(|(range, _)| range.clone()),
+                Some(0..4),
+                "reparsing the symbol text should highlight the `impl` keyword"
+            );
+            assert_eq!(symbol.highlight_ranges, expected);
         });
     }
 

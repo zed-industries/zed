@@ -281,8 +281,6 @@ fn init_logging_server(log_file_path: &Path) -> Result<Receiver<Vec<u8>>> {
         let thread_name = current_thread.name().unwrap_or("<unnamed>");
 
         let msg = format!("thread '{thread_name}' panicked at {location}:\n{message}\n{backtrace}");
-        // NOTE: This log never reaches the client, as the communication is handled on a main thread task
-        // which will never run once we panic.
         log::error!("{msg}");
         old_hook(info);
     }));
@@ -460,76 +458,74 @@ fn start_server(
                 break;
             };
 
+            let _log_task = cx.background_spawn({
+                let log_rx = log_rx.clone();
+                async move {
+                    while let Ok(log_message) = log_rx.recv().await {
+                        if let Err(error) = stderr_stream.write_all(&log_message).await {
+                            log::error!("failed to write log message to stderr: {error:?}");
+                            break;
+                        }
+                        if let Err(error) = stderr_stream.flush().await {
+                            log::error!("failed to flush stderr stream: {error:?}");
+                            break;
+                        }
+                    }
+                }
+            });
+
             let mut input_buffer = Vec::new();
             let mut output_buffer = Vec::new();
 
-            let (mut stdin_msg_tx, mut stdin_msg_rx) = mpsc::unbounded::<Envelope>();
-            cx.background_spawn(async move {
+            let stdin_task = cx.background_spawn({
+                let incoming_tx = incoming_tx.clone();
+                async move {
+                    loop {
+                        match read_message(&mut stdin_stream, &mut input_buffer).await {
+                            Ok(msg) => {
+                                if let Err(error) = incoming_tx.unbounded_send(msg) {
+                                    log::error!("failed to send message to application: {error:?}. exiting.");
+                                    return Err(anyhow!(error));
+                                }
+                            }
+                            Err(error) => {
+                                log::warn!("stdin read failed: {error:?}");
+                                break;
+                            }
+                        }
+                    }
+                    anyhow::Ok(())
+                }
+            });
+
+            let stdout_task = async {
                 loop {
-                    match read_message(&mut stdin_stream, &mut input_buffer).await {
-                        Ok(msg) => {
-                            if (stdin_msg_tx.send(msg).await).is_err() {
-                                log::info!("stdin message channel closed, stopping stdin reader");
-                                break;
-                            }
-                        }
-                        Err(error) => {
-                            log::warn!("stdin read failed: {error:?}");
-                            break;
-                        }
+                    let Some(message) = outgoing_rx.next().await else {
+                        log::error!("stdout handler, no message");
+                        break;
+                    };
+
+                    if let Err(error) =
+                        write_message(&mut stdout_stream, &mut output_buffer, message).await
+                    {
+                        log::error!("failed to write stdout message: {:?}", error);
+                        break;
+                    }
+                    if let Err(error) = stdout_stream.flush().await {
+                        log::error!("failed to flush stdout message: {:?}", error);
+                        break;
                     }
                 }
-            }).detach();
+            };
 
-            loop {
-
-                select_biased! {
-                    _ = app_quit_rx.next().fuse() => {
-                        return anyhow::Ok(());
-                    }
-
-                    stdin_message = stdin_msg_rx.next().fuse() => {
-                        let Some(message) = stdin_message else {
-                            log::warn!("error reading message on stdin, dropping connection.");
-                            break;
-                        };
-                        if let Err(error) = incoming_tx.unbounded_send(message) {
-                            log::error!("failed to send message to application: {error:?}. exiting.");
-                            return Err(anyhow!(error));
-                        }
-                    }
-
-                    outgoing_message  = outgoing_rx.next().fuse() => {
-                        let Some(message) = outgoing_message else {
-                            log::error!("stdout handler, no message");
-                            break;
-                        };
-
-                        if let Err(error) =
-                            write_message(&mut stdout_stream, &mut output_buffer, message).await
-                        {
-                            log::error!("failed to write stdout message: {:?}", error);
-                            break;
-                        }
-                        if let Err(error) = stdout_stream.flush().await {
-                            log::error!("failed to flush stdout message: {:?}", error);
-                            break;
-                        }
-                    }
-
-                    log_message = log_rx.recv().fuse() => {
-                        if let Ok(log_message) = log_message {
-                            if let Err(error) = stderr_stream.write_all(&log_message).await {
-                                log::error!("failed to write log message to stderr: {:?}", error);
-                                break;
-                            }
-                            if let Err(error) = stderr_stream.flush().await {
-                                log::error!("failed to flush stderr stream: {:?}", error);
-                                break;
-                            }
-                        }
-                    }
+            select_biased! {
+                _ = app_quit_rx.next().fuse() => {
+                    return anyhow::Ok(());
                 }
+                result = stdin_task.fuse() => {
+                    result?;
+                }
+                _ = stdout_task.fuse() => {}
             }
         }
         anyhow::Ok(())
@@ -677,7 +673,7 @@ pub fn execute_run(
         json_schema_store::init(cx);
 
         let project = cx.new(|cx| {
-            let fs = Arc::new(RealFs::new(None, cx.background_executor().clone()));
+            let fs = RealFs::new(None, cx.background_executor().clone());
             let node_settings_rx = initialize_settings(session.clone(), fs.clone(), cx);
 
             let proxy_url = read_proxy_settings(cx);
@@ -1373,6 +1369,139 @@ fn is_file_in_use(file_name: &OsStr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    mod unix {
+        use super::*;
+        use gpui::TestAppContext;
+        use proto::EnvelopedMessage as _;
+
+        // Windows did not reproduce socket backpressure.
+        #[gpui::test]
+        async fn rpc_responds_when_stderr_is_blocked(cx: &mut TestAppContext) {
+            cx.executor().allow_parking();
+
+            let temp_dir = tempfile::tempdir().expect("create socket directory");
+            let stdin_path = temp_dir.path().join("stdin.sock");
+            let stdout_path = temp_dir.path().join("stdout.sock");
+            let stderr_path = temp_dir.path().join("stderr.sock");
+            let listeners =
+                ServerListeners::new(stdin_path.clone(), stdout_path.clone(), stderr_path.clone())
+                    .expect("bind server sockets");
+
+            let (log_tx, log_rx) = async_channel::unbounded();
+
+            let handler = cx.new(|_| ());
+            let server = cx.update(|cx| start_server(listeners, log_rx, cx, false));
+            server.add_request_handler::<proto::Ping, _, _, _>(
+                handler.downgrade(),
+                |_, _, _| async { Ok(proto::Ack {}) },
+            );
+
+            select! {
+                _ = async {
+                    let (mut stdin, mut stdout, mut stderr) = futures::future::try_join3(
+                        UnixStream::connect(&stdin_path),
+                        UnixStream::connect(&stdout_path),
+                        UnixStream::connect(&stderr_path),
+                    ).await.expect("connect server sockets");
+
+                    log_tx
+                        .try_send(vec![b'x'; 16 * 1024 * 1024])
+                        .expect("queue a log larger than the socket buffer");
+
+                    stderr
+                        .read_exact(&mut [0])
+                        .await
+                        .expect("wait until log forwarding starts");
+
+                    let mut buffer = Vec::new();
+                    write_message(
+                        &mut stdin,
+                        &mut buffer,
+                        proto::Ping {}.into_envelope(1, None, None),
+                    ).await.expect("send ping");
+
+                    loop {
+                        let response = read_message(&mut stdout, &mut buffer)
+                            .await
+                            .expect("read server message");
+
+                        if response.responding_to == Some(1) {
+                            assert!(matches!(response.payload, Some(proto::envelope::Payload::Ack(_))));
+                            break;
+                        }
+                    }
+                }.fuse() => {}
+
+                _ = cx.executor().timer(std::time::Duration::from_secs(2)).fuse() => {
+                    panic!("RPC response blocked by an unread log stream");
+                }
+            }
+        }
+
+        #[gpui::test]
+        async fn ping_is_handled_while_stdout_is_blocked(cx: &mut TestAppContext) {
+            cx.executor().allow_parking();
+
+            let temp_dir = tempfile::tempdir().expect("create socket directory");
+            let stdin_path = temp_dir.path().join("stdin.sock");
+            let stdout_path = temp_dir.path().join("stdout.sock");
+            let stderr_path = temp_dir.path().join("stderr.sock");
+            let listeners =
+                ServerListeners::new(stdin_path.clone(), stdout_path.clone(), stderr_path.clone())
+                    .expect("bind server sockets");
+
+            let (_log_tx, log_rx) = async_channel::unbounded();
+            let (ping_tx, mut ping_rx) = mpsc::unbounded();
+            let handler = cx.new(|_| ());
+            let server = cx.update(|cx| start_server(listeners, log_rx, cx, false));
+            server.add_request_handler::<proto::Ping, _, _, _>(
+                handler.downgrade(),
+                move |_, _, _| {
+                    ping_tx.unbounded_send(()).expect("report handled ping");
+                    async { Ok(proto::Ack {}) }
+                },
+            );
+
+            select! {
+                _ = async {
+                    let (mut stdin, mut stdout, _stderr) = futures::future::try_join3(
+                        UnixStream::connect(&stdin_path),
+                        UnixStream::connect(&stdout_path),
+                        UnixStream::connect(&stderr_path),
+                    ).await.expect("connect server sockets");
+
+                    let mut buffer = Vec::new();
+                    read_message(&mut stdout, &mut buffer)
+                        .await
+                        .expect("read server startup message");
+
+                    server.send(proto::CreateBufferForPeer {
+                        variant: Some(proto::create_buffer_for_peer::Variant::State(proto::BufferState {
+                            base_text: "x".repeat(16 * 1024 * 1024),
+                            ..Default::default()
+                        })),
+                        ..Default::default()
+                    }).expect("queue a buffer larger than the socket buffer");
+
+                    stdout.read_exact(&mut [0]).await.expect("wait until buffer forwarding starts");
+
+                    write_message(
+                        &mut stdin,
+                        &mut buffer,
+                        proto::Ping {}.into_envelope(1, None, None),
+                    ).await.expect("send ping");
+
+                    ping_rx.next().await.expect("ping handled without draining stdout");
+                }.fuse() => {}
+
+                _ = cx.executor().timer(std::time::Duration::from_secs(2)).fuse() => {
+                    panic!("Ping handling blocked by an unread stdout stream");
+                }
+            }
+        }
+    }
 
     #[test]
     fn rotated_remote_log_path_uses_numbered_log_suffix() {

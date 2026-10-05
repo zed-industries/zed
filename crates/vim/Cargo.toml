@@ -24,7 +24,6 @@ command_palette.workspace = true
 command_palette_hooks.workspace = true
 db.workspace = true
 editor.workspace = true
-env_logger.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
@@ -49,7 +48,6 @@ menu.workspace = true
 tokio = { version = "1.15", features = ["full"], optional = true }
 ui.workspace = true
 util.workspace = true
-util_macros.workspace = true
 vim_mode_setting.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
@@ -57,6 +55,7 @@ zed_actions.workspace = true
 [dev-dependencies]
 command_palette = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
 git_ui = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
@@ -71,7 +70,8 @@ release_channel.workspace = true
 semver.workspace = true
 settings_ui.workspace = true
 settings.workspace = true
-perf.workspace = true
+perf = { workspace = true, features = ["cli"] }
 util = { workspace = true, features = ["test-support"] }
+util_macros.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 search = { workspace = true, features = ["test-support"] }

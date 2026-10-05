@@ -326,7 +326,10 @@ impl LspAdapter for RustLspAdapter {
                 .iter_mut()
                 .flatten()
                 .map(|info| &mut info.message)
-                .chain([&mut diagnostic.message])
+                .chain(match &mut diagnostic.message {
+                    lsp::DiagnosticMessage::String(message) => Some(message),
+                    lsp::DiagnosticMessage::MarkupContent(_) => None,
+                })
             {
                 if let Cow::Owned(sanitized) = REGEX.replace_all(message, "`$1`") {
                     *message = sanitized;
@@ -440,11 +443,7 @@ impl LspAdapter for RustLspAdapter {
                     let run_start = prefix.len() + 1;
                     let runs = language.highlight_text(&source, run_start..run_start + text.len());
                     mk_label(text, &|| 0..label.len(), runs)
-                } else if completion
-                    .detail
-                    .as_ref()
-                    .is_some_and(|detail| detail.starts_with("macro_rules! "))
-                {
+                } else if detail_right.is_some_and(|detail| detail.starts_with("macro_rules! ")) {
                     let text = completion.label.clone();
                     let len = text.len();
                     let source = Rope::from(text.as_str());
@@ -1481,42 +1480,75 @@ mod tests {
 
     #[gpui::test]
     async fn test_process_rust_diagnostics() {
+        let markdown_message = lsp::MarkupContent {
+            kind: lsp::MarkupKind::Markdown,
+            value: "consider importing this struct: `use b::c;\n`".to_string(),
+        };
+        let plain_text_message = lsp::MarkupContent {
+            kind: lsp::MarkupKind::PlainText,
+            value: "consider importing this struct: `use b::c;\n`".to_string(),
+        };
         let mut params = lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a")).unwrap(),
             version: None,
             diagnostics: vec![
                 // no newlines
                 lsp::Diagnostic {
-                    message: "use of moved value `a`".to_string(),
+                    message: lsp::DiagnosticMessage::from("use of moved value `a`"),
                     ..Default::default()
                 },
                 // newline at the end of a code span
                 lsp::Diagnostic {
-                    message: "consider importing this struct: `use b::c;\n`".to_string(),
+                    message: lsp::DiagnosticMessage::from(
+                        "consider importing this struct: `use b::c;\n`",
+                    ),
                     ..Default::default()
                 },
                 // code span starting right after a newline
                 lsp::Diagnostic {
-                    message: "cannot borrow `self.d` as mutable\n`self` is a `&` reference"
-                        .to_string(),
+                    message: lsp::DiagnosticMessage::from(
+                        "cannot borrow `self.d` as mutable\n`self` is a `&` reference".to_string(),
+                    ),
+                    ..Default::default()
+                },
+                lsp::Diagnostic {
+                    message: lsp::DiagnosticMessage::from(markdown_message.clone()),
+                    ..Default::default()
+                },
+                lsp::Diagnostic {
+                    message: lsp::DiagnosticMessage::from(plain_text_message.clone()),
                     ..Default::default()
                 },
             ],
         };
         RustLspAdapter.process_diagnostics(&mut params, LanguageServerId(0));
 
-        assert_eq!(params.diagnostics[0].message, "use of moved value `a`");
+        assert_eq!(
+            params.diagnostics[0].message,
+            lsp::DiagnosticMessage::from("use of moved value `a`")
+        );
 
         // remove trailing newline from code span
         assert_eq!(
             params.diagnostics[1].message,
-            "consider importing this struct: `use b::c;`"
+            lsp::DiagnosticMessage::from("consider importing this struct: `use b::c;`")
         );
 
         // do not remove newline before the start of code span
         assert_eq!(
             params.diagnostics[2].message,
-            "cannot borrow `self.d` as mutable\n`self` is a `&` reference"
+            lsp::DiagnosticMessage::from(
+                "cannot borrow `self.d` as mutable\n`self` is a `&` reference"
+            )
+        );
+
+        assert_eq!(
+            params.diagnostics[3].message,
+            lsp::DiagnosticMessage::from(markdown_message)
+        );
+        assert_eq!(
+            params.diagnostics[4].message,
+            lsp::DiagnosticMessage::from(plain_text_message)
         );
     }
 
@@ -1538,6 +1570,58 @@ mod tests {
         let highlight_type = grammar.highlight_id_for_name("type").unwrap();
         let highlight_keyword = grammar.highlight_id_for_name("keyword").unwrap();
         let highlight_field = grammar.highlight_id_for_name("property").unwrap();
+
+        let macro_detail_label = adapter
+            .label_for_completion(
+                &lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
+                    label: "println!".to_string(),
+                    detail: Some("macro_rules! println".to_string()),
+                    ..Default::default()
+                },
+                &language,
+            )
+            .await;
+
+        let macro_description_label = adapter
+            .label_for_completion(
+                &lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
+                    label: "println!".to_string(),
+                    label_details: Some(CompletionItemLabelDetails {
+                        detail: None,
+                        description: Some("macro_rules! println".to_string()),
+                    }),
+                    ..Default::default()
+                },
+                &language,
+            )
+            .await;
+
+        assert_eq!(macro_detail_label, macro_description_label);
+
+        let macro_label = macro_detail_label.unwrap();
+        assert_eq!(macro_label.text, "println!");
+        assert_eq!(macro_label.filter_range, 0..8);
+
+        let macro_import_label = adapter
+            .label_for_completion(
+                &lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
+                    label: "println!".to_string(),
+                    label_details: Some(CompletionItemLabelDetails {
+                        detail: Some("(use std::println)".to_string()),
+                        description: Some("macro_rules! println".to_string()),
+                    }),
+                    ..Default::default()
+                },
+                &language,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(macro_import_label.text, "println! (use std::println)");
+        assert_eq!(macro_import_label.filter_range, 0..8);
 
         assert_eq!(
             adapter
@@ -1806,8 +1890,7 @@ mod tests {
                 vec![
                     (10..13, HighlightId::TABSTOP_INSERT_ID),
                     (16..19, HighlightId::TABSTOP_INSERT_ID),
-                    (0..7, HighlightId::new(2)),
-                    (7..8, HighlightId::new(2)),
+                    (0..8, HighlightId::new(2)),
                 ],
             ))
         );
@@ -1834,8 +1917,7 @@ mod tests {
                 0..4,
                 vec![
                     (5..9, HighlightId::TABSTOP_REPLACE_ID),
-                    (0..3, HighlightId::new(2)),
-                    (3..4, HighlightId::new(2)),
+                    (0..4, HighlightId::new(2)),
                 ],
             ))
         );
@@ -1920,8 +2002,7 @@ mod tests {
                 vec![
                     (15..20, HighlightId::TABSTOP_REPLACE_ID),
                     (16..19, HighlightId::TABSTOP_INSERT_ID),
-                    (0..13, HighlightId::new(2)),
-                    (13..14, HighlightId::new(2)),
+                    (0..14, HighlightId::new(2)),
                 ],
             ))
         );
