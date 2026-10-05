@@ -1786,7 +1786,7 @@ impl Item for MarkdownPreviewView {
             return Task::ready(None);
         };
 
-        let Some(project) = active_editor.editor.read(cx).project().clone() else {
+        let Some(project) = active_editor.editor.read(cx).project() else {
             return Task::ready(None);
         };
 
