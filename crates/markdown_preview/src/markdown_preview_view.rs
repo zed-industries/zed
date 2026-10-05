@@ -3317,7 +3317,7 @@ mod tests {
                 pane.active_item()
                     .and_then(|item| item.downcast::<MarkdownPreviewView>())
                     .is_some(),
-                "splitting a preivew should clone it into a new pane"
+                "splitting a preview should clone it into a new pane"
             );
         });
     }
