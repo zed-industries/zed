@@ -981,6 +981,7 @@ pub struct SettingsWindow {
     list_state: ListState,
     bottom_spacer_height: Pixels,
     pending_content_scroll: Option<usize>,
+    content_navigation_generation: usize,
     shown_errors: HashSet<String>,
     pub(crate) hidden_deleted_skill_directory_paths: HashSet<PathBuf>,
     pub(crate) regex_validation_error: Option<String>,
@@ -2025,6 +2026,7 @@ impl SettingsWindow {
             list_state,
             bottom_spacer_height: px(0.),
             pending_content_scroll: None,
+            content_navigation_generation: 0,
             last_copied_link_path: None,
             provider_configuration_views: HashMap::default(),
             configuring_provider: None,
@@ -2527,6 +2529,7 @@ impl SettingsWindow {
 
     fn reset_list_state(&mut self) {
         self.pending_content_scroll = None;
+        self.content_navigation_generation = self.content_navigation_generation.wrapping_add(1);
         let mut visible_items_count = self.visible_page_items().count();
 
         if visible_items_count > 0 {
@@ -2654,6 +2657,7 @@ impl SettingsWindow {
 
     fn open_navbar_entry_page(&mut self, navbar_entry: usize) {
         self.pending_content_scroll = None;
+        self.content_navigation_generation = self.content_navigation_generation.wrapping_add(1);
         // Navigating to another page dismisses the transient "copied share
         // link" checkmark shown on a Skills page row.
         self.last_copied_skill_directory_path = None;
@@ -3402,6 +3406,7 @@ impl SettingsWindow {
             .visible_page_items()
             .position(|(index, _)| index == content_item_index)
             .unwrap_or(0);
+        self.content_navigation_generation = self.content_navigation_generation.wrapping_add(1);
         self.pending_content_scroll = Some(if index == 0 { 0 } else { index + 1 });
         if index == 0 {
             if let Some(scroll_handle) = self.current_sub_page_scroll_handle() {
@@ -3671,6 +3676,7 @@ impl SettingsWindow {
 
             let settings_window = cx.entity().downgrade();
             let list_state = self.list_state.clone();
+            let navigation_generation = self.content_navigation_generation;
             page_content = page_content.child(list_content.size_full()).child(
                 gpui::canvas(
                     move |bounds, _, cx| {
@@ -3686,6 +3692,10 @@ impl SettingsWindow {
                         cx.defer(move |cx| {
                             settings_window
                                 .update(cx, |this, cx| {
+                                    // Focus listeners can navigate after this layout but before its callback.
+                                    if this.content_navigation_generation != navigation_generation {
+                                        return;
+                                    }
                                     if this.bottom_spacer_height != spacer_height {
                                         this.bottom_spacer_height = spacer_height;
                                         this.list_state.remeasure_items(count - 1..count);
@@ -5472,6 +5482,7 @@ pub mod test {
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
                 bottom_spacer_height: px(0.),
                 pending_content_scroll: None,
+                content_navigation_generation: 0,
                 shown_errors: HashSet::default(),
                 hidden_deleted_skill_directory_paths: HashSet::default(),
                 regex_validation_error: None,
@@ -5613,6 +5624,7 @@ pub mod test {
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
             bottom_spacer_height: px(0.),
             pending_content_scroll: None,
+            content_navigation_generation: 0,
             shown_errors: HashSet::default(),
             hidden_deleted_skill_directory_paths: HashSet::default(),
             regex_validation_error: None,
@@ -5924,6 +5936,59 @@ pub mod test {
             cx.run_until_parked();
         }
         settings_window.read_with(cx, |this, _| assert_eq!(this.navbar_entry, 3));
+    }
+    #[gpui::test]
+    fn navbar_focus_navigation_survives_previous_layout_callback(cx: &mut gpui::TestAppContext) {
+        let (settings_window, cx) = cx.add_window_view(|window, cx| {
+            register_settings(cx);
+            let mut this = parse("v First*\n- One\nv Second\n- First\n- Last", window, cx);
+            this.pages[0].items = vec![
+                SettingsPageItem::SectionHeader("One"),
+                SettingsPageItem::ActionLink(ActionLink {
+                    title: "Tall final row".into(),
+                    description: Some("A longer settings description makes this page's final row taller than the next page's final row. It covers multiple lines so that navigating to the next page requires a larger spacer after its first layout. This deliberately exercises correction after a stale callback from the preceding page.".into()),
+                    button_text: "Action".into(),
+                    on_click: Arc::new(|_, _, _| {}),
+                    files: USER,
+                }),
+            ].into_boxed_slice();
+            this.build_filter_table();
+            this.build_content_handles(window, cx);
+            this.list_state = ListState::new(0, gpui::ListAlignment::Top, px(0.)).measure_all();
+            this.reset_list_state();
+            this.setup_navbar_focus_subscriptions(window, cx);
+            window.activate_window();
+            this
+        });
+        cx.simulate_resize(gpui::size(px(900.), px(500.)));
+        for _ in 0..3 {
+            cx.update(|window, cx| {
+                window.simulate_next_frame(cx);
+                window.draw(cx).clear(cx);
+            });
+            cx.run_until_parked();
+        }
+        for target in [4, 1, 4] {
+            settings_window.update_in(cx, |this, window, cx| {
+                this.navbar_entries[target].focus_handle.focus(window, cx);
+            });
+            // Drawing A dispatches B's focus listener before A's deferred callback runs.
+            for _ in 0..4 {
+                cx.update(|window, cx| {
+                    window.simulate_next_frame(cx);
+                    window.draw(cx).clear(cx);
+                });
+                cx.run_until_parked();
+                settings_window.read_with(cx, |this, _| assert_eq!(this.navbar_entry, target));
+            }
+            settings_window.read_with(cx, |this, _| {
+                assert!(this.pending_content_scroll.is_none());
+                if target == 4 {
+                    let header = this.list_state.bounds_for_item(2).unwrap();
+                    assert_eq!(header.top(), this.list_state.viewport_bounds().top());
+                }
+            });
+        }
     }
     #[gpui::test]
     fn navbar_selection_near_headers_and_at_page_end(cx: &mut gpui::TestAppContext) {
