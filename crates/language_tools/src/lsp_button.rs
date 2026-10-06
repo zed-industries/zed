@@ -346,7 +346,15 @@ impl LanguageServerState {
                 .lsp_store
                 .update(cx, |lsp_store, _| lsp_store.as_remote().is_some())
                 .unwrap_or(false);
-            let has_logs = is_remote || lsp_logs.read(cx).has_server_logs(&server_selector);
+            let has_logs = is_remote
+                || self.workspace.upgrade().is_some_and(|workspace| {
+                    let project = workspace.read(cx).project();
+                    lsp_logs.read(cx).has_server_logs(
+                        &server_selector,
+                        &project.downgrade(),
+                        &self.lsp_store,
+                    )
+                });
 
             let (status_color, status_label) = server_info
                 .binary_status
@@ -695,7 +703,7 @@ fn tooltip_for_server_binary(
     let runtime = path_style.file_name(&server_binary.path).and_then(|name| {
         ["node", "python"]
             .into_iter()
-            .find(|runtime| name.starts_with(runtime))
+            .find(|runtime| name.to_string_lossy().starts_with(runtime))
     });
 
     let target_path = runtime

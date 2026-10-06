@@ -19,10 +19,11 @@ use futures::{
     future::{BoxFuture, FutureExt as _},
 };
 use globset::GlobSet;
-use gpui::{App, BackgroundExecutor};
+use gpui::{App, BackgroundExecutor, EntityId, Subscription};
 use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
+use smallvec::SmallVec;
 
 use std::{
     ffi::OsStr,
@@ -89,9 +90,17 @@ impl std::fmt::Display for LanguageNotFound {
     }
 }
 
+type ServerStatus = (Option<EntityId>, LanguageServerName, BinaryStatus);
+
 #[derive(Clone, Default)]
 struct ServerStatusSender {
-    txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(LanguageServerName, BinaryStatus)>>>>,
+    state: Arc<Mutex<ServerStatusSenderState>>,
+}
+
+#[derive(Default)]
+struct ServerStatusSenderState {
+    next_subscription_id: usize,
+    txs: HashMap<usize, mpsc::UnboundedSender<ServerStatus>>,
 }
 
 pub struct LoadedLanguage {
@@ -616,16 +625,42 @@ impl LanguageRegistry {
         cx: &App,
     ) -> Option<LanguageId> {
         let user_file_types = all_language_settings(Some(file), cx);
-
+        let filename = file
+            .path()
+            .file_name()
+            .unwrap_or_else(|| file.file_name(cx));
+        let paths = [Some(file.full_path(cx)), file.file_system_abs_path(cx)];
+        let path_style = file.path_style(cx);
+        let normalized_paths = paths.each_ref().map(|path| {
+            if path_style.is_windows()
+                && let Some(path) = path.as_deref().and_then(Path::to_str)
+                && path.contains('\\')
+            {
+                Some(PathBuf::from(path.replace('\\', "/")))
+            } else {
+                None
+            }
+        });
+        let paths = paths
+            .iter()
+            .filter_map(Option::as_deref)
+            .chain(normalized_paths.iter().filter_map(Option::as_deref))
+            .collect::<SmallVec<[_; 4]>>();
         self.language_for_file_internal(
-            &file.full_path(cx),
+            Some(filename),
+            &paths,
             content,
             Some(&user_file_types.file_types),
         )
     }
 
     pub fn language_for_file_path(self: &Arc<Self>, path: &Path) -> Option<LanguageId> {
-        self.language_for_file_internal(path, None, None)
+        self.language_for_file_internal(
+            path.file_name().and_then(|filename| filename.to_str()),
+            &[path],
+            None,
+            None,
+        )
     }
 
     #[ztracing::instrument(skip_all)]
@@ -647,14 +682,17 @@ impl LanguageRegistry {
 
     fn language_for_file_internal(
         self: &Arc<Self>,
-        path: &Path,
+        filename: Option<&str>,
+        paths: &[&Path],
         content: Option<&Rope>,
         user_file_types: Option<&FxHashMap<Arc<str>, (GlobSet, Vec<String>)>>,
     ) -> Option<LanguageId> {
-        self.state
-            .read()
-            .available_languages
-            .find_for_file(path, content, user_file_types)
+        self.state.read().available_languages.find_for_file(
+            filename,
+            paths,
+            content,
+            user_file_types,
+        )
     }
 
     #[ztracing::instrument(skip_all)]
@@ -894,6 +932,20 @@ impl LanguageRegistry {
             .unwrap_or_default()
     }
 
+    pub fn lsp_adapter(
+        &self,
+        language_name: &LanguageName,
+        server_name: &LanguageServerName,
+    ) -> Option<Arc<CachedLspAdapter>> {
+        self.state
+            .read()
+            .lsp_adapters
+            .get(language_name)?
+            .iter()
+            .find(|adapter| adapter.name() == *server_name)
+            .cloned()
+    }
+
     pub fn all_lsp_adapters(&self) -> Vec<Arc<CachedLspAdapter>> {
         self.state
             .read()
@@ -908,7 +960,17 @@ impl LanguageRegistry {
     }
 
     pub fn update_lsp_binary_status(&self, server_name: LanguageServerName, status: BinaryStatus) {
-        self.lsp_binary_status_tx.send(server_name, status);
+        self.lsp_binary_status_tx.send(None, server_name, status);
+    }
+
+    pub fn update_lsp_binary_status_for_entity(
+        &self,
+        source: EntityId,
+        server_name: LanguageServerName,
+        status: BinaryStatus,
+    ) {
+        self.lsp_binary_status_tx
+            .send(Some(source), server_name, status);
     }
 
     pub fn next_language_server_id(&self) -> LanguageServerId {
@@ -954,7 +1016,10 @@ impl LanguageRegistry {
 
     pub fn language_server_binary_statuses(
         &self,
-    ) -> mpsc::UnboundedReceiver<(LanguageServerName, BinaryStatus)> {
+    ) -> (
+        mpsc::UnboundedReceiver<(Option<EntityId>, LanguageServerName, BinaryStatus)>,
+        Subscription,
+    ) {
         self.lsp_binary_status_tx.subscribe()
     }
 }
@@ -1051,14 +1116,41 @@ impl LanguageRegistryState {
 }
 
 impl ServerStatusSender {
-    fn subscribe(&self) -> mpsc::UnboundedReceiver<(LanguageServerName, BinaryStatus)> {
+    fn subscribe(&self) -> (mpsc::UnboundedReceiver<ServerStatus>, Subscription) {
         let (tx, rx) = mpsc::unbounded();
-        self.txs.lock().push(tx);
-        rx
+        let subscription_id = {
+            let mut state = self.state.lock();
+            let subscription_id = post_inc(&mut state.next_subscription_id);
+            state.txs.insert(subscription_id, tx);
+            subscription_id
+        };
+        let state = self.state.clone();
+        let subscription = Subscription::new(move || {
+            state.lock().txs.remove(&subscription_id);
+        });
+        (rx, subscription)
     }
 
-    fn send(&self, name: LanguageServerName, status: BinaryStatus) {
-        let mut txs = self.txs.lock();
-        txs.retain(|tx| tx.unbounded_send((name.clone(), status.clone())).is_ok());
+    fn send(&self, source: Option<EntityId>, name: LanguageServerName, status: BinaryStatus) {
+        let mut state = self.state.lock();
+        state.txs.retain(|_, tx| {
+            tx.unbounded_send((source, name.clone(), status.clone()))
+                .is_ok()
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropping_server_status_subscription_unregisters_sender() {
+        let sender = ServerStatusSender::default();
+        let (_receiver, subscription) = sender.subscribe();
+        assert_eq!(sender.state.lock().txs.len(), 1);
+
+        drop(subscription);
+        assert!(sender.state.lock().txs.is_empty());
     }
 }

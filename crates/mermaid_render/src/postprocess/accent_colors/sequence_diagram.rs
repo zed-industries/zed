@@ -1,4 +1,5 @@
 use anyhow::Result;
+use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
 
 use super::{accent_class_name, add_to_event};
@@ -67,7 +68,7 @@ impl SequenceDiagramAccents {
             Some(a) => a,
             None => return Ok(None),
         };
-        let class_val = class_attr.unescape_value()?;
+        let class_val = class_attr.normalized_value(XmlVersion::Implicit1_0)?;
         if class_val.contains("actor-bottom") {
             let idx = self.actor_bottom_counter % self.accent_count;
             self.actor_bottom_counter += 1;
@@ -88,7 +89,7 @@ impl SequenceDiagramAccents {
             Some(a) => a,
             None => return Ok(None),
         };
-        let class_val = class_attr.unescape_value()?;
+        let class_val = class_attr.normalized_value(XmlVersion::Implicit1_0)?;
         if class_val.contains("actor") && class_val.contains("actor-box") {
             Ok(self.last_actor_accent.take())
         } else {

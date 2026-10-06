@@ -1,5 +1,6 @@
 [
   "const"
+  "constexpr"
   "enum"
   "extern"
   "inline"
