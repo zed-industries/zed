@@ -1807,13 +1807,8 @@ impl NativeAgent {
         let Some(session) = self.sessions.get(&id) else {
             return;
         };
-        // The thread notifies on every streamed chunk, but streamed content
-        // stays in the pending message, which isn't persisted until the
-        // message completes. Saving then would rewrite identical content.
-        let thread = thread.read(cx);
-        if thread.has_pending_message()
-            && session.saved_message_count == Some(thread.message_count())
-        {
+        // This runs on every thread notify, and streaming notifies once per chunk.
+        if thread.read(cx).can_defer_save(session.saved_message_count) {
             return;
         }
         let draft_prompt = session.draft_prompt(cx);

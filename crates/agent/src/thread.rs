@@ -1959,6 +1959,13 @@ impl Thread {
         })
     }
 
+    /// Returns true while a message is streaming and no message has completed
+    /// since the last save. `to_db` doesn't include the pending message, so a
+    /// save now would write the same data as the last one.
+    pub(crate) fn can_defer_save(&self, saved_message_count: Option<usize>) -> bool {
+        self.pending_message.is_some() && saved_message_count == Some(self.messages.len())
+    }
+
     /// Create a snapshot of the current project state including git information and unsaved buffers.
     fn project_snapshot(
         project: Entity<Project>,
@@ -4067,10 +4074,6 @@ impl Thread {
                 Message::User(user_message) => Some(user_message),
                 Message::Agent(_) | Message::Resume | Message::Compaction(_) => None,
             })
-    }
-
-    pub(crate) fn has_pending_message(&self) -> bool {
-        self.pending_message.is_some()
     }
 
     pub(crate) fn message_count(&self) -> usize {
