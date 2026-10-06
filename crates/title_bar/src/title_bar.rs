@@ -279,12 +279,12 @@ impl Render for TitleBar {
                 });
 
                 let display_name = if identity.extension() == Some(std::ffi::OsStr::new("git")) {
-                    identity.file_stem().and_then(|n| n.to_str())
+                    identity.file_stem()
                 } else {
                     repo.path_style.file_name(identity)
                 };
 
-                if let Some(repo_name) = display_name {
+                if let Some(repo_name) = display_name.and_then(|n| n.to_str()) {
                     let visible_worktrees_in_repo = self.visible_worktrees_in_repository(repo, cx);
                     let name = if visible_worktrees_in_repo == 1 {
                         if let Ok(relative) =
@@ -1331,7 +1331,7 @@ impl TitleBar {
                         )
                         .separator()
                     })
-                    .map(|this| {
+                    .when(is_signed_in, |this| {
                         let mut this = this.header("Organization");
 
                         for (organization, plan) in &organizations {

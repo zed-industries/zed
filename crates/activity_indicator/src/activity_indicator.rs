@@ -102,11 +102,17 @@ impl ActivityIndicator {
                     this.update(cx, |this: &mut ActivityIndicator, cx| {
                         match job_event {
                             fs::JobEvent::Started { info } => {
-                                this.fs_jobs.retain(|j| j.id != info.id);
+                                this.fs_jobs.retain(|job| job.id != info.id);
                                 this.fs_jobs.push(info);
                             }
+                            fs::JobEvent::Updated { id, message } => {
+                                if let Some(job) = this.fs_jobs.iter_mut().find(|job| job.id == id)
+                                {
+                                    job.message = message;
+                                }
+                            }
                             fs::JobEvent::Completed { id } => {
-                                this.fs_jobs.retain(|j| j.id != id);
+                                this.fs_jobs.retain(|job| job.id != id);
                             }
                         }
                         cx.notify();

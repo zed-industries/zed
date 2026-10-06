@@ -8,7 +8,7 @@ pub mod util;
 
 use anyhow::{Context as _, Result, anyhow};
 use cloud_llm_client::CompletionRequestStatus;
-use http_client::{StatusCode, http};
+use http::StatusCode;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Sub};
@@ -30,6 +30,12 @@ pub use crate::util::{
     parse_tool_arguments,
 };
 pub use gpui_shared_string::SharedString;
+
+/// The events of a streaming completion, as produced by a provider.
+pub type LanguageModelCompletionStream = futures::stream::BoxStream<
+    'static,
+    Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+>;
 
 /// A completion event from a language model.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -243,6 +249,13 @@ pub enum LanguageModelCompletionError {
     },
     #[error("stream from {provider} ended unexpectedly")]
     StreamEndedUnexpectedly { provider: LanguageModelProviderName },
+    /// The provider no longer offers a model with this id, for example after
+    /// its settings or fetched model list changed.
+    #[error("{provider} no longer offers the model {}", model.0)]
+    ModelUnavailable {
+        provider: LanguageModelProviderName,
+        model: LanguageModelId,
+    },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -369,6 +382,39 @@ impl LanguageModelCompletionError {
         }
     }
 
+    /// Whether retrying the same request after a delay may succeed.
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Self::ProviderRejection {
+                provider,
+                status,
+                retry_after,
+                category,
+                ..
+            } => {
+                *category != ProviderErrorCategory::PaymentRequired
+                    && (status.is_some_and(|status| is_retryable_provider_status(provider, status))
+                        || matches!(
+                            category,
+                            ProviderErrorCategory::RateLimit
+                                | ProviderErrorCategory::Overloaded
+                                | ProviderErrorCategory::Timeout
+                                | ProviderErrorCategory::InternalServer
+                        )
+                        || retry_after.is_some())
+            }
+            Self::ApiReadResponseError { .. } | Self::HttpSend { .. } => true,
+            Self::DataRetentionConsentRequired { .. }
+            | Self::NoApiKey { .. }
+            | Self::SerializeRequest { .. }
+            | Self::BuildRequestBody { .. }
+            | Self::DeserializeResponse { .. }
+            | Self::StreamEndedUnexpectedly { .. }
+            | Self::ModelUnavailable { .. }
+            | Self::Other(_) => false,
+        }
+    }
+
     /// Returns the delay before a retry attempt, honoring a provider-supplied
     /// delay before falling back to exponential backoff from five to forty
     /// seconds.
@@ -377,26 +423,12 @@ impl LanguageModelCompletionError {
     /// transient, and error kinds without shared retry semantics, return
     /// `None`.
     pub fn retry_delay(&self, attempt: usize) -> Option<Duration> {
-        if attempt == 0 {
+        if attempt == 0 || !self.is_transient() {
             return None;
         }
 
         match self {
-            Self::ProviderRejection {
-                status,
-                retry_after,
-                category,
-                ..
-            } if status.is_some_and(is_retryable_provider_status)
-                || matches!(
-                    category,
-                    ProviderErrorCategory::RateLimit
-                        | ProviderErrorCategory::Overloaded
-                        | ProviderErrorCategory::Timeout
-                        | ProviderErrorCategory::InternalServer
-                )
-                || retry_after.is_some() =>
-            {
+            Self::ProviderRejection { retry_after, .. } => {
                 (*retry_after).or_else(|| exponential_backoff(attempt))
             }
             Self::ApiReadResponseError { .. } | Self::HttpSend { .. } => {
@@ -404,11 +436,11 @@ impl LanguageModelCompletionError {
             }
             Self::DataRetentionConsentRequired { .. }
             | Self::NoApiKey { .. }
-            | Self::ProviderRejection { .. }
             | Self::SerializeRequest { .. }
             | Self::BuildRequestBody { .. }
             | Self::DeserializeResponse { .. }
             | Self::StreamEndedUnexpectedly { .. }
+            | Self::ModelUnavailable { .. }
             | Self::Other(_) => None,
         }
     }
@@ -446,8 +478,13 @@ fn category_from_cloud_failure(code: &str, message: &str) -> ProviderErrorCatego
     }
 }
 
-fn is_retryable_provider_status(status: StatusCode) -> bool {
-    status.is_server_error() || matches!(status.as_u16(), 408 | 425 | 429)
+fn is_retryable_provider_status(provider: &LanguageModelProviderName, status: StatusCode) -> bool {
+    // OpenAI sometimes returns 404 during service disruptions instead of a server-error status.
+    // Retrying adds only bounded delay and network traffic when the endpoint is genuinely absent,
+    // while potentially hiding a spurious failure from the user when the outage is transient.
+    status.is_server_error()
+        || matches!(status.as_u16(), 408 | 425 | 429)
+        || (provider == &OPEN_AI_PROVIDER_NAME && status == StatusCode::NOT_FOUND)
 }
 
 fn exponential_backoff(attempt: usize) -> Option<Duration> {
@@ -652,7 +689,7 @@ impl LanguageModelToolUseInput {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LanguageModelEffortLevel {
     pub name: SharedString,
     pub value: SharedString,
@@ -998,6 +1035,7 @@ mod tests {
             "Rate limit exceeded".to_string(),
             Some(retry_after),
         );
+        assert!(error.is_transient());
         assert_eq!(error.retry_delay(1), Some(retry_after));
 
         let error = LanguageModelCompletionError::from_http_status(
@@ -1006,6 +1044,7 @@ mod tests {
             "Internal server error".to_string(),
             None,
         );
+        assert!(error.is_transient());
         assert_eq!(error.retry_delay(0), None);
         assert_eq!(error.retry_delay(1), Some(Duration::from_secs(5)));
         assert_eq!(error.retry_delay(2), Some(Duration::from_secs(10)));
@@ -1028,8 +1067,42 @@ mod tests {
                 category,
             );
 
+            assert!(error.is_transient());
             assert_eq!(error.retry_delay(1), Some(Duration::from_secs(5)));
         }
+    }
+
+    #[test]
+    fn test_open_ai_not_found_is_transient() {
+        let error = LanguageModelCompletionError::from_http_status(
+            OPEN_AI_PROVIDER_NAME,
+            StatusCode::NOT_FOUND,
+            "Not found".to_string(),
+            None,
+        );
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                category: ProviderErrorCategory::EndpointNotFound,
+                ..
+            }
+        ));
+        assert!(error.is_transient());
+        assert_eq!(error.retry_delay(1), Some(Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn test_not_found_is_permanent_for_other_providers() {
+        let error = LanguageModelCompletionError::from_http_status(
+            ANTHROPIC_PROVIDER_NAME,
+            StatusCode::NOT_FOUND,
+            "Not found".to_string(),
+            None,
+        );
+
+        assert!(!error.is_transient());
+        assert_eq!(error.retry_delay(1), None);
     }
 
     #[test]
@@ -1043,6 +1116,7 @@ mod tests {
             ProviderErrorCategory::Other,
         );
 
+        assert!(!error.is_transient());
         assert_eq!(error.retry_delay(1), None);
     }
 

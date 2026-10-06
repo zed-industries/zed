@@ -79,6 +79,7 @@ impl Editor {
         self.unfold_buffers_with_selections(cx);
 
         let selections = self.selections.all_adjusted(&self.display_snapshot(cx));
+        let has_multiple_selections = selections.len() > 1;
         let mut bracket_inserted = false;
         let mut edits = Vec::new();
         let mut linked_edits = LinkedEdits::new();
@@ -416,11 +417,18 @@ impl Editor {
             let initial_buffer_versions =
                 jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
 
+            let autoindent_mode = if has_multiple_selections {
+                this.autoindent_mode
+                    .clone()
+                    .map(|_| AutoindentMode::PreserveSingleLine)
+            } else {
+                this.autoindent_mode.clone()
+            };
             this.buffer.update(cx, |buffer, cx| {
                 if has_adjacent_edits {
-                    buffer.edit_non_coalesce(edits, this.autoindent_mode.clone(), cx);
+                    buffer.edit_non_coalesce(edits, autoindent_mode, cx);
                 } else {
-                    buffer.edit(edits, this.autoindent_mode.clone(), cx);
+                    buffer.edit(edits, autoindent_mode, cx);
                 }
             });
             linked_edits.apply(cx);
@@ -500,11 +508,12 @@ impl Editor {
                 this.show_edit_predictions_in_menu() || !had_active_edit_prediction;
             if this.hard_wrap.is_some() {
                 let latest: Range<Point> = this.selections.newest(&map).range();
+                // Reuse the post-edit snapshot captured in `map` above; the buffer
+                // is not mutated between there and here (only selections move), so a
+                // fresh `buffer().snapshot(cx)` would be redundant.
                 if latest.is_empty()
-                    && this
-                        .buffer()
-                        .read(cx)
-                        .snapshot(cx)
+                    && map
+                        .buffer_snapshot()
                         .line_len(MultiBufferRow(latest.start.row))
                         == latest.start.column
                 {
@@ -1486,6 +1495,7 @@ impl Editor {
             let empty_str: Arc<str> = Arc::default();
             let mut suffixes_inserted = Vec::new();
             let ignore_indent = action.ignore_indent;
+            let comment_empty_lines = action.comment_empty_lines;
 
             fn comment_prefix_range(
                 snapshot: &MultiBufferSnapshot,
@@ -1615,11 +1625,13 @@ impl Editor {
                         .map(|p| p.trim_end_matches(' ').len())
                         .collect::<SmallVec<[usize; 4]>>();
 
-                    let mut all_selection_lines_are_comments = true;
+                    let mut commented_lines = 0;
+                    let mut uncommented_lines = 0;
 
                     for row in start_row.0..=end_row.0 {
                         let row = MultiBufferRow(row);
-                        if start_row < end_row && snapshot.is_line_blank(row) {
+                        let is_blank = start_row < end_row && snapshot.is_line_blank(row);
+                        if !comment_empty_lines && is_blank {
                             continue;
                         }
 
@@ -1638,14 +1650,30 @@ impl Editor {
                             .max_by_key(|range| range.end.column - range.start.column)
                             .expect("prefixes is non-empty");
 
-                        if prefix_range.is_empty() {
-                            all_selection_lines_are_comments = false;
+                        // Blank rows are left out of the tally. They never carry a marker,
+                        // so counting them would make a commented block that contains one
+                        // look uncommented, and it could then never be uncommented. VS Code
+                        // and IntelliJ exclude them here for the same reason.
+                        // Without this, commenting a block with an empty line in between,
+                        // and then changing the action parameter of
+                        // ToggleComments with `comment_empty_lines: true` would add comment to the block,
+                        // even though it should be uncommented
+                        if !is_blank {
+                            if prefix_range.is_empty() {
+                                uncommented_lines += 1;
+                            } else {
+                                commented_lines += 1;
+                            }
                         }
 
                         selection_edit_ranges.push(prefix_range);
                     }
 
-                    if all_selection_lines_are_comments {
+                    // Remove markers only when at least one row was counted as commented
+                    // and none were counted as uncommented.
+                    let should_uncomment = uncommented_lines == 0 && commented_lines > 0;
+
+                    if should_uncomment {
                         edits.extend(
                             selection_edit_ranges
                                 .iter()
@@ -1855,7 +1883,7 @@ impl Editor {
             .filter_map(|keystroke| keystroke.key_char.clone())
             .collect();
 
-        if !self.input_enabled || self.read_only || !self.focus_handle.is_focused(window) {
+        if !self.input_enabled || !self.focus_handle.is_focused(window) {
             pending = "".to_string();
         }
 
@@ -1865,45 +1893,52 @@ impl Editor {
         if existing_pending.is_none() && pending.is_empty() {
             return;
         }
-        let transaction =
-            self.transact(window, cx, |this, window, cx| {
-                let selections = this
-                    .selections
-                    .all::<MultiBufferOffset>(&this.display_snapshot(cx));
-                let edits = selections
-                    .iter()
-                    .map(|selection| (selection.end..selection.end, pending.clone()));
-                this.edit(edits, cx);
-                this.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges(selections.into_iter().enumerate().map(|(ix, sel)| {
-                        sel.start + ix * pending.len()..sel.end + ix * pending.len()
-                    }));
-                });
-                if let Some(existing_ranges) = existing_pending {
-                    let edits = existing_ranges.iter().map(|range| (range.clone(), ""));
-                    this.edit(edits, cx);
-                }
-            });
+        let mut inserted_ranges = Vec::new();
+        let transaction = self.transact(window, cx, |this, window, cx| {
+            let selections = this
+                .selections
+                .all::<MultiBufferOffset>(&this.display_snapshot(cx));
+            let buffer = this.buffer.read(cx).snapshot(cx);
+            let selection_ranges = selections
+                .iter()
+                .map(|selection| {
+                    buffer.anchor_before(selection.start)..buffer.anchor_before(selection.end)
+                })
+                .collect::<Vec<_>>();
+            inserted_ranges = selections
+                .iter()
+                .map(|selection| {
+                    buffer.anchor_before(selection.end)..buffer.anchor_after(selection.end)
+                })
+                .collect();
 
-        let snapshot = self.snapshot(window, cx);
-        let ranges = self
-            .selections
-            .all::<MultiBufferOffset>(&snapshot.display_snapshot)
-            .into_iter()
-            .map(|selection| {
-                snapshot.buffer_snapshot().anchor_after(selection.end)
-                    ..snapshot
-                        .buffer_snapshot()
-                        .anchor_before(selection.end + pending.len())
-            })
-            .collect();
+            let edits = selections
+                .iter()
+                .map(|selection| (selection.end..selection.end, pending.clone()));
+            this.edit(edits, cx);
+            this.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_anchor_ranges(selection_ranges);
+            });
+            if let Some(existing_ranges) = existing_pending {
+                let edits = existing_ranges.iter().map(|range| (range.clone(), ""));
+                this.edit(edits, cx);
+            }
+        });
 
         if pending.is_empty() {
             self.clear_highlights(HighlightKey::PendingInput, cx);
         } else {
+            let buffer = self.buffer.read(cx).snapshot(cx);
+            let pending_ranges = inserted_ranges
+                .iter()
+                .map(|range| {
+                    let range = range.to_offset(&buffer);
+                    buffer.anchor_after(range.start)..buffer.anchor_before(range.end)
+                })
+                .collect();
             self.highlight_text(
                 HighlightKey::PendingInput,
-                ranges,
+                pending_ranges,
                 HighlightStyle {
                     underline: Some(UnderlineStyle {
                         thickness: px(1.),

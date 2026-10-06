@@ -164,6 +164,7 @@ pub fn report_input_latency_telemetry(window: &Window, cx: &mut App) {
         frames_with_2_events = frames_with_2_events,
         frames_with_3_events = frames_with_3_events,
         report_window_seconds = report_window_seconds,
+        measurement_version = gpui::profiler::hang::MEASUREMENT_VERSION,
     );
 }
 
@@ -264,6 +265,7 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
     let intervals_18to36 = count_frames_in_range(&delta_intervals, MS18_NS, MS36_NS);
     let intervals_36to100 = count_frames_in_range(&delta_intervals, MS36_NS, MS100_NS);
     // intervals > 100ms are implicitly total_intervals - (the buckets above)
+    let average_present_interval_ms = delta_intervals.mean() / 1_000_000.0;
     let average_dirty_to_present_ms = delta_dirty_to_present.mean() / 1_000_000.0;
 
     telemetry::event!(
@@ -278,9 +280,17 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
         intervals_18to36 = intervals_18to36,
         intervals_36to100 = intervals_36to100,
         total_intervals = total_intervals,
+        average_present_interval_ms = average_present_interval_ms,
         average_dirty_to_present_ms = average_dirty_to_present_ms,
+        dirty_to_present_samples = delta_dirty_to_present.len(),
+        dirty_to_present_p50_ms =
+            delta_dirty_to_present.value_at_quantile(0.5) as f64 / 1_000_000.0,
+        dirty_to_present_p95_ms =
+            delta_dirty_to_present.value_at_quantile(0.95) as f64 / 1_000_000.0,
+        dirty_to_present_max_ms = delta_dirty_to_present.max() as f64 / 1_000_000.0,
         root_entity_type_name = window_handle.root_entity_type_name(),
         report_window_seconds = report_window_seconds,
+        measurement_version = gpui::profiler::hang::MEASUREMENT_VERSION,
     );
 }
 
