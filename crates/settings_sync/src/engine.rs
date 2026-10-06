@@ -5,15 +5,15 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use cloud_api_client::{SYNCED_SETTINGS_KIND_SETTINGS, UpdateSyncedSettingsBody};
-use feature_flags::{FeatureFlagAppExt as _, SettingsSyncFeatureFlag};
+use feature_flags::{FeatureFlagAppExt as _, FeatureFlagStore, SettingsSyncFeatureFlag};
 use fs::{Fs, RenameOptions};
 use futures::StreamExt;
 use futures::channel::mpsc;
-use gpui::{AppContext as _, AsyncApp, Context, EventEmitter, Task, WeakEntity};
+use gpui::{AppContext as _, AsyncApp, Context, EventEmitter, Subscription, Task, WeakEntity};
 use rand::Rng as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{Settings as _, watch_config_file};
+use settings::{Settings as _, SettingsStore, watch_config_file};
 use settings_json::parse_json_with_comments;
 
 use crate::classifier::DocumentClassifier;
@@ -85,8 +85,10 @@ pub struct SettingsSyncEngine {
     update_required_notified: bool,
     flag_gate_notified: bool,
     cloud_unsupported_notified: bool,
+    flag_enabled: bool,
     sync_tx: mpsc::UnboundedSender<()>,
     _tasks: Vec<Task<()>>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<SettingsSyncEvent> for SettingsSyncEngine {}
@@ -149,8 +151,13 @@ impl SettingsSyncEngine {
             update_required_notified: false,
             flag_gate_notified: false,
             cloud_unsupported_notified: false,
+            flag_enabled: cx.has_flag::<SettingsSyncFeatureFlag>(),
             sync_tx,
             _tasks: vec![watch_task, sync_task],
+            _subscriptions: vec![
+                cx.observe_global::<FeatureFlagStore>(Self::handle_flag_inputs_changed),
+                cx.observe_global::<SettingsStore>(Self::handle_flag_inputs_changed),
+            ],
         }
     }
 
@@ -240,6 +247,14 @@ impl SettingsSyncEngine {
             }
         }
         self.schedule_sync(cx);
+    }
+
+    fn handle_flag_inputs_changed(&mut self, cx: &mut Context<Self>) {
+        let flag_enabled = cx.has_flag::<SettingsSyncFeatureFlag>();
+        if flag_enabled && !self.flag_enabled {
+            self.schedule_sync(cx);
+        }
+        self.flag_enabled = flag_enabled;
     }
 
     async fn run_sync(this: &WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
@@ -340,26 +355,17 @@ impl SettingsSyncEngine {
             Err(error) => return Err(error).context("fetching synced settings"),
         };
 
-        // TODO kb cloud: observer semantics for renamed keys — pulling a migrated
-        // doc deletes the old-shape keys locally, regressing the setting's effect
-        // until this Zed updates; document, or skip deletions for observers.
-        let schema_epoch = settings_schema_epoch();
-        let observer_mode = current_remote
-            .as_ref()
-            .is_some_and(|remote| remote.schema_epoch > schema_epoch);
-        if observer_mode {
-            this.update(cx, |this, cx| {
-                if !this.update_required_notified {
-                    this.update_required_notified = true;
-                    log::warn!(
-                        "settings sync: the cloud document was written by a newer Zed; \
-                         pulling only until this Zed is updated"
-                    );
-                    cx.emit(SettingsSyncEvent::UpdateRequired);
-                }
-            })?;
+        if let Some(remote) = &current_remote
+            && state.base.is_some()
+            && state.group_id.as_deref() != Some(remote.group_id.as_str())
+        {
+            log::warn!(
+                "settings sync: this device moved to another sync group, merging without a base"
+            );
+            state.base = None;
         }
 
+        let schema_epoch = settings_schema_epoch();
         let mut exclusions = ExclusionSet::built_in();
         exclusions.extend_from_pointers(sync_settings.exclude.iter().map(String::as_str));
         let local_full = flatten_doc(&classifier, &local_doc);
@@ -370,27 +376,42 @@ impl SettingsSyncEngine {
         let mut paused_now = false;
         let mut new_base = None;
         let mut attempts = 0;
+        // TODO kb: with no base yet (first enable / joining a group) this
+        // degrades to a two-way union merge; the first-enable choice
+        // (merge / replace local / replace remote + preview diff) is not
+        // implemented yet.
+        let mut merge_base = match (&current_remote, &state.base) {
+            (Some(_), Some(base)) => flatten_doc(&classifier, &base.doc),
+            _ => PathMap::default(),
+        };
 
         loop {
+            // TODO kb cloud: observer semantics for renamed keys — pulling a migrated
+            // doc deletes the old-shape keys locally, regressing the setting's effect
+            // until this Zed updates; document, or skip deletions for observers.
+            let observer_mode = current_remote
+                .as_ref()
+                .is_some_and(|remote| remote.schema_epoch > schema_epoch);
+            if observer_mode {
+                this.update(cx, |this, cx| {
+                    if !this.update_required_notified {
+                        this.update_required_notified = true;
+                        log::warn!(
+                            "settings sync: the cloud document was written by a newer Zed; \
+                             pulling only until this Zed is updated"
+                        );
+                        cx.emit(SettingsSyncEvent::UpdateRequired);
+                    }
+                })?;
+            }
+
             let remote_full = current_remote
                 .as_ref()
                 .map(|remote| flatten_doc(&classifier, &remote.doc))
                 .unwrap_or_default();
             exclusions.extend_from_flattened(&remote_full);
 
-            // TODO kb: with no base yet (first enable / joining a group) this
-            // degrades to a two-way union merge; the first-enable choice
-            // (merge / replace local / replace remote + preview diff) is not
-            // implemented yet.
-            let mut base_paths = if current_remote.is_some() {
-                state
-                    .base
-                    .as_ref()
-                    .map(|base| flatten_doc(&classifier, &base.doc))
-                    .unwrap_or_default()
-            } else {
-                PathMap::default()
-            };
+            let mut base_paths = merge_base.clone();
             let mut remote_paths = remote_full.clone();
             exclusions.strip(&mut base_paths);
             exclusions.strip(&mut remote_paths);
@@ -472,6 +493,7 @@ impl SettingsSyncEngine {
                     cx.background_executor()
                         .timer(PUSH_RETRY_BACKOFF * attempts as u32 + jitter)
                         .await;
+                    merge_base = remote_full;
                     current_remote = current;
                 }
             }
@@ -501,6 +523,7 @@ impl SettingsSyncEngine {
             }
             conflicts.push(Conflict {
                 local: original_local.cloned(),
+                remote: final_merged.get(&path).cloned(),
                 ..conflict
             });
         }
@@ -605,7 +628,7 @@ fn notify_cloud_unsupported(
         if !this.cloud_unsupported_notified {
             this.cloud_unsupported_notified = true;
             log::warn!(
-                "settings sync: Zed Cloud does not implement settings sync yet; \
+                "settings sync: Zed Cloud does not serve settings sync for this account; \
                  skipping sync until it does"
             );
         }

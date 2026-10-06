@@ -13,15 +13,12 @@ pub struct SyncNotImplementedError;
 
 impl std::fmt::Display for SyncNotImplementedError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Zed Cloud does not implement settings sync yet")
+        write!(f, "Zed Cloud does not serve settings sync for this account")
     }
 }
 
 impl std::error::Error for SyncNotImplementedError {}
 
-// TODO kb cloud: 404 is reserved for "endpoint not implemented"; the real
-// endpoint must return 200 with a null `synced_settings` for "no doc yet",
-// never 404.
 fn map_not_implemented(error: ClientApiError) -> anyhow::Error {
     match &error {
         ClientApiError::ServerError { status, .. } if status.as_u16() == 404 => {
@@ -44,8 +41,6 @@ pub trait SettingsSyncServer: Send + Sync {
     async fn push(&self, body: UpdateSyncedSettingsBody) -> Result<PushResult>;
 }
 
-// TODO kb cloud: talks to `/client/synced_settings`, which Cloud does not
-// implement yet.
 pub struct CloudSettingsSyncServer {
     client: Arc<Client>,
 }
@@ -65,8 +60,6 @@ impl CloudSettingsSyncServer {
 
 #[async_trait]
 impl SettingsSyncServer for CloudSettingsSyncServer {
-    // TODO kb cloud: the server must reject sync requests lacking
-    // `x-zed-system-id`; the device id is the group-membership key.
     fn is_ready(&self) -> bool {
         self.client.cloud_client().has_credentials() && self.system_id().is_some()
     }

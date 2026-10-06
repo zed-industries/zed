@@ -1,6 +1,5 @@
 use gpui::{App, AppContext as _, TaskExt as _};
 use settings_sync::SettingsSyncEvent;
-use util::ResultExt as _;
 use workspace::notifications::{
     NotificationId, show_app_notification, simple_message_notification::MessageNotification,
 };
@@ -45,7 +44,7 @@ pub fn init(cx: &mut App) {
                                     .update(cx, |engine, cx| {
                                         engine.revert_conflicts(conflicts, cx).detach_and_log_err(cx)
                                     })
-                                    .log_err();
+                                    .ok();
                             })
                     })
                 },
@@ -67,7 +66,7 @@ pub fn init(cx: &mut App) {
                         .primary_on_click(move |_, cx| {
                             engine
                                 .update(cx, |engine, cx| engine.unpause(cx))
-                                .log_err();
+                                .ok();
                         })
                     })
                 },

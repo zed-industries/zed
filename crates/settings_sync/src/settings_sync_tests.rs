@@ -1224,6 +1224,157 @@ async fn test_malformed_local_json_skips_cycle(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_cas_retry_keeps_a_concurrent_revert(cx: &mut TestAppContext) {
+    init_test(cx);
+    let server = FakeSettingsSyncServer::new();
+
+    let device = make_device(&server, "a", r#"{ "buffer_font_size": 15 }"#, cx).await;
+    settle(cx);
+    assert_eq!(server.doc().unwrap().version, 1);
+
+    let mut remote = server.doc().unwrap();
+    remote.version = 2;
+    remote.doc = json!({ "buffer_font_size": 16 });
+    server.set_doc(remote.clone());
+    let mut reverted = remote;
+    reverted.version = 3;
+    reverted.doc = json!({ "buffer_font_size": 15 });
+    server.queue_racing_doc(reverted);
+
+    device
+        .fs
+        .insert_file(
+            &device.settings_path,
+            br#"{ "buffer_font_size": 15, "tab_size": 8 }"#.to_vec(),
+        )
+        .await;
+    sync(&device, cx);
+    cx.executor().advance_clock(Duration::from_secs(5));
+    cx.run_until_parked();
+
+    let doc = server.doc().unwrap();
+    assert_eq!(doc.version, 4);
+    assert_eq!(doc.doc, json!({ "buffer_font_size": 15, "tab_size": 8 }));
+    assert_eq!(
+        device.settings_json(cx).await,
+        json!({ "buffer_font_size": 15, "tab_size": 8 })
+    );
+}
+
+#[gpui::test]
+async fn test_newer_epoch_seen_on_retry_stops_pushing(cx: &mut TestAppContext) {
+    init_test(cx);
+    let server = FakeSettingsSyncServer::new();
+
+    let device = make_device(&server, "a", r#"{ "buffer_font_size": 15 }"#, cx).await;
+    let events = subscribe_to_events(&device.engine, cx);
+    settle(cx);
+    assert_eq!(server.push_count(), 1);
+
+    let mut racing_doc = server.doc().unwrap();
+    racing_doc.version = 2;
+    racing_doc.schema_epoch = crate::settings_schema_epoch() + 1;
+    racing_doc.doc = json!({ "buffer_font_size": 15, "theme": "One Dark" });
+    server.queue_racing_doc(racing_doc.clone());
+
+    device
+        .fs
+        .insert_file(
+            &device.settings_path,
+            br#"{ "buffer_font_size": 15, "tab_size": 8 }"#.to_vec(),
+        )
+        .await;
+    sync(&device, cx);
+    cx.executor().advance_clock(Duration::from_secs(5));
+    cx.run_until_parked();
+
+    assert_eq!(server.push_count(), 2);
+    assert_eq!(server.doc(), Some(racing_doc));
+    assert_eq!(
+        device.settings_json(cx).await,
+        json!({ "buffer_font_size": 15, "tab_size": 8, "theme": "One Dark" })
+    );
+    let update_required_events = events
+        .lock()
+        .iter()
+        .filter(|event| matches!(event, SettingsSyncEvent::UpdateRequired))
+        .count();
+    assert_eq!(update_required_events, 1);
+}
+
+#[gpui::test]
+async fn test_moving_to_another_group_drops_the_stale_base(cx: &mut TestAppContext) {
+    init_test(cx);
+    let backend = Arc::new(FakeSettingsSyncBackend::default());
+    let work = FakeSettingsSyncServer::in_group(backend.clone(), "work");
+    let home = FakeSettingsSyncServer::in_group(backend, "home");
+    home.set_doc(cloud_api_client::SyncedSettings {
+        group_id: "home".to_string(),
+        kind: cloud_api_client::SYNCED_SETTINGS_KIND_SETTINGS.to_string(),
+        version: 1,
+        schema_epoch: crate::settings_schema_epoch(),
+        doc: json!({ "buffer_font_size": 20 }),
+        updated_by_system_id: None,
+    });
+
+    let device = make_device(
+        &work,
+        "a",
+        r#"{ "buffer_font_size": 15, "theme": "One Dark" }"#,
+        cx,
+    )
+    .await;
+    settle(cx);
+    assert_eq!(
+        work.doc().unwrap().doc,
+        json!({ "buffer_font_size": 15, "theme": "One Dark" })
+    );
+
+    let TestDevice {
+        fs,
+        engine,
+        settings_path,
+    } = device;
+    drop(engine);
+    cx.run_until_parked();
+    let moved = make_device_with(
+        home.clone(),
+        fs,
+        settings_path,
+        PathBuf::from("/a/sync_state.json"),
+        cx,
+    );
+    settle(cx);
+
+    assert_eq!(
+        home.doc().unwrap().doc,
+        json!({ "buffer_font_size": 20, "theme": "One Dark" })
+    );
+    assert_eq!(
+        moved.settings_json(cx).await,
+        json!({ "buffer_font_size": 20, "theme": "One Dark" })
+    );
+}
+
+#[gpui::test]
+async fn test_feature_flag_arriving_later_starts_syncing(cx: &mut TestAppContext) {
+    init_test(cx);
+    set_settings_sync_flag_override("off", cx);
+    let server = FakeSettingsSyncServer::new();
+
+    let _device = make_device(&server, "a", r#"{ "buffer_font_size": 15 }"#, cx).await;
+    settle(cx);
+    assert_eq!(server.doc(), None);
+
+    set_settings_sync_flag_override("on", cx);
+    settle(cx);
+    assert_eq!(
+        server.doc().map(|doc| doc.doc),
+        Some(json!({ "buffer_font_size": 15 }))
+    );
+}
+
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
@@ -1235,6 +1386,20 @@ fn init_test(cx: &mut TestAppContext) {
                     enabled: Some(true),
                     exclude: None,
                 });
+            });
+        });
+    });
+}
+
+fn set_settings_sync_flag_override(value: &str, cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        SettingsStore::update(cx, |store, cx| {
+            store.update_user_settings(cx, |content| {
+                content.feature_flags = Some(settings::FeatureFlagsMap(
+                    [("settings-sync".to_string(), value.to_string())]
+                        .into_iter()
+                        .collect(),
+                ));
             });
         });
     });
