@@ -7842,6 +7842,52 @@ mod internal_tests {
         send.await.unwrap();
     }
 
+    #[gpui::test]
+    async fn test_token_usage_saved_when_message_ends_without_content(cx: &mut TestAppContext) {
+        let (turn, send) = StreamingTurn::start(cx).await;
+        // A titled thread doesn't generate a title when the turn ends, which
+        // would otherwise save the thread.
+        turn.thread
+            .update(cx, |thread, cx| thread.set_title("Title".into(), cx));
+        turn.send_start_message_with_usage(100);
+        cx.run_until_parked();
+
+        turn.fake.end_last(&turn.model);
+        send.await.unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            turn.saved_thread()
+                .await
+                .cumulative_token_usage
+                .input_tokens,
+            100
+        );
+    }
+
+    #[gpui::test]
+    async fn test_token_usage_saved_when_cancelled_before_content(cx: &mut TestAppContext) {
+        let (turn, send) = StreamingTurn::start(cx).await;
+        // A titled thread doesn't generate a title when the turn ends, which
+        // would otherwise save the thread.
+        turn.thread
+            .update(cx, |thread, cx| thread.set_title("Title".into(), cx));
+        turn.send_start_message_with_usage(100);
+        cx.run_until_parked();
+
+        turn.acp_thread
+            .update(cx, |thread, cx| thread.cancel(cx))
+            .await;
+        send.await.unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            turn.saved_thread()
+                .await
+                .cumulative_token_usage
+                .input_tokens,
+            100
+        );
+    }
+
     /// A native session whose first prompt, "hello", is waiting on the fake model.
     struct StreamingTurn {
         fake: Arc<FakeLanguageModelProvider>,
@@ -7889,6 +7935,24 @@ mod internal_tests {
 
         async fn saved_markdown(&self) -> String {
             crate::thread::messages_to_markdown(&self.saved_thread().await.messages)
+        }
+
+        /// Starts a message and reports its usage, as providers like Anthropic
+        /// do before streaming any content.
+        fn send_start_message_with_usage(&self, input_tokens: u64) {
+            self.fake.send_last_event(
+                &self.model,
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "message".into(),
+                },
+            );
+            self.fake.send_last_event(
+                &self.model,
+                LanguageModelCompletionEvent::UsageUpdate(language_model::TokenUsage {
+                    input_tokens,
+                    ..Default::default()
+                }),
+            );
         }
     }
 
