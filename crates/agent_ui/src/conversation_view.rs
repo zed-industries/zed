@@ -2359,6 +2359,10 @@ impl ConversationView {
                     return;
                 };
                 let subagent_session_id = subagent_thread.read(cx).session_id().clone();
+                // Agent-created subagent threads get their parent link only here.
+                subagent_thread.update(cx, |thread, cx| {
+                    thread.set_parent_session_id(parent_session_id.clone(), cx);
+                });
                 conversation.update(cx, |conversation, cx| {
                     conversation.register_thread(subagent_thread.clone(), cx);
                 });

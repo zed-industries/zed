@@ -3364,6 +3364,7 @@ pub struct AcpThread {
     session_id: acp_v1::SessionId,
     work_dirs: Option<PathList>,
     parent_session_id: Option<acp_v1::SessionId>,
+    announced_subagents: HashSet<acp_v1::SessionId>,
     title: Option<SharedString>,
     provisional_title: Option<SharedString>,
     entries: Vec<AgentThreadEntry>,
@@ -3643,34 +3644,37 @@ impl AcpThread {
             this.update_idle_sleep_prevention(cx);
         });
         let idle_sleep_event_subscription =
-            cx.subscribe_self(|this, event: &AcpThreadEvent, cx| match event {
-                AcpThreadEvent::StatusChanged
-                | AcpThreadEvent::EntriesRemoved(_)
-                | AcpThreadEvent::ToolAuthorizationRequested(_)
-                | AcpThreadEvent::ToolAuthorizationReceived(_)
-                | AcpThreadEvent::ElicitationRequested(_)
-                | AcpThreadEvent::ElicitationResponded(_) => {
-                    this.sync_legacy_action_state(cx);
-                    this.update_idle_sleep_prevention(cx);
+            cx.subscribe_self(|this, event: &AcpThreadEvent, cx| {
+                match event {
+                    AcpThreadEvent::StatusChanged
+                    | AcpThreadEvent::EntriesRemoved(_)
+                    | AcpThreadEvent::ToolAuthorizationRequested(_)
+                    | AcpThreadEvent::ToolAuthorizationReceived(_)
+                    | AcpThreadEvent::ElicitationRequested(_)
+                    | AcpThreadEvent::ElicitationResponded(_) => {
+                        this.sync_legacy_action_state(cx);
+                        this.update_idle_sleep_prevention(cx);
+                    }
+                    AcpThreadEvent::PromptUpdated
+                    | AcpThreadEvent::SubmissionUpdated(_)
+                    | AcpThreadEvent::NewEntry
+                    | AcpThreadEvent::TitleUpdated
+                    | AcpThreadEvent::NoticesUpdated
+                    | AcpThreadEvent::TokenUsageUpdated
+                    | AcpThreadEvent::EntryUpdated(_)
+                    | AcpThreadEvent::Retry(_)
+                    | AcpThreadEvent::SubagentSpawned(_)
+                    | AcpThreadEvent::Stopped { .. }
+                    | AcpThreadEvent::Error
+                    | AcpThreadEvent::LoadError(_)
+                    | AcpThreadEvent::PromptCapabilitiesUpdated
+                    | AcpThreadEvent::Refusal
+                    | AcpThreadEvent::AvailableCommandsUpdated(_)
+                    | AcpThreadEvent::ModeUpdated(_)
+                    | AcpThreadEvent::ConfigOptionsUpdated(_)
+                    | AcpThreadEvent::WorkingDirectoriesUpdated => {}
                 }
-                AcpThreadEvent::PromptUpdated
-                | AcpThreadEvent::SubmissionUpdated(_)
-                | AcpThreadEvent::NewEntry
-                | AcpThreadEvent::TitleUpdated
-                | AcpThreadEvent::NoticesUpdated
-                | AcpThreadEvent::TokenUsageUpdated
-                | AcpThreadEvent::EntryUpdated(_)
-                | AcpThreadEvent::Retry(_)
-                | AcpThreadEvent::SubagentSpawned(_)
-                | AcpThreadEvent::Stopped { .. }
-                | AcpThreadEvent::Error
-                | AcpThreadEvent::LoadError(_)
-                | AcpThreadEvent::PromptCapabilitiesUpdated
-                | AcpThreadEvent::Refusal
-                | AcpThreadEvent::AvailableCommandsUpdated(_)
-                | AcpThreadEvent::ModeUpdated(_)
-                | AcpThreadEvent::ConfigOptionsUpdated(_)
-                | AcpThreadEvent::WorkingDirectoriesUpdated => {}
+                this.announce_subagent_session(event, cx);
             });
 
         let git_store = project.read(cx).git_store().clone();
@@ -3691,6 +3695,7 @@ impl AcpThread {
         let receipt_submissions = connection.receipt_submissions(&session_id, cx);
         Self {
             parent_session_id,
+            announced_subagents: Default::default(),
             work_dirs,
             action_log,
             _git_store_subscription,
@@ -3734,6 +3739,17 @@ impl AcpThread {
 
     pub fn parent_session_id(&self) -> Option<&acp_v1::SessionId> {
         self.parent_session_id.as_ref()
+    }
+
+    /// Set the parent of an agent-created subagent thread, so the subagent
+    /// view renders its back-to-parent affordance.
+    pub fn set_parent_session_id(
+        &mut self,
+        parent_session_id: acp_v1::SessionId,
+        cx: &mut Context<Self>,
+    ) {
+        self.parent_session_id = Some(parent_session_id);
+        cx.notify();
     }
 
     pub fn prompt_capabilities(&self) -> acp_v1::PromptCapabilities {
@@ -5137,6 +5153,28 @@ impl AcpThread {
 
     pub fn subagent_spawned(&mut self, session_id: acp_v1::SessionId, cx: &mut Context<Self>) {
         cx.emit(AcpThreadEvent::SubagentSpawned(session_id));
+    }
+
+    /// Announce a subagent session the first time an entry that references it
+    /// changes, so the session can be loaded.
+    fn announce_subagent_session(&mut self, event: &AcpThreadEvent, cx: &mut Context<Self>) {
+        let ix = match event {
+            AcpThreadEvent::NewEntry => self.entries.len().saturating_sub(1),
+            AcpThreadEvent::EntryUpdated(ix) => *ix,
+            _ => return,
+        };
+        let session_id = match self.entries.get(ix) {
+            Some(AgentThreadEntry::ToolCall(call)) => call
+                .subagent_session_info
+                .as_ref()
+                .map(|info| info.session_id.clone()),
+            _ => None,
+        };
+        if let Some(session_id) = session_id
+            && self.announced_subagents.insert(session_id.clone())
+        {
+            self.subagent_spawned(session_id, cx);
+        }
     }
 
     pub fn update_token_usage(&mut self, usage: Option<TokenUsage>, cx: &mut Context<Self>) {
@@ -15626,6 +15664,129 @@ mod tests {
                 "}
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_subagent_session_info_meta_emits_subagent_spawned_once(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+
+        let spawned: Rc<RefCell<Vec<acp_v1::SessionId>>> = Default::default();
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&thread, {
+                let spawned = spawned.clone();
+                move |_, event: &AcpThreadEvent, _| {
+                    if let AcpThreadEvent::SubagentSpawned(session_id) = event {
+                        spawned.borrow_mut().push(session_id.clone());
+                    }
+                }
+            })
+        });
+
+        let subagent_meta: acp_v1::Meta = json!({
+            SUBAGENT_SESSION_INFO_META_KEY: {
+                "session_id": "subagent-session",
+                "message_start_index": 0,
+            }
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+
+        // External agents declare the spawner, then attach subagent session
+        // info via an update; the first acquisition must announce the spawn.
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp_v1::SessionUpdate::ToolCall(
+                        acp_v1::ToolCall::new("spawner-call", "spawn task")
+                            .kind(acp_v1::ToolKind::Other)
+                            .status(acp_v1::ToolCallStatus::Pending),
+                    ),
+                    cx,
+                )
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(spawned.borrow().len(), 0);
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp_v1::SessionUpdate::ToolCallUpdate(
+                        acp_v1::ToolCallUpdate::new(
+                            "spawner-call",
+                            acp_v1::ToolCallUpdateFields::new(),
+                        )
+                        .meta(subagent_meta.clone()),
+                    ),
+                    cx,
+                )
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(spawned.borrow().len(), 1);
+        assert_eq!(spawned.borrow()[0].0.as_ref(), "subagent-session");
+
+        // Re-announcing the same info does not re-emit.
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp_v1::SessionUpdate::ToolCallUpdate(
+                        acp_v1::ToolCallUpdate::new(
+                            "spawner-call",
+                            acp_v1::ToolCallUpdateFields::new()
+                                .status(acp_v1::ToolCallStatus::InProgress),
+                        )
+                        .meta(subagent_meta),
+                    ),
+                    cx,
+                )
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(spawned.borrow().len(), 1);
+
+        // A declaration that already carries the info announces at creation.
+        let subagent_meta_two: acp_v1::Meta = json!({
+            SUBAGENT_SESSION_INFO_META_KEY: {
+                "session_id": "subagent-session-two",
+                "message_start_index": 0,
+            }
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp_v1::SessionUpdate::ToolCall(
+                        acp_v1::ToolCall::new("meta-declared-call", "with meta")
+                            .kind(acp_v1::ToolKind::Other)
+                            .meta(subagent_meta_two),
+                    ),
+                    cx,
+                )
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(spawned.borrow().len(), 2);
+        assert_eq!(spawned.borrow()[1].0.as_ref(), "subagent-session-two");
+
+        // A tool call without subagent session info does not emit.
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp_v1::SessionUpdate::ToolCall(
+                        acp_v1::ToolCall::new("plain-call", "plain task")
+                            .kind(acp_v1::ToolKind::Read),
+                    ),
+                    cx,
+                )
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(spawned.borrow().len(), 2);
     }
 
     async fn new_test_thread(cx: &mut TestAppContext) -> Entity<AcpThread> {
