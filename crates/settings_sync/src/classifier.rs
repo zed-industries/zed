@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use regex::Regex;
 use serde_json::{Map, Value};
 use settings_content::UserSettingsContent;
 
@@ -5,32 +8,43 @@ const MAX_REF_DEPTH: usize = 32;
 
 pub struct DocumentClassifier {
     schema: Value,
+    patterns: HashMap<String, Regex>,
 }
 
 pub struct ContainerView<'a> {
     properties: Vec<&'a Map<String, Value>>,
+    pattern_properties: Vec<(&'a Regex, &'a Value)>,
     additional: Option<&'a Value>,
 }
 
 impl<'a> ContainerView<'a> {
-    fn is_empty(&self) -> bool {
-        self.properties
-            .iter()
-            .all(|properties| properties.is_empty())
-            && self.additional.is_none()
-    }
-
     pub fn child_schema(&self, key: &str) -> Option<&'a Value> {
         self.properties
             .iter()
             .find_map(|properties| properties.get(key))
+            .or_else(|| {
+                self.pattern_properties
+                    .iter()
+                    .find(|(pattern, _)| pattern.is_match(key))
+                    .map(|(_, schema)| *schema)
+            })
             .or(self.additional)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.properties
+            .iter()
+            .all(|properties| properties.is_empty())
+            && self.pattern_properties.is_empty()
+            && self.additional.is_none()
     }
 }
 
 impl DocumentClassifier {
     pub fn from_schema(schema: Value) -> Self {
-        Self { schema }
+        let mut patterns = HashMap::new();
+        collect_patterns(&schema, &mut patterns);
+        Self { schema, patterns }
     }
 
     pub fn for_user_settings() -> Self {
@@ -63,11 +77,20 @@ impl DocumentClassifier {
 
         let mut view = ContainerView {
             properties: Vec::new(),
+            pattern_properties: Vec::new(),
             additional: None,
         };
 
         if let Some(properties) = object.get("properties").and_then(Value::as_object) {
             view.properties.push(properties);
+        }
+        if let Some(pattern_properties) = object.get("patternProperties").and_then(Value::as_object)
+        {
+            view.pattern_properties.extend(
+                pattern_properties
+                    .iter()
+                    .filter_map(|(pattern, schema)| Some((self.patterns.get(pattern)?, schema))),
+            );
         }
         if let Some(additional) = object.get("additionalProperties")
             && additional.is_object()
@@ -79,6 +102,8 @@ impl DocumentClassifier {
             for branch in all_of {
                 if let Some(branch_view) = self.container_view_inner(branch, depth + 1) {
                     view.properties.extend(branch_view.properties);
+                    view.pattern_properties
+                        .extend(branch_view.pattern_properties);
                     view.additional = view.additional.or(branch_view.additional);
                 }
             }
@@ -109,6 +134,39 @@ impl DocumentClassifier {
             .or_else(|| self.schema.get("$defs"))?
             .get(definition_name)?;
         self.resolve(definition, depth + 1)
+    }
+}
+
+fn collect_patterns(schema: &Value, patterns: &mut HashMap<String, Regex>) {
+    match schema {
+        Value::Object(object) => {
+            if let Some(pattern_properties) =
+                object.get("patternProperties").and_then(Value::as_object)
+            {
+                for pattern in pattern_properties.keys() {
+                    if patterns.contains_key(pattern) {
+                        continue;
+                    }
+                    match Regex::new(pattern) {
+                        Ok(regex) => {
+                            patterns.insert(pattern.clone(), regex);
+                        }
+                        Err(error) => {
+                            log::warn!("settings sync: invalid schema pattern {pattern:?}: {error}")
+                        }
+                    }
+                }
+            }
+            for value in object.values() {
+                collect_patterns(value, patterns);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                collect_patterns(value, patterns);
+            }
+        }
+        _ => {}
     }
 }
 

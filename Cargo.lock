@@ -16698,12 +16698,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
  "client",
  "cloud_api_client",
  "feature_flags",
  "fs",
  "futures 0.3.34",
  "gpui",
+ "http_client",
  "indoc",
  "log",
  "migrator",
@@ -16711,12 +16713,14 @@ dependencies = [
  "paths",
  "pretty_assertions",
  "rand 0.9.4",
+ "regex",
  "schemars 1.0.4",
  "serde",
  "serde_json",
  "settings",
  "settings_content",
  "settings_json",
+ "sysinfo 0.39.6",
 ]
 
 [[package]]
@@ -22795,6 +22799,7 @@ dependencies = [
  "cli",
  "client",
  "clock",
+ "cloud_api_client",
  "codestral",
  "collab_ui",
  "collections",

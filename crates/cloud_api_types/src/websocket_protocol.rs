@@ -16,13 +16,13 @@ pub enum MessageToClient {
     NotificationsUpdated,
     /// The user's settings were updated and should be refreshed.
     SettingsUpdated,
-    // TODO kb cloud: Cloud does not send this yet; broadcast to all of the
-    // user's sockets, clients filter by group and dedupe by version.
     SyncedSettingsChanged {
         group_id: String,
         kind: String,
         version: u64,
+        document_id: String,
     },
+    SyncedSettingsInvalidated,
 }
 
 impl MessageToClient {
@@ -69,6 +69,28 @@ mod tests {
         let message = MessageToClient::SettingsUpdated;
         let bytes = message.serialize()?;
         assert_eq!(bytes, b"\x6fSettingsUpdated");
+        assert_eq!(MessageToClient::deserialize(&bytes)?, message);
+        Ok(())
+    }
+
+    #[test]
+    fn synced_settings_changed_message_round_trips_with_the_expected_wire_format() -> Result<()> {
+        let message = MessageToClient::SyncedSettingsChanged {
+            group_id: "g".to_string(),
+            kind: "settings".to_string(),
+            version: 1,
+            document_id: "d".to_string(),
+        };
+        let bytes = message.serialize()?;
+        assert_eq!(
+            bytes,
+            b"\xa1\x75SyncedSettingsChanged\xa4\x68group_id\x61g\x64kind\x68settings\x67version\x01\x6bdocument_id\x61d"
+        );
+        assert_eq!(MessageToClient::deserialize(&bytes)?, message);
+
+        let message = MessageToClient::SyncedSettingsInvalidated;
+        let bytes = message.serialize()?;
+        assert_eq!(bytes, b"\x78\x19SyncedSettingsInvalidated");
         assert_eq!(MessageToClient::deserialize(&bytes)?, message);
         Ok(())
     }

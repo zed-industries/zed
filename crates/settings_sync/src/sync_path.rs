@@ -17,19 +17,16 @@ impl SyncPath {
     }
 
     pub fn parse(pointer: &str) -> Option<Self> {
-        let pointer = pointer.trim();
-        if pointer.is_empty() || pointer == "/" {
+        if pointer.is_empty() {
             return None;
         }
         let pointer = pointer.strip_prefix('/').unwrap_or(pointer);
-        let segments = pointer
-            .split('/')
-            .map(|segment| segment.replace("~1", "/").replace("~0", "~"))
-            .collect::<Vec<_>>();
-        if segments.iter().any(String::is_empty) {
-            return None;
-        }
-        Some(Self(segments))
+        Some(Self(
+            pointer
+                .split('/')
+                .map(|segment| segment.replace("~1", "/").replace("~0", "~"))
+                .collect(),
+        ))
     }
 
     pub fn join(&self, segment: &str) -> Self {
@@ -83,8 +80,25 @@ mod tests {
             Some(SyncPath::from_segments(["languages", "Rust", "tab_size"]))
         );
         assert_eq!(SyncPath::parse(""), None);
-        assert_eq!(SyncPath::parse("/"), None);
-        assert_eq!(SyncPath::parse("//x"), None);
+        assert_eq!(
+            SyncPath::parse("proxy"),
+            Some(SyncPath::from_segments(["proxy"]))
+        );
+        assert_eq!(SyncPath::parse("/"), Some(SyncPath::from_segments([""])));
+        assert_eq!(
+            SyncPath::parse("/log/"),
+            Some(SyncPath::from_segments(["log", ""]))
+        );
+        assert_eq!(
+            SyncPath::parse("/log/a "),
+            Some(SyncPath::from_segments(["log", "a "]))
+        );
+        for path in [
+            SyncPath::from_segments(["log", ""]),
+            SyncPath::from_segments(["log", "a "]),
+        ] {
+            assert_eq!(SyncPath::parse(&path.to_string()), Some(path));
+        }
         assert_eq!(
             SyncPath::parse("/file_types/C++/~0~1"),
             Some(SyncPath::from_segments(["file_types", "C++", "~/"]))
