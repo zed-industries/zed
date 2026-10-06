@@ -235,8 +235,8 @@ struct Session {
     /// Latest snapshot to persist. Overwritten in place on every save request;
     /// the single save worker drains it, coalescing bursts into one write.
     pending_save: Arc<Mutex<Option<PendingThreadSave>>>,
-    /// The thread's state as of the last enqueued save.
-    last_save: Option<SaveCheckpoint>,
+    /// The thread's save key as of the last enqueued save.
+    last_save_key: Option<SaveKey>,
     save_wake: watch::Sender<()>,
     save_worker: Task<Result<()>>,
     _subscriptions: Vec<Subscription>,
@@ -904,7 +904,7 @@ impl NativeAgent {
                 subagents: Vec::new(),
                 project_id,
                 pending_save,
-                last_save: None,
+                last_save_key: None,
                 save_wake,
                 save_worker,
                 _subscriptions: subscriptions,
@@ -1818,9 +1818,9 @@ impl NativeAgent {
         // This runs on every thread notify, and streaming notifies once per chunk.
         if !session.draft_prompt_changed(cx)
             && session
-                .last_save
+                .last_save_key
                 .as_ref()
-                .is_some_and(|last_save| thread.read(cx).can_defer_save(last_save))
+                .is_some_and(|last_save_key| thread.read(cx).can_defer_save(last_save_key))
         {
             return;
         }
@@ -1846,7 +1846,7 @@ impl NativeAgent {
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
-        session.last_save = Some(session.thread.read(cx).save_checkpoint());
+        session.last_save_key = Some(session.thread.read(cx).save_key());
         *session.pending_save.lock() = Some(PendingThreadSave {
             folder_paths,
             db_thread,
