@@ -2905,21 +2905,31 @@ impl Element for MarkdownElement {
                                 )
                                 .fill();
 
-                                if let Some(on_toggle) = self.on_checkbox_toggle.clone() {
+                                let checkbox = if let Some(on_toggle) =
+                                    self.on_checkbox_toggle.clone()
+                                {
                                     let task_source_range = task_range.clone();
-                                    checkbox
-                                        .on_click(move |_state, window, cx| {
-                                            on_toggle(
-                                                task_source_range.clone(),
-                                                !checked,
-                                                window,
-                                                cx,
-                                            );
-                                        })
-                                        .into_any_element()
+                                    checkbox.on_click(move |_state, window, cx| {
+                                        on_toggle(task_source_range.clone(), !checked, window, cx);
+                                    })
                                 } else {
-                                    checkbox.visualization_only(true).into_any_element()
-                                }
+                                    checkbox.visualization_only(true)
+                                };
+
+                                let line_height = self
+                                    .style
+                                    .paragraph_line_height
+                                    .to_pixels(builder.text_style().font_size, window.rem_size());
+                                // List items top-align their bullet, which suits text bullets
+                                // but leaves the taller checkbox sitting above the text.
+                                // Centering it in a slot one line tall aligns it with the
+                                // first line, even when the item wraps.
+                                div()
+                                    .h(line_height)
+                                    .flex()
+                                    .items_center()
+                                    .child(checkbox)
+                                    .into_any_element()
                             } else if let Some(bullet_index) = builder.next_bullet_index() {
                                 div().child(format!("{}.", bullet_index)).into_any_element()
                             } else {
@@ -6996,7 +7006,7 @@ mod tests {
             LanguageConfig {
                 name: "JavaScript".into(),
                 matcher: (LanguageMatcher {
-                    path_suffixes: vec!["js".to_string()],
+                    path_suffixes: vec!["js".into()],
                     ..Default::default()
                 })
                 .into(),

@@ -319,6 +319,22 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+## Suggest Extensions
+
+- Description: Whether to suggest installing extensions based on the files you open.
+- Setting: `suggest_extensions`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+```json [settings]
+{
+  "suggest_extensions": false
+}
+```
+
 ## Auto Update extensions
 
 - Description: Disable auto-updates for specific extensions.
@@ -2492,7 +2508,7 @@ When set to `expanded`, symbolic links are only scanned after you explicitly exp
       "**/Zed/**/*.json",
       "**/.vscode/**/*.json"
     ],
-    "Shell Script": [".env.*"]
+    "Env": [".env.*"]
   }
 }
 ```

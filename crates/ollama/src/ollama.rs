@@ -7,7 +7,7 @@ use http_client::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-pub use settings::KeepAlive;
+pub use settings_content::KeepAlive;
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
 
