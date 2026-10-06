@@ -1817,7 +1817,10 @@ impl NativeAgent {
         };
         // This runs on every thread notify, and streaming notifies once per chunk.
         if !session.draft_prompt_changed(cx)
-            && thread.read(cx).can_defer_save(session.last_save.as_ref())
+            && session
+                .last_save
+                .as_ref()
+                .is_some_and(|last_save| thread.read(cx).can_defer_save(last_save))
         {
             return;
         }

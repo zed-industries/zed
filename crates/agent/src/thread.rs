@@ -1979,8 +1979,8 @@ impl Thread {
     /// Returns true while a message is streaming and nothing in `last_save` has
     /// changed. `to_db` doesn't include the pending message, so a save now would
     /// only add fields that `SaveCheckpoint` leaves out.
-    pub(crate) fn can_defer_save(&self, last_save: Option<&SaveCheckpoint>) -> bool {
-        self.pending_message.is_some() && last_save == Some(&self.save_checkpoint())
+    pub(crate) fn can_defer_save(&self, last_save: &SaveCheckpoint) -> bool {
+        self.pending_message.is_some() && *last_save == self.save_checkpoint()
     }
 
     pub(crate) fn save_checkpoint(&self) -> SaveCheckpoint {
