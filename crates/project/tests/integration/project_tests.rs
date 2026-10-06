@@ -11839,6 +11839,27 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
             (path!("dir/four.rs").to_string(), vec![25..28, 36..39])
         ])
     );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                "THREE",
+                false,
+                true,
+                false,
+                Default::default(),
+                Default::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([(path!("dir/three.rs").to_string(), vec![6..11])])
+    );
 }
 
 #[gpui::test]
